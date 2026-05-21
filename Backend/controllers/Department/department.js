@@ -1,8 +1,41 @@
 const departmentService = require("../../services/Department/departmentService");
+// R7bb-FIX-B-5/D7-CRIT-6: master-data audit — Department write surfaces
+// emit MASTER_DEPARTMENT_* BillingAudit rows on every create / update /
+// deactivate. Before R7bb a hospital reorg could rename / remove a
+// department with zero audit trail, breaking the chain back to
+// historical bills that referenced the old name.
+const Department = require("../../models/Department/department");
+const { logMasterDataEvent } = require("../../services/Clinical/activityLogger");
+function _deptSnapshot(doc) {
+  if (!doc) return null;
+  const o = doc.toObject ? doc.toObject() : doc;
+  return {
+    _id:                o._id,
+    departmentName:     o.departmentName,
+    departmentCode:     o.departmentCode,
+    category:           o.category,
+    headOfDepartment:   o.headOfDepartment,
+    opdAvailable:       o.opdAvailable,
+    ipdAvailable:       o.ipdAvailable,
+    emergencyAvailable: o.emergencyAvailable,
+    isActive:           o.isActive,
+  };
+}
+
 class DepartmentController {
   async createDepartment(req, res) {
     try {
       const department = await departmentService.createDepartment(req.body);
+      // R7bb-FIX-B-5/D7-CRIT-6
+      logMasterDataEvent({
+        event:    "MASTER_DEPARTMENT_CREATED",
+        model:    "Department",
+        before:   null,
+        after:    _deptSnapshot(department),
+        actorReq: req,
+        reason:   req.body?.reason || "Department row created",
+        docId:    department?._id,
+      });
       res.status(201).json({
         success: true,
         message: "Department created successfully",
@@ -67,10 +100,23 @@ class DepartmentController {
 
   async updateDepartment(req, res) {
     try {
+      // R7bb-FIX-B-5/D7-CRIT-6: capture BEFORE snapshot for audit.
+      const before = _deptSnapshot(
+        await Department.findById(req.params.id).lean().catch(() => null),
+      );
       const department = await departmentService.updateDepartment(
         req.params.id,
         req.body
       );
+      logMasterDataEvent({
+        event:    "MASTER_DEPARTMENT_UPDATED",
+        model:    "Department",
+        before,
+        after:    _deptSnapshot(department),
+        actorReq: req,
+        reason:   req.body?.reason || "Department row updated",
+        docId:    department?._id,
+      });
       res.status(200).json({
         success: true,
         message: "Department updated successfully",
@@ -86,9 +132,24 @@ class DepartmentController {
 
   async deleteDepartment(req, res) {
     try {
+      // R7bb-FIX-B-5/D7-CRIT-6: capture before-state. Soft-delete = isActive
+      // flip; the prior snapshot lets reviewers undo accidentally-deactivated
+      // departments by walking the audit chain.
+      const before = _deptSnapshot(
+        await Department.findById(req.params.id).lean().catch(() => null),
+      );
       const department = await departmentService.deleteDepartment(
         req.params.id
       );
+      logMasterDataEvent({
+        event:    "MASTER_DEPARTMENT_UPDATED",   // soft-delete = isActive flip
+        model:    "Department",
+        before,
+        after:    _deptSnapshot(department) || (before ? { ...before, isActive: false } : null),
+        actorReq: req,
+        reason:   req.body?.reason || "Department row deactivated",
+        docId:    req.params.id,
+      });
       res.status(200).json({
         success: true,
         message: "Department deactivated successfully",

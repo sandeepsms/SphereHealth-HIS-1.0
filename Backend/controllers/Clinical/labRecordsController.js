@@ -288,3 +288,144 @@ exports.reportVerify = async (req, res) => {
 exports._PANELS = PANELS;
 exports._REPORT_TYPES = REPORT_TYPES;
 exports._classify = classify;
+
+/* ────────────────────────────────────────────────────────────
+   R7bb-FIX-E-8 / D6-CRIT-5: Lab QC log + panel CRUD
+   ─────────────────────────────────────────────────────────
+   NABH AAC.3 + ISO 15189 require labs to run a control sample
+   per analyzer per shift and retain the record. Pre-R7bb the
+   HIS had no place for this — labs kept paper logs that didn't
+   tie to a result trail. The collection lives in models/Lab.
+
+   Endpoints (routes registered in labRecordsRoutes.js):
+     GET  /api/lab-records/qc       — list (filterable)
+     POST /api/lab-records/qc       — create a QC entry
+     POST /api/lab-records/panels   — Lab Tech adds a custom panel
+     PUT  /api/lab-records/panels/:code — update custom panel
+     DELETE /api/lab-records/panels/:code — soft-delete (deactivate)
+   ──────────────────────────────────────────────────────────── */
+const LabQCLog = require("../../models/Lab/LabQCLogModel");
+
+exports.qcList = async (req, res) => {
+  try {
+    const { equipmentName, result, from, to } = req.query;
+    const q = {};
+    if (equipmentName) q.equipmentName = new RegExp(String(equipmentName).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    if (result && ["PASS", "FAIL"].includes(String(result).toUpperCase())) q.result = String(result).toUpperCase();
+    if (from || to) {
+      q.performedAt = {};
+      if (from) q.performedAt.$gte = new Date(`${from}T00:00:00`);
+      if (to)   q.performedAt.$lte = new Date(`${to}T23:59:59.999`);
+    }
+    const rows = await LabQCLog.find(q).sort({ performedAt: -1 }).limit(500).lean();
+    res.json({ success: true, count: rows.length, data: rows });
+  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+};
+
+exports.qcCreate = async (req, res) => {
+  try {
+    const body = req.body || {};
+    if (!body.equipmentName) {
+      return res.status(400).json({ success: false, message: "equipmentName required" });
+    }
+    if (!["PASS", "FAIL"].includes(String(body.result || "").toUpperCase())) {
+      return res.status(400).json({ success: false, message: "result must be PASS or FAIL" });
+    }
+    body.result = String(body.result).toUpperCase();
+    body.performedBy   = req.user?.fullName || req.user?.employeeId || "Lab";
+    body.performedById = req.user?.id || req.user?._id || null;
+    body.performedByRole = req.user?.role || "";
+    body.performedAt = body.performedAt ? new Date(body.performedAt) : new Date();
+    const row = await LabQCLog.create(body);
+    res.status(201).json({ success: true, data: row });
+  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+};
+
+// In-memory custom-panel store. Persisted via a lightweight collection
+// (re-using the labRecordsModels file would require a schema add; keep
+// MVP simple by leaning on PANELS at runtime + a separate Mongo doc
+// per custom panel).
+const CustomPanelSchema = new (require("mongoose").Schema)({
+  code:    { type: String, required: true, unique: true, uppercase: true, trim: true },
+  label:   { type: String, required: true, trim: true },
+  tests:   [{
+    name:   { type: String, required: true },
+    unit:   { type: String, default: "" },
+    refMin: { type: Number, default: null },
+    refMax: { type: Number, default: null },
+  }],
+  active:    { type: Boolean, default: true },
+  createdBy: { type: String, trim: true, default: "" },
+  createdById: { type: require("mongoose").Schema.Types.ObjectId, ref: "User", default: null },
+}, { timestamps: true });
+const CustomPanel = require("mongoose").models.LabCustomPanel ||
+  require("mongoose").model("LabCustomPanel", CustomPanelSchema);
+
+exports.panelCreate = async (req, res) => {
+  try {
+    const { code, label, tests } = req.body || {};
+    if (!code || !label) {
+      return res.status(400).json({ success: false, message: "code and label required" });
+    }
+    if (!Array.isArray(tests) || !tests.length) {
+      return res.status(400).json({ success: false, message: "tests[] required with at least one entry" });
+    }
+    const upperCode = String(code).toUpperCase().trim();
+    // Conflict with built-in PANELS code.
+    if (PANELS[upperCode]) {
+      return res.status(409).json({
+        success: false,
+        message: `Code '${upperCode}' is a built-in panel — choose another code.`,
+      });
+    }
+    const row = await CustomPanel.create({
+      code: upperCode, label, tests,
+      createdBy: req.user?.fullName || req.user?.employeeId || "",
+      createdById: req.user?.id || req.user?._id || null,
+    });
+    res.status(201).json({ success: true, data: row });
+  } catch (e) {
+    if (e.code === 11000) return res.status(409).json({ success: false, message: "Panel code already exists" });
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
+
+exports.panelUpdate = async (req, res) => {
+  try {
+    const code = String(req.params.code || "").toUpperCase().trim();
+    if (PANELS[code]) {
+      return res.status(409).json({ success: false, message: `'${code}' is built-in and immutable` });
+    }
+    const row = await CustomPanel.findOneAndUpdate(
+      { code },
+      { $set: { ...req.body, updatedBy: req.user?.fullName || "" } },
+      { new: true, runValidators: true },
+    );
+    if (!row) return res.status(404).json({ success: false, message: "Custom panel not found" });
+    res.json({ success: true, data: row });
+  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+};
+
+exports.panelDelete = async (req, res) => {
+  try {
+    const code = String(req.params.code || "").toUpperCase().trim();
+    if (PANELS[code]) {
+      return res.status(409).json({ success: false, message: `'${code}' is built-in — cannot delete` });
+    }
+    const row = await CustomPanel.findOneAndUpdate({ code }, { $set: { active: false } }, { new: true });
+    if (!row) return res.status(404).json({ success: false, message: "Custom panel not found" });
+    res.json({ success: true, data: row });
+  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+};
+
+// Returned by GET /api/lab-records/panels — merges built-in + custom.
+exports.panelsMerged = async (_req, res) => {
+  try {
+    const customs = await CustomPanel.find({ active: true }).lean();
+    const out = { ...PANELS };
+    for (const c of customs) {
+      out[c.code] = { label: c.label, tests: c.tests, _custom: true };
+    }
+    res.json({ success: true, data: out });
+  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+};

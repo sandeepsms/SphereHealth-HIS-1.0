@@ -47,6 +47,16 @@ const CashierSessionSchema = new mongoose.Schema(
     upiCollected:    { type: Dec, default: 0 },
     cardCollected:   { type: Dec, default: 0 },
     chequeCollected: { type: Dec, default: 0 },
+    // R7bb-FIX-E-17 / D3-HIGH-6: cashier self-close is permitted but
+    // when variance is significant (>₹500 OR cashShort > 0) the close
+    // is marked PENDING APPROVAL — Admin must clear via
+    // POST /cashier-sessions/:id/clear-close. Pre-R7bb a cashier could
+    // pocket the till and close with no second eye.
+    closeApprovalPending: { type: Boolean, default: false, index: true },
+    closeApprovedBy:      { type: String, trim: true, default: "" },
+    closeApprovedById:    { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    closeApprovedAt:      { type: Date, default: null },
+    closeApprovalRemarks: { type: String, trim: true, default: "" },
   },
   { timestamps: true },
 );

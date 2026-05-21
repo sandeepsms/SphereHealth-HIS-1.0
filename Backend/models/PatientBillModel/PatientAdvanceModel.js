@@ -94,10 +94,21 @@ const PatientAdvanceSchema = new mongoose.Schema(
     // deposit without losing the applied-to-bills history.
     refundedAt:            { type: Date, default: null },
     refundedBy:            { type: String, trim: true, default: null },
+    refundedById:          { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     refundReason:          { type: String, trim: true, default: null },
     refundedAmount:        { type: mongoose.Schema.Types.Decimal128, default: 0, min: 0 },
     refundMode:            { type: String, trim: true, default: null }, // CASH/UPI/BANK_TRANSFER
     refundTransactionId:   { type: String, trim: true, default: null },
+    // R7bb-FIX-E-3 / D3-CRIT-3: Admin-only override slot. When a refund
+    // is requested by the same cashier who took the deposit, the service
+    // throws SAME_ACTOR; an Admin can second-sign via this field to
+    // unblock the workflow (Admin role stamped here, refundedById carries
+    // the original cashier). Pre-R7bb there was no audit anchor for the
+    // override at all — Admin would just refund as themselves, losing
+    // the link to the original collector.
+    approvedById:          { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    approvedBy:            { type: String, trim: true, default: null },
+    approvedAt:            { type: Date, default: null },
 
     // ── Notes (free text) ──────────────────────────────────────────
     remarks: { type: String, trim: true, default: null },

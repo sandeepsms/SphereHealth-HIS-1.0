@@ -5,7 +5,20 @@ const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const User = require("../../models/User/userModel");
 const TokenRevocation = require("../../models/Auth/TokenRevocationModel");
+const userActivity = require("../../services/User/userActivityLogger");
+const { validatePassword, checkPasswordReuse } = require("../../utils/passwordPolicy");
+// R7at-FIX-10: route /me, PATCH /signature, GET /signature, POST
+// /change-password, POST /logout-all-devices all go through the global
+// authenticate middleware so revocation + token-version checks run on every
+// hit. Import lifted to module scope so route handlers below can reference
+// `authenticate` at module-load time.
+const { authenticate } = require("../../middleware/auth");
 
+// R7bb-FIX-A-16: JWT_SECRET rotation procedure needs a SECONDARY_JWT_SECRETS
+// env array for graceful rollover. Today every node verifies against a single
+// secret — rotating the secret invalidates every issued token, forcing a
+// global re-login. Future work: accept tokens signed by either the current
+// or the previous secret for the duration of the rotation window.
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES = process.env.JWT_EXPIRES || "8h";
 
@@ -25,6 +38,24 @@ router.post("/login", async (req, res) => {
 
     const user = await User.findOne({ email: email.toLowerCase().trim() });
 
+    // R7bb-FIX-A-2: NABH HIC.5 account lockout. If the account is currently
+    // locked, refuse even with the right password — and short-circuit BEFORE
+    // bcrypt so we don't waste cycles. 423 Locked is the IANA-correct status.
+    // We emit a USER_LOGIN_LOCKED audit row so the SOC can see lockout
+    // attempts (potential brute-force in progress).
+    if (user && user.lockUntil && user.lockUntil.getTime() > Date.now()) {
+      try {
+        await userActivity.emit({
+          event: "USER_LOGIN_LOCKED",
+          targetUser: user,
+          actor: null,
+          ip: req.ip,
+          metadata: { email: user.email, lockUntil: user.lockUntil },
+        });
+      } catch (_) { /* best-effort */ }
+      return res.status(423).json({ message: "Account locked. Try again later." });
+    }
+
     // Always run a bcrypt compare — dummy hash on miss — to keep timing flat.
     const passwordHash = user ? user.password : TIMING_DUMMY_HASH;
     const isMatch = await bcrypt.compare(password, passwordHash);
@@ -36,28 +67,107 @@ router.post("/login", async (req, res) => {
         user.status === "Terminated" ||
         user.status === "Suspended");
 
+    // R7bb-FIX-A-2: on a real user with a wrong password, increment the
+    // failure counter; after 5 strikes lock for 30 minutes and reset the
+    // counter. Use $inc / $set so the password pre-save hook doesn't re-fire.
+    if (user && !isMatch) {
+      const nextFails = (user.failedLoginAttempts || 0) + 1;
+      if (nextFails >= 5) {
+        const lockUntil = new Date(Date.now() + 30 * 60_000);
+        await User.updateOne(
+          { _id: user._id },
+          { $set: { failedLoginAttempts: 0, lockUntil } }
+        );
+        try {
+          await userActivity.emit({
+            event: "USER_LOCKED",
+            targetUser: user,
+            actor: null,
+            ip: req.ip,
+            metadata: { reason: "5 failed login attempts", lockUntil },
+          });
+        } catch (_) { /* best-effort */ }
+      } else {
+        await User.updateOne(
+          { _id: user._id },
+          { $set: { failedLoginAttempts: nextFails } }
+        );
+      }
+      // R7bb-FIX-A-9: best-effort LOGIN_FAILED audit row. We emit even when
+      // the user lookup misses (using a synthetic null targetUser) so the
+      // SOC can see credential-spray patterns against non-existent emails.
+      try {
+        await userActivity.emit({
+          event: "USER_LOGIN_FAILED",
+          targetUser: user,
+          actor: null,
+          ip: req.ip,
+          metadata: { email: user.email, attempts: nextFails },
+        });
+      } catch (_) { /* best-effort */ }
+    }
+
     // Collapse all failure modes (no user / wrong password / inactive) into a
     // single generic response so the auth surface doesn't leak account state.
     if (!user || !isMatch || inactive)
       return res.status(401).json({ message: INVALID_CREDENTIALS });
 
-    // Update last login
+    // R7bb-FIX-A-2: successful login — clear lockout counters via $set so we
+    // don't trigger the password pre-save hook (which would re-hash on every
+    // login and bump bcrypt cost on each touch).
+    await User.updateOne(
+      { _id: user._id },
+      { $set: { failedLoginAttempts: 0, lockUntil: null, lastLogin: new Date() } }
+    );
     user.lastLogin = new Date();
-    await user.save();
 
     // jti = unique token ID for the revocation list (audit B-10). Without
     // it, a logged-out / compromised token stays valid until exp. The
     // authenticate middleware checks TokenRevocation by jti on every
     // request; logout writes the jti there with TTL = exp.
     const jti = crypto.randomUUID();
+    // R7bb-FIX-A-5: JWT payload extended with the full claim set the
+    // downstream middleware (restrictToOwnNurseWard / restrictToOwnDoctor*
+    // /requireAction) reads — tokenVersion (stale-token detection), wards
+    // (multi-ward shift cover), specializations (doctor-specialty gates),
+    // designation (HOD-only writes). The middleware still re-checks DB-
+    // fresh values per request, so the JWT is the fast-path / fallback.
     const token = jwt.sign(
-      { id: user._id, role: user.role, employeeId: user.employeeId, jti },
+      {
+        id: user._id,
+        role: user.role,
+        employeeId: user.employeeId,
+        jti,
+        tokenVersion: user.tokenVersion || 0,
+        // R7bb-FIX-A-3: mustChangePassword in the JWT so middleware can
+        // short-circuit any write attempt before the forced-rotation modal
+        // is dismissed on the frontend — defense in depth.
+        mustChangePassword: user.mustChangePassword === true,
+        designation: user.doctorDetails?.designation || null,
+        ward: user.ward || null,
+        wards: (user.wards || []).map(String),
+        specializations: user.specializations || [],
+      },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES }
     );
 
+    // R7bb-FIX-A-9: LOGIN_SUCCESS audit row — HR / SOC trail.
+    try {
+      await userActivity.emit({
+        event: "USER_LOGIN_SUCCESS",
+        targetUser: user,
+        actor: user,
+        ip: req.ip,
+        metadata: { jti, userAgent: req.headers["user-agent"] },
+      });
+    } catch (_) { /* best-effort */ }
+
     res.json({
       token,
+      // R7bb-FIX-A-3: surface mustChangePassword so the frontend can pop the
+      // forced-rotation modal on first login after an admin reset.
+      mustChangePassword: user.mustChangePassword === true,
       user: {
         _id: user._id,
         employeeId: user.employeeId,
@@ -72,11 +182,99 @@ router.post("/login", async (req, res) => {
         doctorDetails: user.doctorDetails,
         nurseDetails: user.nurseDetails,
         signature: user.signature || null,
+        mustChangePassword: user.mustChangePassword === true,
       },
     });
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Server error during login" });
+  }
+});
+
+/* ── POST /api/auth/change-password ──
+   R7bb-FIX-A-3: forced first-login + voluntary password rotation. The
+   request takes { currentPassword, newPassword }. On success: bumps
+   tokenVersion (kills every other live session for this user), clears
+   mustChangePassword, stamps passwordChangedAt, archives the old hash
+   into passwordHistory. Returns a new JWT so the caller's current
+   session stays valid without re-login.
+*/
+router.post("/change-password", authenticate, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: "currentPassword and newPassword are required" });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+    // Verify the current password — even on a forced-rotation flow the
+    // user must prove they hold the admin-issued one-time password.
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: "Current password is incorrect" });
+    }
+
+    // R7bb-FIX-A-14: enforce NABH-grade complexity on the NEW password.
+    const v = validatePassword(newPassword);
+    if (!v.ok) {
+      return res.status(400).json({ success: false, message: "Password does not meet policy", reasons: v.reasons });
+    }
+    // Reuse-blocker: reject any of the last 5 hashes.
+    const reuse = await checkPasswordReuse(newPassword, user.passwordHistory || []);
+    if (reuse.reused) {
+      return res.status(400).json({ success: false, message: "Cannot reuse a recent password" });
+    }
+    // Also reject "same as current" even when history is empty.
+    if (await bcrypt.compare(newPassword, user.password)) {
+      return res.status(400).json({ success: false, message: "New password must differ from current" });
+    }
+
+    // Archive the soon-to-be-overwritten hash, then set the new plaintext.
+    // The pre-save hook hashes + bumps passwordChangedAt automatically.
+    user.archivePriorHash();
+    user.password = newPassword;
+    user.mustChangePassword = false;
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    await user.save();
+
+    // R7bb-FIX-A-9: PASSWORD_CHANGED audit row.
+    try {
+      await userActivity.emit({
+        event: "USER_PASSWORD_CHANGED",
+        targetUser: user,
+        actor: user,
+        ip: req.ip,
+        metadata: { firstLogin: req.user.mustChangePassword === true },
+      });
+    } catch (_) { /* best-effort */ }
+
+    // Re-mint a JWT with the bumped tokenVersion so the caller's current
+    // session doesn't auto-eject on the next request. Other sessions DO
+    // eject because their JWT carries the old tokenVersion.
+    const jti = crypto.randomUUID();
+    const token = jwt.sign(
+      {
+        id: user._id,
+        role: user.role,
+        employeeId: user.employeeId,
+        jti,
+        tokenVersion: user.tokenVersion,
+        mustChangePassword: false,
+        designation: user.doctorDetails?.designation || null,
+        ward: user.ward || null,
+        wards: (user.wards || []).map(String),
+        specializations: user.specializations || [],
+      },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES }
+    );
+
+    return res.json({ success: true, message: "Password changed successfully", token });
+  } catch (err) {
+    console.error("[auth] change-password error:", err);
+    return res.status(500).json({ success: false, message: err.message });
   }
 });
 
@@ -94,7 +292,8 @@ router.post("/login", async (req, res) => {
 // endpoints (the routes most clients use for "am I still logged in"
 // checks) until natural exp (up to 8h). Now they go through
 // `authenticate` so revocation is enforced.
-const { authenticate } = require("../../middleware/auth");
+// (R7bb-FIX-A-3: import lifted to module top so POST /change-password
+//  registered above can reference it.)
 
 router.get("/me", authenticate, async (req, res) => {
   try {
@@ -181,6 +380,19 @@ router.post("/logout", async (req, res) => {
           { upsert: true },
         );
       }
+      // R7bb-FIX-A-9: LOGOUT audit row. Best-effort — never fail the
+      // logout flow on logging trouble.
+      if (decoded.id) {
+        try {
+          await userActivity.emit({
+            event: "USER_LOGOUT",
+            targetUser: { _id: decoded.id, employeeId: decoded.employeeId },
+            actor:      { _id: decoded.id, role: decoded.role },
+            ip: req.ip,
+            metadata: { jti: decoded.jti },
+          });
+        } catch (_) { /* best-effort */ }
+      }
     } catch (e) {
       // Invalid / already-expired token — nothing to revoke, still 200
     }
@@ -188,6 +400,33 @@ router.post("/logout", async (req, res) => {
   } catch (err) {
     console.error("[auth] logout error:", err.message);
     res.status(500).json({ message: "Logout failed" });
+  }
+});
+
+/* ── POST /api/auth/logout-all-devices ──
+   R7bb-FIX-A-11/D9-HIGH-6: bumps user.tokenVersion → invalidates every JWT
+   issued before the bump on every node within the 60s cache TTL. Used when
+   the user suspects a device was lost / stolen, or after a password change.
+*/
+router.post("/logout-all-devices", authenticate, async (req, res) => {
+  try {
+    const updated = await User.findByIdAndUpdate(
+      req.user.id,
+      { $inc: { tokenVersion: 1 } },
+      { new: true, select: "_id employeeId tokenVersion role" }
+    );
+    try {
+      await userActivity.emit({
+        event: "USER_TOKEN_REVOKED_ALL",
+        targetUser: updated,
+        actor: req.user,
+        ip: req.ip,
+        metadata: { reason: "user requested logout-all-devices", newTokenVersion: updated?.tokenVersion },
+      });
+    } catch (_) { /* best-effort */ }
+    res.json({ success: true, message: "All sessions on all devices revoked." });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 

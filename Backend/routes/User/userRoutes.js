@@ -40,6 +40,9 @@ router.post("/hod/assign",                   requireAction("users.write"),      
 router.put("/:id",                           requireAction("users.write"),          userController.updateUser);
 router.put("/:id/deactivate",                requireAction("users.deactivate"),     userController.deactivateUser);
 router.put("/:id/activate",                  requireAction("users.deactivate"),     userController.activateUser);
+// R7bb-FIX-A-10/D10-CRIT-2: dedicated terminate endpoint. Gated on the
+// same permission token as deactivate — both are HR write surfaces.
+router.put("/:id/terminate",                 requireAction("users.deactivate"),     userController.terminateUser);
 router.put("/:id/reset-password",            requireAction("users.reset-password"), userController.adminResetPassword);
 router.patch("/:id/signature",               requireAction("users.signature"),      userController.adminSetSignature);
 

@@ -15,6 +15,18 @@
  *   - register it in the userModel enum (Backend/models/User/userModel.js)
  *   - drop it into ROLES below
  *   - add it to whatever modules / actions it should access
+ *
+ * ────────────────────────────────────────────────────────────────────
+ * R7bb-FIX-C-2 — PHANTOM / DEPRECATED ROLE DECISIONS (mirror)
+ * ────────────────────────────────────────────────────────────────────
+ * Radiologist & Physiotherapist exist in the User.role enum + ROLES
+ * catalogue but have near-zero action coverage. See
+ * Backend/config/permissions.js header for the full decision log.
+ * Frontend `can()` returns false for everything except the small set
+ * Radiologist gets on the imaging-workflow + Physiotherapist on the
+ * new physio.note.write action. "Maintenance" is NOT a role — it is
+ * a module label and a Bed/Room status value.
+ * ────────────────────────────────────────────────────────────────────
  */
 
 /* ── Role catalogue with theme + meta ────────────────────────────── */
@@ -64,6 +76,10 @@ export const MODULES = [
   { id: "care",       label: "Care Plans",      icon: "pi-bolt",          home: "/vitalSheet",        color: "#16a34a" },
   { id: "maintenance",label: "Maintenance",     icon: "pi-wrench",        home: "/maintenance",       color: "#0d9488" },
   { id: "security",   label: "Visitor Security",icon: "pi-lock",          home: "/visitor-passes",    color: "#374151" },
+  // R7bb-FIX-C-4/D1-CRIT-4: MRD module — discharged-patient archive
+  // home + tile so the MRD role has a navigable module on
+  // RoleDashboardPage's AccessSnapshot.
+  { id: "medical-records", label: "Medical Records", icon: "pi-folder-open", home: "/medical-records/discharges", color: "#6366f1" },
   { id: "admin",      label: "Masters & Admin", icon: "pi-cog",           home: "/admin/users",       color: "#1e293b" },
   { id: "reports",    label: "Reports & MIS",   icon: "pi-chart-bar",     home: "/billing-audit-trail",  color: "#1d4ed8" },
 ];
@@ -73,7 +89,7 @@ export const MODULES = [
 export const MODULE_ROLES = {
   reception:   ["Admin", "Receptionist", "Doctor", "Nurse", "Accountant", "TPA Coordinator"],
   opd:         ["Admin", "Doctor", "Nurse", "Receptionist"],
-  ipd:         ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy", "Housekeeping", "Physiotherapist", "Dietician"],
+  ipd:         ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy", "Housekeeping", "Physiotherapist", "Dietician", "MRD"],
   doctor:      ["Admin", "Doctor"],
   nursing:     ["Admin", "Nurse", "Doctor", "Physiotherapist", "Dietician"],
   pharmacy:    ["Admin", "Pharmacist", "Doctor"],
@@ -83,8 +99,14 @@ export const MODULE_ROLES = {
   care:        ["Admin", "Physiotherapist", "Dietician", "Doctor", "Nurse"],
   maintenance: ["Admin", "Housekeeping", "Ward Boy"],
   security:    ["Admin", "Security", "Receptionist"],
+  // R7bb-FIX-C-4/D1-CRIT-4: MRD now has an explicit MODULE_ROLES row so the
+  // role can see its sidebar/dashboard module tile. Admin gets visibility
+  // too (HIM oversight) and Doctor (cross-cover read of discharged files).
+  "medical-records": ["Admin", "MRD", "Doctor"],
   admin:       ["Admin"],
-  reports:     ["Admin", "Accountant"],
+  // Reports — MRD added so the MRD console can pull discharge / occupancy
+  // reports for HIM audits.
+  reports:     ["Admin", "Accountant", "MRD"],
 };
 
 /* ── Fine-grained action permissions ─────────────────────────────── */
@@ -117,7 +139,11 @@ export const ACTIONS = {
   // Patient demographics vs clinical edits — split so receptionist can fix a
   // misspelled name / contact but can't rewrite blood group, DOB, allergies,
   // gender. Mirror of Backend/config/permissions.js (security audit 2026-05-17).
+  // R7bb-FIX-C-6/D2-CRIT-1: patient.read-demographics is the canonical
+  // token going forward (same role set, separate key for future split).
+  // patient-file.read (declared later) is the narrow clinical-file token.
   "patient.read":               ["Admin", "Receptionist", "Doctor", "Nurse", "Lab Technician", "Pharmacist", "Dietician", "TPA Coordinator", "Accountant"],
+  "patient.read-demographics":  ["Admin", "Receptionist", "Doctor", "Nurse", "Lab Technician", "Pharmacist", "Dietician", "TPA Coordinator", "Accountant"],
   "patient.write-demographics": ["Admin", "Receptionist"],
   "patient.write-clinical":     ["Admin", "Doctor", "Nurse"],
   "patient.delete":             ["Admin"],
@@ -161,14 +187,14 @@ export const ACTIONS = {
   "pharmacy.settings":     ["Admin", "Pharmacist"],
 
   // Lab — outsourced workflow. Lab Technician does ALL data entry
-  // (labs + imaging + micro + histopath). No in-house Pathologist /
-  // Radiologist for now (14 May 2026 — role stays in userModel for
-  // when in-house imaging comes online).
+  // for labs + micro + histopath; Radiologist re-enabled for imaging
+  // workflow (R7bb-FIX-C-2 mirror).
   "lab.order":             ["Admin", "Doctor", "Receptionist"],
   "lab.collect":           ["Admin", "Lab Technician", "Nurse"],
-  "lab.result-entry":      ["Admin", "Lab Technician"],
-  "lab.verify":            ["Admin", "Doctor"],
-  "lab.dispatch":          ["Admin", "Lab Technician"],
+  "lab.read":              ["Admin", "Doctor", "Nurse", "Lab Technician", "Radiologist", "MRD"],
+  "lab.result-entry":      ["Admin", "Lab Technician", "Radiologist"],
+  "lab.verify":            ["Admin", "Doctor", "Radiologist"],
+  "lab.dispatch":          ["Admin", "Lab Technician", "Radiologist"],
   // R7z: cancel split from dispatch — Lab Tech can print but can't void
   // a clinician's order (cancel also reverses billing). Sample rejection
   // stays a Lab Tech action under lab.result-entry.
@@ -176,8 +202,8 @@ export const ACTIONS = {
   // R7bb-B/D4-CRIT: Radiologist + MRD added so they can read lab + imaging
   // records on the investigation-orders surface (mirror of backend).
   "lab.records.read":      ["Admin", "Doctor", "Nurse", "Lab Technician", "Radiologist", "MRD"],
-  "lab.records.write":     ["Admin", "Lab Technician"],
-  "lab.records.verify":    ["Admin", "Doctor"],
+  "lab.records.write":     ["Admin", "Lab Technician", "Radiologist"],
+  "lab.records.verify":    ["Admin", "Doctor", "Radiologist"],
 
   // Billing
   "billing.read":          ["Admin", "Accountant", "Receptionist", "TPA Coordinator"],
@@ -195,7 +221,13 @@ export const ACTIONS = {
   "billing.manual-charge": ["Admin", "Accountant", "Receptionist", "Doctor", "Nurse"],
 
   // TPA / cashless
-  "tpa.pre-auth":          ["Admin", "TPA Coordinator", "Receptionist"],
+  // R7bb-FIX-C-7/D2-CRIT-2: split tpa.pre-auth → tpa.case-file (Reception
+  // + TPA Coordinator) vs tpa.master-edit (TPA Coordinator + Admin only).
+  // Receptionist can attach pre-auth to a bill but cannot CRUD the TPA
+  // master payor record.
+  "tpa.pre-auth":          ["Admin", "TPA Coordinator", "Receptionist"], // deprecated alias for tpa.case-file
+  "tpa.case-file":         ["Admin", "TPA Coordinator", "Receptionist"],
+  "tpa.master-edit":       ["Admin", "TPA Coordinator"],
   "tpa.claim":             ["Admin", "TPA Coordinator"],
 
   // Dietician — patient assessment + diet plan assignment
@@ -215,7 +247,7 @@ export const ACTIONS = {
   "ward.mortuary":         ["Admin", "Doctor", "Nurse", "Ward Boy"],
   "ward.manage":           ["Admin", "Nurse"],
 
-  // Housekeeping
+  // Housekeeping — R7bb-FIX-C-12/D2-HIGH-4 adds Housekeeping to house.manage.
   "house.read":            ["Admin", "Doctor", "Nurse", "Receptionist", "Housekeeping", "Ward Boy"],
   "house.create":          ["Admin", "Doctor", "Nurse", "Receptionist", "Housekeeping"],
   "house.fulfill":         ["Admin", "Housekeeping"],
@@ -223,7 +255,7 @@ export const ACTIONS = {
   "house.inventory":       ["Admin", "Housekeeping"],
   "house.checklist":       ["Admin", "Housekeeping"],
   "house.pest":            ["Admin", "Housekeeping"],
-  "house.manage":          ["Admin", "Nurse"],
+  "house.manage":          ["Admin", "Nurse", "Housekeeping"],
 
   // Reports
   "reports.financial":     ["Admin", "Accountant"],
@@ -237,6 +269,7 @@ export const ACTIONS = {
   // labs, consents, bills, payments).
   "mrd.read":              ["Admin", "Doctor", "MRD"],
   "mrd.list":              ["Admin", "Doctor", "MRD"],
+  "mrd.write":             ["Admin"],
   // Same-day discharge undo — Admin only, controller gates 24h window.
   "admission.reactivate":  ["Admin"],
 
@@ -252,14 +285,26 @@ export const ACTIONS = {
   "mlc.write":                 ["Admin", "Doctor"],
   "mlc.read":                  ["Admin", "Doctor", "Nurse"],
   "ipd.read":                  ["Admin", "Doctor", "Nurse", "Receptionist"],
+  // R7bb-FIX-C-1: new explicit OPD / ER read tokens + restricted DELETE.
+  "opd.read":                  ["Admin", "Doctor", "Nurse", "Receptionist"],
+  "er.read":                   ["Admin", "Doctor", "Nurse", "Receptionist"],
+  "opd.delete":                ["Admin", "Doctor"],
+  "er.delete":                 ["Admin", "Doctor"],
   "consultation.write":        ["Admin", "Doctor"],
   "safety.write":              ["Admin", "Doctor", "Nurse"],
   "diabetic.scale.write":      ["Admin", "Doctor"],
   "doctor.self.write":         ["Admin", "Doctor"],
+  // R7bb-FIX-C-15: new self-read token for /api/doctors/me.
+  "doctor.self.read":          ["Admin", "Doctor"],
   "services.read":             ["Admin", "Doctor", "Nurse", "Receptionist", "Pharmacist", "Lab Technician"],
   "appointment.confirm":       ["Admin", "Receptionist"],
 
-  // ── R7bb-B/D4 (S1: 38 ungated routes) — new tokens (mirror) ──
+  // ── R7bb-FIX-C-1 (S1: 38 ungated routes) — new explicit tokens ────
+  "med-recon.read":            ["Admin", "Doctor", "Nurse", "Pharmacist", "MRD"],
+  "nursing.care-plan.read":    ["Admin", "Doctor", "Nurse", "MRD"],
+  "equipment.read":            ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy", "Housekeeping"],
+  "equipment.write":           ["Admin", "Ward Boy", "Nurse"],
+  "auth.2fa":                  ["Admin", "Doctor", "Nurse"],
   "presence.read":             ["Admin"],
   "users.change-password-self": [
     "Admin", "Receptionist", "Doctor", "Nurse", "Dietician",
@@ -267,6 +312,16 @@ export const ACTIONS = {
     "Physiotherapist", "Accountant", "Ward Boy", "Housekeeping",
     "Security", "MRD",
   ],
+
+  // R7bb-FIX-C-5: senior-doctor signature gate (stub — middleware
+  // extension pending). Same role set as "Admin + Doctor" today;
+  // designation-tier check is filed forward.
+  "signature.consultant-grade": ["Admin", "Doctor"],
+
+  // R7bb-FIX-C-2: Physiotherapist's only write action. No frontend
+  // page wires it yet — kept as a stub so the role has somewhere to
+  // attach a future requireAction.
+  "physio.note.write":         ["Admin", "Physiotherapist"],
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
@@ -277,8 +332,27 @@ export function roleSeesModule(role, moduleId) {
   return allowed.includes("*") || allowed.includes(role);
 }
 
+// R7bb-FIX-C-2: phantom-role warning. Mirrors the Backend roleCan() noise
+// so a deprecated Radiologist / Physiotherapist account surfaces in the
+// browser console as well as the server log.
+const _phantomWarned = new Set();
+function _maybeWarn(role) {
+  if (role === "Radiologist" || role === "Physiotherapist") {
+    if (!_phantomWarned.has(role)) {
+      _phantomWarned.add(role);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[permissions] role="${role}" is a deprecated / partially-built role. ` +
+        `This account will see an almost-empty UI. See ` +
+        `Frontend/src/config/permissions.js header for the decision log.`
+      );
+    }
+  }
+}
+
 export function roleCan(role, action) {
   if (!role) return false;
+  _maybeWarn(role);
   const allowed = ACTIONS[action];
   if (!allowed) return false;
   return allowed.includes("*") || allowed.includes(role);
@@ -318,6 +392,11 @@ export function homePathForRole(role) {
   if (role === "Dietician")    return "/dietitian";
   if (role === "Ward Boy")     return "/ward-tasks";
   if (role === "Housekeeping") return "/housekeeping";
+  // R7bb-E/D5-CRIT-3 — MRD lands on the discharged-patient archive
+  // (their primary read-only surface). RoleDashboardPage's MRD branch
+  // also redirects there as a belt-and-braces fallback if some flow
+  // forces /dashboard.
+  if (role === "MRD")          return "/medical-records/discharges";
   return "/dashboard";
 }
 

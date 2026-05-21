@@ -6,6 +6,29 @@ const JWT_SECRET = process.env.JWT_SECRET;
 // lazily on first authenticate() so most requests hit cache (5min TTL).
 let _fullNameCache = null;
 
+// R7bb-A: per-process LRU for the per-request User status/tokenVersion
+// re-check. 60s TTL — short enough that a terminate/role-change/logout-all
+// takes effect within a minute on every node, long enough that the hot
+// auth path doesn't hammer Mongo.
+let _userStatusCache = null;
+
+// R7bb-FIX-A-6/S14: tokens in `?token=` query strings end up in proxy
+// access logs, browser history, and Referer headers. Restrict the practice
+// to the SSE endpoints that genuinely need it (SSE — can't set Authorization
+// header):
+//   /api/bedss/events           — bed live-update SSE stream
+//   /api/live-updates/*         — generic SSE channel
+//   /api/billing/audit/stream   — billing-audit SSE channel
+// Everywhere else, the query token is silently dropped.
+const QUERY_TOKEN_ALLOWED_REGEX = [
+  /^\/api\/live-updates\//,
+  /^\/api\/bedss\/events/,
+  /^\/api\/billing\/audit\/stream/,
+];
+function _queryTokenAllowed(reqPath) {
+  return QUERY_TOKEN_ALLOWED_REGEX.some(rx => rx.test(reqPath));
+}
+
 /* ── Verify JWT token ──
    Supports both the Authorization: Bearer header (preferred) and
    a `?token=` query parameter — the latter is required for
@@ -16,7 +39,9 @@ const authenticate = async (req, res, next) => {
 
   if (authHeader && authHeader.startsWith("Bearer ")) {
     token = authHeader.split(" ")[1];
-  } else if (req.query && req.query.token) {
+  } else if (req.query && req.query.token && _queryTokenAllowed(req.originalUrl || req.path)) {
+    // R7bb-A: query-token only honored on whitelisted SSE prefixes; anywhere
+    // else it's ignored so tokens don't leak into proxy logs / browser history.
     token = String(req.query.token);
   }
 
@@ -26,7 +51,64 @@ const authenticate = async (req, res, next) => {
     return res.status(401).json({ success: false, message: "Authentication required. Please login." });
 
   try {
+    // R7bb-followup/FIX-A-16: JWT_SECRET rotation procedure needs a
+    // SECONDARY_JWT_SECRETS env array for graceful rollover. Today every
+    // node verifies against a single secret — rotating the secret forces
+    // every active user to re-login (8h validity window). Future: try the
+    // current secret, then fall back to each secondary secret for the
+    // duration of the rotation window. Tokens signed by retired secrets
+    // are rejected once their grace period passes.
     const decoded = jwt.verify(token, JWT_SECRET);
+
+    // R7bb-A: per-request user re-check. Without this, a token issued at
+    // 09:00 stays valid until exp even if the user is terminated at 09:05,
+    // their role is changed, or they hit logout-all-devices on another
+    // device. 60s LRU keeps Mongo load flat. Failures here are AUTHN
+    // rejections, so they precede the (best-effort) revocation lookup.
+    if (decoded.id) {
+      try {
+        if (!_userStatusCache) {
+          _userStatusCache = require("../utils/lruCache")({ max: 500, ttlMs: 60_000 });
+        }
+        const u = await _userStatusCache.get(String(decoded.id), async () => {
+          const User = require("../models/User/userModel");
+          // R7bb-FIX-A-4/D9-CRIT-1: include `phone` so the 2FA controller
+          // (req.user.phone) can issue OTPs without a second Mongo round-
+          // trip per request. Also include `mustChangePassword` so any
+          // mutating endpoint can refuse writes until the forced-rotation
+          // modal is dismissed on the frontend (defense in depth).
+          return await User.findById(decoded.id)
+            .select("isActive status tokenVersion ward wards designation specializations role phone mustChangePassword fullName employeeId doctorDetails.designation")
+            .lean();
+        });
+        if (!u) {
+          return res.status(401).json({ success: false, code: "USER_DELETED", message: "Account no longer exists." });
+        }
+        const inactive = u.isActive === false
+          || u.status === "Terminated"
+          || u.status === "Suspended"
+          || u.status === "Inactive";
+        if (inactive) {
+          return res.status(401).json({ success: false, code: "ACCOUNT_INACTIVE", message: "Account is not active. Contact admin." });
+        }
+        if ((decoded.tokenVersion || 0) !== (u.tokenVersion || 0)) {
+          return res.status(401).json({ success: false, code: "TOKEN_STALE", message: "Session no longer valid. Please login again." });
+        }
+        // Stash DB-fresh fields onto decoded so the req.user augmentation
+        // below pulls from Mongo (not the possibly-stale JWT payload).
+        decoded._dbWard           = u.ward || null;
+        decoded._dbWards          = u.wards || [];
+        decoded._dbDesignation    = u.designation || u.doctorDetails?.designation || null;
+        decoded._dbSpecializations = u.specializations || [];
+        decoded._dbPhone          = u.phone || null;
+        decoded._dbMustChangePw   = u.mustChangePassword === true;
+        decoded._dbFullName       = u.fullName || null;
+      } catch (e) {
+        // Mongo blip — fail open (don't lock the hospital out); log loud.
+        console.error("[auth] user re-check failed:", e.message);
+      }
+    }
+
     // Revocation list check (audit B-10). A logged-out / compromised
     // token still parses cleanly until `exp`, so we look it up by
     // `jti`. Pre-B-10 tokens lack the jti claim — those bypass the
@@ -50,18 +132,25 @@ const authenticate = async (req, res, next) => {
     // — undefined `_id` previously broke F20 CashierSession (every cashier
     // shared one row), and zeroed `receivedById` on every payment audit.
     req.user = { ...decoded, _id: decoded.id }; // { id, _id, role, employeeId, jti, iat, exp }
+    // R7bb-FIX-A-4: surface DB-fresh ward/designation/specializations/phone
+    // so middlewares and controllers (esp. nurse-ward scope, doctor-
+    // designation gates, 2FA OTP target) read the CURRENT value — not
+    // whatever was true when the JWT was issued. Fields are named without
+    // the `_db` prefix on req.user for backward-compatible controller code
+    // (e.g. restrictToOwnNurseWard reads req.user.ward, twoFactorController
+    // reads req.user.phone).
+    if (decoded._dbWard           !== undefined) req.user.ward           = decoded._dbWard;
+    if (decoded._dbWards          !== undefined) req.user.wards          = decoded._dbWards;
+    if (decoded._dbDesignation    !== undefined) req.user.designation    = decoded._dbDesignation;
+    if (decoded._dbSpecializations!== undefined) req.user.specializations = decoded._dbSpecializations;
+    if (decoded._dbPhone          !== undefined) req.user.phone          = decoded._dbPhone;
+    if (decoded._dbMustChangePw   !== undefined) req.user.mustChangePassword = decoded._dbMustChangePw;
+    if (decoded._dbFullName       !== undefined && !req.user.fullName) req.user.fullName = decoded._dbFullName;
 
-    // R7as-FIX-10/D3-high (revised in R7at-FIX-7): JWT payload doesn't
-    // include `fullName`, so ~15 controllers reading `req.user.fullName`
-    // always fell through to hard-coded defaults ("Reception", "TPA Desk",
-    // "Cashier") — every audit row lost the real cashier name. Load it
-    // lazily via the read-through `lruCache.get(key, compute)` memoizer
-    // so concurrent first-hits piggy-back on a single Mongo round-trip.
-    //
-    // R7at-FIX-7/D2-NEW-CRIT-1: pre-R7at this block called the non-
-    // existent `_fullNameCache.set(key, value)` API — every request hit
-    // the catch branch and FIX-10 silently no-op'd. Now uses the actual
-    // read-through `get(key, compute)` shape exposed by `utils/lruCache.js`.
+    // R7as-FIX-10/D3-high: ensure req.user.fullName is populated for the
+    // ~15 audit-row callers that read it. The DB re-check above already
+    // returns fullName when present; this _fullNameCache fallback path
+    // covers the (rare) case where the cached row lacked the field.
     if (decoded.id && !req.user.fullName) {
       try {
         if (!_fullNameCache) {

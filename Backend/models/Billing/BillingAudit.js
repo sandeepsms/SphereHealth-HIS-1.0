@@ -56,6 +56,26 @@ const BillingAuditSchema = new mongoose.Schema(
         // a day-end snapshot, a successful auto-close, a recon delta.
         "CRON_RECONCILED",           // advance-recon / receipt-gap cron found+fixed
         "OVERAGE_DETECTED",          // P1-24 dischargeOverage trigger
+        // R7bb-C/D7-HIGH-3: user-admin lifecycle. UserActivityLog is the
+        // primary store for these but a thin BillingAudit row gives the
+        // accountant a single chronological view across finance + admin
+        // events (NABH AAC.7 wants ONE auditable timeline).
+        "USER_CREATED",
+        "USER_UPDATED",
+        "USER_TERMINATED",
+        "USER_REACTIVATED",
+        "USER_PASSWORD_RESET",
+        "USER_LOCKED",
+        "USER_UNLOCKED",
+        "USER_ROLE_CHANGED",
+        // R7bb-C/D7-HIGH-4: master-data lifecycle. Pre-R7bb a Master
+        // service / drug-price change left no audit row — opens a vector
+        // for an insider to silently inflate a service cost mid-shift.
+        "MASTER_SERVICE_CREATED",
+        "MASTER_SERVICE_UPDATED",
+        "MASTER_DEPARTMENT_CREATED",
+        "MASTER_DEPARTMENT_UPDATED",
+        "MASTER_DRUG_PRICE_CHANGED",
       ],
       index: true,
     },
@@ -135,6 +155,21 @@ const _ADMIN_EVENTS = new Set([
   "SHIFT_AUTO_CLOSED",
   "CRON_RECONCILED",
   "OVERAGE_DETECTED",
+  // R7bb-C: user-admin + master-data audit rows. 3y NABH internal-audit
+  // floor — not GST-Act-bound but useful for HR + master-list reviews.
+  "USER_CREATED",
+  "USER_UPDATED",
+  "USER_TERMINATED",
+  "USER_REACTIVATED",
+  "USER_PASSWORD_RESET",
+  "USER_LOCKED",
+  "USER_UNLOCKED",
+  "USER_ROLE_CHANGED",
+  "MASTER_SERVICE_CREATED",
+  "MASTER_SERVICE_UPDATED",
+  "MASTER_DEPARTMENT_CREATED",
+  "MASTER_DEPARTMENT_UPDATED",
+  "MASTER_DRUG_PRICE_CHANGED",
 ]);
 function _retainYearsFor(event) {
   if (_FINANCIAL_EVENTS.has(event)) return 7;

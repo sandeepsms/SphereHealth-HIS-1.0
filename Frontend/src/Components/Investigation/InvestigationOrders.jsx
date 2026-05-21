@@ -16,6 +16,7 @@ import { MultiSelect } from "primereact/multiselect";
 import { ProgressBar } from "primereact/progressbar";
 
 import { API_BASE_URL as API } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const ORDER_STATUS = {
@@ -165,6 +166,11 @@ const printReport = (order) => {
 // ════════════════════════════════════════════════════════════════════════════════
 export default function InvestigationOrders() {
   const toast = useRef(null);
+  // R7bb-E/D5-HIGH-5 — Cancel Order is gated by lab.cancel (Admin/Doctor).
+  // Lab Tech can print/dispatch but mustn't void a clinician's order
+  // (cancel also reverses billing). Sample rejection is a different flow.
+  const { can } = useAuth();
+  const canCancel = typeof can === "function" ? can("lab.cancel") : false;
 
   // List state
   const [orders, setOrders] = useState([]);
@@ -1461,7 +1467,8 @@ export default function InvestigationOrders() {
                   }}
                 />
               )}
-              {!["COMPLETED", "CANCELLED"].includes(selOrder.orderStatus) && (
+              {/* R7bb-E/D5-HIGH-5 — Cancel gated by lab.cancel. */}
+              {canCancel && !["COMPLETED", "CANCELLED"].includes(selOrder.orderStatus) && (
                 <Button
                   label="Cancel Order"
                   icon="pi pi-times"

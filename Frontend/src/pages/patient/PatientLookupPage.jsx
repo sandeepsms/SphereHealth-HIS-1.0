@@ -160,13 +160,20 @@ export default function PatientLookupPage({ initialView = "auto" }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { uhid: routeUhid } = useParams(); // legacy /visit-history/:uhid
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const role = user?.role;
 
   const isRX        = role === "Receptionist";
   const isAdmin     = role === "Admin";
   const canEdit     = isAdmin || isRX;
   const canNewVisit = isAdmin || isRX;
+  // R7bb-FIX-D-18 / D5-MED-5 — Take/Apply Advance hit billing endpoints;
+  // gate by billing.write so Doctor/Nurse/Pharmacist don't see CTAs the
+  // backend would 403. Admin + Receptionist + Accountant have it.
+  const canBillingWrite = typeof can === "function" ? can("billing.write") : false;
+  // R7bb-FIX-D-21 / D5-MED-9 — Archive Patient is an admin-only delete
+  // (patient.delete). Backend wires DELETE /api/patients/:id behind it.
+  const canDeletePatient = typeof can === "function" ? can("patient.delete") : false;
 
   // Auto-pick initial view by role / URL.
   const urlUhid = (searchParams.get("uhid") || routeUhid || "").toUpperCase();
@@ -697,6 +704,8 @@ export default function PatientLookupPage({ initialView = "auto" }) {
           loading={detailLoading}
           canNewVisit={canNewVisit}
           canEdit={canEdit}
+          canBillingWrite={canBillingWrite}
+          canDeletePatient={canDeletePatient}
           navigate={navigate}
           advancesList={advances}
           unspentAdv={unspentAdv}
@@ -745,7 +754,7 @@ export default function PatientLookupPage({ initialView = "auto" }) {
 function PatientDetailPanel({
   patient, opd, adm, er, bills, tab, setTab,
   timelineFilter, setTimelineFilter, timelineRows, totals, loading,
-  canNewVisit, canEdit, navigate, fullWidth, emptyHint,
+  canNewVisit, canEdit, canBillingWrite, canDeletePatient, navigate, fullWidth, emptyHint,
   advancesList = [], unspentAdv = 0, onTakeAdvance, onApplyAdvance,
 }) {
   if (!patient && emptyHint) return emptyHint;
@@ -788,7 +797,10 @@ function PatientDetailPanel({
               <i className="pi pi-plus" /> New Visit
             </button>
           )}
-          {canNewVisit && onTakeAdvance && (
+          {/* R7bb-FIX-D-18 / D5-MED-5 — Take Advance gated by billing.write.
+              Doctor/Nurse/Pharmacist roles get patient.read but not
+              billing.write; without this gate they'd see a CTA that 403s. */}
+          {canBillingWrite && onTakeAdvance && (
             <button className="rx-action-btn"
                     onClick={onTakeAdvance}
                     title="Take cash / UPI / card deposit before bills are generated">
@@ -833,6 +845,32 @@ function PatientDetailPanel({
             <button className="rx-action-btn"
                     onClick={() => navigate(`/reception/register?uhid=${encodeURIComponent(patient.UHID || "")}`)}>
               <i className="pi pi-pencil" /> Edit
+            </button>
+          )}
+          {/* R7bb-FIX-D-21 / D5-MED-9 — Archive Patient is admin-only
+              (patient.delete). Backend DELETE /api/patients/:id soft-deletes
+              the record. Confirmation required to avoid trigger-happy clicks. */}
+          {canDeletePatient && (
+            <button className="rx-action-btn rx-action-btn--danger"
+                    onClick={async () => {
+                      const ok = window.confirm(
+                        `Archive patient ${patient.fullName || patient.UHID}?\n\n` +
+                        `This soft-deletes the patient record (sets isActive=false).\n` +
+                        `Cannot be undone from the UI. Existing bills/visits remain on file.`
+                      );
+                      if (!ok) return;
+                      try {
+                        await axios.delete(
+                          `${API_ENDPOINTS.BASE}/patients/${patient._id}`,
+                        );
+                        window.alert("Patient archived.");
+                        navigate("/patient-search");
+                      } catch (e) {
+                        window.alert(e?.response?.data?.message || "Archive failed.");
+                      }
+                    }}
+                    title="Archive (soft-delete) this patient — Admin only">
+              <i className="pi pi-trash" /> Archive
             </button>
           )}
         </div>

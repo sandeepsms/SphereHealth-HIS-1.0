@@ -169,6 +169,18 @@ exports.closeSession = async (req, res, next) => {
     session.cardCollected   = cardCollected;
     session.chequeCollected = chequeCollected;
     session.status          = "CLOSED";
+    // R7bb-FIX-E-17 / D3-HIGH-6: cashier self-close is allowed but a
+    // material variance triggers an Admin co-sign requirement. Same-
+    // actor close on a clean drawer (≤ ₹500 abs variance, no short) is
+    // routine and stays auto-approved.
+    const SAME_ACTOR = String(session.cashierId) === String(cashierId);
+    const sigVariance = Math.abs(variance) > 500;
+    const isShort     = variance < 0;
+    if (SAME_ACTOR && (sigVariance || isShort)) {
+      session.closeApprovalPending = true;
+    } else {
+      session.closeApprovalPending = false;
+    }
     await session.save();
     // R7ar-P1-20/D6-aq-04: emit SHIFT_CLOSED with variance snapshot.
     try {
@@ -202,6 +214,39 @@ exports.closeSession = async (req, res, next) => {
         },
       }, { req });
     } catch (_) { /* audit best-effort */ }
+    res.json({ success: true, data: session });
+  } catch (e) { next(e); }
+};
+
+// POST /api/cashier-sessions/:id/clear-close  { remarks }
+// R7bb-FIX-E-17 / D3-HIGH-6: Admin clears the post-close approval flag
+// on a CLOSED shift that closed with significant variance / cash short.
+// Approver must differ from the shift's cashier.
+exports.clearCloseApproval = async (req, res, next) => {
+  try {
+    if (req.user?.role !== "Admin") {
+      return res.status(403).json({ success: false, message: "Admin only" });
+    }
+    const session = await CashierSession.findById(req.params.id);
+    if (!session) return res.status(404).json({ success: false, message: "Shift not found" });
+    if (session.status !== "CLOSED") {
+      return res.status(409).json({ success: false, message: "Shift is not CLOSED — clear is not applicable." });
+    }
+    if (!session.closeApprovalPending) {
+      return res.status(409).json({ success: false, message: "Shift close approval is not pending." });
+    }
+    if (String(session.cashierId) === String(req.user?._id || req.user?.id)) {
+      return res.status(409).json({
+        success: false, code: "SAME_ACTOR",
+        message: "SAME_ACTOR — close-approval must be cleared by a different user than the cashier",
+      });
+    }
+    session.closeApprovalPending = false;
+    session.closeApprovedBy      = req.user.fullName || req.user.employeeId || "Admin";
+    session.closeApprovedById    = req.user._id || req.user.id || null;
+    session.closeApprovedAt      = new Date();
+    session.closeApprovalRemarks = String(req.body?.remarks || "").trim();
+    await session.save();
     res.json({ success: true, data: session });
   } catch (e) { next(e); }
 };

@@ -183,9 +183,18 @@ exports.updateItemQty = async (req, res) => {
 // id that joins every per-bill payment row.
 exports.bulkCollectByUHID = async (req, res) => {
   try {
+    // R7bb-C / S5 (D7-CRIT-1): actor pulled from req.user only — any
+    // `receivedBy*` in body is stripped so a forged body can't
+    // attribute the bulk collect to another cashier.
+    const { receivedBy: _ia, receivedById: _ib, receivedByRole: _ic, ...safeBody } = req.body;
     const data = await billingService.bulkCollectByUHID(
       req.params.UHID,
-      req.body,
+      {
+        ...safeBody,
+        receivedBy:     req.user?.fullName || req.user?.employeeId,
+        receivedById:   req.user?._id,
+        receivedByRole: req.user?.role,
+      },
     );
     res.json({
       success: true,
@@ -205,9 +214,17 @@ exports.bulkCollectByUHID = async (req, res) => {
 // log entry.
 exports.bulkSettleByUHID = async (req, res) => {
   try {
+    // R7bb-C / S5: actor sourced from req.user — body's adjustedBy
+    // ignored so the bulk-settlement attribution is forge-proof.
+    const { adjustedBy: _ia, adjustedById: _ib, adjustedByRole: _ic, ...safeBody } = req.body;
     const data = await billingService.bulkSettleByUHID(
       req.params.UHID,
-      req.body,
+      {
+        ...safeBody,
+        adjustedBy:     req.user?.fullName || req.user?.employeeId,
+        adjustedById:   req.user?._id,
+        adjustedByRole: req.user?.role,
+      },
     );
     res.json({
       success: true,
@@ -224,11 +241,19 @@ exports.bulkSettleByUHID = async (req, res) => {
 // time (extra discount + per-item qty/price edits). Audited — backend
 // requires `adjustedBy` + `reason` and pushes a before/after snapshot
 // onto bill.adjustmentLog.
+// R7bb-C / S5 (D7-CRIT-2): actor identity sourced from `req.user`
+// (set by authenticate middleware), not from `req.body.adjustedBy`.
+// Pre-R7bb a body field forged via Postman could attribute a discount
+// to any staff member's name — fatal for the NABH attribution audit.
 exports.settlementAdjust = async (req, res) => {
   try {
     const data = await billingService.settlementAdjust(
       req.params.billId,
-      req.body,
+      {
+        ...req.body,
+        adjustedBy:   req.user?.fullName || req.user?.employeeId,
+        adjustedById: req.user?._id,
+      },
     );
     res.json({ success: true, data, message: "Settlement adjustment recorded" });
   } catch (e) {
@@ -238,11 +263,17 @@ exports.settlementAdjust = async (req, res) => {
 };
 
 // ── POST /api/billing/:billId/generate ───────────────────────
+// R7bb-C / S5 (D7-CRIT-2): actor from req.user only — body's
+// `generatedBy` ignored. Fallback to "Staff" only when req.user is
+// somehow absent (should be impossible past authenticate middleware
+// — kept as a defensive belt so generate never throws on a missing
+// session, only mis-attributes).
 exports.generateBill = async (req, res) => {
   try {
+    const generatedBy = req.user?.fullName || req.user?.employeeId || "Staff";
     const data = await billingService.generateFinalBill(
       req.params.billId,
-      req.body.generatedBy || "Staff",
+      generatedBy,
     );
     res.json({
       success: true,
@@ -255,6 +286,11 @@ exports.generateBill = async (req, res) => {
 };
 
 // ── POST /api/billing/:billId/payment ────────────────────────
+// R7bb-C / S5 (D7-CRIT-1): actor (`receivedBy` + id + role) sourced
+// from `req.user` only. Body's `receivedBy` / `receivedById` are
+// IGNORED — pre-R7bb a Postman-forged body could attribute a cash
+// take to another cashier's name, defeating the per-cashier shift
+// reconciliation entirely.
 exports.recordPayment = async (req, res) => {
   try {
     const { amount, paymentMode } = req.body;
@@ -263,10 +299,16 @@ exports.recordPayment = async (req, res) => {
         .status(400)
         .json({ success: false, message: "amount and paymentMode required" });
     }
+    const { receivedBy: _ignoredA, receivedById: _ignoredB, receivedByRole: _ignoredC, ...safeBody } = req.body;
 
     const data = await billingService.recordPayment(
       req.params.billId,
-      req.body,
+      {
+        ...safeBody,
+        receivedBy:     req.user?.fullName || req.user?.employeeId,
+        receivedById:   req.user?._id,
+        receivedByRole: req.user?.role,
+      },
     );
     res.json({ success: true, data });
   } catch (e) {
@@ -958,13 +1000,43 @@ exports.addManualCharge = async (req, res, next) => {
     const user = req.user || {};
     const role = user.role || "";
     const canSetPrice = role === "Admin" || role === "Accountant";
+
+    // R7bb-FIX-E-20: Doctor-initiated manual charges over ₹5,000 are
+    // flagged for secondary review by Admin/Accountant. We don't block
+    // — the doctor's clinical judgement still adds the charge — but the
+    // audit row carries a `NEEDS_REVIEW` flag so the accountant's
+    // refunds tab surfaces it for a second eye next cycle. Pre-R7bb a
+    // doctor could add an arbitrarily-priced manual charge with no
+    // financial-control checkpoint.
+    const qty = Math.max(1, Number(req.body?.quantity || 1));
+    const unit = Number(req.body?.unitPrice || 0);
+    const approxAmount = qty * unit;
+    const doctorHighValue = role === "Doctor" && approxAmount > 5000;
+
     const result = await autoBilling.addManualCharge(req.params.admissionId, {
       serviceId:  req.body?.serviceId,
       quantity:   req.body?.quantity,
       unitPrice:  canSetPrice ? req.body?.unitPrice : undefined,
-      remarks:    req.body?.remarks,
+      remarks:    doctorHighValue
+        ? `${req.body?.remarks || ""} | NEEDS_REVIEW: doctor manual charge ~₹${approxAmount}`
+        : req.body?.remarks,
       user,
     });
+    if (doctorHighValue) {
+      // Best-effort audit flag — accountants filter on this event.
+      try {
+        const { emit } = require("../../models/Billing/BillingAudit");
+        await emit({
+          event:       "SETTLEMENT_ADJUSTED",
+          admissionId: req.params.admissionId,
+          actorId:     user._id || user.id,
+          actorName:   user.fullName || user.employeeId,
+          actorRole:   role,
+          amount:      approxAmount,
+          reason:      `NEEDS_REVIEW: doctor manual charge serviceId=${req.body?.serviceId} qty=${qty} approx=₹${approxAmount} — secondary review required`,
+        }, { req });
+      } catch (_) { /* best-effort */ }
+    }
     res.json({ success: true, data: result });
   } catch (e) {
     const code = e.code;
@@ -1083,11 +1155,38 @@ exports.tpaPreAuthSubmit = async (req, res, next) => {
       });
     }
 
+    const _priorTpa     = bill.tpaClaimStatus;
+    const _priorPayable = Number(bill.tpaPayableAmount || 0);
     bill.tpaClaimNumber  = req.body.claimNumber || bill.tpaClaimNumber || "";
     bill.tpaClaimStatus  = "SUBMITTED";
     bill.tpaPayableAmount = Number(req.body.requestedAmount) || bill.tpaPayableAmount || 0;
+    // R7bb-FIX-E-15 / D3-HIGH-2: stamp the submitter so tpaApprove can
+    // enforce a different-actor check. We capture name + id + when so
+    // the maker-checker trail is complete even if the user is later
+    // renamed or deactivated.
+    bill.tpaPreAuthSubmittedBy   = req.user?.fullName || req.user?.employeeId || "TPA Desk";
+    bill.tpaPreAuthSubmittedById = req.user?._id || req.user?.id || null;
+    bill.tpaPreAuthSubmittedAt   = new Date();
     bill.markModified("tpaClaimStatus");
     await bill.save();
+    // R7bb-C / D7-CRIT-5: TPA pre-auth must emit a BillingAudit row.
+    // Pre-R7bb the preauth flip happened with NO audit trace — only
+    // the eventual TPA_APPROVED row landed, so investigators had no
+    // way to see when (or by whom) a claim was originally submitted.
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:        "TPA_PREAUTH_SUBMITTED",
+        UHID:         bill.UHID,
+        patientId:    bill.patient,
+        billId:       bill._id,
+        billNumber:   bill.billNumber,
+        amount:       bill.tpaPayableAmount,
+        reason:       req.body.notes || `Pre-auth submitted (claim #${bill.tpaClaimNumber || "—"})`,
+        before:       { tpaClaimStatus: _priorTpa, tpaPayableAmount: _priorPayable },
+        after:        { tpaClaimStatus: "SUBMITTED", tpaPayableAmount: bill.tpaPayableAmount, tpaClaimNumber: bill.tpaClaimNumber },
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
     res.json({ success: true, data: bill });
   } catch (e) { next(e); }
 };
@@ -1120,6 +1219,22 @@ exports.tpaApprove = async (req, res, next) => {
         message: "Approval is only valid for TPA or Corporate bills",
       });
     }
+    // R7bb-FIX-E-15 / D3-HIGH-2: maker-checker — the user who SUBMITTED
+    // the preauth cannot also APPROVE it. Admin can override via body
+    // flag (approverOverride). Pre-R7bb a single TPA Coordinator could
+    // submit and approve back-to-back with no second eye on a money
+    // gate.
+    const callerId = String(req.user?._id || req.user?.id || "");
+    const submitterId = String(bill.tpaPreAuthSubmittedById || "");
+    const approverOverride =
+      req.user?.role === "Admin" && !!req.body.approverOverride;
+    if (submitterId && callerId && submitterId === callerId && !approverOverride) {
+      return res.status(409).json({
+        success: false,
+        code:    "SAME_ACTOR",
+        message: "SAME_ACTOR — TPA approval must be done by a different user than the preauth submitter",
+      });
+    }
     const _priorTpa     = bill.tpaClaimStatus;
     const _priorApprAmt = Number(bill.tpaApprovedAmount || 0);
     // R7ap-F26/D7-10: VersionError retry — concurrent cashier-payment vs
@@ -1131,7 +1246,13 @@ exports.tpaApprove = async (req, res, next) => {
       b.tpaClaimStatus    = "APPROVED";
       b.tpaApprovedAmount = Number(req.body.approvedAmount) || b.tpaPayableAmount || 0;
       b.tpaApprovedAt     = new Date();
-      b.tpaApprovedBy     = req.body.approvedBy || req.user?.fullName || "TPA Desk";
+      // R7bb-C / S5 (D7-CRIT-1): actor from req.user only — body's
+      // approvedBy is ignored so a forged body can't impersonate the
+      // TPA desk. Fallback to "TPA Desk" remains for the (impossible
+      // post-auth) case where req.user is missing.
+      b.tpaApprovedBy     = req.user?.fullName || req.user?.employeeId || "TPA Desk";
+      // R7bb-FIX-E-15: stamp the approver id for maker-checker audit.
+      b.tpaApprovedById   = req.user?._id || req.user?.id || null;
       b.markModified("tpaClaimStatus");
       await b.save();
       return b;
@@ -1170,13 +1291,27 @@ exports.tpaApprove = async (req, res, next) => {
 exports.refundPayment = async (req, res, next) => {
   try {
     const billingService = require("../../services/Billing/billingService");
+    // R7bb-C / S5 (D7-CRIT-1): actor pulled from req.user only —
+    // body's `refundedBy` ignored. The refundedById is forwarded to
+    // the service so the negative-payment row + audit emit can both
+    // carry the actor reference (D7-MED-4).
+    //
+    // R7bb-FIX-E-1 / D3-CRIT-1: approverOverride is honoured ONLY for
+    // role===Admin. Receptionist/Accountant body-supplied flag is
+    // silently dropped so a same-actor refund stays blocked.
+    const approverOverride =
+      req.user?.role === "Admin" && !!req.body.approverOverride;
     const { bill, advance } = await billingService.recordRefund(req.params.billId, {
       amount:           req.body.amount,
       reason:           req.body.reason,
       mode:             req.body.mode,
-      refundedBy:       req.body.refundedBy,
+      refundedBy:       req.user?.fullName || req.user?.employeeId,
+      refundedById:     req.user?._id,
+      refundedByRole:   req.user?.role,
       transactionId:    req.body.transactionId,
       creditToAdvance:  !!req.body.creditToAdvance,
+      reasonCode:       req.body.reasonCode,
+      approverOverride,
     });
     return res.json({ success: true, data: bill, advance });
   } catch (e) {
@@ -1185,6 +1320,62 @@ exports.refundPayment = async (req, res, next) => {
     }
     return next(e);
   }
+};
+
+// R7bb-FIX-E-2 / D3-CRIT-2: POST /api/billing/credit-notes/:id/approve
+//   Body: { remarks? }
+// Approve a CreditNote that landed in PENDING_APPROVAL state. The
+// approver MUST be a different user than the CN issuer. Emits a
+// CREDIT_NOTE_APPROVED audit row.
+exports.approveCreditNote = async (req, res, next) => {
+  try {
+    const CreditNote = require("../../models/Billing/CreditNote");
+    const cn = await CreditNote.findById(req.params.id);
+    if (!cn) return res.status(404).json({ success: false, message: "Credit note not found" });
+    if (cn.status !== "PENDING_APPROVAL") {
+      return res.status(409).json({
+        success: false,
+        message: `Credit note is in '${cn.status}' — only PENDING_APPROVAL notes can be approved.`,
+        code:    "WRONG_STATE",
+      });
+    }
+    // SoD: approver must differ from issuer.
+    if (cn.issuedById && String(cn.issuedById) === String(req.user?._id || req.user?.id)) {
+      return res.status(409).json({
+        success: false,
+        message: "SAME_ACTOR — credit note must be approved by a different user than the issuer",
+        code:    "SAME_ACTOR",
+      });
+    }
+    cn.status       = "APPROVED";
+    cn.approvedBy   = req.user?.fullName || req.user?.employeeId || "";
+    cn.approvedById = req.user?._id || req.user?.id || null;
+    cn.approvedAt   = new Date();
+    await cn.save();
+
+    // Audit emit (re-use BillingAudit "SETTLEMENT_ADJUSTED" as the
+    // generic financial event since there's no CN-specific enum yet;
+    // event name carried in the reason text).
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:      "SETTLEMENT_ADJUSTED",
+        UHID:       cn.UHID,
+        patientId:  cn.patientId,
+        billId:     cn.billId,
+        billNumber: cn.originalBillNumber,
+        amount:     cn.refundAmount,
+        actorId:    cn.approvedById,
+        actorName:  cn.approvedBy,
+        actorRole:  req.user?.role,
+        reason:     `CREDIT_NOTE_APPROVED: ${cn.creditNoteNumber} (₹${cn.refundAmount}). ${String(req.body?.remarks || "").trim()}`,
+        before:     { status: "PENDING_APPROVAL" },
+        after:      { status: "APPROVED", creditNoteNumber: cn.creditNoteNumber },
+      }, { req });
+    } catch (_) { /* best-effort */ }
+
+    return res.json({ success: true, data: cn });
+  } catch (e) { next(e); }
 };
 
 // POST /api/billing/:billId/cancel-bill
@@ -1210,7 +1401,10 @@ exports.cancelBill = async (req, res, next) => {
       return res.status(400).json({ success: false, message: "Cancellation reason is required" });
     }
     const reason      = String(req.body.reason).trim();
-    const cancelledBy = req.body.cancelledBy || req.user?.fullName || "Reception";
+    // R7bb-C / S5 (D7-CRIT-1): actor from req.user only — body field
+    // `cancelledBy` ignored. Reception fallback preserved for the
+    // (impossible post-auth) case where session somehow missing.
+    const cancelledBy = req.user?.fullName || req.user?.employeeId || "Reception";
 
     const { bill, _priorBillStatus, _priorTpaStatus } = await retryVE(async () => {
       const b = await PatientBill.findById(req.params.billId);
@@ -1306,6 +1500,7 @@ exports.tpaDeny = async (req, res, next) => {
     // R7av-FIX-11/D7-MED-2: state-machine guard + retry. Pre-R7av tpaDeny
     // could be invoked on already-SETTLED claims (wiping the approved
     // amount) and 500'd under concurrent writer races.
+    let _priorTpa = null, _priorApprAmt = 0;
     const bill = await retryVE(async () => {
       const b = await PatientBill.findById(req.params.billId);
       if (!b) { const err = new Error("Bill not found"); err.status = 404; throw err; }
@@ -1314,12 +1509,32 @@ exports.tpaDeny = async (req, res, next) => {
         const err = new Error(`Cannot deny — claim is in '${b.tpaClaimStatus}' state`);
         err.status = 409; throw err;
       }
+      _priorTpa     = b.tpaClaimStatus;
+      _priorApprAmt = Number(b.tpaApprovedAmount || 0);
       b.tpaClaimStatus = "REJECTED";
       b.tpaApprovedAmount = 0;
       if (req.body.reason) b.remarks = `TPA Denied: ${req.body.reason}`;
       await b.save();
       return b;
     }, { label: "tpaDeny" });
+    // R7bb-C / D7-CRIT-5: emit BillingAudit on TPA deny — previously
+    // the rejection landed with no chronological trace (only the
+    // remarks field carried the reason). NABH AAC.7 needs the actor +
+    // before/after snapshot in the audit collection itself.
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:        "TPA_DENIED",
+        UHID:         bill.UHID,
+        patientId:    bill.patient,
+        billId:       bill._id,
+        billNumber:   bill.billNumber,
+        amount:       _priorApprAmt,                     // amount that was on the line before deny
+        reason:       req.body.reason || "TPA denied (no reason supplied)",
+        before:       { tpaClaimStatus: _priorTpa, tpaApprovedAmount: _priorApprAmt },
+        after:        { tpaClaimStatus: "REJECTED", tpaApprovedAmount: 0 },
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
     res.json({ success: true, data: bill });
   } catch (e) {
     if (e?.status && !res.headersSent) {
@@ -1369,7 +1584,10 @@ exports.tpaSettle = async (req, res, next) => {
       return res.status(400).json({ success: false, message: "transactionId (NEFT/UTR/cheque ref) is required for TPA settlement" });
     }
 
-    const settledBy   = req.body.settledBy || req.user?.fullName || "TPA Desk";
+    // R7bb-C / S5 (D7-CRIT-1): actor from req.user only — body's
+    // `settledBy` ignored so a forged body cannot impersonate a TPA
+    // desk operator on a settlement (a critical money-touching event).
+    const settledBy   = req.user?.fullName || req.user?.employeeId || "TPA Desk";
     const settledOn   = req.body.settledOn ? new Date(req.body.settledOn) : new Date();
     const shortfallTo = (req.body.shortfallTo || "PATIENT").toUpperCase();
 
@@ -1944,15 +2162,19 @@ async function computeCollectionSummary(dateStr) {
 // (typical IPD admission deposit) lives here. Later applied to bills.
 // ─────────────────────────────────────────────────────────────────────
 
-// POST /api/billing/advance  { UHID, amount, paymentMode, transactionId?, receivedBy, admission?, remarks? }
+// POST /api/billing/advance  { UHID, amount, paymentMode, transactionId?, admission?, remarks? }
+// R7bb-C / S5 (D7-CRIT-1): actor sourced from req.user only — body's
+// `receivedBy*` ignored. Pre-R7bb a forged body could attribute the
+// deposit to any cashier, breaking shift reconciliation.
 exports.createAdvance = async (req, res) => {
   try {
     const svc = require("../../services/Billing/patientAdvanceService");
+    const { receivedBy: _ia, receivedById: _ib, receivedByRole: _ic, ...safeBody } = req.body;
     const adv = await svc.createAdvance({
-      ...req.body,
-      receivedBy:     req.body.receivedBy     || req.user?.fullName     || req.user?.employeeId,
-      receivedById:   req.body.receivedById   || req.user?._id,
-      receivedByRole: req.body.receivedByRole || req.user?.role,
+      ...safeBody,
+      receivedBy:     req.user?.fullName || req.user?.employeeId,
+      receivedById:   req.user?._id,
+      receivedByRole: req.user?.role,
     });
     res.status(201).json({ success: true, data: adv });
   } catch (e) {
@@ -2135,6 +2357,19 @@ exports.listBillingAudit = async (req, res, next) => {
         return res.status(400).json({ success: false, message: "billId must be a valid ObjectId" });
       }
       filter.billId = req.query.billId;
+    }
+    // R7bb-C / D7-HIGH-5: actor-centric filters. Pre-R7bb the audit feed
+    // could only be sliced by event/UHID/bill — investigators chasing
+    // "everything cashier X did on date Y" had to dump+grep client-side.
+    // ObjectId validation guards against CastError 500s.
+    if (req.query.actorId) {
+      if (!mongoose.isValidObjectId(req.query.actorId)) {
+        return res.status(400).json({ success: false, message: "actorId must be a valid ObjectId" });
+      }
+      filter.actorId = req.query.actorId;
+    }
+    if (req.query.actorRole) {
+      filter.actorRole = String(req.query.actorRole).trim();
     }
     if (req.query.from || req.query.to) {
       try {
@@ -2529,18 +2764,30 @@ exports.applyAdvanceToBill = async (req, res) => {
   }
 };
 
-// POST /api/billing/advance/:advanceId/refund  { refundedBy, refundReason }
+// POST /api/billing/advance/:advanceId/refund  { refundReason, mode?, transactionId? }
+// R7bb-C / S5 (D7-CRIT-1): actor from req.user only — body's
+// `refundedBy` ignored. refundedById/Role forwarded to the service so
+// the audit row carries the operator's identity (not just their name).
 exports.refundAdvance = async (req, res) => {
   try {
     const svc = require("../../services/Billing/patientAdvanceService");
+    // R7bb-FIX-E-3 / D3-CRIT-3: Admin-only override on SoD block.
+    const approverOverride =
+      req.user?.role === "Admin" && !!req.body?.approverOverride;
     const adv = await svc.refundAdvance(req.params.advanceId, {
-      refundedBy:    req.body?.refundedBy   || req.user?.fullName || req.user?.employeeId,
-      refundReason:  req.body?.refundReason || "Refund at patient request",
-      mode:          req.body?.mode          || req.body?.refundMode,
-      transactionId: req.body?.transactionId || req.body?.refundTransactionId || null,
+      refundedBy:       req.user?.fullName || req.user?.employeeId,
+      refundedById:     req.user?._id,
+      refundedByRole:   req.user?.role,
+      refundReason:     req.body?.refundReason || "Refund at patient request",
+      mode:             req.body?.mode          || req.body?.refundMode,
+      transactionId:    req.body?.transactionId || req.body?.refundTransactionId || null,
+      approverOverride,
     });
     res.json({ success: true, data: adv });
   } catch (e) {
+    if (e?.status && e?.code) {
+      return res.status(e.status).json({ success: false, message: e.message, code: e.code });
+    }
     res.status(400).json({ success: false, message: e?.message || "Refund failed" });
   }
 };

@@ -327,7 +327,11 @@ class PatientAdvanceService {
   // double the unspent amount in cash. The predicate-filter version
   // guarantees only ONE write wins; the loser sees the post-update doc
   // already in REFUNDED state and throws 409.
-  async refundAdvance(advanceId, { refundedBy, refundReason, mode, transactionId }) {
+  // R7bb-C / S5 (D7-CRIT-1): controller forwards req.user identity
+  // (refundedById, refundedByRole). Pre-R7bb body's refundedBy was
+  // accepted directly so a forged body could attribute the refund
+  // to any operator (a critical money out-flow).
+  async refundAdvance(advanceId, { refundedBy, refundedById, refundedByRole, refundReason, mode, transactionId, approverOverride }) {
     if (!advanceId) throw new Error("advanceId required");
     if (!refundedBy)   throw new Error("refundedBy name required for audit");
     if (!refundReason) throw new Error("refundReason required for audit");
@@ -341,6 +345,19 @@ class PatientAdvanceService {
     }
     if (adv.status === "FULLY_APPLIED") {
       throw new Error("Advance fully applied to bills — no remaining balance to refund.");
+    }
+
+    // R7bb-FIX-E-3 / D3-CRIT-3: Segregation of Duties — the cashier
+    // who collected the advance can't be the one who refunds it. An
+    // Admin can second-sign via approverOverride=true; the original
+    // collector stays on refundedById for trail.
+    if (refundedById && adv.receivedById &&
+        String(refundedById) === String(adv.receivedById) &&
+        !approverOverride) {
+      const err = new Error(
+        "SAME_ACTOR — advance refund must be initiated by a different cashier or admin",
+      );
+      err.code = "SAME_ACTOR"; err.status = 409; throw err;
     }
     const total    = toNum(adv.amount);
     const applied  = toNum(adv.appliedAmount);
@@ -368,9 +385,16 @@ class PatientAdvanceService {
           status:              "REFUNDED",
           refundedAt:          new Date(),
           refundedBy,
+          refundedById:        refundedById || null,
           refundReason,
           refundMode,
           refundTransactionId: transactionId || null,
+          // R7bb-FIX-E-3: Admin override audit anchor.
+          ...(approverOverride && refundedById ? {
+            approvedById: refundedById,
+            approvedBy:   refundedBy,
+            approvedAt:   new Date(),
+          } : {}),
         },
       },
       { new: true },
@@ -397,6 +421,10 @@ class PatientAdvanceService {
         amount:               remaining,
         paymentMode:          refundMode,
         transactionId:        transactionId || null,
+        // R7bb-C / D7-HIGH-4: actorId on the audit row — listing audit
+        // by actor (`?actorId=…`) now works for advance refunds too.
+        actorId:              refundedById || null,
+        actorRole:            refundedByRole || null,
         actorName:            refundedBy,
         reason:               refundReason,
         before:               { status: adv.status, refundedAmount: refunded, remainingAmount: remaining },

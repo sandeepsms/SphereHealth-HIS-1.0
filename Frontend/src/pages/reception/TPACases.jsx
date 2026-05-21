@@ -10,6 +10,7 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
+import { useAuth } from "../../context/AuthContext";
 import "./reception-shared.css";
 import "../../Components/clinical/clinical-forms.css";
 
@@ -71,6 +72,11 @@ function printTPAAuth(bill) {
 
 export default function TPACases() {
   const navigate = useNavigate();
+  // R7bb-E/D5-CRIT-5 — Approve/Deny are gated by tpa.claim (Admin +
+  // TPA Coordinator only). Receptionist + Accountant can SEE the
+  // queue but mustn't see buttons the backend would 403 on.
+  const { can } = useAuth();
+  const canClaim = typeof can === "function" ? can("tpa.claim") : false;
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("PENDING");
@@ -173,7 +179,8 @@ export default function TPACases() {
                   <i className="pi pi-send" /> Submit Pre-Auth
                 </button>
               )}
-              {bill.tpaClaimStatus === "SUBMITTED" && (
+              {/* R7bb-E/D5-CRIT-5 — Approve/Deny gated by tpa.claim. */}
+              {bill.tpaClaimStatus === "SUBMITTED" && canClaim && (
                 <>
                   <button className="rx-action-btn rx-action-btn--success"
                           onClick={() => { setActionBill(bill); setActionType("approve"); }}>
@@ -184,6 +191,15 @@ export default function TPACases() {
                     <i className="pi pi-times" /> Mark Denied
                   </button>
                 </>
+              )}
+              {/* R7bb-FIX-E-7 / D6-CRIT-4: Settle TPA — record actual
+                  remittance against an APPROVED / PARTIAL_APPROVED claim.
+                  Posts to /billing/:billId/tpa-settle (endpoint exists). */}
+              {(bill.tpaClaimStatus === "APPROVED" || bill.tpaClaimStatus === "PARTIAL_APPROVED") && canClaim && (
+                <button className="rx-action-btn rx-action-btn--primary"
+                        onClick={() => { setActionBill(bill); setActionType("settle"); }}>
+                  <i className="pi pi-wallet" /> Settle TPA
+                </button>
               )}
               <button className="rx-action-btn" onClick={() => printTPAAuth(bill)}>
                 <i className="pi pi-print" /> Print TPA Letter
@@ -211,6 +227,12 @@ function TPAActionModal({ bill, type, onClose, onDone }) {
   const [approvedAmount, setApprovedAmount] = useState(bill.tpaPayableAmount || 0);
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
+  // R7bb-FIX-E-7: settlement modal fields.
+  const [actualReceivedAmount, setActualReceivedAmount] = useState(bill.tpaApprovedAmount || 0);
+  const [paymentRef, setPaymentRef] = useState("");
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [tdsAmount, setTdsAmount] = useState(0);
+  const [shortfallTo, setShortfallTo] = useState("PATIENT");
 
   const save = async () => {
     setSaving(true);
@@ -228,6 +250,20 @@ function TPAActionModal({ bill, type, onClose, onDone }) {
       } else if (type === "deny") {
         await axios.post(`${API_ENDPOINTS.BASE}/billing/${bill._id}/tpa-deny`, { reason });
         toast.success("Denial recorded");
+      } else if (type === "settle") {
+        // R7bb-FIX-E-7 / D6-CRIT-4: post the actual remittance.
+        if (!paymentRef.trim()) {
+          toast.error("Payment reference (UTR / cheque #) is required");
+          setSaving(false); return;
+        }
+        await axios.post(`${API_ENDPOINTS.BASE}/billing/${bill._id}/tpa-settle`, {
+          settledAmount:   Number(actualReceivedAmount) || 0,
+          transactionId:   paymentRef.trim(),
+          settledOn:       paymentDate,
+          tdsAmount:       Number(tdsAmount) || 0,
+          shortfallTo,
+        });
+        toast.success("TPA settlement recorded");
       }
       onDone();
     } catch (e) {
@@ -235,8 +271,8 @@ function TPAActionModal({ bill, type, onClose, onDone }) {
     } finally { setSaving(false); }
   };
 
-  const titles = { submit: "Submit Pre-Authorization", approve: "Mark Claim Approved", deny: "Mark Claim Denied" };
-  const icons  = { submit: "pi-send", approve: "pi-check", deny: "pi-times" };
+  const titles = { submit: "Submit Pre-Authorization", approve: "Mark Claim Approved", deny: "Mark Claim Denied", settle: "Settle TPA Remittance" };
+  const icons  = { submit: "pi-send", approve: "pi-check", deny: "pi-times", settle: "pi-wallet" };
 
   return (
     <div className="rx-modal-backdrop" onClick={onClose}>
@@ -281,6 +317,43 @@ function TPAActionModal({ bill, type, onClose, onDone }) {
               </div>
               <div className="rx-banner rx-banner--danger">
                 ⚠ Patient will need to settle in cash/card. Inform patient about the denial.
+              </div>
+            </>
+          )}
+          {/* R7bb-FIX-E-7 / D6-CRIT-4: TPA settle modal */}
+          {type === "settle" && (
+            <>
+              <div className="rx-banner rx-banner--info" style={{ marginBottom: 10 }}>
+                Approved: <strong>{fmtCur(bill.tpaApprovedAmount)}</strong> — record actual receipt below.
+              </div>
+              <div className="his-field-group">
+                <label className="his-label">Actual Received (₹)</label>
+                <input className="his-field" type="number" value={actualReceivedAmount}
+                       onChange={e => setActualReceivedAmount(e.target.value)} />
+              </div>
+              <div className="his-field-group">
+                <label className="his-label">Payment Reference (UTR / NEFT / Cheque #)</label>
+                <input className="his-field" value={paymentRef}
+                       onChange={e => setPaymentRef(e.target.value)}
+                       placeholder="UTR12345…" />
+              </div>
+              <div className="his-field-group">
+                <label className="his-label">Payment Date</label>
+                <input className="his-field" type="date" value={paymentDate}
+                       onChange={e => setPaymentDate(e.target.value)} />
+              </div>
+              <div className="his-field-group">
+                <label className="his-label">TDS Deducted (₹)</label>
+                <input className="his-field" type="number" value={tdsAmount}
+                       onChange={e => setTdsAmount(e.target.value)} />
+              </div>
+              <div className="his-field-group">
+                <label className="his-label">Shortfall handled by</label>
+                <select className="his-field" value={shortfallTo}
+                        onChange={e => setShortfallTo(e.target.value)}>
+                  <option value="PATIENT">Bill patient for shortfall</option>
+                  <option value="WRITEOFF">Write off (extra discount)</option>
+                </select>
               </div>
             </>
           )}

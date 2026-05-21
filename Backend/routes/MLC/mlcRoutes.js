@@ -21,6 +21,12 @@ router.get   ("/",            requireAction("mlc.read"),  ctrl.listMLC);
 router.post  ("/",            requireAction("mlc.write"), ctrl.createMLC);
 router.get   ("/:idOrMlr",    requireAction("mlc.read"),  ctrl.getMLC);
 router.put   ("/:idOrMlr",    requireAction("mlc.write"), ctrl.updateMLC);
+// R7bb-FIX-E-5 / D3-CRIT-5: explicit finalize + close endpoints with
+// SoD enforcement on the actor (must differ from creator, must be
+// Consultant / HOD). Previously the only lifecycle transition was via
+// the generic PUT — no second-actor check fired.
+router.post  ("/:idOrMlr/finalize", requireAction("mlc.write"), ctrl.finalize);
+router.post  ("/:idOrMlr/close",    requireAction("mlc.write"), ctrl.close);
 router.delete("/:idOrMlr",    requireAction("mlc.write"), ctrl.deleteMLC);
 
 module.exports = router;

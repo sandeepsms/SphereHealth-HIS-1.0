@@ -338,6 +338,17 @@ const PatientBillSchema = new mongoose.Schema(
       default: "NOT_APPLICABLE" },
     tpaClaimNumber: { type: String, trim: true },
     tpaApprovedAmount: { type: Dec, default: () => toDec(0) },
+    // R7bb-FIX-E-15 / D3-HIGH-2: maker-checker on TPA approval. The
+    // user who SUBMITTED the preauth cannot also APPROVE the claim —
+    // otherwise a single TPA Coordinator can move from preauth straight
+    // to approval with no second eye. The controller refuses if
+    // req.user._id === tpaPreAuthSubmittedById on tpaApprove.
+    tpaPreAuthSubmittedBy:   { type: String, trim: true, default: null },
+    tpaPreAuthSubmittedById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    tpaPreAuthSubmittedAt:   { type: Date, default: null },
+    tpaApprovedBy:           { type: String, trim: true, default: null },
+    tpaApprovedById:         { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    tpaApprovedAt:           { type: Date, default: null },
 
     // ── Dates & Audit ─────────────────────────────────────
     billDate: { type: Date, default: Date.now },

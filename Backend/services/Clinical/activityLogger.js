@@ -351,4 +351,39 @@ function middleware() {
   };
 }
 
-module.exports = { log, middleware };
+// ── Public: master-data event helper ───────────────────────────
+// R7bb-FIX-B-5/D7-CRIT-6: thin wrapper around BillingAudit.emit() for
+// master-data write surfaces (ServiceMaster / Department / DrugMaster).
+// Before R7bb these surfaces had ZERO audit — an insider could silently
+// retag a service price from ₹500 to ₹5000 between cashier shifts and
+// nobody would know who or when. Now: create / update / delete emits a
+// MASTER_* event with before/after snapshot + actor identity + reason.
+// Best-effort — never throws, never blocks the caller.
+//
+// Args:
+//   event       — BillingAudit enum value, e.g. "MASTER_SERVICE_UPDATED"
+//   model       — Mongoose model name string (e.g. "ServiceMaster")
+//   before/after— minimal snapshots (price + key fields), NOT full docs
+//   actorReq    — Express req (we pull req.user.{_id, fullName, role})
+//   reason      — caller-supplied audit reason (free text)
+//   docId       — the affected master row's _id (for cross-reference)
+async function logMasterDataEvent({ event, model, before, after, actorReq, reason, docId }) {
+  try {
+    const { emit } = require("../../models/Billing/BillingAudit");
+    const u = actorReq?.user || {};
+    await emit({
+      event,
+      actorId:   u._id || u.id,
+      actorName: u.fullName || u.employeeId,
+      actorRole: u.role,
+      reason:    reason || `${event} on ${model}${docId ? ` ${docId}` : ""}`,
+      before,
+      after,
+    }, { req: actorReq });
+  } catch (e) {
+    // Audit failure must never block the master-data write.
+    console.warn("[activityLogger] logMasterDataEvent failed:", e?.message);
+  }
+}
+
+module.exports = { log, middleware, logMasterDataEvent };

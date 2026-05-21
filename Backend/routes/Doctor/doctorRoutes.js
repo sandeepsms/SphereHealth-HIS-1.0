@@ -10,10 +10,11 @@ router.get("/search",                          requireAction("doctors.read"), do
 
 // Doctor profile for the logged-in user (role=Doctor). Controller scopes
 // to req.user.id so a Doctor only gets their own row.
-// R7bb-B/D4-HIGH-S1: gated on `doctor.self.write` (Admin / Doctor) so a
-// logged-in non-doctor role (Pharmacist / Ward Boy / Security) cannot
-// probe `/me` to see if a doctor profile exists for their user id.
-router.get("/me",                              authenticate, requireAction("doctor.self.write"), doctorController.getMyDoctorProfile);
+// R7bb-FIX-C-15/D4-MED-3: now gated on its own `doctor.self.read` action
+// (Admin / Doctor) instead of borrowing the write gate. Audit-grep finds
+// the read surface independently from the availability / serve-next
+// write surface — they are different operations on different rows.
+router.get("/me",                              authenticate, requireAction("doctor.self.read"), doctorController.getMyDoctorProfile);
 
 router.get("/department/:department",          requireAction("doctors.read"), doctorController.getDoctorsByDepartment);
 router.get("/specialization/:specialization",  requireAction("doctors.read"), doctorController.getDoctorsBySpecialization);

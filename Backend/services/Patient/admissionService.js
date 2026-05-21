@@ -151,6 +151,18 @@ class AdmissionService {
             attendingDoctor:   data.attendingDoctor || "",
             // ref to the doctor's User _id — drives IPD file access control
             attendingDoctorId: data.attendingDoctorId || undefined,
+            // R7bb-FIX-E-4 / D3-CRIT-4: mustCosign auto-derived from the
+            // attending doctor's designation. Junior Residents trip the
+            // flag so the dischargeSummary finalize endpoint demands an
+            // explicit senior-cosign acknowledgement at sign-off.
+            mustCosign: await (async () => {
+              if (!data.attendingDoctorId) return false;
+              try {
+                const User = require("../../models/User/userModel");
+                const u = await User.findById(data.attendingDoctorId).select("doctorDetails.designation").lean();
+                return u?.doctorDetails?.designation === "Junior Resident";
+              } catch (_) { return false; }
+            })(),
             estimatedCost: Number(data.estimatedCost) || 0,
             advancePaid: Number(data.advancePaid) || 0,
             // ER-specific clinical context captured at intake

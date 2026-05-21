@@ -2,6 +2,7 @@
 const DischargeSummary = require("../../models/Clinical/DischargeSummaryModel");
 const Admission = require("../../models/Patient/admissionModel");
 const admissionService = require("../../services/Patient/admissionService");
+const User = require("../../models/User/userModel");
 
 const handle = (fn) => async (req, res) => {
   try {
@@ -267,7 +268,7 @@ class DischargeSummaryController {
     //      the cashier's explicit clearFinalBill action stamps them.
     if (summary.admissionId) {
       const admission = await Admission.findById(summary.admissionId)
-        .select("attendingDoctorId status dischargeWorkflow bedId admissionNumber")
+        .select("attendingDoctorId status dischargeWorkflow bedId admissionNumber mustCosign")
         .lean();
       if (!admission) {
         return res.status(404).json({ success: false, message: "Linked admission not found" });
@@ -285,6 +286,61 @@ class DischargeSummaryController {
             message: "Only the primary attending consultant (or an Admin) may finalize this discharge.",
             code: "NOT_PRIMARY_CONSULTANT",
           });
+        }
+      }
+
+      // R7bb-FIX-E-4 / D3-CRIT-4: SoD on Junior Resident self-finalize.
+      // Junior Residents must NOT discharge their own patients without
+      // senior co-sign (NABH COP.7 / institutional risk). Two paths:
+      //   • admission.mustCosign === true  → REQUIRE explicit
+      //     requireSeniorCosign:false ack in the body (the caller
+      //     attests they will obtain co-sign offline / via the pending
+      //     /cosign endpoint). Without the ack we 409.
+      //   • caller's designation === "Junior Resident" → emit a WARN
+      //     audit row noting "self-finalized by treating doctor" but
+      //     don't block. The admin gets a flag on the audit feed.
+      if (req.user?.role === "Doctor") {
+        // Look up the caller's designation off the User doc — req.user
+        // carries only `role`, not the doctorDetails subdoc.
+        let designation = "";
+        try {
+          const u = await User.findById(req.user._id || req.user.id)
+            .select("doctorDetails.designation").lean();
+          designation = u?.doctorDetails?.designation || "";
+        } catch (_) { /* best-effort */ }
+        const isJR = designation === "Junior Resident";
+        if (isJR && admission.mustCosign === true) {
+          // Hard gate — must explicitly acknowledge that senior co-sign
+          // will follow. The cosign itself happens via a separate
+          // future endpoint that stamps cosignedBy on the summary.
+          if (req.body?.requireSeniorCosign !== false) {
+            return res.status(409).json({
+              success: false,
+              code: "REQUIRE_SENIOR_COSIGN",
+              message:
+                "This admission is flagged mustCosign — a Junior Resident cannot finalize without senior co-sign. " +
+                "Resubmit with { requireSeniorCosign: false } to acknowledge that co-sign will be obtained, OR have a Senior Resident / Consultant finalize.",
+            });
+          }
+          // Mark on the doc for the cosign endpoint to honour.
+          await DischargeSummary.findByIdAndUpdate(summary._id, {
+            $set: { selfFinalizeAck: true },
+          });
+        }
+        if (isJR) {
+          // WARN audit row — non-blocking.
+          try {
+            const { emit } = require("../../models/Billing/BillingAudit");
+            await emit({
+              event:     "SETTLEMENT_ADJUSTED",  // generic audit channel
+              actorId:   req.user._id || req.user.id,
+              actorName: req.user.fullName || req.user.employeeId,
+              actorRole: req.user.role,
+              admissionId: summary.admissionId,
+              reason:    `WARN_SELF_FINALIZE: Discharge summary ${summary._id} self-finalized by Junior Resident (treating doctor). Senior co-sign required.`,
+              after:     { discharge: "self-finalized", mustCosign: admission.mustCosign, designation },
+            }, { req });
+          } catch (_) { /* best-effort */ }
         }
       }
 

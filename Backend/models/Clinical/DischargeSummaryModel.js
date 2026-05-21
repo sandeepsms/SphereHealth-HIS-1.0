@@ -131,6 +131,16 @@ const DischargeSummarySchema = new mongoose.Schema(
     finalizedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
     finalizedByName: { type: String },
     finalizedAt: { type: Date },
+    // R7bb-FIX-E-4 / D3-CRIT-4: senior co-sign on Junior Resident-
+    // authored discharge summaries. Populated by a future endpoint
+    // (POST /discharge-summary/:id/cosign — Agent C will wire).
+    cosignedBy:     { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    cosignedByName: { type: String, trim: true, default: "" },
+    cosignedAt:     { type: Date, default: null },
+    // Audit row for any self-finalize WARN — the actor cleared the
+    // self-finalize gate without an actual senior co-sign because the
+    // attending isn't flagged mustCosign.
+    selfFinalizeAck: { type: Boolean, default: false },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" } },

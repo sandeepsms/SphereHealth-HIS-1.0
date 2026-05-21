@@ -143,6 +143,13 @@ PatientActivityLogSchema.index({ UHID: 1, createdAt: -1 });
 PatientActivityLogSchema.index({ admissionId: 1, createdAt: -1 });
 // Per-actor view (who did what across patients).
 PatientActivityLogSchema.index({ userId: 1, createdAt: -1 });
+// R7bb-FIX-B-11/D7-MED-3: per-ROLE view (what did Doctors do across
+// patients last week, what did Receptionists touch on the rounds). The
+// audit reviewer cuts the feed by role for HR + NABH compliance reports;
+// pre-R7bb the query did a full collscan filtered by userRole. Cardinality
+// is low (~5-10 roles) so this index is cheap and the createdAt suffix
+// lets the audit page sort without an in-memory sort.
+PatientActivityLogSchema.index({ userRole: 1, createdAt: -1 });
 
 // ── R7az-D10-HIGH-1: pre-save retention defaults ─────────────────────
 // Compute retainUntil from action + tags when not already set. We never

@@ -6,15 +6,16 @@ const router = express.Router();
 const ctrl = require("../../controllers/Nurse/nursingCarePlanController");
 const { requireAction } = require("../../middleware/auth");
 
-// R7bb-B/D4-CRIT-S1: nursing-care-plan reads now gated on `nurse-notes.read`
-// (Admin / Doctor / Nurse / MRD). Pre-R7bb any authenticated role could
-// pull NABH-IPSG nursing care plans (problem list + interventions + plan
-// of care = full clinical narrative).
-router.get   ("/uhid/:uhid",                          requireAction("nurse-notes.read"), ctrl.getByUHID);
-router.get   ("/ipd/:ipdNo",                          requireAction("nurse-notes.read"), ctrl.getByIPD);
-router.get   ("/admission/:admissionId",              requireAction("nurse-notes.read"), ctrl.getByAdmission);
+// R7bb-FIX-C-1/S1 (D4-CRIT): nursing-care-plan reads now gated on the
+// new explicit `nursing.care-plan.read` (Admin / Doctor / Nurse / MRD)
+// instead of the generic `nurse-notes.read`. Same audience; the
+// dedicated token makes audit-grep find every care-plan touch
+// independently from the wider nurse-notes surface.
+router.get   ("/uhid/:uhid",                          requireAction("nursing.care-plan.read"), ctrl.getByUHID);
+router.get   ("/ipd/:ipdNo",                          requireAction("nursing.care-plan.read"), ctrl.getByIPD);
+router.get   ("/admission/:admissionId",              requireAction("nursing.care-plan.read"), ctrl.getByAdmission);
 router.post  ("/",                                    requireAction("mar.write"), ctrl.create);
-router.get   ("/:id",                                 requireAction("nurse-notes.read"), ctrl.getById);
+router.get   ("/:id",                                 requireAction("nursing.care-plan.read"), ctrl.getById);
 router.put   ("/:id",                                 requireAction("mar.write"), ctrl.update);
 router.patch ("/:id/problem/:problemId/status",       requireAction("mar.write"), ctrl.updateProblemStatus);
 router.patch ("/:id/complete",                        requireAction("mar.write"), ctrl.complete);

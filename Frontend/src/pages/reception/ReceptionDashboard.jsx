@@ -55,8 +55,14 @@ const presenceDoing = (p) => {
 
 export default function ReceptionDashboard() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  // R7bb-E/D5-CRIT-4 — `can("doctor.self.write")` decides whether the
+  // viewer can press "Next →" (call next token) or change the doctor's
+  // status from the receptionist dashboard. Receptionists can SEE the
+  // strip but can't drive someone else's availability — that's the
+  // doctor's own self-write surface.
+  const { user, can } = useAuth();
   const myUserId = user?._id || user?.id;
+  const canDriveDoctorSelf = typeof can === "function" ? can("doctor.self.write") : false;
   const [date,       setDate]       = useState(today());
   const [collection, setCollection] = useState(null);
   const [queues,     setQueues]     = useState([]);
@@ -444,13 +450,16 @@ export default function ReceptionDashboard() {
                   )}
                 </div>
                 <div className="rd-doc-actions">
-                  {isToday && d.waiting > 0 && (
+                  {/* R7bb-E/D5-CRIT-4 — Next/status are gated by doctor.self.write
+                      so Receptionist/Accountant viewers see read-only doctor info
+                      instead of buttons the backend would 403 on. */}
+                  {isToday && canDriveDoctorSelf && d.waiting > 0 && (
                     <button className="rd-doc-btn rd-doc-btn--next" onClick={() => serveNext(d._id)}
                             title="Call next patient">
                       Next →
                     </button>
                   )}
-                  {isToday && (
+                  {isToday && canDriveDoctorSelf && (
                     <select
                       className="rd-doc-btn"
                       value={d.availability?.status || "Offline"}
@@ -460,6 +469,11 @@ export default function ReceptionDashboard() {
                         <option key={k} value={k}>{v}</option>
                       )}
                     </select>
+                  )}
+                  {isToday && !canDriveDoctorSelf && (
+                    <span className="rd-doc-status-label" style={{ fontSize:11, color:"#64748b", fontWeight:600 }}>
+                      {STATUS_LABEL[d.availability?.status || "Offline"]}
+                    </span>
                   )}
                 </div>
               </div>

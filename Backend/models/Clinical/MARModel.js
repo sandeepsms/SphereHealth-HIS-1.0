@@ -22,7 +22,17 @@ const AdministrationEntrySchema = new mongoose.Schema(
     // R7az-D7-HIGH-4: per-administration signature (capped 150KB) so the
     // MAR row carries the authoritative actor signature, not just a name.
     // Pulled server-side from req.user.signature in marController.
-    signatureUrl: { type: String, maxlength: [200000, "signatureUrl too large (max 200,000 chars ≈ 150KB)"] } },
+    signatureUrl: { type: String, maxlength: [200000, "signatureUrl too large (max 200,000 chars ≈ 150KB)"] },
+    // R7bb-FIX-E-19/D3-HIGH-4: High-Alert Medication dual-witness. When
+    // the parent med has isHighAlert:true, recordAdministration demands
+    // a SECOND nurse identifier; both must hold mar.write and must be
+    // different users. Controller enforces — these fields are only
+    // populated for HAM doses, NULL otherwise (preserving prior shape).
+    administeredByUser1Id: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    administeredByUser2Id: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    nurse2Name:            { type: String, trim: true, default: "" },
+    nurse2StaffId:         { type: String, trim: true, default: "" },
+    isHamDose:             { type: Boolean, default: false } },
   { _id: true }
 );
 

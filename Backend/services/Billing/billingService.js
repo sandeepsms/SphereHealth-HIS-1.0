@@ -568,8 +568,10 @@ class BillingService {
   //
   // The pre-save hook re-derives every total from the (possibly-edited)
   // items + extraDiscount, so the caller never has to do math here.
+  // R7bb-C / S5 (D7-CRIT-2): accept adjustedById from the controller so
+  // the audit row can carry the operator's _id (not just display name).
   async settlementAdjust(billId, payload = {}) {
-    const { extraDiscount, extraDiscountReason, items, adjustedBy, reason } = payload;
+    const { extraDiscount, extraDiscountReason, items, adjustedBy, adjustedById, reason } = payload;
 
     if (!adjustedBy || !String(adjustedBy).trim()) {
       const err = new Error("adjustedBy (staff name) is required for audit");
@@ -712,6 +714,27 @@ class BillingService {
     try {
       require("../../controllers/Billing/billingController").invalidateDayBookCache();
     } catch (_) {}
+    // R7bb-C / D7-HIGH-3: emit SETTLEMENT_ADJUSTED to BillingAudit so the
+    // chronological feed carries the change (the existing
+    // bill.adjustmentLog[] entry is per-bill but the audit register
+    // demands a single chronological view — that's what BillingAudit
+    // exists for).
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:        "SETTLEMENT_ADJUSTED",
+        UHID:         bill.UHID,
+        patientId:    bill.patient,
+        billId:       bill._id,
+        billNumber:   bill.billNumber,
+        amount:       Math.max(0, beforeSnap.netAmount - afterSnap.netAmount),
+        actorId:      adjustedById || null,
+        actorName:    adjustedBy,
+        reason:       String(reason).trim(),
+        before:       beforeSnap,
+        after:        afterSnap,
+      });
+    } catch (_) { /* audit best-effort */ }
     return bill;
     }, { label: "settlementAdjust" });
   }
@@ -727,7 +750,13 @@ class BillingService {
   // the legs back together — receipt printing, reconciliation, etc.
   //
   // Returns { totalCollected, billsTouched, allocations: [{billId, billNumber, amount}], parentTransactionId }
-  async bulkCollectByUHID(UHID, { amount, paymentMode, transactionId, receivedBy, remarks }) {
+  // R7bb-C / D7-CRIT-1 + D7-HIGH-3: accept actor id/role from caller,
+  // write to every per-leg payment row, and emit one BillingAudit row
+  // per touched bill so the audit feed reflects EACH leg (not just the
+  // parent transaction). Pre-R7bb a single bulk-collect call posted
+  // 7 payment rows but emitted ZERO audit rows — investigators had to
+  // reconstruct the legs from bill.payments[].
+  async bulkCollectByUHID(UHID, { amount, paymentMode, transactionId, receivedBy, receivedById, receivedByRole, remarks }) {
     if (!UHID || !String(UHID).trim()) throw new Error("UHID required");
     const amt = Number(amount);
     if (!amt || amt <= 0) throw new Error("Valid amount required");
@@ -792,6 +821,9 @@ class BillingService {
             paymentMode: mode,
             transactionId: parentTxn,
             receivedBy: receivedBy ? String(receivedBy).trim() : undefined,
+            // R7bb-C / D7-CRIT-1: per-cashier attribution on every leg.
+            receivedById:   receivedById || null,
+            receivedByRole: receivedByRole || null,
             remarks: remarks
               ? `${String(remarks).trim()} (bulk-collect)`
               : `Bulk collect across UHID — parent ${parentTxn}`,
@@ -805,6 +837,29 @@ class BillingService {
           if (newBal <= 0.005) fresh.paidAt = new Date();
 
           await fresh.save();
+          // R7bb-C / D7-HIGH-3: emit a per-leg BillingAudit row so the
+          // audit feed shows each touched bill, not just the parent
+          // transaction. Pre-R7bb the bulk endpoint was the only
+          // money-touching path that wrote zero audit rows — D7's
+          // top finding for the GST/NABH register.
+          try {
+            const { emit } = require("../../models/Billing/BillingAudit");
+            await emit({
+              event:        "BILL_PAYMENT_RECORDED",
+              UHID:         fresh.UHID,
+              patientId:    fresh.patient,
+              billId:       fresh._id,
+              billNumber:   fresh.billNumber,
+              amount:       leg,
+              paymentMode:  mode,
+              transactionId:parentTxn,
+              actorId:      receivedById || null,
+              actorRole:    receivedByRole || null,
+              actorName:    receivedBy,
+              reason:       `Bulk-collect leg of parent txn ${parentTxn}`,
+              after:        { billStatus: fresh.billStatus, balanceAmount: toNum(fresh.balanceAmount) },
+            });
+          } catch (_) { /* audit best-effort */ }
           return {
             billNumber: fresh.billNumber,
             amount:     leg,
@@ -868,7 +923,10 @@ class BillingService {
   //
   // Each bill gets its own audit log entry (type: EXTRA_DISCOUNT,
   // reason: shared) so per-bill review still works downstream.
-  async bulkSettleByUHID(UHID, { mode, value, adjustedBy, reason }) {
+  // R7bb-C / D7-CRIT-1 + D7-HIGH-3: accept adjustedById from caller and
+  // emit one BillingAudit row per touched bill. Same forgery/audit
+  // story as bulkCollectByUHID.
+  async bulkSettleByUHID(UHID, { mode, value, adjustedBy, adjustedById, adjustedByRole, reason }) {
     if (!UHID || !String(UHID).trim()) throw new Error("UHID required");
     const m = String(mode || "").toUpperCase();
     if (!["PERCENT", "AMOUNT"].includes(m)) throw new Error("mode must be PERCENT or AMOUNT");
@@ -976,6 +1034,26 @@ class BillingService {
           discountApplied: Number(billDisc.toFixed(2)),
           newBalance:    Number(toNum(bill.balanceAmount).toFixed(2)),
         });
+        // R7bb-C / D7-HIGH-3: per-leg audit emit (mirror of the
+        // bulkCollect fix). Without this the bulk-settle endpoint
+        // touched N bills and wrote zero BillingAudit rows.
+        try {
+          const { emit } = require("../../models/Billing/BillingAudit");
+          await emit({
+            event:        "SETTLEMENT_ADJUSTED",
+            UHID:         bill.UHID,
+            patientId:    bill.patient,
+            billId:       bill._id,
+            billNumber:   bill.billNumber,
+            amount:       Number(billDisc.toFixed(2)),
+            actorId:      adjustedById || null,
+            actorRole:    adjustedByRole || null,
+            actorName:    adjustedBy,
+            reason:       `[BULK-${m}] ${String(reason).trim()}`,
+            before:       beforeSnap,
+            after:        afterSnap,
+          });
+        } catch (_) { /* audit best-effort */ }
       } catch (err) {
         if (err?.name === "VersionError") {
           skipped.push({
@@ -1155,9 +1233,15 @@ class BillingService {
   // optimisticConcurrency enabled (rejects stale __v with VersionError); here
   // we retry the load-modify-save up to 5 times before giving up. Net effect:
   // concurrent payments serialise correctly and no row is ever lost.
+  // R7bb-C / S5 (D7-CRIT-1): added `receivedById` + `receivedByRole`
+  // args. Controller now passes these from req.user (body forgery
+  // closed at the route boundary). We write them into the
+  // PaymentSchema's per-cashier-attribution fields (added by Agent A)
+  // so per-cashier shift reconciliation has the operator's _id, not
+  // just a display name that could collide across staff.
   async recordPayment(
     billId,
-    { amount, paymentMode, transactionId, receivedBy, remarks },
+    { amount, paymentMode, transactionId, receivedBy, receivedById, receivedByRole, remarks },
   ) {
     if (!amount || amount <= 0) throw new Error("Valid amount required");
 
@@ -1218,6 +1302,14 @@ class BillingService {
         paymentMode,
         transactionId,
         receivedBy,
+        // R7bb-C / S5 (D7-CRIT-1): per-cashier attribution. The
+        // receivedById is the load-bearing field for shift recon —
+        // receivedBy (display name) is for human-facing receipts
+        // and can collide across staff (two "Priya" cashiers, one
+        // gets renamed in HR, etc.). Schema fields populated by
+        // Agent A in PaymentSchema; we set them whenever supplied.
+        receivedById,
+        receivedByRole,
         remarks,
         paidAt: new Date(),
       });
@@ -1250,6 +1342,12 @@ class BillingService {
             amount:       amount,
             paymentMode:  paymentMode,
             transactionId,
+            // R7bb-C / D7-HIGH-4: actor identity (id+role+name) in the
+            // audit row itself, not just on the bill. Lets the audit
+            // feed be sliced by actorId without joining back to
+            // bill.payments[].
+            actorId:      receivedById,
+            actorRole:    receivedByRole,
             actorName:    receivedBy,
             reason:       remarks || `Payment received via ${paymentMode}`,
             before:       { advancePaid: toNum(bill.advancePaid) - toNum(amount), billStatus: _priorBillStatus },
@@ -1327,6 +1425,7 @@ class BillingService {
       }
       pay.voidedAt     = new Date();
       pay.voidedBy     = user.fullName || user.name || "Receptionist";
+      pay.voidedById   = user._id || null;                     // R7bb-C / D7-MED-4
       pay.voidedByRole = user.role || "Receptionist";
       pay.voidReason   = String(reason).trim();
       b.payments.push({
@@ -1334,6 +1433,14 @@ class BillingService {
         paymentMode:    pay.paymentMode,
         transactionId:  `VOID-${pay.transactionId || pay._id}`,
         receivedBy:     user.fullName || user.name || "Receptionist",
+        // R7bb-C / D7-MED-4: the synthetic reversal row carries the
+        // operator's id (receivedById = void operator) AND voidedById
+        // (same person) so the per-cashier shift query can attribute
+        // the reversal to the actor without joining to the parent row.
+        receivedById:   user._id || null,
+        receivedByRole: user.role || null,
+        voidedById:     user._id || null,
+        voidedByRole:   user.role || null,
         paidAt:         new Date(),
         remarks:        `VOID of payment ${pay._id} — ${String(reason).trim()}`,
       });
@@ -1359,6 +1466,10 @@ class BillingService {
         billId:     bill._id,
         billNumber: bill.billNumber,
         paymentId,
+        // R7bb-C / D7-HIGH-4: include actor id+role on the audit row
+        // so it is queryable by actorId without joining to bill.payments.
+        actorId:    user._id || null,
+        actorRole:  user.role || null,
         actorName:  user.fullName || user.name,
         reason:     String(reason).trim(),
       });
@@ -1386,9 +1497,14 @@ class BillingService {
   // pool growth is the SECOND leg of the transfer. We still print a
   // refund-receipt; the frontend also prints an advance-receipt for the
   // pool credit so both ledger sides have audit paper.
+  // R7bb-C / S5 (D7-CRIT-1 + D7-MED-4): added refundedById +
+  // refundedByRole. The negative payment row carries receivedById +
+  // voidedById, the audit emit carries actorId — keeps the per-
+  // cashier shift register consistent with bills the same actor
+  // refunds, plus closes the body-actor-forgery surface.
   async recordRefund(
     billId,
-    { amount, reason, mode, refundedBy, transactionId, creditToAdvance = false, reasonCode } = {},
+    { amount, reason, mode, refundedBy, refundedById, refundedByRole, transactionId, creditToAdvance = false, reasonCode, approverOverride } = {},
   ) {
     const amt = Number(amount);
     if (!amt || amt <= 0) {
@@ -1398,6 +1514,34 @@ class BillingService {
     if (!reason || !String(reason).trim()) {
       const err = new Error("Refund reason is required for audit trail");
       err.code = "REASON_REQUIRED"; err.status = 400; throw err;
+    }
+    // R7bb-FIX-E-1 / D3-CRIT-1: Segregation of Duties on refund.
+    // The cashier who took the original payment cannot also issue the
+    // refund — a single actor controlling both legs is a textbook
+    // financial-control hole. Refuse with 409 SAME_ACTOR. An Admin can
+    // bypass only by sending approverOverride=true (controller-level
+    // role check decides who's allowed to set that flag).
+    //
+    // Implementation: peek at the bill's positive payment rows; if the
+    // requesting actor matches the receivedById of any positive payment
+    // and approverOverride !== true, refuse before we even cut the row.
+    if (refundedById && !approverOverride) {
+      const probe = await PatientBill.findById(billId)
+        .select("payments.receivedById payments.amount payments.voidedAt")
+        .lean();
+      if (probe) {
+        const sameActor = (probe.payments || []).some((p) => {
+          if (p.voidedAt) return false;
+          if (Number(p.amount) <= 0) return false; // skip refund rows themselves
+          return p.receivedById && String(p.receivedById) === String(refundedById);
+        });
+        if (sameActor) {
+          const err = new Error(
+            "SAME_ACTOR — refund must be initiated by a different cashier or admin",
+          );
+          err.code = "SAME_ACTOR"; err.status = 409; throw err;
+        }
+      }
     }
     // R7aw-FIX-4/D6-MED-4: optional reasonCode classifies the CN beyond
     // the free-text reason — drives the GSTR-1 CDNR row's reason code.
@@ -1465,6 +1609,17 @@ class BillingService {
         paymentMode:   payMode,
         transactionId,
         receivedBy:    refundedBy || "Reception",
+        // R7bb-C / D7-MED-4: refund creates a synthetic negative
+        // payment row. Pre-R7bb the row carried only receivedBy
+        // (display name) — the per-cashier shift query couldn't
+        // attribute the reversal back to its operator's _id. Now
+        // we tag both `receivedById` (the operator) AND
+        // `voidedById` (same person — refund is a kind of void)
+        // so both audit lenses agree on the actor.
+        receivedById:  refundedById || null,
+        receivedByRole:refundedByRole || null,
+        voidedById:    refundedById || null,
+        voidedByRole:  refundedByRole || null,
         paidAt:        new Date(),
         remarks:       creditToAdvance
           ? `REFUND → advance pool: ${String(reason).trim()}`
@@ -1500,6 +1655,10 @@ class BillingService {
             amount:       amt,
             paymentMode:  payMode,
             transactionId,
+            // R7bb-C / D7-HIGH-4: actorId + actorRole on the audit row
+            // so the listing endpoint can slice by `?actorId=…`.
+            actorId:      refundedById,
+            actorRole:    refundedByRole,
             actorName:    refundedBy,
             reason:       String(reason).trim(),
             before:       { advancePaid: paid, billStatus: bill.billStatus === "REFUNDED" ? "PAID" : (bill.billStatus === "PARTIAL" ? "PAID" : bill.billStatus) },
@@ -1579,6 +1738,11 @@ class BillingService {
           const cgstShare  = _isInter ? 0 : +(taxShare / 2).toFixed(2);
           const sgstShare  = _isInter ? 0 : +(taxShare / 2).toFixed(2);
           const igstShare  = _isInter ? taxShare : 0;
+          // R7bb-FIX-E-2 / D3-CRIT-2: high-value or tax-bearing CNs
+          // land in PENDING_APPROVAL state. Routine sub-₹10k cash-only
+          // refunds keep the prior "auto-APPROVED" path so the cashier's
+          // workflow speed is unaffected on small corrections.
+          const NEEDS_APPROVAL = amt > 10000 || taxShare > 0;
           await CreditNote.create({
             billId:               bill._id,
             originalBillNumber:   bill.billNumber,
@@ -1603,6 +1767,13 @@ class BillingService {
             refundMode:           payMode,
             refundTransactionId:  transactionId || null,
             issuedBy:             refundedBy || "Reception",
+            issuedById:           refundedById || null,
+            issuedByRole:         refundedByRole || null,
+            // R7bb-FIX-E-2: maker-checker
+            status:               NEEDS_APPROVAL ? "PENDING_APPROVAL" : "APPROVED",
+            approvedBy:           NEEDS_APPROVAL ? null : (refundedBy || "Reception"),
+            approvedById:         NEEDS_APPROVAL ? null : (refundedById || null),
+            approvedAt:           NEEDS_APPROVAL ? null : new Date(),
           });
         } catch (e) {
           // CN failure must not block the refund — log and continue.

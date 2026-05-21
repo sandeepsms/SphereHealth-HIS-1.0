@@ -21,6 +21,7 @@ import BedSectionHeader from "./BedSectionHeader";
 import RequestWardBoyButton from "../ward/RequestWardBoyButton";
 import RequestHousekeepingButton from "../ward/RequestHousekeepingButton";
 import BedActionMenu from "./BedActionMenu";
+import { useAuth } from "../../context/AuthContext";
 import "./bed-mgmt.css";
 
 /* ─── Colors ─────────────────────────────────────────────── */
@@ -230,6 +231,18 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   // overlapping headers on the /beds page.
   const isEmbedded = typeof onRefreshParent === "function";
   const toast = useRef(null);
+  // R7bb-E/D5-HIGH-1 — Bed action menu items are gated by the matching
+  // backend permission so viewers (Ward Boy on the bed map, Housekeeping
+  // who lacks ipd.assign-bed) don't see admit/transfer/block CTAs the
+  // backend would 403 on. Admit/Reserve use ipd.assign-bed (the canonical
+  // gate); Maintenance/Block use ipd.assign-bed too because the bed
+  // status route requires it; Shift Patient uses ipd.transfer; Discharge
+  // uses ipd.discharge.
+  const { can } = useAuth();
+  const canAssignBed = typeof can === "function" ? can("ipd.assign-bed") : false;
+  const canTransfer  = typeof can === "function" ? can("ipd.transfer") : false;
+  const canDischarge = typeof can === "function" ? can("ipd.discharge") : false;
+  const bedPerms     = { canAssignBed, canTransfer, canDischarge };
 
   const [beds, setBeds] = useState([]);
   const [shown, setShown] = useState([]);
@@ -4025,6 +4038,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       <BedActionMenu
         bed={actionMenuBed}
         onClose={() => setActionMenuBed(null)}
+        perms={bedPerms}
         actions={{
           // Available
           onAdmit: (bed) => { setActionMenuBed(null); handleAvailable(bed); },

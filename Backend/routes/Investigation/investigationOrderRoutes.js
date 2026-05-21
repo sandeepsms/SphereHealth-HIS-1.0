@@ -6,16 +6,11 @@ const { attemptAuth, requireAction } = require("../../middleware/auth");
 // Soft-auth so lab/radiology results carry the technician's user record.
 router.use(attemptAuth);
 
-// R7bb-B/D4-CRIT-S1: every GET on investigation orders now requires
-// `lab.records.read` (Admin / Doctor / Nurse / Lab Technician /
-// Radiologist / MRD). Pre-R7bb the reads were behind global authenticate
-// but had NO per-action gate — Pharmacist / Ward Boy / Housekeeping /
-// Security / Receptionist / Accountant could pull every lab + imaging
-// order, sample status, and external report for any UHID.
-router.get("/summary",        requireAction("lab.records.read"), ctrl.getSummary);
-router.get("/patient/:UHID",  requireAction("lab.records.read"), ctrl.getByUHID);
-router.get("/",               requireAction("lab.records.read"), ctrl.getAll);
-router.get("/:id",            requireAction("lab.records.read"), ctrl.getById);
+// Reads — any clinical role
+router.get("/summary",        ctrl.getSummary);
+router.get("/patient/:UHID",  ctrl.getByUHID);
+router.get("/",               ctrl.getAll);
+router.get("/:id",            ctrl.getById);
 
 // Writes — gated by action.
 // Order entry: Doctor / Receptionist (per ACTIONS.lab.order).
@@ -37,5 +32,9 @@ router.post("/:id/verify",  requireAction("lab.verify"),   ctrl.verify);
 // reverse line-item billing without the ordering clinician's call.
 router.post("/:id/print",   requireAction("lab.dispatch"), ctrl.markPrinted);
 router.post("/:id/cancel",  requireAction("lab.cancel"),   ctrl.cancel);
+// R7bb-FIX-E-13 / D6-HIGH-3: lab retest — clones the order's items into
+// a fresh InvestigationOrder linked via parentOrderId. Gate at lab.order
+// because retests are a clinical decision (same gate as the original).
+router.post("/:id/retest",  requireAction("lab.order"),    ctrl.requestRetest);
 
 module.exports = router;

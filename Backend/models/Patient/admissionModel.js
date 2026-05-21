@@ -157,6 +157,14 @@ const AdmissionSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null },
+    // R7bb-FIX-E-4 / D3-CRIT-4: when the attending doctor is a Junior
+    // Resident (designation flag on User.doctorDetails) the discharge
+    // summary finalize MUST be co-signed by a Senior Resident /
+    // Consultant. The flag is set at admission time by admissionService
+    // based on the attendingDoctor's designation; the dischargeSummary
+    // finalize endpoint reads it to decide whether to demand a
+    // requireSeniorCosign: false explicit acknowledgement.
+    mustCosign: { type: Boolean, default: false },
     // Department as ObjectId ref (alongside the string field)
     departmentId: {
       type: mongoose.Schema.Types.ObjectId,

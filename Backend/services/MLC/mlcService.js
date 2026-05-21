@@ -186,6 +186,7 @@ class MLCService {
                          `${doctor.personalInfo?.firstName || ""} ${doctor.personalInfo?.lastName || ""}`.trim(),
             mlrNumber, mlrPrefix, mlrSeq,
             createdBy:     actor.fullName || actor.name || "",
+            createdById:   actor.id || actor._id || null,
             createdByRole: actor.role     || "",
           }], { session });
         });

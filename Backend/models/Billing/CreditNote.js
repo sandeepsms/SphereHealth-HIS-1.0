@@ -54,6 +54,25 @@ const CreditNoteSchema = new mongoose.Schema(
     // toggled manually by Accountant via /accounts UI when files are
     // uploaded to the portal.
     periodLocked:     { type: Boolean, default: false },
+
+    // R7bb-FIX-E-2 / D3-CRIT-2: maker-checker on high-value / tax-
+    // bearing credit notes. Pre-R7bb a refund instantly emitted an
+    // APPROVED CN that hit GSTR-1 in the next cycle with no second
+    // sign-off. Now: if refundAmount > ₹10,000 OR taxAmount > 0 the
+    // CN is created in PENDING_APPROVAL state. The cashier still
+    // sees the bill refunded (they need to count cash out), but the
+    // CN won't appear in the GST register until a different
+    // Accountant/Admin approves via /credit-notes/:id/approve.
+    status: {
+      type: String,
+      enum: ["APPROVED", "PENDING_APPROVAL", "REJECTED"],
+      default: "APPROVED",
+      index: true,
+    },
+    approvedBy:   { type: String, trim: true },
+    approvedById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    approvedAt:   { type: Date, default: null },
+    rejectionReason: { type: String, trim: true, default: "" },
   },
   { timestamps: true },
 );

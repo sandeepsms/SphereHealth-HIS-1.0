@@ -32,9 +32,18 @@ router.get("/:id",                             vId,    requireAction("billing.re
 router.get("/:tpaId/charges/:roomCategoryId",
   vTpaId, vRoom,                                       requireAction("billing.read"), getChargesByRoomCategory);
 
-// Writes — TPA master only mutated by TPA Coordinator / Admin
-router.post("/",              requireAction("tpa.pre-auth"), createTPA);
-router.put("/:id",     vId,   requireAction("tpa.pre-auth"), updateTPA);
-router.delete("/:id",  vId,   requireAction("tpa.claim"),    deleteTPA);
+// Writes — TPA master only mutated by TPA Coordinator / Admin.
+// R7bb-FIX-C-7/D2-CRIT-2: gated on the new `tpa.master-edit` (TPA
+// Coordinator + Admin only). Pre-R7bb the gate was `tpa.pre-auth` which
+// also includes Receptionist — the front desk should be able to FILE a
+// pre-auth on an admission's bill (tpa.case-file) but must NOT be able
+// to CRUD the TPA insurance-company master record (tariff sheets,
+// allowed services, contact details, contractual data). Delete stays on
+// tpa.claim (same audience as master-edit; identical TPA Coordinator +
+// Admin tier — kept distinct so a future "claims-only" sub-role can
+// drop one without the other).
+router.post("/",              requireAction("tpa.master-edit"), createTPA);
+router.put("/:id",     vId,   requireAction("tpa.master-edit"), updateTPA);
+router.delete("/:id",  vId,   requireAction("tpa.claim"),       deleteTPA);
 
 module.exports = router;

@@ -51,7 +51,11 @@ const WB    = "Ward Boy";
 const ADMIN = "Admin";
 const PT    = "Physiotherapist";
 const DT    = "Dietician";
-const MT    = "Maintenance";        // Housekeeping / facilities / equipment
+// R7bb-E/D1-CRIT-2 — "MT" / "Maintenance" was a phantom role: never in
+// the User enum or permissions ACL, never satisfied any backend gate.
+// Removed alongside the Maintenance section below. Housekeeping handles
+// cleaning queues via HOUSEKEEPING_NAV; Equipment Tracker remains a
+// Bed Management / facility-admin tile if reinstated later.
 const SE    = "Security";
 
 /* ══════════════════════════════════════════════════════════════
@@ -144,17 +148,12 @@ const NAV = [
     ],
   },
 
-  /* ── Maintenance ─────────────────────────────────────── */
-  {
-    id: "maintenance", label: "Maintenance",
-    icon: "pi-wrench", color: "#d97706", light: "#fffbeb",
-    roles: [ADMIN, MT, WB, NR],
-    items: [
-      { label: "Dashboard",        icon: "pi-th-large",  path: "/maintenance",          badge: "NEW", roles: [ADMIN, MT, WB, NR] },
-      { label: "Equipment Tracker",icon: "pi-box",       path: "/equipment",            badge: "NEW", roles: [ADMIN, MT, NR] },
-      { label: "Live Bed Map",     icon: "pi-eye",       path: "/bed-visual",                         roles: [ADMIN, MT, WB] },
-    ],
-  },
+  /* R7bb-E/D1-CRIT-2, D6-CRIT-1 — Maintenance section deleted.
+     "Maintenance" was a phantom role with no backend ACL backing; nothing
+     under /maintenance or /equipment was reachable by the (non-existent)
+     MT user. Housekeeping uses HOUSEKEEPING_NAV; equipment + maintenance
+     dashboards can be reinstated as admin-only tiles inside Bed Management
+     when there's real backend support behind them. */
 
   /* ── Clinical — Doctor ──────────────────────────────── */
   {
@@ -227,7 +226,10 @@ const NAV = [
       // tab inside the Pharmacy page (next to Dispense + Sales) so the
       // pharmacist sees it on their primary workspace.
       { label: "Pharmacy",         icon: "pi-box",           path: "/pharmacy",        nabh: true, badge: "NEW", roles: [ADMIN, PH] },
-      { label: "MAR",              icon: "pi-table",         path: "/mar",             nabh: true, roles: [ADMIN, PH, NR, DR] },
+      // R7bb-E/D5-CRIT-1 — Pharmacist removed: backend mar.read excludes
+      // PH so the page hits a 403/empty state every time. PH still
+      // sees Pharmacy + Indents to fulfil dispensing requests instead.
+      { label: "MAR",              icon: "pi-table",         path: "/mar",             nabh: true, roles: [ADMIN, NR, DR] },
       { label: "Diabetic Chart",   icon: "pi-chart-bar",     path: "/diabetic-chart",  nabh: true, badge: "NEW", roles: [ADMIN, NR, DR] },
     ],
   },
@@ -238,11 +240,13 @@ const NAV = [
     icon: "pi-search-plus", color: "#0284c7", light: "#f0f9ff",
     roles: [ADMIN, LB, RL, DR],
     items: [
-      // Lab/Imaging is outsourced — Lab Technician is the single
-      // in-house user who transcribes external reports + maintains
-      // the trend sheets. Radiologist removed 14 May 2026 (role
-      // stays in userModel for future in-house imaging.)
-      { label: "Investigation Orders",  icon: "pi-list",   path: "/investigation-orders",  roles: [ADMIN, LB, DR] },
+      // R7bb-E/D5-MED-1 — Radiologist re-added to the imaging/lab list
+      // surface. Backend lab.records.read includes Radiologist + MRD so
+      // they can pull up scan reports — without this entry the Lab
+      // section was visible but empty for the role. Manual Lab Entry
+      // (write) stays Admin/LabTech-only. Master likewise.
+      { label: "Investigation Orders",  icon: "pi-list",   path: "/investigation-orders",  roles: [ADMIN, LB, DR, RL] },
+      { label: "Imaging Reports",       icon: "pi-table",  path: "/lab-results",           badge: "READ",roles: [RL] },
       { label: "Manual Lab Entry",      icon: "pi-table",  path: "/lab-results",           badge: "NEW", roles: [ADMIN, LB] },
       { label: "Investigation Master",  icon: "pi-cog",    path: "/investigation-master",  roles: [ADMIN, LB] },
     ],

@@ -1,15 +1,19 @@
 // routes/Clinical/twoFactorRoutes.js
 //
-// R7bb-B/D4-CRIT-S1: gated on `safety.write` (Admin / Doctor / Nurse).
-// Pre-R7bb any authenticated role (Pharmacist / Ward Boy / Housekeeping /
-// Security) could request OTPs and verify them — would let a non-clinical
-// role complete a 2FA-gated safety action (override-MAR, surgical
-// checklist, two-ID confirm) just because they have a valid JWT.
+// R7bb-FIX-C-1/S1 (D4-CRIT): gated on the new `auth.2fa` token
+// (Admin / Doctor / Nurse). Previously these sat on `safety.write` which
+// conflated 2FA OTP request + verify with the two-ID-confirm /
+// surgical-checklist / pain-reassessment surface. Splitting the gates
+// gives audit-grep an explicit row per route and avoids the "Doctor
+// requested an OTP" event hiding under a safety attestation log.
+//
+// Role set mirrors `safety.write` (same audience — anyone who can
+// initiate an OTP-gated workflow can also request the OTP itself).
 const router = require("express").Router();
 const ctrl = require("../../controllers/Clinical/twoFactorController");
 const { requireAction } = require("../../middleware/auth");
 
-router.post("/request", requireAction("safety.write"), ctrl.requestOtp);
-router.post("/verify",  requireAction("safety.write"), ctrl.verifyOtp);
+router.post("/request", requireAction("auth.2fa"), ctrl.requestOtp);
+router.post("/verify",  requireAction("auth.2fa"), ctrl.verifyOtp);
 
 module.exports = router;

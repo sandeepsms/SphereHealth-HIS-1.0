@@ -769,9 +769,14 @@ function MARPageContent({ selectedPatient }) {
   // R7az-D5-HIGH-5 — Default the nurse name + signature from the logged-in
   // user. Pre-fix the page hard-coded "Nurse" downstream which destroyed
   // the audit trail's per-nurse accountability.
-  const { user } = useAuth() || {};
+  // R7bb-E/D5-CRIT-2 — `can("mar.write")` decides whether the user can
+  // see Add/Record/Discontinue buttons. Doctors + Pharmacists can READ
+  // the MAR but only Admin/Nurse may mutate it (mirror of backend
+  // mar.write ACL). A "Read-only" pill is shown at the top for viewers.
+  const { user, can } = useAuth() || {};
   const defaultNurseName = (user?.fullName || user?.name || "").trim();
   const defaultNurseSig  = user?.signature || "";
+  const canWriteMar      = typeof can === "function" ? can("mar.write") : false;
 
   const [searchIPD, setSearchIPD]   = useState("");
   const [searchDate, setSearchDate] = useState(new Date().toISOString().slice(0,10));
@@ -1057,6 +1062,23 @@ function MARPageContent({ selectedPatient }) {
 
   return (
     <div style={{ padding:0, minHeight:"100vh", background:"#f4f6fb" }}>
+      {/* R7bb-FIX-D-2 — Read-only banner for viewers (Doctor, MRD). Doctors
+          have mar.read but NOT mar.write. The banner makes that explicit
+          at the top of the page so they don't hunt for missing buttons. */}
+      {!canWriteMar && (
+        <div style={{
+          marginBottom: 12, padding: "10px 14px",
+          background: "#eff6ff", border: "1.5px solid #bfdbfe",
+          borderRadius: 10, display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <i className="pi pi-eye" style={{ fontSize: 16, color: "#1d4ed8" }} />
+          <div style={{ fontSize: 12.5, color: "#1e3a8a" }}>
+            <strong>Read-only view{user?.role ? ` for ${user.role}` : ""}.</strong>{" "}
+            You can view the MAR, but adding medications, recording administrations,
+            and discontinuations are reserved for Admin / Nurse roles.
+          </div>
+        </div>
+      )}
       {/* Title */}
       <div style={{ marginBottom:16, display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
         <div>
@@ -1154,15 +1176,24 @@ function MARPageContent({ selectedPatient }) {
                   </div>
                 )}
               </div>
-              <button onClick={() => setShowAddMed(v => !v)}
-                style={{ padding:"9px 18px", background:"#16a34a", color:"white", border:"none", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer" }}>
-                {showAddMed ? "✕ Cancel" : "+ Add Medication"}
-              </button>
+              {/* R7bb-E/D5-CRIT-2 — viewer-only roles (Doctor, Pharmacist, MRD)
+                  see a Read-only pill instead of the write CTA. */}
+              {canWriteMar ? (
+                <button onClick={() => setShowAddMed(v => !v)}
+                  style={{ padding:"9px 18px", background:"#16a34a", color:"white", border:"none", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+                  {showAddMed ? "✕ Cancel" : "+ Add Medication"}
+                </button>
+              ) : (
+                <span style={{ padding:"6px 12px", background:"#f1f5f9", color:"#475569", border:"1px solid #cbd5e1", borderRadius:999, fontSize:11, fontWeight:700, letterSpacing:".4px" }}>
+                  <i className="pi pi-eye" style={{ fontSize:10, marginRight:5 }} />
+                  READ-ONLY VIEW
+                </span>
+              )}
             </div>
           </div>
 
-          {/* Add Medication */}
-          {showAddMed && (
+          {/* Add Medication — guarded by canWriteMar so stale UI can't post. */}
+          {showAddMed && canWriteMar && (
             <div style={{ ...sectionStyle, border:"2px solid #bbf7d0", background:"#f0fdf4" }}>
               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14, paddingBottom:10, borderBottom:"1px solid #bbf7d0" }}>
                 <h3 style={{ fontWeight:700, fontSize:14, color:"#166534", margin:0 }}>Add Medication to MAR</h3>
@@ -1338,7 +1369,9 @@ function MARPageContent({ selectedPatient }) {
                         {med.specialInstructions && <p style={{ fontSize:11, color:"#d97706", margin:"4px 0 0" }}>⚠ {med.specialInstructions}</p>}
                         {!med.isActive && med.discontinueReason && <p style={{ fontSize:11, color:"#dc2626", margin:"4px 0 0" }}>Discontinued: {med.discontinueReason}</p>}
                       </div>
-                      {med.isActive && (
+                      {/* R7bb-E/D5-CRIT-2 — Record/Discontinue gated by mar.write.
+                          Pharmacist + Doctor + MRD readers see no action buttons. */}
+                      {med.isActive && canWriteMar && (
                         <div style={{ display:"flex", gap:8 }}>
                           <button onClick={() => setAdminDialog(med._id)}
                             style={{ padding:"6px 14px", background:"#1e40af", color:"white", border:"none", borderRadius:7, fontSize:12, fontWeight:600, cursor:"pointer" }}>
@@ -1405,7 +1438,7 @@ function MARPageContent({ selectedPatient }) {
               R7az-D5-CRIT-2: inline validation errors per field, surfaced
               red text below the input. Late-admin warning + reason input
               appear when the scheduled slot is > 30 min in the past. */}
-          {adminDialog && (() => {
+          {adminDialog && canWriteMar && (() => {
             const lateMin = lateMinutesFor(adminEntry.scheduledTime);
             const isLate  = lateMin > 30 && adminEntry.status === "GIVEN";
             const errStyle = { color: "#dc2626", fontSize: 10, marginTop: 4, fontWeight: 600 };

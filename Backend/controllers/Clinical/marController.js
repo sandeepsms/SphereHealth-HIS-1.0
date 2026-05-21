@@ -142,8 +142,17 @@ class MARController {
   // reason mandatory for non-GIVEN statuses (HELD/REFUSED/MISSED).
   // actualTime is always server-stamped — never trust client clocks.
   // Signature carried from req.user.signature if present.
+  //
+  // R7bb-FIX-E-19 / D3-HIGH-4: HAM (High-Alert Medication) dual-witness.
+  // When the medication's isHighAlert flag is true, the request MUST
+  // carry a SECOND nurse identifier (witnessUserId + witnessNurseName)
+  // who also holds mar.write and is a DIFFERENT user than the primary
+  // administering nurse. Pre-R7bb a single nurse could chart insulin /
+  // opioids / heparin unilaterally — an ISMP independent-double-check
+  // violation.
   recordAdministration = handle(async (req, res) => {
-    const { scheduledTime, status, nurseName, nurseStaffId, batchNumber, reason, remarks } = req.body;
+    const { scheduledTime, status, nurseName, nurseStaffId, batchNumber, reason, remarks,
+            witnessUserId, witnessNurseName, witnessNurseStaffId } = req.body;
     const finalStatus = normalizeStatus(status);
 
     // Actor + signature must be resolvable
@@ -177,6 +186,50 @@ class MARController {
       }
     }
 
+    // R7bb-FIX-E-19 / D3-HIGH-4: HAM dual-witness gate. Only enforced
+    // for the GIVEN path — HELD / REFUSED / MISSED don't trigger a
+    // physical administration and don't need the second eye.
+    let hamWitness = null;
+    if (med.isHighAlert && finalStatus === "GIVEN") {
+      if (!witnessUserId) {
+        return res.status(400).json({
+          success: false,
+          code: "HAM_WITNESS_REQUIRED",
+          message: "High-Alert Medication — second nurse witnessUserId required for independent double-check (ISMP).",
+        });
+      }
+      if (String(witnessUserId) === String(resolvedUserId)) {
+        return res.status(400).json({
+          success: false,
+          code: "HAM_WITNESS_SAME_ACTOR",
+          message: "HAM witness must be a different user than the primary administering nurse.",
+        });
+      }
+      // Confirm the witness holds mar.write.
+      try {
+        const User = require("../../models/User/userModel");
+        const { roleCan } = require("../../config/permissions");
+        const wUser = await User.findById(witnessUserId).select("role fullName employeeId").lean();
+        if (!wUser) {
+          return res.status(400).json({ success: false, code: "HAM_WITNESS_NOT_FOUND", message: "Witness user not found" });
+        }
+        if (!roleCan(wUser.role, "mar.write")) {
+          return res.status(400).json({
+            success: false,
+            code: "HAM_WITNESS_NOT_AUTHORIZED",
+            message: `Witness '${wUser.fullName}' (role: ${wUser.role}) does not hold mar.write — choose another nurse.`,
+          });
+        }
+        hamWitness = {
+          userId:    wUser._id,
+          name:      witnessNurseName || wUser.fullName || "",
+          staffId:   witnessNurseStaffId || wUser.employeeId || "",
+        };
+      } catch (e) {
+        return res.status(500).json({ success: false, message: "HAM witness validation failed: " + e.message });
+      }
+    }
+
     const entry = {
       scheduledTime,
       actualTime: new Date(),       // server-side only
@@ -188,6 +241,14 @@ class MARController {
       batchNumber,
       reason,
       remarks,
+      // R7bb-FIX-E-19: stamp both witnesses on HAM doses for audit.
+      ...(hamWitness ? {
+        administeredByUser1Id: resolvedUserId,
+        administeredByUser2Id: hamWitness.userId,
+        nurse2Name:            hamWitness.name,
+        nurse2StaffId:         hamWitness.staffId,
+        isHamDose:             true,
+      } : {}),
     };
 
     med.administrations.push(entry);

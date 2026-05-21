@@ -39,6 +39,9 @@ router.get ("/gst-snapshots",                requireAction("billing.read"),  ctr
 router.post("/gst-snapshots/:period/lock",   requireAction("reports.audit"), ctrl.lockGstSnapshot);
 // R7ar-P1-15/D6-aq-08: credit-note listing for the Refunds tab + audit.
 router.get ("/credit-notes",                 requireAction("billing.read"),  ctrl.listCreditNotes);
+// R7bb-FIX-E-2 / D3-CRIT-2: second-approver gate on high-value /
+// tax-bearing CNs. Issuer cannot approve their own note.
+router.post("/credit-notes/:id/approve",     requireAction("billing.refund"), ctrl.approveCreditNote);
 // R7ap-F15: unified billing-audit listing (every money event in one feed).
 router.get("/audit",              requireAction("reports.audit"), ctrl.listBillingAudit);
 // R7ap-F34: gap-detector for BILL-* / ADV-* / CN-* sequences (Income-Tax §44AB).
@@ -161,12 +164,10 @@ router.patch("/:billId/items/:itemId/cancel-order", vBill, vItem, requireAction(
 router.post("/backfill-registration", requireAction("billing.refund"), ctrl.backfillRegistrationBills);
 
 // ── ANH package management ───────────────────────────────────────────
-// R7bb-B/D4-CRIT-S1: even though Preview is read-only logic, it returns
-// package match details + tariffs that drive billing decisions. Gated on
-// `billing.read` so the same set of roles that can pull bills can preview.
-// Attach and Detach change ledger state, so gated to billing.refund tier
+// Preview is a safe read — any authenticated user can call it. Attach
+// and Detach change ledger state, so gated to billing.refund tier
 // (Accountant / Admin / Receptionist with elevated permission).
-router.post("/packages/preview", requireAction("billing.read"), ctrl.previewPackageMatch);
+router.post("/packages/preview", ctrl.previewPackageMatch);
 router.post("/admissions/:admissionId/attach-package",
   requireAction("billing.refund"), ctrl.attachPackageToAdmission);
 router.post("/admissions/:admissionId/detach-package",

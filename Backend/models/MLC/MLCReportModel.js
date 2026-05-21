@@ -183,11 +183,26 @@ const MLCReportSchema = new mongoose.Schema(
       index: true,
     },
     finalizedAt: { type: Date },
+    finalizedBy: { type: String, trim: true, default: "" },
+    finalizedById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     closedAt:    { type: Date },
+    closedBy:    { type: String, trim: true, default: "" },
+    closedById:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     closedReason:{ type: String, trim: true },
 
     createdBy:   { type: String, trim: true },             // user fullname
+    createdById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     createdByRole: { type: String, trim: true },
+
+    // R7bb-FIX-E-5 / D3-CRIT-5: chain-of-custody co-signer. MLCs are
+    // medico-legal documents that must carry a second clinician's
+    // attestation on finalize/close. The co-signer MUST be a different
+    // User than createdById AND must be a Doctor with designation
+    // Consultant or above (HOD). Enforced by mlcController.finalize
+    // and mlcController.close.
+    coSignedBy:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    coSignedByName: { type: String, trim: true, default: "" },
+    coSignedAt:   { type: Date, default: null },
   },
   { timestamps: true }
 );

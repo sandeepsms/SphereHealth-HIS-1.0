@@ -383,6 +383,101 @@ function BreakdownCard({ title, rows, keyField, color, icon, total, valueField =
 /* ══════════════════════════════════════════════════════════════
    GST — CGST/SGST/IGST bucket-wise for monthly returns
 ══════════════════════════════════════════════════════════════ */
+// R7bb-FIX-E-10 / D6-CRIT-7: GST monthly snapshot lock.
+// Lists the GstMonthlySnapshot rows (one per closed month) and lets the
+// Accountant lock a period once GSTR-1 has been filed for it. After
+// lock, any new CN issued against that month's bills auto-routes to
+// the current open period with a remark trail.
+function GstSnapshotLockTable() {
+  const [rows, setRows]       = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busyId, setBusyId]   = useState(null);
+
+  const load = async (signal) => {
+    setLoading(true);
+    try {
+      const r = await axios.get(`${API}/billing/gst-snapshots`, { ...authHdr(), signal });
+      if (!signal || !signal.aborted) setRows(r.data?.data || []);
+    } catch (e) {
+      if (!axios.isCancel(e) && !(signal && signal.aborted)) {
+        // Quiet failure — snapshot table may be empty pre-cron.
+      }
+    }
+    if (!signal || !signal.aborted) setLoading(false);
+  };
+  useEffect(() => {
+    const ctrl = new AbortController();
+    load(ctrl.signal);
+    return () => ctrl.abort();
+  }, []);
+
+  const lock = async (period) => {
+    if (!window.confirm(`Lock GST period ${period}? Any subsequent refund will issue a CN against the CURRENT month with an amendment note. This cannot be undone.`)) return;
+    setBusyId(period);
+    try {
+      await axios.post(`${API}/billing/gst-snapshots/${period}/lock`, {}, authHdr());
+      toast.success(`Period ${period} locked`);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Lock failed");
+    } finally { setBusyId(null); }
+  };
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <Card title="Monthly GST snapshots — lock periods filed in GSTR-1"
+            color={C.amber} icon="pi-lock"
+            right={<PrimaryButton label="Refresh" icon="pi-refresh"
+                     color={C.amber} busy={loading} onClick={() => load()} />}>
+        {!rows.length ? (
+          <Empty icon="pi-inbox"
+                 text="No snapshots yet — the gst-monthly-snapshot cron writes the previous month at 02:00 IST on the 1st." />
+        ) : (
+          <Table cols={[
+            { label: "Period" },
+            { label: "Bills", align: "right" },
+            { label: "Taxable", align: "right" },
+            { label: "CGST", align: "right" },
+            { label: "SGST", align: "right" },
+            { label: "IGST", align: "right" },
+            { label: "CNs", align: "right" },
+            { label: "Status" },
+            { label: "Action" },
+          ]}>
+            {rows.map((r) => (
+              <tr key={r.period}>
+                <td style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.period}</td>
+                <td style={{ textAlign: "right" }}>{r.billsCount}</td>
+                <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{fmtINR2(r.taxableValue ?? r.grossSupply)}</td>
+                <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{fmtINR2(r.cgstOut)}</td>
+                <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{fmtINR2(r.sgstOut)}</td>
+                <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{fmtINR2(r.igstOut)}</td>
+                <td style={{ textAlign: "right" }}>{r.creditNotesCount}</td>
+                <td>{r.lockedAt
+                  ? <Badge value={`LOCKED ${new Date(r.lockedAt).toLocaleDateString("en-IN")}`} palette={C.red} />
+                  : <Badge value="OPEN" palette={C.green} />}</td>
+                <td>
+                  {r.lockedAt ? (
+                    <span style={{ fontSize: 11, color: C.muted }}>By {r.lockedBy || "—"}</span>
+                  ) : (
+                    <button onClick={() => lock(r.period)}
+                            disabled={busyId === r.period}
+                            style={{ padding: "4px 12px", borderRadius: 6, border: `1px solid ${C.red}`,
+                                     background: busyId === r.period ? C.muted + "20" : C.red, color: "#fff",
+                                     fontSize: 11, fontWeight: 800, cursor: busyId === r.period ? "wait" : "pointer" }}>
+                      <i className={`pi ${busyId === r.period ? "pi-spin pi-spinner" : "pi-lock"}`} /> Lock Period
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 function GSTTab() {
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo]     = useState(todayISO());
@@ -458,6 +553,11 @@ function GSTTab() {
         <KPI label="SGST"           value={fmtINR(grandTotals.sgst)}    color={C.amber}  icon="pi-percentage" />
         <KPI label="Net tax"        value={fmtINR(grandTotals.total)}   color={C.green}  icon="pi-money-bill" />
       </div>
+
+      {/* R7bb-FIX-E-10 / D6-CRIT-7: monthly snapshot lock register.
+          One row per frozen month — Accountant locks once GSTR-1 is
+          filed so subsequent CNs route to the open period. */}
+      <GstSnapshotLockTable />
 
       <Card title="Pharmacy GST · bucket-wise" color={C.purple} icon="pi-list">
         {buckets.length === 0 ? (
@@ -768,16 +868,31 @@ function AllBillsTab() {
                   <td style={{ fontWeight: 700 }}>{b.patientName || b.UHID || "—"}</td>
                   <td style={{ color: C.muted, fontSize: 11.5 }}>{b.createdAt ? new Date(b.createdAt).toLocaleDateString("en-IN") : "—"}</td>
                   <td style={{ color: C.muted, fontSize: 11.5 }}>{b.visitType || "—"}</td>
-                  <td style={{ color: C.muted, fontSize: 11.5 }}>{b.paymentType || "—"}</td>
+                  <td style={{ color: C.muted, fontSize: 11.5 }}>
+                    {b.paymentType || "—"}
+                    {b.paymentType === "TPA" && b.tpaApprovedAmount > 0 && (
+                      <span style={{ marginLeft: 6, fontSize: 10, color: C.green }}>
+                        ✓ {fmtINR2(b.tpaApprovedAmount)}
+                      </span>
+                    )}
+                  </td>
                   <td><Badge value={b.billStatus || "—"} /></td>
                   <td style={{ textAlign: "right" }}>{fmtINR2(b.netAmount ?? b.totalAmount ?? 0)}</td>
                   <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR2(b.advancePaid ?? b.totalPaid ?? 0)}</td>
-                  <td>
+                  <td style={{ display: "flex", gap: 4 }}>
                     {/* R7ap-F4: route /billing/view/:id deleted — use UHID workflow page */}
                     <button onClick={() => navigate(`/reception-billing/${b.UHID}`)}
                       style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                       Open
                     </button>
+                    {/* R7bb-FIX-E-7 / D6-CRIT-4: jump to TPA Cases settle modal */}
+                    {(b.paymentType === "TPA" || b.paymentType === "CORPORATE") &&
+                     (b.tpaClaimStatus === "APPROVED" || b.tpaClaimStatus === "PARTIAL_APPROVED") && (
+                      <button onClick={() => navigate(`/tpa-cases?settle=${b._id}`)}
+                        style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.green}40`, background: C.green + "10", color: C.green, fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+                        <i className="pi pi-wallet" /> Settle
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

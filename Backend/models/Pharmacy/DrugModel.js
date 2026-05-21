@@ -50,6 +50,11 @@ const DrugSchema = new mongoose.Schema(
     defaultSalePrice: { type: Number, default: 0 },     // fallback if batch has no price
 
     // Flags
+    // R7bb-FIX-E-19/D3-HIGH-4: isHighAlert is the canonical HAM
+    // (High-Alert Medication) flag — when true, MAR.recordAdministration
+    // demands TWO different nurse signatures (independent double-check
+    // per ISMP guidance) before the dose can be recorded as GIVEN.
+    // Pre-R7bb the flag existed but MAR didn't enforce dual-witness.
     isHighAlert:  { type: Boolean, default: false },    // insulin, opioids, anti-coagulants
     isLASA:       { type: Boolean, default: false },    // look-alike-sound-alike
     isNarcotic:   { type: Boolean, default: false },

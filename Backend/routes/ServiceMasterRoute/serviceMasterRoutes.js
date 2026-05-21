@@ -19,6 +19,11 @@ const { requireAction, adminOnly } = require("../../middleware/auth");
 
 // ── Service catalog routes ────────────────────────────────────
 router.get("/grouped",        requireAction("services.read"), ctrl.getGrouped); // GET  /api/services/grouped?domain=IPD&applicableTo=IPD
+// R7bb-FIX-E-16: price-change requests must be registered BEFORE
+// the generic /:id GET so the literal segment doesn't get swallowed.
+router.get ("/price-change-requests",          requireAction("departments.write"), ctrl.listPriceChangeRequests);
+router.post("/price-change-requests/:id/approve", requireAction("departments.write"), ctrl.approvePriceChangeRequest);
+router.post("/price-change-requests/:id/reject",  requireAction("departments.write"), ctrl.rejectPriceChangeRequest);
 router.get("/",               requireAction("services.read"), ctrl.getAll); // GET  /api/services?category=ROOM&domain=IPD
 router.get("/:id/pricing",    requireAction("services.read"), ctrl.getPricing); // GET  /api/services/:id/pricing
 router.get("/:id",            requireAction("services.read"), ctrl.getById); // GET  /api/services/:id

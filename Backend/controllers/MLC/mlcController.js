@@ -6,7 +6,9 @@
  * the front-desk and admin dashboards work too.
  */
 const mlcService = require("../../services/MLC/mlcService");
+const MLC = require("../../models/MLC/MLCReportModel");
 const Doctor = require("../../models/Doctor/doctorModel");
+const User = require("../../models/User/userModel");
 
 // R7az-D9-HIGH-4: Doctor users cannot override the doctorId scope by
 // passing `?doctorId=<some-other-doctor>` in the query string — we
@@ -25,6 +27,9 @@ const scopeFilters = (req, filters = {}) => {
 const actorFrom = (req) => ({
   fullName: req.user?.fullName || req.user?.firstName || "",
   role:     req.user?.role || "",
+  // R7bb-FIX-E-5: forward the actor id to the service so MLC.createdById
+  // is populated — required for the finalize / close SoD check.
+  id:       req.user?._id || req.user?.id || null,
 });
 
 exports.createMLC = async (req, res) => {
@@ -113,6 +118,121 @@ exports.deleteMLC = async (req, res) => {
     // deleted" — surface that distinct status instead of a blanket 500.
     const code = e.statusCode || 500;
     res.status(code).json({ success: false, message: e.message });
+  }
+};
+
+// R7bb-FIX-E-5 / D3-CRIT-5: MLC finalize + close demand chain-of-custody.
+// The actor finalizing or closing MUST be a DIFFERENT user than the
+// original creator AND must be a Doctor with designation Consultant or
+// HOD (the senior tier authorised to attest a medico-legal document).
+//
+// POST /api/mlc/:idOrMlr/finalize  { coSignedBy?, opinion? }
+//   coSignedBy is the actor themselves — we derive from req.user. The
+//   field on the request body is reserved for an optional name override
+//   (e.g. "Dr. R. Singh acting for self") but the id is always req.user.
+exports.finalize = async (req, res) => {
+  try {
+    const existing = await loadAndAuthorize(req, res);
+    if (!existing) return; // response already sent
+    if (existing.status === "Closed") {
+      return res.status(409).json({ success: false, message: `MLC ${existing.mlrNumber} is already Closed.` });
+    }
+    if (existing.status === "Finalized") {
+      return res.status(409).json({ success: false, message: `MLC ${existing.mlrNumber} is already Finalized.` });
+    }
+    // SoD — actor must differ from createdById.
+    const actorId = String(req.user?._id || req.user?.id || "");
+    if (existing.createdById && String(existing.createdById) === actorId) {
+      return res.status(409).json({
+        success: false,
+        code: "SAME_ACTOR",
+        message: "SAME_ACTOR — MLC finalize must be done by a different user than the creator",
+      });
+    }
+    // Senior-tier: Doctor + designation Consultant / HOD.
+    if (req.user?.role !== "Doctor" && req.user?.role !== "Admin") {
+      return res.status(403).json({ success: false, message: "Only Doctor / Admin can finalize an MLC" });
+    }
+    if (req.user?.role === "Doctor") {
+      const u = await User.findById(req.user._id || req.user.id)
+        .select("doctorDetails.designation").lean();
+      const desig = u?.doctorDetails?.designation || "";
+      const SENIOR = new Set(["Consultant", "HOD"]);
+      if (!SENIOR.has(desig)) {
+        return res.status(403).json({
+          success: false,
+          code: "DESIGNATION_REQUIRED",
+          message: `Finalize requires Consultant / HOD designation; your designation is '${desig || "—"}'.`,
+        });
+      }
+    }
+    const patch = {
+      status: "Finalized",
+      finalizedAt: new Date(),
+      finalizedBy:    req.user.fullName || req.user.employeeId || "",
+      finalizedById:  req.user._id || req.user.id || null,
+      coSignedBy:     req.user._id || req.user.id || null,
+      coSignedByName: req.body?.coSignedBy || req.user.fullName || "",
+      coSignedAt:     new Date(),
+      ...(req.body?.opinion ? { opinion: req.body.opinion } : {}),
+    };
+    const doc = await MLC.findOneAndUpdate(
+      { _id: existing._id, status: { $ne: "Closed" } },
+      { $set: patch },
+      { new: true, runValidators: true },
+    );
+    res.json({ success: true, data: doc });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
+
+// POST /api/mlc/:idOrMlr/close  { closedReason }
+exports.close = async (req, res) => {
+  try {
+    const existing = await loadAndAuthorize(req, res);
+    if (!existing) return;
+    if (existing.status === "Closed") {
+      return res.status(409).json({ success: false, message: `MLC ${existing.mlrNumber} is already Closed.` });
+    }
+    if (!String(req.body?.closedReason || "").trim()) {
+      return res.status(400).json({ success: false, message: "closedReason is required" });
+    }
+    const actorId = String(req.user?._id || req.user?.id || "");
+    if (existing.createdById && String(existing.createdById) === actorId) {
+      return res.status(409).json({
+        success: false,
+        code: "SAME_ACTOR",
+        message: "SAME_ACTOR — MLC close must be done by a different user than the creator",
+      });
+    }
+    if (req.user?.role !== "Doctor" && req.user?.role !== "Admin") {
+      return res.status(403).json({ success: false, message: "Only Doctor / Admin can close an MLC" });
+    }
+    if (req.user?.role === "Doctor") {
+      const u = await User.findById(req.user._id || req.user.id)
+        .select("doctorDetails.designation").lean();
+      const desig = u?.doctorDetails?.designation || "";
+      const SENIOR = new Set(["Consultant", "HOD"]);
+      if (!SENIOR.has(desig)) {
+        return res.status(403).json({
+          success: false,
+          code: "DESIGNATION_REQUIRED",
+          message: `Close requires Consultant / HOD designation; your designation is '${desig || "—"}'.`,
+        });
+      }
+    }
+    const patch = {
+      status: "Closed",
+      closedAt: new Date(),
+      closedBy:   req.user.fullName || req.user.employeeId || "",
+      closedById: req.user._id || req.user.id || null,
+      closedReason: String(req.body.closedReason).trim(),
+    };
+    const doc = await MLC.findByIdAndUpdate(existing._id, { $set: patch }, { new: true });
+    res.json({ success: true, data: doc });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
   }
 };
 

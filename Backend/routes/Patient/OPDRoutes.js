@@ -9,21 +9,24 @@ const { attachDoctorProfile, requireAction } = require("../../middleware/auth");
 // can auto-restrict to "only this doctor's patients" when role === Doctor.
 router.use(attachDoctorProfile);
 
-// R7bb-B/D4-CRIT-S1: every GET on /api/opd now requires `patient.read`
-// (same gate as parent /api/patients). Pre-R7bb any authenticated role
-// (Ward Boy, Housekeeping, Security) could pull the OPD queue / followup
-// list / per-department visit roster — exposes diagnosis + complaint text.
+// R7bb-FIX-C-1/S1 (D4-CRIT): every GET on /api/opd now requires the
+// narrower `opd.read` (Admin / Doctor / Nurse / Receptionist) instead of
+// the wider `patient.read` (9 roles). The OPD queue + per-visit detail
+// exposes diagnosis + complaint + Rx text — Pharmacist / Lab Tech /
+// Dietician / TPA / Accountant do not need to enumerate the queue. The
+// narrower token also stops Ward Boy / Housekeeping / Security from
+// hitting these endpoints with their valid JWTs.
 
 // ── Specific non-param routes FIRST ──────────────────────────────
-router.get("/today",        requireAction("patient.read"), opdController.getTodayVisits);
-router.get("/followup-due", requireAction("patient.read"), opdController.getFollowUpDue);
+router.get("/today",        requireAction("opd.read"), opdController.getTodayVisits);
+router.get("/followup-due", requireAction("opd.read"), opdController.getFollowUpDue);
 
 // ── Filtered list routes ──────────────────────────────────────────
-router.get("/department/:departmentId", requireAction("patient.read"), opdController.getVisitsByDepartment);
-router.get("/doctor/:doctorId",         requireAction("patient.read"), opdController.getVisitsByDoctor);
+router.get("/department/:departmentId", requireAction("opd.read"), opdController.getVisitsByDepartment);
+router.get("/doctor/:doctorId",         requireAction("opd.read"), opdController.getVisitsByDoctor);
 
 // ── Patient history ───────────────────────────────────────────────
-router.get("/patient/:patientId", requireAction("patient.read"), opdController.getPatientOPDHistory);
+router.get("/patient/:patientId", requireAction("opd.read"), opdController.getPatientOPDHistory);
 
 // ── CRUD ─────────────────────────────────────────────────────────
 // R7ab: visit creation/edit/delete now gated. Previously every
@@ -31,10 +34,15 @@ router.get("/patient/:patientId", requireAction("patient.read"), opdController.g
 // because only the parent /api/patients had reception.register. Adding
 // visits on an existing patient bypassed that gate.
 router.post("/",    requireAction("reception.register"), opdController.createOPDVisit);
-router.get("/",     requireAction("patient.read"), opdController.getAllOPDVisits);
-router.get("/:visitNumber",   requireAction("patient.read"), opdController.getOPDVisitById);
+router.get("/",     requireAction("opd.read"), opdController.getAllOPDVisits);
+router.get("/:visitNumber",   requireAction("opd.read"), opdController.getOPDVisitById);
 router.put("/:visitNumber",   requireAction("reception.register"), opdController.updateOPDVisit);
-router.delete("/:visitNumber", requireAction("reception.register"), opdController.deleteOPDVisit);
+// R7bb-FIX-C-11/D2-HIGH-2: DELETE on an OPD visit record is a clinical
+// deletion — only Admin and Doctor should perform it. Pre-R7bb the gate
+// was `reception.register` which let any front-desk staffer wipe a visit
+// record without the clinician's sign-off (clinical history loss + audit
+// trail break). `opd.delete` = [Admin, Doctor].
+router.delete("/:visitNumber", requireAction("opd.delete"), opdController.deleteOPDVisit);
 
 // ── Nurse vitals & status ─────────────────────────────────────────
 router.patch("/:visitNumber/vitals",  requireAction("vitals.write"),    opdController.updateVitals);
@@ -42,7 +50,7 @@ router.patch("/:visitNumber/status",  requireAction("reception.register"), opdCo
 
 // ── Doctor OPD Assessment + Audit Trail ──────────────────────────
 router.post("/:visitNumber/assessment",  requireAction("rx.write"), opdController.saveAssessment);
-router.get ("/:visitNumber/audit-trail", requireAction("patient.read"), opdController.getOPDauditTrail);
+router.get ("/:visitNumber/audit-trail", requireAction("opd.read"), opdController.getOPDauditTrail);
 
 // ── Investigations & prescriptions ───────────────────────────────
 router.post("/:visitNumber/investigation",         requireAction("lab.order"), opdController.addInvestigation);

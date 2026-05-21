@@ -7,6 +7,15 @@ const { requireAction } = require("../../middleware/auth");
    doctor can suggest a panel from the order page too. */
 router.get("/panels",       requireAction("lab.records.read"), ctrl.panels);
 router.get("/report-types", requireAction("lab.records.read"), ctrl.reportTypes);
+// R7bb-FIX-E-8 / E-18: custom panel CRUD + merged view.
+router.get   ("/panels/all",        requireAction("lab.records.read"),  ctrl.panelsMerged);
+router.post  ("/panels",            requireAction("lab.records.write"), ctrl.panelCreate);
+router.put   ("/panels/:code",      requireAction("lab.records.write"), ctrl.panelUpdate);
+router.delete("/panels/:code",      requireAction("lab.records.write"), ctrl.panelDelete);
+// R7bb-FIX-E-8 / D6-CRIT-5: QC log — list + create. POST is Lab Tech /
+// Admin; list reachable to Doctor / Nurse for context.
+router.get   ("/qc",                requireAction("lab.records.read"),  ctrl.qcList);
+router.post  ("/qc",                requireAction("lab.records.write"), ctrl.qcCreate);
 
 /* Trend sheets */
 router.get  ("/trends",         requireAction("lab.records.read"),  ctrl.trendList);

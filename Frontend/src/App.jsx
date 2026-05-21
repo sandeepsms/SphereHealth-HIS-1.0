@@ -114,6 +114,10 @@ const ReceptionDashboard = lazy(() => import("./pages/reception/ReceptionDashboa
 const DischargeQueue        = lazy(() => import("./pages/reception/DischargeQueue"));
 const VisitorPasses         = lazy(() => import("./pages/reception/VisitorPasses"));
 const TPACases              = lazy(() => import("./pages/reception/TPACases"));
+// R7bb-FIX-E-6 / D6-CRIT-3: Receptionist-facing cashier shift / closing
+// report. Wraps the Accounts ShiftTab so a Receptionist can open + close
+// their drawer without holding Admin/Accountant access to /accounts.
+const ReceptionShiftReport  = lazy(() => import("./pages/reception/ReceptionShiftReport"));
 const Appointments          = lazy(() => import("./pages/reception/Appointments"));
 // ReceptionPatientSearch + ReceptionVisitHistory deleted 2026-05-17 —
 // both superseded by PatientLookupPage. Routes /patient-search and
@@ -323,9 +327,17 @@ function AppLayout({ collapsed, setCollapsed }) {
               <RoleGuard action="doctors.write"><DoctorFormPage /></RoleGuard>
             } />
 
-            {/* ── Nursing ──────────────────────────────────────── */}
-            <Route path="/nursing-notes" element={<NursingNotes />} />
-            <Route path="/nursing-handover-notes" element={<NursingHandoverNotes />} />
+            {/* ── Nursing ────────────────────────────────────────
+                R7bb-E/D5-HIGH-2 — Wrap all nursing write surfaces in
+                mar.write so non-nursing roles (Pharmacist, Lab Tech,
+                Receptionist) hit a clean Access Denied instead of
+                loading a page with disabled buttons everywhere. */}
+            <Route path="/nursing-notes" element={
+              <RoleGuard action="mar.write"><NursingNotes /></RoleGuard>
+            } />
+            <Route path="/nursing-handover-notes" element={
+              <RoleGuard action="mar.write"><NursingHandoverNotes /></RoleGuard>
+            } />
 
             {/* ── OPD ──────────────────────────────────────────── */}
             <Route path="/opd/:UHID" element={<OPDPrint />} />
@@ -338,12 +350,24 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/opd-details/:visitNumber" element={<OPDDetails />} />
 
             {/* ── Emergency ─────────────────────────────────────── */}
-            <Route path="/emergency-assessment" element={<EmergencyAssessmentPage />} />
-            <Route path="/emergency-assessment/:uhid" element={<EmergencyAssessmentPage />} />
+            {/* R7bb-E/D5-HIGH-2 — emergency-assessment posts doctor orders,
+                gate by doctor-orders.write (Admin/Doctor). */}
+            <Route path="/emergency-assessment" element={
+              <RoleGuard action="doctor-orders.write"><EmergencyAssessmentPage /></RoleGuard>
+            } />
+            <Route path="/emergency-assessment/:uhid" element={
+              <RoleGuard action="doctor-orders.write"><EmergencyAssessmentPage /></RoleGuard>
+            } />
             <Route path="/emergency" element={<Emergencylist />} />
-            {/* Medico-Legal Cases — doctors land here to record/issue MLR-stamped reports */}
-            <Route path="/mlc" element={<MLCPage />} />
-            <Route path="/mlc/:mlrNumber" element={<MLCPage />} />
+            {/* R7bb-E/D5-HIGH-2 — MLC sees PHI + writes medico-legal records;
+                gate by mlc.read (Admin/Doctor/Nurse). The page itself further
+                gates the "issue MLR" CTA by mlc.write. */}
+            <Route path="/mlc" element={
+              <RoleGuard action="mlc.read"><MLCPage /></RoleGuard>
+            } />
+            <Route path="/mlc/:mlrNumber" element={
+              <RoleGuard action="mlc.read"><MLCPage /></RoleGuard>
+            } />
             {/* /emergency/register moved to /reception (see below) */}
             <Route path="/emergency/new" element={<Navigate to="/reception" replace />} />
             <Route path="/emergency/edit/:emergencyNumber" element={<Navigate to="/reception" replace />} />
@@ -485,10 +509,19 @@ function AppLayout({ collapsed, setCollapsed }) {
               }
             />
 
-            {/* ── Reception Console (single-window registration) ── */}
+            {/* ── Reception Console (single-window registration) ──
+                R7bb-FIX-D-16 / D5-MED-3 — register / appointment / console
+                surfaces all mutate patient + admission state via reception
+                APIs, gate them by reception.register so Doctor / Nurse /
+                Pharmacist / Lab Tech don't see a half-loaded form before
+                the API 403s. Read-only Reception dashboard stays open. */}
             <Route path="/reception" element={<ReceptionDashboard />} />
-            <Route path="/reception/register" element={<ReceptionConsole />} />
-            <Route path="/reception-console" element={<ReceptionConsole />} />
+            <Route path="/reception/register" element={
+              <RoleGuard action="reception.register"><ReceptionConsole /></RoleGuard>
+            } />
+            <Route path="/reception-console" element={
+              <RoleGuard action="reception.register"><ReceptionConsole /></RoleGuard>
+            } />
             <Route path="/discharge-queue" element={
               <RoleGuard action="reception.discharge"><DischargeQueue /></RoleGuard>
             } />
@@ -504,7 +537,15 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/tpa-cases" element={
               <RoleGuard allow={["Admin", "TPA Coordinator", "Receptionist", "Accountant"]}><TPACases /></RoleGuard>
             } />
-            <Route path="/appointments" element={<Appointments />} />
+            {/* R7bb-FIX-E-6 / D6-CRIT-3: Receptionist closing report (cashier shift) */}
+            <Route path="/reception/closing-report" element={
+              <RoleGuard allow={["Admin", "Receptionist", "Accountant"]}><ReceptionShiftReport /></RoleGuard>
+            } />
+            {/* R7bb-FIX-D-16 / D5-MED-3 — appointment slot booking is a
+                reception-only surface; gate by reception.register. */}
+            <Route path="/appointments" element={
+              <RoleGuard action="reception.register"><Appointments /></RoleGuard>
+            } />
             {/* Receptionist-flavored versions of shared modules */}
             {/* All three legacy patient-lookup routes now mount the unified
                 PatientLookupPage. /patient-search lands on the live-search
@@ -527,7 +568,11 @@ function AppLayout({ collapsed, setCollapsed }) {
 
             {/* ── Clinical pages ── */}
             <Route path="/opd-queue" element={<NurseOPDQueuePage />} />
-            <Route path="/nurse-patient-panel" element={<NursePatientPanel />} />
+            {/* R7bb-FIX-D-19 / D5-MED-6 — Nurse / Doctor patient panels read
+                full clinical file; gate by patient-file.read. */}
+            <Route path="/nurse-patient-panel" element={
+              <RoleGuard action="patient-file.read"><NursePatientPanel /></RoleGuard>
+            } />
             <Route path="/doctor-opd-panel" element={<DoctorOPDPanelPage />} />
             {/* Legacy clinical-history route — same destination, "timeline"
                 tab. /patient-history/:uhid still works the same way thanks
@@ -559,11 +604,22 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/consent-forms" element={
               <RoleGuard action="consent.write"><ConsentFormPage /></RoleGuard>
             } />
-            <Route path="/nurse-initial-assessment" element={<NurseInitialAssessmentPage />} />
-            <Route path="/ipd-initial-assessment" element={<IPDInitialAssessmentPage />} />
+            {/* R7bb-E/D5-HIGH-2 — Nursing assessment writes gated by mar.write
+                (Admin/Nurse). Doctor still has POST gates server-side via the
+                doctor-orders flow; assessment forms are nurse-driven. */}
+            <Route path="/nurse-initial-assessment" element={
+              <RoleGuard action="mar.write"><NurseInitialAssessmentPage /></RoleGuard>
+            } />
+            <Route path="/ipd-initial-assessment" element={
+              <RoleGuard action="mar.write"><IPDInitialAssessmentPage /></RoleGuard>
+            } />
             {/* Alias — many pages link to /ipd-assessment which is the same flow */}
-            <Route path="/ipd-assessment" element={<IPDInitialAssessmentPage />} />
-            <Route path="/ipd-assessment/:uhid" element={<IPDInitialAssessmentPage />} />
+            <Route path="/ipd-assessment" element={
+              <RoleGuard action="mar.write"><IPDInitialAssessmentPage /></RoleGuard>
+            } />
+            <Route path="/ipd-assessment/:uhid" element={
+              <RoleGuard action="mar.write"><IPDInitialAssessmentPage /></RoleGuard>
+            } />
 
             {/* Investigation / Lab — used by Lab Tech, Radiologist, Doctor */}
             <Route path="/investigation-orders" element={
@@ -582,15 +638,34 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/opd-assessment" element={
               <RoleGuard action="doctor-orders.write"><OPDAssessmentPage /></RoleGuard>
             } />
-            <Route path="/doctor-patient-panel" element={<DoctorPatientPanel />} />
+            {/* R7bb-FIX-D-19 / D5-MED-6 — Doctor patient panel reads full
+                clinical file; gate by patient-file.read. */}
+            <Route path="/doctor-patient-panel" element={
+              <RoleGuard action="patient-file.read"><DoctorPatientPanel /></RoleGuard>
+            } />
             <Route path="/doctor-notes" element={<DoctorNotesPage />} />
-            <Route path="/nursing-care-plan" element={<NursingCarePlanPage />} />
-            <Route path="/fall-risk-assessment" element={<FallRiskAssessmentPage />} />
-            <Route path="/pressure-area-care" element={<PressureAreaCarePage />} />
-            <Route path="/pain-assessment" element={<PainAssessmentPage />} />
-            <Route path="/nutritional-assessment" element={<NutritionalAssessmentPage />} />
-            <Route path="/daily-nursing-assessment" element={<DailyNursingAssessmentPage />} />
-            <Route path="/patient-education" element={<PatientEducationPage />} />
+            {/* R7bb-E/D5-HIGH-2 — Nursing assessment writes gated by mar.write. */}
+            <Route path="/nursing-care-plan" element={
+              <RoleGuard action="mar.write"><NursingCarePlanPage /></RoleGuard>
+            } />
+            <Route path="/fall-risk-assessment" element={
+              <RoleGuard action="mar.write"><FallRiskAssessmentPage /></RoleGuard>
+            } />
+            <Route path="/pressure-area-care" element={
+              <RoleGuard action="mar.write"><PressureAreaCarePage /></RoleGuard>
+            } />
+            <Route path="/pain-assessment" element={
+              <RoleGuard action="mar.write"><PainAssessmentPage /></RoleGuard>
+            } />
+            <Route path="/nutritional-assessment" element={
+              <RoleGuard action="mar.write"><NutritionalAssessmentPage /></RoleGuard>
+            } />
+            <Route path="/daily-nursing-assessment" element={
+              <RoleGuard action="mar.write"><DailyNursingAssessmentPage /></RoleGuard>
+            } />
+            <Route path="/patient-education" element={
+              <RoleGuard action="mar.write"><PatientEducationPage /></RoleGuard>
+            } />
 
             {/* ── Admin ───────────────────────────────────────────
                  Sensitive routes are wrapped in <RoleGuard> so non-admins

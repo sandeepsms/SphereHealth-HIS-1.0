@@ -189,6 +189,18 @@ const InvestigationOrderSchema = new mongoose.Schema(
     cancelledAt: { type: Date },
     cancelledBy: { type: String },
     cancellationReason: { type: String },
+    // R7bb-FIX-E-13 / D6-HIGH-3: retest linkage. When a lab order is
+    // re-run (typically because the original sample hemolysed or the
+    // result didn't fit the clinical picture), the new InvestigationOrder
+    // carries parentOrderId so the trail (lineage of retests) is auditable
+    // and the lab can see "this is run #2, original is XYZ".
+    parentOrderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "InvestigationOrder",
+      default: null,
+      index: true,
+    },
+    retestReason: { type: String, trim: true, default: "" },
   },
   {
     timestamps: true,

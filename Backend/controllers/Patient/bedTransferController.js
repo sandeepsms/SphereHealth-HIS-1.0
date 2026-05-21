@@ -154,6 +154,20 @@ exports.completeHandover = async (req, res) => {
       });
     }
 
+    // R7bb-FIX-E-20: SoD — the nurse completing the handover MUST be a
+    // different user than the doctor who initiated the transfer. Pre-R7bb
+    // a single user with both gates (doctor.write + nursing.handover) could
+    // bypass the four-eyes intent of the two-step workflow.
+    const initiatorId = String(transfer.requestedById || "");
+    const completerId = String(req.user?._id || req.user?.id || "");
+    if (initiatorId && completerId && initiatorId === completerId) {
+      return res.status(409).json({
+        success: false,
+        code: "SAME_ACTOR",
+        message: "SAME_ACTOR — handover completion must be done by a different user than the transfer initiator",
+      });
+    }
+
     // Perform the actual bed switch directly. NOTE: handover is now
     // ordered to minimise the "patient in two beds" / "bed orphaned"
     // window if a step fails mid-sequence (re-audit r7 follow-up):
