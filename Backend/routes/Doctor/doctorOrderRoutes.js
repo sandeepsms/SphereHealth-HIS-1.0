@@ -1,5 +1,9 @@
 const router   = require("express").Router();
 const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
+// R7m: Apply role-based action gates to every write route. Reads stay
+// open (any authenticated clinician can view orders). Writes are
+// scoped to the appropriate role per Backend/config/permissions.js.
+const { requireAction, adminOnly } = require("../../middleware/auth");
 
 /* ─────────────────────────────────────────────────────
    NABH High Alert Medication detection (shared util)
@@ -23,8 +27,8 @@ const checkHAM = (name = "") => HAM_KW.some(k => (name || "").toLowerCase().incl
    DOCTOR ROUTES
 ═══════════════════════════════════════════════════ */
 
-// POST / — create single order
-router.post("/", async (req, res) => {
+// POST / — create single order (Doctor / Admin only)
+router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
   try {
     const body = req.body;
     // Auto-set HAM flags
@@ -58,7 +62,7 @@ router.post("/", async (req, res) => {
 // when only 3 actually inserted, and the missing 2 quietly disappeared.
 // Now we report inserted + failed counts with reasons so the UI can flag
 // the bad rows.
-router.post("/bulk", async (req, res) => {
+router.post("/bulk", requireAction("doctor-orders.write"), async (req, res) => {
   try {
     const { orders } = req.body;
     if (!Array.isArray(orders) || !orders.length)
@@ -112,7 +116,11 @@ router.post("/bulk", async (req, res) => {
 });
 
 // GET / — list orders. Query: UHID, visitId, status (comma-sep), orderType
-router.get("/", async (req, res) => {
+// R7bb-B/D4-CRIT-S1: gated on `doctor-notes.read` (Admin / Doctor / Nurse /
+// MRD). Pre-R7bb any authenticated role could pull every active doctor
+// order (medication name + dose + HAM flag + administration record) for
+// any patient.
+router.get("/", requireAction("doctor-notes.read"), async (req, res) => {
   try {
     const { UHID, visitId, status, orderType } = req.query;
     const filter = {};
@@ -128,7 +136,7 @@ router.get("/", async (req, res) => {
 });
 
 // GET /:id — single order
-router.get("/:id", async (req, res) => {
+router.get("/:id", requireAction("doctor-notes.read"), async (req, res) => {
   try {
     const order = await DoctorOrder.findById(req.params.id);
     if (!order) return res.status(404).json({ ok: false, message: "Not found" });
@@ -153,7 +161,7 @@ const PATCH_ALLOWED = new Set([
   "holdUntil", "holdReason", "delayReason",
   "remarks", "priority",
 ]);
-router.patch("/:id", async (req, res) => {
+router.patch("/:id", requireAction("doctor-orders.write"), async (req, res) => {
   try {
     const safe = {};
     for (const [k, v] of Object.entries(req.body || {})) {
@@ -176,7 +184,7 @@ router.patch("/:id", async (req, res) => {
    NURSE — STEP COMPLETION
 ═══════════════════════════════════════════════════ */
 // POST /:id/step — nurse completes a workflow step
-router.post("/:id/step", async (req, res) => {
+router.post("/:id/step", requireAction("order.acknowledge"), async (req, res) => {
   try {
     const { step, doneBy, notes, totalSteps } = req.body;
     if (!step || !doneBy) return res.status(400).json({ ok: false, message: "step and doneBy required" });
@@ -222,7 +230,7 @@ router.post("/:id/step", async (req, res) => {
  *   adverseEvent?, adverseDetails?,
  * }
  */
-router.post("/:id/administer", async (req, res) => {
+router.post("/:id/administer", requireAction("mar.write"), async (req, res) => {
   try {
     const order = await DoctorOrder.findById(req.params.id);
     if (!order) return res.status(404).json({ ok: false, message: "Not found" });
@@ -353,7 +361,7 @@ router.post("/:id/administer", async (req, res) => {
  * POST /:id/infusion-rate
  * Body: { changedBy, oldRate, newRate, reason, reasonDetail?, verifiedBy?, doctorInformed?, doctorName? }
  */
-router.post("/:id/infusion-rate", async (req, res) => {
+router.post("/:id/infusion-rate", requireAction("mar.write"), async (req, res) => {
   try {
     const { changedBy, oldRate, newRate, reason, reasonDetail, verifiedBy, doctorInformed, doctorName } = req.body;
     if (!changedBy || !newRate || !reason)
@@ -398,7 +406,7 @@ router.post("/:id/infusion-rate", async (req, res) => {
  * POST /:id/infusion-monitor
  * Body: { nurse, currentRate?, bp?, pulse?, spo2?, urineOutput?, volumeInfused?, siteCondition?, action?, remarks? }
  */
-router.post("/:id/infusion-monitor", async (req, res) => {
+router.post("/:id/infusion-monitor", requireAction("mar.write"), async (req, res) => {
   try {
     const { nurse, currentRate, bp, pulse, spo2, urineOutput, volumeInfused, siteCondition, action, remarks } = req.body;
     if (!nurse) return res.status(400).json({ ok: false, message: "nurse required" });
@@ -434,7 +442,7 @@ router.post("/:id/infusion-monitor", async (req, res) => {
  *   }
  * }
  */
-router.post("/:id/doctor-action", async (req, res) => {
+router.post("/:id/doctor-action", requireAction("order.stop"), async (req, res) => {
   try {
     const { type, doneBy, reason, reasonDetail, holdUntil, orderDetails, substituteWith } = req.body;
     if (!type || !doneBy)
@@ -546,7 +554,10 @@ router.post("/:id/doctor-action", async (req, res) => {
  * Body: { UHID, patientName, visitId, createdBy }
  * Creates a realistic set of medication + infusion orders for demo
  */
-router.post("/seed-demo", async (req, res) => {
+// R7m: Demo seeder is intentionally gated to Admin so a logged-in
+// receptionist or nurse can't inject fake orders into the system in
+// production.
+router.post("/seed-demo", adminOnly, async (req, res) => {
   try {
     const { UHID, patientName, visitId, createdBy = "Dr. Demo" } = req.body;
     if (!UHID) return res.status(400).json({ ok: false, message: "UHID required" });
@@ -668,7 +679,7 @@ router.post("/seed-demo", async (req, res) => {
 });
 
 // DELETE /:id — cancel order
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireAction("doctor-orders.write"), async (req, res) => {
   try {
     await DoctorOrder.findByIdAndUpdate(req.params.id, { status: "Cancelled" });
     res.json({ ok: true, message: "Order cancelled" });

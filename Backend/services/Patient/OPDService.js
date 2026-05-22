@@ -1,14 +1,36 @@
 const OPD       = require("../../models/Patient/OPDModels");
 const Patient   = require("../../models/Patient/patientModel");
 const Admission = require("../../models/Patient/admissionModel");
+const { nextSequence } = require("../../utils/counter");
 
 // ── Generate OPD admission number ──────────────────────────────────────────
+// R7bd-A-7 / A1-HIGH-8 — atomic via utils/counter.
+// Pre-R7bd this used `findOne({admissionNumber: /^prefix/}).sort(-1)` then
+// `+1`, which races catastrophically under concurrent OPD walk-ins: two
+// receptionists registering at the same moment computed the same "last
+// seq", emitted the same admissionNumber, one save succeeded and one
+// silently overwrote the other (no unique index). R7bd-A also adds
+// `unique:true sparse:true` on Admission.admissionNumber so a future
+// duplicate would E11000 immediately.
+//
+// Key: `opd-admission:YYYYMMDD` — one counter per local date, padded to 4.
+// We seed FROM the existing same-day max ONCE so a redeploy mid-day
+// doesn't re-issue numbers that already left the building.
 async function generateOPDAdmissionNumber() {
   const today = new Date();
-  const prefix = `OPD-${today.getFullYear()}${String(today.getMonth()+1).padStart(2,"0")}${String(today.getDate()).padStart(2,"0")}-`;
-  const last = await Admission.findOne({ admissionNumber: { $regex: `^${prefix}` } })
-    .sort({ admissionNumber: -1 }).lean();
-  const seq = last ? (parseInt(last.admissionNumber.slice(-4), 10) || 0) + 1 : 1;
+  const datePart = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,"0")}${String(today.getDate()).padStart(2,"0")}`;
+  const prefix = `OPD-${datePart}-`;
+  const key = `opd-admission:${datePart}`;
+
+  const Counter = require("../../models/CounterModel");
+  const existing = await Counter.findOne({ _id: key }).lean();
+  let seed = null;
+  if (!existing) {
+    const last = await Admission.findOne({ admissionNumber: { $regex: `^${prefix}` } })
+      .sort({ admissionNumber: -1 }).lean();
+    seed = last ? (parseInt(last.admissionNumber.slice(-4), 10) || 0) : 0;
+  }
+  const seq = await nextSequence(key, seed);
   return `${prefix}${String(seq).padStart(4, "0")}`;
 }
 
@@ -63,6 +85,22 @@ class OPDService {
     // and doctor assessment systems which all operate on Admission records.
     try {
       const admissionNumber = await generateOPDAdmissionNumber();
+
+      // R7bd-A-4 / A1-CRIT-5 — populate BOTH attendingDoctorId (Doctor._id)
+      // AND attendingDoctorUserId (the User._id of the doctor's login).
+      // Pre-R7bd only attendingDoctorId was set, and consumers that
+      // expected User._id (termination cascade, JWT-driven access
+      // checks) got a Doctor._id and silently misbehaved (no match →
+      // no access → no termination cleanup).
+      let attendingDoctorUserId = null;
+      if (savedOPD.doctorId) {
+        try {
+          const Doctor = require("../../models/Doctor/doctorModel");
+          const doc = await Doctor.findById(savedOPD.doctorId).select("loginUserId").lean();
+          attendingDoctorUserId = doc?.loginUserId || null;
+        } catch (_) { /* leave null — doctor may not have a login account */ }
+      }
+
       const admission = await Admission.create({
         UHID:            savedOPD.UHID,
         patientId:       patient._id,
@@ -72,7 +110,8 @@ class OPDService {
         admissionNumber,
         visitNumber:     savedOPD.visitNumber,
         attendingDoctor: savedOPD.consultantName || "",
-        attendingDoctorId: savedOPD.doctorId || null,
+        attendingDoctorId:     savedOPD.doctorId || null,        // Doctor._id (existing semantics)
+        attendingDoctorUserId,                                    // User._id (new, R7bd-A-4)
         department:      savedOPD.department || "",
         departmentId:    savedOPD.departmentId || null,
         reasonForAdmission: savedOPD.chiefComplaint || "OPD Consultation",

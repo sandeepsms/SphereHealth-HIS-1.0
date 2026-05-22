@@ -182,6 +182,9 @@
 .rx-card-stage--revoked   { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
 .rx-card-stage--booked    { background: #eff6ff; color: #1d4ed8; border-color: #93c5fd; }
 .rx-card-stage--checkedin { background: #f0fdf4; color: #15803d; border-color: #86efac; }
+/* R7ar-P1-24/D9-aq-04: discharge overage chip — surfaces post-discharge
+   surplus that needs a refund. Red so the cashier can't miss it. */
+.rx-card-stage--overage   { background: #fee2e2; color: #991b1b; border-color: #fca5a5; font-weight: 700; }
 .rx-card-actions {
   display: flex;
   gap: 6px;
@@ -400,7 +403,10 @@
 /* KPI strip — small stat cards across the top */
 .rx-kpis {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  /* R7ai: bump minmax from 150 → 160 so the long ₹ amount tiles
+     ("ADVANCE CREDIT ₹54,800", "OUTSTANDING ₹11,811") don't get
+     clipped at the right edge. */
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -411,6 +417,16 @@
   padding: 12px 14px;
   position: relative;
   overflow: hidden;
+  /* R7ai: stack label + value vertically. Children are <span>s which
+     are inline by default — without this they rendered as "OPD0",
+     "BILLS3", and "ADVANCE CREDIT" sat on the same line as ₹54,800
+     causing the right side to be clipped. Flex-column gives a clean
+     two-line layout; min-width:0 lets long values wrap instead of
+     overflowing. */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
 }
 .rx-kpi-label {
   font-size: 11px;
@@ -418,6 +434,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .5px;
+  display: block;        /* R7ai — break onto its own line */
 }
 .rx-kpi-value {
   font-size: 22px;
@@ -426,8 +443,18 @@
   font-family: 'DM Mono', monospace;
   margin-top: 4px;
   line-height: 1.1;
+  display: block;        /* R7ai */
+  /* R7ai: wrap long ₹ values onto the next line on narrow tiles
+     rather than overflowing the card. */
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
-.rx-kpi-sub { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+.rx-kpi-sub {
+  font-size: 10px;
+  color: #94a3b8;
+  margin-top: 2px;
+  display: block;        /* R7ai */
+}
 .rx-kpi--accent::before {
   content: "";
   position: absolute;

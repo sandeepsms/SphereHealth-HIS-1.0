@@ -188,9 +188,16 @@ const DoctorOrderSchema = new mongoose.Schema({
   orderedByRole: { type: String, default: "Doctor" },
   orderedAt:     { type: Date, default: Date.now },
 
+  // R7az-CRIT-4 / R7az-HIGH-6 / R7az-MED-1 (D6-CRIT-4, D6-HIGH-6, D6-MED-1):
+  // Order status. "Active" is the canonical alias for "Pending+Acknowledged"
+  // in the doctor-orders UI; we accept both for backward-compat with the
+  // existing route handlers. "Held" was a dead duplicate of "OnHold" —
+  // removed in R7az to keep the state-machine matrix unambiguous. Any
+  // legacy doc still carrying status:"Held" will be coerced to "OnHold"
+  // by the pre-save hook below before the state-machine guard runs.
   status: {
     type: String,
-    enum: ["Pending","Acknowledged","InProgress","Completed","Cancelled","OnHold","Stopped","Held"],
+    enum: ["Pending","Acknowledged","Active","InProgress","Completed","Cancelled","OnHold","Stopped","Modified"],
     default: "Pending",
     index: true,
   },
@@ -211,6 +218,22 @@ const DoctorOrderSchema = new mongoose.Schema({
   completedBy:    String,
   completedAt:    Date,
   nurseNotes:     String,
+
+  // R7az-MED-3 (D10-MED-3): verbal-order scaffold. When the consultant
+  // is unavailable (phone-order during a code, off-site weekend round),
+  // a nurse can enter the order on the consultant's behalf with
+  // `isVerbal:true` and `verbalEnteredBy` stamped to herself. The
+  // consultant later co-signs (NABH ROM.7c requires within 24h) — that
+  // flips `coSignedBy` + `coSignedAt`. Without co-sign within the
+  // window, the order is flagged for governance review. The 24h cron
+  // hasn't been wired yet — it's a feature, not a bug — but the schema
+  // shape is ready for it.
+  // TODO: enforce 24h cosign window via cron (R7az-MED-3)
+  isVerbal:         { type: Boolean, default: false, index: true },
+  verbalEnteredBy:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  verbalEnteredAt:  { type: Date },
+  coSignedBy:       { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  coSignedAt:       { type: Date },
 
   consentStatus: {
     type: String,
@@ -242,6 +265,87 @@ DoctorOrderSchema.pre("save", function (next) {
     this.hamFlag = isHAM(name);
     this.twoNurseRequired = this.hamFlag;
     this.highRisk = this.hamFlag;
+  }
+  next();
+});
+
+/* ── R7az-CRIT-4 / D6-CRIT-4 + D6-HIGH-6 + D6-MED-1 ──────────────────
+   State-machine guard. Pre-R7az nothing prevented a route handler from
+   moving a Cancelled order back to Active, or flipping a Stopped order
+   to InProgress and quietly re-administering — a CRITICAL governance
+   gap. This hook captures the prior status on init and rejects any
+   transition that isn't in the allowed matrix below. Admin override
+   path uses `this._stateOverride = "admin"` (the route handler sets
+   this when an Admin user explicitly requests a terminal-reopen).
+
+   The matrix lives here (not in the controller) so every write path —
+   route handler, service method, cron, migration — gets the same
+   guarantee. Modified means "the doctor edited the order details
+   in-flight" — kept reachable from Active and InProgress.
+
+   Legacy doc cleanup: status:"Held" → coerced to "OnHold" before
+   matrix check, so old data doesn't break post-deploy.
+─────────────────────────────────────────────────────────────────────── */
+// R7bf-I / A7-HIGH-5 — DoctorOrder state-machine matrix is now sourced
+// from the shared registry (utils/statusTransitionGuard.js). The local
+// copy here is kept as a fallback (only used if the require fails — e.g.
+// circular-load in some unit-test bootstrap) so the model still self-
+// contains a sane matrix. The shared registry tightens Completed → []
+// (was previously [Modified]) — pre-R7bf a nurse / lab path could
+// "amend" an executed medication order which re-fired MAR scheduling
+// and was a documented re-administration risk. Now Completed is
+// terminal; amendments require the admin force flag + audit row.
+let SHARED = null;
+try { SHARED = require("../../utils/statusTransitionGuard"); } catch (_) { /* fallback */ }
+const ALLOWED_TRANSITIONS = (SHARED && SHARED.LEGAL_TRANSITIONS.DoctorOrder) || {
+  Pending:     ["Acknowledged","Active","InProgress","OnHold","Stopped","Cancelled","Completed","Modified"],
+  Acknowledged:["Active","InProgress","OnHold","Stopped","Cancelled","Completed","Modified"],
+  Active:      ["InProgress","OnHold","Stopped","Cancelled","Completed","Modified"],
+  InProgress:  ["Completed","OnHold","Stopped","Cancelled","Modified"],
+  OnHold:      ["Active","InProgress","Stopped","Cancelled"],
+  Stopped:     [],
+  Cancelled:   [],
+  Completed:   [],
+  Modified:    ["Active","InProgress","Stopped","Cancelled","Completed"],
+};
+
+// Snapshot prior status at load time so the next save can validate the
+// transition. We can't read `this.status` post-mutation to know what it
+// _was_ — Mongoose only knows the current value.
+DoctorOrderSchema.post("init", function () {
+  this._priorStatus = this.status;
+});
+
+DoctorOrderSchema.pre("save", function (next) {
+  // Legacy "Held" coercion — old data wrote "Held"; new enum says "OnHold".
+  if (this.status === "Held") this.status = "OnHold";
+  if (this._priorStatus === "Held") this._priorStatus = "OnHold";
+
+  // First-save / no prior — anything goes (creation).
+  if (this.isNew || !this._priorStatus) return next();
+  if (this._priorStatus === this.status) return next(); // unchanged
+  if (this._stateOverride === "admin") {
+    // Admin explicitly bypassed the matrix. Log so the audit trail
+    // shows _why_ a terminal state was re-opened.
+    console.warn(`[DoctorOrder] ADMIN state override ${this._priorStatus} → ${this.status} for order ${this._id}`);
+    return next();
+  }
+  const allowed = ALLOWED_TRANSITIONS[this._priorStatus];
+  if (!Array.isArray(allowed)) {
+    // Unknown prior state — be conservative, allow the transition but
+    // shout in the logs so we notice and fix the matrix.
+    console.warn(`[DoctorOrder] Unknown prior state "${this._priorStatus}" — allowing transition to "${this.status}" without matrix check`);
+    return next();
+  }
+  if (!allowed.includes(this.status)) {
+    const err = new Error(
+      `Illegal status transition: ${this._priorStatus} → ${this.status} ` +
+      `(allowed: ${allowed.join(", ") || "<terminal>"}). ` +
+      `Set this._stateOverride = "admin" with an Admin actor to bypass.`,
+    );
+    err.code   = "ILLEGAL_STATE_TRANSITION";
+    err.status = 409;
+    return next(err);
   }
   next();
 });

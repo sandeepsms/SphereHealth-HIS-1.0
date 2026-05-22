@@ -89,14 +89,25 @@ async function findOrCreateUser({ email, role, firstName, lastName, phone, gende
     dateOfBirth: new Date("1985-01-01"),
     status: "Active",
     isActive: true,
+    // R7bb-FIX-A-13/S9: every seeded production user lands on the force-
+    // rotation modal on first login so the shared `Welcome@123` seed
+    // password (visible to anyone who can read this file) can never be
+    // the in-use password for an active employee. The pre-save hook on
+    // the User model also defaults this to true so re-saves preserve it
+    // until the user actually rotates.
+    mustChangePassword: true,
     ...(department && { department: department._id }),
     ...(doctorDetails && { doctorDetails }),
   };
 
   if (user) {
     // Refresh editable fields but leave password alone (so re-runs don't reset
-    // a user's manually-changed password)
-    Object.assign(user, payload);
+    // a user's manually-changed password). R7bb-FIX-A-13: also leave
+    // `mustChangePassword` alone — re-runs of the seed must not re-flag a
+    // user who already rotated their password (otherwise every seed run
+    // force-rotates them again).
+    const { mustChangePassword: _ignore, ...refreshable } = payload;
+    Object.assign(user, refreshable);
     await user.save();
     return { user, created: false };
   } else {

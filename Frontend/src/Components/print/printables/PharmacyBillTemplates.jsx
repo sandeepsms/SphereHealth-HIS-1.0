@@ -549,13 +549,26 @@ function ItemsTable(p) {
             const taxable = Number(it.taxableAmount != null ? it.taxableAmount : gross - disc);
             const net = Number(it.netAmount != null ? it.netAmount : taxable + taxable * gst / 100);
             const bg = striped ? (i % 2 ? "#fafbfc" : "#fff") : (bordered ? "#fff" : undefined);
+            // R7bf-F / A4-HIGH-10: Schedule-H / H1 / X dispenses must
+            // carry the prescriber's name on the bill (Drugs & Cosmetics
+            // Rules § 65.9). Prefer the per-line prescriberName, fall
+            // back to the bill-level doctorName so legacy data still
+            // renders something useful. Plain "—" when neither exists,
+            // which is a red flag for the pharmacist.
+            const isScheduleH = !!(it.schedule && /^(H|H1|X)$/i.test(it.schedule));
+            const prescriber  = it.prescriberName || it.prescriber || p.receipt?.doctorName;
             return (
-              <tr key={i} style={{ borderBottom: `1px solid ${COL.line}`, background: bg }}>
+              <tr key={i} className="bill-line-row" style={{ borderBottom: `1px solid ${COL.line}`, background: bg }}>
                 <td style={{ padding: "8px 10px", color: COL.mute, border: fullBorders ? `1px solid ${COL.ink}` : undefined }}>{i + 1}</td>
                 <td style={{ padding: "8px 10px", border: fullBorders ? `1px solid ${COL.ink}` : undefined }}>
                   <div style={{ fontWeight: 700 }}>{it.drugName || it.name}</div>
                   {(it.strength || it.form) && <div style={{ fontSize: 9, color: COL.mute, marginTop: 1 }}>{[it.form, it.strength].filter(Boolean).join(" · ")}</div>}
-                  {it.schedule && /^(H|H1|X)$/i.test(it.schedule) && <span style={{ display: "inline-block", marginTop: 2, padding: "1px 6px", borderRadius: 3, fontSize: 8.5, fontWeight: 800, background: "#fee2e2", color: "#991b1b", border: "1px solid #fecaca" }}>Sch {it.schedule}</span>}
+                  {isScheduleH && <span style={{ display: "inline-block", marginTop: 2, padding: "1px 6px", borderRadius: 3, fontSize: 8.5, fontWeight: 800, background: "#fee2e2", color: "#991b1b", border: "1px solid #fecaca" }}>Sch {it.schedule}</span>}
+                  {isScheduleH && (
+                    <div style={{ marginTop: 2, fontSize: 9, color: "#7f1d1d" }}>
+                      Rx by: <strong>{prescriber || "— (PRESCRIBER MISSING)"}</strong>
+                    </div>
+                  )}
                 </td>
                 <td className="pb-cell-mono" style={{ color: COL.mute, fontFamily: "DM Mono, monospace", border: fullBorders ? `1px solid ${COL.ink}` : undefined }}>{it.hsnCode || "30049099"}</td>
                 <td className="pb-cell-mono" style={{ fontFamily: "DM Mono, monospace", border: fullBorders ? `1px solid ${COL.ink}` : undefined }}>

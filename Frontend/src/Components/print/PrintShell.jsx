@@ -11,6 +11,8 @@
 
 import React from "react";
 import "./print.css";
+import PrintWatermark from "./PrintWatermark";
+import { absoluteLogoUrl } from "../../utils/printUtils";
 
 const fmtAddress = (s) => {
   const bits = [
@@ -30,6 +32,15 @@ const PrintShell = ({
   showSignatures = true,
   signatureLabels = ["Authorised Signatory", "Patient / Attendant"],
   showTerms = true,
+  // R7bf-F / A4-CRIT-5: full-page DUPLICATE watermark when this is a
+  // reprint. printCount=0/1 → original, no watermark. Caller passes the
+  // value returned by recordPrintAudit() (utils/printUtils.js).
+  printCount = 0,
+  watermarkLabel,
+  watermarkRecipient,
+  // R7bf-F / A4-MED-3: per-printable font size override. Lab reports
+  // default to 14pt (elderly-patient readability), bills stay 12pt.
+  fontSize,
   children,
 }) => {
   return (
@@ -38,14 +49,27 @@ const PrintShell = ({
       style={{
         "--pr-header-color": settings.printHeaderColor || "#1e293b",
         "--pr-accent-color": settings.printAccentColor || "#1d4ed8",
+        // Font-size knob — falls through to the global pr-page CSS rule
+        // when not set, so legacy printables behave exactly as before.
+        ...(fontSize ? { fontSize } : {}),
       }}
     >
+      {/* R7bf-F / A4-CRIT-5: DUPLICATE / TRIPLICATE watermark.
+          Renders nothing on first prints. */}
+      <PrintWatermark
+        printCount={printCount}
+        label={watermarkLabel}
+        recipient={watermarkRecipient}
+      />
+
       {/* ── Header ── */}
       <div className="pr-header">
         {settings.showLogoInPrint && settings.logo ? (
           <img
             className="pr-header__logo"
-            src={settings.logo}
+            /* R7bf-F / A4-MED-2: rewrite relative logo to absolute URL
+               so staging deploys don't 404 the asset. */
+            src={absoluteLogoUrl(settings.logo)}
             alt="logo"
             style={{ width: settings.logoWidth || 120, maxWidth: "30%" }}
           />

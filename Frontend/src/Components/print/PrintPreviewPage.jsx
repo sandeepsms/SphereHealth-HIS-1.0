@@ -12,6 +12,7 @@
 
 import React, { useEffect, useState } from "react";
 import "./print.css";
+import { recordPrintAudit } from "../../utils/printUtils";
 
 const PAPERS = [
   { value: "a4",       label: "A4 (210 × 297 mm)"           },
@@ -27,6 +28,11 @@ const PrintPreviewPage = ({
   defaultPaper = "a4",
   defaultOrient = "portrait",
   toolbarTitle = "Print preview",
+  // R7bf-F / A4-CRIT-4: audit anchor for the document being previewed.
+  // PrintRouterPage reads this off `payload.printAudit` so any printable
+  // can opt in by including a tiny `printAudit:{entityType, entityId,
+  // entityNumber, UHID, patientName}` block on the receipt payload.
+  printAudit,
   children,
 }) => {
   const [paper,  setPaper]  = useState(defaultPaper);
@@ -35,6 +41,7 @@ const PrintPreviewPage = ({
   // by default; if they want two halves on one A4 for paper saving,
   // they tick the toolbar checkbox before clicking Print.
   const [doubleOnA4, setDoubleOnA4] = useState(false);
+  const [auditing, setAuditing] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-paper",  paper);
@@ -101,8 +108,23 @@ const PrintPreviewPage = ({
         )}
 
         <button onClick={() => window.close()}>Close</button>
-        <button className="primary" onClick={() => window.print()}>
-          Print
+        <button
+          className="primary"
+          disabled={auditing}
+          onClick={async () => {
+            // R7bf-F / A4-CRIT-4: record the print BEFORE firing
+            // window.print(). The /api/print-audit POST also bumps
+            // the entity's printCount, so the next reprint sees a
+            // higher count and the DUPLICATE watermark renders.
+            if (printAudit?.entityType && printAudit?.entityId) {
+              setAuditing(true);
+              try { await recordPrintAudit(printAudit); }
+              catch (_e) { /* never block print on audit failure */ }
+              setAuditing(false);
+            }
+            window.print();
+          }}>
+          {auditing ? "Recording…" : "Print"}
         </button>
       </div>
 

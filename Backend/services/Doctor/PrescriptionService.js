@@ -5,6 +5,12 @@ const InvestigationOrder = require("../../models/Investigation/InvestigationOrde
 const InvestigationMaster = require("../../models/Investigation/InvestigationMasterModel");
 const InvestigationPricing = require("../../models/Investigation/InvestigationPricingModel");
 const mongoose = require("mongoose");
+// R7az-D10-CRIT-1: route every prescription audit row through the hash-
+// chained activityLogger so direct PatientActivityLog.create() calls
+// (which bypass the chain) are eliminated. The log() facade soft-fails
+// on its own — wrap the call but don't catch here to keep the existing
+// fire-and-forget posture.
+const activityLogger = require("../Clinical/activityLogger");
 
 class PrescriptionService {
   // ── CREATE ────────────────────────────────────────────────────
@@ -63,46 +69,47 @@ class PrescriptionService {
   }
 
   // ── UPDATE BY UHID ────────────────────────────────────────────
-  // Audit log added per A-11 — every prescription edit needs a before/
-  // after snapshot in PatientActivityLog so a NABH reviewer can replay
-  // the chain. The actor info comes from the controller as `data.actor`
-  // (req.user); we strip it before writing to Mongo so it doesn't
-  // pollute the prescription doc.
+  // R7az-D2-CRIT-3 / D7-CRIT-4: load doc, mutate, .save() so the
+  // pre-save hooks (post-dispense edit-lock + allergy gate on
+  // prescription.js) actually fire. findOneAndUpdate bypassed both
+  // safety nets and let nurses overwrite locked Rx silently.
+  //
+  // R7az-D10-CRIT-1: audit row goes via activityLogger.log() so the
+  // hash chain stays unbroken. Direct PatientActivityLog.create() is
+  // forbidden on the prescription path now.
   static async updatePrescriptionByUHID(uhid, data) {
     const { actor, ...payload } = data || {};
 
-    const before = await Prescription.findOne({ UHID: uhid }).lean();
-    if (!before) throw new Error("Prescription not found");
+    const doc = await Prescription.findOne({ UHID: uhid });
+    if (!doc) throw new Error("Prescription not found");
+    const before = doc.toObject();
 
-    const p = await Prescription.findOneAndUpdate(
-      { UHID: uhid },
-      { $set: payload },
-      { new: true, runValidators: true },
-    );
-    if (!p) throw new Error("Prescription not found");
-
-    // Fire-and-forget audit log — never block the clinical write even if
-    // the log path is down. The PatientActivityLog hash-chain in the
-    // model still detects tampering after the fact.
-    try {
-      const PatientActivityLog = require("../../models/Clinical/PatientActivityLogModel");
-      await PatientActivityLog.create({
-        UHID: uhid,
-        patientId: before.patient || null, // R9 re-audit — include patientId so analytics group-by works
-        action: "PRESCRIPTION_UPDATE",
-        module: "Prescription",
-        summary: `Prescription updated by ${actor?.name || actor?.role || "System"}`,
-        userId:   actor?.id   || null,
-        userName: actor?.name || "System",
-        userRole: actor?.role || "System",
-        before,
-        after: p.toObject(),
-      });
-    } catch (e) {
-      console.error("[PrescriptionService] audit-log write failed:", e.message);
+    // Apply allowed mutations; never let UHID / patient / doctor get
+    // rewritten through this entrypoint (those are bound at create-time).
+    delete payload.UHID;
+    delete payload.patient;
+    delete payload.doctor;
+    for (const [k, v] of Object.entries(payload)) {
+      doc.set(k, v);
     }
+    await doc.save();
 
-    return PrescriptionService._populate(p._id);
+    activityLogger.log({
+      UHID: uhid,
+      patientId: before.patient || null,
+      action: "PRESCRIPTION_UPDATE",
+      module: "Prescription",
+      sourceModel: "Prescription",
+      sourceId: doc._id,
+      summary: `Prescription updated by ${actor?.name || actor?.role || "System"}`,
+      userId:   actor?.id   || null,
+      userName: actor?.name || "System",
+      userRole: actor?.role || "System",
+      before,
+      after: doc.toObject(),
+    }).catch((e) => console.error("[PrescriptionService] audit-log write failed:", e.message));
+
+    return PrescriptionService._populate(doc._id);
   }
 
   // ── GET ALL ───────────────────────────────────────────────────
@@ -168,87 +175,101 @@ class PrescriptionService {
   }
 
   // ── UPDATE BY ID ──────────────────────────────────────────────
-  static async updatePrescription(id, data) {
-    const p = await Prescription.findOne({ _id: id, isActive: true });
-    if (!p) throw new Error("Prescription not found");
+  // R7az-S3 / D2-CRIT-3 / D7-CRIT-4: load → mutate → .save() so the
+  // pre-save guards (post-dispense lock + allergy gate) fire on every
+  // edit path. The legacy findByIdAndUpdate silently bypassed them.
+  static async updatePrescription(id, data, actor = {}) {
+    const doc = await Prescription.findOne({ _id: id, isActive: true });
+    if (!doc) throw new Error("Prescription not found");
+    const before = doc.toObject();
     delete data.patient;
     delete data.doctor;
     delete data.UHID;
-    return Prescription.findByIdAndUpdate(id, data, {
-      new: true,
-      runValidators: true,
-    })
+    for (const [k, v] of Object.entries(data || {})) {
+      doc.set(k, v);
+    }
+    await doc.save();
+
+    activityLogger.log({
+      UHID: doc.UHID,
+      patientId: doc.patient || null,
+      action: "PRESCRIPTION_UPDATE",
+      module: "Prescription",
+      sourceModel: "Prescription",
+      sourceId: doc._id,
+      summary: `Prescription updated by ${actor?.name || actor?.role || "System"}`,
+      userId:   actor?.id   || null,
+      userName: actor?.name || "System",
+      userRole: actor?.role || "System",
+      before,
+      after: doc.toObject(),
+    }).catch((e) => console.error("[PrescriptionService] update audit-log write failed:", e.message));
+
+    return Prescription.findById(doc._id)
       .populate("patient", "fullName name UHID age gender")
       .populate("doctor", "personalInfo");
   }
 
   // ── DELETE ────────────────────────────────────────────────────
-  // Audit log added per R9 re-audit follow-up. Every soft-delete writes a
-  // PatientActivityLog row with action=PRESCRIPTION_DELETE so the chain
-  // tracks who cancelled which Rx and when.
+  // R7az-D10-CRIT-1: audit row via activityLogger so the hash chain
+  // includes the delete. Soft-delete uses .save() so any future pre-save
+  // hooks (e.g. cancellation-window checks) still fire.
   static async deletePrescription(id, actor = {}) {
-    const before = await Prescription.findById(id).lean();
-    if (!before) throw new Error("Prescription not found");
-    const p = await Prescription.findByIdAndUpdate(
-      id,
-      { isActive: false, status: "Cancelled" },
-      { new: true, runValidators: true },
-    );
-    if (!p) throw new Error("Prescription not found");
-    try {
-      const PatientActivityLog = require("../../models/Clinical/PatientActivityLogModel");
-      await PatientActivityLog.create({
-        UHID:      before.UHID,
-        patientId: before.patient || null,
-        action:    "PRESCRIPTION_DELETE",
-        module:    "Prescription",
-        summary:   `Prescription cancelled by ${actor.name || actor.role || "System"}`,
-        userId:    actor.id   || null,
-        userName:  actor.name || "System",
-        userRole:  actor.role || "System",
-        before,
-        after:     p.toObject(),
-      });
-    } catch (e) {
-      console.error("[PrescriptionService] delete audit-log write failed:", e.message);
-    }
-    return p;
+    const doc = await Prescription.findById(id);
+    if (!doc) throw new Error("Prescription not found");
+    const before = doc.toObject();
+    doc.isActive = false;
+    doc.status   = "Cancelled";
+    await doc.save();
+
+    activityLogger.log({
+      UHID:      before.UHID,
+      patientId: before.patient || null,
+      action:    "PRESCRIPTION_DELETE",
+      module:    "Prescription",
+      sourceModel: "Prescription",
+      sourceId:  doc._id,
+      summary:   `Prescription cancelled by ${actor.name || actor.role || "System"}`,
+      userId:    actor.id   || null,
+      userName:  actor.name || "System",
+      userRole:  actor.role || "System",
+      before,
+      after:     doc.toObject(),
+    }).catch((e) => console.error("[PrescriptionService] delete audit-log write failed:", e.message));
+
+    return doc;
   }
 
   // ── UPDATE STATUS ─────────────────────────────────────────────
-  // Audit log added per R9 re-audit follow-up. Clinical state transitions
-  // (Active → Completed / Cancelled / FINAL) are NABH-relevant events.
+  // R7az-D10-CRIT-1: status transitions via activityLogger so the hash
+  // chain captures Active → Completed / Cancelled / FINAL legibly.
   static async updatePrescriptionStatus(id, status, actor = {}) {
     const valid = ["Active", "Completed", "Cancelled", "FINAL"];
     if (!valid.includes(status)) throw new Error("Invalid status");
-    const before = await Prescription.findById(id).lean();
-    if (!before) throw new Error("Prescription not found");
-    const p = await Prescription.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true, runValidators: true },
-    )
+    const doc = await Prescription.findById(id);
+    if (!doc) throw new Error("Prescription not found");
+    const before = doc.toObject();
+    doc.status = status;
+    await doc.save();
+
+    activityLogger.log({
+      UHID:      before.UHID,
+      patientId: before.patient || null,
+      action:    "PRESCRIPTION_STATUS_CHANGE",
+      module:    "Prescription",
+      sourceModel: "Prescription",
+      sourceId:  doc._id,
+      summary:   `Prescription status: ${before.status} → ${status}`,
+      userId:    actor.id   || null,
+      userName:  actor.name || "System",
+      userRole:  actor.role || "System",
+      before,
+      after:     doc.toObject(),
+    }).catch((e) => console.error("[PrescriptionService] status audit-log write failed:", e.message));
+
+    return Prescription.findById(doc._id)
       .populate("patient", "fullName name UHID")
       .populate("doctor", "personalInfo");
-    if (!p) throw new Error("Prescription not found");
-    try {
-      const PatientActivityLog = require("../../models/Clinical/PatientActivityLogModel");
-      await PatientActivityLog.create({
-        UHID:      before.UHID,
-        patientId: before.patient || null,
-        action:    "PRESCRIPTION_STATUS_CHANGE",
-        module:    "Prescription",
-        summary:   `Prescription status: ${before.status} → ${status}`,
-        userId:    actor.id   || null,
-        userName:  actor.name || "System",
-        userRole:  actor.role || "System",
-        before,
-        after:     p.toObject(),
-      });
-    } catch (e) {
-      console.error("[PrescriptionService] status audit-log write failed:", e.message);
-    }
-    return p;
   }
 
   // ── STATS ─────────────────────────────────────────────────────

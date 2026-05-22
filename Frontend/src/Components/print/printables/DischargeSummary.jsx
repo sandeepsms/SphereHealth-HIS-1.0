@@ -6,6 +6,8 @@
 
 import React from "react";
 import PrintShell from "../PrintShell";
+import { fmtINR } from "../amountWords";
+import { toNum } from "../../../utils/printUtils";
 
 const fmtDate = (d, withTime = false) => {
   if (!d) return "—";
@@ -29,12 +31,21 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
   const advice = Array.isArray(r.advice)
     ? r.advice
     : (r.advice ? String(r.advice).split("\n").filter(Boolean) : []);
+  // R7bf-F / A4-HIGH-1: total / cost fields are sometimes attached to
+  // the summary payload (when the discharge endpoint inlines the final
+  // bill snapshot). Pre-R7bf they were rendered as the raw mongoose
+  // Decimal128 wire shape `{$numberDecimal:"4500.00"}` because the
+  // template used `${r.totalAmount}` directly. toNum() guarantees a
+  // proper Number even if the controller skipped its toJSON transform.
+  const totalBill = toNum(r.totalAmount ?? r.totalBill ?? r.finalBillAmount);
+  const printCount = toNum(r.printCount);
 
   return (
     <PrintShell
       settings={settings}
       documentTitle="Discharge Summary"
       serialNo={r.summaryNo || r.ipdNo}
+      printCount={printCount}
       infoItems={[
         { label: "Patient",    value: r.patientName },
         { label: "UHID",       value: r.uhid },
@@ -164,6 +175,18 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
       {r.dietAdvice && (
         <Section title="Dietary Advice">
           <div style={{ whiteSpace: "pre-wrap" }}>{r.dietAdvice}</div>
+        </Section>
+      )}
+
+      {/* R7bf-F / A4-HIGH-1: when a final-bill snapshot is inlined on
+          the summary payload, render it as a proper money string —
+          never the raw {$numberDecimal:"..."} object. */}
+      {totalBill > 0 && (
+        <Section title="Financial Summary">
+          <div style={{ display: "flex", justifyContent: "space-between", maxWidth: 360, fontWeight: 800, fontSize: 12 }}>
+            <span>Total Bill (Final)</span>
+            <span>{fmtINR(totalBill)}</span>
+          </div>
         </Section>
       )}
 

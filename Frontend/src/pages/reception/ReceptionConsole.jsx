@@ -35,6 +35,8 @@ import BedSelectionPanel from "../../Components/bed/BedSelectionPanel";
 import WhatsAppButton from "../../Components/whatsapp/WhatsAppButton";
 import { useAuth } from "../../context/AuthContext";
 import { useReceptionistPresence } from "../../hooks/useReceptionistPresence";
+// R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
+import { toMoney } from "../../utils/money";
 
 /* ─── Constants ─────────────────────────────────────────────── */
 const VISIT_TYPES = [
@@ -716,7 +718,7 @@ export default function ReceptionConsole() {
               bedNumber:     bedData.bedNumber || null,
               wardName:      null, // bedData only carries IDs — name shown on visit receipt
               date:          adv.paidAt || adv.createdAt || new Date().toISOString(),
-              amount:        Number(adv.amount?.$numberDecimal ?? adv.amount ?? advAmt) || 0,
+              amount:        toMoney(adv.amount) || advAmt,
               method:        adv.paymentMode || "CASH",
               refNo:         adv.transactionId || null,
               depositPurpose: "hospitalization advance",

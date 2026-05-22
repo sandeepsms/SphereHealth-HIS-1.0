@@ -27,8 +27,14 @@ router.post("/:id/enter-external-result",  requireAction("lab.result-entry"), ct
 // Verification: Radiologist / Doctor.
 router.post("/:id/verify",  requireAction("lab.verify"),   ctrl.verify);
 
-// Dispatch + cancel: Lab Technician.
+// Dispatch (Lab Tech) vs cancel (Doctor/Admin). R7z: cancel splits off
+// from dispatch — Lab Tech mustn't be able to wipe a doctor's order or
+// reverse line-item billing without the ordering clinician's call.
 router.post("/:id/print",   requireAction("lab.dispatch"), ctrl.markPrinted);
-router.post("/:id/cancel",  requireAction("lab.dispatch"), ctrl.cancel);
+router.post("/:id/cancel",  requireAction("lab.cancel"),   ctrl.cancel);
+// R7bb-FIX-E-13 / D6-HIGH-3: lab retest — clones the order's items into
+// a fresh InvestigationOrder linked via parentOrderId. Gate at lab.order
+// because retests are a clinical decision (same gate as the original).
+router.post("/:id/retest",  requireAction("lab.order"),    ctrl.requestRetest);
 
 module.exports = router;

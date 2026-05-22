@@ -49,15 +49,28 @@ function hash(s) {
 // Body: { phone, purpose }   purpose ∈ {"sign-dnr","sign-lama","sign-death","controlled-rx","blood-tx"}
 exports.requestOtp = async (req, res) => {
   try {
-    const { phone, purpose } = req.body || {};
+    // R7bb-FIX-A-7/S15/D9-HIGH-8: do NOT destructure `phone` from the body —
+    // the OTP target is always derived server-side from the authenticated
+    // session. Pre-R7bb a caller could pass {phone:"my-attacker-number"}
+    // and the OTP would race to the attacker's device. Phone now comes
+    // from req.user.phone (populated by the authenticate middleware) with
+    // a User.findById fallback for the rare case the cache row lacks it.
+    const { purpose } = req.body || {};
     const allowed = ["sign-dnr", "sign-lama", "sign-death", "controlled-rx", "blood-tx", "sign-amendment"];
     if (!purpose || !allowed.includes(purpose)) {
       return res.status(400).json({ success: false, message: "Invalid purpose" });
     }
     const u = req.user || {};
-    const phoneToUse = phone || u.phone || u.contactNumber;
+    let phoneToUse = u.phone || null;
+    if (!phoneToUse && (u.id || u._id)) {
+      try {
+        const User = require("../../models/User/userModel");
+        const fresh = await User.findById(u.id || u._id).select("phone").lean();
+        phoneToUse = fresh?.phone || null;
+      } catch (_) { /* best-effort */ }
+    }
     if (!phoneToUse) {
-      return res.status(400).json({ success: false, message: "Phone number required for OTP" });
+      return res.status(400).json({ success: false, message: "No phone on file" });
     }
     const otp   = String(Math.floor(100_000 + Math.random() * 900_000));
     const token = crypto.randomBytes(16).toString("hex");
@@ -86,8 +99,10 @@ exports.requestOtp = async (req, res) => {
       success:   true,
       token,
       expiresAt: Date.now() + OTP_TTL_MS,
-      // expose in dev only so the UI can auto-fill during testing
-      ...(process.env.SMS_PROVIDER ? {} : { devOtp: otp }),
+      // R7bb-A: expose devOtp ONLY in non-production AND when no SMS provider
+      // is wired up. Pre-R7bb a production environment with a misconfigured
+      // SMS_PROVIDER would happily echo the OTP back in the JSON response.
+      ...(process.env.NODE_ENV !== "production" && !process.env.SMS_PROVIDER ? { devOtp: otp } : {}),
     });
   } catch (e) {
     return res.status(500).json({ success: false, message: e.message });

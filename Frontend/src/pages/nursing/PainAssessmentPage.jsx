@@ -5,6 +5,7 @@
 
 import React, { useState, useCallback, useEffect } from "react";
 import axios from "axios";
+import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
@@ -121,11 +122,12 @@ function PainContent({ patient }) {
 
   const handleSave = async () => {
     if (!patient) return;
+    // R7az-D5-CRIT-1 — POST first, only clearDraft + setSaved on 2xx.
+    // Pre-fix the silent catch let a network failure leave the nurse
+    // thinking the assessment was saved server-side while it lived only
+    // on her laptop's localStorage.
     setSaving(true);
     const entry = { date: new Date().toISOString(), ...form, reassessLog: [...reassessLog] };
-    const newHistory = [entry, ...history];
-    localStorage.setItem(`nabh_pain_${patient._id}`, JSON.stringify({ history:newHistory, reassessLog }));
-    setHistory(newHistory);
     try {
       await axios.post(`${API}/nursing-assessments/pain`, {
         patientId: patient._id, ...entry,
@@ -133,10 +135,17 @@ function PainContent({ patient }) {
         nurseEmployeeId: user?.employeeId || "",
         nurseSignature: signature || undefined,
       });
-    } catch {}
-    clearDraft();
-    setSaving(false); setSaved(true);
-    setTimeout(()=>setSaved(false),2500);
+      const newHistory = [entry, ...history];
+      localStorage.setItem(`nabh_pain_${patient._id}`, JSON.stringify({ history: newHistory, reassessLog }));
+      setHistory(newHistory);
+      clearDraft();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      toast.error("Save failed: " + (err.response?.data?.message || err.message) + " — your draft is preserved, please retry.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (!patient) {

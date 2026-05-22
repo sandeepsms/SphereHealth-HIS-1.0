@@ -5,6 +5,7 @@
 
 import React from "react";
 import PrintShell from "../PrintShell";
+import { toNum } from "../../../utils/printUtils";
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
@@ -22,11 +23,22 @@ const MARSheet = ({ settings, receipt = {} }) => {
   const slots = Array.isArray(r.timeSlots) ? r.timeSlots
               : ["06:00", "10:00", "14:00", "18:00", "22:00"];
 
+  // R7bf-F / A4-HIGH-2: when the MAR window is > 1 day (multi-day
+  // tile), pre-R7bf rendering dropped the nurse-signature mini-cell
+  // under each slot because each slot key was treated as a single
+  // admin event. Now we explicitly render the nurse initials inside
+  // the same cell AND we add a dedicated trailing "Nurse Signature"
+  // column on every row so the auditor has a per-row attestation
+  // anchor regardless of slot density.
+  const isMultiDay = !!r.multiDay || (Array.isArray(r.dates) && r.dates.length > 1);
+  const printCount = toNum(r.printCount);
+
   return (
     <PrintShell
       settings={settings}
-      documentTitle="Medication Administration Record (MAR)"
+      documentTitle={`Medication Administration Record (MAR)${isMultiDay ? " — multi-day" : ""}`}
       serialNo={r.marNo || r.ipdNo}
+      printCount={printCount}
       infoItems={[
         { label: "Patient",     value: r.patientName },
         { label: "UHID",        value: r.uhid },
@@ -35,6 +47,7 @@ const MARSheet = ({ settings, receipt = {} }) => {
         { label: "Bed / Ward",  value: [r.bedNumber, r.wardName].filter(Boolean).join(" · ") },
         { label: "Date",        value: fmtDate(r.date || new Date()) },
         { label: "Shift",       value: r.shift },
+        { label: "Window",      value: isMultiDay ? `${r.dates?.length || "?"} days` : "1 day" },
         { label: "Allergies",   value: Array.isArray(r.allergies) ? r.allergies.join(", ") : r.allergies },
       ]}
       signatureLabels={["Nurse-in-charge", "Doctor on Round"]}
@@ -49,16 +62,27 @@ const MARSheet = ({ settings, receipt = {} }) => {
             {slots.map((s) => (
               <th key={s} className="center" style={{ width: 50 }}>{s}</th>
             ))}
+            {/* R7bf-F / A4-HIGH-2: dedicated nurse-signature column.
+                Even on multi-day prints (where per-slot rows can get
+                cramped) the auditor has a clear per-med signature
+                anchor at the right edge. */}
+            <th className="center" style={{ width: 80 }}>Nurse Signature</th>
             <th>Notes</th>
           </tr>
         </thead>
         <tbody>
           {meds.length === 0 ? (
-            <tr><td colSpan={5 + slots.length} className="muted center" style={{ padding: 20 }}>
+            <tr><td colSpan={6 + slots.length} className="muted center" style={{ padding: 20 }}>
               No medications on the MAR for this period.
             </td></tr>
           ) : meds.map((m, i) => {
             const adm = m.administrations || {};
+            // Last-touched nurse across all slots for this med — used
+            // for the dedicated signature column when the window
+            // spans multiple days (most-recent admin attestation).
+            const allNurses = Array.from(new Set(
+              Object.values(adm).map((a) => a?.nurse).filter(Boolean),
+            ));
             return (
               <tr key={i}>
                 <td>{i + 1}</td>
@@ -90,6 +114,14 @@ const MARSheet = ({ settings, receipt = {} }) => {
                     </td>
                   );
                 })}
+                {/* R7bf-F / A4-HIGH-2: dedicated signature cell.
+                    Renders comma-joined nurses or a blank line for
+                    on-paper sign-off when no admin has fired yet. */}
+                <td className="center" style={{ fontSize: 9.5, color: "#475569" }}>
+                  {allNurses.length > 0
+                    ? allNurses.join(", ")
+                    : <span style={{ color: "#cbd5e1", borderBottom: "1px solid #94a3b8", display: "inline-block", minWidth: 50 }}>&nbsp;</span>}
+                </td>
                 <td style={{ fontSize: 10 }}>{m.notes || ""}</td>
               </tr>
             );

@@ -7,6 +7,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 const mongoose = require("mongoose");
+const { Decimal128 } = mongoose.Types;                           // R7ap-F7: atomic Decimal128 writes
 const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
 const PatientBill    = require("../../models/PatientBillModel/PatientBillModel");
 const Patient        = require("../../models/Patient/patientModel");
@@ -43,6 +44,19 @@ class PatientAdvanceService {
     const patient = await Patient.findOne({ UHID: String(UHID).toUpperCase() });
     if (!patient) throw new Error(`Patient ${UHID} not found`);
 
+    // R7bd-A-18 / A1-MED-23 — refuse advance creation on an archived
+    // patient. Pre-R7bd a deletedPatient (soft) could still receive new
+    // deposits because the apply / refund / list flows all keyed off
+    // UHID without checking isActive. The receptionist would then see
+    // a deposit receipt for a patient who no longer existed in any
+    // active list.
+    if (patient.isActive === false) {
+      const err = new Error(`Patient ${UHID} is archived — cannot create new advance.`);
+      err.status = 409;
+      err.code   = "PATIENT_ARCHIVED";
+      throw err;
+    }
+
     const ALLOWED_MODES = ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE"];
     if (!ALLOWED_MODES.includes(String(paymentMode).toUpperCase())) {
       throw new Error(`Invalid payment mode "${paymentMode}". Allowed: ${ALLOWED_MODES.join(", ")}`);
@@ -78,6 +92,30 @@ class PatientAdvanceService {
       paidAt: new Date(),
       remarks,
     });
+    // R7ar-P1-7: invalidate Day Book cache so deposit shows immediately.
+    try {
+      const ctrl = require("../../controllers/Billing/billingController");
+      ctrl.invalidateDayBookCache?.();
+    } catch (_) { /* best-effort */ }
+    // R7ap-F15: emit audit row for deposit creation.
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:                "ADVANCE_CREATED",
+        UHID:                 advance.UHID,
+        patientId:            advance.patientId,
+        advanceId:            advance._id,
+        advanceReceiptNumber: advance.receiptNumber,
+        admissionId:          advance.admission,
+        amount,
+        paymentMode:          String(paymentMode).toUpperCase(),
+        transactionId,
+        actorName:            receivedBy,
+        actorId:              receivedById,
+        actorRole:            receivedByRole,
+        reason:               remarks || "Patient advance deposit",
+      });
+    } catch (_) { /* audit best-effort */ }
     return advance;
   }
 
@@ -93,9 +131,12 @@ class PatientAdvanceService {
     return rows.map((r) => {
       const o = r.toObject({ virtuals: true });
       // Force-cast Decimal128 strings → numbers for the API consumer.
-      o.amount        = toNum(o.amount);
-      o.appliedAmount = toNum(o.appliedAmount);
-      o.remainingAmount = Math.max(0, +(o.amount - o.appliedAmount).toFixed(2));
+      // R7ao: include refundedAmount so the UI can compute the correct
+      // remaining balance (= amount − applied − refunded).
+      o.amount          = toNum(o.amount);
+      o.appliedAmount   = toNum(o.appliedAmount);
+      o.refundedAmount  = toNum(o.refundedAmount);
+      o.remainingAmount = Math.max(0, +(o.amount - o.appliedAmount - o.refundedAmount).toFixed(2));
       return o;
     });
   }
@@ -108,7 +149,13 @@ class PatientAdvanceService {
       UHID: String(UHID).toUpperCase(),
       status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
     }).lean();
-    return rows.reduce((s, r) => s + Math.max(0, toNum(r.amount) - toNum(r.appliedAmount)), 0);
+    // R7ao: refunded portion is no longer available (a REFUNDED row is
+    // already excluded by the status filter above, but defensive-subtract
+    // refundedAmount in case a row's status hook hasn't caught up).
+    return rows.reduce(
+      (s, r) => s + Math.max(0, toNum(r.amount) - toNum(r.appliedAmount) - toNum(r.refundedAmount)),
+      0,
+    );
   }
 
   // ── 4. Apply an advance row to a bill ─────────────────────────
@@ -153,8 +200,37 @@ class PatientAdvanceService {
           if (bill.billStatus === "REFUNDED")
             throw new Error("Refunded bill — no further payments allowed");
 
-          const remainingAdv  = Math.max(0, toNum(adv.amount) - toNum(adv.appliedAmount));
-          const billBalance   = Math.max(0, toNum(bill.patientPayableAmount) - bill.payments.reduce((s, p) => s + toNum(p.amount), 0));
+          // R7bd-A-5 / A1-CRIT-6 — remainingAdv MUST subtract refundedAmount.
+          // Pre-R7bd a concurrent refund could land between our read of
+          // (appliedAmount) and our save: the refund flip from
+          // ACTIVE/PARTIALLY_APPLIED → REFUNDED writes
+          // refundedAmount=remaining and flips status. The apply then
+          // sees status=REFUNDED at next read and throws — but a *racing*
+          // apply that completed its read just before the refund could
+          // still attempt to consume the (now-refunded) remainder. The
+          // schema's pre-validate `applied + refunded ≤ amount` invariant
+          // catches the corruption at save time (errors out), but the
+          // cashier sees a confusing "invariant violation" message.
+          // Including refundedAmount in remainingAdv up-front means the
+          // apply throws "Nothing to apply" cleanly when the refund won
+          // the race.
+          const remainingAdv  = Math.max(0,
+            toNum(adv.amount) - toNum(adv.appliedAmount) - toNum(adv.refundedAmount),
+          );
+          // R7am: compute the bill's effective balance using the LARGER
+          // of stored `patientPayableAmount` vs `sum(billItems.netAmount)`.
+          // Some bills have stale patentPayable=0 because recalcTotals
+          // never ran (R7aa root cause) but their billItems still hold
+          // real money. Without this fallback, /apply would always say
+          // "Nothing to apply" for those bills and the cashier sees a
+          // success toast with zero effect.
+          const itemsNet      = (bill.billItems || []).reduce((s, i) => s + toNum(i.netAmount), 0);
+          const paidPositive  = bill.payments.reduce((s, p) => {
+            const v = toNum(p.amount);
+            return s + (v > 0 ? v : 0);
+          }, 0);
+          const referenceNet  = Math.max(toNum(bill.patientPayableAmount), itemsNet);
+          const billBalance   = Math.max(0, referenceNet - paidPositive);
           // Default to MIN(advance remaining, bill balance) — covers the
           // most common case where the cashier wants to consume as much
           // of the advance as the bill allows. Caller can override.
@@ -162,6 +238,25 @@ class PatientAdvanceService {
           if (requested <= 0) throw new Error("Nothing to apply (bill balance or advance remaining is zero)");
           if (requested > remainingAdv) throw new Error(`Advance only has ₹${remainingAdv} remaining; cannot apply ₹${requested}`);
           if (requested > billBalance)  throw new Error(`Bill balance is only ₹${billBalance}; cannot apply ₹${requested}`);
+
+          // R7am: if patientPayableAmount was stale (0) but items have
+          // value, repair it before the payment row goes in. Without
+          // this, the bill's totals would still report ₹0 after apply.
+          if (toNum(bill.patientPayableAmount) <= 0 && itemsNet > 0) {
+            bill.patientPayableAmount = itemsNet;
+            bill.markModified("patientPayableAmount");
+          }
+          if (toNum(bill.netAmount) <= 0 && itemsNet > 0) {
+            bill.netAmount = itemsNet;
+            bill.markModified("netAmount");
+          }
+          if (toNum(bill.grossAmount) <= 0 && itemsNet > 0) {
+            // Conservative — itemsNet already includes per-item discounts/tax,
+            // but if grossAmount is empty too, use itemsNet as the floor so
+            // the UI shows something coherent.
+            bill.grossAmount = itemsNet;
+            bill.markModified("grossAmount");
+          }
 
           // 1. Push a Bill.payments[] row of mode ADVANCE_ADJUSTMENT.
           //    transactionId carries the advance receipt number for the
@@ -200,6 +295,34 @@ class PatientAdvanceService {
 
           await adv.save({ session: s || undefined });
           await bill.save({ session: s || undefined });
+          // R7ap-F15: emit audit row for advance application to bill.
+          try {
+            const { emit } = require("../../models/Billing/BillingAudit");
+            await emit({
+              event:                "ADVANCE_APPLIED",
+              UHID:                 adv.UHID,
+              patientId:            adv.patientId,
+              advanceId:            adv._id,
+              advanceReceiptNumber: adv.receiptNumber,
+              billId:               bill._id,
+              billNumber:           bill.billNumber,
+              admissionId:          adv.admission,
+              amount:               requested,
+              paymentMode:          "ADVANCE_ADJUSTMENT",
+              actorName:            appliedBy,
+              actorId:              appliedById,
+              reason:               `Applied ${requested} from advance ${adv.receiptNumber} to ${bill.billNumber}`,
+            });
+          } catch (_) { /* audit best-effort */ }
+          // R7av-FIX-9/D5-MED-1: invalidate Day Book cache so the
+          // accountant's tile reflects the ADVANCE_ADJUSTMENT row
+          // within milliseconds, not 30s. Pre-R7av the apply flow
+          // skipped this — applied amounts stayed off the dashboard
+          // until next cache rotation.
+          try {
+            const ctrl = require("../../controllers/Billing/billingController");
+            ctrl.invalidateDayBookCache?.();
+          } catch (_) {}
           return { advance: adv, bill, appliedAmount: requested };
         };
 
@@ -221,25 +344,123 @@ class PatientAdvanceService {
     }
   }
 
-  // ── 5. Refund an unspent advance ──────────────────────────────
-  // Allowed when no portion has been applied yet (status ACTIVE).
-  // Once any portion is applied the advance is locked — refund of a
-  // partially-applied advance would require reversing the bill
-  // payments first, which is a separate accountant-tier flow.
-  async refundAdvance(advanceId, { refundedBy, refundReason }) {
-    const adv = await PatientAdvance.findById(advanceId);
-    if (!adv) throw new Error("Advance not found");
-    if (adv.status !== "ACTIVE") {
-      throw new Error(`Cannot refund — status is ${adv.status}. Only ACTIVE advances can be refunded.`);
-    }
+  // ── 5. Refund the unspent portion of an advance ──────────────
+  // R7ao: refunds the remainingAmount (amount − appliedAmount). Allowed
+  // when status is ACTIVE or PARTIALLY_APPLIED — applied-to-bills history
+  // is preserved untouched, only the unspent remainder is returned to
+  // the patient. FULLY_APPLIED / REFUNDED / CANCELLED rows are rejected.
+  //
+  // R7ap-F7/D7-02: ATOMIC via `findOneAndUpdate` with status predicate.
+  // Pre-R7ap two concurrent refund calls each passed the read-time status
+  // check then both saved last-writer-wins — patient could walk out with
+  // double the unspent amount in cash. The predicate-filter version
+  // guarantees only ONE write wins; the loser sees the post-update doc
+  // already in REFUNDED state and throws 409.
+  // R7bb-C / S5 (D7-CRIT-1): controller forwards req.user identity
+  // (refundedById, refundedByRole). Pre-R7bb body's refundedBy was
+  // accepted directly so a forged body could attribute the refund
+  // to any operator (a critical money out-flow).
+  async refundAdvance(advanceId, { refundedBy, refundedById, refundedByRole, refundReason, mode, transactionId, approverOverride }) {
+    if (!advanceId) throw new Error("advanceId required");
     if (!refundedBy)   throw new Error("refundedBy name required for audit");
     if (!refundReason) throw new Error("refundReason required for audit");
-    adv.status = "REFUNDED";
-    adv.refundedAt = new Date();
-    adv.refundedBy = refundedBy;
-    adv.refundReason = refundReason;
-    await adv.save();
-    return adv;
+
+    // Pre-read for amount validation + invariant computation (read-side fine
+    // because the actual write is the atomic findOneAndUpdate).
+    const adv = await PatientAdvance.findById(advanceId).lean();
+    if (!adv) throw new Error("Advance not found");
+    if (adv.status === "REFUNDED" || adv.status === "CANCELLED") {
+      throw new Error(`Already ${adv.status} — nothing more to refund.`);
+    }
+    if (adv.status === "FULLY_APPLIED") {
+      throw new Error("Advance fully applied to bills — no remaining balance to refund.");
+    }
+
+    // R7bb-FIX-E-3 / D3-CRIT-3: Segregation of Duties — the cashier
+    // who collected the advance can't be the one who refunds it. An
+    // Admin can second-sign via approverOverride=true; the original
+    // collector stays on refundedById for trail.
+    if (refundedById && adv.receivedById &&
+        String(refundedById) === String(adv.receivedById) &&
+        !approverOverride) {
+      const err = new Error(
+        "SAME_ACTOR — advance refund must be initiated by a different cashier or admin",
+      );
+      err.code = "SAME_ACTOR"; err.status = 409; throw err;
+    }
+    const total    = toNum(adv.amount);
+    const applied  = toNum(adv.appliedAmount);
+    const refunded = toNum(adv.refundedAmount);
+    const remaining = +(total - applied - refunded).toFixed(2);
+    if (remaining <= 0) throw new Error("No remaining balance to refund.");
+
+    const validModes = ["CASH", "UPI", "BANK_TRANSFER", "CARD", "ONLINE"];
+    const refundMode = mode && validModes.includes(mode) ? mode : "CASH";
+
+    // CAS write: only proceed if the status is still ACTIVE/PARTIALLY_APPLIED
+    // AND appliedAmount hasn't moved since our read. If a concurrent apply
+    // landed in the meantime, appliedAmount changed and we lose the race
+    // — caller should retry with the freshly computed `remaining`.
+    const PatientAdvanceModel = require("../../models/PatientBillModel/PatientAdvanceModel");
+    const updated = await PatientAdvanceModel.findOneAndUpdate(
+      {
+        _id:           advanceId,
+        status:        { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
+        appliedAmount: adv.appliedAmount,             // snapshot guard
+      },
+      {
+        $set: {
+          refundedAmount:      Decimal128.fromString(remaining.toFixed(2)),
+          status:              "REFUNDED",
+          refundedAt:          new Date(),
+          refundedBy,
+          refundedById:        refundedById || null,
+          refundReason,
+          refundMode,
+          refundTransactionId: transactionId || null,
+          // R7bb-FIX-E-3: Admin override audit anchor.
+          ...(approverOverride && refundedById ? {
+            approvedById: refundedById,
+            approvedBy:   refundedBy,
+            approvedAt:   new Date(),
+          } : {}),
+        },
+      },
+      { new: true },
+    );
+    if (!updated) {
+      throw new Error("Refund race detected — advance state changed between read and write. Please retry.");
+    }
+    // R7ar-P1-7: invalidate Day Book cache on refund.
+    try {
+      const ctrl = require("../../controllers/Billing/billingController");
+      ctrl.invalidateDayBookCache?.();
+    } catch (_) { /* best-effort */ }
+    // R7ap-F15: emit audit row. Best-effort — never block the refund on
+    // audit-collection failure.
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:                "ADVANCE_REFUNDED",
+        UHID:                 updated.UHID,
+        patientId:            updated.patientId,
+        advanceId:            updated._id,
+        advanceReceiptNumber: updated.receiptNumber,
+        admissionId:          updated.admission,
+        amount:               remaining,
+        paymentMode:          refundMode,
+        transactionId:        transactionId || null,
+        // R7bb-C / D7-HIGH-4: actorId on the audit row — listing audit
+        // by actor (`?actorId=…`) now works for advance refunds too.
+        actorId:              refundedById || null,
+        actorRole:            refundedByRole || null,
+        actorName:            refundedBy,
+        reason:               refundReason,
+        before:               { status: adv.status, refundedAmount: refunded, remainingAmount: remaining },
+        after:                { status: "REFUNDED", refundedAmount: remaining, remainingAmount: 0 },
+      });
+    } catch (_) { /* audit best-effort */ }
+    return updated;
   }
 }
 

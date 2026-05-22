@@ -106,7 +106,13 @@ const PatientDietPlanSchema = new mongoose.Schema({
 
     // Conditions / clinical
     conditions:       { type: [String], default: [] },   // ["diabetic", "hypertensive", "ckd-3"]
-    allergies:        { type: [String], default: [] },   // ["dairy", "nuts"]
+    allergies:        { type: [String], default: [] },   // ["dairy", "nuts"] — free-text food category
+    // R7bb-FIX-E-9 / D6-CRIT-6: structured food-allergen list. The kitchen
+    // indent endpoint copies this into KitchenIndent.allergens so the cook
+    // checks against a curated enum (peanut/tree-nut/dairy/gluten/etc.)
+    // rather than free-text. Falls back to `allergies[]` if the dietitian
+    // doesn't populate it.
+    allergens:        { type: [String], default: [] },   // ["peanut","tree-nut","dairy","egg","gluten","soy","shellfish","fish","sesame"]
     medications:      { type: [String], default: [] },   // notable drug interactions (warfarin → vit K)
 
     // Dietary habits

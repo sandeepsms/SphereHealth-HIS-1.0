@@ -82,6 +82,34 @@ exports.getCompleteFile = async (req, res) => {
       return res.status(404).json({ success: false, message: "Patient not found" });
     }
 
+    // R7bf-J/A8-CRIT-2: bounded fetch + windowed time-range. Pre-R7bf this
+    // endpoint loaded EVERY nursing note, vital, MAR, order, lab,
+    // radiology row since admission. A 30-day ICU patient = 28 MB
+    // response, four concurrent hits OOMed the Node process. Now:
+    //   - default window = last 7 days (configurable via ?from&to)
+    //   - per-section cap = 200 rows (configurable via ?limit)
+    //   - response carries `pagination` with `hasMore` flags + the cursor
+    //     parameters the UI passes in `loadOlder` to fetch the next page.
+    // The earlier `admissions`, `consents`, `dischargeSummary`, `mlc`,
+    // `bills` lists are KEY clinical context and small in cardinality —
+    // those still load fully (typically < 50 rows / patient). The big-N
+    // collections (notes, orders, MAR, vitals, audit) are windowed.
+    const DEFAULT_WINDOW_DAYS = 7;
+    const MAX_LIMIT           = 500;
+    const PER_SECTION_LIMIT   = Math.min(parseInt(req.query.limit, 10) || 200, MAX_LIMIT);
+    const now    = new Date();
+    const toDate = req.query.to   ? new Date(req.query.to)   : now;
+    const fromDate = req.query.from
+      ? new Date(req.query.from)
+      : new Date(now.getTime() - DEFAULT_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+      return res.status(400).json({ success: false, message: "Invalid from/to date" });
+    }
+    // Time window applied via createdAt for the big collections. Sections
+    // are sorted DESC so the per-section .limit() picks the newest within
+    // the window — UI can request older rows via ?from / ?to.
+    const win = { $gte: fromDate, $lte: toDate };
+
     // Parallel fetch — every section is independent, so blast them all at once.
     const [
       admissions, doctorNotes, nurseNotes, doctorOrders,
@@ -91,31 +119,35 @@ exports.getCompleteFile = async (req, res) => {
       investigations, bills, billingTriggers, activityLog,
       dietPlans,
     ] = await Promise.all([
-      safe("admissions",       () => Admission.find({ UHID }).sort({ admissionDate: -1 }).lean()),
-      safe("doctorNotes",      () => DoctorNotes.find({ patientUHID: UHID }).sort({ visitDate: -1, createdAt: -1 }).lean()),
-      safe("nurseNotes",       () => NurseNotes.find({ patientUHID: UHID }).sort({ createdAt: -1 }).lean()),
-      safe("doctorOrders",     () => DoctorOrder.find({ UHID }).sort({ orderedAt: -1, createdAt: -1 }).lean()),
-      safe("consents",         () => ConsentForm.find({ UHID }).sort({ createdAt: -1 }).lean()),
-      safe("dischargeSummary", () => DischargeSummary.find({ UHID }).sort({ createdAt: -1 }).lean()),
-      safe("nursingAssessments", () => NursingAssessment.find({ UHID }).sort({ createdAt: -1 }).lean()),
-      safe("nursingCarePlans",   () => NursingCarePlan.find({ UHID }).sort({ createdAt: -1 }).lean()),
-      safe("shiftHandovers",     () => ShiftHandover.find({ UHID }).sort({ createdAt: -1 }).lean()),
-      safe("bedTransfers",       () => BedTransfer ? BedTransfer.find({ UHID }).sort({ createdAt: -1 }).lean() : []),
-      safe("mar",                () => MAR ? MAR.find({ UHID }).sort({ createdAt: -1 }).lean() : []),
-      safe("vitals",             () => VitalSheet ? VitalSheet.find({ UHID }).sort({ recordedAt: -1 }).lean() : []),
-      safe("mlc",                () => MLCReport ? MLCReport.find({ UHID }).sort({ createdAt: -1 }).lean() : []),
-      safe("investigations",     () => InvestigationOrder.find({ UHID }).sort({ createdAt: -1 }).lean()),
-      safe("bills",              () => PatientBill.find({ UHID }).sort({ createdAt: -1 }).lean()),
-      safe("billingTriggers",    () => BillingTrigger.find({ UHID }).sort({ createdAt: -1 }).limit(500).lean()),
-      safe("activityLog",        () => PatientActivityLog.find({ UHID }).sort({ createdAt: -1 }).limit(500).lean()),
-      safe("dietPlans",          () => PatientDietPlan ? PatientDietPlan.find({ UHID }).sort({ assignedAt: -1, createdAt: -1 }).lean() : []),
+      // Admissions are small (typically 1–3) and the chronology spine — load all.
+      safe("admissions",       () => Admission.find({ UHID }).sort({ admissionDate: -1 }).limit(50).lean()),
+      // The 7-day window applies to high-cardinality recorded data.
+      safe("doctorNotes",      () => DoctorNotes.find({ patientUHID: UHID, createdAt: win }).sort({ visitDate: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("nurseNotes",       () => NurseNotes.find({ patientUHID: UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("doctorOrders",     () => DoctorOrder.find({ UHID, createdAt: win }).sort({ orderedAt: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      // Consents are infrequent + must be visible historically — load all but capped.
+      safe("consents",         () => ConsentForm.find({ UHID }).sort({ createdAt: -1 }).limit(100).lean()),
+      safe("dischargeSummary", () => DischargeSummary.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean()),
+      safe("nursingAssessments", () => NursingAssessment.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("nursingCarePlans",   () => NursingCarePlan.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("shiftHandovers",     () => ShiftHandover.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("bedTransfers",       () => BedTransfer ? BedTransfer.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
+      safe("mar",                () => MAR ? MAR.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
+      safe("vitals",             () => VitalSheet ? VitalSheet.find({ UHID, recordedAt: win }).sort({ recordedAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
+      // MLC + bills + admissions don't bloat — keep small, no window.
+      safe("mlc",                () => MLCReport ? MLCReport.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
+      safe("investigations",     () => InvestigationOrder.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("bills",              () => PatientBill.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean()),
+      safe("billingTriggers",    () => BillingTrigger.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("activityLog",        () => PatientActivityLog.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("dietPlans",          () => PatientDietPlan ? PatientDietPlan.find({ UHID }).sort({ assignedAt: -1, createdAt: -1 }).limit(50).lean() : []),
     ]);
 
     // Lab-records (manual trend sheets + imaging/micro/histopath reports).
     // Fetched separately so the optional-require null-guard is local — the
     // main Promise.all above stays uncluttered.
-    const labTrends  = LabTrend  ? await safe("labTrends",  () => LabTrend.find({ UHID }).sort({ createdAt: -1 }).lean())  : [];
-    const labReports = LabReport ? await safe("labReports", () => LabReport.find({ UHID }).sort({ reportDate: -1 }).lean()) : [];
+    const labTrends  = LabTrend  ? await safe("labTrends",  () => LabTrend.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean())  : [];
+    const labReports = LabReport ? await safe("labReports", () => LabReport.find({ UHID, reportDate: win }).sort({ reportDate: -1 }).limit(PER_SECTION_LIMIT).lean()) : [];
 
     const currentAdmission =
       admissions.find((a) => a.status === "Active") || admissions[0] || null;
@@ -224,6 +256,43 @@ exports.getCompleteFile = async (req, res) => {
       dietPlanned:         dietPlans.some((d) => d.status === "active"),
     };
 
+    // R7bf-J/A8-CRIT-2: cursor metadata so the UI can request older windows.
+    // A section flags `hasMore` when its row count hits PER_SECTION_LIMIT —
+    // the UI then offers "Load older" which re-calls this endpoint with
+    // `?to=<oldest-shown-when>&from=<to - 7d>`.
+    const oldest = (rows, key = "createdAt") =>
+      rows.length ? rows[rows.length - 1][key] || null : null;
+    const pagination = {
+      from: fromDate.toISOString(),
+      to:   toDate.toISOString(),
+      perSectionLimit: PER_SECTION_LIMIT,
+      hasMore: {
+        doctorNotes:        doctorNotes.length        >= PER_SECTION_LIMIT,
+        nurseNotes:         nurseNotes.length         >= PER_SECTION_LIMIT,
+        doctorOrders:       doctorOrders.length       >= PER_SECTION_LIMIT,
+        nursingAssessments: nursingAssessments.length >= PER_SECTION_LIMIT,
+        nursingCarePlans:   nursingCarePlans.length   >= PER_SECTION_LIMIT,
+        shiftHandovers:     shiftHandovers.length     >= PER_SECTION_LIMIT,
+        mar:                mar.length                >= PER_SECTION_LIMIT,
+        vitals:             vitals.length             >= PER_SECTION_LIMIT,
+        investigations:     investigations.length     >= PER_SECTION_LIMIT,
+        billingTriggers:    billingTriggers.length    >= PER_SECTION_LIMIT,
+        activityLog:        activityLog.length        >= PER_SECTION_LIMIT,
+        labTrends:          labTrends.length          >= PER_SECTION_LIMIT,
+        labReports:         labReports.length         >= PER_SECTION_LIMIT,
+      },
+      // Next "to=" the UI should pass when asking for older rows in each section.
+      cursor: {
+        doctorNotes:        oldest(doctorNotes),
+        nurseNotes:         oldest(nurseNotes),
+        doctorOrders:       oldest(doctorOrders, "orderedAt"),
+        mar:                oldest(mar),
+        vitals:             oldest(vitals, "recordedAt"),
+        billingTriggers:    oldest(billingTriggers),
+        activityLog:        oldest(activityLog),
+      },
+    };
+
     return res.json({
       success: true,
       data: {
@@ -251,6 +320,7 @@ exports.getCompleteFile = async (req, res) => {
         labReports,
         timeline,
         completeness,
+        pagination,
       },
     });
   } catch (e) {

@@ -45,13 +45,14 @@ const BedSchema = new mongoose.Schema(
       ref: "Patient",
       default: null,
     },
-    admission: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Admission",
-      default: null,
-    },
-    // ✅ ADDED: admissionService already does Bed.findByIdAndUpdate(..., { currentAdmission: admission._id })
-    //           but the field was missing from schema — so it was silently dropped by MongoDB
+    // R7bd-A-14 / A1-MED-17 — `admission` field removed (dead schema field).
+    // The previous `admission` and `currentAdmission` were two refs to the
+    // same Admission collection and the only writer was admissionService
+    // (which only ever set `currentAdmission`). The dead field caused
+    // confusion in audits + drift in legacy data. Run
+    // `node Backend/scripts/dropBedAdmissionField.js` once after deploy
+    // to backfill stragglers (copy any non-null `admission` to
+    // `currentAdmission`, then `$unset admission`).
     currentAdmission: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admission",
@@ -177,5 +178,15 @@ BedSchema.pre("save", function (next) {
   }
   next();
 });
+
+// R7bf-I / A7-HIGH-12 — Bed state-machine guard.
+// Pre-R7bf admissionService.dischargePatient (and a couple of manual
+// reservation paths) could flip a bed straight from Maintenance →
+// Occupied. With NABH IPC.6 the bed MUST land on Available between
+// cleaning and re-occupancy so housekeeping can sign off + the
+// admission flow can re-check isolation flags. The registry now
+// forbids Maintenance → Occupied (must route via Available).
+const { attachStatusGuard: _bedGuard } = require("../../utils/statusTransitionGuard");
+_bedGuard(BedSchema, { modelName: "Bed", field: "status" });
 
 module.exports = mongoose.models.Beds || mongoose.model("Beds", BedSchema);

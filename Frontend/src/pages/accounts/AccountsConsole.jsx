@@ -27,10 +27,13 @@ import {
 } from "../../Components/admin-theme";
 
 import { API_BASE_URL as API } from "../../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem("his_token")}` } });
-
-const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
-const fmtINR2 = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// R7ap-F16: shared Decimal128-safe money helpers — replaces ad-hoc Number()
+// coercion that NaN'd on raw {$numberDecimal} payloads.
+import { toMoney, fmtINR0 as fmtINR, fmtINR2 } from "../../utils/money";
+// R7ap-F22/D4-16: per-tab error boundary so one component crash doesn't
+// blank the whole Accounts page.
+import ErrorBoundary from "../../Components/ErrorBoundary";
+const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const firstOfMonth = () => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); };
 
@@ -73,13 +76,15 @@ export default function AccountsConsole() {
       />
 
       <div style={{ marginTop: 16 }}>
-        {tab === "daybook"     && <DayBookTab />}
-        {tab === "revenue"     && <RevenueTab />}
-        {tab === "gst"         && <GSTTab />}
-        {tab === "outstanding" && <OutstandingTab />}
-        {tab === "bills"       && <AllBillsTab />}
-        {tab === "refunds"     && <RefundsTab />}
-        {tab === "shift"       && <ShiftTab />}
+        {/* R7ap-F22: wrap each tab in its own ErrorBoundary so an exception
+            (e.g. a Decimal128 reduce NaN) doesn't unmount the tab strip. */}
+        {tab === "daybook"     && <ErrorBoundary label="Day Book"><DayBookTab /></ErrorBoundary>}
+        {tab === "revenue"     && <ErrorBoundary label="Revenue"><RevenueTab /></ErrorBoundary>}
+        {tab === "gst"         && <ErrorBoundary label="GST Returns"><GSTTab /></ErrorBoundary>}
+        {tab === "outstanding" && <ErrorBoundary label="Outstanding"><OutstandingTab /></ErrorBoundary>}
+        {tab === "bills"       && <ErrorBoundary label="All Bills"><AllBillsTab /></ErrorBoundary>}
+        {tab === "refunds"     && <ErrorBoundary label="Refunds & Audit"><RefundsTab /></ErrorBoundary>}
+        {tab === "shift"       && <ErrorBoundary label="Shift / Cashier"><ShiftTab /></ErrorBoundary>}
       </div>
     </AdminPage>
   );
@@ -93,15 +98,28 @@ function DayBookTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const refresh = async () => {
+  // R7aw-FIX-F2/D4: wire AbortController to the Day Book date-change effect
+  // so rapid date scrubbing doesn't pile stale 200ms-old responses on top
+  // of the fresh one. Pre-fix, jumping from 2026-05-19 → 20 → 21 in quick
+  // succession could land on the YYYY-05-19 payload because that request
+  // returned last. The `signal` is passed to axios and the cleanup calls
+  // `ctrl.abort()` to cancel in-flight requests.
+  const refresh = async (signal) => {
     setLoading(true);
     try {
-      const r = await axios.get(`${API}/billing/collection-summary?date=${date}`, authHdr());
-      setData(r.data || {});
-    } catch (e) { toast.error("Day Book load failed"); }
-    setLoading(false);
+      const r = await axios.get(`${API}/billing/collection-summary?date=${date}`, { ...authHdr(), signal });
+      if (!signal || !signal.aborted) setData(r.data || {});
+    } catch (e) {
+      if (!axios.isCancel(e) && !(signal && signal.aborted)) toast.error("Day Book load failed");
+    }
+    if (!signal || !signal.aborted) setLoading(false);
   };
-  useEffect(() => { refresh(); }, [date]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date]);
 
   const s = data?.summary || {};
   const byMode    = data?.byMode || [];
@@ -116,7 +134,7 @@ function DayBookTab() {
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)}
               style={{ padding: "6px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontWeight: 700, color: C.text }} />
-            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.amber} onClick={refresh} busy={loading} />
+            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.amber} onClick={() => refresh()} busy={loading} />
           </div>
         }>
         <div style={{ fontSize: 12.5, color: C.muted }}>
@@ -131,6 +149,19 @@ function DayBookTab() {
         <KPI label="Transactions"     value={s.txnCount ?? 0}           color={C.purple}  icon="pi-list" />
         <KPI label="IPD advance due"  value={fmtINR(s.advanceDue)}      color={C.amber}   icon="pi-home" />
         <KPI label="TPA pending"      value={fmtINR(s.tpaPending)}      color={C.teal}    icon="pi-briefcase" />
+      </div>
+      {/* R7ar-P1-12/D5-aq-04: explicit cash-flow strip so the cashier can
+          see in/out at a glance. Backend already computes these four —
+          they were just not rendered. netCashFlow = totalCollected −
+          billRefundsOut − advanceRefundsOut. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, margin: "0 0 12px" }}>
+        <KPI label="Advance deposits IN"  value={fmtINR(s.advanceDepositsIn)} color={C.amber}  icon="pi-arrow-down-left" />
+        <KPI label="Advance refunds OUT"  value={fmtINR(s.advanceRefundsOut)} color={C.red}    icon="pi-arrow-up-right" />
+        <KPI label="Bill refunds OUT"     value={fmtINR(s.billRefundsOut)}    color={C.red}    icon="pi-undo" />
+        <KPI label="Net cash flow (today)"
+             value={fmtINR(s.netCashFlow)}
+             color={(s.netCashFlow ?? 0) < 0 ? C.red : C.green}
+             icon={(s.netCashFlow ?? 0) < 0 ? "pi-arrow-down" : "pi-arrow-up"} />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -218,21 +249,30 @@ function RevenueTab() {
   const [pharmacy, setPharmacy] = useState(null);    // /pharmacy/stats
   const [loading, setLoading] = useState(false);
 
-  const refresh = async () => {
+  // R7aw-FIX-F2/D4: AbortController wired through the 3 parallel calls so
+  // a quick `from`/`to` change cancels the previous trio instead of letting
+  // the stale set overwrite the fresh state.
+  const refresh = async (signal) => {
     setLoading(true);
     try {
       const [bd, snap, ph] = await Promise.all([
-        axios.get(`${API}/billing/revenue-breakdown?from=${from}&to=${to}`, authHdr()).then(r => r.data).catch(() => null),
-        axios.get(`${API}/billing/summary`, authHdr()).then(r => r.data?.data).catch(() => null),
-        axios.get(`${API}/pharmacy/stats`, authHdr()).then(r => r.data?.data).catch(() => null),
+        axios.get(`${API}/billing/revenue-breakdown?from=${from}&to=${to}`, { ...authHdr(), signal }).then(r => r.data).catch(() => null),
+        axios.get(`${API}/billing/summary`, { ...authHdr(), signal }).then(r => r.data?.data).catch(() => null),
+        axios.get(`${API}/pharmacy/stats`, { ...authHdr(), signal }).then(r => r.data?.data).catch(() => null),
       ]);
+      if (signal && signal.aborted) return;
       setBreakdown(bd);
       setSnapshot(snap);
       setPharmacy(ph);
     } catch (e) {}
-    setLoading(false);
+    if (!signal || !signal.aborted) setLoading(false);
   };
-  useEffect(() => { refresh(); }, [from, to]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from, to]);
   const t = breakdown?.totals || {};
 
   return (
@@ -245,7 +285,7 @@ function RevenueTab() {
             <span style={{ color: C.muted }}>to</span>
             <input type="date" value={to} max={todayISO()} onChange={(e) => setTo(e.target.value)}
               style={{ padding: "6px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontWeight: 700 }} />
-            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.blue} onClick={refresh} busy={loading} />
+            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.blue} onClick={() => refresh()} busy={loading} />
           </div>
         }>
         <div style={{ fontSize: 12.5, color: C.muted }}>
@@ -299,7 +339,8 @@ function RevenueTab() {
       </div>
 
       <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <PrimaryButton label="Open Bills List"          icon="pi-list"    color={C.amber}  onClick={() => navigate("/billing")} />
+        {/* R7ah: "Open Bills List" button removed — was wired to the deleted
+            /billing route. Billing Counter covers the same flow. */}
         <PrimaryButton label="Billing Counter"          icon="pi-credit-card" color={C.purple} onClick={() => navigate("/reception-billing")} />
         <PrimaryButton label="Pharmacy Sales Register"  icon="pi-receipt" color={C.orange} onClick={() => navigate("/pharmacy?tab=registers")} />
       </div>
@@ -342,34 +383,149 @@ function BreakdownCard({ title, rows, keyField, color, icon, total, valueField =
 /* ══════════════════════════════════════════════════════════════
    GST — CGST/SGST/IGST bucket-wise for monthly returns
 ══════════════════════════════════════════════════════════════ */
+// R7bb-FIX-E-10 / D6-CRIT-7: GST monthly snapshot lock.
+// Lists the GstMonthlySnapshot rows (one per closed month) and lets the
+// Accountant lock a period once GSTR-1 has been filed for it. After
+// lock, any new CN issued against that month's bills auto-routes to
+// the current open period with a remark trail.
+function GstSnapshotLockTable() {
+  const [rows, setRows]       = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [busyId, setBusyId]   = useState(null);
+
+  const load = async (signal) => {
+    setLoading(true);
+    try {
+      const r = await axios.get(`${API}/billing/gst-snapshots`, { ...authHdr(), signal });
+      if (!signal || !signal.aborted) setRows(r.data?.data || []);
+    } catch (e) {
+      if (!axios.isCancel(e) && !(signal && signal.aborted)) {
+        // Quiet failure — snapshot table may be empty pre-cron.
+      }
+    }
+    if (!signal || !signal.aborted) setLoading(false);
+  };
+  useEffect(() => {
+    const ctrl = new AbortController();
+    load(ctrl.signal);
+    return () => ctrl.abort();
+  }, []);
+
+  const lock = async (period) => {
+    if (!window.confirm(`Lock GST period ${period}? Any subsequent refund will issue a CN against the CURRENT month with an amendment note. This cannot be undone.`)) return;
+    setBusyId(period);
+    try {
+      await axios.post(`${API}/billing/gst-snapshots/${period}/lock`, {}, authHdr());
+      toast.success(`Period ${period} locked`);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Lock failed");
+    } finally { setBusyId(null); }
+  };
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <Card title="Monthly GST snapshots — lock periods filed in GSTR-1"
+            color={C.amber} icon="pi-lock"
+            right={<PrimaryButton label="Refresh" icon="pi-refresh"
+                     color={C.amber} busy={loading} onClick={() => load()} />}>
+        {!rows.length ? (
+          <Empty icon="pi-inbox"
+                 text="No snapshots yet — the gst-monthly-snapshot cron writes the previous month at 02:00 IST on the 1st." />
+        ) : (
+          <Table cols={[
+            { label: "Period" },
+            { label: "Bills", align: "right" },
+            { label: "Taxable", align: "right" },
+            { label: "CGST", align: "right" },
+            { label: "SGST", align: "right" },
+            { label: "IGST", align: "right" },
+            { label: "CNs", align: "right" },
+            { label: "Status" },
+            { label: "Action" },
+          ]}>
+            {rows.map((r) => (
+              <tr key={r.period}>
+                <td style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.period}</td>
+                <td style={{ textAlign: "right" }}>{r.billsCount}</td>
+                <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{fmtINR2(r.taxableValue ?? r.grossSupply)}</td>
+                <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{fmtINR2(r.cgstOut)}</td>
+                <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{fmtINR2(r.sgstOut)}</td>
+                <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{fmtINR2(r.igstOut)}</td>
+                <td style={{ textAlign: "right" }}>{r.creditNotesCount}</td>
+                <td>{r.lockedAt
+                  ? <Badge value={`LOCKED ${new Date(r.lockedAt).toLocaleDateString("en-IN")}`} palette={C.red} />
+                  : <Badge value="OPEN" palette={C.green} />}</td>
+                <td>
+                  {r.lockedAt ? (
+                    <span style={{ fontSize: 11, color: C.muted }}>By {r.lockedBy || "—"}</span>
+                  ) : (
+                    <button onClick={() => lock(r.period)}
+                            disabled={busyId === r.period}
+                            style={{ padding: "4px 12px", borderRadius: 6, border: `1px solid ${C.red}`,
+                                     background: busyId === r.period ? C.muted + "20" : C.red, color: "#fff",
+                                     fontSize: 11, fontWeight: 800, cursor: busyId === r.period ? "wait" : "pointer" }}>
+                      <i className={`pi ${busyId === r.period ? "pi-spin pi-spinner" : "pi-lock"}`} /> Lock Period
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 function GSTTab() {
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo]     = useState(todayISO());
   const [data, setData] = useState(null);
+  const [hospitalData, setHospitalData] = useState(null);   // R7ap-F13
   const [loading, setLoading] = useState(false);
 
-  const refresh = async () => {
+  // R7aw-FIX-F2/D4: GST tab's from/to picker cancels in-flight requests on
+  // change. Both calls share the signal so a stale pair can't half-update.
+  const refresh = async (signal) => {
     setLoading(true);
     try {
-      const r = await axios.get(`${API}/pharmacy/registers/gst?from=${from}&to=${to}`, authHdr());
-      setData(r.data || {});
-    } catch (e) { toast.error("GST register load failed"); }
-    setLoading(false);
+      // R7ap-F13: fetch pharmacy + hospital GST in parallel.
+      const [pharmaR, hospR] = await Promise.all([
+        axios.get(`${API}/pharmacy/registers/gst?from=${from}&to=${to}`, { ...authHdr(), signal }).catch(() => null),
+        axios.get(`${API}/billing/gst-register?from=${from}&to=${to}`, { ...authHdr(), signal }).catch(() => null),
+      ]);
+      if (signal && signal.aborted) return;
+      setData(pharmaR?.data || {});
+      setHospitalData(hospR?.data?.data || null);
+    } catch (e) {
+      if (!axios.isCancel(e) && !(signal && signal.aborted)) toast.error("GST register load failed");
+    }
+    if (!signal || !signal.aborted) setLoading(false);
   };
-  useEffect(() => { refresh(); }, [from, to]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+    /* eslint-disable-next-line */
+  }, [from, to]);
 
   const buckets = data?.data?.buckets || data?.buckets || [];
-  // Pharmacy GST endpoint only computes CGST + SGST (intra-state supplies).
-  // IGST would require inter-state ship-to addresses which the pharmacy
-  // POS doesn't capture — left as a placeholder when that data becomes
-  // available. For now the column is dropped from the UI to avoid showing
-  // a misleading ₹0.
+  const hospitalBuckets = hospitalData?.buckets || [];
+  const hospitalTotals  = hospitalData?.totals  || { taxableValue: 0, cgst: 0, sgst: 0, taxAmount: 0 };
+  // Pharmacy + Hospital combined view: union both bucket arrays by rate.
   const totals  = buckets.reduce((acc, b) => ({
     taxable: acc.taxable + (b.netTaxable ?? b.taxable ?? 0),
     cgst:    acc.cgst    + (b.cgst ?? 0),
     sgst:    acc.sgst    + (b.sgst ?? 0),
     total:   acc.total   + (b.netTax ?? b.tax ?? 0),
   }), { taxable: 0, cgst: 0, sgst: 0, total: 0 });
+  const grandTotals = {
+    taxable: totals.taxable + hospitalTotals.taxableValue,
+    cgst:    totals.cgst    + hospitalTotals.cgst,
+    sgst:    totals.sgst    + hospitalTotals.sgst,
+    total:   totals.total   + hospitalTotals.taxAmount,
+  };
 
   return (
     <>
@@ -381,7 +537,7 @@ function GSTTab() {
             <span style={{ color: C.muted }}>to</span>
             <input type="date" value={to} max={todayISO()} onChange={(e) => setTo(e.target.value)}
               style={{ padding: "6px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontWeight: 700 }} />
-            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.purple} onClick={refresh} busy={loading} />
+            <PrimaryButton label="Refresh" icon="pi-refresh" color={C.purple} onClick={() => refresh()} busy={loading} />
           </div>
         }>
         <div style={{ fontSize: 12.5, color: C.muted }}>
@@ -390,16 +546,22 @@ function GSTTab() {
         </div>
       </Card>
 
+      {/* R7ap-F13: grand totals = pharmacy + hospital */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, margin: "12px 0" }}>
-        <KPI label="Taxable value"  value={fmtINR(totals.taxable)} color={C.blue}   icon="pi-receipt" />
-        <KPI label="CGST"           value={fmtINR(totals.cgst)}    color={C.amber}  icon="pi-percentage" />
-        <KPI label="SGST"           value={fmtINR(totals.sgst)}    color={C.amber}  icon="pi-percentage" />
-        <KPI label="Net tax"        value={fmtINR(totals.total)}   color={C.green}  icon="pi-money-bill" />
+        <KPI label="Taxable value"  value={fmtINR(grandTotals.taxable)} color={C.blue}   icon="pi-receipt" />
+        <KPI label="CGST"           value={fmtINR(grandTotals.cgst)}    color={C.amber}  icon="pi-percentage" />
+        <KPI label="SGST"           value={fmtINR(grandTotals.sgst)}    color={C.amber}  icon="pi-percentage" />
+        <KPI label="Net tax"        value={fmtINR(grandTotals.total)}   color={C.green}  icon="pi-money-bill" />
       </div>
 
-      <Card title="Bucket-wise GST breakdown" color={C.purple} icon="pi-list">
+      {/* R7bb-FIX-E-10 / D6-CRIT-7: monthly snapshot lock register.
+          One row per frozen month — Accountant locks once GSTR-1 is
+          filed so subsequent CNs route to the open period. */}
+      <GstSnapshotLockTable />
+
+      <Card title="Pharmacy GST · bucket-wise" color={C.purple} icon="pi-list">
         {buckets.length === 0 ? (
-          <div style={{ padding: 18, textAlign: "center", color: C.muted, fontSize: 12.5 }}>No GST data in the selected range.</div>
+          <div style={{ padding: 18, textAlign: "center", color: C.muted, fontSize: 12.5 }}>No pharmacy GST in the selected range.</div>
         ) : (
           <Table cols={[
             { label: "Rate" },
@@ -425,10 +587,41 @@ function GSTTab() {
         )}
       </Card>
 
+      {/* R7ap-F13/C-08/D5-10: hospital-service GST aggregator — was a known gap,
+          consultation/room/procedure/investigation GST is now surfaced. */}
+      <div style={{ marginTop: 12 }}>
+        <Card title="Hospital service GST · bucket-wise" color={C.purple} icon="pi-list">
+          {hospitalBuckets.length === 0 ? (
+            <div style={{ padding: 18, textAlign: "center", color: C.muted, fontSize: 12.5 }}>No hospital-service GST in the selected range.</div>
+          ) : (
+            <Table cols={[
+              { label: "Rate" },
+              { label: "Items", align: "right" },
+              { label: "Bills", align: "right" },
+              { label: "Net Taxable", align: "right" },
+              { label: "CGST", align: "right" },
+              { label: "SGST", align: "right" },
+              { label: "Net Tax", align: "right" },
+            ]}>
+              {hospitalBuckets.map((b, i) => (
+                <tr key={i}>
+                  <td><Badge value={`${b.rate}%`} palette={C.purple} /></td>
+                  <td style={{ textAlign: "right" }}>{b.itemCount}</td>
+                  <td style={{ textAlign: "right" }}>{b.billCount}</td>
+                  <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR2(b.taxableValue)}</td>
+                  <td style={{ textAlign: "right" }}>{fmtINR2(b.cgst)}</td>
+                  <td style={{ textAlign: "right" }}>{fmtINR2(b.sgst)}</td>
+                  <td style={{ textAlign: "right", fontWeight: 800, color: C.green }}>{fmtINR2(b.taxAmount)}</td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </Card>
+      </div>
+
       <div style={{ marginTop: 12, fontSize: 11.5, color: C.muted, padding: "0 4px" }}>
         <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
-        Hospital-service GST (consultation, room, procedures) wiring to this view is pending a unified aggregator on the billing side.
-        Pharmacy GST shown above is GST-Act compliant (Sale + supplement debit notes − refund credit notes).
+        R7ap: Hospital-service GST now aggregated alongside Pharmacy. CGST/SGST 50/50 split assumes intra-state supplies; IGST handling for inter-state patients requires place-of-supply on bills (R7ap-D6-04, pending).
       </div>
     </>
   );
@@ -444,21 +637,30 @@ function OutstandingTab() {
   const [aging, setAging] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const refresh = async () => {
+  // R7aw-FIX-F2/D4: AbortController wired for consistency — Outstanding tab
+  // refreshes on mount and on demand. Without abort, a user clicking the
+  // tab and immediately switching away leaves three in-flight calls that
+  // setState on an unmounted tree.
+  const refresh = async (signal) => {
     setLoading(true);
     try {
       const [t, c, a] = await Promise.all([
-        axios.get(`${API}/billing/tpa-cases`, authHdr()).catch(() => null),
-        axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, authHdr()).catch(() => null),
-        axios.get(`${API}/billing/aging`, authHdr()).catch(() => null),
+        axios.get(`${API}/billing/tpa-cases`, { ...authHdr(), signal }).catch(() => null),
+        axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, { ...authHdr(), signal }).catch(() => null),
+        axios.get(`${API}/billing/aging`, { ...authHdr(), signal }).catch(() => null),
       ]);
+      if (signal && signal.aborted) return;
       setTpaCases(t?.data?.data || t?.data?.cases || t?.data || []);
       setCollection(c?.data?.summary || null);
       setAging(a?.data || null);
     } catch (e) {}
-    setLoading(false);
+    if (!signal || !signal.aborted) setLoading(false);
   };
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+  }, []);
 
   const tpaTotal = useMemo(() => (Array.isArray(tpaCases) ? tpaCases.reduce((s, c) => s + Number(c.outstanding ?? c.balance ?? c.netAmount ?? 0), 0) : 0), [tpaCases]);
   const bucketColor = { "0-30": C.green, "31-60": C.amber, "61-90": C.orange || C.amber, "90+": C.red };
@@ -473,7 +675,7 @@ function OutstandingTab() {
       </div>
 
       <Card title="TPA / Insurance cases — outstanding" color={C.purple} icon="pi-briefcase"
-        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.purple} onClick={refresh} busy={loading} />}>
+        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.purple} onClick={() => refresh()} busy={loading} />}>
         {!Array.isArray(tpaCases) || tpaCases.length === 0 ? (
           <Empty icon="pi-briefcase" text="No open TPA cases. Pre-auth submissions appear here once filed." />
         ) : (
@@ -545,7 +747,10 @@ function OutstandingTab() {
                   <td style={{ textAlign: "right" }}>{fmtINR2(b.paid)}</td>
                   <td style={{ textAlign: "right", fontWeight: 800, color: C.red }}>{fmtINR2(b.due)}</td>
                   <td>
-                    <button onClick={() => navigate(`/billing/view/${b.billNumber.length === 8 ? b.UHID : b._id || b.UHID}`)}
+                    {/* R7ap-F4: route /billing/view/:id was deleted in R7ah.
+                        Open the workflow page (Reception Billing Counter) so
+                        the accountant can drill into payments, refund, print. */}
+                    <button onClick={() => navigate(`/reception-billing/${b.UHID}`)}
                       style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                       Open
                     </button>
@@ -581,7 +786,11 @@ function AllBillsTab() {
   const [from, setFrom] = useState(ninetyAgo());
   const [to, setTo]     = useState(todayISO());
 
-  const refresh = async () => {
+  // R7aw-FIX-F2/D4: AllBills has the busiest filter set (5 deps —
+   // from/to/status/visitType/payer). Pre-fix, toggling pills rapidly
+  // showed the wrong bill list because the older response landed last.
+  // AbortController solves the race.
+  const refresh = async (signal) => {
     setLoading(true);
     try {
       const qs = new URLSearchParams({
@@ -589,13 +798,18 @@ function AllBillsTab() {
         ...(status ? { status } : {}), ...(visitType ? { visitType } : {}),
         ...(payer ? { paymentType: payer } : {}), ...(q ? { UHID: q } : {}),
       });
-      const r = await axios.get(`${API}/billing?${qs}`, authHdr());
+      const r = await axios.get(`${API}/billing?${qs}`, { ...authHdr(), signal });
+      if (signal && signal.aborted) return;
       setBills(r.data?.data || r.data?.bills || []);
       setTotal(r.data?.pagination?.total ?? (r.data?.data?.length || 0));
     } catch (e) {}
-    setLoading(false);
+    if (!signal || !signal.aborted) setLoading(false);
   };
-  useEffect(() => { refresh(); }, [from, to, status, visitType, payer]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+  }, [from, to, status, visitType, payer]);
 
   const Pill = ({ label, value, current, setCurrent, color = C.amber }) => (
     <button onClick={() => setCurrent(value === current ? "" : value)}
@@ -611,7 +825,7 @@ function AllBillsTab() {
   return (
     <>
       <Card title="Filter bills" color={C.amber} icon="pi-filter"
-        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.amber} onClick={refresh} busy={loading} />}>
+        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.amber} onClick={() => refresh()} busy={loading} />}>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
             style={{ padding: "6px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontWeight: 700 }} />
@@ -654,15 +868,31 @@ function AllBillsTab() {
                   <td style={{ fontWeight: 700 }}>{b.patientName || b.UHID || "—"}</td>
                   <td style={{ color: C.muted, fontSize: 11.5 }}>{b.createdAt ? new Date(b.createdAt).toLocaleDateString("en-IN") : "—"}</td>
                   <td style={{ color: C.muted, fontSize: 11.5 }}>{b.visitType || "—"}</td>
-                  <td style={{ color: C.muted, fontSize: 11.5 }}>{b.paymentType || "—"}</td>
+                  <td style={{ color: C.muted, fontSize: 11.5 }}>
+                    {b.paymentType || "—"}
+                    {b.paymentType === "TPA" && b.tpaApprovedAmount > 0 && (
+                      <span style={{ marginLeft: 6, fontSize: 10, color: C.green }}>
+                        ✓ {fmtINR2(b.tpaApprovedAmount)}
+                      </span>
+                    )}
+                  </td>
                   <td><Badge value={b.billStatus || "—"} /></td>
                   <td style={{ textAlign: "right" }}>{fmtINR2(b.netAmount ?? b.totalAmount ?? 0)}</td>
                   <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR2(b.advancePaid ?? b.totalPaid ?? 0)}</td>
-                  <td>
-                    <button onClick={() => navigate(`/billing/view/${b._id}`)}
+                  <td style={{ display: "flex", gap: 4 }}>
+                    {/* R7ap-F4: route /billing/view/:id deleted — use UHID workflow page */}
+                    <button onClick={() => navigate(`/reception-billing/${b.UHID}`)}
                       style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                       Open
                     </button>
+                    {/* R7bb-FIX-E-7 / D6-CRIT-4: jump to TPA Cases settle modal */}
+                    {(b.paymentType === "TPA" || b.paymentType === "CORPORATE") &&
+                     (b.tpaClaimStatus === "APPROVED" || b.tpaClaimStatus === "PARTIAL_APPROVED") && (
+                      <button onClick={() => navigate(`/tpa-cases?settle=${b._id}`)}
+                        style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.green}40`, background: C.green + "10", color: C.green, fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+                        <i className="pi pi-wallet" /> Settle
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -680,63 +910,96 @@ function AllBillsTab() {
    self-track a session even before the persistent backend ships.
    Phase 2 (TBD): /api/cashier-sessions endpoints.
 ══════════════════════════════════════════════════════════════ */
+// R7ar-P1-10/D6-aq-10: Cashier shift backed by the /api/cashier-sessions
+// endpoint (Mongo-persisted, cross-device, audited). Pre-R7ar this tab
+// kept the session in localStorage — so a cashier opening on terminal A
+// couldn't close from terminal B, and the variance never landed in the
+// audit register. The CashierSession backend was built in R7ap-F20 but
+// the frontend was left on the localStorage shim until now.
 function ShiftTab() {
-  const [session, setSession] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("his_cashier_session") || "null"); }
-    catch { return null; }
-  });
-  const [openingCash, setOpeningCash] = useState("");
-  const [closingCash, setClosingCash] = useState("");
+  const [session,      setSession]      = useState(null);
+  const [loadingSess,  setLoadingSess]  = useState(true);
+  const [openingCash,  setOpeningCash]  = useState("");
+  const [openNotes,    setOpenNotes]    = useState("");
+  const [closingCash,  setClosingCash]  = useState("");
   const [closingNotes, setClosingNotes] = useState("");
-  const [today, setToday] = useState(null);
+  const [varianceNote, setVarianceNote] = useState("");
+  const [today,        setToday]        = useState(null);
+  const [busy,         setBusy]         = useState(false);
 
-  useEffect(() => {
-    axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, authHdr())
-      .then(r => setToday(r.data?.summary))
-      .catch(() => {});
-  }, []);
-
-  const openShift = () => {
-    if (!openingCash) { toast.error("Enter opening cash"); return; }
-    const s = {
-      openedAt: new Date().toISOString(),
-      openingCash: Number(openingCash),
-      status: "open",
-    };
-    localStorage.setItem("his_cashier_session", JSON.stringify(s));
-    setSession(s);
-    setOpeningCash("");
-    toast.success(`Shift opened · opening ${fmtINR(s.openingCash)}`);
+  // R7aw-FIX-F2/D4: ShiftTab uses signals so a quick tab-switch on mount
+  // cancels both the session lookup and today's collection summary.
+  const refreshSession = async (signal) => {
+    setLoadingSess(true);
+    try {
+      const r = await axios.get(`${API}/cashier-sessions/current`, { ...authHdr(), signal });
+      if (!signal || !signal.aborted) setSession(r.data?.data || null);
+    } catch (e) {
+      // 401/403 surface clean — no session shown
+      if (!signal || !signal.aborted) setSession(null);
+    } finally {
+      if (!signal || !signal.aborted) setLoadingSess(false);
+    }
   };
 
-  const closeShift = () => {
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refreshSession(ctrl.signal);
+    axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, { ...authHdr(), signal: ctrl.signal })
+      .then(r => { if (!ctrl.signal.aborted) setToday(r.data?.summary); })
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, []);
+
+  const openShift = async () => {
+    if (!openingCash) { toast.error("Enter opening cash"); return; }
+    setBusy(true);
+    try {
+      const r = await axios.post(`${API}/cashier-sessions/open`,
+        { openingCash: Number(openingCash), openNotes: openNotes || undefined },
+        authHdr());
+      setSession(r.data?.data || null);
+      setOpeningCash("");
+      setOpenNotes("");
+      toast.success(`Shift opened · opening ${fmtINR(Number(openingCash))}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Open shift failed");
+    } finally { setBusy(false); }
+  };
+
+  const closeShift = async () => {
     if (!session) return;
     if (!closingCash) { toast.error("Enter closing cash"); return; }
-    const expected = Number(session.openingCash) + Number(today?.byMode?.find(m => /cash/i.test(m.mode))?.amount || 0);
-    const variance = Number(closingCash) - expected;
-    const closed = {
-      ...session,
-      closedAt: new Date().toISOString(),
-      closingCash: Number(closingCash),
-      expectedCash: expected,
-      variance,
-      closingNotes,
-      status: "closed",
-    };
-    // Stash the closed session under a date key so the cashier can re-view
-    // past shifts. Active session slot is cleared.
-    const history = JSON.parse(localStorage.getItem("his_cashier_history") || "[]");
-    history.unshift(closed);
-    localStorage.setItem("his_cashier_history", JSON.stringify(history.slice(0, 30)));
-    localStorage.removeItem("his_cashier_session");
-    setSession(null);
-    setClosingCash("");
-    setClosingNotes("");
-    toast.success(`Shift closed · variance ${variance >= 0 ? "+" : ""}${fmtINR(variance)}`);
+    setBusy(true);
+    try {
+      const r = await axios.post(
+        `${API}/cashier-sessions/${session._id}/close`,
+        {
+          closingCash:  Number(closingCash),
+          varianceNote: varianceNote || undefined,
+          closeNotes:   closingNotes || undefined,
+        },
+        authHdr(),
+      );
+      setSession(null);
+      setClosingCash("");
+      setClosingNotes("");
+      setVarianceNote("");
+      const v = Number(r.data?.data?.variance || 0);
+      toast.success(`Shift closed · variance ${v >= 0 ? "+" : ""}${fmtINR(v)}`);
+    } catch (e) {
+      const msg = e?.response?.data?.message || "Close shift failed";
+      // Backend asks for varianceNote on > ₹0.50 variance — surface inline
+      // instead of just toasting, so the cashier can fix it without losing
+      // the closingCash they already typed.
+      if (msg.includes("varianceNote")) toast.error("Variance > ₹0.50 — provide a note explaining the difference.");
+      else                                toast.error(msg);
+    } finally { setBusy(false); }
   };
 
   const cashCollected = today?.byMode?.find(m => /cash/i.test(m.mode))?.amount || 0;
-  const expectedClosing = session ? Number(session.openingCash) + cashCollected : 0;
+  const openingCashN = toMoney(session?.openingCash);
+  const expectedClosing = session ? openingCashN + cashCollected : 0;
   const variance = closingCash ? Number(closingCash) - expectedClosing : 0;
 
   return (
@@ -744,22 +1007,24 @@ function ShiftTab() {
       <Card title="Cashier shift" color={C.teal} icon="pi-user-edit"
         right={session
           ? <Badge value={`Open since ${new Date(session.openedAt).toLocaleTimeString("en-IN")}`} />
-          : <Badge value="No active session" />}>
+          : <Badge value={loadingSess ? "Checking…" : "No active session"} />}>
         {!session ? (
-          <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr auto", gap: 10, alignItems: "flex-end" }}>
             <Field label="Opening cash in drawer">
               <input type="number" value={openingCash} onChange={(e) => setOpeningCash(e.target.value)}
                 placeholder="e.g. 2000"
-                style={{ width: 180, padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 13, fontWeight: 700 }} />
+                style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 13, fontWeight: 700 }} />
             </Field>
-            <PrimaryButton label="Open Shift" icon="pi-play" color={C.teal} onClick={openShift} />
-            <div style={{ flex: 1, fontSize: 12, color: C.muted, padding: "8px 0" }}>
-              Phase-1 UI — sessions persist in this browser only (local storage). Phase-2 will write to <code>/api/cashier-sessions</code> for cross-device + audit.
-            </div>
+            <Field label="Notes (optional)">
+              <input value={openNotes} onChange={(e) => setOpenNotes(e.target.value)}
+                placeholder="e.g. Morning till — Sunita"
+                style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5 }} />
+            </Field>
+            <PrimaryButton label="Open Shift" icon="pi-play" color={C.teal} onClick={openShift} busy={busy} />
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-            <KPI label="Opening cash"      value={fmtINR(session.openingCash)} color={C.muted}  icon="pi-wallet" />
+            <KPI label="Opening cash"      value={fmtINR(openingCashN)}         color={C.muted}  icon="pi-wallet" />
             <KPI label="Cash collected"    value={fmtINR(cashCollected)}        color={C.green}  icon="pi-money-bill" />
             <KPI label="Expected closing"  value={fmtINR(expectedClosing)}      color={C.blue}   icon="pi-calculator" />
             {closingCash && (
@@ -773,20 +1038,26 @@ function ShiftTab() {
       {session && (
         <div style={{ marginTop: 14 }}>
           <Card title="Close shift" color={C.red} icon="pi-stop">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 12 }}>
               <Field label="Actual cash in drawer">
                 <input type="number" value={closingCash} onChange={(e) => setClosingCash(e.target.value)}
                   placeholder="Count the drawer"
                   style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 13, fontWeight: 700 }} />
               </Field>
-              <Field label="Notes / explanation for variance (optional)">
+              <Field label="Variance note (required if > ₹0.50 off)">
+                <input value={varianceNote} onChange={(e) => setVarianceNote(e.target.value)}
+                  placeholder="e.g. ₹500 short — refund #1234 paid without slip"
+                  style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5 }} />
+              </Field>
+              <Field label="General notes (optional)">
                 <textarea value={closingNotes} onChange={(e) => setClosingNotes(e.target.value)} rows={2}
-                  placeholder="e.g. ₹500 short — receipt #1234 customer refund without slip."
+                  placeholder="Handover instructions, anything the next shift should know."
                   style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontFamily: "inherit" }} />
               </Field>
             </div>
             <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
-              <PrimaryButton label="Close Shift" icon="pi-stop" color={C.red} onClick={closeShift} disabled={!closingCash} />
+              <PrimaryButton label="Close Shift" icon="pi-stop" color={C.red} onClick={closeShift}
+                busy={busy} disabled={!closingCash} />
             </div>
           </Card>
         </div>
@@ -798,31 +1069,50 @@ function ShiftTab() {
 }
 
 function ShiftHistory() {
-  const history = (() => {
-    try { return JSON.parse(localStorage.getItem("his_cashier_history") || "[]"); }
-    catch { return []; }
-  })();
-  if (!history.length) return null;
+  const [rows,    setRows]    = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await axios.get(`${API}/cashier-sessions?limit=30`, authHdr());
+        if (!cancelled) setRows(r.data?.data || []);
+      } catch (_) {
+        if (!cancelled) setRows([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  if (loading) return null;
+  if (!rows.length) return null;
+  const num = (v) => toMoney(v);
   return (
     <div style={{ marginTop: 14 }}>
-      <Card title="Previous shifts (this browser)" color={C.muted} icon="pi-history">
+      <Card title="Previous shifts" color={C.muted} icon="pi-history">
         <Table cols={[
-          { label: "Opened" }, { label: "Closed" },
+          { label: "Cashier" }, { label: "Opened" }, { label: "Closed" },
           { label: "Opening", align: "right" }, { label: "Expected", align: "right" },
           { label: "Closing", align: "right" }, { label: "Variance", align: "right" },
         ]}>
-          {history.map((s, i) => (
-            <tr key={i}>
-              <td style={{ fontSize: 11.5 }}>{new Date(s.openedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
-              <td style={{ fontSize: 11.5 }}>{new Date(s.closedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
-              <td style={{ textAlign: "right" }}>{fmtINR(s.openingCash)}</td>
-              <td style={{ textAlign: "right" }}>{fmtINR(s.expectedCash)}</td>
-              <td style={{ textAlign: "right" }}>{fmtINR(s.closingCash)}</td>
-              <td style={{ textAlign: "right", fontWeight: 800, color: Math.abs(s.variance) < 100 ? C.green : C.red }}>
-                {s.variance >= 0 ? "+" : ""}{fmtINR(s.variance)}
-              </td>
-            </tr>
-          ))}
+          {rows.map((s) => {
+            const variance = num(s.variance);
+            const closedAt = s.closedAt ? new Date(s.closedAt) : null;
+            return (
+              <tr key={s._id}>
+                <td style={{ fontSize: 11.5 }}>{s.cashierName || "—"}{s.closedByCron && <Badge value="AUTO" palette={C.amber} />}</td>
+                <td style={{ fontSize: 11.5 }}>{new Date(s.openedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
+                <td style={{ fontSize: 11.5 }}>{closedAt ? closedAt.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : <Badge value="OPEN" palette={C.green} />}</td>
+                <td style={{ textAlign: "right" }}>{fmtINR(num(s.openingCash))}</td>
+                <td style={{ textAlign: "right" }}>{fmtINR(num(s.expectedClosing))}</td>
+                <td style={{ textAlign: "right" }}>{fmtINR(num(s.closingCash))}</td>
+                <td style={{ textAlign: "right", fontWeight: 800, color: Math.abs(variance) < 100 ? C.green : C.red }}>
+                  {variance >= 0 ? "+" : ""}{fmtINR(variance)}
+                </td>
+              </tr>
+            );
+          })}
         </Table>
       </Card>
     </div>
@@ -835,23 +1125,55 @@ function ShiftHistory() {
 function RefundsTab() {
   const navigate = useNavigate();
   const [bills, setBills] = useState([]);
+  const [advanceRefunds, setAdvanceRefunds] = useState([]);  // R7ap-F11
+  const [creditNotes,    setCreditNotes]    = useState([]);  // R7ar-P1-15
+  const [cnTotals,       setCnTotals]       = useState({ total: 0, totalTax: 0 });
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("REFUNDED");
+  // R7ap-F11: default 30-day window for the advance-refund register.
+  const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); });
+  const [to,   setTo]   = useState(() => new Date().toISOString().slice(0, 10));
 
-  const refresh = async () => {
+  // R7aw-FIX-F2/D4: 3-parallel fetch needs a shared signal so a fast
+  // filter pivot (REFUNDED → CANCELLED → PARTIAL) doesn't interleave
+  // stale and fresh sets in the table.
+  const refresh = async (signal) => {
     setLoading(true);
     try {
-      const r = await axios.get(`${API}/billing?status=${filter}&limit=50`, authHdr());
-      setBills(r.data?.data || r.data?.bills || r.data || []);
-    } catch (e) {}
-    setLoading(false);
+      // Parallel fetch — bill refunds + advance refunds + credit notes.
+      // R7at-FIX-15/D9-HIGH-3: thread `from`/`to` into the bills query too
+      // so the Refunds tab shows ONE end-of-day picture, not "last 50 ever
+      // refunded bills alongside today's CNs". The accountant reconciling
+      // 2026-05-21 EOD now sees just that day's outflow.
+      const [billRes, advRes, cnRes] = await Promise.all([
+        axios.get(`${API}/billing?status=${filter}&limit=200&from=${from}&to=${to}`, { ...authHdr(), signal }).catch(() => null),
+        axios.get(`${API}/billing/advance/refunds?from=${from}&to=${to}`, { ...authHdr(), signal }).catch(() => null),
+        axios.get(`${API}/billing/credit-notes?from=${from}&to=${to}`, { ...authHdr(), signal }).catch(() => null),
+      ]);
+      if (signal && signal.aborted) return;
+      setBills(billRes?.data?.data || billRes?.data?.bills || billRes?.data || []);
+      setAdvanceRefunds(advRes?.data?.data || []);
+      setCreditNotes(cnRes?.data?.data || []);
+      setCnTotals({
+        total:    Number(cnRes?.data?.meta?.total || 0),
+        totalTax: Number(cnRes?.data?.meta?.totalTax || 0),
+      });
+    } catch (e) {
+      if (!axios.isCancel(e) && !(signal && signal.aborted)) toast.error("Refunds load failed");
+    }
+    if (!signal || !signal.aborted) setLoading(false);
   };
-  useEffect(() => { refresh(); }, [filter]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+    /* eslint-disable-next-line */
+  }, [filter, from, to]);
 
   return (
     <>
       <Card title="Filter" color={C.red} icon="pi-filter"
-        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.red} onClick={refresh} busy={loading} />}>
+        right={<PrimaryButton label="Refresh" icon="pi-refresh" color={C.red} onClick={() => refresh()} busy={loading} />}>
         <div style={{ display: "flex", gap: 8 }}>
           {[
             { id: "REFUNDED",  label: "Refunded bills",   color: C.red },
@@ -895,7 +1217,8 @@ function RefundsTab() {
                   <td style={{ textAlign: "right" }}>{fmtINR2(b.netAmount ?? b.totalAmount ?? 0)}</td>
                   <td style={{ textAlign: "right" }}>{fmtINR2(b.advancePaid ?? b.totalPaid ?? 0)}</td>
                   <td>
-                    <button onClick={() => navigate(`/billing/view/${b._id}`)}
+                    {/* R7ap-F4: dead /billing/view/:id route — route to UHID workflow page */}
+                    <button onClick={() => navigate(`/reception-billing/${b.UHID}`)}
                       style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                       Open
                     </button>
@@ -907,9 +1230,105 @@ function RefundsTab() {
         </Card>
       </div>
 
+      {/* R7ap-F11: Advance refund register — surfaces R7ao refunds that
+          were previously invisible to Accounts. Cashier-drawer reconciliation
+          requires this list (NABH ROM.3 refund register). */}
+      <div style={{ marginTop: 12 }}>
+        <Card title={`Advance refunds · ${from} → ${to}`} color={C.red} icon="pi-wallet"
+          right={
+            <div style={{ display: "flex", gap: 6 }}>
+              <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+                style={{ padding: "4px 8px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }} />
+              <input type="date" value={to}   onChange={e => setTo(e.target.value)}
+                style={{ padding: "4px 8px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }} />
+            </div>
+          }>
+          {!Array.isArray(advanceRefunds) || advanceRefunds.length === 0 ? (
+            <Empty icon="pi-inbox" text={`No advance refunds in ${from} → ${to}.`} />
+          ) : (
+            <Table cols={[
+              { label: "Receipt #" },
+              { label: "Patient" },
+              { label: "Refunded At" },
+              { label: "Mode" },
+              { label: "Refunded By" },
+              { label: "Reason" },
+              { label: "Amount", align: "right" },
+              { label: "Action" },
+            ]}>
+              {advanceRefunds.map((a, i) => (
+                <tr key={a._id || i}>
+                  <td style={{ fontFamily: "monospace", fontSize: 11.5 }}>{a.receiptNumber}</td>
+                  <td style={{ fontWeight: 700 }}>{a.patientId?.fullName || a.UHID}</td>
+                  <td style={{ color: C.muted, fontSize: 12 }}>{a.refundedAt ? new Date(a.refundedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                  <td><Badge value={a.refundMode || "CASH"} palette={C.purple} /></td>
+                  <td style={{ fontSize: 12 }}>{a.refundedBy || "—"}</td>
+                  <td style={{ color: C.muted, fontSize: 11.5, maxWidth: 260, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={a.refundReason}>{a.refundReason || "—"}</td>
+                  <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace", fontWeight: 800, color: C.red }}>{fmtINR2(a.refundedAmount)}</td>
+                  <td>
+                    <button onClick={() => navigate(`/reception-billing/${a.UHID}`)}
+                      style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      Open
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </Card>
+      </div>
+
+      {/* R7ar-P1-15/D6-aq-08: Credit notes register — every GST-Act §34 CN
+          emitted on a bill refund. Pre-R7ar these were data-resident only;
+          the GST register subtracted them but they had no list view, so
+          the accountant couldn't audit which CNs cleared this period. */}
+      <div style={{ marginTop: 12 }}>
+        <Card title={`Credit notes · ${from} → ${to}`} color={C.purple} icon="pi-file-edit"
+          right={
+            <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: C.muted }}>Total <b style={{ color: C.red, fontFamily: "'DM Mono', monospace" }}>{fmtINR2(cnTotals.total)}</b></span>
+              <span style={{ fontSize: 12, color: C.muted }}>Tax reversed <b style={{ color: C.red, fontFamily: "'DM Mono', monospace" }}>{fmtINR2(cnTotals.totalTax)}</b></span>
+            </div>
+          }>
+          {!Array.isArray(creditNotes) || creditNotes.length === 0 ? (
+            <Empty icon="pi-inbox" text={`No credit notes in ${from} → ${to}.`} />
+          ) : (
+            <Table cols={[
+              { label: "CN #" },
+              { label: "Date" },
+              { label: "Original Bill" },
+              { label: "Patient" },
+              { label: "Reason" },
+              { label: "Refund Mode" },
+              { label: "Taxable", align: "right" },
+              { label: "Tax", align: "right" },
+              { label: "Refund Total", align: "right" },
+              { label: "Status" },
+            ]}>
+              {creditNotes.map((cn) => (
+                <tr key={cn._id}>
+                  <td style={{ fontFamily: "monospace", fontSize: 11.5 }}>{cn.creditNoteNumber}</td>
+                  <td style={{ color: C.muted, fontSize: 11.5 }}>{cn.creditNoteDate ? new Date(cn.creditNoteDate).toLocaleDateString("en-IN") : "—"}</td>
+                  <td style={{ fontFamily: "monospace", fontSize: 11.5 }}>{cn.originalBillNumber}</td>
+                  <td style={{ fontWeight: 700 }}>{cn.patientId?.fullName || cn.UHID}</td>
+                  <td style={{ color: C.muted, fontSize: 11.5, maxWidth: 240, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={cn.reasonText}>{cn.reasonText || "—"}</td>
+                  <td><Badge value={cn.refundMode || "—"} palette={C.purple} /></td>
+                  <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{fmtINR2(cn.taxableValue)}</td>
+                  <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace", color: C.red }}>{fmtINR2(cn.taxAmount)}</td>
+                  <td style={{ textAlign: "right", fontFamily: "'DM Mono', monospace", fontWeight: 800, color: C.red }}>{fmtINR2(cn.refundAmount)}</td>
+                  <td>{cn.periodLocked
+                    ? <Badge value="GST LOCKED" palette={C.red} />
+                    : <Badge value="OPEN" palette={C.green} />}</td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </Card>
+      </div>
+
       <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <PrimaryButton label="Billing Audit Trail" icon="pi-shield" color={C.teal} onClick={() => navigate("/billing-audit-trail")} />
-        <PrimaryButton label="All Bills" icon="pi-list" color={C.amber} onClick={() => navigate("/billing")} />
+        <PrimaryButton label="Billing Counter"     icon="pi-list"   color={C.amber} onClick={() => navigate("/reception-billing")} />
       </div>
     </>
   );

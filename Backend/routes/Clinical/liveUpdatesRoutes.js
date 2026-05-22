@@ -14,12 +14,18 @@
 
 const router = require("express").Router();
 const { EventEmitter } = require("events");
+const { requireAction } = require("../../middleware/auth");
 
 // Module-scoped emitter — exported so activityLogger can fire on it.
 const bus = new EventEmitter();
 bus.setMaxListeners(200); // 200 simultaneous viewers per node
 
-router.get("/:uhid", (req, res) => {
+// R7az-A/D1-CRIT: SSE was completely ungated pre-R7az — any logged-in
+// role could subscribe to the live activity firehose for any UHID
+// (charts, MAR entries, lab results, payments, etc. = full PHI feed).
+// Gated on patient.read so the same roles that can view the patient
+// file can also subscribe to its live updates.
+router.get("/:uhid", requireAction("patient.read"), (req, res) => {
   const uhid = String(req.params.uhid || "").toUpperCase();
   if (!uhid) return res.status(400).end();
 

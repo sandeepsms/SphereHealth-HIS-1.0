@@ -35,10 +35,30 @@ const IndentItemSchema = new mongoose.Schema({
   // what the pharmacist actually dispensed (may be less if low stock,
   // or after a substitution). Both are simple Number counts of units
   // (tablets, ampoules, sachets) — granular split happens at the
-  // PharmacyBatch level via FIFO.
+  // PharmacyBatch level via FIFO/FEFO.
   requestedQty:  { type: Number, required: true, min: 1 },
   issuedQty:     { type: Number, default: 0, min: 0 },
-  batchNumber:   { type: String, trim: true },   // set on release
+  // R7az-MED-6 (D7-MED-6): typed batch reference for traceability +
+  // recall queries. `batchNumber` (string mirror) kept for display so
+  // print receipts / older clients keep working without a join.
+  batchId:       { type: mongoose.Schema.Types.ObjectId, ref: "PharmacyDrugBatch" },
+  batchNumber:   { type: String, trim: true },   // set on release (display mirror)
+
+  // R7az-CRIT-5/D7-CRIT-3: per-batch dispense ledger. When the release
+  // path splits a single requested quantity across multiple FEFO-ordered
+  // batches (earliest expiry first), each batch's contribution lands as
+  // a `picked` row so the audit trail can prove FEFO compliance and so
+  // a future recall can reach every patient who received a specific
+  // batch. populated only on release.
+  picked: [
+    {
+      batchId:    { type: mongoose.Schema.Types.ObjectId, ref: "PharmacyDrugBatch", required: true },
+      batchNo:    { type: String, trim: true },
+      qty:        { type: Number, required: true, min: 0 },
+      expiryDate: { type: Date },
+      pickedAt:   { type: Date, default: Date.now },
+    },
+  ],
 
   // Where the indent line came from. Doctor-prescribed lines link back
   // to the prescription so the audit trail can prove the nurse didn't
@@ -145,6 +165,19 @@ PharmacyIndentSchema.pre("save", async function (next) {
 PharmacyIndentSchema.index({ status: 1, urgency: 1, raisedAt: 1 });
 PharmacyIndentSchema.index({ admissionId: 1, status: 1 });
 PharmacyIndentSchema.index({ UHID: 1, raisedAt: -1 });
+
+// R7bf-I / A7-CRIT-7 — Indent state-machine guard.
+// Pre-R7bf indentService.cancelIndent only blocked status === "Released".
+// PartiallyReleased was treated as still-cancellable, but at that point
+// the dispensed batches had ALREADY been debited from stock — silently
+// re-cancelling created a ghost-inventory state where the bill never
+// fired but the drug was gone. The registry now treats both
+// PartiallyReleased and Released as no-cancel terminals; the indent
+// service / controller will surface a 409 with code ILLEGAL_TRANSITION
+// and the operator is directed to use the return-indent / void-sale
+// flow instead.
+const { attachStatusGuard } = require("../../utils/statusTransitionGuard");
+attachStatusGuard(PharmacyIndentSchema, { modelName: "PharmacyIndent", field: "status" });
 
 module.exports =
   mongoose.models.PharmacyIndent ||

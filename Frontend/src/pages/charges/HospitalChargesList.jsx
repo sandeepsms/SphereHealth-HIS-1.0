@@ -13,11 +13,19 @@ import {
   AdminPage, Hero, KPI, Card, Table, EmptyRow, RowAction, Badge,
   Modal, Field, SearchInput, PrimaryButton, C,
 } from "../../Components/admin-theme";
+import { confirm } from "../../Components/common/ConfirmDialog";
+import { useAuth } from "../../context/AuthContext";
 
 const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
 const HospitalChargesList = () => {
   const navigate = useNavigate();
+  // R7bb-E/D5-HIGH-3 — Receptionist + Accountant + TPA Coord can READ
+  // tariff sheets (billing.read), but only Admin (departments.write)
+  // may add/edit/toggle/delete. Hide the action affordances so
+  // viewers don't see CTAs the backend would 403 on.
+  const { can } = useAuth();
+  const canMutate = typeof can === "function" ? can("departments.write") : false;
   const [rows, setRows]    = useState([]);
   const [q, setQ]          = useState("");
   const [statusF, setStatusF] = useState("all"); // all | active | inactive
@@ -53,7 +61,13 @@ const HospitalChargesList = () => {
   };
 
   const remove = async (id, name) => {
-    if (!window.confirm(`Delete charge sheet for ${name}? This cannot be undone.`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Delete charge sheet?",
+      body: `This will permanently remove the "${name}" charge sheet and all its line items. This cannot be undone.`,
+      danger: true,
+      confirmLabel: "Delete",
+    }))) return;
     try {
       await hospitalChargesService.deleteHospitalCharges(id);
       toast.success("Charge sheet deleted");
@@ -85,8 +99,11 @@ const HospitalChargesList = () => {
               <option value="active">Active only</option>
               <option value="inactive">Inactive only</option>
             </select>
-            <PrimaryButton icon="pi-plus" label="Add Charge Sheet" color={C.purple}
-              onClick={() => navigate("/hospital-charges/create")} />
+            {/* R7bb-E/D5-HIGH-3 — Add gated by departments.write. */}
+            {canMutate && (
+              <PrimaryButton icon="pi-plus" label="Add Charge Sheet" color={C.purple}
+                onClick={() => navigate("/hospital-charges/create")} />
+            )}
           </div>
         }
         padding={0}>
@@ -112,13 +129,18 @@ const HospitalChargesList = () => {
                       <Badge value={r.isActive ? "Active" : "Inactive"} palette={r.isActive ? "active" : "inactive"} />
                     </td>
                     <td style={{ padding: "7px 12px", whiteSpace: "nowrap" }}>
+                      {/* View is read-only, always visible. Mutations gated. */}
                       <RowAction icon="pi-eye"    label="View"   color={C.green}  onClick={() => setView(r)} />
-                      <RowAction icon="pi-pencil" label="Edit"   color={C.blue}   onClick={() => navigate(`/hospital-charges/edit/${r._id}`)} />
-                      <RowAction icon={r.isActive ? "pi-ban" : "pi-check"}
-                        label={r.isActive ? "Off" : "On"}
-                        color={C.amber}
-                        onClick={() => toggle(r._id)} />
-                      <RowAction icon="pi-trash"  label="Delete" color={C.red}    onClick={() => remove(r._id, r.tpaName)} />
+                      {canMutate && (
+                        <>
+                          <RowAction icon="pi-pencil" label="Edit"   color={C.blue}   onClick={() => navigate(`/hospital-charges/edit/${r._id}`)} />
+                          <RowAction icon={r.isActive ? "pi-ban" : "pi-check"}
+                            label={r.isActive ? "Off" : "On"}
+                            color={C.amber}
+                            onClick={() => toggle(r._id)} />
+                          <RowAction icon="pi-trash"  label="Delete" color={C.red}    onClick={() => remove(r._id, r.tpaName)} />
+                        </>
+                      )}
                     </td>
                   </tr>
                 );

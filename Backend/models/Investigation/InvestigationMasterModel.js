@@ -111,10 +111,17 @@ const CATEGORY_PREFIX = {
 InvestigationMasterSchema.pre("save", async function (next) {
   if (!this.investigationCode) {
     const prefix = CATEGORY_PREFIX[this.category] || "INV";
-    const count = await mongoose.model("InvestigationMaster").countDocuments({
+    // R7au-FIX-2/D1-CRIT-C3: atomic counter (same pattern as User
+    // employeeId + Patient UHID). Pre-R7au the `countDocuments({regex}) + 1`
+    // pattern raced under concurrent bulk-import — second insert hit
+    // E11000 on unique investigationCode. Counter is per-prefix so
+    // PATH/RAD/CARD series stay independent.
+    const { nextSequence } = require("../../utils/counter");
+    const seed = await mongoose.model("InvestigationMaster").countDocuments({
       investigationCode: { $regex: `^${prefix}-` },
     });
-    this.investigationCode = `${prefix}-${String(count + 1).padStart(3, "0")}`;
+    const seq = await nextSequence(`invmaster:${prefix}`, seed);
+    this.investigationCode = `${prefix}-${String(seq).padStart(3, "0")}`;
   }
   next();
 });

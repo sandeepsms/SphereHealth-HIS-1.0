@@ -48,12 +48,27 @@ class NursingCarePlanController {
   });
 
   // PUT /api/nursing-care-plans/:id
+  // R7az-D2-HIGH-3: refuse PUT on a completed plan (NABH COP.1). The
+  // amendment workflow is a separate path that flips status to
+  // "amended" explicitly; a stock PUT must not silently overwrite a
+  // signed care plan.
   update = handle(async (req, res) => {
-    const plan = await NursingCarePlan.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    });
+    const plan = await NursingCarePlan.findById(req.params.id);
     if (!plan) return res.status(404).json({ success: false, message: "Nursing care plan not found" });
+    if (plan.status === "completed" || plan.status === "COMPLETED") {
+      return res.status(409).json({
+        success: false,
+        code: "CARE_PLAN_LOCKED",
+        message: "Nursing care plan is completed — use the amendment endpoint to change it (NABH COP.1)",
+      });
+    }
+    const body = { ...(req.body || {}) };
+    // Don't let callers backdoor signedBy / signedAt via PUT.
+    delete body.signedBy;
+    delete body.signedAt;
+    for (const [k, v] of Object.entries(body)) plan.set(k, v);
+    plan.updatedBy = req.user?.id || req.user?._id || plan.updatedBy;
+    await plan.save();
     return res.json({ success: true, data: plan });
   });
 

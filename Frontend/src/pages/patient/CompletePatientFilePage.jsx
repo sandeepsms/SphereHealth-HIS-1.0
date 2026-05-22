@@ -2177,9 +2177,59 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
   // dietPlans was missing from this destructure — PrintSection 9a was
   // reading a free variable that didn't exist, crashing the print popup.
   // (Audit finding HIGH-3.)
-  const { currentAdmission, doctorOrders, vitals, nurseNotes,
+  const { currentAdmission, doctorOrders, vitals, nurseNotes, doctorNotes,
     consents, investigations, mlc, dischargeSummary, bills, activityLog,
-    bedTransfers, shiftHandovers, dietPlans, timeline } = data;
+    bedTransfers, shiftHandovers, dietPlans, nursingAssessments, nursingCarePlans, timeline } = data;
+
+  // R7k: NABH-compliant chronological clinical narrative.
+  // Previously this print rendered "4. Doctor Notes" then "5. Nursing
+  // Notes" as two separate blocks grouped by author. The medical-record
+  // standard (and what auditors expect) is a single continuous narrative
+  // ordered by encounter time — Day 1 doctor round → Day 1 nurse note →
+  // Day 1 evening note → Day 2 …. We merge docOther + nurseOther and
+  // sort by visitDate/createdAt ascending.
+  const chronologicalNotes = React.useMemo(() => {
+    const items = [];
+    for (const n of (docOther || [])) {
+      const when = n.visitDate || n.createdAt;
+      if (!when) continue;
+      items.push({ kind: "doctor", when: new Date(when), note: n });
+    }
+    for (const n of (nurseOther || [])) {
+      const when = n.visitDate || n.noteDate || n.createdAt;
+      if (!when) continue;
+      items.push({ kind: "nurse", when: new Date(when), note: n });
+    }
+    items.sort((a, b) => a.when - b.when);
+    return items;
+  }, [docOther, nurseOther]);
+
+  // R7k: Same-day filter for shift handovers. Handovers are operational
+  // shift-to-shift notes — once the day rolls over they pollute the
+  // permanent record. NABH wants the printed file to reflect a clean
+  // clinical narrative, so we only print handovers from today.
+  const startOfToday = React.useMemo(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0); return d;
+  }, []);
+  const todaysHandovers = React.useMemo(
+    () => (shiftHandovers || []).filter((h) =>
+      h.createdAt && new Date(h.createdAt) >= startOfToday,
+    ),
+    [shiftHandovers, startOfToday],
+  );
+
+  // R7k: Blood transfusion records — extracted from any nurse note whose
+  // noteData payload matches the blood-transfusion shape. NABH MOM.7
+  // requires a dedicated audit-friendly transfusion register that lists
+  // every bag with cross-match + pre/post vitals + reaction status —
+  // not buried inside generic nursing notes.
+  const bloodTransfusionEntries = React.useMemo(
+    () => (nurseNotes || [])
+      .filter((n) => matchBlood(n.noteData))
+      .sort((a, b) => new Date(a.visitDate || a.createdAt) - new Date(b.visitDate || b.createdAt)),
+    [nurseNotes],
+  );
+
   return (
     <main className="pf-print-body">
       <PrintSection title="1. Admission Summary">
@@ -2194,91 +2244,163 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
         <NoteList notes={nurseInitial} kind="nurse" emptyMsg="Nursing initial assessment not recorded" />
       </PrintSection>
 
-      <PrintSection title="4. Doctor Notes">
-        <NoteList notes={docOther} kind="doctor" emptyMsg="No doctor notes on file" />
+      {/* R7k: ONE chronological progress-notes section instead of two
+          author-grouped blocks. Each entry keeps its kind tag (Doctor /
+          Nurse) but they're interleaved by encounter time so the
+          reviewing clinician sees the actual order of care. */}
+      <PrintSection title="4. Progress Notes (chronological)">
+        {chronologicalNotes.length === 0
+          ? <Empty icon="📝" msg="No progress notes on file" />
+          : chronologicalNotes.map(({ kind, note }, i) => (
+              <NoteList key={`${note._id}-${i}`} notes={[note]} kind={kind} />
+            ))
+        }
       </PrintSection>
 
-      <PrintSection title="5. Nursing Notes">
-        <NoteList notes={nurseOther} kind="nurse" emptyMsg="No nursing notes on file" />
+      {/* R7k: Procedure notes — separate dedicated section per NABH.
+          Pulled from BOTH doctorNotes + nurseNotes when their noteType
+          looks procedural OR noteDetails/noteData payload matches the
+          procedure shape. The same component used in interactive view. */}
+      <PrintSection title="5. Procedure Notes">
+        <ProcedureNotesSection doctorNotes={doctorNotes || []} nurseNotes={nurseNotes || []} />
       </PrintSection>
 
       <PrintSection title="6. Orders + MAR">
         <OrdersSection orders={doctorOrders} />
       </PrintSection>
 
+      {/* R7l: Day-by-day NABH MOM.3 treatment chart. For each day of
+          the stay, every active medication (+IV/oxygen) shows its
+          scheduled doses with a green ✓ when administered, the
+          nurse's name, and the actual administration time. Pages
+          break between days (pageBreakInside: avoid). */}
+      <PrintSection title="6a. Treatment Chart — Day-wise (NABH MOM.3)">
+        <TreatmentChartPrintSection
+          doctorOrders={doctorOrders}
+          currentAdmission={currentAdmission}
+        />
+      </PrintSection>
+
       <PrintSection title="7. Vital Trends">
         <VitalsSection vitals={vitals} nurseNotes={nurseNotes} />
       </PrintSection>
 
-      <PrintSection title="8. Investigations">
+      {/* R7k: Dedicated Blood Transfusion Records (NABH MOM.7).
+          Previously these scattered across generic nurse notes — auditors
+          had to hunt for each transfusion. Now every blood event with
+          its bag number, cross-match, pre/post vitals, monitoring entries
+          and reaction status appears in one chronological list. */}
+      {bloodTransfusionEntries.length > 0 && (
+        <PrintSection title="8. Blood Transfusion Records (NABH MOM.7)">
+          {bloodTransfusionEntries.map((n) => (
+            <div key={n._id} className="pf-record pf-record--nurse" style={{ marginBottom: 8 }}>
+              <div className="pf-record__head">
+                <span className="pf-record__title">Transfusion event</span>
+                <span className="pf-record__time">{fmtDT(n.visitDate || n.createdAt)}</span>
+                <span className="pf-record__by">by {n.nurseName || "Nurse"}</span>
+              </div>
+              <BloodTransfusionPanel data={n.noteData} />
+            </div>
+          ))}
+        </PrintSection>
+      )}
+
+      <PrintSection title="9. Investigations">
         <InvestigationSection investigations={investigations} />
       </PrintSection>
 
-      <PrintSection title="9. Consent Forms">
+      <PrintSection title="10. Consent Forms">
         <ConsentSection consents={consents} />
       </PrintSection>
+
+      {/* Care Plans (NABH COP.3) — fetched but never rendered prior to
+          R7k. Surfaced here so the print includes the nurse's care-plan
+          documentation. */}
+      {(nursingCarePlans?.length || 0) > 0 && (
+        <PrintSection title="10a. Nursing Care Plans">
+          <CarePlansSection carePlans={nursingCarePlans} />
+        </PrintSection>
+      )}
+
+      {/* Nutrition / Patient Education / Daily nursing assessments —
+          all live on the NursingAssessment model and were fetched but
+          never rendered. R7k closes that silent gap. */}
+      {(nursingAssessments?.length || 0) > 0 && (
+        <PrintSection title="10b. Nutritional & Patient-Education Assessments">
+          <NursingAssessmentsSection assessments={nursingAssessments} />
+        </PrintSection>
+      )}
 
       {/* Dietician — nutritional assessments + assigned plans. Shown
           whenever any plan exists so the treating doctor / nurse on
           rounds can see what nutritional orders are in effect. */}
       {(dietPlans?.length || 0) > 0 && (
-        <PrintSection title="9a. Dietician — Diet Plans">
+        <PrintSection title="10c. Dietician — Diet Plans">
           <DietPlansSection dietPlans={dietPlans} />
         </PrintSection>
       )}
 
       {mlc?.length > 0 && (
-        <PrintSection title="10. Medico-Legal Cases">
+        <PrintSection title="11. Medico-Legal Cases">
           <MLCSection mlc={mlc} />
         </PrintSection>
       )}
 
-      <PrintSection title="11. Bed Transfers + Shift Handovers">
-        {(bedTransfers?.length || 0) === 0 && (shiftHandovers?.length || 0) === 0
-          ? <Empty icon="🔄" msg="No handovers recorded" />
-          : (
-            <>
-              {bedTransfers?.map((t) => (
-                <div key={t._id} className="pf-record">
-                  <div className="pf-record__head">
-                    <span className="pf-record__title">Bed transfer — {t.fromBed} → {t.toBed}</span>
-                    <span className="pf-record__time">{fmtDT(t.createdAt)}</span>
-                    <span className={`pf-badge pf-badge--${t.status === "Complete" ? "ok" : "warn"}`}>{t.status}</span>
-                  </div>
-                  <div className="pf-record__body">
-                    {t.shiftingNotes && <p><strong>Doctor notes:</strong> {t.shiftingNotes}</p>}
-                    {t.handoverNotes && <p><strong>Nurse handover:</strong> {t.handoverNotes}</p>}
-                  </div>
+      {/* R7k: Bed Transfers stay in the permanent record (NABH AAC.3).
+          They mark changes in level of care and need to be auditable. */}
+      <PrintSection title="12. Bed Transfers">
+        {(bedTransfers?.length || 0) === 0
+          ? <Empty icon="🛏" msg="No bed transfers recorded" />
+          : bedTransfers.map((t) => (
+              <div key={t._id} className="pf-record">
+                <div className="pf-record__head">
+                  <span className="pf-record__title">Bed transfer — {t.fromBed} → {t.toBed}</span>
+                  <span className="pf-record__time">{fmtDT(t.createdAt)}</span>
+                  <span className={`pf-badge pf-badge--${t.status === "Complete" ? "ok" : "warn"}`}>{t.status}</span>
                 </div>
-              ))}
-              {shiftHandovers?.map((h) => (
-                <div key={h._id} className="pf-record pf-record--nurse">
-                  <div className="pf-record__head">
-                    <span className="pf-record__title">Shift handover — {h.outgoingShift} → {h.incomingShift}</span>
-                    <span className="pf-record__time">{fmtDT(h.createdAt)}</span>
-                  </div>
-                  <div className="pf-record__body">
-                    {h.situation      && <p><strong>S:</strong> {h.situation}</p>}
-                    {h.background     && <p><strong>B:</strong> {h.background}</p>}
-                    {h.assessment     && <p><strong>A:</strong> {h.assessment}</p>}
-                    {h.recommendation && <p><strong>R:</strong> {h.recommendation}</p>}
-                  </div>
+                <div className="pf-record__body">
+                  {t.shiftingNotes && <p><strong>Doctor notes:</strong> {t.shiftingNotes}</p>}
+                  {t.handoverNotes && <p><strong>Nurse handover:</strong> {t.handoverNotes}</p>}
                 </div>
-              ))}
-            </>
-          )
+              </div>
+            ))
         }
       </PrintSection>
 
-      <PrintSection title="12. Discharge Summary">
+      {/* R7k: Shift Handovers — same-day only. NABH treats SBAR shift
+          handovers as operational shift-to-shift continuity notes, NOT
+          part of the permanent clinical record. The interactive view
+          still shows the full history; the printed record carries only
+          today's handovers so the file isn't bloated with shift
+          ephemera from earlier days. */}
+      {todaysHandovers.length > 0 && (
+        <PrintSection title="12a. Today's Shift Handovers (SBAR — same-day)">
+          {todaysHandovers.map((h) => (
+            <div key={h._id} className="pf-record pf-record--nurse">
+              <div className="pf-record__head">
+                <span className="pf-record__title">Shift handover — {h.outgoingShift} → {h.incomingShift}</span>
+                <span className="pf-record__time">{fmtDT(h.createdAt)}</span>
+              </div>
+              <div className="pf-record__body">
+                {h.situation      && <p><strong>S:</strong> {h.situation}</p>}
+                {h.background     && <p><strong>B:</strong> {h.background}</p>}
+                {h.assessment     && <p><strong>A:</strong> {h.assessment}</p>}
+                {h.recommendation && <p><strong>R:</strong> {h.recommendation}</p>}
+              </div>
+            </div>
+          ))}
+        </PrintSection>
+      )}
+
+      <PrintSection title="13. Discharge Summary">
         <DischargeSection dischargeSummary={dischargeSummary} />
       </PrintSection>
 
-      <PrintSection title="13. Billing Summary">
+      <PrintSection title="14. Billing Summary">
         <BillingSection bills={bills} />
       </PrintSection>
 
-      <PrintSection title="14. Activity / Audit Trail (latest 50)">
+      <PrintSection title="15. Activity / Audit Trail (latest 50)">
         <ActivityFeed activityLog={(activityLog || []).slice(0, 50)} />
       </PrintSection>
     </main>
@@ -2888,6 +3010,404 @@ function PrintFooter({ uhid, role }) {
   );
 }
 
+/* ──────────────────────────────────────────────────────────────
+   R7k — Nursing-record sections previously fetched-but-never-rendered.
+   The patient-file backend has always returned `nursingCarePlans` +
+   `nursingAssessments`, but the file UI never consumed them, so a
+   nurse who saved a Daily Assessment / Nutrition / Patient Education
+   / Care Plan would find their work missing from the file view AND
+   from the print. These three lightweight read-only sections close
+   that NABH-compliance gap.
+─────────────────────────────────────────────────────────────── */
+
+function CarePlansSection({ carePlans = [] }) {
+  if (!carePlans.length) return <Empty icon="📋" msg="No nursing care plans on file" />;
+  // Newest first — most clinically actionable plan is usually the latest
+  const sorted = [...carePlans].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {sorted.map((p) => {
+        const diags = Array.isArray(p.diagnoses) ? p.diagnoses
+                    : Array.isArray(p.problems) ? p.problems
+                    : (p.diagnosis || p.problem) ? [p.diagnosis || p.problem]
+                    : [];
+        const interventions = Array.isArray(p.interventions) ? p.interventions
+                            : p.intervention ? [p.intervention]
+                            : [];
+        const outcomes = Array.isArray(p.outcomes) ? p.outcomes
+                       : p.outcome ? [p.outcome]
+                       : [];
+        return (
+          <div key={p._id} className="pf-record pf-record--nurse">
+            <div className="pf-record__head">
+              <span className="pf-record__title">
+                Care plan {p.shift ? `· ${p.shift}` : ""}
+              </span>
+              <span className="pf-record__time">{fmtDT(p.createdAt)}</span>
+              <span className="pf-record__by">by {p.nurseName || p.createdByName || "Nurse"}</span>
+            </div>
+            <div className="pf-record__body">
+              {diags.length > 0 && (
+                <p><strong>Problems / Nursing diagnoses:</strong> {diags.filter(Boolean).join(" · ")}</p>
+              )}
+              {p.goal && <p><strong>Goal:</strong> {p.goal}</p>}
+              {interventions.length > 0 && (
+                <div style={{ marginTop: 4 }}>
+                  <strong>Interventions:</strong>
+                  <ul style={{ margin: "2px 0 0 18px", padding: 0, fontSize: 12.5 }}>
+                    {interventions.filter(Boolean).map((it, i) => (
+                      <li key={i}>{typeof it === "string" ? it : (it?.text || JSON.stringify(it))}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {outcomes.length > 0 && (
+                <p style={{ marginTop: 4 }}>
+                  <strong>Expected outcomes:</strong> {outcomes.filter(Boolean).map(o => typeof o === "string" ? o : (o?.text || "")).join(" · ")}
+                </p>
+              )}
+              {p.evaluation && <p><strong>Evaluation:</strong> {p.evaluation}</p>}
+              {p.notes && <p style={{ color: "var(--pf-muted)" }}>{p.notes}</p>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function NursingAssessmentsSection({ assessments = [] }) {
+  // Group by type (daily / nutrition / education / etc) so each subsection
+  // is easy to scan independently. Daily assessments are usually 1-per-day,
+  // nutrition/education tend to be single-shot.
+  const groups = useMemo(() => {
+    const g = { nutrition: [], education: [], daily: [], other: [] };
+    for (const a of assessments) {
+      const t = String(a.type || "").toLowerCase();
+      if (t === "nutrition")     g.nutrition.push(a);
+      else if (t === "education") g.education.push(a);
+      else if (t === "daily")     g.daily.push(a);
+      else                        g.other.push(a);
+    }
+    // newest first within each group
+    for (const k of Object.keys(g)) {
+      g[k].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }
+    return g;
+  }, [assessments]);
+
+  const total = assessments.length;
+  if (!total) return <Empty icon="📑" msg="No nutrition / patient-education / daily assessments on file" />;
+
+  const renderEntry = (a, label) => {
+    const d = a.data || {};
+    const fields = Object.entries(d).filter(([k, v]) =>
+      v != null && v !== "" && !(typeof v === "object" && Object.keys(v).length === 0));
+    return (
+      <div key={a._id} className="pf-record pf-record--nurse" style={{ marginBottom: 8 }}>
+        <div className="pf-record__head">
+          <span className="pf-record__title">{label}</span>
+          <span className="pf-record__time">{fmtDT(a.createdAt)}</span>
+          <span className="pf-record__by">by {a.nurseName || a.createdByName || "Nurse"}</span>
+        </div>
+        <div className="pf-record__body">
+          {fields.length === 0 ? (
+            <p style={{ color: "var(--pf-muted)" }}>(no fields recorded)</p>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "2px 14px", fontSize: 12.5 }}>
+              {fields.map(([k, v]) => (
+                <div key={k}>
+                  <span style={{ color: "var(--pf-muted)", fontWeight: 700 }}>{k}:</span>{" "}
+                  <span>{typeof v === "object" ? JSON.stringify(v) : String(v)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {a.notes && <p style={{ marginTop: 6, fontStyle: "italic", color: "var(--pf-muted)" }}>{a.notes}</p>}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      {groups.nutrition.length > 0 && (
+        <>
+          <h4 style={{ margin: "0 0 6px", color: "var(--pf-accent-d)" }}>🥗 Nutritional Assessment</h4>
+          {groups.nutrition.map((a) => renderEntry(a, "Nutritional assessment"))}
+        </>
+      )}
+      {groups.education.length > 0 && (
+        <>
+          <h4 style={{ margin: "10px 0 6px", color: "var(--pf-accent-d)" }}>📘 Patient Education</h4>
+          {groups.education.map((a) => renderEntry(a, "Patient-education session"))}
+        </>
+      )}
+      {groups.daily.length > 0 && (
+        <>
+          <h4 style={{ margin: "10px 0 6px", color: "var(--pf-accent-d)" }}>🩺 Daily Nursing Assessment</h4>
+          {groups.daily.map((a) => renderEntry(a, "Daily nursing assessment"))}
+        </>
+      )}
+      {groups.other.length > 0 && (
+        <>
+          <h4 style={{ margin: "10px 0 6px", color: "var(--pf-accent-d)" }}>📝 Other nursing assessments</h4>
+          {groups.other.map((a) => renderEntry(a, a.type || "Nursing assessment"))}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   R7l — Day-wise Treatment Chart for the printed file.
+   The interactive view shows a live MAR via <TreatmentChart>; that
+   component is interactive (administer buttons, modals, filters)
+   and won't paginate cleanly. For PRINT we render a static
+   day-by-day medication chart pulled from DoctorOrder.administrationRecord
+   (the canonical NABH MAR — same source TreatmentChart writes to).
+   For a 3-day stay we render 3 day-blocks aligned chronologically;
+   inside each day every medication shows its scheduled doses with a
+   green ✓ when administered + the nurse name + actual time.
+─────────────────────────────────────────────────────────────── */
+function TreatmentChartPrintSection({ doctorOrders = [], currentAdmission }) {
+  const data = useMemo(() => {
+    // Pull only Medication / IV-Fluid / Blood orders — those are what
+    // populate the MAR. Other orderTypes (Lab / Radiology / Procedure)
+    // belong in their own sections.
+    const MAR_TYPES = new Set(["Medication", "IV_Fluid", "BloodTransfusion", "Oxygen"]);
+    const meds = (doctorOrders || []).filter((o) => MAR_TYPES.has(o.orderType));
+    if (meds.length === 0) return { days: [], hasAny: false };
+
+    // Anchor: admission start → today (or actualDischargeDate if discharged).
+    // We bucket each administration by the LOCAL day of givenAt / scheduledDate.
+    const startMs = currentAdmission?.admissionDate
+      ? new Date(currentAdmission.admissionDate).getTime()
+      : (() => {
+          // No admission date — fall back to the earliest ordered/given timestamp.
+          let earliest = Infinity;
+          for (const o of meds) {
+            const t = new Date(o.orderedAt || o.createdAt).getTime();
+            if (Number.isFinite(t) && t < earliest) earliest = t;
+            for (const a of (o.administrationRecord || [])) {
+              const at = new Date(a.givenAt || a.scheduledDate || 0).getTime();
+              if (Number.isFinite(at) && at < earliest) earliest = at;
+            }
+          }
+          return Number.isFinite(earliest) ? earliest : Date.now();
+        })();
+    const endMs = (currentAdmission?.actualDischargeDate
+      ? new Date(currentAdmission.actualDischargeDate).getTime()
+      : Date.now());
+
+    const dayMs = 24 * 60 * 60 * 1000;
+    const startDay = new Date(startMs); startDay.setHours(0, 0, 0, 0);
+    const endDay = new Date(endMs); endDay.setHours(0, 0, 0, 0);
+    const dayList = [];
+    for (let t = startDay.getTime(); t <= endDay.getTime(); t += dayMs) {
+      dayList.push(new Date(t));
+    }
+    // Safety: cap at 60 days so a degenerate admissionDate doesn't print
+    // a thousand-page document. NABH inpatient stays >60d are exceptional
+    // and would warrant separate runs anyway.
+    if (dayList.length > 60) dayList.length = 60;
+
+    // Per-medication per-day administration map:
+    //   meds = [{ med, perDay: Map<dateKey, [adminEntries]> }, …]
+    const dk = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const enriched = meds.map((o) => {
+      const perDay = {};
+      for (const a of (o.administrationRecord || [])) {
+        const when = a.givenAt || a.scheduledDate;
+        if (!when) continue;
+        const d = new Date(when); d.setHours(0, 0, 0, 0);
+        const k = dk(d);
+        if (!perDay[k]) perDay[k] = [];
+        perDay[k].push(a);
+      }
+      return { order: o, perDay };
+    });
+
+    // Build day-blocks. For each day, list every order that was either
+    // active on that day OR has an administration on that day. An order
+    // is "active on a day" if startDate ≤ day ≤ (endDate || ∞).
+    const days = dayList.map((d) => {
+      const dayKey = dk(d);
+      const dayStart = d.getTime();
+      const dayEnd = dayStart + dayMs - 1;
+      const rows = [];
+      for (const { order, perDay } of enriched) {
+        const orderStart = new Date(order.orderedAt || order.createdAt || 0).getTime();
+        const orderEndRaw = order.endDate || order.discontinuedAt || null;
+        const orderEnd = orderEndRaw ? new Date(orderEndRaw).getTime() : Infinity;
+        const active = orderStart <= dayEnd && orderEnd >= dayStart;
+        const admins = perDay[dayKey] || [];
+        if (!active && admins.length === 0) continue;
+        rows.push({ order, admins });
+      }
+      return { date: d, rows };
+    }).filter((d) => d.rows.length > 0);
+
+    return { days, hasAny: days.length > 0 };
+  }, [doctorOrders, currentAdmission]);
+
+  if (!data.hasAny) {
+    return <Empty icon="💊" msg="No medication / IV / oxygen orders on file" />;
+  }
+
+  const fmtTime = (when) => when
+    ? new Date(when).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })
+    : "—";
+  const fmtDateLong = (d) =>
+    d.toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+
+  const TH_STYLE = { padding: "4px 8px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "var(--pf-muted)", textTransform: "uppercase", letterSpacing: 0.5, borderBottom: "1.5px solid #e2e8f0", background: "#f8fafc" };
+  const TD_STYLE = { padding: "5px 8px", fontSize: 11, verticalAlign: "top", borderBottom: "1px dashed #e2e8f0" };
+
+  // Per-status pill renderer — green tick for given, amber/red for
+  // hold/refused/skipped, neutral dash for pending.
+  const renderDoseChip = (a) => {
+    const s = (a.status || "pending").toLowerCase();
+    const time = fmtTime(a.givenAt);
+    if (s === "given") {
+      return (
+        <div style={{ display: "inline-flex", flexDirection: "column", marginRight: 10, marginBottom: 4 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 4, background: "#dcfce7", color: "#166534", fontWeight: 800, fontSize: 10.5, border: "1px solid #86efac" }}>
+            ✓ {a.scheduledTime || time}
+          </span>
+          <span style={{ fontSize: 9.5, color: "var(--pf-muted)", marginTop: 2 }}>
+            {a.givenBy || "Nurse"} @ {time}
+          </span>
+        </div>
+      );
+    }
+    const palette = s === "hold"          ? { bg: "#fef3c7", fg: "#92400e", bd: "#fcd34d", icon: "⏸", label: "HOLD" }
+                  : s === "refused"       ? { bg: "#fee2e2", fg: "#b91c1c", bd: "#fca5a5", icon: "✗", label: "REFUSED" }
+                  : s === "skipped"       ? { bg: "#fee2e2", fg: "#b91c1c", bd: "#fca5a5", icon: "✗", label: "SKIPPED" }
+                  : s === "not_available" ? { bg: "#fef3c7", fg: "#92400e", bd: "#fcd34d", icon: "⚠", label: "N/A" }
+                  : s === "delayed"       ? { bg: "#fef3c7", fg: "#92400e", bd: "#fcd34d", icon: "⏱", label: "DELAYED" }
+                  : s === "partial"       ? { bg: "#dbeafe", fg: "#1e40af", bd: "#93c5fd", icon: "◐", label: "PARTIAL" }
+                  :                         { bg: "#f1f5f9", fg: "#475569", bd: "#cbd5e1", icon: "○", label: "PENDING" };
+    return (
+      <div style={{ display: "inline-flex", flexDirection: "column", marginRight: 10, marginBottom: 4 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 4, background: palette.bg, color: palette.fg, fontWeight: 800, fontSize: 10.5, border: `1px solid ${palette.bd}` }}>
+          {palette.icon} {a.scheduledTime || "—"}
+        </span>
+        <span style={{ fontSize: 9.5, color: "var(--pf-muted)", marginTop: 2 }}>
+          {palette.label}{a.givenBy ? ` · ${a.givenBy}` : ""}
+        </span>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ fontSize: 11, color: "var(--pf-muted)", marginBottom: -6 }}>
+        NABH MOM.3 — every scheduled dose with administration status (✓ given · ⏸ hold · ✗ refused/skipped · ⏱ delayed · ◐ partial · ○ pending).
+        Patient stay: <b>{data.days.length} day{data.days.length === 1 ? "" : "s"}</b>.
+      </div>
+      {data.days.map((day, idx) => {
+        const dayNum = idx + 1;
+        const totalDosesGiven = day.rows.reduce((s, r) => s + r.admins.filter(a => (a.status || "").toLowerCase() === "given").length, 0);
+        const totalDosesAll   = day.rows.reduce((s, r) => s + r.admins.length, 0);
+        return (
+          <div key={day.date.toISOString()} style={{
+            border: "1px solid #c7d2fe", borderLeft: "4px solid #4f46e5",
+            borderRadius: 6, overflow: "hidden", pageBreakInside: "avoid",
+          }}>
+            <div style={{
+              padding: "6px 12px",
+              background: "linear-gradient(90deg, #eef2ff 0%, #fff 60%)",
+              display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6,
+            }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: "#3730a3" }}>
+                📅 Day {dayNum} — {fmtDateLong(day.date)}
+              </div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 10.5 }}>
+                <span style={{ padding: "2px 8px", borderRadius: 4, fontWeight: 800, background: "#dcfce7", color: "#166534" }}>
+                  ✓ Given: {totalDosesGiven}
+                </span>
+                {totalDosesAll - totalDosesGiven > 0 && (
+                  <span style={{ padding: "2px 8px", borderRadius: 4, fontWeight: 800, background: "#fef3c7", color: "#92400e" }}>
+                    Pending/Other: {totalDosesAll - totalDosesGiven}
+                  </span>
+                )}
+                <span style={{ padding: "2px 8px", borderRadius: 4, fontWeight: 700, background: "#f1f5f9", color: "var(--pf-muted)" }}>
+                  {day.rows.length} med{day.rows.length === 1 ? "" : "s"}
+                </span>
+              </div>
+            </div>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={{ ...TH_STYLE, width: "26%" }}>Medication</th>
+                  <th style={{ ...TH_STYLE, width: "16%" }}>Dose · Route</th>
+                  <th style={{ ...TH_STYLE, width: "12%" }}>Frequency</th>
+                  <th style={{ ...TH_STYLE, width: "14%" }}>Ordered by</th>
+                  <th style={TH_STYLE}>Doses administered (status · scheduled-time · nurse @ actual-time)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {day.rows.map(({ order, admins }) => {
+                  const od = order.orderDetails || {};
+                  const med = od.medicineName || od.displayName || order.orderType;
+                  const dose = od.dose || "—";
+                  const route = od.route || "";
+                  const freq = od.frequency || (order.orderType === "IV_Fluid" ? (od.rate || "") : "");
+                  return (
+                    <tr key={`${order._id}-${day.date.toISOString()}`}>
+                      <td style={{ ...TD_STYLE, fontWeight: 700 }}>
+                        {med}
+                        {order.hamFlag && (
+                          <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 3, background: "#fee2e2", color: "#b91c1c", fontSize: 9, fontWeight: 800 }}>
+                            HAM
+                          </span>
+                        )}
+                        {od.specialInstructions && (
+                          <div style={{ fontSize: 10, color: "var(--pf-muted)", marginTop: 2, fontStyle: "italic" }}>
+                            {od.specialInstructions}
+                          </div>
+                        )}
+                      </td>
+                      <td style={TD_STYLE}>
+                        <div>{dose}</div>
+                        {route && <div style={{ fontSize: 10, color: "var(--pf-muted)" }}>{route}</div>}
+                      </td>
+                      <td style={TD_STYLE}>{freq || "—"}</td>
+                      <td style={TD_STYLE}>
+                        {order.orderedBy || "—"}
+                        <div style={{ fontSize: 10, color: "var(--pf-muted)" }}>
+                          {order.orderedAt ? new Date(order.orderedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : ""}
+                        </div>
+                      </td>
+                      <td style={TD_STYLE}>
+                        {admins.length === 0 ? (
+                          <span style={{ fontSize: 10.5, color: "var(--pf-muted)", fontStyle: "italic" }}>
+                            (no doses recorded this day — order was {(() => {
+                              const orderStart = new Date(order.orderedAt || order.createdAt || 0).getTime();
+                              const dayStart = day.date.getTime();
+                              return orderStart > dayStart + 86400000 - 1 ? "not yet placed" : "active but unadministered";
+                            })()})
+                          </span>
+                        ) : (
+                          admins
+                            .slice()
+                            .sort((a, b) => (a.scheduledTime || "").localeCompare(b.scheduledTime || ""))
+                            .map((a, i) => <React.Fragment key={i}>{renderDoseChip(a)}</React.Fragment>)
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── Page ───────────────────────────────────────────────────── */
 export default function CompletePatientFilePage() {
   const { uhid } = useParams();
@@ -2977,7 +3497,9 @@ export default function CompletePatientFilePage() {
 
   const { patient, currentAdmission, doctorNotes, nurseNotes, doctorOrders, vitals,
     consents, investigations, mlc, dischargeSummary, bills, activityLog,
-    bedTransfers, shiftHandovers, dietPlans, timeline, completeness } = data;
+    bedTransfers, shiftHandovers, dietPlans, timeline, completeness,
+    // R7k: surface these in interactive view (previously fetched but never used)
+    nursingCarePlans, nursingAssessments } = data;
 
   // Note types that have their OWN dedicated section now (Procedure Notes,
   // Intake/Output Sheet). Filter them out of the generic Doctor/Nurse
@@ -3005,6 +3527,10 @@ export default function CompletePatientFilePage() {
     { id: "investigations",label: "Investigations",     icon: "🧪", count: investigations.length },
     { id: "consents",      label: "Consents",           icon: "📝", count: consents.length },
     { id: "diet",          label: "Diet Plans",         icon: "🥗", count: dietPlans?.length || 0 },
+    // R7k: nav entries for the new (previously-hidden) nursing sections.
+    { id: "care-plans",    label: "Care Plans",         icon: "📋", count: nursingCarePlans?.length || 0 },
+    { id: "assessments",   label: "Nursing Assessments", icon: "📑", count: nursingAssessments?.length || 0 },
+    { id: "blood",         label: "Blood Transfusion",  icon: "🩸", count: (nurseNotes || []).filter(n => matchBlood(n.noteData)).length },
     { id: "mlc",           label: "MLC",                icon: "⚖", count: mlc.length },
     { id: "handover",      label: "Handovers",          icon: "🔄", count: (bedTransfers?.length || 0) + (shiftHandovers?.length || 0) },
     { id: "discharge",     label: "Discharge",          icon: "🏥", count: dischargeSummary.length },
@@ -3172,42 +3698,133 @@ export default function CompletePatientFilePage() {
               <DietPlansSection dietPlans={dietPlans} uhid={uhid} viewerRole={viewerRole} />
             </Section>
 
+            {/* R7k: Nursing Care Plans (NABH COP.3) — previously fetched
+                from /api/nursing-care-plans but never rendered, so a
+                nurse's saved Care Plan was invisible in the file. */}
+            <Section id="care-plans" icon="📋" title="Nursing Care Plans" sub="NABH COP.3 — problems, goals, interventions, outcomes" count={nursingCarePlans?.length || 0}>
+              <CarePlansSection carePlans={nursingCarePlans || []} />
+            </Section>
+
+            {/* R7k: Nursing Assessments (Daily / Nutrition / Patient Ed) —
+                live on the NursingAssessment model and were never surfaced
+                in the file UI. Grouped by type for easy scanning. */}
+            <Section id="assessments" icon="📑" title="Nursing Assessments" sub="Daily · Nutritional · Patient education — every saved record" count={nursingAssessments?.length || 0}>
+              <NursingAssessmentsSection assessments={nursingAssessments || []} />
+            </Section>
+
+            {/* R7k: Dedicated Blood Transfusion Records (NABH MOM.7) —
+                pulls every nurse note whose payload matches the blood-
+                transfusion shape (bag #, cross-match, pre/post vitals,
+                reaction status). Previously these were buried inline
+                in the generic Nurse Notes feed. */}
+            {(() => {
+              const bloodEvents = (nurseNotes || [])
+                .filter((n) => matchBlood(n.noteData))
+                .sort((a, b) => new Date(b.visitDate || b.createdAt) - new Date(a.visitDate || a.createdAt));
+              return (
+                <Section id="blood" icon="🩸" title="Blood Transfusion Records" sub="NABH MOM.7 — every bag with pre/post vitals + reaction status" count={bloodEvents.length}>
+                  {bloodEvents.length === 0
+                    ? <Empty icon="🩸" msg="No blood transfusions recorded" />
+                    : bloodEvents.map((n) => (
+                        <div key={n._id} className="pf-record pf-record--nurse" style={{ marginBottom: 10 }}>
+                          <div className="pf-record__head">
+                            <span className="pf-record__title">Transfusion event</span>
+                            <span className="pf-record__time">{fmtDT(n.visitDate || n.createdAt)}</span>
+                            <span className="pf-record__by">by {n.nurseName || "Nurse"}</span>
+                          </div>
+                          <BloodTransfusionPanel data={n.noteData} />
+                        </div>
+                      ))
+                  }
+                </Section>
+              );
+            })()}
+
             <Section id="mlc" icon="⚖" title="Medico-Legal Cases" sub="MLC reports with FIR linkage" count={mlc.length}>
               <MLCSection mlc={mlc} />
             </Section>
 
-            <Section id="handover" icon="🔄" title="Bed Transfers + Shift Handovers" sub="Every transfer of care">
+            {/* R7k: Bed Transfers stay in the permanent record (NABH AAC.3).
+                Same-day SBAR handovers are operational ephemera — separated
+                so the permanent file stays clean. */}
+            <Section id="handover" icon="🔄" title="Bed Transfers + Shift Handovers" sub="Bed transfers permanent · SBAR handovers same-day only">
               {(bedTransfers?.length || 0) === 0 && (shiftHandovers?.length || 0) === 0
-                ? <Empty icon="🔄" msg="No handovers recorded" />
+                ? <Empty icon="🔄" msg="No transfers or handovers recorded" />
                 : (
                   <>
-                    {bedTransfers?.map((t) => (
-                      <div key={t._id} className="pf-record">
-                        <div className="pf-record__head">
-                          <span className="pf-record__title">Bed transfer — {t.fromBed} → {t.toBed}</span>
-                          <span className="pf-record__time">{fmtDT(t.createdAt)}</span>
-                          <span className={`pf-badge pf-badge--${t.status === "Complete" ? "ok" : "warn"}`}>{t.status}</span>
-                        </div>
-                        <div className="pf-record__body">
-                          {t.shiftingNotes  && <p><strong>Doctor notes:</strong> {t.shiftingNotes}</p>}
-                          {t.handoverNotes  && <p><strong>Nurse handover:</strong> {t.handoverNotes}</p>}
-                        </div>
-                      </div>
-                    ))}
-                    {shiftHandovers?.map((h) => (
-                      <div key={h._id} className="pf-record pf-record--nurse">
-                        <div className="pf-record__head">
-                          <span className="pf-record__title">Shift handover — {h.outgoingShift} → {h.incomingShift}</span>
-                          <span className="pf-record__time">{fmtDT(h.createdAt)}</span>
-                        </div>
-                        <div className="pf-record__body">
-                          {h.situation      && <p><strong>S:</strong> {h.situation}</p>}
-                          {h.background     && <p><strong>B:</strong> {h.background}</p>}
-                          {h.assessment     && <p><strong>A:</strong> {h.assessment}</p>}
-                          {h.recommendation && <p><strong>R:</strong> {h.recommendation}</p>}
-                        </div>
-                      </div>
-                    ))}
+                    {(bedTransfers?.length || 0) > 0 && (
+                      <>
+                        <h4 style={{ margin: "0 0 8px", color: "var(--pf-accent-d)" }}>🛏 Bed transfers</h4>
+                        {bedTransfers.map((t) => (
+                          <div key={t._id} className="pf-record">
+                            <div className="pf-record__head">
+                              <span className="pf-record__title">Bed transfer — {t.fromBed} → {t.toBed}</span>
+                              <span className="pf-record__time">{fmtDT(t.createdAt)}</span>
+                              <span className={`pf-badge pf-badge--${t.status === "Complete" ? "ok" : "warn"}`}>{t.status}</span>
+                            </div>
+                            <div className="pf-record__body">
+                              {t.shiftingNotes  && <p><strong>Doctor notes:</strong> {t.shiftingNotes}</p>}
+                              {t.handoverNotes  && <p><strong>Nurse handover:</strong> {t.handoverNotes}</p>}
+                            </div>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                    {(() => {
+                      const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+                      const today = (shiftHandovers || []).filter((h) =>
+                        h.createdAt && new Date(h.createdAt) >= startOfToday);
+                      const older = (shiftHandovers || []).filter((h) =>
+                        h.createdAt && new Date(h.createdAt) < startOfToday);
+                      return (
+                        <>
+                          {today.length > 0 && (
+                            <>
+                              <h4 style={{ margin: "12px 0 8px", color: "var(--pf-accent-d)" }}>
+                                🔄 Today's SBAR shift handovers <span style={{ fontWeight: 500, color: "var(--pf-muted)", fontSize: 12 }}>({today.length})</span>
+                              </h4>
+                              {today.map((h) => (
+                                <div key={h._id} className="pf-record pf-record--nurse">
+                                  <div className="pf-record__head">
+                                    <span className="pf-record__title">Shift handover — {h.outgoingShift} → {h.incomingShift}</span>
+                                    <span className="pf-record__time">{fmtDT(h.createdAt)}</span>
+                                  </div>
+                                  <div className="pf-record__body">
+                                    {h.situation      && <p><strong>S:</strong> {h.situation}</p>}
+                                    {h.background     && <p><strong>B:</strong> {h.background}</p>}
+                                    {h.assessment     && <p><strong>A:</strong> {h.assessment}</p>}
+                                    {h.recommendation && <p><strong>R:</strong> {h.recommendation}</p>}
+                                  </div>
+                                </div>
+                              ))}
+                            </>
+                          )}
+                          {older.length > 0 && (
+                            <details style={{ marginTop: 10, padding: 10, background: "#f8fafc", borderRadius: 6, fontSize: 12 }}>
+                              <summary style={{ cursor: "pointer", fontWeight: 700, color: "var(--pf-muted)" }}>
+                                Older handovers ({older.length}) — operational history, not part of permanent record
+                              </summary>
+                              <div style={{ marginTop: 8 }}>
+                                {older.map((h) => (
+                                  <div key={h._id} className="pf-record pf-record--nurse" style={{ opacity: .85 }}>
+                                    <div className="pf-record__head">
+                                      <span className="pf-record__title">Shift handover — {h.outgoingShift} → {h.incomingShift}</span>
+                                      <span className="pf-record__time">{fmtDT(h.createdAt)}</span>
+                                    </div>
+                                    <div className="pf-record__body">
+                                      {h.situation      && <p><strong>S:</strong> {h.situation}</p>}
+                                      {h.background     && <p><strong>B:</strong> {h.background}</p>}
+                                      {h.assessment     && <p><strong>A:</strong> {h.assessment}</p>}
+                                      {h.recommendation && <p><strong>R:</strong> {h.recommendation}</p>}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                        </>
+                      );
+                    })()}
                   </>
                 )
               }
@@ -3221,9 +3838,25 @@ export default function CompletePatientFilePage() {
               <BillingSection bills={bills} />
             </Section>
 
-            <Section id="activity" icon="🪵" title="Activity Log" sub="Every click, edit, dropdown selection — full UI audit feed" count={activityLog.length}>
-              <ActivityFeed activityLog={activityLog} />
-            </Section>
+            {/* R7r: Activity Log restricted to audit-eligible roles
+                (NABH AAC.7). The full UI audit feed identifies which staff
+                accessed which patient at which time — sensitive metadata
+                that NABH treats as access-controlled. Clinicians acting
+                on the patient (Nurse, Pharmacist, etc.) don't need this;
+                only Admin / Doctor (treating) / MRD (records) /
+                Accountant (audit) need visibility. Wrong-role users see
+                a stub instead of the data. */}
+            {["Admin", "Doctor", "MRD", "Accountant"].includes(viewerRole) ? (
+              <Section id="activity" icon="🪵" title="Activity Log" sub="Every click, edit, dropdown selection — full UI audit feed (NABH AAC.7)" count={activityLog.length}>
+                <ActivityFeed activityLog={activityLog} />
+              </Section>
+            ) : (
+              <Section id="activity" icon="🪵" title="Activity Log" sub="Restricted to Admin / Doctor / MRD / Accountant (NABH AAC.7)">
+                <div style={{ padding: 28, textAlign: "center", color: "var(--pf-muted)", fontSize: 13 }}>
+                  🔒 Audit feed access is limited to authorized roles per NABH AAC.7.
+                </div>
+              </Section>
+            )}
 
             <Section id="scoring" icon="📊" title="Scoring Trends" sub="Braden / Morse / MEWS / GCS — every entry, by date and shift, with total & risk band">
               <ScoringTrendsSection nurseNotes={nurseNotes} doctorNotes={doctorNotes} currentAdmission={currentAdmission} />

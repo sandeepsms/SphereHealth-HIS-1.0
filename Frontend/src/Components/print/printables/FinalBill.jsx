@@ -11,7 +11,8 @@
 
 import React from "react";
 import PrintShell from "../PrintShell";
-import { fmtINR, amountInWords } from "../amountWords";
+import { fmtINR } from "../amountWords";
+import { numberToIndianWords, toNum } from "../../../utils/printUtils";
 
 const CATEGORY_ORDER = [
   "Room/Bed Charges",
@@ -45,16 +46,36 @@ const FinalBill = ({ settings, receipt = {} }) => {
     ];
   }
 
-  const sumOf = (g) => g.items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+  const sumOf = (g) => g.items.reduce((s, it) => s + toNum(it.amount), 0);
 
+  // R7bf-F / A4-HIGH-1: every money field goes through toNum() so raw
+  // Decimal128 ({$numberDecimal:"..."}) wire shapes can never bleed
+  // into the rendered total as a literal string.
   const gross     = groups.reduce((s, g) => s + sumOf(g), 0);
-  const advances  = Number(receipt.advanceReceived) || 0;
-  const discount  = Number(receipt.discount)        || 0;
-  const tpaPaid   = Number(receipt.tpaPaid)         || 0;
-  const tax       = Number(receipt.tax)             || 0;
+  const advances  = toNum(receipt.advanceReceived);
+  const discount  = toNum(receipt.discount);
+  const tpaPaid   = toNum(receipt.tpaPaid);
+  const tax       = toNum(receipt.tax);
+  const tdsDeducted = toNum(receipt.tdsDeducted ?? receipt.tdsAmount);
+  // R7bf-F / A4-CRIT-3: GST split per slab. When non-zero, render in
+  // place of the generic "tax" line so GSTR-1 trace is preserved.
+  const cgst      = toNum(receipt.cgstAmount);
+  const sgst      = toNum(receipt.sgstAmount);
+  const igst      = toNum(receipt.igstAmount);
+  const taxTotal  = cgst + sgst + igst || tax;
   const netBefore = gross - discount;
-  const netAfterTax = netBefore + tax;
-  const payable   = Math.max(0, netAfterTax - advances - tpaPaid);
+  const netAfterTax = netBefore + taxTotal;
+  // R7bf-F / A4-HIGH-7: settlement / TPA bills carry a TDS-deducted line
+  // (subtracted before Net Receivable). When tdsDeducted=0 the line is
+  // hidden so retail bills keep their existing layout.
+  const payable   = Math.max(0, netAfterTax - advances - tpaPaid - tdsDeducted);
+  const hasGstFields = !!(
+    receipt.customerGstin ||
+    receipt.placeOfSupply ||
+    cgst || sgst || igst ||
+    groups.some(g => g.items.some(it => it.hsnSacCode || it.hsnSac))
+  );
+  const printCount = toNum(receipt.printCount);
 
   // Interim mode flips the document title + adds a Day-N stamp so the
   // patient understands the bill is a running snapshot, not the final
@@ -77,8 +98,16 @@ const FinalBill = ({ settings, receipt = {} }) => {
     ? `Bill Audit Trail — Day ${receipt.totalDays || "?"}`
     : isInterim
     ? `Interim Bill${isDaily ? " (Daily Breakdown)" : ""} — Day ${receipt.totalDays || "?"}`
-    : "Final Bill (Discharge / IPD)";
+    : (hasGstFields ? "Tax Invoice (Final / IPD)" : "Final Bill (Discharge / IPD)");
   const dischargeLabel = isInterim || isAudit ? "Discharge (planned)" : "Discharged";
+  // R7bf-F / A4-HIGH-9: IPD interim bill must carry "as on dd-mmm hh:mm"
+  // banner so the patient can tell it's a snapshot, not the final bill.
+  const interimAsOf = isInterim
+    ? new Date().toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      })
+    : null;
 
   /* ── Audit Trail branch ─────────────────────────────────────────
      A completely different middle section: one row per trigger in
@@ -108,6 +137,7 @@ const FinalBill = ({ settings, receipt = {} }) => {
         settings={settings}
         documentTitle={docTitle}
         serialNo={receipt.billNo || receipt.invoiceNo}
+        printCount={printCount}
         infoItems={[
           { label: "Patient",       value: receipt.patientName },
           { label: "UHID",          value: receipt.uhid },
@@ -225,6 +255,8 @@ const FinalBill = ({ settings, receipt = {} }) => {
       settings={settings}
       documentTitle={docTitle}
       serialNo={receipt.billNo || receipt.invoiceNo}
+      printCount={printCount}
+      watermarkRecipient={hasGstFields ? "RECIPIENT" : undefined}
       infoItems={[
         { label: "Patient",       value: receipt.patientName },
         { label: "UHID",          value: receipt.uhid },
@@ -242,6 +274,10 @@ const FinalBill = ({ settings, receipt = {} }) => {
         { label: isInterim ? "Working Dx" : "Final Dx", value: receipt.finalDiagnosis },
         { label: "TPA / Scheme",  value: receipt.tpaName || receipt.scheme },
         { label: "Bill Date",     value: new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
+        ...(hasGstFields ? [
+          { label: "Place of Supply", value: receipt.placeOfSupply || "—" },
+          { label: "Customer GSTIN",  value: receipt.customerGstin || "—" },
+        ] : []),
       ]}
       signatureLabels={["Billing Officer", "Patient / Attendant"]}
     >
@@ -251,7 +287,17 @@ const FinalBill = ({ settings, receipt = {} }) => {
           color: "#92400e", padding: "8px 14px", borderRadius: 6,
           marginBottom: 12, fontSize: 11, fontWeight: 700,
         }}>
-          INTERIM BILL — snapshot as of {new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}. Final bill will be issued at discharge.
+          INTERIM BILL — as on {interimAsOf}. Final bill will be issued at discharge.
+        </div>
+      )}
+      {hasGstFields && (receipt.customerLegalName || receipt.customerAddress) && (
+        <div className="pr-section">
+          <div className="pr-section__title">Bill To (Customer)</div>
+          <div className="pr-section__body" style={{ fontSize: 11 }}>
+            {receipt.customerLegalName && <div><strong>{receipt.customerLegalName}</strong></div>}
+            {receipt.customerAddress && <div>{receipt.customerAddress}</div>}
+            {receipt.customerGstin && <div>GSTIN: <strong>{receipt.customerGstin}</strong></div>}
+          </div>
         </div>
       )}
       {/* ── Category-grouped bill table ── */}
@@ -260,62 +306,86 @@ const FinalBill = ({ settings, receipt = {} }) => {
           No charges recorded.
         </div>
       ) : (
-        <table className="pr-table">
-          <thead>
-            <tr>
-              <th style={{ width: 30 }}>#</th>
-              <th>Particulars</th>
-              <th className="center" style={{ width: 60 }}>Qty</th>
-              <th className="right" style={{ width: 90 }}>Rate (₹)</th>
-              <th className="right" style={{ width: 100 }}>Amount (₹)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {groups.map((g, gi) => {
-              const sub = sumOf(g);
-              return (
-                <React.Fragment key={gi}>
-                  <tr>
-                    <td colSpan={5} style={{
-                      background: "var(--pr-accent-color, #1d4ed8)15",
-                      color: "var(--pr-accent-color, #1d4ed8)",
-                      fontWeight: 800,
-                      fontSize: 10.5,
-                      textTransform: "uppercase",
-                      letterSpacing: ".5px",
-                      padding: "6px 10px",
-                    }}>
-                      {g.name}
-                    </td>
-                  </tr>
-                  {g.items.map((it, i) => (
-                    <tr key={i}>
-                      <td>{i + 1}</td>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>{it.name || it.service || it.particulars}</div>
-                        {it.description && <div className="muted" style={{ fontSize: 10 }}>{it.description}</div>}
-                        {it.date && <div className="muted" style={{ fontSize: 10 }}>
-                          {new Date(it.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
-                        </div>}
+        <div className={hasGstFields ? "pr-gst-invoice" : ""}>
+          <table className="pr-table">
+            <thead>
+              <tr>
+                <th style={{ width: 30 }}>#</th>
+                <th>Particulars</th>
+                {hasGstFields && <th style={{ width: 70 }}>HSN/SAC</th>}
+                <th className="center" style={{ width: 50 }}>Qty</th>
+                <th className="right" style={{ width: 75 }}>Rate (₹)</th>
+                {hasGstFields && <th className="right" style={{ width: 50 }}>GST %</th>}
+                <th className="right" style={{ width: 90 }}>Amount (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((g, gi) => {
+                const sub = sumOf(g);
+                const cols = hasGstFields ? 7 : 5;
+                // R7bf-F / A4-HIGH-8: daycare same-day proration label.
+                // Receipt sets `receipt.daycareProrationHours` (set by
+                // billingService for daycare admissions with same-day
+                // discharge). The chip is rendered next to the Room/Bed
+                // category header so the patient sees WHY the bed
+                // charge is half.
+                const daycareNote = (g.name === "Room/Bed Charges" && toNum(receipt.daycareProrationHours) > 0)
+                  ? `(Pro-rata: ${toNum(receipt.daycareProrationHours)}h stay)`
+                  : null;
+                return (
+                  <React.Fragment key={gi}>
+                    <tr>
+                      <td colSpan={cols} style={{
+                        background: "var(--pr-accent-color, #1d4ed8)15",
+                        color: "var(--pr-accent-color, #1d4ed8)",
+                        fontWeight: 800,
+                        fontSize: 10.5,
+                        textTransform: "uppercase",
+                        letterSpacing: ".5px",
+                        padding: "6px 10px",
+                      }}>
+                        {g.name}
+                        {daycareNote && (
+                          <span style={{
+                            marginLeft: 8, fontSize: 9.5, fontWeight: 700,
+                            color: "#a16207", background: "#fef3c7",
+                            padding: "1px 6px", borderRadius: 4,
+                            letterSpacing: ".2px", textTransform: "none",
+                          }}>{daycareNote}</span>
+                        )}
                       </td>
-                      <td className="center">{it.qty || 1}</td>
-                      <td className="right">{Number(it.rate || it.amount || 0).toLocaleString("en-IN")}</td>
-                      <td className="right">{Number(it.amount || 0).toLocaleString("en-IN")}</td>
                     </tr>
-                  ))}
-                  <tr>
-                    <td colSpan={4} className="right" style={{ fontWeight: 700, color: "#475569", paddingTop: 5, paddingBottom: 5 }}>
-                      Subtotal · {g.name}
-                    </td>
-                    <td className="right" style={{ fontWeight: 800, color: "#0f172a", paddingTop: 5, paddingBottom: 5 }}>
-                      {fmtINR(sub)}
-                    </td>
-                  </tr>
-                </React.Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+                    {g.items.map((it, i) => (
+                      <tr key={i} className="bill-line-row">
+                        <td>{i + 1}</td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{it.name || it.service || it.particulars || it.serviceName}</div>
+                          {it.description && <div className="muted" style={{ fontSize: 10 }}>{it.description}</div>}
+                          {it.date && <div className="muted" style={{ fontSize: 10 }}>
+                            {new Date(it.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                          </div>}
+                        </td>
+                        {hasGstFields && <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 10 }}>{it.hsnSacCode || it.hsnSac || "—"}</td>}
+                        <td className="center">{it.qty || it.quantity || 1}</td>
+                        <td className="right">{toNum(it.rate || it.unitPrice || it.amount).toLocaleString("en-IN")}</td>
+                        {hasGstFields && <td className="right">{toNum(it.taxPercent ?? it.gstRate ?? 0)}%</td>}
+                        <td className="right">{toNum(it.amount).toLocaleString("en-IN")}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td colSpan={cols - 1} className="right" style={{ fontWeight: 700, color: "#475569", paddingTop: 5, paddingBottom: 5 }}>
+                        Subtotal · {g.name}
+                      </td>
+                      <td className="right" style={{ fontWeight: 800, color: "#0f172a", paddingTop: 5, paddingBottom: 5 }}>
+                        {fmtINR(sub)}
+                      </td>
+                    </tr>
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {/* ── Totals box ── */}
@@ -330,7 +400,25 @@ const FinalBill = ({ settings, receipt = {} }) => {
             <span className="pr-totals__val">- {fmtINR(discount)}</span>
           </div>
         )}
-        {tax > 0 && (
+        {cgst > 0 && (
+          <div className="pr-totals__row">
+            <span className="pr-totals__lbl">Add: CGST</span>
+            <span className="pr-totals__val">+ {fmtINR(cgst)}</span>
+          </div>
+        )}
+        {sgst > 0 && (
+          <div className="pr-totals__row">
+            <span className="pr-totals__lbl">Add: SGST</span>
+            <span className="pr-totals__val">+ {fmtINR(sgst)}</span>
+          </div>
+        )}
+        {igst > 0 && (
+          <div className="pr-totals__row">
+            <span className="pr-totals__lbl">Add: IGST</span>
+            <span className="pr-totals__val">+ {fmtINR(igst)}</span>
+          </div>
+        )}
+        {(!cgst && !sgst && !igst && tax > 0) && (
           <div className="pr-totals__row">
             <span className="pr-totals__lbl">Add: GST / Tax</span>
             <span className="pr-totals__val">+ {fmtINR(tax)}</span>
@@ -352,19 +440,26 @@ const FinalBill = ({ settings, receipt = {} }) => {
             <span className="pr-totals__val">- {fmtINR(tpaPaid)}</span>
           </div>
         )}
+        {/* R7bf-F / A4-HIGH-7: TDS deducted (TPA settlement bills) */}
+        {tdsDeducted > 0 && (
+          <div className="pr-totals__row">
+            <span className="pr-totals__lbl">Less: TDS Deducted</span>
+            <span className="pr-totals__val">- {fmtINR(tdsDeducted)}</span>
+          </div>
+        )}
         <div className="pr-totals__row pr-totals__row--grand">
           <span className="pr-totals__lbl">
             {payable > 0 ? "Net Payable" : "Refund Due"}
           </span>
           <span className="pr-totals__val">
-            {payable > 0 ? fmtINR(payable) : fmtINR(advances + tpaPaid - netAfterTax)}
+            {payable > 0 ? fmtINR(payable) : fmtINR(advances + tpaPaid + tdsDeducted - netAfterTax)}
           </span>
         </div>
       </div>
 
       <div className="pr-amount-words">
-        <strong>{payable > 0 ? "Payable in words: " : "Refund in words: "}</strong>
-        {amountInWords(payable > 0 ? payable : (advances + tpaPaid - netAfterTax))}
+        <strong>{payable > 0 ? "Total in words: " : "Refund in words: "}</strong>
+        {numberToIndianWords(payable > 0 ? payable : (advances + tpaPaid + tdsDeducted - netAfterTax))}
       </div>
 
       {/* ── Payment history (if provided) ── */}

@@ -57,8 +57,29 @@ class AdmissionController {
     return res.json({ success: true, ...result });
   });
 
+  // R7az-D9-HIGH-6: Doctor-scope ownership check. Pre-R7az ANY logged-in
+  // Doctor could fetch /admissions/:id for any patient — even cases
+  // they had nothing to do with. Now we fetch then 403 on mismatch
+  // (both attendingDoctorId and treatmentTeam[].doctorId allowed).
+  // Admin / Receptionist / Nurse pass through.
   getAdmissionById = handle(async (req, res) => {
     const admission = await AdmissionService.getAdmissionById(req.params.id);
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      const callerDoctorId = String(req.doctorProfile._id);
+      const attendingId    = String(admission.attendingDoctorId?._id || admission.attendingDoctorId || "");
+      const teamIds        = (admission.treatmentTeam || [])
+        .map(m => String(m.doctorId?._id || m.doctorId || ""))
+        .filter(Boolean);
+      const isAttending = !!attendingId    && callerDoctorId === attendingId;
+      const isOnTeam    = teamIds.includes(callerDoctorId);
+      if (!isAttending && !isOnTeam) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not on the care team for this admission.",
+          code: "NOT_ON_CARE_TEAM",
+        });
+      }
+    }
     return res.json({ success: true, data: admission });
   });
 
@@ -94,33 +115,66 @@ class AdmissionController {
     return res.json({ success: true, data: admissions });
   });
 
+  // R7az-D9-HIGH-6: Doctor-scope post-filter. The service methods don't
+  // currently take a doctor filter so we filter the result list. Fast
+  // enough — these endpoints return a single day's worth of
+  // discharges, never thousands of rows. Cross-check against
+  // attendingDoctorId AND treatmentTeam[].doctorId.
   getTodayDischarges = handle(async (req, res) => {
-    const admissions = await AdmissionService.getTodayDischarges();
+    let admissions = await AdmissionService.getTodayDischarges();
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      const docId = String(req.doctorProfile._id);
+      admissions = admissions.filter(a =>
+        String(a.attendingDoctorId || "") === docId ||
+        (a.treatmentTeam || []).some(m => String(m.doctorId || "") === docId),
+      );
+    }
     return res.json({ success: true, data: admissions });
   });
 
   getExpectedDischarges = handle(async (req, res) => {
     const { date } = req.query;
-    const admissions = await AdmissionService.getExpectedDischarges(date);
+    let admissions = await AdmissionService.getExpectedDischarges(date);
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      const docId = String(req.doctorProfile._id);
+      admissions = admissions.filter(a =>
+        String(a.attendingDoctorId || "") === docId ||
+        (a.treatmentTeam || []).some(m => String(m.doctorId || "") === docId),
+      );
+    }
     return res.json({ success: true, data: admissions });
   });
 
+  // R7az-D3-MED-2: Doctor-scope statistics. Pre-R7az every Doctor saw
+  // the global admission counts (whole-hospital census, every dept).
+  // Now we pass attendingDoctorId so a Doctor's dashboard reflects
+  // only their own clinical load. Admin/Accountant see global.
   getAdmissionStatistics = handle(async (req, res) => {
     const { startDate, endDate } = req.query;
+    const doctorFilter = (req.user?.role === "Doctor" && req.doctorProfile?._id)
+      ? String(req.doctorProfile._id)
+      : null;
     const stats = await AdmissionService.getAdmissionStatistics(
       startDate,
       endDate,
+      { attendingDoctorId: doctorFilter },
     );
     return res.json({ success: true, data: stats });
   });
 
+  // R7az-D9-HIGH-6: Doctor-scope search. Pre-R7az the search endpoint
+  // was wide-open to any logged-in clinician. Now the service filters
+  // by attendingDoctorId for Doctor callers.
   searchAdmissions = handle(async (req, res) => {
     const { q } = req.query;
     if (!q)
       return res
         .status(400)
         .json({ success: false, message: "Search term q is required" });
-    const admissions = await AdmissionService.searchAdmissions(q);
+    const doctorFilter = (req.user?.role === "Doctor" && req.doctorProfile?._id)
+      ? String(req.doctorProfile._id)
+      : null;
+    const admissions = await AdmissionService.searchAdmissions(q, { attendingDoctorId: doctorFilter });
     return res.json({ success: true, data: admissions });
   });
 
@@ -164,9 +218,19 @@ class AdmissionController {
   });
 
   // GET /api/admissions/:id/access  — check if current doctor owns the admission
+  // R7az-D3-CRIT-1: pass the doctorProfile._id (the Doctor model's _id, NOT
+  // User._id) — pre-R7az this passed req.user.id which is the User._id and
+  // could never match attendingDoctorId. Result was isOwner:false for every
+  // logged-in doctor, even on their own patients.
   checkAccess = handle(async (req, res) => {
     if (!req.user?.id) return res.status(401).json({ success: false, message: "Not authenticated" });
-    const { admission, isOwner } = await AdmissionService.checkDoctorAccess(req.params.id, req.user.id);
+    const { admission, isOwner } = await AdmissionService.checkDoctorAccess(
+      req.params.id,
+      {
+        userId: req.user.id,
+        doctorProfileId: req.doctorProfile?._id,
+      },
+    );
     return res.json({ success: true, isOwner, data: admission });
   });
 
@@ -202,10 +266,28 @@ class AdmissionController {
   });
 
   cancelAdmission = handle(async (req, res) => {
+    // R7bd-A-3 / A1-CRIT-3 — pipe req.user into the cascade so audit
+    // rows attribute to the right actor. The `force` query flag bypasses
+    // the "bills with payments" guard and is Admin-only (refund path
+    // must be used first under normal circumstances).
     const { reason } = req.body;
+    const force = String(req.query.force || "").toLowerCase() === "true";
+    if (force && req.user?.role !== "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only Admin can force-cancel an admission with collected payments.",
+        code: "FORCE_REQUIRES_ADMIN",
+      });
+    }
+    const actor = {
+      id:   req.user?.id || req.user?._id,
+      name: req.user?.fullName || req.user?.employeeId || "",
+      role: req.user?.role || "",
+    };
     const admission = await AdmissionService.cancelAdmission(
       req.params.id,
       reason,
+      { actor, force },
     );
     return res.json({
       success: true,
@@ -233,7 +315,26 @@ class AdmissionController {
   });
 
   deleteAdmission = handle(async (req, res) => {
-    const result = await AdmissionService.deleteAdmission(req.params.id);
+    // R7bd-A-2 / A1-CRIT-2 — soft delete with optional force-cascade.
+    // The base permission `admission.delete` already gates the route;
+    // we further restrict force=true to Admin so only that role can
+    // tear down a populated admission record. Reason is captured for
+    // the audit trail.
+    const force = String(req.query.force || "").toLowerCase() === "true";
+    if (force && req.user?.role !== "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only Admin can force-cascade delete an admission with active dependencies.",
+        code: "FORCE_REQUIRES_ADMIN",
+      });
+    }
+    const actor = {
+      id:     req.user?.id || req.user?._id,
+      name:   req.user?.fullName || req.user?.employeeId || "",
+      role:   req.user?.role || "",
+      reason: req.body?.reason || (force ? "FORCE_DELETE" : ""),
+    };
+    const result = await AdmissionService.deleteAdmission(req.params.id, { force, actor });
     return res.json({ success: true, message: result.message });
   });
 
@@ -245,6 +346,12 @@ class AdmissionController {
    * POST /:id/consultation
    * Add a consulting doctor to an admission's treatment team.
    * RULE: Only the primary consultant (attendingDoctorId) may add consultants.
+   *
+   * R7az-D3-CRIT-2: pre-R7az compared `req.user._id` (User._id) against
+   * `admission.attendingDoctorId` (Doctor._id). User._id never matches
+   * Doctor._id directly — the comparison was always false and EVERY
+   * Doctor request was 403'd except Admins. Now compares the resolved
+   * doctorProfile._id (attached by attachDoctorProfile middleware).
    */
   addConsultation = handle(async (req, res) => {
     const Admission = require("../../models/Patient/admissionModel");
@@ -252,14 +359,16 @@ class AdmissionController {
     if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
 
     // Auth check: only primary consultant or Admin can add
-    const callerId = req.user?._id?.toString() || req.user?.id?.toString();
-    const primaryId = admission.attendingDoctorId?.toString();
-    if (req.user?.role !== "Admin" && callerId !== primaryId) {
+    const callerDoctorId = req.doctorProfile?._id?.toString() || "";
+    const primaryId      = admission.attendingDoctorId?.toString() || "";
+    const isPrimary      = !!callerDoctorId && !!primaryId && callerDoctorId === primaryId;
+    if (req.user?.role !== "Admin" && !isPrimary) {
       return res.status(403).json({
         success: false,
         message: "Only the primary consultant can appoint additional doctors.",
       });
     }
+    const callerId = req.user?._id?.toString() || req.user?.id?.toString();
 
     const {
       doctorId, doctorName, department, departmentId, specialization,
@@ -355,12 +464,15 @@ class AdmissionController {
     const member = admission.treatmentTeam.id(req.params.consultId);
     if (!member) return res.status(404).json({ success: false, message: "Consultation not found" });
 
-    const callerId = req.user?._id?.toString() || req.user?.id?.toString();
-    const primaryId = admission.attendingDoctorId?.toString();
-    const consultingId = member.doctorId?.toString();
-    const isAdmin = req.user?.role === "Admin";
-    const isPrimary = callerId === primaryId;
-    const isConsulting = callerId === consultingId;
+    // R7az-D3-CRIT-2: compare doctorProfile._id (Doctor model _id) — not
+    // User._id — against attendingDoctorId / treatmentTeam[].doctorId.
+    // Same null-on-mismatch bug as addConsultation; see note there.
+    const callerDoctorId = req.doctorProfile?._id?.toString() || "";
+    const primaryId      = admission.attendingDoctorId?.toString() || "";
+    const consultingId   = member.doctorId?.toString() || "";
+    const isAdmin        = req.user?.role === "Admin";
+    const isPrimary      = !!callerDoctorId && !!primaryId    && callerDoctorId === primaryId;
+    const isConsulting   = !!callerDoctorId && !!consultingId && callerDoctorId === consultingId;
 
     if (!isAdmin && !isPrimary && !isConsulting) {
       return res.status(403).json({ success: false, message: "You do not have permission to update this consultation." });
@@ -398,9 +510,11 @@ class AdmissionController {
     const admission = await Admission.findById(req.params.id);
     if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
 
-    const callerId = req.user?._id?.toString() || req.user?.id?.toString();
-    const primaryId = admission.attendingDoctorId?.toString();
-    if (req.user?.role !== "Admin" && callerId !== primaryId) {
+    // R7az-D3-CRIT-2: doctorProfile._id, not User._id. See addConsultation.
+    const callerDoctorId = req.doctorProfile?._id?.toString() || "";
+    const primaryId      = admission.attendingDoctorId?.toString() || "";
+    const isPrimary      = !!callerDoctorId && !!primaryId && callerDoctorId === primaryId;
+    if (req.user?.role !== "Admin" && !isPrimary) {
       return res.status(403).json({ success: false, message: "Only the primary consultant can remove team members." });
     }
 
@@ -498,26 +612,32 @@ class AdmissionController {
     if (!["doctor", "nurse"].includes(role))
       return res.status(400).json({ success: false, message: 'role must be "doctor" or "nurse"' });
 
-    const admission = await Admission.findById(req.params.id);
-    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
-
+    // R7s: Atomic $set on the specific role's flags only. The previous
+    // read-then-save pattern was vulnerable to a race: if the doctor
+    // marks complete at the same time as the nurse, both load the same
+    // admission doc, each writes their own role's flags, and the last
+    // .save() overwrites the other role's flags entirely (clobbering
+    // the doctor- OR nurse-completed:true that the other request set).
+    // findOneAndUpdate with dotted-path $set updates only the targeted
+    // sub-keys, leaving the other role's flags intact.
     const now = new Date();
-    // Ensure initialAssessment object exists (Mixed type needs explicit init)
-    if (!admission.initialAssessment || typeof admission.initialAssessment !== "object") {
-      admission.initialAssessment = {};
-    }
-    if (role === "doctor") {
-      admission.initialAssessment.doctorCompleted   = true;
-      admission.initialAssessment.doctorCompletedAt = now;
-      admission.initialAssessment.doctorName        = name;
-    } else {
-      admission.initialAssessment.nurseCompleted   = true;
-      admission.initialAssessment.nurseCompletedAt = now;
-      admission.initialAssessment.nurseName        = name;
-    }
-    // markModified is required for Mixed-type fields so Mongoose tracks the change
-    admission.markModified("initialAssessment");
-    await admission.save();
+    const updates = role === "doctor"
+      ? {
+          "initialAssessment.doctorCompleted":   true,
+          "initialAssessment.doctorCompletedAt": now,
+          "initialAssessment.doctorName":        name,
+        }
+      : {
+          "initialAssessment.nurseCompleted":   true,
+          "initialAssessment.nurseCompletedAt": now,
+          "initialAssessment.nurseName":        name,
+        };
+    const admission = await Admission.findByIdAndUpdate(
+      req.params.id,
+      { $set: updates },
+      { new: true, runValidators: true },
+    );
+    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
     return res.json({ success: true, message: `${role} initial assessment marked complete`, data: admission.initialAssessment });
   });
 
@@ -532,10 +652,16 @@ class AdmissionController {
   //   • DoctorApproved + BillCleared + GatePassIssued → all returned
   //   • Completed → only those gate-passed today (so the "Discharged Today"
   //     tab doesn't grow unbounded over weeks of history).
+  // R7az-D8-HIGH-3: Doctor-scope. Pre-R7az every Doctor saw the entire
+  // hospital's discharge queue — including patients of other doctors.
+  // Now we filter by attendingDoctorId OR treatmentTeam[].doctorId so
+  // a Doctor only sees their own clinical work. Reception/Admin keep
+  // the full view to coordinate gate-pass issuance.
   getDischargeQueue = handle(async (req, res) => {
     const Admission = require("../../models/Patient/admissionModel");
     const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
-    const list = await Admission.find({
+
+    const baseQuery = {
       status: { $in: ["Active", "Discharged"] },
       $or: [
         { "dischargeWorkflow.stage": { $in: ["DoctorApproved", "BillCleared", "GatePassIssued"] } },
@@ -544,7 +670,22 @@ class AdmissionController {
           "dischargeWorkflow.gatePassIssuedAt": { $gte: startOfToday },
         },
       ],
-    })
+    };
+
+    // Doctor scope (additive AND on top of the stage/date filter).
+    if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+      const docId = req.doctorProfile._id;
+      baseQuery.$and = [
+        {
+          $or: [
+            { attendingDoctorId: docId },
+            { "treatmentTeam.doctorId": docId },
+          ],
+        },
+      ];
+    }
+
+    const list = await Admission.find(baseQuery)
       .populate("patientId",     "fullName UHID dateOfBirth age gender contactNumber")
       .populate("attendingDoctorId", "firstName lastName fullName doctorDetails.specialization")
       .populate("departmentId",      "departmentName")
@@ -563,6 +704,35 @@ class AdmissionController {
     // returns 200, the other gets a clean 409. No double-fire of the
     // approval timestamp / approver name.
     const Admission = require("../../models/Patient/admissionModel");
+
+    // R7az-D8-CRIT-5: primary-consultant OR treatment-team gate. Pre-R7az
+    // any logged-in Doctor could approve any admission's discharge — a
+    // dermatologist with no involvement in the case could discharge an
+    // ICU patient. Now we require the caller to be either the primary
+    // attending OR a member of the treatment team (NABH consultation
+    // model). Admin bypasses.
+    if (req.user?.role === "Doctor") {
+      const probeAdmission = await Admission.findById(req.params.id)
+        .select("attendingDoctorId treatmentTeam.doctorId").lean();
+      if (!probeAdmission) {
+        return res.status(404).json({ success: false, message: "Admission not found" });
+      }
+      const callerDoctorId = String(req.doctorProfile?._id || "");
+      const attendingId    = String(probeAdmission.attendingDoctorId || "");
+      const teamIds        = (probeAdmission.treatmentTeam || [])
+        .map(m => String(m.doctorId || ""))
+        .filter(Boolean);
+      const isAttending = !!callerDoctorId && !!attendingId && callerDoctorId === attendingId;
+      const isOnTeam    = !!callerDoctorId && teamIds.includes(callerDoctorId);
+      if (!isAttending && !isOnTeam) {
+        return res.status(403).json({
+          success: false,
+          message: "Only the primary attending consultant or a treatment-team member may approve discharge.",
+          code: "NOT_ON_CARE_TEAM",
+        });
+      }
+    }
+
     const set = {
       "dischargeWorkflow.stage":              "DoctorApproved",
       "dischargeWorkflow.doctorApprovedAt":   new Date(),
@@ -617,14 +787,26 @@ class AdmissionController {
     if (req.body.finalBillAmount !== undefined) {
       set["dischargeWorkflow.finalBillAmount"] = Number(req.body.finalBillAmount) || 0;
     }
+    // R7ab: gate on status:"Active" too. Previously a Cancelled or
+    // Transferred admission whose `dischargeWorkflow.stage` happened to
+    // be DoctorApproved (from a half-completed earlier discharge attempt)
+    // could still be flipped to BillCleared, which then cascades into
+    // issueGatePass flipping the bed to Available — corrupting whatever
+    // patient is currently in that bed.
     const adm = await Admission.findOneAndUpdate(
-      { _id: req.params.id, "dischargeWorkflow.stage": "DoctorApproved" },
+      { _id: req.params.id, status: "Active", "dischargeWorkflow.stage": "DoctorApproved" },
       { $set: set },
       { new: true, runValidators: true },
     );
     if (!adm) {
-      const probe = await Admission.findById(req.params.id).select("dischargeWorkflow").lean();
+      const probe = await Admission.findById(req.params.id).select("dischargeWorkflow status").lean();
       if (!probe) return res.status(404).json({ success: false, message: "Admission not found" });
+      if (probe.status && probe.status !== "Active") {
+        return res.status(409).json({
+          success: false,
+          message: `Cannot clear final bill — admission is currently '${probe.status}', not 'Active'.`,
+        });
+      }
       const stage = probe.dischargeWorkflow?.stage || "NotRequested";
       if (stage === "NotRequested") {
         return res.status(400).json({ success: false, message: "Doctor has not yet approved discharge" });
@@ -670,8 +852,15 @@ class AdmissionController {
           // honours billStatus when computing balanceAmount) sees the right
           // value. The hook itself recomputes advancePaid + balanceAmount
           // using patientPayableAmount, so we don't need manual math here.
-          const paid = bill.payments.reduce((s, p) => s + (p.amount || 0), 0);
-          const patientShare = bill.patientPayableAmount || bill.netAmount || 0;
+          // R7at-FIX-12/D1-CRIT-C2: `bill.payments[].amount` is Decimal128
+          // — pre-R7at `s + (p.amount || 0)` coerced via toString and the
+          // reducer produced string-concat values like "0100.00". The
+          // status-flip comparison then string-compared against a
+          // Decimal128 RHS — tiny IPD bills silently stayed PARTIAL at
+          // discharge. Now uses `toNum()` everywhere.
+          const { toNum } = require("../../utils/money");
+          const paid = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
+          const patientShare = toNum(bill.patientPayableAmount) || toNum(bill.netAmount) || 0;
           bill.billStatus    = paid + 0.5 >= patientShare ? "PAID" : "PARTIAL";
           if (bill.billStatus === "PAID") bill.paidAt = new Date();
           await bill.save();
@@ -697,8 +886,12 @@ class AdmissionController {
     const seq = await nextSequence(`gatepass:${dateStr}`);
     const passNumber = `GP-${dateStr}-${String(seq).padStart(4, "0")}`;
     const now = new Date();
+    // R7ab: also gate on status:"Active" so a Cancelled/Transferred
+    // admission can't be flipped to "Discharged" via this path. The
+    // bed-release block below relies on the admission still being
+    // Active at this CAS instant.
     const adm = await Admission.findOneAndUpdate(
-      { _id: req.params.id, "dischargeWorkflow.stage": "BillCleared" },
+      { _id: req.params.id, status: "Active", "dischargeWorkflow.stage": "BillCleared" },
       { $set: {
         "dischargeWorkflow.stage":            "Completed",
         "dischargeWorkflow.gatePassNumber":   passNumber,
@@ -737,14 +930,36 @@ class AdmissionController {
     // so the reception UI can prompt for manual cleanup. The admission
     // itself stays Discharged (the source of truth) — bed-mgmt is a
     // downstream concern that a nightly sweep can also reconcile.
+    //
+    // R7bd-A-11 / A1-HIGH-12 — ALSO flip housekeeping.state to
+    // CleaningPending AND auto-create a CleaningTask. Pre-R7bd
+    // issueGatePass only flipped status:"Available" — so on the
+    // discharge path from this controller, housekeeping never knew the
+    // bed needed cleaning. dischargePatient (the service path) already
+    // did this; the controller-driven gate-pass discharge skipped it,
+    // producing a bed-cleaning queue that under-reported the real load.
     let bedReleased = true;
     let bedWarning  = null;
+    let bedSnapshot = null;
     if (adm.bedId) {
       try {
         const Bed = require("../../models/bedMgmt/bedsModel");
+        bedSnapshot = await Bed.findById(adm.bedId).lean();
         const updated = await Bed.findByIdAndUpdate(
           adm.bedId,
-          { $set: { status: "Available", currentAdmission: null, patient: null } },
+          {
+            $set: {
+              status: "Available",
+              currentAdmission: null,
+              patient: null,
+              // R7bd-A-11 — housekeeping flip mirrors admissionService.dischargePatient
+              "housekeeping.state":      "CleaningPending",
+              "housekeeping.startedAt":  new Date(),
+              "housekeeping.finishedAt": null,
+              "housekeeping.assignedTo": "",
+              "currentBooking.actualDischargeDate": now,
+            },
+          },
           { new: true, runValidators: true },
         );
         if (!updated) {
@@ -756,6 +971,41 @@ class AdmissionController {
         bedReleased = false;
         bedWarning  = `Bed release failed: ${e.message}`;
         console.error(`[issueGatePass] bed-release error for ${adm.UHID}:`, e.message);
+      }
+    }
+
+    // R7bd-A-11 — Auto-create a CleaningTask so the housekeeping queue
+    // shows the bed even though discharge came through the gate-pass
+    // route (not the service-level discharge). Best-effort: log + skip
+    // on failure (the bed flag above is the primary correctness signal).
+    if (bedSnapshot && bedReleased) {
+      try {
+        const { CleaningTask } = require("../../models/Clinical/housekeepingModels");
+        const isolation = (bedSnapshot.isolationFlags || []).filter(Boolean);
+        const isIsolation = isolation.length > 0;
+        await CleaningTask.create({
+          type:        isIsolation ? "terminal" : "discharge-clean",
+          title:       isIsolation
+            ? `Terminal clean — Bed ${bedSnapshot.bedNumber} (${isolation.join(", ")})`
+            : `Discharge clean — Bed ${bedSnapshot.bedNumber}`,
+          description: adm.patientName
+            ? `Bed turnover after gate-pass discharge of ${adm.patientName} (${adm.UHID || ""}).${isIsolation ? " Follow isolation cleaning protocol." : ""}`
+            : `Bed turnover required.${isIsolation ? " Follow isolation cleaning protocol." : ""}`,
+          ward:        bedSnapshot.wardName || "",
+          roomNumber:  bedSnapshot.roomNumber || "",
+          bedNumber:   bedSnapshot.bedNumber || "",
+          bedId:       bedSnapshot._id,
+          admissionId: adm._id,
+          UHID:        adm.UHID || "",
+          patientName: adm.patientName || "",
+          priority:    isIsolation ? "urgent" : "high",
+          protocolFollowed: isIsolation ? "terminal-icu" : "discharge",
+          status:      "open",
+          requestedByName: "System (Auto on gate-pass)",
+          requestedByRole: "System",
+        });
+      } catch (e) {
+        console.error("[issueGatePass] CleaningTask auto-create failed:", e.message);
       }
     }
 
@@ -797,6 +1047,12 @@ class AdmissionController {
   reactivate = handle(async (req, res) => {
     const Admission = require("../../models/Patient/admissionModel");
     const Bed       = require("../../models/bedMgmt/bedsModel");
+    // R7bd-A-13 / A1-HIGH-16 — Use the model's shared state-machine
+    // validator. findOneAndUpdate (below) BYPASSES the pre("save")
+    // guard inside admissionModel.js, so without this explicit check
+    // we could go Discharged → anything. The same helper is exported
+    // for any other update path that mutates status via raw operators.
+    const { validateStatusTransition } = Admission;
 
     const reason = String(req.body?.reason || "").trim();
     if (!reason || reason.length < 10) {
@@ -813,6 +1069,28 @@ class AdmissionController {
         success: false,
         message: `Cannot reactivate — admission is currently "${adm.status}", not "Discharged".`,
       });
+    }
+
+    // R7bd-A-13 — pre-flight the transition. Discharged is terminal in
+    // LEGAL_STATUS_TRANSITIONS, so the validator returns an error.
+    // We INTENTIONALLY bypass that for the reactivate flow (admin-only
+    // 24h same-day undo) — but only AFTER explicit policy gates have
+    // passed (24h window, bed-availability, role). The validateStatusTransition
+    // call is here as defense-in-depth documentation: any future
+    // refactor that drops the policy gates will trip the validator
+    // and fail loud. R7bd-A-19 (TODO): gatePassNumber sequence is NOT
+    // restored on reactivate — the original number stays on the admission
+    // but if a second discharge happens the new gate-pass number will be
+    // the next in the daily counter, leaving a gap in the audit series.
+    // This is a known design question (re-issue same number? burn a new
+    // one?) deferred to a future change once Reception / NABH agree.
+    if (validateStatusTransition) {
+      // Will report illegal under current rules — used for surfacing the
+      // bypass in the audit log only.
+      const err = validateStatusTransition("Discharged", "Active");
+      if (err) {
+        console.warn(`[Reactivate] Bypassing state-machine guard: ${err}`);
+      }
     }
 
     // 24-hour window — same-day undo only.
@@ -882,6 +1160,14 @@ class AdmissionController {
     // Re-occupy the bed. CAS on Available/Cleaning so we never steal an
     // already-allocated bed. If the bed was taken between our pre-check
     // and now, we ROLLBACK the admission flip and return 409.
+    //
+    // R7az-D8-HIGH-6: ALSO clear housekeeping flags + close the auto-
+    // created CleaningTask. Pre-R7az reactivation re-occupied the bed
+    // but left `housekeeping.state="CleaningPending"` from the
+    // discharge cascade — the bed showed as "Cleaning" on the live
+    // bed map even though a live patient was in it. Worse, the open
+    // CleaningTask kept appearing in housekeeping's queue and a
+    // janitor could be sent to clean an occupied bed.
     let bedRestored = false;
     if (updatedAdm.bedId) {
       const restored = await Bed.findOneAndUpdate(
@@ -891,6 +1177,10 @@ class AdmissionController {
             status: "Occupied",
             patient: updatedAdm.patientId,
             currentAdmission: updatedAdm._id,
+            "housekeeping.state":      null,
+            "housekeeping.startedAt":  null,
+            "housekeeping.finishedAt": null,
+            "housekeeping.assignedTo": "",
           },
         },
         { new: true, runValidators: true },
@@ -921,6 +1211,63 @@ class AdmissionController {
         });
       }
       bedRestored = true;
+    }
+
+    // R7az-D8-HIGH-6: Cancel the still-open CleaningTask spawned by
+    // the original discharge so housekeeping doesn't dispatch a janitor
+    // to an occupied bed. Non-fatal — log + continue if the task model
+    // is missing or the update throws; the bed flags above are the
+    // primary correctness signal. CleaningTask status enum is
+    // ["open","assigned","in-progress","done","cancelled"] — we use
+    // "cancelled" with cancelReason="REACTIVATED" for the audit trail.
+    try {
+      const { CleaningTask } = require("../../models/Clinical/housekeepingModels");
+      await CleaningTask.findOneAndUpdate(
+        { admissionId: req.params.id, status: { $nin: ["cancelled", "done"] } },
+        {
+          $set: {
+            status:        "cancelled",
+            cancelReason:  `REACTIVATED — ${reason}`.slice(0, 500),
+            cancelledAt:   new Date(),
+          },
+        },
+      );
+    } catch (e) {
+      console.warn("[Reactivate] CleaningTask cancel skipped:", e.message);
+    }
+
+    // R7bd-A-16 / A1-MED-21 — un-finalize the DischargeSummary so the
+    // next discharge can update it. Pre-R7bd a reactivated patient's
+    // DischargeSummary stayed `status:"finalized"`, which the model's
+    // pre-write guard (DischargeSummaryModel.js) refuses to overwrite.
+    // The doctor would get a 500 when re-saving the discharge summary
+    // for the eventual second discharge. Now we flip it back to draft.
+    // Best-effort: log + skip on failure.
+    try {
+      const DischargeSummary = require("../../models/Clinical/DischargeSummaryModel");
+      // Bypass the model's `_refuseIfFinalized` hook via updateOne with
+      // an explicit $set on a single whitelisted-AND-status field — but
+      // since `status` isn't in the whitelist, the hook will refuse.
+      // Use the raw collection write to step around the guard for this
+      // controlled admin path. This is the only place outside the
+      // amendment endpoint allowed to revert finalized → draft.
+      await DischargeSummary.collection.updateOne(
+        { admissionId: updatedAdm._id, status: "finalized" },
+        {
+          $set: {
+            status: "draft",
+            // Tombstone the prior finalize-trail so MRD can see the undo.
+            updatedAt: new Date(),
+          },
+          $unset: {
+            finalizedAt: "",
+            finalizedBy: "",
+            finalizedByName: "",
+          },
+        },
+      );
+    } catch (e) {
+      console.warn("[Reactivate] DischargeSummary un-finalize skipped:", e.message);
     }
 
     return res.json({

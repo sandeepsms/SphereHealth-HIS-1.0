@@ -37,7 +37,7 @@ const Action = ({ icon, label, sub, color, danger, primary, onClick, disabled })
   </button>
 );
 
-const BedActionMenu = ({ bed, onClose, actions = {} }) => {
+const BedActionMenu = ({ bed, onClose, actions = {}, perms = {} }) => {
   // Lock body scroll while open
   useEffect(() => {
     if (!bed) return;
@@ -54,6 +54,14 @@ const BedActionMenu = ({ bed, onClose, actions = {} }) => {
   const isRes   = bed.status === "Reserved";
   const isMnt   = bed.status === "Maintenance";
   const isBlk   = bed.status === "Blocked";
+  // R7bb-E/D5-HIGH-1 — Caller passes `perms` derived from useAuth().can().
+  // Default to true so the menu still works if a caller forgets to pass
+  // perms (legacy embedders). Backend always enforces; this is UI polish.
+  const {
+    canAssignBed = true,
+    canTransfer  = true,
+    canDischarge = true,
+  } = perms;
 
   return (
     <Dialog
@@ -157,14 +165,21 @@ const BedActionMenu = ({ bed, onClose, actions = {} }) => {
         {/* ── AVAILABLE ── */}
         {isAvail && (
           <>
-            <Action icon="pi-user-plus" label="Admit Patient"
-              sub="Search existing or register new admission"
-              color="#16a34a" primary
-              onClick={() => actions.onAdmit?.(bed)} />
-            <Action icon="pi-bookmark" label="Reserve Bed"
-              sub="Hold for a scheduled admission"
-              color="#2563eb"
-              onClick={() => actions.onReserve?.(bed)} />
+            {/* R7bb-E/D5-HIGH-1 — Admit / Reserve / Maintenance / Block
+                require ipd.assign-bed (Admin/Receptionist/Doctor). Ward
+                Boy + Housekeeping viewers see info-only menu. */}
+            {canAssignBed && (
+              <Action icon="pi-user-plus" label="Admit Patient"
+                sub="Search existing or register new admission"
+                color="#16a34a" primary
+                onClick={() => actions.onAdmit?.(bed)} />
+            )}
+            {canAssignBed && (
+              <Action icon="pi-bookmark" label="Reserve Bed"
+                sub="Hold for a scheduled admission"
+                color="#2563eb"
+                onClick={() => actions.onReserve?.(bed)} />
+            )}
             <Action icon="pi-shield" label="Add Isolation Flag"
               sub="MRSA · COVID · TB · Contact · Droplet · Airborne"
               color="#dc2626"
@@ -173,14 +188,18 @@ const BedActionMenu = ({ bed, onClose, actions = {} }) => {
               sub="Ventilator · monitor · IV pump · etc."
               color="#475569"
               onClick={() => actions.onEquipment?.(bed)} />
-            <Action icon="pi-wrench" label="Mark Maintenance"
-              sub="Send to housekeeping cleaning queue"
-              color="#d97706"
-              onClick={() => actions.onMaintenance?.(bed)} />
-            <Action icon="pi-ban" label="Block Bed"
-              sub="Disable temporarily (renovation, etc.)"
-              color="#475569"
-              onClick={() => actions.onBlock?.(bed)} />
+            {canAssignBed && (
+              <Action icon="pi-wrench" label="Mark Maintenance"
+                sub="Send to housekeeping cleaning queue"
+                color="#d97706"
+                onClick={() => actions.onMaintenance?.(bed)} />
+            )}
+            {canAssignBed && (
+              <Action icon="pi-ban" label="Block Bed"
+                sub="Disable temporarily (renovation, etc.)"
+                color="#475569"
+                onClick={() => actions.onBlock?.(bed)} />
+            )}
           </>
         )}
 
@@ -203,10 +222,13 @@ const BedActionMenu = ({ bed, onClose, actions = {} }) => {
               sub="Medication administration record"
               color="#0d9488"
               onClick={() => actions.onMAR?.(bed)} />
-            <Action icon="pi-arrows-h" label="Transfer to Another Bed"
-              sub="Initiate transfer · nurse handover follows"
-              color="#7c3aed"
-              onClick={() => actions.onTransfer?.(bed)} />
+            {/* R7bb-E/D5-HIGH-1 — Transfer gated by ipd.transfer. */}
+            {canTransfer && (
+              <Action icon="pi-arrows-h" label="Transfer to Another Bed"
+                sub="Initiate transfer · nurse handover follows"
+                color="#7c3aed"
+                onClick={() => actions.onTransfer?.(bed)} />
+            )}
             <Action icon="pi-shield" label="Update Isolation"
               sub="Add or remove precaution flags"
               color="#dc2626"
@@ -215,51 +237,66 @@ const BedActionMenu = ({ bed, onClose, actions = {} }) => {
               sub="Current bed-days × tariff + add-ons"
               color="#0891b2"
               onClick={() => actions.onEstimate?.(bed)} />
-            <Action icon="pi-sign-out" label="Discharge Patient"
-              sub="Free the bed · queue for cleaning"
-              danger
-              onClick={() => actions.onDischarge?.(bed)} />
+            {/* R7bb-E/D5-HIGH-1 — Discharge gated by ipd.discharge. */}
+            {canDischarge && (
+              <Action icon="pi-sign-out" label="Discharge Patient"
+                sub="Free the bed · queue for cleaning"
+                danger
+                onClick={() => actions.onDischarge?.(bed)} />
+            )}
           </>
         )}
 
         {/* ── RESERVED ── */}
         {isRes && (
           <>
-            <Action icon="pi-check-circle" label="Complete Admission"
-              sub="Convert reservation into an active stay"
-              color="#16a34a" primary
-              onClick={() => actions.onAdmit?.(bed)} />
-            <Action icon="pi-clock" label="Extend Hold"
-              sub="Push reservedUntil further out"
-              color="#2563eb"
-              onClick={() => actions.onExtendReservation?.(bed)} />
-            <Action icon="pi-times-circle" label="Cancel Reservation"
-              sub="Free the bed · mark Available"
-              danger
-              onClick={() => actions.onCancelReservation?.(bed)} />
+            {/* R7bb-E/D5-HIGH-1 — Reservation lifecycle gated by ipd.assign-bed. */}
+            {canAssignBed && (
+              <Action icon="pi-check-circle" label="Complete Admission"
+                sub="Convert reservation into an active stay"
+                color="#16a34a" primary
+                onClick={() => actions.onAdmit?.(bed)} />
+            )}
+            {canAssignBed && (
+              <Action icon="pi-clock" label="Extend Hold"
+                sub="Push reservedUntil further out"
+                color="#2563eb"
+                onClick={() => actions.onExtendReservation?.(bed)} />
+            )}
+            {canAssignBed && (
+              <Action icon="pi-times-circle" label="Cancel Reservation"
+                sub="Free the bed · mark Available"
+                danger
+                onClick={() => actions.onCancelReservation?.(bed)} />
+            )}
           </>
         )}
 
         {/* ── MAINTENANCE ── */}
         {isMnt && (
           <>
-            <Action icon="pi-check-circle" label="Mark Available"
-              sub="Cleaning complete · ready for next patient"
-              color="#16a34a" primary
-              onClick={() => actions.onClearMaintenance?.(bed)} />
+            {/* R7bb-E/D5-HIGH-1 — Bed state changes gated by ipd.assign-bed. */}
+            {canAssignBed && (
+              <Action icon="pi-check-circle" label="Mark Available"
+                sub="Cleaning complete · ready for next patient"
+                color="#16a34a" primary
+                onClick={() => actions.onClearMaintenance?.(bed)} />
+            )}
             <Action icon="pi-bookmark-fill" label="Update Housekeeping State"
               sub={`Current: ${bed.housekeeping?.state || "Idle"}`}
               color="#d97706"
               onClick={() => actions.onHousekeeping?.(bed)} />
-            <Action icon="pi-ban" label="Move to Blocked"
-              sub="If maintenance will take longer"
-              color="#475569"
-              onClick={() => actions.onBlock?.(bed)} />
+            {canAssignBed && (
+              <Action icon="pi-ban" label="Move to Blocked"
+                sub="If maintenance will take longer"
+                color="#475569"
+                onClick={() => actions.onBlock?.(bed)} />
+            )}
           </>
         )}
 
         {/* ── BLOCKED ── */}
-        {isBlk && (
+        {isBlk && canAssignBed && (
           <>
             <Action icon="pi-check-circle" label="Unblock · Mark Available"
               sub="Bed returns to active inventory"

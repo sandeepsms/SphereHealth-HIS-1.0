@@ -29,6 +29,8 @@ import API_ENDPOINTS from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { openPrint } from "../../Components/print/openPrint";
 import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
+// R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap to avoid 7-page drift.
+import { toMoney } from "../../utils/money";
 
 /* Map a trigger to a friendly print-category label that lines up with
    the FinalBill printable's CATEGORY_ORDER (Room/Bed → Doctor → Nursing
@@ -194,7 +196,10 @@ const catBadge = (code) => {
 };
 
 // ── Money formatter ─────────────────────────────────────────────
-const inr = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+// R7av-FIX-13/D4-R7at-money: use central toMoney so Decimal128 fields
+// (grossAmount, totalDiscount, netAmount, advancePaid, balanceAmount,
+// per-medicine prices) don't render as ₹NaN.
+const inr = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDate     = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
@@ -358,6 +363,21 @@ export default function IPDBillingLedger() {
   const [pickerList,   setPickerList]   = useState([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerSearch, setPickerSearch] = useState("");
+
+  // R7af: the IPD Live Ledger only makes sense for INPATIENT admissions.
+  // The /admissions/active endpoint legacy-returns OPD/Services rows
+  // alongside real inpatient admissions (the Admission model has them
+  // in its enum: "Emergency","Planned","Transfer","Day Care","OPD",
+  // "Daycare","Services"). Filter to just the inpatient subset so the
+  // picker doesn't surface OPD visits that don't belong on a ledger.
+  const INPATIENT_TYPES = new Set([
+    "IPD", "Emergency", "Planned", "Transfer", "Day Care", "Daycare",
+  ]);
+  const isInpatient = (a) =>
+    INPATIENT_TYPES.has(a?.admissionType)
+    // Also require an admissionNumber so legacy rows without one are skipped.
+    && !!(a?.admissionNumber);
+
   useEffect(() => {
     if (admissionId) return; // ledger mode — skip picker fetch
     let cancelled = false;
@@ -366,7 +386,10 @@ export default function IPDBillingLedger() {
       try {
         const { data: r } = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active`);
         const arr = Array.isArray(r) ? r : r?.data || [];
-        if (!cancelled) setPickerList(arr);
+        // R7af: filter out OPD/Services rows at fetch time so the picker
+        // count + search both reflect inpatient-only.
+        const inpatientOnly = arr.filter(isInpatient);
+        if (!cancelled) setPickerList(inpatientOnly);
       } catch (e) {
         if (!cancelled) toast.error("Could not load admissions: " + (e?.response?.data?.message || e?.message));
       } finally {
@@ -374,6 +397,7 @@ export default function IPDBillingLedger() {
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [admissionId]);
   // Live filter — search by name / UHID / IPD No / bed / doctor / dept.
   const filteredPicker = (() => {
@@ -499,7 +523,7 @@ export default function IPDBillingLedger() {
         date:   p.paidAt,
         method: p.paymentMode,
         refNo:  p.transactionId,
-        amount: Number(p.amount?.$numberDecimal ?? p.amount ?? 0),
+        amount: toMoney(p.amount),
       })),
     });
   };
@@ -544,7 +568,7 @@ export default function IPDBillingLedger() {
         date:   p.paidAt,
         method: p.paymentMode,
         refNo:  p.transactionId,
-        amount: Number(p.amount?.$numberDecimal ?? p.amount ?? 0),
+        amount: toMoney(p.amount),
       })),
     };
 
@@ -941,7 +965,7 @@ export default function IPDBillingLedger() {
       }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginRight: 6 }}>ACTIONS:</div>
         {can("billing.write") && (
-          <button onClick={() => navigate(`/reception/billing?UHID=${admission.UHID}&admissionId=${admissionId}`)} style={{
+          <button onClick={() => navigate(`/reception-billing/${admission.UHID}?admissionId=${admissionId}`)} style={{
             padding: "7px 14px", background: C.primary, color: "#fff", border: "none",
             borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
           }}>
@@ -950,7 +974,7 @@ export default function IPDBillingLedger() {
           </button>
         )}
         {can("billing.write") && (
-          <button onClick={() => navigate(`/reception/billing?UHID=${admission.UHID}&advance=1`)} style={{
+          <button onClick={() => navigate(`/reception-billing/${admission.UHID}?action=advance`)} style={{
             padding: "7px 14px", background: C.success, color: "#fff", border: "none",
             borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
           }}>

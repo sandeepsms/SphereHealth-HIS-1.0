@@ -117,6 +117,22 @@ ConsentFormSchema.index({ UHID: 1, consentType: 1 });
 ConsentFormSchema.index({ admissionId: 1, consentType: 1 });
 ConsentFormSchema.index({ status: 1 });
 
+// R7bf-I / A7-CRIT-4 — Consent state-machine guard.
+// Pre-R7bf the refuse / revoke endpoints had no transition guard:
+//   • A patient who already REFUSED could be silently "re-refused"
+//     overwriting the original refusal timestamp + reason — NABH PRE.4
+//     audit chain broken.
+//   • A SIGNED consent could be REVOKED at any time, including
+//     post-procedure, which is medico-legally invalid.
+// The registry now restricts:
+//   PENDING → SIGNED | REFUSED       (offer outcome — one-shot)
+//   SIGNED  → REVOKED                (only while procedure not yet started;
+//                                     the post-procedure check is enforced
+//                                     by the controller, not the schema)
+//   REFUSED / REVOKED → terminal
+const { attachStatusGuard } = require("../../utils/statusTransitionGuard");
+attachStatusGuard(ConsentFormSchema, { modelName: "ConsentForm", field: "status" });
+
 module.exports =
   mongoose.models.ConsentForm ||
   mongoose.model("ConsentForm", ConsentFormSchema);

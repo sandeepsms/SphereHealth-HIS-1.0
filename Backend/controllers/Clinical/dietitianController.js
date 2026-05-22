@@ -237,6 +237,27 @@ exports.updatePlan = async (req, res) => {
   } catch (e) { res.status(400).json({ success: false, message: e.message }); }
 };
 
+/* ── R7bb-FIX-E-9 / D6-CRIT-6: Kitchen-indent push ─────────────
+   POST /api/dietitian/plan/:id/kitchen-indent
+   Fans out one KitchenIndent row per meal slot in the active plan.
+   The dietitian's bookmark, the kitchen's worklist — without it the
+   diet order lived only in PatientDietPlan and was never visible to
+   the cook. */
+exports.pushKitchenIndent = async (req, res) => {
+  try {
+    const svc = require("../../services/Dietitian/dietitianService");
+    const result = await svc.pushToKitchenIndent(req.params.id, {
+      id:       req.user?._id || req.user?.id,
+      fullName: req.user?.fullName || req.user?.employeeId || "",
+      role:     req.user?.role || "",
+    });
+    res.status(201).json({ success: true, ...result });
+  } catch (e) {
+    if (e?.status) return res.status(e.status).json({ success: false, message: e.message });
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
+
 /* ── DASHBOARD STATS ───────────────────────────────────────── */
 exports.stats = async (req, res) => {
   try {

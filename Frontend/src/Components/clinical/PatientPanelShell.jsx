@@ -164,7 +164,7 @@ export default function PatientPanelShell({
     // forget — never blocks the clinician's workflow if the log endpoint
     // is down, but logs the failure so SOC can spot dropped events.
     try {
-      const t = localStorage.getItem("his_token");
+      const t = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
       fetch(`${import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api"}/patient-file/${encodeURIComponent(patient.UHID)}/log`, {
         method: "POST",
         headers: {

@@ -23,7 +23,7 @@ import { useAuth } from "../../context/AuthContext";
 import { ShiftTab, EquipmentTab, SuppliesTab, CodeBlueTab, MortuaryTab } from "./WardBoyConsoleTabs";
 
 import { API_BASE_URL as API } from "../../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem("his_token")}` } });
+const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
 
 const TYPE_LABEL = {
   transport: "Transport",
@@ -71,6 +71,17 @@ const fmtAgo  = (d) => {
 };
 
 /* ──────────────────────────────────────────────────────────── */
+// R7bb-E/D5-HIGH-6 — Claim/Start/Complete are write actions on the
+// task; Admin (read+manage) + Receptionist/Doctor/Nurse (read-only for
+// visibility) can see the page but mustn't see CTAs the backend would
+// 403 on. ward.fulfill is the gate that distinguishes worker from
+// observer. The page itself is RoleGuard wrapped by ward.read in
+// App.jsx, so this is the per-button refinement.
+function useCanFulfillWardTask() {
+  const { can } = useAuth();
+  return typeof can === "function" ? can("ward.fulfill") : false;
+}
+
 export default function WardBoyConsole() {
   const [params, setParams] = useSearchParams();
   const [tab, setTab] = useState(params.get("tab") || "available");
@@ -140,6 +151,7 @@ export default function WardBoyConsole() {
    AVAILABLE — open pool, any ward boy can claim
 ══════════════════════════════════════════════════════════════ */
 function AvailableTab({ onChange }) {
+  const canFulfill = useCanFulfillWardTask();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [typeFilter, setTypeFilter] = useState("");
@@ -189,7 +201,7 @@ function AvailableTab({ onChange }) {
           </Card>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12 }}>
-            {rows.map((t) => <TaskCard key={t._id} task={t} mode="claim" onAction={accept} />)}
+            {rows.map((t) => <TaskCard key={t._id} task={t} mode="claim" onAction={accept} canFulfill={canFulfill} />)}
           </div>
         )}
       </div>
@@ -201,6 +213,7 @@ function AvailableTab({ onChange }) {
    MY TASKS — assigned + in-progress (start / complete)
 ══════════════════════════════════════════════════════════════ */
 function MyTasksTab({ onChange }) {
+  const canFulfill = useCanFulfillWardTask();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [completing, setCompleting] = useState(null);  // task currently in completion modal
@@ -237,6 +250,7 @@ function MyTasksTab({ onChange }) {
             {rows.map((t) => (
               <TaskCard key={t._id} task={t}
                 mode={t.status === "assigned" ? "start" : "complete"}
+                canFulfill={canFulfill}
                 onAction={(task) => {
                   if (task.status === "assigned") start(task);
                   else setCompleting(task);
@@ -344,7 +358,7 @@ function TodayTab() {
 /* ══════════════════════════════════════════════════════════════
    Reusable task card
 ══════════════════════════════════════════════════════════════ */
-function TaskCard({ task, mode, onAction }) {
+function TaskCard({ task, mode, onAction, canFulfill = true }) {
   const color  = TYPE_COLOR[task.type] || C.muted;
   const pColor = PRIORITY_COLOR[task.priority] || C.muted;
   const cta = mode === "claim"   ? { label: "Claim", icon: "pi-hand-pointer", color: C.green }
@@ -401,15 +415,20 @@ function TaskCard({ task, mode, onAction }) {
         <div style={{ fontSize: 10.5, color: C.muted }}>
           By {task.requestedByName || "—"} · {fmtAgo(task.requestedAt)}
         </div>
-        <button onClick={() => onAction(task)}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 5,
-            padding: "6px 12px", borderRadius: 7,
-            border: `1.5px solid ${cta.color}`, background: cta.color, color: "#fff",
-            fontWeight: 800, fontSize: 11.5, cursor: "pointer",
-          }}>
-          <i className={`pi ${cta.icon}`} style={{ fontSize: 11 }} />{cta.label}
-        </button>
+        {/* R7bb-E/D5-HIGH-6 — Action CTA shown only to roles with
+            ward.fulfill (Admin + Ward Boy). Read-only viewers
+            (Nurse, Receptionist, Doctor) just see task info. */}
+        {canFulfill && (
+          <button onClick={() => onAction(task)}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 5,
+              padding: "6px 12px", borderRadius: 7,
+              border: `1.5px solid ${cta.color}`, background: cta.color, color: "#fff",
+              fontWeight: 800, fontSize: 11.5, cursor: "pointer",
+            }}>
+            <i className={`pi ${cta.icon}`} style={{ fontSize: 11 }} />{cta.label}
+          </button>
+        )}
       </div>
     </div>
   );

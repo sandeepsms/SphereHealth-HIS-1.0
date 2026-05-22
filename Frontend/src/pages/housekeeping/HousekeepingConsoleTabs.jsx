@@ -17,7 +17,7 @@ import {
 import { useAuth } from "../../context/AuthContext";
 
 import { API_BASE_URL as API } from "../../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem("his_token")}` } });
+const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtAgo = (d) => {

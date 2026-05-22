@@ -9,12 +9,13 @@
  *   - Non-team doctors cannot modify anything
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { departmentService } from "../../Services/departmentService";
 import { doctorService } from "../../Services/doctors/doctorService";
+import { confirm } from "../common/ConfirmDialog";
 
 /* ── Design tokens ── */
 const C = {
@@ -98,19 +99,35 @@ export default function TreatmentTeamPanel({ admissionId, patientName, UHID, ref
   const userId = user?._id || user?.id || "";
   const userRole = user?.role || "";
 
-  /* ── Load team ── */
+  /* ── Load team — R7az-D4-HIGH-2: abort cleanup. Pre-fix a fast
+       admission switch left late responses overwriting the new team. */
+  const loadAbortRef = useRef(null);
   const loadTeam = useCallback(async () => {
     if (!admissionId) return;
+    if (loadAbortRef.current) {
+      try { loadAbortRef.current.abort(); } catch (_) { /* noop */ }
+    }
+    const ctrl = new AbortController();
+    loadAbortRef.current = ctrl;
     setLoading(true); setError("");
     try {
-      const res = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/${admissionId}/consultation`);
-      setTeam(res.data.data);
+      const res = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/${admissionId}/consultation`, { signal: ctrl.signal });
+      if (!ctrl.signal.aborted) setTeam(res.data.data);
     } catch (e) {
+      if (axios.isCancel?.(e) || ctrl.signal.aborted) return;
       setError(e?.response?.data?.message || "Could not load treatment team");
-    } finally { setLoading(false); }
+    } finally {
+      if (!ctrl.signal.aborted) setLoading(false);
+    }
   }, [admissionId]);
 
   useEffect(() => { loadTeam(); }, [loadTeam, refreshTrigger]);
+  // R7az-D4-HIGH-2: cleanup on unmount.
+  useEffect(() => () => {
+    if (loadAbortRef.current) {
+      try { loadAbortRef.current.abort(); } catch (_) { /* noop */ }
+    }
+  }, []);
 
   /* ── Load departments for add form ── */
   useEffect(() => {
@@ -208,7 +225,13 @@ export default function TreatmentTeamPanel({ admissionId, patientName, UHID, ref
 
   /* ── Remove consultant ── */
   const removeConsultant = async (consultId, name) => {
-    if (!window.confirm(`Remove ${name} from the treatment team?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Remove from treatment team?",
+      body: `${name} will be removed from this admission's multi-disciplinary team and will no longer see this patient in their worklist.`,
+      danger: true,
+      confirmLabel: "Remove",
+    }))) return;
     try {
       await axios.delete(`${API_ENDPOINTS.ADMISSIONS}/${admissionId}/consultation/${consultId}`);
       loadTeam();

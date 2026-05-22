@@ -20,6 +20,9 @@ import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { useReceptionistPresence } from "../../hooks/useReceptionistPresence";
 import { useAuth } from "../../context/AuthContext";
+// R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap + INR formatters.
+// Replaces the local toMoney/fmtCur shim that used to live near line 46.
+import { toMoney, fmtINR0 as fmtCur, fmtINR2 as fmtCurExact } from "../../utils/money";
 import "./ReceptionDashboard.css";
 
 const STATUS_LABEL = {
@@ -37,22 +40,6 @@ const STATUS_DOT_CLASS = {
   Offline:          "rd-doc-status-dot--offline",
 };
 
-// Backend's listBills uses `.lean()` which bypasses the schema's
-// toJSON transform — so Decimal128 money fields come over the wire as
-// `{ $numberDecimal: "50.00" }` objects instead of flat Numbers. Other
-// endpoints (getBillById, getBillsByUHID) DON'T use lean and serialise
-// fine. Rather than touch every consumer of listBills, this helper
-// flattens whichever shape we receive.
-const toMoney = (v) => {
-  if (v == null) return 0;
-  if (typeof v === "number") return v;
-  if (typeof v === "string") return Number(v) || 0;
-  if (typeof v === "object" && v.$numberDecimal != null) return Number(v.$numberDecimal) || 0;
-  return Number(v) || 0;
-};
-const fmtCur = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-const fmtCurExact = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtDateLong = (d) => new Date(d).toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 
@@ -68,8 +55,14 @@ const presenceDoing = (p) => {
 
 export default function ReceptionDashboard() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  // R7bb-E/D5-CRIT-4 — `can("doctor.self.write")` decides whether the
+  // viewer can press "Next →" (call next token) or change the doctor's
+  // status from the receptionist dashboard. Receptionists can SEE the
+  // strip but can't drive someone else's availability — that's the
+  // doctor's own self-write surface.
+  const { user, can } = useAuth();
   const myUserId = user?._id || user?.id;
+  const canDriveDoctorSelf = typeof can === "function" ? can("doctor.self.write") : false;
   const [date,       setDate]       = useState(today());
   const [collection, setCollection] = useState(null);
   const [queues,     setQueues]     = useState([]);
@@ -211,10 +204,17 @@ export default function ReceptionDashboard() {
   };
 
   /* ─── Derived ─── */
-  const totalCollected = collection?.summary?.totalCollected || 0;
+  // R7aw-FIX-F3/D4: unwrap Decimal128 wire shape via `toMoney` instead of
+  // `|| 0`. Pre-fix, when /billing/collection-summary returned amounts as
+  // `{$numberDecimal:"…"}` (Mongo Decimal128) the `|| 0` left the object
+  // intact — every downstream `fmtCur(totalCollected)` and the
+  // `modes.reduce(…+m.amount, 0)` total in the Payment-Mode card showed
+  // ₹NaN. The KPI tiles (totalCollected, advanceDue, tpaPending) and the
+  // by-visit/by-mode amounts all flow through this now-safe coercion.
+  const totalCollected = toMoney(collection?.summary?.totalCollected);
   const txnCount       = collection?.summary?.txnCount || 0;
-  const advanceDue     = collection?.summary?.advanceDue || 0;
-  const tpaPending     = collection?.summary?.tpaPending || 0;
+  const advanceDue     = toMoney(collection?.summary?.advanceDue);
+  const tpaPending     = toMoney(collection?.summary?.tpaPending);
 
   const byVisitMap = useMemo(() => {
     const m = {};
@@ -223,7 +223,10 @@ export default function ReceptionDashboard() {
   }, [collection]);
 
   const modes = collection?.byMode || [];
-  const totalForPct = modes.reduce((s, m) => s + m.amount, 0) || 1;
+  // R7aw-FIX-F3: same Decimal128 trap on per-mode amounts feeding the
+  // percentage strip (m.amount/totalForPct). `toMoney(m.amount)` keeps the
+  // reduce numeric instead of NaN.
+  const totalForPct = modes.reduce((s, m) => s + toMoney(m.amount), 0) || 1;
 
   const isToday = date === today();
   const isFuture = date > today();
@@ -397,7 +400,10 @@ export default function ReceptionDashboard() {
             visual noise. OPD/IPD/DC/ER always render even at zero so
             the layout stays predictable shift-to-shift. */}
         {["OPD","IPD","DC","ER","Services"]
-          .filter(t => t !== "Services" || (byVisitMap[t]?.amount || 0) > 0 || (byVisitMap[t]?.count || 0) > 0)
+          // R7aw-FIX-F3/D4: `byVisitMap[t]?.amount` is Decimal128 — compare
+          // against 0 via `toMoney(…) > 0`, else the bare object compared
+          // > 0 is always falsey and the Services tile never shows.
+          .filter(t => t !== "Services" || toMoney(byVisitMap[t]?.amount) > 0 || (byVisitMap[t]?.count || 0) > 0)
           .map(t => (
             <div key={t} className={`rd-stat rd-stat--${t.toLowerCase()}`}>
               <span className="rd-stat-label">{t === "DC" ? "Day Care" : t}</span>
@@ -444,13 +450,16 @@ export default function ReceptionDashboard() {
                   )}
                 </div>
                 <div className="rd-doc-actions">
-                  {isToday && d.waiting > 0 && (
+                  {/* R7bb-E/D5-CRIT-4 — Next/status are gated by doctor.self.write
+                      so Receptionist/Accountant viewers see read-only doctor info
+                      instead of buttons the backend would 403 on. */}
+                  {isToday && canDriveDoctorSelf && d.waiting > 0 && (
                     <button className="rd-doc-btn rd-doc-btn--next" onClick={() => serveNext(d._id)}
                             title="Call next patient">
                       Next →
                     </button>
                   )}
-                  {isToday && (
+                  {isToday && canDriveDoctorSelf && (
                     <select
                       className="rd-doc-btn"
                       value={d.availability?.status || "Offline"}
@@ -460,6 +469,11 @@ export default function ReceptionDashboard() {
                         <option key={k} value={k}>{v}</option>
                       )}
                     </select>
+                  )}
+                  {isToday && !canDriveDoctorSelf && (
+                    <span className="rd-doc-status-label" style={{ fontSize:11, color:"#64748b", fontWeight:600 }}>
+                      {STATUS_LABEL[d.availability?.status || "Offline"]}
+                    </span>
                   )}
                 </div>
               </div>
@@ -480,7 +494,9 @@ export default function ReceptionDashboard() {
                 No payments recorded
               </div>
             ) : modes.map(m => {
-              const pct = ((m.amount / totalForPct) * 100).toFixed(0);
+              // R7aw-FIX-F3/D4: same Decimal128 unwrap so the percentage
+              // calc doesn't render "NaN%" when the wire shape is raw.
+              const pct = ((toMoney(m.amount) / totalForPct) * 100).toFixed(0);
               const cls = m.mode.toLowerCase();
               return (
                 <div key={m.mode} className="rd-mode">

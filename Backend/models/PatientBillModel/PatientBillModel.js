@@ -71,6 +71,24 @@ const BillItemSchema = new mongoose.Schema(
       },
     },
     taxAmount: { type: Dec, default: () => toDec(0) },
+    // R7ap-F18/D6-03/D6-04: GST Act §31 requires HSN/SAC code on every
+    // tax invoice line. 9993 is the SAC for "human-health services"
+    // (default for clinical services). Pharmacy lines override with their
+    // drug-class HSN. Field is optional so legacy line items don't fail
+    // validation; new emitters set it.
+    hsnSacCode:    { type: String, trim: true, default: null },
+    // R7ap-F18: CGST/SGST/IGST split needed for GSTR-1 inter-state vs
+    // intra-state reporting. Default to taxAmount/2 (intra-state) at save
+    // time. IGST populated only when placeOfSupply != hospital state.
+    cgstAmount:    { type: Dec, default: () => toDec(0) },
+    sgstAmount:    { type: Dec, default: () => toDec(0) },
+    igstAmount:    { type: Dec, default: () => toDec(0) },
+    // R7ap-F36/D5-08: when an ANH package is attached mid-stay, the
+    // per-line bed/nursing/etc. items existing on the bill must NOT be
+    // double-counted alongside the package bundle. Set this flag at
+    // attach time; the revenue aggregator + receipt totals skip excluded
+    // items. The attach action is the only thing that should set this.
+    excludedByPackage: { type: Boolean, default: false },
 
     appliedTariff: {
       type: String,
@@ -173,7 +191,15 @@ const PaymentSchema = new mongoose.Schema(
     voidedAt:     { type: Date },
     voidedBy:     { type: String, trim: true },
     voidedByRole: { type: String, trim: true },
-    voidReason:   { type: String, trim: true } },
+    voidReason:   { type: String, trim: true },
+    // R7ap-F28/D6-17: TDS deducted at source on TPA / corporate remittances.
+    // Hospital books need the GROSS approved amount + the TDS deducted +
+    // the NET amount actually received in the account to reconcile 26AS at
+    // year-end. Pre-R7ap only the net was captured.
+    tdsAmount:           { type: Dec, default: () => toDec(0) },
+    tdsCertificateNo:    { type: String, trim: true },
+    tdsSection:          { type: String, trim: true, default: null },  // 194J / 194I / etc.
+  },
   { _id: true },
 );
 
@@ -232,6 +258,22 @@ const PatientBillSchema = new mongoose.Schema(
     advancePaid:          { type: Dec, default: () => toDec(0) },
     balanceAmount:        { type: Dec, default: () => toDec(0) },
 
+    // R7ap-F18/D6-04/D6-05: GST Act §31 + GSTR-1 schema fields. Pre-R7ap
+    // hospital service GST couldn't be filed via the HIS — no field for
+    // customer GSTIN (B2B / corporate panel ITC claim), no placeOfSupply
+    // (intra-state vs IGST disambiguation), no split between CGST/SGST/IGST.
+    // Default placeOfSupply to the hospital state (intra-state assumption);
+    // emitters that detect inter-state patients override.
+    placeOfSupply:    { type: String, trim: true, default: null }, // state code (e.g. "29" for KA)
+    customerGstin:    { type: String, trim: true, default: null, uppercase: true },
+    customerLegalName:{ type: String, trim: true, default: null },
+    customerAddress:  { type: String, trim: true, default: null },
+    // Bill-level CGST/SGST/IGST aggregates (sum across billItems[]). Pre-save
+    // computes them by summing item-level fields so they stay in sync.
+    cgstAmount:       { type: Dec, default: () => toDec(0) },
+    sgstAmount:       { type: Dec, default: () => toDec(0) },
+    igstAmount:       { type: Dec, default: () => toDec(0) },
+
     // Sum of net+tax for line items still in Ordered / InProgress state —
     // i.e. work the doctor has booked but the executing team hasn't yet
     // confirmed complete. Surfaced on the bill UI as "Pending Orders" so
@@ -272,9 +314,14 @@ const PatientBillSchema = new mongoose.Schema(
     payments: [PaymentSchema],
 
     // ── Status ────────────────────────────────────────────
+    // R7aw-FIX-8/D7: GENERATING is a short-lived intermediate state used
+    // by generateFinalBill to serialise concurrent generate calls via a
+    // findOneAndUpdate(DRAFT → GENERATING) CAS claim. Always flips to
+    // GENERATED inside the same request (or rolls back to DRAFT on
+    // validation failure). Reads ignore it (treated as a pending DRAFT).
     billStatus: {
       type: String,
-      enum: ["DRAFT", "GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"],
+      enum: ["DRAFT", "GENERATING", "GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"],
       default: "DRAFT" },
 
     // ── TPA Claim tracking ────────────────────────────────
@@ -291,13 +338,29 @@ const PatientBillSchema = new mongoose.Schema(
       default: "NOT_APPLICABLE" },
     tpaClaimNumber: { type: String, trim: true },
     tpaApprovedAmount: { type: Dec, default: () => toDec(0) },
+    // R7bb-FIX-E-15 / D3-HIGH-2: maker-checker on TPA approval. The
+    // user who SUBMITTED the preauth cannot also APPROVE the claim —
+    // otherwise a single TPA Coordinator can move from preauth straight
+    // to approval with no second eye. The controller refuses if
+    // req.user._id === tpaPreAuthSubmittedById on tpaApprove.
+    tpaPreAuthSubmittedBy:   { type: String, trim: true, default: null },
+    tpaPreAuthSubmittedById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    tpaPreAuthSubmittedAt:   { type: Date, default: null },
+    tpaApprovedBy:           { type: String, trim: true, default: null },
+    tpaApprovedById:         { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    tpaApprovedAt:           { type: Date, default: null },
 
     // ── Dates & Audit ─────────────────────────────────────
     billDate: { type: Date, default: Date.now },
     billGeneratedAt: { type: Date },
     paidAt: { type: Date },
     generatedBy: { type: String, trim: true },
-    remarks: { type: String, trim: true } },
+    remarks: { type: String, trim: true },
+    // R7bf-F / A4-CRIT-4 + A4-CRIT-5: atomically incremented on every
+    // print/reprint. Source of truth for the DUPLICATE watermark
+    // (count > 1 → watermark renders).  Defaults to 0; the PrintAudit
+    // POST `$inc`s it to 1 on the first print.
+    printCount: { type: Number, default: 0, min: 0 } },
   {
     timestamps: true,
     // Serialize Decimal128 → Number on the wire so the existing frontend
@@ -351,6 +414,29 @@ PatientBillSchema.methods.recalcTotals = function () {
       item.discountAmount = toDec(dAmt);
       item.netAmount      = toDec(nAmt);
       item.taxAmount      = toDec(tAmt);
+      // R7ap-F35/D6-04/D6-16: CGST/SGST/IGST split. Default intra-state
+      // (placeOfSupply blank or matches hospital state) → 50/50 CGST+SGST.
+      // Inter-state (placeOfSupply differs) → 100% IGST. Bill-level
+      // placeOfSupply is the single source — items inherit from parent.
+      // R7au-FIX-7/D6-HIGH-C7: also treat a non-zero bill-level
+      // `igstAmount` as an inter-state marker for LEGACY bills imported
+      // without `placeOfSupply` (pre-F18 data). Without this, recalcTotals
+      // re-derives 50/50 CGST/SGST and silently zeros out the legacy
+      // IGST — register/snapshot under-reports inter-state IGST.
+      const _hosp = (this.constructor?.HOSPITAL_STATE_CODE || process.env.HOSPITAL_STATE_CODE || "").trim();
+      const _legacyIgst = this.igstAmount != null && Number(this.igstAmount.toString ? this.igstAmount.toString() : this.igstAmount) > 0;
+      const _isInterState =
+        (_hosp && this.placeOfSupply && String(this.placeOfSupply).trim() !== _hosp) ||
+        _legacyIgst;
+      if (_isInterState) {
+        item.cgstAmount = toDec(0);
+        item.sgstAmount = toDec(0);
+        item.igstAmount = toDec(tAmt);
+      } else {
+        item.cgstAmount = toDec(tAmt / 2);
+        item.sgstAmount = toDec(tAmt / 2);
+        item.igstAmount = toDec(0);
+      }
 
       let tpaShare = 0;
       let ptShare = lineTotal;
@@ -375,7 +461,12 @@ PatientBillSchema.methods.recalcTotals = function () {
       // the bill aggregate. Backward-compat: missing orderStatus is
       // treated as Completed via isItemBillable() so legacy bills behave
       // identically to before this field was introduced.
-      if (isItemBillable(item)) {
+      //
+      // R7ar-P0-4/D1-aq-01: ALSO skip items marked excludedByPackage —
+      // these are pre-package per-line charges (bed, nursing, doctor visit)
+      // that have been superseded by an attached ANH package. Pre-R7ar
+      // recalcTotals ignored the flag → receipts double-counted.
+      if (isItemBillable(item) && !item.excludedByPackage) {
         gross  += gAmt;
         disc   += dAmt;
         tax    += tAmt;
@@ -403,6 +494,19 @@ PatientBillSchema.methods.recalcTotals = function () {
     this.netAmount            = toDec(gross - disc + tax - extra);
     this.tpaPayableAmount     = toDec(tpaPay);
     this.patientPayableAmount = toDec(ptPay - extra);
+    // R7ap-F35: aggregate item-level CGST/SGST/IGST into bill-level fields.
+    // Driven by placeOfSupply (set above per-item). Used by GSTR-1 export.
+    const _hosp = process.env.HOSPITAL_STATE_CODE || "";
+    const _isInter = _hosp && this.placeOfSupply && String(this.placeOfSupply).trim() !== _hosp;
+    if (_isInter) {
+      this.cgstAmount = toDec(0);
+      this.sgstAmount = toDec(0);
+      this.igstAmount = toDec(tax);
+    } else {
+      this.cgstAmount = toDec(tax / 2);
+      this.sgstAmount = toDec(tax / 2);
+      this.igstAmount = toDec(0);
+    }
   }
 
   // Recalculate balance. Payment rows can be negative (refunds), so totalPaid
@@ -418,9 +522,17 @@ PatientBillSchema.methods.recalcTotals = function () {
   }
 };
 
-// ── Pre-save: bill number + recalculate all totals ─────────────
+// ── Pre-save: bill number (for non-DRAFT) + recalculate all totals ─
+// R7at-FIX-11/D1-CRIT-NEW: pre-R7at this hook burned a billNumber on EVERY
+// new bill — including DRAFTs. Then `generateFinalBill` overwrote it with
+// a fresh `generateBillNumber()` call. Net effect: every finalized bill
+// consumed TWO sequence positions, plus every cancelled DRAFT orphaned
+// one number — IT-Rule-46 gap-less series invariant broken on every
+// bill. The fix: only burn a billNumber when the bill is created in a
+// non-DRAFT state (rare — most paths create DRAFT first then call
+// generateFinalBill); DRAFT bills get their number at finalisation only.
 PatientBillSchema.pre("save", async function (next) {
-  if (this.isNew && !this.billNumber) {
+  if (this.isNew && !this.billNumber && this.billStatus && this.billStatus !== "DRAFT") {
     const year = new Date().getFullYear();
     const seq  = await nextSeqBill(`bill:${year}`);
     this.billNumber = `BILL-${year}-${String(seq).padStart(6, "0")}`;
@@ -436,6 +548,32 @@ PatientBillSchema.index({ billStatus: 1 });
 PatientBillSchema.index({ visitType: 1 });
 PatientBillSchema.index({ billDate: -1 });
 PatientBillSchema.index({ tpa: 1 });
+// R7t: Revenue-breakdown reports filter `billStatus != DRAFT` and sort by
+// createdAt — this compound covers that scan. Same for the dashboard
+// "today's bills" feed.
+PatientBillSchema.index({ billStatus: 1, createdAt: -1 });
+PatientBillSchema.index({ UHID: 1, billStatus: 1, createdAt: -1 });
+
+// R7ap-F14/D1-12/D8-01/D8-05: compound indexes for dashboard hot paths.
+//   {paidAt, billStatus}        — todayRevenue (`$unwind payments` aggregate)
+//   {billStatus, paymentType, billDate} — listBills filter+sort
+//   {paymentType, tpaClaimStatus, updatedAt} — getTPACases
+// Previously these queries did in-memory sorts / picked partial indexes;
+// at 10k bills/mo the All Bills tab took 800ms-2s, TPA tab 500ms-2s.
+PatientBillSchema.index({ paidAt: -1, billStatus: 1 });
+PatientBillSchema.index({ billStatus: 1, paymentType: 1, billDate: -1 });
+PatientBillSchema.index({ paymentType: 1, tpaClaimStatus: 1, updatedAt: -1 });
+// R7at-FIX-13/D8-HIGH-R7as-2: index on `billGeneratedAt` (immutable bill
+// finalisation timestamp). R7as-FIX-6 switched the hospital GST register
+// + snapshot cron to filter by this field, but no index existed — every
+// monthly tax query did a collscan over 50k-200k rows. Compound with
+// billStatus covers the `$nin: [DRAFT, CANCELLED]` predicate.
+PatientBillSchema.index({ billGeneratedAt: -1, billStatus: 1 });
+
+// payments.paidAt is the new attribution field for getCollectionSummary.
+// Multikey index lets the query pick up bills with any payment row in the
+// day window without scanning the full collection.
+PatientBillSchema.index({ "payments.paidAt": -1 });
 
 // FIX (audit P6-B1): partial unique index that prevents two concurrent
 // getOrCreateDraftBill() callers from materialising two DRAFT rows for the
@@ -473,6 +611,49 @@ PatientBillSchema.index(
 // two cashiers taking payment from the same bill at the same instant can't
 // silently clobber each other's payment row.
 PatientBillSchema.set("optimisticConcurrency", true);
+
+// R7bf-I / A7-HIGH-2 + A7-HIGH-3 — billStatus state-machine guard.
+// Pre-R7bf nothing prevented a controller from flipping a PAID bill back
+// to PARTIAL (the canonical "discount after payment" workaround that
+// silently downgraded the ledger) or REFUNDED → GENERATED (which would
+// double-charge the patient). The registry now treats PAID / REFUNDED /
+// CANCELLED as terminal; admin force flag + audit row is required to
+// override. The discount-after-payment workflow MUST instead create a
+// CreditNote / refund row.
+const { attachStatusGuard: _pbGuard } = require("../../utils/statusTransitionGuard");
+_pbGuard(PatientBillSchema, { modelName: "PatientBill", field: "billStatus" });
+
+// R7bf-I / A7-HIGH-3 — DRAFT bill cannot be deleted while a BillingTrigger
+// references it. Pre-R7bf the DRAFT-deletion endpoint hard-deleted the
+// PatientBill row; any BillingTrigger.linkedBillId still pointing at it
+// was orphaned (the trigger said "billed" but the bill was gone, so the
+// autoBilling reconciler never re-fired the charge).
+async function _refuseDeleteIfTriggersReference(next) {
+  try {
+    const filter = (this.getFilter && this.getFilter()) || (this.getQuery && this.getQuery()) || {};
+    const id = filter._id || filter.id;
+    if (!id) return next();
+    if (this.model && this.model.modelName === "PatientBill") {
+      let BillingTrigger;
+      try { BillingTrigger = require("../Billing/BillingTrigger"); } catch (_) { /* circular-load tolerant */ }
+      if (!BillingTrigger) return next();
+      const refCount = await BillingTrigger.countDocuments({ linkedBillId: id }).catch(() => 0);
+      if (refCount > 0) {
+        const err = new Error(
+          `Cannot delete bill — ${refCount} BillingTrigger row(s) reference it. ` +
+          `Cancel the bill instead (billStatus: CANCELLED) or detach the triggers first.`,
+        );
+        err.code = "BILL_HAS_LINKED_TRIGGERS";
+        err.statusCode = 409;
+        err.status = 409;
+        return next(err);
+      }
+    }
+    next();
+  } catch (e) { next(e); }
+}
+PatientBillSchema.pre("findOneAndDelete", _refuseDeleteIfTriggersReference);
+PatientBillSchema.pre("deleteOne",        _refuseDeleteIfTriggersReference);
 
 module.exports =
   mongoose.models.PatientBill ||

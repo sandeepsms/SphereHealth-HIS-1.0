@@ -236,14 +236,39 @@ exports.updatePatient = async (req, res) => {
 };
 
 exports.deletePatient = async (req, res) => {
+  // R7bd-A-1 / A1-CRIT-1 — soft-delete with dependency guard.
+  // ?force=true cascades through active admissions / open bills / open
+  // advances. Force-cascade requires the Admin role (the route already
+  // gates `patient.delete` to a permission, but cascade is a much
+  // stronger action — we narrow that sub-action to Admin only).
   try {
-    await patientService.deletePatient(req.params.id);
+    const force = String(req.query.force || "").toLowerCase() === "true";
+    if (force && req.user?.role !== "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only Admin can force-cascade delete a patient with active dependencies.",
+        code: "FORCE_REQUIRES_ADMIN",
+      });
+    }
+    const actor = {
+      id:   req.user?.id || req.user?._id,
+      name: req.user?.fullName || req.user?.employeeId || "",
+      role: req.user?.role || "",
+    };
+    await patientService.deletePatient(req.params.id, { force, actor });
     res
       .status(200)
-      .json({ success: true, message: "Patient deleted successfully" });
+      .json({ success: true, message: force ? "Patient archived (cascade)" : "Patient archived" });
   } catch (error) {
-    const statusCode = error.message === "Patient not found" ? 404 : 500;
-    res.status(statusCode).json({ success: false, message: error.message });
+    const explicit = Number(error.status || error.statusCode);
+    const statusCode = Number.isInteger(explicit) && explicit >= 400 && explicit < 600
+      ? explicit
+      : (error.message === "Patient not found" ? 404 : 500);
+    res.status(statusCode).json({
+      success: false,
+      message: error.message,
+      ...(error.code ? { code: error.code } : {}),
+    });
   }
 };
 

@@ -20,7 +20,7 @@ import { ROLES, MODULES, modulesForRole, homePathForRole } from "../config/permi
 import AdminHome from "./AdminHome";
 
 import { API_BASE_URL as API } from "../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem("his_token")}` } });
+const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
 
 const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 
@@ -39,6 +39,10 @@ export default function RoleDashboardPage() {
   if (user.role === "Dietician")    return <Navigate to="/dietitian" replace />;
   if (user.role === "Ward Boy")     return <Navigate to="/ward-tasks" replace />;
   if (user.role === "Housekeeping") return <Navigate to="/housekeeping" replace />;
+  // R7bb-E/D5-CRIT-3 — MRD lands on the discharged-patient archive
+  // (their primary surface). Previously their landing was the generic
+  // RoleDashboardPage that had no MRD branch and rendered a blank hero.
+  if (user.role === "MRD")          return <Navigate to="/medical-records/discharges" replace />;
 
   // Admin gets the full mission-control layout (its own hero, KPIs, feed).
   if (user.role === "Admin") return <AdminHome user={user} />;
@@ -338,7 +342,7 @@ function ReceptionDashboard({ user }) {
             { icon: "pi-search",     label: "Patient Search",     sub: "Find by UHID / name / phone",   color: C.amber,   onClick: () => navigate("/patient-search") },
             { icon: "pi-sign-out",   label: "Discharge Queue",    sub: "Bills + clearance",             color: C.green,   onClick: () => navigate("/discharge-queue") },
             { icon: "pi-id-card",    label: "Visitor Pass",       sub: "Issue attendant pass",          color: C.amber,   onClick: () => navigate("/visitor-passes") },
-            { icon: "pi-receipt",    label: "Billing",            sub: "Generate bill · payment",       color: C.amber,   onClick: () => navigate("/billing") },
+            { icon: "pi-receipt",    label: "Billing",            sub: "Generate bill · payment",       color: C.amber,   onClick: () => navigate("/reception-billing") },
             { icon: "pi-briefcase",  label: "TPA / Cashless",     sub: "Pre-auth + claim",              color: C.purple,  onClick: () => navigate("/tpa-cases") },
           ]} />
         </Card>
@@ -405,6 +409,30 @@ function LabDashboard({ user, role }) {
   const isRad = role === "Radiologist";
   return (
     <>
+      {/* R7bb-E/D6-CRIT-2 — Radiologist has no end-to-end workflow yet
+          (imaging reporting + dispatch surface is not built). They can
+          read imaging orders (lab.records.read) but the rest of the
+          tiles are placeholders. Show an honest "coming soon" banner so
+          the user knows what's live vs scaffolded. */}
+      {isRad && (
+        <div style={{
+          padding: "12px 16px", marginBottom: 14, borderRadius: 10,
+          background: "#eff6ff", border: "1.5px solid #bfdbfe",
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          <i className="pi pi-info-circle" style={{ fontSize: 18, color: "#1d4ed8" }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1e3a8a" }}>
+              Radiology reporting workspace — coming soon
+            </div>
+            <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>
+              You can read imaging orders &amp; reports today via Investigation Orders. The
+              dictate-and-sign reporting surface ships in the next release.
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label={isRad ? "Imaging orders" : "Lab orders"} value="—" color={C.blue}   icon="pi-list" />
         <KPI label="Samples / studies"       value="—" color={C.purple} icon="pi-search-plus" />
@@ -474,7 +502,7 @@ function AccountantDashboard({ user }) {
             { icon: "pi-percentage",   label: "GST Returns",       sub: "CGST / SGST / IGST bucket-wise",              color: C.purple,  onClick: () => navigate("/accounts?tab=gst") },
             { icon: "pi-clock",        label: "Outstanding",       sub: "TPA pending · IPD advance",                   color: C.teal,    onClick: () => navigate("/accounts?tab=outstanding") },
             { icon: "pi-undo",         label: "Refunds & Cancels", sub: "Process / review refund queue",               color: C.red,     onClick: () => navigate("/accounts?tab=refunds") },
-            { icon: "pi-receipt",      label: "Generate Bill",     sub: "Patient bill · payment recording",            color: C.blue,    onClick: () => navigate("/billing") },
+            { icon: "pi-receipt",      label: "Generate Bill",     sub: "Patient bill · payment recording",            color: C.blue,    onClick: () => navigate("/reception-billing") },
             { icon: "pi-briefcase",    label: "TPA / Cashless",    sub: "Insurance claims",                            color: C.purple,  onClick: () => navigate("/tpa-cases") },
             { icon: "pi-shield",       label: "Audit Trail",       sub: "Every billing action logged",                 color: C.teal,    onClick: () => navigate("/billing-audit-trail") },
           ]} />
@@ -604,6 +632,7 @@ function SecurityDashboard({ user }) {
 function CareTeamDashboard({ user, role }) {
   const navigate = useNavigate();
   const isDietician = role === "Dietician";
+  const isPhysio    = role === "Physiotherapist";
   const [stats, setStats] = useState({});
   useEffect(() => {
     if (!isDietician) return;
@@ -617,6 +646,29 @@ function CareTeamDashboard({ user, role }) {
 
   return (
     <>
+      {/* R7bb-E/D6-CRIT-2 — Physiotherapy session/scheduling workflow
+          isn't built yet; the role has no actionable backend. Flag this
+          honestly with a banner so the user doesn't expect Dietician-
+          parity features. Keeps the dashboard tile visible while the
+          real surface ships. */}
+      {isPhysio && (
+        <div style={{
+          padding: "12px 16px", marginBottom: 14, borderRadius: 10,
+          background: "#ecfdf5", border: "1.5px solid #a7f3d0",
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          <i className="pi pi-info-circle" style={{ fontSize: 18, color: "#047857" }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#065f46" }}>
+              Physiotherapy workspace — coming soon
+            </div>
+            <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>
+              The scheduled-sessions board and per-patient progress notes are scaffolded but
+              not yet wired up. Use the Bed View for ward rounds in the meantime.
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         {isDietician ? (
           <>

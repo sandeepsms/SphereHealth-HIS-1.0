@@ -1,0 +1,8 @@
+node_modules/
+Backend/node_modules/
+Frontend/node_modules/
+Frontend/dist/
+Backend/.env
+Frontend/.env
+.claude/scheduled_tasks.lock
+Backend/scripts/resetDoctorPw.js

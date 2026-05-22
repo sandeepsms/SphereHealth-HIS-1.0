@@ -38,6 +38,8 @@ import { useAuth } from "../../context/AuthContext";
 import ActivePatientDirectory from "../../Components/ActivePatientDirectory";
 import "../reception/reception-shared.css";
 import "./PatientLookupPage.css";
+// R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
+import { toMoney } from "../../utils/money";
 
 /* ─── Formatters ─────────────────────────────────────────────── */
 const fmtDate = (d) =>
@@ -158,13 +160,20 @@ export default function PatientLookupPage({ initialView = "auto" }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { uhid: routeUhid } = useParams(); // legacy /visit-history/:uhid
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const role = user?.role;
 
   const isRX        = role === "Receptionist";
   const isAdmin     = role === "Admin";
   const canEdit     = isAdmin || isRX;
   const canNewVisit = isAdmin || isRX;
+  // R7bb-FIX-D-18 / D5-MED-5 — Take/Apply Advance hit billing endpoints;
+  // gate by billing.write so Doctor/Nurse/Pharmacist don't see CTAs the
+  // backend would 403. Admin + Receptionist + Accountant have it.
+  const canBillingWrite = typeof can === "function" ? can("billing.write") : false;
+  // R7bb-FIX-D-21 / D5-MED-9 — Archive Patient is an admin-only delete
+  // (patient.delete). Backend wires DELETE /api/patients/:id behind it.
+  const canDeletePatient = typeof can === "function" ? can("patient.delete") : false;
 
   // Auto-pick initial view by role / URL.
   const urlUhid = (searchParams.get("uhid") || routeUhid || "").toUpperCase();
@@ -215,6 +224,13 @@ export default function PatientLookupPage({ initialView = "auto" }) {
   const [timelineFilter, setTimelineFilter] = useState("ALL");
   const [detailTab, setDetailTab] = useState("profile"); // profile · visits · billing
 
+  // R7aw-FIX-F1/D4: AbortController is created locally for in-function
+  // `ac.signal.aborted` checks that guard against stale setState after
+  // unmount. The earlier `return () => ac.abort()` was dead code — async
+  // functions return a Promise, so the returned cleanup was never callable
+  // by the caller (useEffect saw Promise<Function>, not a function).
+  // Signals are still threaded to every axios.get so callers can abort if
+  // they wire one in from outside.
   const loadPatientDetail = useCallback(async (uhidOrId) => {
     if (!uhidOrId) return;
     setDetailLoading(true);
@@ -252,7 +268,6 @@ export default function PatientLookupPage({ initialView = "auto" }) {
     } finally {
       if (!ac.signal.aborted) setDetailLoading(false);
     }
-    return () => ac.abort();
   }, []);
 
   useEffect(() => {
@@ -302,6 +317,12 @@ export default function PatientLookupPage({ initialView = "auto" }) {
   const [dirLoading,  setDirLoading]  = useState(false);
   const DIR_LIMIT = 15;
 
+  // R7aw-FIX-F1/D4: dead-code removal — same pattern as loadPatientDetail.
+  // The earlier `cleanup = loadDirectory(); return () => if (typeof cleanup
+  // === "function") cleanup()` was broken: `loadDirectory()` returns a
+  // Promise (it's async), so `typeof Promise === "object"` and the guard
+  // never fires. AbortController lives inside for the `aborted` checks
+  // that prevent setState after unmount.
   const loadDirectory = useCallback(async () => {
     if (view !== "directory") return;
     setDirLoading(true);
@@ -323,12 +344,10 @@ export default function PatientLookupPage({ initialView = "auto" }) {
     } finally {
       if (!ac.signal.aborted) setDirLoading(false);
     }
-    return () => ac.abort();
   }, [view, dirPage, dirType, dirSearch]);
 
   useEffect(() => {
-    const cleanup = loadDirectory();
-    return () => { if (typeof cleanup === "function") cleanup(); };
+    loadDirectory();
   }, [loadDirectory]);
 
   /* ─── Unified timeline rows ───────────────────────────────── */
@@ -685,6 +704,8 @@ export default function PatientLookupPage({ initialView = "auto" }) {
           loading={detailLoading}
           canNewVisit={canNewVisit}
           canEdit={canEdit}
+          canBillingWrite={canBillingWrite}
+          canDeletePatient={canDeletePatient}
           navigate={navigate}
           advancesList={advances}
           unspentAdv={unspentAdv}
@@ -733,7 +754,7 @@ export default function PatientLookupPage({ initialView = "auto" }) {
 function PatientDetailPanel({
   patient, opd, adm, er, bills, tab, setTab,
   timelineFilter, setTimelineFilter, timelineRows, totals, loading,
-  canNewVisit, canEdit, navigate, fullWidth, emptyHint,
+  canNewVisit, canEdit, canBillingWrite, canDeletePatient, navigate, fullWidth, emptyHint,
   advancesList = [], unspentAdv = 0, onTakeAdvance, onApplyAdvance,
 }) {
   if (!patient && emptyHint) return emptyHint;
@@ -776,21 +797,80 @@ function PatientDetailPanel({
               <i className="pi pi-plus" /> New Visit
             </button>
           )}
-          {canNewVisit && onTakeAdvance && (
+          {/* R7bb-FIX-D-18 / D5-MED-5 — Take Advance gated by billing.write.
+              Doctor/Nurse/Pharmacist roles get patient.read but not
+              billing.write; without this gate they'd see a CTA that 403s. */}
+          {canBillingWrite && onTakeAdvance && (
             <button className="rx-action-btn"
                     onClick={onTakeAdvance}
                     title="Take cash / UPI / card deposit before bills are generated">
               <i className="pi pi-wallet" /> Take Advance
             </button>
           )}
-          <button className="rx-action-btn"
-                  onClick={() => navigate(`/reception-billing?uhid=${encodeURIComponent(patient.UHID || "")}`)}>
-            <i className="pi pi-receipt" /> Billing
-          </button>
+          {/* R7ad: Billing button is context-aware.
+              • If the patient has an ACTIVE IPD admission → jump to the
+                IPD Live Ledger for that admission (the per-day ledger is
+                where IPD-specific operations like Add Charge / Take
+                Advance / Generate Final Bill live).
+              • Otherwise (OPD / Daycare / Emergency / Services) → drop
+                them on the Reception Billing counter for the UHID, which
+                surfaces every non-IPD bill in one place.
+              Picking the most recent Active admission is intentional —
+              a patient who's currently admitted should land on their
+              live ledger, even if they have older OPD bills lying around. */}
+          {(() => {
+            const activeIpd = (adm || []).find(
+              (a) => a && a.status === "Active" && (a.admissionType === "IPD"
+                                                  || a.admissionType === "Emergency"
+                                                  || a.admissionType === "Day Care"
+                                                  || a.admissionType === "Daycare"),
+            );
+            const target = activeIpd
+              ? `/billing/ipd/${activeIpd._id}`
+              : `/reception-billing?uhid=${encodeURIComponent(patient.UHID || "")}`;
+            const label = activeIpd
+              ? `Open ${activeIpd.admissionType === "Emergency" ? "ER" : "IPD"} Ledger`
+              : "Billing Counter";
+            return (
+              <button className="rx-action-btn"
+                      onClick={() => navigate(target)}
+                      title={activeIpd
+                        ? `Active ${activeIpd.admissionType} admission ${activeIpd.admissionNumber || ""} — open live ledger`
+                        : "Open reception billing counter for this patient"}>
+                <i className="pi pi-receipt" /> {label}
+              </button>
+            );
+          })()}
           {canEdit && (
             <button className="rx-action-btn"
                     onClick={() => navigate(`/reception/register?uhid=${encodeURIComponent(patient.UHID || "")}`)}>
               <i className="pi pi-pencil" /> Edit
+            </button>
+          )}
+          {/* R7bb-FIX-D-21 / D5-MED-9 — Archive Patient is admin-only
+              (patient.delete). Backend DELETE /api/patients/:id soft-deletes
+              the record. Confirmation required to avoid trigger-happy clicks. */}
+          {canDeletePatient && (
+            <button className="rx-action-btn rx-action-btn--danger"
+                    onClick={async () => {
+                      const ok = window.confirm(
+                        `Archive patient ${patient.fullName || patient.UHID}?\n\n` +
+                        `This soft-deletes the patient record (sets isActive=false).\n` +
+                        `Cannot be undone from the UI. Existing bills/visits remain on file.`
+                      );
+                      if (!ok) return;
+                      try {
+                        await axios.delete(
+                          `${API_ENDPOINTS.BASE}/patients/${patient._id}`,
+                        );
+                        window.alert("Patient archived.");
+                        navigate("/patient-search");
+                      } catch (e) {
+                        window.alert(e?.response?.data?.message || "Archive failed.");
+                      }
+                    }}
+                    title="Archive (soft-delete) this patient — Admin only">
+              <i className="pi pi-trash" /> Archive
             </button>
           )}
         </div>
@@ -879,12 +959,13 @@ function PatientDetailPanel({
         )}
 
         {!loading && tab === "billing" && (
+          // R7ac: read-only billing summary. No `patient` or
+          // `onApplyAdvance` props needed — operational actions live on
+          // /reception-billing.
           <BillingBody
-            patient={patient}
             bills={bills}
             advancesList={advancesList}
             unspentAdv={unspentAdv}
-            onApplyAdvance={onApplyAdvance}
           />
         )}
       </div>
@@ -951,13 +1032,21 @@ function ProfileBody({ patient }) {
 }
 
 /* ─── Billing body — full bill + payment ledger + advance section ── */
-function BillingBody({ bills, advancesList = [], unspentAdv = 0, onApplyAdvance, patient }) {
+function BillingBody({ bills, advancesList = [], unspentAdv = 0 }) {
+  // R7ac: pure read-only summary view. Patient-search is a LOOKUP page —
+  // bill operations belong on /reception-billing or /billing/ipd. We
+  // intentionally do NOT render:
+  //   • print/reprint advance receipt button
+  //   • "Apply Advance to Bill" button
+  //   • any "Add Charge", "Take Advance", "Print Interim Bill",
+  //     "Generate Final Bill" or "Open Billing Counter" affordances
+  // The user explicitly asked for "different types of bills, amounts,
+  // advance deposit — no service can be added, no bill can be printed".
   const list = Array.isArray(bills) ? bills : [];
-  const unspentAdvances = (advancesList || []).filter((a) => (a.remainingAmount || 0) > 0);
 
   // ── Advance section — visible whenever the patient has unspent
   //    deposits OR has any advance history (so refunded/applied
-  //    advances stay traceable too).
+  //    advances stay traceable too). Pure summary.
   const advanceSection = (advancesList && advancesList.length > 0) ? (
     <div className="pl-advance-panel">
       <div className="pl-advance-head">
@@ -979,20 +1068,6 @@ function BillingBody({ bills, advancesList = [], unspentAdv = 0, onApplyAdvance,
                 <span className="pl-advance-rem"> ({fmtCur(a.remainingAmount)} left)</span>
               )}
             </span>
-            {/* Reprint button — admin / cashier can reprint at any time
-                (e.g. patient asks for a duplicate copy). Hidden for
-                refunded / cancelled rows since their receipt is no
-                longer valid evidence of held money. */}
-            {patient && a.status !== "REFUNDED" && a.status !== "CANCELLED" && (
-              <button
-                type="button"
-                className="pl-advance-print"
-                title={`Reprint receipt ${a.receiptNumber}`}
-                onClick={(e) => { e.stopPropagation(); printAdvanceReceipt(a, patient); }}
-              >
-                <i className="pi pi-print" />
-              </button>
-            )}
           </div>
           <div className="pl-advance-meta">
             {fmtDateTime(a.paidAt)} · status: <strong>{a.status}</strong>
@@ -1015,15 +1090,129 @@ function BillingBody({ bills, advancesList = [], unspentAdv = 0, onApplyAdvance,
       </>
     );
   }
+
+  // R7ac: group bills by visitType so the receptionist sees a clean
+  // by-type summary at a glance ("OPD: 3 bills, ₹900 paid; IPD: 1 bill,
+  // ₹500 outstanding") before drilling into individual rows.
+  const byType = list.reduce((acc, b) => {
+    const t = b.visitType || "Other";
+    const net  = Number(b.netAmount)     || Number(b.totalAmount) || 0;
+    const bal  = Number(b.balanceAmount) || Number(b.balance)     || 0;
+    if (!acc[t]) acc[t] = { count: 0, gross: 0, paid: 0, outstanding: 0 };
+    acc[t].count       += 1;
+    acc[t].gross       += net;
+    acc[t].paid        += Math.max(0, net - bal);
+    acc[t].outstanding += bal;
+    return acc;
+  }, {});
+  const typeOrder = ["OPD", "IPD", "Emergency", "Daycare", "Services", "Other"];
+  const typeRows  = typeOrder.filter((t) => byType[t]).map((t) => ({ type: t, ...byType[t] }));
+
+  // R7aj: flatten every billItem across every bill into ONE chronological
+  // ledger — same UX as the Advance Deposits panel. Receptionist can scan
+  // "every charge the patient was ever billed for" without opening each
+  // bill card individually. Sorted newest → oldest by chargeDate (or
+  // createdAt on the parent bill as fallback).
+  const itemsLedger = [];
+  for (const b of list) {
+    for (const it of (b.billItems || [])) {
+      if (it.isVoided) continue; // skip voided line items
+      itemsLedger.push({
+        _id:         it._id || `${b._id}-${it.serviceCode || it.serviceName}`,
+        serviceName: it.serviceName || it.name || "Service",
+        serviceCode: it.serviceCode || "",
+        category:    it.category || it.billingType || "",
+        quantity:    Number(it.quantity || 1),
+        unitPrice:   Number(it.unitPrice || 0),
+        netAmount:   Number(it.netAmount || 0),
+        discount:    Number(it.discountAmount || 0),
+        tax:         Number(it.taxAmount || 0),
+        chargeDate:  it.chargeDate || b.billDate || b.createdAt,
+        addedBy:     it.addedBy || "—",
+        addedBySource: it.addedBySource || "",
+        isAutoCharged: !!it.isAutoCharged,
+        orderStatus: it.orderStatus || "",
+        // Parent bill context
+        billNumber:  b.billNumber || "DRAFT",
+        billStatus:  b.billStatus,
+        visitType:   b.visitType,
+      });
+    }
+  }
+  itemsLedger.sort((a, b) =>
+    new Date(b.chargeDate || 0).getTime() - new Date(a.chargeDate || 0).getTime(),
+  );
+
   return (
     <>
       {advanceSection}
+
+      {/* By-type summary strip — at-a-glance "what does this patient owe
+          across visit types" so the receptionist doesn't have to scan
+          the full list to answer a phone query. */}
+      {typeRows.length > 0 && (
+        <div className="pl-bills-summary">
+          {typeRows.map((r) => (
+            <div key={r.type} className="pl-bills-summary-card">
+              <div className="pl-bills-summary-head">
+                <span className={`rx-pill rx-pill--${r.type.toLowerCase()}`}>{r.type}</span>
+                <span className="pl-bills-summary-count">{r.count} bill{r.count === 1 ? "" : "s"}</span>
+              </div>
+              <div className="pl-bills-summary-amts">
+                <span>Billed <strong>{fmtCur(r.gross)}</strong></span>
+                <span className="paid">Paid <strong>{fmtCur(r.paid)}</strong></span>
+                {r.outstanding > 0 && <span className="due">Due <strong>{fmtCur(r.outstanding)}</strong></span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* R7aj: Billing Items Ledger — every item added to any bill,
+          newest first. Mirrors the Advance Deposits panel UX so the
+          receptionist gets a uniform chronological view of money in
+          AND money out. Pure read-only. */}
+      {itemsLedger.length > 0 && (
+        <div className="pl-advance-panel pl-items-ledger">
+          <div className="pl-advance-head">
+            <i className="pi pi-list-check" /> Billing Items Ledger
+            <span className="pl-advance-unspent">{itemsLedger.length} item{itemsLedger.length === 1 ? "" : "s"}</span>
+          </div>
+          {itemsLedger.map((it) => (
+            <div key={it._id} className={`pl-advance-row pl-advance-row--${(it.billStatus || "").toLowerCase()}`}>
+              <div className="pl-advance-line">
+                <span className="rx-mono-tag">{it.billNumber}</span>
+                {it.visitType && <span className={`rx-pill rx-pill--${(it.visitType || "").toLowerCase()}`}>{it.visitType}</span>}
+                {it.category && <span className="rx-mono-tag rx-mono-tag--subtle">{it.category}</span>}
+                {it.isAutoCharged && <span className="rx-mono-tag rx-mono-tag--subtle" title="Auto-billed by the system">AUTO</span>}
+                <span className="pl-pay-by" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {it.serviceName}
+                </span>
+                <span className="pl-advance-amt">
+                  {fmtCur(it.netAmount)}
+                  {it.quantity > 1 && (
+                    <span className="pl-advance-rem"> ({it.quantity} × {fmtCur(it.unitPrice)})</span>
+                  )}
+                </span>
+              </div>
+              <div className="pl-advance-meta">
+                {fmtDateTime(it.chargeDate)}
+                {" · "}status: <strong>{it.billStatus}</strong>
+                {it.discount > 0 && ` · disc ${fmtCur(it.discount)}`}
+                {it.tax > 0 && ` · tax ${fmtCur(it.tax)}`}
+                {it.addedBy && it.addedBy !== "—" && ` · added by ${it.addedBy}`}
+                {it.orderStatus && ` · order: ${it.orderStatus}`}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="pl-bills">
         {list.map((b) => {
           const balance = Number(b.balanceAmount) || Number(b.balance) || 0;
           const total   = Number(b.netAmount)     || Number(b.totalAmount) || 0;
           const paid    = Number(b.totalPaid)     || Number(b.paidAmount)  || (total - balance);
-          const canApply = balance > 0 && unspentAdvances.length > 0 && b.billStatus !== "DRAFT";
           return (
             <div key={b._id} className="pl-bill-card">
               <div className="pl-bill-head">
@@ -1060,22 +1249,6 @@ function BillingBody({ bills, advancesList = [], unspentAdv = 0, onApplyAdvance,
                       <span className="pl-pay-amt">{fmtCur(p.amount)}</span>
                     </div>
                   ))}
-                </div>
-              )}
-              {canApply && onApplyAdvance && (
-                <div className="pl-bill-apply">
-                  <button
-                    className="rx-action-btn rx-action-btn--primary"
-                    onClick={() => {
-                      // Auto-pick the oldest unspent advance (FIFO) for the
-                      // typical case. A future enhancement could open a picker.
-                      const adv = unspentAdvances[unspentAdvances.length - 1] || unspentAdvances[0];
-                      if (adv) onApplyAdvance(adv._id, b._id);
-                    }}
-                    title="Apply oldest advance deposit to this bill (FIFO)"
-                  >
-                    <i className="pi pi-arrow-circle-down" /> Apply Advance ({fmtCur(unspentAdv)} available)
-                  </button>
                 </div>
               )}
             </div>
@@ -1199,7 +1372,7 @@ function printAdvanceReceipt(advance, patient) {
     bedNumber:    null,
     wardName:     null,
     date:         advance.paidAt || advance.createdAt || new Date().toISOString(),
-    amount:       Number(advance.amount?.$numberDecimal ?? advance.amount) || 0,
+    amount:       toMoney(advance.amount),
     method:       advance.paymentMode,
     refNo:        advance.transactionId,
     depositPurpose: advance.remarks || "hospitalization advance",
@@ -1262,7 +1435,7 @@ function TakeAdvanceModal({ patient, onClose, onSaved }) {
 
   // ── Success state — receipt summary + print button ───────────────
   if (savedAdv) {
-    const amt = Number(savedAdv.amount?.$numberDecimal ?? savedAdv.amount) || 0;
+    const amt = toMoney(savedAdv.amount);
     return (
       <div className="pl-modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) { onSaved && onSaved(); } }}>
         <div className="pl-modal" role="dialog" aria-label="Advance saved">

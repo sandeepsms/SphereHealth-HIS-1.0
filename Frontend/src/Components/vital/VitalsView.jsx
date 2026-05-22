@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { getVitalSheet, deleteVitalSheet } from "../../Services/vital/vitalService";
 import { Button } from "primereact/button";
+import { confirm } from "../common/ConfirmDialog";
 
 function VitalsView() {
   const { uhid } = useParams();
@@ -39,10 +40,14 @@ function VitalsView() {
   };
 
   const handleDelete = async (record) => {
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
     if (
-      !window.confirm(
-        `Are you sure you want to delete record dated ${record.date}?`,
-      )
+      !(await confirm({
+        title: "Delete vitals record?",
+        body: `The vitals entry dated ${record.date} will be permanently removed from this patient's chart.`,
+        danger: true,
+        confirmLabel: "Delete",
+      }))
     )
       return;
 
@@ -105,9 +110,24 @@ function VitalsView() {
             <h2>Vitals Sheet</h2>
           </div>
           <div className="d-flex gap-2 align-items-center ">
+            {/* R7az-D5-HIGH-7 — Added the missing Start date input. The
+                applyFilter() function already supported a start bound
+                via state, but the JSX never rendered the input — so the
+                user could only filter "up to date X". Now: a complete
+                Start / End range. Labels are visually-hidden via
+                aria-label to keep the toolbar compact. */}
             <input
               type="date"
               className="form-control no-print"
+              aria-label="Start date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+            />
+            <span className="text-muted no-print" style={{ fontSize: 12 }}>to</span>
+            <input
+              type="date"
+              className="form-control no-print"
+              aria-label="End date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
             />

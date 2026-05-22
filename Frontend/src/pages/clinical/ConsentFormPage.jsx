@@ -759,7 +759,7 @@ function ConsentFormPageContent({ selectedPatient }) {
   const [previewData, setPreviewData] = useState(null);
   const [previewType, setPreviewType] = useState(null);
 
-  const token = localStorage.getItem("his_token");
+  const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
   const headers = { Authorization: `Bearer ${token}` };
 
   // Auto-fill when patient selected from AdmittedPatientPanel
@@ -1020,27 +1020,76 @@ function ConsentFormPageContent({ selectedPatient }) {
                 {savedForms.map(f => {
                   const cat = CONSENT_CATALOGUE.find(c => c.key === f.consentType);
                   const sc = STATUS_COLORS[f.status] || STATUS_COLORS.PENDING;
+                  // R7r: Audit trail surfacing (NABH PRE.3 / PRE.4).
+                  // Backend captures the full CREATED → UPDATED → SIGNED
+                  // → REFUSED / REVOKED trail in f.auditTrail; previously
+                  // the UI only showed the latest status pill, hiding
+                  // the chain of who signed / refused / amended and
+                  // when. Now the card is expandable — click "Trail"
+                  // to reveal the chronological state history with
+                  // actor + role + reason for each transition.
+                  const trail = Array.isArray(f.auditTrail) ? f.auditTrail : [];
                   return (
                     <div key={f._id} style={{
-                      display: "flex", alignItems: "center", gap: 12,
                       padding: "10px 14px", border: `1.5px solid ${C.border}`,
                       borderRadius: 10, background: "#fafbfc",
                     }}>
-                      <span style={{ width: 30, height: 30, borderRadius: 7, background: cat?.bg || "#f1f5f9",
-                        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        <i className={`pi ${cat?.icon || "pi-file"}`} style={{ fontSize: 13, color: cat?.color || C.muted }} />
-                      </span>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{f.consentTitle || cat?.label}</div>
-                        <div style={{ fontSize: 11, color: C.muted }}>{new Date(f.createdAt).toLocaleString("en-IN")}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <span style={{ width: 30, height: 30, borderRadius: 7, background: cat?.bg || "#f1f5f9",
+                          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          <i className={`pi ${cat?.icon || "pi-file"}`} style={{ fontSize: 13, color: cat?.color || C.muted }} />
+                        </span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{f.consentTitle || cat?.label}</div>
+                          <div style={{ fontSize: 11, color: C.muted }}>{new Date(f.createdAt).toLocaleString("en-IN")}</div>
+                        </div>
+                        <span style={{ padding: "3px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700,
+                          background: sc.bg, color: sc.text }}>{f.status}</span>
+                        <button onClick={() => { setPreviewData({ ...f, body: f.procedureDescription, risks: f.risksDisclosed, benefits: f.benefitsExplained, alternatives: f.alternativesDisclosed }); setPreviewType(cat); }}
+                          style={{ padding: "5px 12px", borderRadius: 7, border: "none", background: "#eef2ff",
+                            color: "#6366f1", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                          <i className="pi pi-eye" style={{ marginRight: 4 }} />View
+                        </button>
                       </div>
-                      <span style={{ padding: "3px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700,
-                        background: sc.bg, color: sc.text }}>{f.status}</span>
-                      <button onClick={() => { setPreviewData({ ...f, body: f.procedureDescription, risks: f.risksDisclosed, benefits: f.benefitsExplained, alternatives: f.alternativesDisclosed }); setPreviewType(cat); }}
-                        style={{ padding: "5px 12px", borderRadius: 7, border: "none", background: "#eef2ff",
-                          color: "#6366f1", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
-                        <i className="pi pi-eye" style={{ marginRight: 4 }} />View
-                      </button>
+                      {trail.length > 0 && (
+                        <details style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${C.border}`, fontSize: 11 }}>
+                          <summary style={{ cursor: "pointer", fontWeight: 700, color: C.muted, userSelect: "none" }}>
+                            🪵 Audit Trail ({trail.length} event{trail.length !== 1 ? "s" : ""}) — NABH PRE.3
+                          </summary>
+                          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4, paddingLeft: 4 }}>
+                            {trail
+                              .slice()
+                              .sort((a, b) => new Date(a.at) - new Date(b.at))
+                              .map((evt, idx) => {
+                                const palette = evt.action === "SIGNED"   ? { bg: "#dcfce7", fg: "#166534" }
+                                              : evt.action === "REFUSED"  ? { bg: "#fee2e2", fg: "#b91c1c" }
+                                              : evt.action === "REVOKED"  ? { bg: "#fef3c7", fg: "#92400e" }
+                                              : evt.action === "PRINTED"  ? { bg: "#e0e7ff", fg: "#3730a3" }
+                                              : evt.action === "UPDATED"  ? { bg: "#cffafe", fg: "#0e7490" }
+                                              :                             { bg: "#f1f5f9", fg: "#475569" };
+                                return (
+                                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
+                                    <span style={{ padding: "1px 7px", borderRadius: 3, background: palette.bg, color: palette.fg, fontWeight: 800, fontSize: 9.5, minWidth: 64, textAlign: "center" }}>
+                                      {evt.action}
+                                    </span>
+                                    <span style={{ color: C.muted, fontFamily: "monospace", minWidth: 130 }}>
+                                      {new Date(evt.at).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                    </span>
+                                    <span style={{ color: C.text, fontWeight: 600 }}>{evt.byName || "—"}</span>
+                                    {evt.byRole && (
+                                      <span style={{ color: C.muted, fontSize: 10 }}>· {evt.byRole}</span>
+                                    )}
+                                    {evt.reason && (
+                                      <span style={{ color: C.muted, fontStyle: "italic", marginLeft: "auto", fontSize: 10.5 }}>
+                                        “{evt.reason}”
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </details>
+                      )}
                     </div>
                   );
                 })}

@@ -5,12 +5,13 @@
  * Supports 12 order types — each with dedicated form fields
  * Audit trail: who ordered (doctor) + each nurse step + completion timestamp
  */
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import SharedDrugAutocomplete, { parseStrength, drugDisplayName } from "../clinical/DrugAutocomplete";
+import { confirm } from "../common/ConfirmDialog";
 
 /* ── Design tokens ── */
 const C = {
@@ -654,7 +655,17 @@ function OrderCard({ order, onCancel }) {
           <AuditTrail order={order}/>
           {order.status !== "Completed" && order.status !== "Cancelled" && (
             <button
-              onClick={(e) => { e.stopPropagation(); if (window.confirm("Cancel this order?")) onCancel(order._id); }}
+              onClick={async (e) => {
+                e.stopPropagation();
+                // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+                if (await confirm({
+                  title: "Cancel this order?",
+                  body: "The order will be marked Cancelled and will no longer appear in the active worklist.",
+                  danger: true,
+                  confirmLabel: "Cancel order",
+                  cancelLabel: "Keep",
+                })) onCancel(order._id);
+              }}
               style={{ marginTop: 10, padding: "5px 12px", border: `1px solid ${C.redB}`, borderRadius: 7, background: C.redL, color: C.red, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
             >
               <i className="pi pi-times" style={{ marginRight: 5 }}/> Cancel Order
@@ -683,21 +694,41 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
   const [filterType, setFilterType] = useState("All");
   const [filterStat, setFilterStat] = useState("Active");
 
-  /* fetch orders */
+  /* fetch orders — R7az-D4-HIGH-6/D4-HIGH-7: abort on UHID change and on
+     unmount so the 30s polling timer doesn't keep firing requests after
+     the doctor navigates away from the panel. Also avoids late responses
+     overwriting state for a different patient when the user clicks rapid
+     fire through the sidebar. */
+  const fetchAbortRef = useRef(null);
   const fetchOrders = useCallback(async () => {
     if (!UHID) return;
+    if (fetchAbortRef.current) {
+      try { fetchAbortRef.current.abort(); } catch (_) { /* noop */ }
+    }
+    const ctrl = new AbortController();
+    fetchAbortRef.current = ctrl;
     setLoading(true);
     try {
       const params = new URLSearchParams({ UHID });
       if (visitId) params.set("visitId", visitId);
-      const r = await axios.get(`${API_ENDPOINTS.DOCTOR_ORDERS}?${params}`);
-      setOrders(r.data?.data || []);
-    } catch { /* silently ignore */ }
-    finally { setLoading(false); }
+      const r = await axios.get(`${API_ENDPOINTS.DOCTOR_ORDERS}?${params}`, { signal: ctrl.signal });
+      if (!ctrl.signal.aborted) setOrders(r.data?.data || []);
+    } catch { /* silently ignore — abort or transient */ }
+    finally { if (!ctrl.signal.aborted) setLoading(false); }
   }, [UHID, visitId]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders, refreshSignal]);
-  useEffect(() => { const t = setInterval(fetchOrders, 30000); return () => clearInterval(t); }, [fetchOrders]);
+  // Polling timer + abort cleanup. Both share the abort ref so the
+  // unmount fires through whichever cycle is in flight.
+  useEffect(() => {
+    const t = setInterval(fetchOrders, 30000);
+    return () => {
+      clearInterval(t);
+      if (fetchAbortRef.current) {
+        try { fetchAbortRef.current.abort(); } catch (_) { /* noop */ }
+      }
+    };
+  }, [fetchOrders]);
 
   /* helpers */
   const setField = (k, v) => setForm(p => ({ ...p, [k]: v }));

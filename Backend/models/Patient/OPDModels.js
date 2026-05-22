@@ -16,9 +16,18 @@ const OPDSchema = new mongoose.Schema(
     age:           { type: String, default: "" },
     gender:        { type: String, default: "" },
     paymentType:   { type: String, enum: ["GENERAL","TPA","CORPORATE","CASH"], default: "GENERAL" },
+    // R7bd-A-8 / A1-HIGH-9 — visitNumber is `unique:true sparse:true`.
+    // Pre-R7bd a newly-instantiated OPDRegistration that failed the
+    // pre("validate") visitNumber assignment (counter outage, network blip)
+    // produced a `visitNumber: null` row that then collided on the unique
+    // index with EVERY OTHER null-visitNumber row. The receptionist saw
+    // duplicate-key errors that bore no relation to the actual visit.
+    // Sparse means "only enforce uniqueness when the field exists" so
+    // documents with null visitNumber can coexist while we retry.
     visitNumber: {
       type: String,
       unique: true,
+      sparse: true,
     },
     // Patient's sequential visit count (1st OPD, 2nd OPD…)
     patientVisitSeq: {

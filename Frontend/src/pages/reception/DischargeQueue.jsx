@@ -16,8 +16,14 @@ import { useAuth } from "../../context/AuthContext";
 import WhatsAppButton from "../../Components/whatsapp/WhatsAppButton";
 import "./reception-shared.css";
 import "../../Components/clinical/clinical-forms.css";
+// R7av-FIX-13/D4-R7at-money: use central toMoney so Decimal128 wire shape
+// `{$numberDecimal:"…"}` doesn't render as ₹NaN on the overage chip /
+// final-bill display. Pre-R7av the local `Number(n)` shim NaN'd
+// silently on the new Decimal128 fields from the backend.
+import { toMoney } from "../../utils/money";
+import { confirm } from "../../Components/common/ConfirmDialog";
 
-const fmtCur  = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+const fmtCur  = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 
 export default function DischargeQueue() {
@@ -138,6 +144,23 @@ export default function DischargeQueue() {
                    w.stage === "BillCleared"    ? "Ready for Gate Pass" :
                    w.stage === "Completed"      ? "Discharged" : w.stage}
                 </span>
+                {/* R7ar-P1-24/D9-aq-04: surface the post-discharge surplus
+                    detected by the cascade. R7au-FIX-18/D9-HIGH-1 made
+                    the chip clickable so cashier goes one-click into the
+                    IPD ledger refund flow (`/billing/ipd/:id?refundOverage=N`).
+                    Pre-R7au it was a static <span> with title-only hint. */}
+                {Number(adm.dischargeOverage) > 0.5 && (
+                  <button
+                    type="button"
+                    className="rx-card-stage rx-card-stage--overage"
+                    title={`Surplus ₹${Number(adm.dischargeOverage).toFixed(2)} owed to patient — click to refund in Live Ledger`}
+                    onClick={() => navigate(`/billing/ipd/${adm._id}?refundOverage=${Number(adm.dischargeOverage).toFixed(2)}`)}
+                    style={{ cursor: "pointer", border: "none", font: "inherit" }}
+                  >
+                    <i className="pi pi-exclamation-triangle" />{" "}
+                    Refund Owed {fmtCur(adm.dischargeOverage)}
+                  </button>
+                )}
               </div>
               <div className="rx-card-meta">
                 <span>UHID: <strong>{adm.UHID || "—"}</strong></span>
@@ -253,7 +276,13 @@ function ClearBillModal({ admission, onClose, onCleared, userName }) {
       return toast.error("Enter the final amount settled");
     }
     if (["UPI", "CARD", "CHEQUE", "ONLINE", "TPA_CLAIM"].includes(paymentMode) && !transactionId.trim()) {
-      if (!window.confirm(`No transaction reference for ${paymentMode}. Record anyway?`)) return;
+      // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+      if (!(await confirm({
+        title: "No transaction reference",
+        body: `No transaction reference was entered for ${paymentMode}. Record this payment anyway?`,
+        danger: true,
+        confirmLabel: "Record anyway",
+      }))) return;
     }
     setSaving(true);
     try {

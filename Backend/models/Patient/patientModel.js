@@ -54,7 +54,38 @@ const PatientSchema = new mongoose.Schema(
     },
     // Receptionist enters as either a comma string or a list of allergens;
     // we accept both — stored as String for backward-compat with old reports.
+    //
+    // R7az-CRIT-2 (D7-CRIT-2): `knownAllergies` is DEPRECATED in favour
+    // of the typed `allergyList[]` below. Keep accepting the legacy
+    // string so old reports / imports don't break, but new code should
+    // read `patient.allergies` (the virtual) which prefers the typed
+    // list and falls back to parsing the legacy string. The drug-allergy
+    // gate (utils/allergyCheck.js) consumes the virtual.
     knownAllergies: { type: mongoose.Schema.Types.Mixed, default: "" },
+
+    // R7az-CRIT-2 (D7-CRIT-2): typed allergy ledger. Each row is a
+    // discrete allergen with severity + type so the clinician UI can
+    // group DRUG vs FOOD vs OTHER and so the dispense gate matches only
+    // on DRUG-typed entries when callers narrow the list (default: all
+    // types are checked — safer baseline).
+    allergyList: [
+      {
+        allergen: { type: String, required: true, trim: true },
+        severity: {
+          type: String,
+          enum: ["MILD", "MODERATE", "SEVERE", "ANAPHYLAXIS", "UNKNOWN", ""],
+          default: "UNKNOWN",
+        },
+        type: {
+          type: String,
+          enum: ["DRUG", "FOOD", "OTHER"],
+          default: "DRUG",
+        },
+        recordedAt: { type: Date, default: Date.now },
+        recordedBy: { type: String, default: "" },
+        notes:      { type: String, default: "" },
+      },
+    ],
 
     // Department / doctor are picked at registration for OPD/IPD but are
     // optional for walk-in Emergency and lab Services.
@@ -113,35 +144,80 @@ PatientSchema.index({ contactNumber: 1 });
 PatientSchema.index({ paymentType: 1 });
 PatientSchema.index({ tpa: 1 });
 
+// R7bf-J/A8-CRIT-1: Mongo text index for the patient-search bar. Pre-R7bf,
+// `searchPatients` ran an OR of five regex queries against `fullName`,
+// `UHID`, `contactNumber`, `patientId`, `email` — a guaranteed COLLSCAN at
+// 30 k+ records (p95 8.4 s). Text index lets the same query plan a
+// $text-stage with weights favouring UHID/mobile (exact-shape hits) over
+// name (fuzzier). The service layer still falls back to exact
+// `contactNumber`/`UHID`/`patientId` regex for partial digit/UHID
+// queries which $text does not tokenise.
+PatientSchema.index(
+  {
+    fullName:      "text",
+    UHID:          "text",
+    contactNumber: "text",
+    patientId:     "text",
+    email:         "text",
+  },
+  {
+    weights: { UHID: 10, contactNumber: 8, patientId: 8, fullName: 4, email: 2 },
+    name:    "patient_text_search",
+    default_language: "none", // names/ids aren't language-tokenisable
+  },
+);
+
+// R7ab: use atomic Counter for UHID + patientId. The previous
+// implementation used `countDocuments` inside pre-save which races
+// catastrophically — two receptionists registering at the same instant
+// computed the same count, produced the same UHID, and the loser saw a
+// 11000 duplicate-key error at the desk. The codebase already has
+// `utils/counter.js` (atomic findOneAndUpdate $inc) used by billNumber,
+// admissionNumber, mlcNumber. Patient was just never migrated.
+//
+// We seed the Counter from the existing collection count the FIRST time
+// the key is touched (via $setOnInsert), so existing UHIDs aren't
+// re-issued. Subsequent calls ignore the seed and just $inc.
+const { nextSequence: nextSeqPatient } = require("../../utils/counter");
+const CounterModel = require("../CounterModel");
+
+async function ensureSeed(key, seedFn) {
+  const existing = await CounterModel.findOne({ _id: key }).lean();
+  if (existing) return null;
+  return await seedFn();
+}
+
 // Pre-save middleware
 PatientSchema.pre("save", async function (next) {
   if (this.isNew) {
     try {
       const Patient = this.constructor;
-
-      // Generate patientId
+      const year = new Date().getFullYear();
+      const prefix =
+        this.registrationType === "OPD"
+          ? "OPD"
+          : this.registrationType === "Emergency"
+            ? "EMG"
+            : this.registrationType === "Daycare"
+              ? "DAY"
+              : this.registrationType === "Services"
+                ? "SVC"
+                : "IPD";
       if (!this.patientId) {
-        const count = await Patient.countDocuments({
-          registrationType: this.registrationType,
-        });
-        const year = new Date().getFullYear();
-        const prefix =
-          this.registrationType === "OPD"
-            ? "OPD"
-            : this.registrationType === "Emergency"
-              ? "EMG"
-              : this.registrationType === "Daycare"
-                ? "DAY"
-                : this.registrationType === "Services"
-                  ? "SVC"
-                  : "IPD";
-        this.patientId = `${prefix}-${year}-${String(count + 1).padStart(6, "0")}`;
+        const idKey = `patientId:${prefix}:${year}`;
+        const seed  = await ensureSeed(idKey, async () =>
+          Patient.countDocuments({ registrationType: this.registrationType }),
+        );
+        const seq = await nextSeqPatient(idKey, seed);
+        this.patientId = `${prefix}-${year}-${String(seq).padStart(6, "0")}`;
       }
-
-      // Generate UHID
       if (!this.UHID) {
-        const count = await Patient.countDocuments();
-        this.UHID = `UH${String(count + 1).padStart(8, "0")}`;
+        const uhidKey = "uhid:global";
+        const seed    = await ensureSeed(uhidKey, async () =>
+          Patient.countDocuments(),
+        );
+        const seq = await nextSeqPatient(uhidKey, seed);
+        this.UHID = `UH${String(seq).padStart(8, "0")}`;
       }
     } catch (error) {
       return next(error);
@@ -167,6 +243,45 @@ PatientSchema.pre("save", async function (next) {
 
   next();
 });
+
+// R7az-CRIT-2 (D7-CRIT-2): unified `allergies` virtual. Prefers the
+// new typed `allergyList[]` when present; falls back to parsing the
+// legacy `knownAllergies` string (comma/semicolon/newline-delimited)
+// so that records imported before the migration still flow through the
+// drug-allergy gate. utils/allergyCheck.js consumes this virtual.
+//
+// Returns: Array<{ allergen, severity, type }>
+PatientSchema.virtual("allergies").get(function () {
+  if (Array.isArray(this.allergyList) && this.allergyList.length > 0) {
+    return this.allergyList.map((row) => ({
+      allergen: row.allergen,
+      severity: row.severity || "UNKNOWN",
+      type:     row.type     || "DRUG",
+    }));
+  }
+  const legacy = this.knownAllergies;
+  if (legacy == null || legacy === "") return [];
+  // Mixed → coerce. Array preserved as-is; string split on separators.
+  let tokens = [];
+  if (Array.isArray(legacy)) {
+    tokens = legacy.map((x) => (typeof x === "string" ? x : x?.allergen || "")).filter(Boolean);
+  } else if (typeof legacy === "string") {
+    tokens = legacy.split(/[,;\n|/]/).map((s) => s.trim()).filter(Boolean);
+  } else if (typeof legacy === "object" && legacy.allergen) {
+    tokens = [String(legacy.allergen)];
+  }
+  // Filter NKA/none/nil sentinel rows so the gate doesn't false-positive.
+  const NEG = /^\s*(none|nil|nka|no known|n\/a|na)\s*$/i;
+  return tokens
+    .filter((t) => !NEG.test(t))
+    .map((t) => ({ allergen: t, severity: "UNKNOWN", type: "DRUG" }));
+});
+
+// Ensure virtuals serialise when the patient doc is JSON-ified for the
+// dispense gate (some call sites use .lean() — those need to read the
+// raw allergyList/knownAllergies and call normaliseAllergies themselves).
+PatientSchema.set("toJSON",   { virtuals: true });
+PatientSchema.set("toObject", { virtuals: true });
 
 module.exports =
   mongoose.models.Patient || mongoose.model("Patient", PatientSchema);

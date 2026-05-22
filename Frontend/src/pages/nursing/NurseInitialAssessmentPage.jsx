@@ -390,7 +390,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
     if (!uhid.trim()) return;
     setSearching(true);
     try {
-      const token = localStorage.getItem("his_token");
+      const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
       const res = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -421,7 +421,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
     if (!patInfo._id) { toast.warn("Admission ID missing — reload patient"); return; }
     setSaving(true);
     try {
-      const token = localStorage.getItem("his_token");
+      const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
       const payload = {
         UHID: patInfo.UHID || patInfo.patientId?.UHID || uhid,
         assessedAt,

@@ -14,6 +14,8 @@ import {
   AdminPage, Hero, KPI, Card, Table, EmptyRow, RowAction, Badge,
   Modal, Field, Check, SearchInput, PrimaryButton, C,
 } from "../../Components/admin-theme";
+import { confirm } from "../../Components/common/ConfirmDialog";
+import { useAuth } from "../../context/AuthContext";
 
 const CATEGORIES = ["Clinical", "Surgical", "Diagnostic", "Support Services", "Emergency", "Critical Care"];
 const EMPTY = {
@@ -22,6 +24,12 @@ const EMPTY = {
 };
 
 const DepartmentManagement = () => {
+  // R7bb-E/D5-HIGH-4 — Doctor/Nurse/Receptionist can READ department
+  // master (departments.read) for dropdowns/onboarding info, but only
+  // Admin (departments.write) may add/edit/deactivate. Hide the
+  // mutation CTAs so non-admins don't see buttons the backend 403s.
+  const { can } = useAuth();
+  const canMutate = typeof can === "function" ? can("departments.write") : false;
   const [rows, setRows]     = useState([]);
   const [q, setQ]           = useState("");
   const [loading, setLoad]  = useState(false);
@@ -54,7 +62,13 @@ const DepartmentManagement = () => {
   }, [rows]);
 
   const remove = async (dept) => {
-    if (!window.confirm(`Deactivate ${dept.departmentName}?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Deactivate department?",
+      body: `"${dept.departmentName}" will be marked inactive and hidden from new visits and admissions. Existing records are preserved.`,
+      danger: true,
+      confirmLabel: "Deactivate",
+    }))) return;
     try {
       await departmentService.deleteDepartment(dept._id);
       toast.success(`${dept.departmentName} deactivated`);
@@ -81,8 +95,11 @@ const DepartmentManagement = () => {
         right={
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             <SearchInput value={q} onChange={e => setQ(e.target.value)} placeholder="Search code / name / category…" />
-            <PrimaryButton icon="pi-plus" label="Add Department"
-              onClick={() => { setEdit({ ...EMPTY }); setAdding(true); }} />
+            {/* R7bb-E/D5-HIGH-4 — Add gated by departments.write. */}
+            {canMutate && (
+              <PrimaryButton icon="pi-plus" label="Add Department"
+                onClick={() => { setEdit({ ...EMPTY }); setAdding(true); }} />
+            )}
           </div>
         }
         padding={0}>
@@ -111,8 +128,15 @@ const DepartmentManagement = () => {
                     <Badge value={d.isActive ? "Active" : "Inactive"} palette={d.isActive ? "active" : "inactive"} />
                   </td>
                   <td style={{ padding: "7px 12px" }}>
-                    <RowAction icon="pi-pencil" label="Edit" color={C.blue} onClick={() => setEdit({ ...d })} />
-                    <RowAction icon="pi-trash"  label="Off"  color={C.red}  onClick={() => remove(d)} />
+                    {/* R7bb-E/D5-HIGH-4 — Edit/Off gated by departments.write. */}
+                    {canMutate ? (
+                      <>
+                        <RowAction icon="pi-pencil" label="Edit" color={C.blue} onClick={() => setEdit({ ...d })} />
+                        <RowAction icon="pi-trash"  label="Off"  color={C.red}  onClick={() => remove(d)} />
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 11, color: C.muted }}>—</span>
+                    )}
                   </td>
                 </tr>
               ))}

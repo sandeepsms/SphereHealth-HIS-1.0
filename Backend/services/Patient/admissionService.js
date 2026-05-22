@@ -13,16 +13,29 @@ const { nextSequence } = require("../../utils/counter");
 
 class AdmissionService {
   async _generateAdmissionNumber() {
-    // Atomic counter via utils/counter.js — replaces the previous
-    // findOne+sort+slice pattern, which raced under concurrent admissions
-    // and could produce duplicate admissionNumbers when two receptionists
-    // hit Save in the same tick.
+    // R7ag: format = IPD-YY-NN with a CONTINUOUS counter (no per-year /
+    // per-month reset). The year prefix updates as time rolls over,
+    // but the sequence keeps incrementing — so 2026 may run
+    // IPD-26-01 ... IPD-26-99, and 2027 picks up at IPD-27-100 (or
+    // wherever the counter is). Per the user's specification:
+    //   "IPD-26-01, IPD-26-02 ... next year IPD-27-03, IPD-27-04"
+    //
+    // Counter is seeded once from the existing Admission collection
+    // count via $setOnInsert so legacy ADM/IPD/ER-prefixed rows aren't
+    // re-issued. Subsequent calls just $inc atomically — the same race
+    // safety the old per-month counter gave us.
     const now = new Date();
     const yy = now.getFullYear().toString().slice(-2);
-    const mm = String(now.getMonth() + 1).padStart(2, "0");
-    const prefix = `ADM${yy}${mm}`;
-    const seq = await nextSequence(`admission:${yy}${mm}`);
-    return `${prefix}${String(seq).padStart(4, "0")}`;
+    const key = "admission:ipd:global";
+    let seed = null;
+    const Counter = require("../../models/CounterModel");
+    const existing = await Counter.findOne({ _id: key }).lean();
+    if (!existing) {
+      const Admission = require("../../models/Patient/admissionModel");
+      seed = await Admission.countDocuments();
+    }
+    const seq = await nextSequence(key, seed);
+    return `IPD-${yy}-${String(seq).padStart(2, "0")}`;
   }
 
   _patientName(p) {
@@ -53,20 +66,33 @@ class AdmissionService {
 
     const patient = await this._findPatient(data.patientId, data.UHID);
 
-    // Only block duplicate if an active bed-admission already exists. We read
-    // outside the transaction — the bed-allocation guard below is the true
-    // race-condition gate.
-    if (data.bedId) {
-      const existing = await Admission.findOne({
+    // R7bd-A-6 / A1-HIGH-7 — reject if patient already has ANY Active
+    // admission (bedded OR bedless). Pre-R7bd this only blocked
+    // bed-on-bed double-admit, so a receptionist could fire two parallel
+    // OPD admissions, two ER intakes, or an IPD + an OPD for the same
+    // patient at the same moment — each producing its own admission
+    // number, its own bill chain, and confusing every consumer that
+    // assumed "one active admission per patient at a time".
+    //
+    // EXCEPTION: bedless OPD walk-ins from OPDService.createOPDVisit
+    // have their own same-day idempotency (visitDate + doctor) and the
+    // caller wants the existing visit. We let the OPD path bypass via
+    // an internal opt-out (data._allowConcurrentBedless) so its dedupe
+    // upstream can take over without this throwing.
+    if (!data._allowConcurrentBedless) {
+      const existingActive = await Admission.findOne({
         patientId: patient._id,
         status: "Active",
-        hasBed: true,
-      }).lean();
-      if (existing) {
-        throw new Error(
-          `Patient already has an active bed admission: ${existing.admissionNumber}. ` +
-            `Discharge first before creating a new admission.`,
+      }).select("_id admissionNumber admissionType hasBed").lean();
+      if (existingActive) {
+        const err = new Error(
+          `Patient already has an active admission: ${existingActive.admissionNumber} ` +
+          `(${existingActive.admissionType}${existingActive.hasBed ? ", bedded" : ", bedless"}). ` +
+          `Discharge or cancel it first before creating a new admission.`,
         );
+        err.status = 409;
+        err.code   = "PATIENT_HAS_ACTIVE_ADMISSION";
+        throw err;
       }
     }
 
@@ -136,8 +162,33 @@ class AdmissionService {
             expectedStayDays:     Number(data.expectedStayDays) || 0,
             admissionType: data.admissionType || "Emergency",
             attendingDoctor:   data.attendingDoctor || "",
-            // ref to the doctor's User _id — drives IPD file access control
-            attendingDoctorId: data.attendingDoctorId || undefined,
+            // R7bd-A-4 / A1-CRIT-5 — attendingDoctorId is the Doctor._id
+            // (medical staff record). attendingDoctorUserId is the linked
+            // User._id. Caller may pass attendingDoctorUserId directly OR
+            // we resolve it lazily from Doctor.loginUserId when only
+            // attendingDoctorId is provided. Termination cascade and
+            // Doctor-role JWT checks compare against attendingDoctorUserId.
+            attendingDoctorId:     data.attendingDoctorId || undefined,
+            attendingDoctorUserId: data.attendingDoctorUserId || await (async () => {
+              if (!data.attendingDoctorId) return null;
+              try {
+                const Doctor = require("../../models/Doctor/doctorModel");
+                const d = await Doctor.findById(data.attendingDoctorId).select("loginUserId").lean();
+                return d?.loginUserId || null;
+              } catch (_) { return null; }
+            })(),
+            // R7bb-FIX-E-4 / D3-CRIT-4: mustCosign auto-derived from the
+            // attending doctor's designation. Junior Residents trip the
+            // flag so the dischargeSummary finalize endpoint demands an
+            // explicit senior-cosign acknowledgement at sign-off.
+            mustCosign: await (async () => {
+              if (!data.attendingDoctorId) return false;
+              try {
+                const User = require("../../models/User/userModel");
+                const u = await User.findById(data.attendingDoctorId).select("doctorDetails.designation").lean();
+                return u?.doctorDetails?.designation === "Junior Resident";
+              } catch (_) { return false; }
+            })(),
             estimatedCost: Number(data.estimatedCost) || 0,
             advancePaid: Number(data.advancePaid) || 0,
             // ER-specific clinical context captured at intake
@@ -200,6 +251,47 @@ class AdmissionService {
         `Cannot discharge — admission status is already "${admission.status}"`,
       );
 
+    // ── R7bf-I / A7-CRIT-6 — Block discharge while an active OT / surgery
+    // booking exists for this admission. The HIS doesn't have a separate
+    // SurgeryBookingModel yet — we use DoctorOrder rows with orderType
+    // "Procedure" (the de-facto OT booking surrogate; Procedures are
+    // also where consentRequired is set + the OT charge-trigger fires).
+    // Any Procedure row in a non-terminal status (Pending/Acknowledged/
+    // Active/InProgress/OnHold/Modified) means the surgery isn't done.
+    // Forcing discharge would leave the bed flag freed before the patient
+    // is actually out of OT — bed-management corruption + a charge that
+    // can't post.
+    //
+    // Admin can override via `dischargeData.allowOverride` + reason
+    // (same path the bill-clearance gate already uses).
+    try {
+      const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
+      const ACTIVE = ["Pending", "Acknowledged", "Active", "InProgress", "OnHold", "Modified"];
+      const activeOT = await DoctorOrder.findOne({
+        UHID: admission.UHID,
+        orderType: "Procedure",
+        status: { $in: ACTIVE },
+      }).select("_id orderDetails.procedureName status").lean();
+      if (activeOT && !dischargeData.allowOverride) {
+        const err = new Error(
+          `Cannot discharge — active procedure / OT booking found ` +
+          `(order ${activeOT._id}, status: ${activeOT.status}` +
+          (activeOT.orderDetails?.procedureName ? `, ${activeOT.orderDetails.procedureName}` : "") +
+          `). Complete or cancel the procedure first, or pass allowOverride=true (Admin only) ` +
+          `with a documented reason for LAMA / abscond scenarios.`,
+        );
+        err.code = "ACTIVE_OT_BOOKING";
+        err.status = 409;
+        err.statusCode = 409;
+        throw err;
+      }
+    } catch (e) {
+      if (e.code === "ACTIVE_OT_BOOKING") throw e;
+      // Lookup failure is non-blocking — discharge can proceed (don't
+      // hold up a real LAMA on an infrastructure hiccup), but warn.
+      console.warn("[Discharge] OT-booking check skipped:", e.message);
+    }
+
     // ── NABH discharge-readiness gate (security/business audit F-01) ─────
     // Block the clinical discharge until the bill-counter workflow has at
     // least progressed past "BillCleared". Caller can pass
@@ -249,17 +341,11 @@ class AdmissionService {
     const finalDischargeAt = dischargeData.actualDischargeDate
       ? new Date(dischargeData.actualDischargeDate)
       : new Date();
-    try {
-      const autoBilling = require("../Billing/autoBillingService");
-      await autoBilling.flushDailyChargesForAdmission(admission, {
-        prorate:        isDaycare,
-        dischargeTime:  finalDischargeAt,
-      });
-    } catch (e) {
-      // Bill-side hiccups shouldn't block a clinical discharge — log and
-      // continue. The cashier still has the bill open for manual review.
-      console.error("[Discharge] flushDailyCharges error:", e.message);
-    }
+    // R7ar-P1-21/D10-aq-09: do NOT flush daily charges here. Pre-R7ar this
+    // ran BEFORE the discharge transaction committed — if the TX rolled
+    // back (validation error, bed re-occupy failure), the bed-day charges
+    // were already fired and dedup-keyed for today, so re-attempting the
+    // discharge silently skipped them. Moved to AFTER endSession() below.
 
     const session = await mongoose.startSession().catch(() => null);
     const useTx = !!session && (session.client?.s?.options?.replicaSet ||
@@ -335,6 +421,25 @@ class AdmissionService {
       session?.endSession();
     }
 
+    // R7ar-P1-21/D10-aq-09: flush daily charges NOW that the discharge
+    // transaction has committed. If we'd flushed before TX commit and the
+    // TX rolled back, bed-day charges would be dedup'd-out from re-attempt.
+    // R7as-FIX-4/D5-crit-1: pass `_dischargingFlush:true` so createTrigger
+    // doesn't reject these as "billing closed" — admission is now
+    // status:Discharged but the discharge-day bed/nursing/package
+    // charges legitimately belong on the bill. Pre-R7as the post-P1-21
+    // flush silently lost every discharge-day charge.
+    try {
+      const autoBilling = require("../Billing/autoBillingService");
+      await autoBilling.flushDailyChargesForAdmission(admission, {
+        prorate:           isDaycare,
+        dischargeTime:     finalDischargeAt,
+        _dischargingFlush: true,
+      });
+    } catch (e) {
+      console.error("[Discharge] flushDailyCharges (post-TX) error:", e.message);
+    }
+
     // ── Auto-create a CleaningTask in the housekeeping queue ──────
     // Done OUTSIDE the transaction (CleaningTask is non-clinical, a
     // failure here must not roll back the discharge). Priority depends
@@ -375,25 +480,337 @@ class AdmissionService {
       }
     }
 
+    // R7ap-F37/D5-13: discharge-overage auto-refund. Once the admission
+    // is marked Discharged and the final bill is generated, check whether
+    // the patient overpaid (paid > netAmount + outstanding) — refund the
+    // excess automatically into a refundable advance so the receptionist
+    // can return it without manual reconciliation.
+    //
+    // R7bd-A-12 / A1-HIGH-13 — INCLUDE DRAFT bills in the totalNet.
+    // Pre-R7bd we only summed non-DRAFT bills, so an admission with a
+    // ₹50k DRAFT bill (still mid-flight at discharge) computed a wildly
+    // overstated overage when the patient had already paid ₹50k upfront:
+    // totalNet=0 vs totalPaid=50k → overage=50k → spurious "refund ₹50k"
+    // prompt at gate-pass time. Now we convert pending DRAFT bills to
+    // GENERATED first via the existing flow, THEN compute overage off
+    // the freshly-finalised numbers. DRAFTs that have nothing on them
+    // are left alone (generateFinalBill would error on empty bills).
+    try {
+      const { toNum } = require("../../utils/money");
+      const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
+      const PatientBillM   = require("../../models/PatientBillModel/PatientBillModel");
+
+      // R7bd-A-12 — pre-finalize DRAFT bills with at least one line item.
+      try {
+        const draftBills = await PatientBillM.find({
+          admission: admission._id,
+          billStatus: "DRAFT",
+        }).select("_id billItems").lean();
+        const billingService = require("../Billing/billingService");
+        for (const d of draftBills) {
+          if (!d.billItems || d.billItems.length === 0) continue;
+          try {
+            await billingService.generateFinalBill(d._id, "System (discharge)");
+          } catch (e) {
+            // Non-fatal — if generation throws (race / locked / etc.),
+            // skip and let overage detection treat the bill as DRAFT
+            // (it'll be excluded from the totalNet calculation below).
+            console.warn(`[Discharge] pre-finalize DRAFT ${d._id} skipped:`, e.message);
+          }
+        }
+      } catch (e) {
+        console.warn("[Discharge] DRAFT pre-finalize sweep skipped:", e.message);
+      }
+
+      // Sum of all finalised (non-CANCELLED, non-REFUNDED) bills tied to
+      // this admission. After the pre-finalize sweep above, most DRAFT
+      // bills with content are now GENERATED. We still include DRAFT in
+      // the totalNet aggregate as a safety net so a stray un-finalisable
+      // DRAFT with a partial-paid advance doesn't escape the overage check.
+      const bills = await PatientBillM.find({
+        admission: admission._id,
+        billStatus: { $nin: ["CANCELLED", "REFUNDED"] },
+      }).lean();
+      const totalNet = bills.reduce((s, b) => s + Math.max(0, toNum(b.netAmount), toNum(b.patientPayableAmount)), 0);
+      const totalPaid = bills.reduce((s, b) => {
+        const pos = (b.payments || []).reduce((x, p) => x + Math.max(0, toNum(p.amount)), 0);
+        return s + pos;
+      }, 0);
+      // Active advances tied to this admission with remaining balance.
+      const advRows = await PatientAdvance.find({
+        admission: admission._id,
+        status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
+      });
+      const advAvailable = advRows.reduce((s, a) =>
+        s + Math.max(0, toNum(a.amount) - toNum(a.appliedAmount) - toNum(a.refundedAmount)), 0,
+      );
+      const overage = +(totalPaid + advAvailable - totalNet).toFixed(2);
+      if (overage > 0.5) {
+        console.log(`[Discharge] overage detected for admission ${admission._id} = ₹${overage}; surfacing for refund.`);
+        // Do NOT auto-refund — surface via admission.dischargeOverage so
+        // the Discharge Queue UI can prompt the receptionist to confirm.
+        // Auto-write would race with manual collections that haven't
+        // hit the DB yet.
+        admission.dischargeOverage = overage;
+        admission.markModified("dischargeOverage");
+        await admission.save();
+        // R7ar-P1-24/D6-aq-09: emit OVERAGE_DETECTED audit row so the
+        // accountant's audit feed shows a chronological line — "this
+        // admission discharged with ₹X surplus that needs refund".
+        // Pre-R7ar the surplus was visible only via the dischargeOverage
+        // field on the admission, with no time-anchored entry in the
+        // BillingAudit register.
+        try {
+          const { emit } = require("../../models/Billing/BillingAudit");
+          await emit({
+            event:        "OVERAGE_DETECTED",
+            UHID:         admission.UHID,
+            patientId:    admission.patient,
+            admissionId:  admission._id,
+            amount:       overage,
+            actorName:    "System (discharge cascade)",
+            reason:       `Patient paid ₹${totalPaid.toFixed(2)} + advance ₹${advAvailable.toFixed(2)} against net ₹${totalNet.toFixed(2)} — surplus ₹${overage.toFixed(2)} needs refund.`,
+            after:        { dischargeOverage: overage, totalPaid, advAvailable, totalNet },
+          });
+        } catch (_) { /* audit best-effort */ }
+      }
+    } catch (e) {
+      // Non-fatal — discharge already complete, refund detection is a
+      // safety net not a blocker.
+      console.warn("[Discharge] overage detection skipped:", e.message);
+    }
+
     return admission;
   }
 
-  async cancelAdmission(id, reason) {
+  // R7bd-A-3 / A1-CRIT-3 — cascade cancel.
+  //
+  // Pre-R7bd cancelling an admission did the bare minimum: flip status,
+  // free the bed. Every downstream object stayed live:
+  //   • DoctorOrders (active/pending) remained in queues — nurses kept
+  //     getting reminders for a patient who was never coming back.
+  //   • MAR rows stayed ACTIVE — drug-administration windows stayed open.
+  //   • NursingCarePlan rows stayed ACTIVE.
+  //   • DRAFT / GENERATED bills stayed alive — daily-accrual cron kept
+  //     adding bed-day charges to a non-existent stay.
+  //   • Pending BillingTriggers continued to materialise into bill items
+  //     hours/days after the cancel.
+  // Net: bogus bills, phantom alerts, broken audit. This now cascades.
+  //
+  // GUARDS:
+  //   • If any finalised bill (non-DRAFT, non-CANCELLED) has totalPaid>0,
+  //     refuse with 409 — money has already changed hands. Operator must
+  //     issue an explicit refund via the bill path first, THEN cancel.
+  //   • OPD / Daycare / Services admissions may have bedId = null. Skip
+  //     bed release in that case (the bed isn't ours to free).
+  //
+  // OUTPUT: BillingAudit ADMISSION_CANCELLED event with a summary of
+  // every cascade step taken so the auditor can reconstruct the wipe.
+  async cancelAdmission(id, reason, { actor = {}, force = false } = {}) {
     const admission = await Admission.findById(id);
     if (!admission) throw new Error("Admission not found");
-    if (admission.status !== "Active")
-      throw new Error(
-        `Cannot cancel — admission status is "${admission.status}"`,
-      );
+    if (admission.status !== "Active") {
+      // Idempotent cancel — return as-is for cascading callers.
+      if (admission.status === "Cancelled") return admission;
+      throw new Error(`Cannot cancel — admission status is "${admission.status}"`);
+    }
 
-    await Bed.findByIdAndUpdate(admission.bedId, {
-      $set: { status: "Available", currentAdmission: null, patient: null },
+    // Lazy loads to dodge circular requires (autoBilling/billing both
+    // import this service in some code paths).
+    const PatientBill       = require("../../models/PatientBillModel/PatientBillModel");
+    const BillingTrigger    = require("../../models/Billing/BillingTrigger");
+    const DoctorOrder       = require("../../models/Doctor/DoctorOrderModel");
+    const MAR               = require("../../models/Clinical/MARModel");
+    let NursingCarePlan = null;
+    try { NursingCarePlan = require("../../models/Nurse/NursingCarePlanModel"); } catch (_) { /* optional */ }
+    let emit = null;
+    try { ({ emit } = require("../../models/Billing/BillingAudit")); } catch (_) { /* audit best-effort */ }
+    const { toNum } = require("../../utils/money");
+
+    // ── PAYMENT GUARD ───────────────────────────────────────────────
+    // If any non-DRAFT bill has positive totalPaid, refuse unless the
+    // caller explicitly overrides (the controller does NOT expose
+    // override yet — internal cascade-from-deletePatient may opt in).
+    const finalisedBills = await PatientBill.find({
+      admission: admission._id,
+      billStatus: { $nin: ["DRAFT", "CANCELLED"] },
     });
+    const paidBill = finalisedBills.find((b) =>
+      (b.payments || []).reduce((s, p) => s + Math.max(0, toNum(p.amount)), 0) > 0.5,
+    );
+    if (paidBill && !force) {
+      const err = new Error(
+        `Cannot cancel — bill ${paidBill.billNumber || paidBill._id} has payments collected. ` +
+        `Issue an explicit refund via the bill path first, then cancel.`,
+      );
+      err.status = 409;
+      err.code   = "ADMISSION_HAS_PAYMENTS";
+      throw err;
+    }
 
-    admission.status = "Cancelled";
-    admission.cancelReason = reason || "";
-    admission.cancelledAt = new Date();
+    const cascadeSummary = {
+      bedReleased:        false,
+      ordersCancelled:    0,
+      marsDiscontinued:   0,
+      carePlansClosed:    0,
+      billsCancelled:     0,
+      triggersVoided:     0,
+    };
+
+    // ── BED RELEASE (skip OPD/Daycare bedless admissions) ──────────
+    // Pre-R7bd this called Bed.findByIdAndUpdate(null, …) when bedId was
+    // null — Mongoose silently no-ops the bad ObjectId but the call was
+    // still wasted. Now we explicitly guard and skip.
+    if (admission.bedId) {
+      try {
+        const released = await Bed.findByIdAndUpdate(admission.bedId, {
+          $set: { status: "Available", currentAdmission: null, patient: null },
+        });
+        cascadeSummary.bedReleased = !!released;
+      } catch (e) {
+        console.warn("[cancelAdmission] bed release failed:", e.message);
+      }
+    }
+
+    // ── DOCTOR ORDERS → Cancelled ──────────────────────────────────
+    try {
+      const openOrders = await DoctorOrder.find({
+        visitId: String(admission._id),
+        status:  { $in: ["Pending", "Acknowledged", "Active", "InProgress"] },
+      });
+      for (const o of openOrders) {
+        o.status     = "Cancelled";
+        o.stopReason = (o.stopReason ? o.stopReason + " | " : "") + "ADMISSION_CANCELLED";
+        // .save() so the state-machine guard inside DoctorOrderModel runs.
+        try { await o.save(); cascadeSummary.ordersCancelled += 1; }
+        catch (e) { console.warn("[cancelAdmission] order save failed:", o._id, e.message); }
+      }
+    } catch (e) {
+      console.warn("[cancelAdmission] order cascade skipped:", e.message);
+    }
+
+    // ── MAR rows → CLOSED ──────────────────────────────────────────
+    // MAR rows are per-admission daily charts. Closing prevents the
+    // nursing UI from accepting late administrations.
+    try {
+      const closeRes = await MAR.updateMany(
+        { admissionId: admission._id, status: "ACTIVE" },
+        { $set: { status: "CLOSED" } },
+      );
+      cascadeSummary.marsDiscontinued = closeRes.modifiedCount || 0;
+    } catch (e) {
+      console.warn("[cancelAdmission] MAR cascade skipped:", e.message);
+    }
+
+    // ── NursingCarePlan rows → DISCONTINUED ─────────────────────────
+    if (NursingCarePlan) {
+      try {
+        const closeRes = await NursingCarePlan.updateMany(
+          { admissionId: admission._id, status: { $in: ["ACTIVE", "draft"] } },
+          { $set: { status: "DISCONTINUED" } },
+        );
+        cascadeSummary.carePlansClosed = closeRes.modifiedCount || 0;
+      } catch (e) {
+        console.warn("[cancelAdmission] NursingCarePlan cascade skipped:", e.message);
+      }
+    }
+
+    // ── DRAFT/GENERATED bills → CANCELLED ──────────────────────────
+    // Preserves the audit chain via BillingAudit instead of
+    // findByIdAndDelete. We don't recompute totals on a CANCELLED bill
+    // (pre-save hook handles that for non-CANCELLED transitions only).
+    try {
+      const cancelableBills = await PatientBill.find({
+        admission: admission._id,
+        billStatus: { $in: ["DRAFT", "GENERATED"] },
+      });
+      for (const b of cancelableBills) {
+        const prev = b.billStatus;
+        b.billStatus = "CANCELLED";
+        b.cancellationReason = `ADMISSION_CANCELLED: ${reason || "(no reason)"}`;
+        try { await b.save(); cascadeSummary.billsCancelled += 1; }
+        catch (e) { console.warn("[cancelAdmission] bill save failed:", b._id, e.message); continue; }
+        if (emit) {
+          try {
+            await emit({
+              event:      "BILL_CANCELLED",
+              UHID:       admission.UHID,
+              patientId:  admission.patientId,
+              billId:     b._id,
+              billNumber: b.billNumber,
+              admissionId: admission._id,
+              actorId:    actor.id || null,
+              actorName:  actor.name || "System",
+              actorRole:  actor.role || "",
+              reason:     `ADMISSION_CANCELLED: ${reason || "(no reason)"}`,
+              before:     { billStatus: prev },
+              after:      { billStatus: "CANCELLED" },
+            });
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      console.warn("[cancelAdmission] bill cascade skipped:", e.message);
+    }
+
+    // ── Pending BillingTriggers → voided ───────────────────────────
+    try {
+      const voidRes = await BillingTrigger.updateMany(
+        { admissionId: admission._id, status: "pending" },
+        {
+          $set: {
+            status:       "voided",
+            voidedAt:     new Date(),
+            voidedBy:     actor.name || "System",
+            voidedByRole: actor.role || "System",
+            voidReason:   `ADMISSION_CANCELLED: ${reason || "(no reason)"}`,
+          },
+        },
+      );
+      cascadeSummary.triggersVoided = voidRes.modifiedCount || 0;
+    } catch (e) {
+      console.warn("[cancelAdmission] trigger void cascade skipped:", e.message);
+    }
+
+    // ── ADMISSION → Cancelled ──────────────────────────────────────
+    admission.status        = "Cancelled";
+    admission.cancelReason  = reason || "";
+    admission.cancelledAt   = new Date();
     await admission.save();
+
+    // ── R7bd-A-15 — decrement the patient's visit counter so totals
+    // reflect the cancellation. Skip silently if the helper isn't
+    // available (defensive — patientService is required lazily).
+    try {
+      const patientService = require("./patientService");
+      if (typeof patientService.decrementVisitCount === "function") {
+        const visitType = (admission.admissionType === "OPD") ? "OPD"
+          : (admission.admissionType === "Day Care" || admission.admissionType === "Daycare") ? "Daycare"
+          : (admission.admissionType === "Emergency") ? "Emergency"
+          : (admission.admissionType === "Services") ? "Services"
+          : "IPD";
+        await patientService.decrementVisitCount(admission.patientId, visitType);
+      }
+    } catch (_) { /* visit-count is decorative — never block cancel */ }
+
+    // ── AUDIT ──────────────────────────────────────────────────────
+    if (emit) {
+      try {
+        await emit({
+          event:       "ITEM_CANCELLED", // closest enum value — no dedicated ADMISSION_CANCELLED
+          UHID:        admission.UHID,
+          patientId:   admission.patientId,
+          admissionId: admission._id,
+          actorId:     actor.id || null,
+          actorName:   actor.name || "System",
+          actorRole:   actor.role || "",
+          reason:      `ADMISSION_CANCELLED: ${reason || "(no reason)"}`,
+          before:      { status: "Active" },
+          after:       { status: "Cancelled", cascadeSummary },
+        });
+      } catch (_) {}
+    }
+
     return admission;
   }
 
@@ -511,6 +928,88 @@ class AdmissionService {
       }
     } finally {
       session?.endSession();
+    }
+
+    // ── R7bd-A-9 / A1-HIGH-10 — re-stamp future bed-day items ─────
+    // After a bed transfer, if any Draft/Generated bill carries
+    // bed-charge line items, the per-day price should change from the
+    // *date of transfer* onward to match the new bed's tariff. Past
+    // day items (chargeDate < today) keep their historical price —
+    // that's the patient's actual occupancy on those days and the
+    // accountant rightly bills the OLD rate.
+    //
+    // DESIGN NOTE: bed-day items are flagged via serviceCode prefix
+    // (BED-*, IPD-RM-*, IPD-ICU-*) and category="Room". A finer
+    // approach would be to consume a ServiceMaster lookup keyed on the
+    // new room category — but for R7bd-A we keep the change minimal:
+    // re-stamp by zeroing unitPrice on bed-day items whose chargeDate
+    // is >= today and letting the next runDailyBedChargeAccrual fire
+    // fresh charges at the new tier. We do NOT mutate past items.
+    try {
+      const PatientBillM   = require("../../models/PatientBillModel/PatientBillModel");
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const BED_PREFIXES = /^(BED-|IPD-RM-|IPD-ICU-|IPD-NUR-)/;
+      const bills = await PatientBillM.find({
+        admission: admission._id,
+        billStatus: { $in: ["DRAFT", "GENERATED"] },
+      });
+      for (const bill of bills) {
+        let changed = false;
+        for (const item of bill.billItems || []) {
+          const code = String(item.serviceCode || "");
+          const cat  = String(item.category || "");
+          const isBedLike = BED_PREFIXES.test(code) || cat === "Room" || cat === "Nursing";
+          if (!isBedLike) continue;
+          const itemDate = item.chargeDate ? new Date(item.chargeDate) : null;
+          if (!itemDate || itemDate < today) continue; // past day — historical price preserved
+          // Mark for re-accrual by canceling the item (qty=0 keeps the
+          // audit trail). The runDailyBedChargeAccrual cron / next
+          // flushDailyChargesForAdmission run picks up the new tier.
+          item.quantity = 0;
+          item.markModified?.("quantity");
+          changed = true;
+        }
+        if (changed) {
+          try { await bill.save(); }
+          catch (e) { console.warn("[transferBed] re-stamp save failed:", bill._id, e.message); }
+        }
+      }
+    } catch (e) {
+      // Non-fatal — bed transfer itself succeeded.
+      console.warn("[transferBed] future-day re-stamp skipped:", e.message);
+    }
+
+    // ── R7bd-A-17 / A1-MED-22 — package tierUsed on transfer ─────
+    // If the admission has an ANH PER_DAY package attached and the
+    // transfer moves into a different room category, update
+    // `admission.package.tierUsed` so the next daily-accrual fires at
+    // the new tier's price. We do NOT recompute past charges (same
+    // historical principle as bed-day items).
+    try {
+      if (admission.package?.serviceCode && admission.package?.packageType === "PER_DAY") {
+        const Room = require("../../models/bedMgmt/roomModel");
+        const newRoom = await Room.findById(admission.roomId).populate("roomCategory").lean();
+        const newCat  = newRoom?.roomCategory?.categoryCode || null;
+        const newTier =
+          newCat === "SEMI" ? "semiPrivate"
+            : (newCat === "PVT" || newCat === "ICU" || newCat === "NICU") ? "private"
+            : "generalWard";
+        if (newTier && newTier !== admission.package.tierUsed) {
+          const ServiceMaster = require("../../models/ServiceMaster/serviceMasterModel");
+          const pkg = admission.package.serviceId
+            ? await ServiceMaster.findById(admission.package.serviceId).lean()
+            : await ServiceMaster.findOne({ serviceCode: admission.package.serviceCode }).lean();
+          if (pkg) {
+            const newPrice = pkg.tierPricing?.[newTier] ?? pkg.tierPricing?.generalWard ?? pkg.defaultPrice ?? admission.package.unitPrice;
+            admission.package.tierUsed  = newTier;
+            admission.package.unitPrice = newPrice;
+            admission.markModified("package");
+            await admission.save();
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[transferBed] package tier sync skipped:", e.message);
     }
 
     return admission;
@@ -770,12 +1269,18 @@ class AdmissionService {
     return admission;
   }
 
-  async getAdmissionStatistics(startDate, endDate) {
+  async getAdmissionStatistics(startDate, endDate, opts = {}) {
     const match = {};
     if (startDate || endDate) {
       match.admissionDate = {};
       if (startDate) match.admissionDate.$gte = new Date(startDate);
       if (endDate) match.admissionDate.$lte = new Date(endDate);
+    }
+    // R7az-D3-MED-2: optional Doctor-scope filter — controller passes
+    // this when the caller is a Doctor user, so the stats reflect only
+    // that doctor's clinical load instead of the whole hospital census.
+    if (opts.attendingDoctorId && mongoose.isValidObjectId(String(opts.attendingDoctorId))) {
+      match.attendingDoctorId = new mongoose.Types.ObjectId(String(opts.attendingDoctorId));
     }
     const [
       total,
@@ -818,10 +1323,10 @@ class AdmissionService {
     };
   }
 
-  async searchAdmissions(searchTerm) {
+  async searchAdmissions(searchTerm, opts = {}) {
     if (!searchTerm?.trim()) throw new Error("Search term is required");
     const regex = { $regex: searchTerm.trim(), $options: "i" };
-    return Admission.find({
+    const query = {
       $or: [
         { UHID: regex },
         { patientName: regex },
@@ -829,7 +1334,15 @@ class AdmissionService {
         { contactNumber: regex },
         { attendingDoctor: regex },
       ],
-    })
+    };
+    // R7az-D3-MED-2: optional Doctor-scope filter. Controller passes
+    // attendingDoctorId when the caller is a Doctor user — search
+    // results are restricted to that doctor's patients. AND-combine
+    // with the $or text-match so the regex still applies.
+    if (opts.attendingDoctorId && mongoose.isValidObjectId(String(opts.attendingDoctorId))) {
+      query.attendingDoctorId = new mongoose.Types.ObjectId(String(opts.attendingDoctorId));
+    }
+    return Admission.find(query)
       .populate("patientId", "fullName UHID")
       .populate("bedId", "bedNumber")
       .limit(20)
@@ -859,14 +1372,47 @@ class AdmissionService {
       .sort({ admissionDate: -1 });
   }
 
-  /* ── Verify doctor access to an admission ── */
-  async checkDoctorAccess(admissionId, doctorUserId) {
+  /* ── Verify doctor access to an admission ──
+     R7az-D3-CRIT-1: pre-R7az this compared `admission.attendingDoctorId`
+     (which is the Doctor model's _id) against the caller's User._id.
+     User._id NEVER matches a Doctor._id directly — the comparison was
+     a permanent `false` and every Doctor saw `isOwner:false` for their
+     OWN admissions. UI badges that surfaced "Not your patient" warnings
+     on the doctor's own bedside view were a symptom of this bug.
+     Now the caller passes either the User._id (legacy) OR the resolved
+     doctorProfile._id; we accept both and resolve the Doctor._id from
+     loginUserId when only a User._id is supplied. */
+  async checkDoctorAccess(admissionId, callerOrUserId) {
     const admission = await Admission.findById(admissionId)
       .select("attendingDoctorId attendingDoctor patientName UHID status")
       .populate("attendingDoctorId", "fullName firstName lastName");
     if (!admission) throw new Error("Admission not found");
-    const ownerId = admission.attendingDoctorId?._id || admission.attendingDoctorId;
-    const isOwner = ownerId?.toString() === doctorUserId?.toString();
+    const ownerId = String(admission.attendingDoctorId?._id || admission.attendingDoctorId || "");
+
+    // Accept both call shapes:
+    //   checkDoctorAccess(id, userId)                           — legacy
+    //   checkDoctorAccess(id, { userId, doctorProfileId })      — preferred
+    //   checkDoctorAccess(id, { _id, role, doctorProfile? })    — pass req.user
+    let doctorProfileId = "";
+    let userId          = "";
+    if (callerOrUserId && typeof callerOrUserId === "object") {
+      doctorProfileId = String(callerOrUserId.doctorProfileId || callerOrUserId.doctorProfile?._id || "");
+      userId          = String(callerOrUserId.userId || callerOrUserId._id || callerOrUserId.id || "");
+    } else {
+      userId = String(callerOrUserId || "");
+    }
+
+    // If we don't have a resolved doctorProfileId yet, look it up by
+    // loginUserId — the Doctor row whose loginUserId is this User._id.
+    if (!doctorProfileId && userId) {
+      try {
+        const Doctor = require("../../models/Doctor/doctorModel");
+        const doc = await Doctor.findOne({ loginUserId: userId }).select("_id").lean();
+        if (doc) doctorProfileId = String(doc._id);
+      } catch (_) { /* leave isOwner=false on lookup failure */ }
+    }
+
+    const isOwner = !!ownerId && !!doctorProfileId && ownerId === doctorProfileId;
     return { admission, isOwner };
   }
 
@@ -882,17 +1428,95 @@ class AdmissionService {
       .lean();
   }
 
-  async deleteAdmission(id) {
+  // R7bd-A-2 / A1-CRIT-2 — SOFT DELETE only.
+  //
+  // RATIONALE: An Admission row is the root pointer for every clinical
+  // and financial artefact a patient generated during a visit:
+  //   • DoctorOrder / Prescription / MAR / NursingCarePlan rows carry
+  //     `visitId = admissionId`
+  //   • PatientBill / BillingTrigger / BillingAudit / PatientAdvance
+  //     carry `admission = admissionId` / `admissionId = …`
+  //   • DischargeSummary, treatment charts, vitals sheets, lab orders
+  //     all reference admissionId or admissionNumber.
+  // Hard-deleting the Admission row orphans every single one of those
+  // — and Mongo gives no cascade help. The previous implementation
+  // would do `Admission.findByIdAndDelete(id)` and silently leave the
+  // bed Free + the orders adrift. That broke billing reconciliation
+  // (orphaned BillingTriggers re-fired daily), broke the MRD audit
+  // (DischargeSummary.admissionId now pointed at nothing), and made
+  // any "patient history" lookup wrong.
+  //
+  // New behaviour:
+  //   • Default (force=false): refuse with 409 if the admission has any
+  //     non-DRAFT / non-CANCELLED bill, any active DoctorOrder, any
+  //     ACTIVE MAR row. Operator must clean those up or use force.
+  //   • force=true: flip status="Deleted", stamp deletedAt + deletedById,
+  //     run the same cancel-cascade as cancelAdmission (bed release,
+  //     orders cancelled, MARs discontinued, bills voided). The row is
+  //     never physically removed — it remains for audit reconstruction.
+  async deleteAdmission(id, { force = false, actor = {} } = {}) {
     const admission = await Admission.findById(id);
     if (!admission) throw new Error("Admission not found");
-    if (admission.status === "Active") {
-      // Free bed only when directly deleting an admission record
-      await Bed.findByIdAndUpdate(admission.bedId, {
-        $set: { status: "Available", currentAdmission: null, patient: null },
-      });
+    if (admission.status === "Deleted") {
+      // Idempotent — already soft-deleted.
+      return { message: "Admission already deleted (soft)", admission };
     }
-    await Admission.findByIdAndDelete(id);
-    return { message: "Admission deleted successfully" };
+
+    // Probe blocking conditions if !force.
+    if (!force) {
+      const PatientBill   = require("../../models/PatientBillModel/PatientBillModel");
+      const DoctorOrder   = require("../../models/Doctor/DoctorOrderModel");
+      const MAR           = require("../../models/Clinical/MARModel");
+      const [openBill, openOrder, activeMar] = await Promise.all([
+        PatientBill.exists({
+          admission: admission._id,
+          billStatus: { $nin: ["DRAFT", "CANCELLED", "REFUNDED"] },
+        }),
+        DoctorOrder.exists({
+          visitId: String(admission._id),
+          status:  { $in: ["Pending", "Acknowledged", "Active", "InProgress"] },
+        }),
+        MAR.exists({ admissionId: admission._id, status: "ACTIVE" }),
+      ]);
+      const blockers = [];
+      if (openBill)  blockers.push("non-DRAFT bill");
+      if (openOrder) blockers.push("active doctor order");
+      if (activeMar) blockers.push("active MAR record");
+      if (blockers.length) {
+        const err = new Error(
+          `Cannot delete admission — ${blockers.join("; ")}. ` +
+          `Resolve the open items or call with force=true.`,
+        );
+        err.status = 409;
+        err.code   = "ADMISSION_HAS_DEPENDENCIES";
+        throw err;
+      }
+    }
+
+    // With force: run the cancel cascade FIRST (releases bed, cancels
+    // orders, voids bills, discontinues MAR / care plan, voids pending
+    // billing triggers, emits audit). That gives us all the safe cleanup
+    // logic for free instead of duplicating it here.
+    if (force && admission.status === "Active") {
+      try {
+        await this.cancelAdmission(admission._id, "ADMISSION_DELETED_CASCADE", { actor, force: true });
+      } catch (e) {
+        console.warn("[deleteAdmission] cancel cascade failed:", e.message);
+      }
+    }
+
+    // Re-load post-cascade and flip to Deleted. Use the doc save path so
+    // the pre("save") state-machine guard runs (Active/Cancelled →
+    // Deleted is allowed per the LEGAL_STATUS_TRANSITIONS update).
+    const fresh = await Admission.findById(id);
+    if (!fresh) throw new Error("Admission disappeared mid-delete");
+    fresh.status      = "Deleted";
+    fresh.deletedAt   = new Date();
+    fresh.deletedById = actor.id || null;
+    fresh.deletedByName = actor.name || "";
+    fresh.deleteReason  = actor.reason || (force ? "FORCE_DELETE" : "DELETE");
+    await fresh.save();
+    return { message: "Admission soft-deleted", admission: fresh };
   }
 }
 

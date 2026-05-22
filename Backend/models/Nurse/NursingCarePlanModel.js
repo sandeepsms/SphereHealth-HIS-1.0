@@ -116,12 +116,20 @@ const NursingCarePlanSchema = new mongoose.Schema(
     expectedDischargeDate: { type: Date },
 
     // ── Status ───────────────────────────────────────────────
+    // R7az-D2-HIGH-3: add draft/completed/amended workflow so the plan
+    // can be locked once the nurse signs off. The legacy ACTIVE / COMPLETED
+    // / DISCONTINUED values remain in the enum for backward compatibility
+    // with existing documents; new code should use draft → completed.
     status: {
       type: String,
-      enum: ["ACTIVE", "COMPLETED", "DISCONTINUED"],
+      enum: ["ACTIVE", "COMPLETED", "DISCONTINUED", "draft", "completed", "amended"],
       default: "ACTIVE" },
     reviewDate: { type: Date },
     completedAt: { type: Date },
+
+    // R7az-D2-HIGH-3: signing fields (NABH COP.1 — care plan must be signed).
+    signedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    signedAt: { type: Date, default: null },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" } },
@@ -132,6 +140,29 @@ NursingCarePlanSchema.index({ UHID: 1, createdAt: -1 });
 NursingCarePlanSchema.index({ ipdNo: 1 });
 NursingCarePlanSchema.index({ admissionId: 1 });
 NursingCarePlanSchema.index({ status: 1 });
+
+// ── R7az-D2-HIGH-3: immutability hook ───────────────────────────────
+// Once status === "completed" the document is locked. The only mutation
+// allowed is the amendment chain — flip status to "amended" and stamp
+// updatedBy. Anything else throws. This mirrors the doctor-note pattern.
+NursingCarePlanSchema.post("init", function () {
+  this._priorStatus = this.status;
+});
+NursingCarePlanSchema.pre("save", function (next) {
+  if (this.isNew) return next();
+  const completed = ["completed", "COMPLETED"].includes(this._priorStatus);
+  if (completed && !["amended"].includes(this.status)) {
+    // Tolerate identity saves (no real changes other than updatedAt)
+    if (!this.isModified() ||
+        (this.modifiedPaths().length === 1 && this.modifiedPaths()[0] === "updatedAt")) {
+      return next();
+    }
+    return next(new Error(
+      "NursingCarePlan is completed — only amendment (status='amended') edits are allowed (NABH COP.1)",
+    ));
+  }
+  next();
+});
 
 module.exports =
   mongoose.models.NursingCarePlan ||

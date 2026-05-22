@@ -106,7 +106,22 @@ const AdmissionSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
       required: true },
-    expectedDischargeDate: Date,
+    // R7u: expectedDischargeDate must be AFTER admissionDate. Without this
+    // a copy-paste typo in the form (e.g. expected = 2026-01-01 vs admitted
+    // 2026-05-19) lands in the DB silently and corrupts the LOS forecast.
+    expectedDischargeDate: {
+      type: Date,
+      validate: {
+        validator: function (v) {
+          if (!v) return true;
+          // `this.admissionDate` is set by default(Date.now) on new docs;
+          // on updates `this` is the query, so fall back to a non-strict check.
+          const adm = this.admissionDate || this.get?.("admissionDate") || Date.now();
+          return new Date(v).getTime() >= new Date(adm).getTime();
+        },
+        message: "expectedDischargeDate must be on or after admissionDate",
+      },
+    },
 
     reasonForAdmission: { type: String, default: "" }, // ✅ No longer required
     // Free-text clinical context captured at admission
@@ -136,12 +151,69 @@ const AdmissionSchema = new mongoose.Schema(
       default: "Emergency" },
 
     attendingDoctor: { type: String, trim: true, default: "" },
-    // ObjectId ref to the User (role=Doctor) who is the attending doctor
-    // Used for strict IPD file access control
+    // R7bd-A-4 / A1-CRIT-5 — fix attendingDoctorId mismatch.
+    // HISTORY: the IPD/OPD code base used `attendingDoctorId` as the
+    // Doctor model `_id` (set by reception's doctor-picker), but the
+    // schema's `ref: "User"` claimed it pointed at the User collection.
+    // Most population call-sites compared/populated against Doctor, and
+    // the role-based access-control middleware compared against
+    // `doctorProfile._id` (the Doctor `_id`). That worked. But the
+    // OPDService.createOPDVisit auto-admission path was setting
+    // `attendingDoctorId` to `savedOPD.doctorId` (Doctor `_id`) while
+    // other paths sometimes passed the login User `_id`, producing
+    // intermittent mismatches when the consumer assumed one side or the
+    // other. From R7bd-A on:
+    //   • `attendingDoctorId`    ALWAYS = Doctor._id (the medical staff
+    //     record) — kept for backward compat across all consumers; we
+    //     keep the `ref: "User"` here ONLY because legacy data may still
+    //     point at User._id (admissionService.createAdmission previously
+    //     accepted either). Populate sites pick a target collection by
+    //     context; do NOT add `.populate("attendingDoctorId")` without
+    //     specifying the model.
+    //   • `attendingDoctorUserId` = the linked login User._id (when the
+    //     doctor has a User account). This is what termination /
+    //     reassignment and JWT-driven access checks should compare
+    //     against. Populated alongside `attendingDoctorId` at admission
+    //     create time. Null is legitimate for ad-hoc doctors with no
+    //     login account.
     attendingDoctorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null },
+    attendingDoctorUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true },
+    // R7bd-A-10 / A1-HIGH-11 — when the attending doctor (User account)
+    // is terminated, the userService post-step sets this flag on every
+    // Active admission that lost its doctor link. Reception sees a "needs
+    // reassignment" banner and must pick a new attending before the next
+    // billing cycle. We do NOT block clinical care — the existing
+    // attending fields stay pointing at the (now-terminated) user so the
+    // audit trail of "who was responsible at time T" is preserved.
+    requiresReassignment:        { type: Boolean, default: false, index: true },
+    requiresReassignmentReason:  { type: String, trim: true, default: "" },
+    requiresReassignmentAt:      { type: Date, default: null },
+    // R7bd-A-2 / A1-CRIT-2 — soft-delete trail for admissionService.deleteAdmission.
+    // Hard delete of an Admission row is dangerous: billing triggers,
+    // doctor orders, MAR rows, lab orders etc. all carry visitId/admissionId
+    // refs that orphan silently — clinical history is lost and bills
+    // stop reconciling. The service now flips status="Deleted" + stamps
+    // these fields instead. The status enum is extended below to allow
+    // "Deleted" so the state-machine guard permits the transition.
+    deletedAt:    { type: Date, default: null },
+    deletedById:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    deletedByName:{ type: String, trim: true, default: "" },
+    deleteReason: { type: String, trim: true, default: "" },
+    // R7bb-FIX-E-4 / D3-CRIT-4: when the attending doctor is a Junior
+    // Resident (designation flag on User.doctorDetails) the discharge
+    // summary finalize MUST be co-signed by a Senior Resident /
+    // Consultant. The flag is set at admission time by admissionService
+    // based on the attendingDoctor's designation; the dischargeSummary
+    // finalize endpoint reads it to decide whether to demand a
+    // requireSeniorCosign: false explicit acknowledgement.
+    mustCosign: { type: Boolean, default: false },
     // Department as ObjectId ref (alongside the string field)
     departmentId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -150,7 +222,11 @@ const AdmissionSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["Active", "Discharged", "Transferred", "Cancelled"],
+      // R7bd-A-2 / A1-CRIT-2: "Deleted" added as a terminal soft-delete
+      // sentinel — replaces the unsafe hard-delete in admissionService.
+      // The state-machine guard below treats Deleted as terminal (no
+      // further transitions out), mirroring Discharged/Cancelled.
+      enum: ["Active", "Discharged", "Transferred", "Cancelled", "Deleted"],
       default: "Active" },
 
     // ── Billing ──────────────────────────────────────────────
@@ -162,6 +238,10 @@ const AdmissionSchema = new mongoose.Schema(
     actualDischargeDate: Date,
     dischargeNotes: String,
     dischargeSummary: String,
+    // R7ap-F37/D5-13: detected overpayment at discharge — Discharge Queue
+    // surfaces this for cashier-confirmed refund (auto-write would race
+    // with manual collections that haven't hit the DB yet).
+    dischargeOverage: { type: Number, default: 0 },
     conditionOnDischarge: {
       type: String,
       enum: ["Stable", "Improved", "Critical", "LAMA", null],
@@ -198,7 +278,15 @@ const AdmissionSchema = new mongoose.Schema(
     transferHistory: [TransferHistorySchema],
 
     // ── Admission / Visit Number ──────────────────────────────
-    admissionNumber: { type: String, trim: true, index: true },  // e.g. ADM-20240417-0001
+    // R7bd-A-7 / A1-HIGH-8 — admissionNumber is now `unique:true sparse:true`.
+    // Pre-R7bd OPDService.generateOPDAdmissionNumber used a non-atomic
+    // findOne+regex sort which raced under concurrent OPD walk-ins, and
+    // the only protection was a non-unique index — two visits could land
+    // with the same admissionNumber and silently overwrite each other on
+    // downstream lookups. Now the OPD path uses utils/counter
+    // (atomic findOneAndUpdate $inc) AND the DB enforces uniqueness so a
+    // race-survivor's E11000 surfaces immediately.
+    admissionNumber: { type: String, trim: true, unique: true, sparse: true },  // R7ag: IPD-YY-NN continuous, e.g. IPD-26-01 (legacy rows may still use ADM26050001 / IPD-2026-000001)
     visitNumber:     { type: String, trim: true, index: true },  // OPD visitNumber link
     paymentType:     { type: String, enum: ["GENERAL","TPA","CORPORATE","CASH"], default: "GENERAL" },
 
@@ -253,36 +341,48 @@ const AdmissionSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-// State-machine guard: enforce legal status transitions. Without this any
-// caller can flip status from a terminal state back to Active (silently
-// reopening a Discharged or Cancelled admission), or skip the discharge
-// workflow entirely.
-//   ──> Active is the only non-terminal state.
-//   ──> Discharged / Cancelled are TERMINAL — no exit.
-//   ──> Transferred can return to Active (resumed care on a new bed).
-const LEGAL_STATUS_TRANSITIONS = {
-  Active:      new Set(["Active", "Discharged", "Transferred", "Cancelled"]),
-  Transferred: new Set(["Transferred", "Active", "Discharged", "Cancelled"]),
-  Discharged:  new Set(["Discharged"]),
-  Cancelled:   new Set(["Cancelled"]),
-};
+// State-machine guard: delegate to shared registry (R7bf-I / R7bd-D-9
+// META reship). Pre-R7bf this model rolled its own LEGAL_STATUS_TRANSITIONS
+// table; the registry now lives at utils/statusTransitionGuard.js and the
+// matrix here is the source of truth for the Admission collection.
+//
+// Backward compat: `validateStatusTransition(from, to)` is still exported
+// as a function returning a string-or-null (legacy controller paths that
+// mutate status via findOneAndUpdate use this). It's now a thin wrapper
+// around the shared assertTransition().
+//
+// Force-bypass: callers can set doc.__forceTransition + doc.__forceAdminUserId
+// on the in-memory doc before save() to bypass; the soft-delete path
+// (admissionService.deleteAdmission) already does this.
+const { assertTransition: _admAssert, LEGAL_TRANSITIONS: _LT } = require("../../utils/statusTransitionGuard");
+
+// Legacy shape — Set-of-allowed-targets per state, including self-loop.
+const LEGAL_STATUS_TRANSITIONS = Object.fromEntries(
+  Object.entries(_LT.Admission || {}).map(([from, list]) => [from, new Set([from, ...list])]),
+);
+
+function validateStatusTransition(from, to) {
+  if (!from || from === to) return null; // no-op move always allowed
+  try {
+    _admAssert("Admission", from, to);
+    return null;
+  } catch (e) {
+    return e.message;
+  }
+}
+
 AdmissionSchema.pre("save", function (next) {
   if (this.isNew) return next();
   if (!this.isModified("status")) return next();
   const prev = this.$__.originalStatus;
-  // We stored the original status in post('init'); if missing (manual
-  // construct), skip the check — there's no baseline to compare to.
   if (!prev) return next();
-  const allowed = LEGAL_STATUS_TRANSITIONS[prev];
-  if (allowed && !allowed.has(this.status)) {
-    return next(
-      new Error(
-        `Illegal admission status transition: ${prev} → ${this.status}. ` +
-          `From "${prev}", allowed states are: ${[...allowed].join(", ")}.`,
-      ),
-    );
-  }
-  next();
+  try {
+    _admAssert("Admission", prev, this.status, {
+      force: !!this.__forceTransition,
+      adminUserId: this.__forceAdminUserId || null,
+    });
+    next();
+  } catch (e) { next(e); }
 });
 AdmissionSchema.post("init", function () {
   // Snapshot the loaded status so pre('save') can detect mutations.
@@ -299,6 +399,24 @@ AdmissionSchema.index({ admissionDate: -1 });
 AdmissionSchema.index({ admissionType: 1 });
 AdmissionSchema.index({ attendingDoctor: 1 });
 AdmissionSchema.index({ hasBed: 1 });
+// R7t: Discharge queue / "Discharged Today" tab + R7i MRD-page query
+// (status=Discharged + dischargedSince) — without this compound, every
+// page load scans the entire admissions collection.
+AdmissionSchema.index({ status: 1, actualDischargeDate: -1 });
+// Discharge workflow queue uses dischargeWorkflow.stage. Speeds up the
+// /admissions/discharge-queue endpoint.
+AdmissionSchema.index({ "dischargeWorkflow.stage": 1, "dischargeWorkflow.gatePassIssuedAt": -1 });
 
-module.exports =
+const AdmissionModel =
   mongoose.models.Admission || mongoose.model("Admission", AdmissionSchema);
+
+// R7bd-A-13 — expose the status-transition validator for controllers that
+// mutate status via findOneAndUpdate (which bypasses pre("save")).
+// Default export remains the model so existing `require("./admissionModel")`
+// keeps working. Named export `validateStatusTransition` available via
+// `const { validateStatusTransition } = require("../models/Patient/admissionModel");`.
+AdmissionModel.validateStatusTransition = validateStatusTransition;
+AdmissionModel.LEGAL_STATUS_TRANSITIONS = LEGAL_STATUS_TRANSITIONS;
+module.exports = AdmissionModel;
+module.exports.validateStatusTransition = validateStatusTransition;
+module.exports.LEGAL_STATUS_TRANSITIONS = LEGAL_STATUS_TRANSITIONS;

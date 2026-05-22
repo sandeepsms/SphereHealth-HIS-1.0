@@ -13,6 +13,7 @@
  * Used in both NursingNotes and DoctorNotesPage (read-only mode for doctors)
  */
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
@@ -141,9 +142,17 @@ function FL({ label, children }) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-export default function TreatmentChart({ UHID, visitId, patientName, nurseMode = true, refreshTrigger = 0, onAdminSave }) {
+export default function TreatmentChart({ UHID, visitId, patientName, nurseMode = true, refreshTrigger = 0, onAdminSave, admissionId }) {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const nurseName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Nurse";
+  // R7j: Inline "Raise Indent" CTA — visible to Nurse/Doctor/Admin when an
+  // admission ID is known. The indent page already has its own RoleGuard
+  // (action="indent.raise" → Nurse/Doctor/Admin) so the button is only a
+  // navigation shortcut; backend permissions are the trust boundary.
+  const canRaiseIndent =
+    !!admissionId &&
+    (user?.role === "Nurse" || user?.role === "Doctor" || user?.role === "Admin");
 
   const [orders,      setOrders]      = useState([]);
   const [loading,     setLoading]     = useState(false);
@@ -707,6 +716,19 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
           <button onClick={() => fetchOrders(true)} style={{ padding: "5px 12px", background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.25)", borderRadius: 6, color: "white", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
             <i className="pi pi-refresh" style={{ marginRight: 5, fontSize: 10 }} />Refresh
           </button>
+          {/* R7j: Raise Indent — quick jump to /nursing/indent/raise/:admissionId.
+              Shown only when caller passed admissionId AND the viewer can act
+              on it (Nurse / Doctor / Admin). Tinted amber so it stands out
+              from the neutral Refresh / Print actions. */}
+          {canRaiseIndent && (
+            <button
+              onClick={() => navigate(`/nursing/indent/raise/${admissionId}`)}
+              title="Raise a pharmacy indent for this patient"
+              style={{ padding: "5px 12px", background: "linear-gradient(135deg, #f59e0b, #d97706)", border: "1px solid rgba(255,255,255,.35)", borderRadius: 6, color: "white", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+            >
+              <i className="pi pi-plus-circle" style={{ marginRight: 5, fontSize: 10 }} />Raise Indent
+            </button>
+          )}
           <button onClick={() => window.print()} style={{ padding: "5px 12px", background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.25)", borderRadius: 6, color: "white", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
             <i className="pi pi-print" style={{ marginRight: 5, fontSize: 10 }} />Print MAR
           </button>
@@ -811,6 +833,29 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                           <span style={{ fontWeight: 700, fontSize: 12, flex: 1 }}>{o.orderDetails?.medicineName}</span>
                           <span style={{ fontSize: 11, color: C.muted }}>{o.orderDetails?.dose} · {o.orderDetails?.route} · {o.orderDetails?.frequency}</span>
                           <span style={{ fontSize: 10, color: C.muted }}>By: {o.orderedBy || "Doctor"}</span>
+                          {/* R7m: Explicit Acknowledge step (NABH MOM.3).
+                              Nurse acknowledges receipt of the prescription
+                              before any administration. The /step endpoint
+                              flips status Pending → Acknowledged, captures
+                              who acknowledged + when. After acknowledgment
+                              the Administer button stays visible. */}
+                          <button
+                            onClick={async () => {
+                              try {
+                                await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/${o._id}/step`, {
+                                  step: "Acknowledge",
+                                  doneBy: nurseName,
+                                });
+                                toast.success(`Acknowledged: ${o.orderDetails?.medicineName || "order"}`);
+                                fetchOrders(true);
+                              } catch (e) {
+                                toast.error(e?.response?.data?.message || "Could not acknowledge order");
+                              }
+                            }}
+                            title="Acknowledge order (NABH MOM.3 — confirms nurse has received the order)"
+                            style={{ padding: "4px 10px", background: "#0e7490", color: "white", border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+                            <i className="pi pi-eye" style={{ fontSize: 9, marginRight: 4 }} />Acknowledge
+                          </button>
                           <button
                             onClick={() => {
                               const times = getScheduledTimes(o);
@@ -857,11 +902,30 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                             )}
                             <div style={{ color: isStopped ? C.muted : C.text }}>{order.orderDetails?.medicineName || "—"}</div>
                             <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{order.orderDetails?.notes}</div>
+                            {/* R7m: Prescribing doctor — surfaced inline so
+                                the nurse can see who ordered each med
+                                without leaving the MAR row. Audit gap
+                                surfaced when ordersList showed prescriber
+                                only in the new-orders banner. */}
+                            {order.orderedBy && (
+                              <div style={{ fontSize: 10, color: C.slate, marginTop: 2, fontStyle: "italic" }}>
+                                Rx by: <b style={{ fontStyle: "normal" }}>{order.orderedBy}</b>
+                              </div>
+                            )}
                             {/* "Ordered X ago" + duration chip */}
                             <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 4 }}>
                               {(order.createdAt || order.orderedAt) && (
                                 <span style={{ fontSize: 9, color: C.muted, background: "#f1f5f9", border: `1px solid ${C.border}`, borderRadius: 3, padding: "1px 5px" }}>
                                   🕐 {timeAgo(order.createdAt || order.orderedAt)}
+                                </span>
+                              )}
+                              {/* R7m: Acknowledgment badge — green tick once
+                                  nurse has formally acknowledged the order
+                                  (status flipped from Pending to Acknowledged
+                                  via /step endpoint). */}
+                              {order.status === "Acknowledged" && (
+                                <span style={{ fontSize: 9, fontWeight: 700, background: "#dcfce7", color: "#166534", border: "1px solid #86efac", borderRadius: 3, padding: "1px 5px" }}>
+                                  ✓ Acknowledged
                                 </span>
                               )}
                               {/* Duration chip — only on active orders (Overrun not meaningful for Completed) */}
@@ -1088,6 +1152,24 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                             <span style={{ fontWeight: 700, fontSize: 12, flex: 1 }}>{o.orderDetails?.displayName || o.orderDetails?.medicineName}</span>
                             <span style={{ fontSize: 11, color: C.muted }}>{o.orderDetails?.totalVolume && `${o.orderDetails.totalVolume}ml`} · {o.orderDetails?.rate && `${o.orderDetails.rate} ml/hr`}</span>
                             <span style={{ fontSize: 10, color: C.muted }}>By: {o.orderedBy || "Doctor"}</span>
+                            {/* R7m: Acknowledge before starting infusion. */}
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/${o._id}/step`, {
+                                    step: "Acknowledge",
+                                    doneBy: nurseName,
+                                  });
+                                  toast.success(`Acknowledged: ${o.orderDetails?.displayName || o.orderDetails?.medicineName || "infusion"}`);
+                                  fetchOrders(true);
+                                } catch (e) {
+                                  toast.error(e?.response?.data?.message || "Could not acknowledge");
+                                }
+                              }}
+                              title="Acknowledge infusion order (NABH MOM.2)"
+                              style={{ padding: "4px 10px", background: "#0e7490", color: "white", border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+                              <i className="pi pi-eye" style={{ fontSize: 9, marginRight: 4 }} />Acknowledge
+                            </button>
                             <button
                               onClick={() => openAction(o, "rate-change")}
                               style={{ padding: "4px 12px", background: C.teal, color: "white", border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>

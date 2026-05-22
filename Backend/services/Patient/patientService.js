@@ -131,52 +131,26 @@ class PatientService {
         } catch { console.error("[patientService] OPD auto-visit error:", e?.message); }
       }
     } else if (patientData.registrationType === "Emergency") {
+      // R7ab: previously this branch created a SYNTHETIC Admission +
+      // fired onEmergencyVisitCreated. But the frontend's Emergency
+      // registration flow ALSO POSTs to /admissions (real admission)
+      // and /emergency (Emergency record, which under R7z fires
+      // onEmergencyVisitCreated itself). Net effect was 2 Admission
+      // rows + 2× ER-TRIAGE billing triggers + an admissionNumber race
+      // (the Date.now-slice key only changes per ~ms). Drop the
+      // synthetic branch entirely — the dedicated controller path
+      // (admissionController → emergencyController) is the single
+      // source of truth for ER intake.
+      //
+      // We still increment the visit counter here so the patient's
+      // totalEmergencyVisits is accurate before any redirect.
       try {
-        const autoBilling = require("../Billing/autoBillingService");
-        const Admission   = require("../../models/Patient/admissionModel");
-        // Synthetic Emergency admission so onEmergencyVisitCreated has
-        // a real row to attach BillingTriggers to. The triage screen
-        // updates this admission with clinical detail later.
-        const erAdmNumber = `ER-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, "0")}${String(new Date().getDate()).padStart(2, "0")}-${String(Date.now()).slice(-4)}`;
-        const adm = await Admission.create({
-          UHID:               patient.UHID,
-          patientId:          patient._id,
-          patientName:        patient.fullName,
-          contactNumber:      patient.contactNumber || "N/A",
-          admissionType:      "Emergency",
-          admissionNumber:    erAdmNumber,
-          attendingDoctor:    patient.doctor?.personalInfo?.fullName || "",
-          attendingDoctorId:  patient.doctor?._id     || patient.doctor || null,
-          department:         patient.department?.departmentName || "Emergency",
-          departmentId:       patient.department?._id || patient.department || null,
-          reasonForAdmission: patientData.chiefComplaint || "Emergency Registration",
-          hasBed:             false,
-          status:             "Active",
-          paymentType:        patient.paymentType || "GENERAL",
-          admissionDate:      new Date(),
-        });
         await this.updateVisitCount(patient._id, "Emergency");
-        autoBilling.onEmergencyVisitCreated(
-          {
-            _id:        adm._id,
-            UHID:       patient.UHID,
-            patientId:  patient._id,
-            visitDate:  new Date(),
-            doctorId:   adm.attendingDoctorId,
-            departmentId: adm.departmentId,
-          },
-          adm,
-        ).catch((e) => {
-          try {
-            const { logErr } = require("../../utils/logErr");
-            logErr("patientService", `ER trigger ${patient.UHID}`)(e);
-          } catch { console.error("[patientService] ER trigger error:", e?.message); }
-        });
       } catch (e) {
         try {
           const { logErr } = require("../../utils/logErr");
-          logErr("patientService", `auto-create ER admission ${patient.UHID}`)(e);
-        } catch { console.error("[patientService] ER auto-admit error:", e?.message); }
+          logErr("patientService", `ER visit-count ${patient.UHID}`)(e);
+        } catch { console.error("[patientService] ER visit-count error:", e?.message); }
       }
     }
 
@@ -249,31 +223,77 @@ class PatientService {
   /* ══════════════════════════════════════════════
      SEARCH
   ══════════════════════════════════════════════ */
-  async searchPatients(searchTerm, limit = 10) {
+  async searchPatients(searchTerm, limit = 50) {
     if (!searchTerm || searchTerm.trim().length < 2) return [];
     const trimmed = searchTerm.trim();
-    // Escape regex meta-chars (same fix as getAllPatients) — phone searches
-    // like "+91…" or "(98)…" would otherwise throw "Invalid regular
-    // expression" and 500 the live patient-search bar.
+    const lim = Math.min(parseInt(limit) || 50, 50); // R7bf-J/A8-CRIT-1: hard cap
+    // R7bf-J/A8-CRIT-1: use the Mongo text index for fuzzy general search,
+    // falling back to exact-prefix lookups when the input looks like a
+    // phone/UHID/patient-id (text index doesn't tokenise digit sequences
+    // mid-string). Pre-R7bf this was a 5-way regex-OR COLLSCAN at 30k+
+    // patients (p95 8.4s). Now: index-backed and bounded by .limit(50).
     const esc = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const SELECT =
+      "fullName title UHID contactNumber email gender dateOfBirth maritalStatus department doctor completeAddress knownAllergies tpa companionName companionRelationship companionContact hasAppointment appointmentDate appointmentTime registrationType bloodGroup address totalOPDVisits totalEmergencyVisits totalIPDVisits totalDaycareVisits totalServicesVisits lastVisitDate";
+
+    const looksLikePhone   = /^[+0-9()\s-]{3,}$/.test(trimmed);
+    const looksLikeUHID    = /^UH\d/i.test(trimmed) || /^uh/i.test(trimmed);
+    const looksLikeIdToken = /^(opd|emg|ipd|day|svc)[-\s]?\d/i.test(trimmed);
+
+    // Exact-shape path: phone, UHID, patientId. These are highly selective
+    // (each has its own dedicated index) and reach via .find with a regex
+    // anchored at the start where possible.
+    if (looksLikePhone || looksLikeUHID || looksLikeIdToken) {
+      const or = [];
+      if (looksLikePhone)   or.push({ contactNumber: { $regex: esc } });
+      if (looksLikeUHID)    or.push({ UHID:          { $regex: `^${esc}`, $options: "i" } });
+      if (looksLikeIdToken) or.push({ patientId:     { $regex: `^${esc}`, $options: "i" } });
+      return Patient.find({ isActive: true, $or: or })
+        .populate("department", "departmentName")
+        .populate("doctor", "personalInfo")
+        .populate("tpa", "tpaName")
+        .select(SELECT)
+        .limit(lim)
+        .lean();
+    }
+
+    // General fuzzy path — Mongo $text. Use lean() and the score for sort
+    // so the most relevant hit (UHID/mobile match → highest weight) wins.
+    try {
+      const rows = await Patient.find(
+        { isActive: true, $text: { $search: trimmed } },
+        { score: { $meta: "textScore" } },
+      )
+        .populate("department", "departmentName")
+        .populate("doctor", "personalInfo")
+        .populate("tpa", "tpaName")
+        .select(SELECT)
+        .sort({ score: { $meta: "textScore" } })
+        .limit(lim)
+        .lean();
+      if (rows.length > 0) return rows;
+    } catch (_) {
+      // text index might not be built yet on a freshly-migrated DB —
+      // fall through to the safe regex path below.
+    }
+
+    // Last-resort fallback (e.g. text index missing, single-char token):
+    // narrow regex to ONLY fullName/email which are most useful for free
+    // text and skip the expensive 5-way OR scan.
     return Patient.find({
       isActive: true,
       $or: [
         { fullName: { $regex: esc, $options: "i" } },
-        { UHID: { $regex: esc, $options: "i" } },
-        { contactNumber: { $regex: esc, $options: "i" } },
-        { patientId: { $regex: esc, $options: "i" } },
-        { email: { $regex: esc, $options: "i" } },
+        { email:    { $regex: esc, $options: "i" } },
       ],
     })
       .populate("department", "departmentName")
       .populate("doctor", "personalInfo")
       .populate("tpa", "tpaName")
-      .select(
-        "fullName title UHID contactNumber email gender dateOfBirth maritalStatus department doctor completeAddress knownAllergies tpa companionName companionRelationship companionContact hasAppointment appointmentDate appointmentTime registrationType bloodGroup address totalOPDVisits totalEmergencyVisits totalIPDVisits totalDaycareVisits totalServicesVisits lastVisitDate",
-      )
+      .select(SELECT)
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit));
+      .limit(lim)
+      .lean();
   }
 
   /* ══════════════════════════════════════════════
@@ -358,15 +378,181 @@ class PatientService {
   }
 
   /* ══════════════════════════════════════════════
-     DELETE (soft)
+     DELETE (soft, with cascade guard + force-cascade)
+     R7bd-A-1 / A1-CRIT-1
+     ──────────────────────────────────────────────────────────────
+     Pre-R7bd this was a one-liner that flipped isActive=false and
+     left ACTIVE admissions / unpaid bills / open advances orphaned.
+     A "deleted" patient could still appear on the IPD census via
+     their Admission, but lookups against the patient collection
+     returned "Patient not found" — a clinical / billing footgun.
+     Now:
+       • Default path (force=false): REFUSE with 409 if the patient
+         has any active admission, any non-terminal bill, or any
+         advance with positive balance. Operator must clean those up
+         first.
+       • Force path (force=true, admin-only): cascade soft-delete the
+         related rows in a controlled order (admissions → cancel,
+         bills → cancel, advances → mark CANCELLED) emitting a
+         BillingAudit row per cascade step so the audit chain is
+         intact. The patient is then archived.
+     The actor's identity is taken from `actor` so the route can pipe
+     req.user identity into the audit rows.
   ══════════════════════════════════════════════ */
-  async deletePatient(id) {
-    const patient = await Patient.findByIdAndUpdate(
-      id,
-      { isActive: false },
-      { new: true },
-    );
+  async deletePatient(id, { force = false, actor = {} } = {}) {
+    const Admission       = require("../../models/Patient/admissionModel");
+    const PatientBill     = require("../../models/PatientBillModel/PatientBillModel");
+    const PatientAdvance  = require("../../models/PatientBillModel/PatientAdvanceModel");
+
+    const patient = await Patient.findById(id);
     if (!patient) throw new Error("Patient not found");
+    if (patient.isActive === false) {
+      // Already archived — idempotent return, do not re-emit audit.
+      return patient;
+    }
+
+    // Probe the three blocking conditions in parallel.
+    const [activeAdmission, openBill, openAdvance] = await Promise.all([
+      Admission.findOne({ patientId: patient._id, status: "Active" }).select("_id admissionNumber").lean(),
+      PatientBill.exists({
+        patient: patient._id,
+        billStatus: { $nin: ["CANCELLED", "PAID", "REFUNDED"] },
+      }),
+      PatientAdvance.exists({
+        patientId: patient._id,
+        status:    { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
+      }),
+    ]);
+
+    if (!force) {
+      const reasons = [];
+      if (activeAdmission) reasons.push(`active admission ${activeAdmission.admissionNumber || activeAdmission._id}`);
+      if (openBill)        reasons.push("unpaid/uncancelled bill(s)");
+      if (openAdvance)     reasons.push("advance(s) with positive balance");
+      if (reasons.length) {
+        const err = new Error(
+          `Cannot delete patient — ${reasons.join("; ")}. ` +
+          `Resolve the open items first, or call with force=true (Admin) to cascade-soft-delete.`,
+        );
+        err.status = 409;
+        err.code   = "PATIENT_HAS_DEPENDENCIES";
+        throw err;
+      }
+    }
+
+    // Audit emitter (lazy load — avoid circular require at module init).
+    let emit = null;
+    try {
+      ({ emit } = require("../../models/Billing/BillingAudit"));
+    } catch (_) { /* audit best-effort */ }
+    const auditCommon = {
+      UHID:      patient.UHID,
+      patientId: patient._id,
+      actorId:   actor.id || null,
+      actorName: actor.name || "System",
+      actorRole: actor.role || "",
+    };
+
+    // Cascade path (force=true) — fan out soft-deletes/cancels with
+    // an audit row per touched object so the finance + clinical
+    // history stays reconstructable.
+    if (force) {
+      // 1. Active admissions → cancel via the safe service path so
+      //    bed + billing-trigger cascades run too.
+      try {
+        const admissionService = require("./admissionService");
+        const liveAdmissions = await Admission.find({
+          patientId: patient._id,
+          status: "Active",
+        }).select("_id").lean();
+        for (const a of liveAdmissions) {
+          try {
+            await admissionService.cancelAdmission(a._id, "PATIENT_DELETED_CASCADE", { actor, force: true });
+          } catch (e) {
+            console.warn(`[deletePatient cascade] cancelAdmission ${a._id} failed:`, e.message);
+          }
+        }
+      } catch (e) {
+        console.warn("[deletePatient cascade] admission cascade skipped:", e.message);
+      }
+
+      // 2. Open bills → mark CANCELLED with reason. Skip terminal ones.
+      try {
+        const openBills = await PatientBill.find({
+          patient: patient._id,
+          billStatus: { $nin: ["CANCELLED", "REFUNDED"] },
+        });
+        for (const b of openBills) {
+          const prev = b.billStatus;
+          b.billStatus = "CANCELLED";
+          b.cancellationReason = "PATIENT_DELETED_CASCADE";
+          try { await b.save(); } catch (e) { console.warn("[deletePatient cascade] bill save failed:", e.message); continue; }
+          if (emit) {
+            try {
+              await emit({
+                ...auditCommon,
+                event:      "BILL_CANCELLED",
+                billId:     b._id,
+                billNumber: b.billNumber,
+                reason:     "PATIENT_DELETED_CASCADE",
+                before:     { billStatus: prev },
+                after:      { billStatus: "CANCELLED" },
+              });
+            } catch (_) {}
+          }
+        }
+      } catch (e) {
+        console.warn("[deletePatient cascade] bill cascade skipped:", e.message);
+      }
+
+      // 3. Active advances → mark CANCELLED so the unspent balance
+      //    is removed from the patient's wallet. The cashier must
+      //    manually issue any external refund — this cascade only
+      //    closes the ledger row.
+      try {
+        const openAdvances = await PatientAdvance.find({
+          patientId: patient._id,
+          status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
+        });
+        for (const a of openAdvances) {
+          const prev = a.status;
+          a.status = "CANCELLED";
+          a.remarks = (a.remarks ? a.remarks + " | " : "") + "Cancelled by PATIENT_DELETED_CASCADE";
+          try { await a.save(); } catch (e) { console.warn("[deletePatient cascade] advance save failed:", e.message); continue; }
+          if (emit) {
+            try {
+              await emit({
+                ...auditCommon,
+                event:                "ADVANCE_REFUNDED", // closest enum value — semantic = "advance closed"
+                advanceId:            a._id,
+                advanceReceiptNumber: a.receiptNumber,
+                reason:               "PATIENT_DELETED_CASCADE",
+                before:               { status: prev },
+                after:                { status: "CANCELLED" },
+              });
+            } catch (_) {}
+          }
+        }
+      } catch (e) {
+        console.warn("[deletePatient cascade] advance cascade skipped:", e.message);
+      }
+    }
+
+    // Finally: archive the patient.
+    patient.isActive = false;
+    await patient.save();
+
+    if (emit) {
+      try {
+        await emit({
+          ...auditCommon,
+          event:  "USER_TERMINATED", // closest enum hit — patient archival fits the lifecycle bucket
+          reason: force ? "PATIENT_ARCHIVED (force cascade)" : "PATIENT_ARCHIVED",
+          after:  { isActive: false, force },
+        });
+      } catch (_) {}
+    }
+
     return patient;
   }
 
@@ -435,6 +621,32 @@ class PatientService {
       { $inc: { [field]: 1 }, lastVisitDate: new Date() },
       { new: true }
     );
+  }
+
+  /* ══════════════════════════════════════════════
+     R7bd-A-15 / A1-MED-19 — DECREMENT VISIT COUNT
+     ─────────────────────────────────────────────
+     Called from cancelAdmission and deleteAdmission cascade so the
+     patient's totalXxxVisits counter doesn't inflate when an admission
+     never actually happened. We `$inc: -1` then clamp at 0 with a
+     secondary update so a double-decrement (race) can't drive the
+     counter negative. Idempotency is best-effort: cron auto-recon
+     can re-sweep if cancels overlap.
+  ══════════════════════════════════════════════ */
+  async decrementVisitCount(patientId, type) {
+    const field = visitCounterField(type);
+    if (!field) return null;
+    // Two-step: $inc -1 to make it visible (Mongo doesn't have a "max(0,
+    // x-1)" atomic), then clamp negative to 0.
+    const after = await Patient.findByIdAndUpdate(
+      patientId,
+      { $inc: { [field]: -1 } },
+      { new: true },
+    );
+    if (after && (after[field] || 0) < 0) {
+      await Patient.findByIdAndUpdate(patientId, { $set: { [field]: 0 } });
+    }
+    return after;
   }
 
   async getPatientsByTPA(tpaId, filters = {}) {

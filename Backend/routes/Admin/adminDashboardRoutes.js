@@ -29,16 +29,21 @@ const PharmacySale  = require("../../models/Pharmacy/PharmacySaleModel");
 const DrugBatch     = require("../../models/Pharmacy/DrugBatchModel");
 const Drug          = require("../../models/Pharmacy/DrugModel");
 const HospitalSettings = require("../../models/HospitalSettings");
+const { istStartOfToday, istStartOfDayPlus, istEndOfToday } = require("../../utils/queryGuards");
 
 router.use(authenticate);
 
 router.get("/overview", requireAction("users.read"), async (req, res) => {
   try {
-    const today      = new Date(); today.setHours(0, 0, 0, 0);
-    const tomorrow   = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
-    const yesterday  = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
-    const ninetyDays = new Date(today); ninetyDays.setDate(ninetyDays.getDate() + 90);
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    // R7bf-H A6-HIGH-1: IST-anchored day windows. Pre-R7bf used
+    // `new Date().setHours(0,0,0,0)` server-local, which drifted by
+    // 5h30m on UTC boxes — admissions made between 18:30 UTC and 24:00
+    // UTC fell into the wrong calendar day on the dashboard.
+    const today      = istStartOfToday();
+    const tomorrow   = istEndOfToday();
+    const yesterday  = istStartOfDayPlus(-1);
+    const ninetyDays = istStartOfDayPlus(90);
+    const monthStart = new Date(`${today.toISOString().slice(0, 7)}-01T00:00:00+05:30`);
 
     /* Fire every aggregation in parallel — keeps the round-trip under
        ~200ms on a warm Mongo, even with full pipelines. */
@@ -88,11 +93,17 @@ router.get("/overview", requireAction("users.read"), async (req, res) => {
         { $group: { _id: null, count: { $sum: 1 }, net: { $sum: "$netAmount" } } },
       ]).catch(() => []),
       Drug.countDocuments({ isActive: { $ne: false } }).catch(() => 0),
-      DrugBatch.countDocuments({ expiryDate: { $gte: today, $lt: ninetyDays }, currentStock: { $gt: 0 } }).catch(() => 0),
-      DrugBatch.countDocuments({ expiryDate: { $lt: today }, currentStock: { $gt: 0 } }).catch(() => 0),
+      // R7bf-H A6-CRIT-5: DrugBatch field is `remaining`, NOT `currentStock`.
+      // Pre-R7bf both KPI tiles read a non-existent field so every admin
+      // saw "0 expiring (90d)" + "0 expired" regardless of real state.
+      DrugBatch.countDocuments({ expiryDate: { $gte: today, $lt: ninetyDays }, remaining: { $gt: 0 } }).catch(() => 0),
+      DrugBatch.countDocuments({ expiryDate: { $lt: today }, remaining: { $gt: 0 } }).catch(() => 0),
+      // R7bf-H A6-CRIT-5: DrugBatch ref is `drugId`, NOT `drug`. Pre-R7bf
+      // the $lookup matched zero rows, onHand was always 0, every drug
+      // appeared low-stock or none did depending on reorderLevel default.
       Drug.aggregate([
-        { $lookup: { from: "pharmacydrugbatches", localField: "_id", foreignField: "drug", as: "batches" } },
-        { $addFields: { onHand: { $sum: "$batches.currentStock" } } },
+        { $lookup: { from: "pharmacydrugbatches", localField: "_id", foreignField: "drugId", as: "batches" } },
+        { $addFields: { onHand: { $sum: "$batches.remaining" } } },
         { $match: { reorderLevel: { $gt: 0 }, $expr: { $lte: ["$onHand", "$reorderLevel"] } } },
         { $count: "n" },
       ]).catch(() => []),
@@ -121,19 +132,30 @@ router.get("/overview", requireAction("users.read"), async (req, res) => {
       ]).catch(() => []),
     ]);
 
-    /* Bed status rollup */
+    /* Bed status rollup. R7bf-H A6-HIGH-4: occupancyPct now uses a
+       service-available denominator (excludes Maintenance + Blocked +
+       any bed mid-cleaning). Cleaning beds were previously counted in
+       the denominator so the occupancy figure under-stated when a few
+       discharges had just left and beds were being turned over. */
     const bedsByStatus = {};
     bedsAll.forEach(b => { bedsByStatus[b._id] = b.n; });
     const bedsTotal     = Object.values(bedsByStatus).reduce((a, b) => a + b, 0);
     const bedsOccupied  = bedsByStatus["Occupied"] || 0;
     const bedsAvailable = bedsByStatus["Available"] || 0;
-    const occupancyPct  = bedsTotal ? Math.round((bedsOccupied / bedsTotal) * 100) : 0;
+    const bedsServiceable = bedsTotal - (bedsByStatus["Maintenance"] || 0) - (bedsByStatus["Blocked"] || 0);
+    const occupancyPct  = bedsServiceable ? Math.round((bedsOccupied / bedsServiceable) * 100) : 0;
 
-    /* By-ward occupancy */
+    /* By-ward occupancy. R7bf-H A6-HIGH-4: same exclusion at the bed
+       row level — a bed currently being cleaned shouldn't count in the
+       per-ward occupancy denominator. */
     const bedsByWard = await Bed.aggregate([
+      { $addFields: {
+          _isCleaning: { $in: ["$housekeeping.state", ["CleaningPending", "CleaningInProgress", "CleaningDone"]] },
+          _isOutOfService: { $in: ["$status", ["Maintenance", "Blocked"]] },
+      } },
       { $group: {
           _id: { ward: "$wardName", code: "$wardCode" },
-          total:    { $sum: 1 },
+          total:    { $sum: { $cond: [{ $or: ["$_isCleaning", "$_isOutOfService"] }, 0, 1] } },
           occupied: { $sum: { $cond: [{ $eq: ["$status", "Occupied"] }, 1, 0] } },
           available:{ $sum: { $cond: [{ $eq: ["$status", "Available"] }, 1, 0] } },
       } },

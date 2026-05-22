@@ -16,7 +16,14 @@ const DrugBatchSchema = new mongoose.Schema(
 
     quantityIn:   { type: Number, required: true, min: 0 },      // received
     quantityOut:  { type: Number, default: 0,    min: 0 },       // dispensed/lost
-    remaining:    { type: Number, default: 0,    min: 0 },       // computed: in - out
+    // R7bb-FIX-E-11/D6-HIGH-1: separate counter for stock returned
+    // to the supplier (expired, damaged, recalled). Subtracted from
+    // remaining alongside quantityOut so dispense and vendor-return
+    // both deplete the same available pool. Kept distinct so the
+    // expiry / D&C registers can tell "we returned 60 strips to the
+    // supplier" apart from "we dispensed 60 strips to patients".
+    vendorReturned: { type: Number, default: 0, min: 0 },
+    remaining:    { type: Number, default: 0,    min: 0 },       // computed: in - out - vendorReturned
 
     purchaseRate: { type: Number, default: 0 },     // per unit, pre-GST
     mrp:          { type: Number, default: 0 },
@@ -40,8 +47,11 @@ DrugBatchSchema.index({ drugId: 1, expiryDate: 1, remaining: 1 });
 DrugBatchSchema.index({ drugId: 1, batchNo: 1 }, { unique: true });
 
 // Auto-compute remaining on save.
+// R7bb-FIX-E-11: include vendorReturned in the consumption side so a
+// batch fully returned to the supplier shows remaining: 0 even if
+// quantityOut hasn't moved (no patient dispenses on a returned batch).
 DrugBatchSchema.pre("save", function (next) {
-  this.remaining = Math.max(0, (this.quantityIn || 0) - (this.quantityOut || 0));
+  this.remaining = Math.max(0, (this.quantityIn || 0) - (this.quantityOut || 0) - (this.vendorReturned || 0));
   next();
 });
 

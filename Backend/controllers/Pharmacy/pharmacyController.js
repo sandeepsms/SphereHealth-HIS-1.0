@@ -26,7 +26,9 @@ const Supplier    = require("../../models/Pharmacy/SupplierModel");
 const Sale        = require("../../models/Pharmacy/PharmacySaleModel");
 const Settings    = require("../../models/Pharmacy/PharmacySettingsModel");
 const Counter     = require("../../models/CounterModel");
+const Patient     = require("../../models/Patient/patientModel");
 const mongoose    = require("mongoose");
+const { assertDrugSafeOrOverride } = require("../../utils/allergyCheck");
 
 const todayISO  = () => new Date().toISOString().slice(0, 10);
 const isOid     = (v) => mongoose.Types.ObjectId.isValid(v);
@@ -393,6 +395,43 @@ exports.dispense = async (req, res) => {
       }
     }
 
+    // R7az-CRIT-1 (D7-CRIT-1): drug-allergy gate at the counter.
+    // Walk-in sales are anonymous (no patient record); for every other
+    // sale-type we look the patient up by UHID, hydrate the unified
+    // `allergies` virtual (which merges legacy knownAllergies + the new
+    // typed allergyList[]), and run the substring-match gate from
+    // utils/allergyCheck. Per-line `_allergyOverrideReason` allows a
+    // senior pharmacist to dispense against a known allergy with a
+    // documented clinical reason (mirrors the Rx-side hook).
+    if (saleType !== "Walk-in" && String(patientUHID || "").trim()) {
+      try {
+        const pat = await Patient.findOne({ UHID: String(patientUHID).trim() })
+          .select("knownAllergies allergyList")
+          .lean({ virtuals: true });
+        if (pat) {
+          const allergyPool = pat.allergies || pat.allergyList || pat.knownAllergies || [];
+          for (const it of items) {
+            assertDrugSafeOrOverride(
+              { drugName: it.drugName, genericName: it.genericName, brandName: it.brandName },
+              allergyPool,
+              { overrideReason: it._allergyOverrideReason, label: "counter-dispense" },
+            );
+          }
+        }
+      } catch (allergyErr) {
+        if (allergyErr.code === "ALLERGY_COLLISION") {
+          return res.status(409).json({
+            success: false,
+            message: allergyErr.message,
+            allergen: allergyErr.allergen,
+            drugName: allergyErr.drugName,
+          });
+        }
+        // Non-allergy errors fall through to the outer catch.
+        throw allergyErr;
+      }
+    }
+
     // Bill number — Counter._id is the scope key, NOT a `name` field.
     const seq = await nextSeq("pharmacyBill");
     const billNumber = `PHM-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
@@ -473,6 +512,11 @@ exports.dispense = async (req, res) => {
       createdById: req.user?._id || null,
       remarks: remarks || "",
     });
+    // R7bf-H A6-HIGH-2: bust pharmacy revenue trend cache so the chart
+    // doesn't lag the dashboard by up to 24h after a bulk sale.
+    try {
+      require("../Reports/dashboardsController").invalidatePharmacyTrendCache?.();
+    } catch (_) { /* best-effort */ }
     res.json({ success: true, data: sale });
     } catch (consumeErr) {
       // Cross-item rollback (business audit F-03): if any item or the
@@ -915,6 +959,184 @@ exports.cancelSale = async (req, res) => {
 /* ════════════════════════════════════════════════════════════════
    DASHBOARD STATS + ALERTS
 ══════════════════════════════════════════════════════════════════ */
+/* ════════════════════════════════════════════════════════════════
+   R7bb-FIX-E-11 / D6-HIGH-1: Vendor return — return a batch to the
+   supplier (expired / damaged / recalled). Pre-R7bb the only way to
+   adjust stock for a vendor return was a free-form stock adjustment
+   that left no audit anchor. New path:
+     POST /api/pharmacy/vendor-returns  { vendor, batchId, qty, reason, expiryDate?, debitNoteNo?, debitNoteDate?, remarks? }
+   Effect:
+     • DrugBatch.vendorReturned += qty  (pre-save hook recomputes remaining)
+     • PharmacyVendorReturn row created
+     • BillingAudit row emitted (event reused: ITEM_PRICE_OVERRIDDEN as
+       generic master-data adjustment; reason carries the prefix
+       VENDOR_RETURN for grep-ability)
+   ════════════════════════════════════════════════════════════════ */
+exports.recordVendorReturn = async (req, res) => {
+  try {
+    const PharmacyVendorReturn = require("../../models/Pharmacy/PharmacyVendorReturnModel");
+    const { batchId, qty, reason, expiryDate, debitNoteNo, debitNoteDate, remarks, vendor, vendorName } = req.body || {};
+    if (!batchId || !isOid(batchId)) {
+      return res.status(400).json({ success: false, message: "batchId (ObjectId) required" });
+    }
+    const qtyN = Number(qty);
+    if (!Number.isFinite(qtyN) || qtyN <= 0) {
+      return res.status(400).json({ success: false, message: "qty must be a positive number" });
+    }
+    const batch = await DrugBatch.findById(batchId);
+    if (!batch) return res.status(404).json({ success: false, message: "Batch not found" });
+    const remaining = Math.max(0, (batch.quantityIn || 0) - (batch.quantityOut || 0) - (batch.vendorReturned || 0));
+    if (qtyN > remaining) {
+      return res.status(409).json({
+        success: false,
+        code: "INSUFFICIENT_STOCK",
+        message: `Cannot return ${qtyN} — only ${remaining} remaining in batch ${batch.batchNo}.`,
+      });
+    }
+    batch.vendorReturned = (batch.vendorReturned || 0) + qtyN;
+    // remaining is recomputed by pre-save hook (in - out - vendorReturned).
+    await batch.save();
+
+    const row = await PharmacyVendorReturn.create({
+      batchId:     batch._id,
+      drugId:      batch.drugId,
+      drugName:    batch.drugName,
+      batchNo:     batch.batchNo,
+      vendor:      vendor && isOid(vendor) ? vendor : (batch.supplierId || null),
+      vendorName:  vendorName || batch.supplierName || "",
+      qty:         qtyN,
+      reason:      String(reason || "EXPIRED").toUpperCase(),
+      expiryDate:  expiryDate ? new Date(expiryDate) : (batch.expiryDate || null),
+      debitNoteNo: String(debitNoteNo || "").trim(),
+      debitNoteDate: debitNoteDate ? new Date(debitNoteDate) : null,
+      remarks:     String(remarks || "").trim(),
+      returnedAt:  new Date(),
+      returnedBy:  req.user?.fullName || req.user?.employeeId || "Pharmacy",
+      returnedById:   req.user?._id || req.user?.id || null,
+      returnedByRole: req.user?.role || "",
+    });
+
+    // Best-effort audit.
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:     "ITEM_PRICE_OVERRIDDEN",  // re-used enum bucket
+        actorId:   req.user?._id || req.user?.id,
+        actorName: req.user?.fullName,
+        actorRole: req.user?.role,
+        amount:    qtyN * Number(batch.purchaseRate || 0),
+        reason:    `VENDOR_RETURN: ${batch.drugName || ""} batch ${batch.batchNo} qty=${qtyN} reason=${reason || "EXPIRED"} (debit-note ${debitNoteNo || "—"})`,
+        before:    { remaining, vendorReturned: (batch.vendorReturned || 0) - qtyN },
+        after:     { remaining: batch.remaining, vendorReturned: batch.vendorReturned, vendorReturnId: row._id },
+      }, { req });
+    } catch (_) { /* best-effort */ }
+
+    res.status(201).json({ success: true, data: row, batchAfter: batch });
+  } catch (e) { sendErr(res, e); }
+};
+
+exports.listVendorReturns = async (req, res) => {
+  try {
+    const PharmacyVendorReturn = require("../../models/Pharmacy/PharmacyVendorReturnModel");
+    const { vendor, batchId, from, to, reason } = req.query;
+    const q = {};
+    if (vendor && isOid(vendor))  q.vendor = vendor;
+    if (batchId && isOid(batchId)) q.batchId = batchId;
+    if (reason) q.reason = String(reason).toUpperCase();
+    if (from || to) {
+      q.returnedAt = {};
+      if (from) q.returnedAt.$gte = new Date(`${from}T00:00:00`);
+      if (to)   q.returnedAt.$lte = new Date(`${to}T23:59:59.999`);
+    }
+    const rows = await PharmacyVendorReturn.find(q).sort({ returnedAt: -1 }).limit(500).lean();
+    res.json({ success: true, count: rows.length, data: rows });
+  } catch (e) { sendErr(res, e); }
+};
+
+/* ════════════════════════════════════════════════════════════════
+   R7bb-FIX-E-14 / D6-HIGH-7: Pharmacy end-of-day cash close.
+   Snapshots /pharmacy/stats for the day into a PharmacyDayClose doc
+   and emits an audit row. Pre-R7bb the day-end reconciliation lived
+   only on a paper register — pharmacist counted till, signed, no
+   queryable trail. Now Admin / Pharmacist can call this once per day
+   and the snapshot becomes the source of truth for the accountant.
+   ════════════════════════════════════════════════════════════════ */
+const PharmacyDayCloseSchema = new (require("mongoose").Schema)({
+  asOf:           { type: Date, required: true },
+  closedBy:       { type: String, trim: true, default: "" },
+  closedById:     { type: require("mongoose").Schema.Types.ObjectId, ref: "User", default: null },
+  closedByRole:   { type: String, trim: true, default: "" },
+  closedAt:       { type: Date, default: Date.now },
+  // Snapshot of the stats payload at close-time.
+  drugsCount:     { type: Number, default: 0 },
+  batchesInStock: { type: Number, default: 0 },
+  stockValue:     { type: Number, default: 0 },
+  todaySales:     { type: require("mongoose").Schema.Types.Mixed, default: {} },
+  monthSales:     { type: require("mongoose").Schema.Types.Mixed, default: {} },
+  cashOnHand:     { type: Number, default: 0 },
+  varianceNote:   { type: String, trim: true, default: "" },
+}, { timestamps: true });
+PharmacyDayCloseSchema.index({ asOf: 1 });
+const PharmacyDayClose = require("mongoose").models.PharmacyDayClose ||
+  require("mongoose").model("PharmacyDayClose", PharmacyDayCloseSchema);
+
+exports.closeDay = async (req, res) => {
+  try {
+    const asOf = req.body?.asOf ? new Date(req.body.asOf) : new Date();
+    // Re-use the same aggregation the /stats endpoint runs by calling it
+    // inline. Cheaper than refactoring — only fires once per day.
+    const todayStart = new Date(asOf); todayStart.setHours(0,0,0,0);
+    const monthStart = new Date(asOf.getFullYear(), asOf.getMonth(), 1);
+    const SALE_STATUSES = ["Completed", "Partial-Return", "Refunded", "Supplemented"];
+    const [drugsCount, batches, todayAgg, monthAgg] = await Promise.all([
+      Drug.countDocuments({ isActive: true }),
+      DrugBatch.find({ isActive: true, remaining: { $gt: 0 } }).lean(),
+      Sale.aggregate([
+        { $match: { status: { $in: SALE_STATUSES }, createdAt: { $gte: todayStart } } },
+        { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$grandTotal" } } },
+      ]),
+      Sale.aggregate([
+        { $match: { status: { $in: SALE_STATUSES }, createdAt: { $gte: monthStart } } },
+        { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$grandTotal" } } },
+      ]),
+    ]);
+    const stockValue = batches.reduce((s, b) => s + (b.remaining * (b.salePrice || b.mrp || 0)), 0);
+    const row = await PharmacyDayClose.create({
+      asOf,
+      closedBy:     req.user?.fullName || req.user?.employeeId || "Pharmacy",
+      closedById:   req.user?._id || req.user?.id || null,
+      closedByRole: req.user?.role || "",
+      drugsCount,
+      batchesInStock: batches.length,
+      stockValue:   Math.round(stockValue),
+      todaySales: {
+        count: todayAgg[0]?.count || 0,
+        total: Math.round(todayAgg[0]?.total || 0),
+      },
+      monthSales: {
+        count: monthAgg[0]?.count || 0,
+        total: Math.round(monthAgg[0]?.total || 0),
+      },
+      cashOnHand:   Number(req.body?.cashOnHand || 0),
+      varianceNote: String(req.body?.varianceNote || "").trim(),
+    });
+    // Audit
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:     "SHIFT_CLOSED",   // closest enum bucket
+        actorId:   req.user?._id || req.user?.id,
+        actorName: row.closedBy,
+        actorRole: row.closedByRole,
+        amount:    row.todaySales?.total || 0,
+        reason:    `PHARMACY_DAY_CLOSE asOf=${asOf.toISOString().slice(0,10)} sales=${row.todaySales?.count || 0}`,
+        after:     { dayCloseId: row._id, stockValue: row.stockValue, todaySales: row.todaySales },
+      }, { req });
+    } catch (_) { /* best-effort */ }
+    res.status(201).json({ success: true, data: row });
+  } catch (e) { sendErr(res, e); }
+};
+
 exports.stats = async (req, res) => {
   try {
     const now = new Date();

@@ -13,6 +13,7 @@ import {
   AdminPage, Hero, KPI, Card, Table, EmptyRow, RowAction, Badge,
   SearchInput, PrimaryButton, C,
 } from "../../Components/admin-theme";
+import { confirm } from "../../Components/common/ConfirmDialog";
 
 const fullNameOf = (d) => `${d.personalInfo?.firstName || ""} ${d.personalInfo?.lastName || ""}`.trim() || "—";
 
@@ -53,8 +54,14 @@ const DoctorListPage = () => {
     return { total: rows.length, active, departments: departments.size, specs: specs.size, senior: seniorCount };
   }, [rows]);
 
-  const remove = (id, name) => {
-    if (!window.confirm(`Delete doctor ${name || ""}? This cannot be undone.`)) return;
+  const remove = async (id, name) => {
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Delete doctor?",
+      body: `Doctor ${name || ""} will be removed from the system. Existing records authored by this doctor are preserved. This cannot be undone.`,
+      danger: true,
+      confirmLabel: "Delete",
+    }))) return;
     doctorService.deleteDoctor(id)
       .then(() => { toast.success("Doctor deleted"); load(); })
       .catch(() => toast.error("Failed to delete doctor"));

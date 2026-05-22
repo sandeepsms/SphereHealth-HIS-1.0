@@ -42,6 +42,14 @@ router.put   ("/settings",       requireAction("pharmacy.settings"),  ctrl.updat
 router.get   ("/stats",          requireAction("rx.read"),            ctrl.stats);
 router.get   ("/alerts",         requireAction("rx.read"),            ctrl.alerts);
 
+// R7bb-FIX-E-11 / D6-HIGH-1: Vendor returns — record an expired /
+// damaged / recalled batch return to the supplier.
+router.get   ("/vendor-returns", requireAction("pharmacy.return"),    ctrl.listVendorReturns);
+router.post  ("/vendor-returns", requireAction("pharmacy.return"),    ctrl.recordVendorReturn);
+
+// R7bb-FIX-E-14 / D6-HIGH-7: end-of-day cash close snapshot.
+router.post  ("/close-day",      requireAction("pharmacy.settings"),  ctrl.closeDay);
+
 // Registers (D&C Rules + GST) — read
 router.get   ("/registers/sales",      requireAction("rx.read"),      ctrl.salesRegister);
 router.get   ("/registers/purchase",   requireAction("rx.read"),      ctrl.purchaseRegister);

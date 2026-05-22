@@ -6,6 +6,7 @@
  */
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
+import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 
 const C = {
@@ -308,27 +309,49 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
     } catch { return ""; }
   });
   const intervalRef = useRef(null);
+  // R7az-D5-MED-3 / D4-HIGH-6 — Abort cleanup for both the initial fetch
+  // and the 30s polling timer. Pre-fix, leaving the page mid-fetch could
+  // setState on a dead component, and a UHID switch left an in-flight
+  // request from the previous patient that would land afterwards and
+  // overwrite the new patient's orders.
+  const fetchAbortRef = useRef(null);
+  // R7az-D5-CRIT-2 — Per-(orderId, stepIndex) in-flight ref so a fast
+  // double-tap on the same step doesn't push the same audit-log row
+  // twice (we saw nurse-side dupes when the request was slow).
+  const stepInFlightRef = useRef(new Set());
 
   const isOrdersToday = ordersDate.toDateString() === new Date().toDateString();
 
   const fetchOrders = useCallback(async () => {
     if (!UHID) return;
+    if (fetchAbortRef.current) {
+      try { fetchAbortRef.current.abort(); } catch (_) { /* noop */ }
+    }
+    const ctrl = new AbortController();
+    fetchAbortRef.current = ctrl;
     setLoading(true);
     try {
       // Fetch ALL statuses so historical date views also see Cancelled/Stopped
       const params = new URLSearchParams({ UHID });
       if (visitId) params.append("visitId", visitId);
-      const { data } = await axios.get(`${API_ENDPOINTS.DOCTOR_ORDERS}?${params}`);
+      const { data } = await axios.get(`${API_ENDPOINTS.DOCTOR_ORDERS}?${params}`, { signal: ctrl.signal });
+      if (ctrl.signal.aborted) return;
       setOrders(data.data || []);
       setLastUpdated(new Date());
-    } catch (_) {}
-    finally { setLoading(false); }
+    } catch (_) { /* silent — abort or transient */ }
+    finally { if (!ctrl.signal.aborted) setLoading(false); }
   }, [UHID, visitId]);
 
   useEffect(() => {
     fetchOrders();
     intervalRef.current = setInterval(fetchOrders, 30000);
-    return () => clearInterval(intervalRef.current);
+    return () => {
+      clearInterval(intervalRef.current);
+      // R7az-D5-MED-3: abort any in-flight axios so the unmount is clean.
+      if (fetchAbortRef.current) {
+        try { fetchAbortRef.current.abort(); } catch (_) { /* noop */ }
+      }
+    };
   }, [fetchOrders]);
 
   // Immediately re-fetch when parent signals a refresh (e.g. after consent saved)
@@ -345,23 +368,37 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
     if (d <= new Date()) setOrdersDate(d);
   };
 
-  // Nurse completes a step
+  // Nurse completes a step.
+  // R7az-D5-CRIT-3 — Pre-fix, on POST failure we still PUSHED the step
+  // into the local auditLog. Result: nurse saw the step as "done" while
+  // the server still showed it pending, then the next 30s poll would
+  // wipe it out (or — worse — the nurse triggered a duplicate POST
+  // thinking it failed silently). Now: server is the single source of
+  // truth. On error we toast the failure and DO NOT mutate local state.
+  // We also dedup concurrent step taps via stepInFlightRef.
   const handleStepDone = async (orderId, step, totalSteps) => {
     if (!nurseName.trim()) return;
+    const inFlightKey = `${orderId}:${step}`;
+    if (stepInFlightRef.current.has(inFlightKey)) return;  // double-tap guard
+    stepInFlightRef.current.add(inFlightKey);
     try {
       const { data } = await axios.post(
         `${API_ENDPOINTS.DOCTOR_ORDERS}/${orderId}/step`,
         { step, doneBy: nurseName.trim(), totalSteps }
       );
       setOrders(prev => prev.map(o => o._id === orderId ? data.data : o));
-    } catch (_) {
-      // Optimistic update on failure
-      setOrders(prev => prev.map(o => {
-        if (o._id !== orderId) return o;
-        const newLog = [...(o.auditLog || []), { step, doneBy: nurseName, doneAt: new Date().toISOString() }];
-        const done = newLog.length >= totalSteps;
-        return { ...o, auditLog: newLog, currentStepIndex: newLog.length - 1, status: done ? "Completed" : "InProgress" };
-      }));
+    } catch (err) {
+      toast.error(
+        "Could not record step '" + step + "': "
+        + (err.response?.data?.message || err.message)
+        + " — please retry."
+      );
+      // Trigger a refetch so the panel reflects whatever the server
+      // actually has (in case the request succeeded but the response
+      // never reached us due to a flaky connection).
+      fetchOrders();
+    } finally {
+      stepInFlightRef.current.delete(inFlightKey);
     }
   };
 

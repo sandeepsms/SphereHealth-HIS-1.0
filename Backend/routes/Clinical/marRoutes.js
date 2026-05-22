@@ -1,19 +1,27 @@
 const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/Clinical/marController");
-const { attemptAuth } = require("../../middleware/auth");
+const { attemptAuth, requireAction } = require("../../middleware/auth");
 
 // Soft-auth so administer/record actions carry req.user (audit trail).
 router.use(attemptAuth);
 
-router.get("/ipd/:ipdNo", ctrl.getByIPD);
-router.get("/ipd/:ipdNo/date/:date", ctrl.getByIPDAndDate);
-router.get("/uhid/:uhid", ctrl.getByUHID);
-router.post("/", ctrl.createOrGet);
-router.get("/:id", ctrl.getById);
-router.put("/:id", ctrl.update);
-router.post("/:id/medication", ctrl.addMedication);
-router.patch("/:id/medication/:medId/administer", ctrl.recordAdministration);
-router.patch("/:id/medication/:medId/discontinue", ctrl.discontinueMedication);
+// R7q: Apply mar.write gate to every mutation. MAR records are clinical
+// NABH-audit documents — only Admin/Nurse can create or modify them.
+// Doctors discontinue via the doctor-orders / doctor-action flow instead.
+//
+// R7az-A/D1-CRIT: read gates added. Pre-R7az every GET was open to any
+// authenticated role — Pharmacist could enumerate the medication
+// administration trail by IPD / UHID / id (PHI + drug-history leak).
+// Now `mar.read` (Admin/Doctor/Nurse/MRD) on every GET.
+router.get("/ipd/:ipdNo",                              requireAction("mar.read"),  ctrl.getByIPD);
+router.get("/ipd/:ipdNo/date/:date",                   requireAction("mar.read"),  ctrl.getByIPDAndDate);
+router.get("/uhid/:uhid",                              requireAction("mar.read"),  ctrl.getByUHID);
+router.post("/",                                       requireAction("mar.write"), ctrl.createOrGet);
+router.get("/:id",                                     requireAction("mar.read"),  ctrl.getById);
+router.put("/:id",                                     requireAction("mar.write"), ctrl.update);
+router.post("/:id/medication",                         requireAction("mar.write"), ctrl.addMedication);
+router.patch("/:id/medication/:medId/administer",      requireAction("mar.write"), ctrl.recordAdministration);
+router.patch("/:id/medication/:medId/discontinue",     requireAction("mar.write"), ctrl.discontinueMedication);
 
 module.exports = router;

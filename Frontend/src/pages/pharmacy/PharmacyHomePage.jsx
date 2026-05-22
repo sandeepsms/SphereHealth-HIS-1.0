@@ -30,6 +30,7 @@ import {
   getScheduleHRegister, getExpiryRegister, getGstSummary,
   DRUG_FORMS, DRUG_CATEGORIES, PAYMENT_MODES, SALE_TYPES,
 } from "../../Services/pharmacyService";
+import { confirm } from "../../Components/common/ConfirmDialog";
 
 /* HIS UHID bridge — call this with a UHID and get back a normalised
    { patientId, patientName, age, gender, contact, doctorName, admissionId,
@@ -38,7 +39,7 @@ import {
      to the patient-master lookup. */
 async function lookupHisPatient(uhid) {
   if (!uhid || !uhid.trim()) return null;
-  const token = localStorage.getItem("his_token");
+  const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
   const headers = { Authorization: `Bearer ${token}` };
   try {
     const r = await axios.get(`${API_ENDPOINTS.BASE}/admissions/active?UHID=${encodeURIComponent(uhid.trim())}`, { headers });
@@ -248,6 +249,18 @@ function DashboardTab() {
   };
   useEffect(() => { refresh(); }, []);
 
+  // R7bd-E-8 / A2-MED-7 — clicking the Low Stock KPI tile scrolls down
+  // to the corresponding alert section (which already lists each drug
+  // + on-hand + reorder level). We don't duplicate the table here.
+  const scrollToLowStock = () => {
+    const el = document.getElementById("pharmacy-low-stock-section");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  // Aggregate count from the alerts payload — backend endpoint already
+  // returns the de-duplicated set so we just len() it.
+  const lowStockCount = (alerts.lowStock || []).length + (alerts.outOfStock || []).length;
+
   return (
     <div>
       {/* KPI strip */}
@@ -256,6 +269,15 @@ function DashboardTab() {
           <KPI label="Drugs catalogued"   value={stats.drugsCount}                  color={C.text}    icon="pi-list" />
           <KPI label="Active batches"     value={stats.batchesInStock}              color={C.blue}    icon="pi-box" />
           <KPI label="Stock value"        value={fmtINR(stats.stockValue)}          color={C.green}   icon="pi-indian-rupee" />
+          {/* R7bd-E-8 / A2-MED-7 — Low Stock KPI tile. Surfaces count
+              from /pharmacy/alerts (lowStock + outOfStock). Click
+              scrolls to the expanded list below. Tooltip-only — no
+              ward filter wired yet (deferred). */}
+          <div onClick={lowStockCount ? scrollToLowStock : undefined}
+            style={{ cursor: lowStockCount ? "pointer" : "default" }}
+            title={lowStockCount ? "Click to expand the low-stock list" : "All drugs above reorder level"}>
+            <KPI label="Low stock"          value={lowStockCount}                     color={C.amber}   icon="pi-bell" />
+          </div>
           <KPI label="Expiring 90d"       value={stats.expiringWithin90Days}        color={C.amber}   icon="pi-clock" />
           <KPI label="Already expired"    value={stats.alreadyExpired}              color={C.red}     icon="pi-exclamation-triangle" />
           <KPI label="Today sales"        value={`${stats.todaySales.count} · ${fmtINR(stats.todaySales.total)}`} color={C.purple} icon="pi-receipt" />
@@ -263,9 +285,12 @@ function DashboardTab() {
       )}
 
       {/* Alert sections */}
-      <AlertSection title="Low stock — at or below reorder level" color={C.amber}
-        empty="All drugs above reorder level."
-        rows={alerts.lowStock} cols={[["drugName","Drug",2],["totalRemaining","On hand",1],["reorderLevel","Reorder at",1]]} />
+      {/* R7bd-E-8: anchor id so the KPI tile can scroll to this section. */}
+      <div id="pharmacy-low-stock-section">
+        <AlertSection title="Low stock — at or below reorder level" color={C.amber}
+          empty="All drugs above reorder level."
+          rows={alerts.lowStock} cols={[["drugName","Drug",2],["totalRemaining","On hand",1],["reorderLevel","Reorder at",1]]} />
+      </div>
 
       <AlertSection title="Out of stock" color={C.red}
         empty="No drugs out of stock."
@@ -332,7 +357,13 @@ function DrugsTab() {
   useEffect(() => { refresh(); }, [q, category]);
 
   const remove = async (d) => {
-    if (!window.confirm(`Deactivate ${d.name}?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Deactivate drug?",
+      body: `"${d.name}" will be marked inactive and removed from new prescriptions. Existing dispense history is preserved.`,
+      danger: true,
+      confirmLabel: "Deactivate",
+    }))) return;
     try { await deleteDrug(d._id); toast.success(`${d.name} deactivated`); refresh(); }
     catch (e) { toast.error(e.message); }
   };
@@ -360,7 +391,19 @@ function DrugsTab() {
           drugs.map((d, i) => (
             <tr key={d._id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "#fff" }}>
               <td style={{ padding: "9px 12px" }}>
-                <div style={{ fontWeight: 700 }}>{d.name}</div>
+                <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                  {d.name}
+                  {/* R7bd-E-7 / A2-HIGH-7 — cold-chain badge so a pharmacist
+                      sees at a glance which SKUs need 2-8 °C handling
+                      (vaccines, insulin, biologics). Backend flag is
+                      requiresRefrigeration on DrugModel. */}
+                  {d.requiresRefrigeration && (
+                    <span title="Cold-chain — must stay at 2-8 °C"
+                      style={{ padding: "2px 6px", borderRadius: 4, background: "#dbeafe", color: "#1d4ed8", fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", whiteSpace: "nowrap" }}>
+                      ❄ COLD
+                    </span>
+                  )}
+                </div>
                 <div style={{ fontSize: 10.5, color: C.muted }}>{d.genericName || "—"}</div>
               </td>
               <td style={{ padding: "9px 12px" }}>{d.form} · {d.strength || "—"}</td>
@@ -436,6 +479,10 @@ function DrugModal({ drug, onClose, onSaved }) {
         <Check label="High-alert med (insulin / opioid)" v={form.isHighAlert} on={() => setForm(p => ({ ...p, isHighAlert: !p.isHighAlert }))} />
         <Check label="LASA (look-alike / sound-alike)"  v={form.isLASA}      on={() => setForm(p => ({ ...p, isLASA: !p.isLASA }))} />
         <Check label="Narcotic"                          v={form.isNarcotic}  on={() => setForm(p => ({ ...p, isNarcotic: !p.isNarcotic }))} />
+        {/* R7bd-E-7 / A2-HIGH-7 — flip the cold-chain flag from the
+            modal. Surface badge on the drug row picks this up
+            immediately on refresh. */}
+        <Check label="Cold-chain (2-8 °C)"               v={form.requiresRefrigeration} on={() => setForm(p => ({ ...p, requiresRefrigeration: !p.requiresRefrigeration }))} />
       </div>
     </Modal>
   );
@@ -918,7 +965,14 @@ function SalesTab() {
   useEffect(() => { refresh(); }, [q, from, to]);
 
   const cancel = async (s) => {
-    if (!window.confirm(`Cancel bill ${s.billNumber}? Stock will be restored.`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Cancel pharmacy bill?",
+      body: `Bill ${s.billNumber} will be voided and all dispensed stock will be returned to inventory. This cannot be undone.`,
+      danger: true,
+      confirmLabel: "Cancel bill",
+      cancelLabel: "Keep",
+    }))) return;
     try { await cancelSale(s._id); toast.success("Sale cancelled · stock restored"); refresh(); }
     catch (e) { toast.error(e.message); }
   };
@@ -2486,7 +2540,13 @@ function SuppliersTab() {
   };
   useEffect(() => { refresh(); }, []);
   const remove = async (s) => {
-    if (!window.confirm(`Deactivate ${s.name}?`)) return;
+    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    if (!(await confirm({
+      title: "Deactivate supplier?",
+      body: `"${s.name}" will be marked inactive and removed from new GRN dropdowns. Existing purchase history is preserved.`,
+      danger: true,
+      confirmLabel: "Deactivate",
+    }))) return;
     try { await deleteSupplier(s._id); toast.success("Supplier deactivated"); refresh(); }
     catch (e) { toast.error(e.message); }
   };

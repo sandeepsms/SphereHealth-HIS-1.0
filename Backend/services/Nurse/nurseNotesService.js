@@ -9,6 +9,8 @@ const NurseStaff = require("../../models/Nurse/NurseStaffModel");
 const DoctorNotes = require("../../models/Doctor/DoctorNotesModel");
 const Patient = require("../../models/Patient/patientModel");
 const TreatmentChart = require("../../models/Doctor/treatmentChartModel");
+// R7az-D10 hash-chained audit for amend / addendum rows.
+const activityLogger = require("../Clinical/activityLogger");
 
 /* ─────────────────────────────────────────────────────────────
    Create / Submit nurse note
@@ -69,6 +71,18 @@ const createNurseNote = async (data, nurseUserId) => {
   // Fallback: find by UHID
   if (!patient && (data.patientUHID || data.UHID)) {
     patient = await Patient.findOne({ UHID: (data.patientUHID || data.UHID) }).catch(() => null);
+  }
+  // R7az-D2-HIGH-5: orphan-write closure. A nurse note must attach to a
+  // resolved Patient ObjectId OR carry a non-empty UHID/admissionNumber
+  // — otherwise we'd silently create floating notes nobody can ever
+  // surface in the patient file. NABH AAC.7 (record completeness).
+  const finalPatientId = patient?._id || (mongoose.isValidObjectId(String(resolvedPatientId)) ? resolvedPatientId : null);
+  const finalUHID = data.patientUHID || data.UHID || patient?.UHID || "";
+  const finalIPD  = ipdNo || data.admissionNumber || "";
+  if (!finalPatientId && !finalUHID && !finalIPD) {
+    const e = new Error("Nurse note must reference a patient (patientId / UHID / ipdNo) — refusing orphaned write (NABH AAC.7)");
+    e.statusCode = 400;
+    throw e;
   }
 
   // ── Nurse — try NurseStaff lookup but don't fail if not found ──
@@ -246,7 +260,8 @@ const getNoteById = async (id) => {
 };
 
 /* ─────────────────────────────────────────────────────────────
-   Update draft note
+   Update nurse note — drafts mutate; SUBMITTED notes spawn an
+   append-only ADDENDUM (R7az-D2-HIGH-4 / NABH HIC.7).
 ───────────────────────────────────────────────────────────── */
 const updateNurseNote = async (id, data, nurseUserId) => {
   const note = await NurseNotes.findById(id);
@@ -255,15 +270,13 @@ const updateNurseNote = async (id, data, nurseUserId) => {
     e.statusCode = 404;
     throw e;
   }
-  if (note.status === "submitted") {
-    const e = new Error("Cannot edit submitted note");
-    e.statusCode = 400;
+  // R7az-D2-HIGH-5: legacy nurse-null notes shouldn't be editable by
+  // arbitrary nurses — refuse rather than fall through to a free-for-all.
+  if (!note.nurse) {
+    const e = new Error("Cannot edit legacy note with no nurse owner — create an addendum via a new note instead");
+    e.statusCode = 403;
     throw e;
   }
-  // FIX (audit P13-B3): note.nurse can legitimately be null (NurseStaff
-  // lookup may have failed on create). Skip the auth comparison when no
-  // owner is recorded — any authenticated nurse can edit an unowned note,
-  // which matches existing behaviour for legacy data.
   if (note.nurse && nurseUserId && note.nurse.toString() !== nurseUserId.toString()) {
     const e = new Error("Not authorised");
     e.statusCode = 403;
@@ -281,6 +294,44 @@ const updateNurseNote = async (id, data, nurseUserId) => {
     "nursingCare",
     "remarks",
   ];
+
+  if (note.status === "submitted") {
+    // ── ADDENDUM path ──
+    const base = note.toObject();
+    delete base._id;
+    delete base.__v;
+    delete base.createdAt;
+    delete base.updatedAt;
+    delete base.submittedAt;
+    base.signature = undefined;
+    allowed.forEach((f) => {
+      if (data[f] !== undefined) base[f] = data[f];
+    });
+    base.status = "draft"; // addendum starts as a fresh draft the nurse can submit
+    base.isAddendum = true;
+    base.originalNoteId   = note.originalNoteId || note._id;
+    base.supersedesNoteId = note._id;
+    base.updatedBy = nurseUserId;
+    const addendum = await NurseNotes.create(base);
+
+    activityLogger.log({
+      UHID: note.patientUHID || "",
+      patientId: note.patient || null,
+      ipdNo: note.ipdNo || "",
+      action: "amend",
+      module: "NurseNote",
+      sourceModel: "NurseNotes",
+      sourceId: addendum._id,
+      summary: `Addendum to nurse note ${note._id} (submitted → amended draft)`,
+      userId: nurseUserId || null,
+      before: { _id: note._id, status: note.status },
+      after:  { _id: addendum._id, supersedesNoteId: note._id, originalNoteId: addendum.originalNoteId, status: "draft" },
+    }).catch((e) => console.error("[nurseNotes] amend audit failed:", e.message));
+
+    return addendum;
+  }
+
+  // ── DRAFT path ──
   allowed.forEach((f) => {
     if (data[f] !== undefined) note[f] = data[f];
   });
@@ -291,6 +342,11 @@ const updateNurseNote = async (id, data, nurseUserId) => {
 
 /* ─────────────────────────────────────────────────────────────
    Confirm single order
+   R7az-D2-MED-8: each confirmation pushes onto a history array on the
+   matching open nurse note (if any) so the legacy "last confirmer wins"
+   pattern is replaced with an append-only audit trail. The DoctorNotes
+   "orders[].nurseStatus" still reflects the latest state (downstream
+   filters depend on it), but every confirmer is now traceable.
 ───────────────────────────────────────────────────────────── */
 const confirmSingleOrder = async (data, nurseUserId) => {
   const { orderId, doctorNoteId, status, remarks, shift } = data;
@@ -340,6 +396,33 @@ const confirmSingleOrder = async (data, nurseUserId) => {
       },
       { _id: nurse._id, name: nurse.personalInfo?.fullName },
     );
+
+    // R7az-D2-MED-8: push the confirmation history onto the most recent
+    // open (draft) nurse note for this admission/shift if one exists.
+    // No-op if nothing matches — the DoctorNotes order array still
+    // carries the latest state and the activity log captures actor.
+    try {
+      const targetNote = await NurseNotes.findOne({
+        ipdNo: doctorNote.ipdNo,
+        shift: shift || "morning",
+        status: "draft",
+      }).sort({ createdAt: -1 });
+      if (targetNote) {
+        targetNote.nurseConfirmations = targetNote.nurseConfirmations || [];
+        targetNote.nurseConfirmations.push({
+          nurseId:      nurse._id,
+          nurseName:    nurse.personalInfo?.fullName || nurse.nurseName || "",
+          orderId:      new mongoose.Types.ObjectId(orderId),
+          doctorNoteId: new mongoose.Types.ObjectId(doctorNoteId),
+          ts:           new Date(),
+          status:       status || "done",
+          remarks:      remarks || "",
+        });
+        await targetNote.save();
+      }
+    } catch (e) {
+      console.error("[nurseNotes] confirm history push failed:", e.message);
+    }
   }
 
   return {
@@ -363,7 +446,13 @@ const deleteNurseNote = async (id, nurseUserId) => {
     e.statusCode = 400;
     throw e;
   }
-  // FIX (audit P13-B3): allow null-owner notes through (legacy data).
+  // R7az-D2-HIGH-5: legacy null-nurse notes refuse delete too — only the
+  // recorded nurse owner can drop a draft.
+  if (!note.nurse) {
+    const e = new Error("Cannot delete legacy note with no nurse owner");
+    e.statusCode = 403;
+    throw e;
+  }
   if (note.nurse && nurseUserId && note.nurse.toString() !== nurseUserId.toString()) {
     const e = new Error("Not authorised");
     e.statusCode = 403;
@@ -378,12 +467,21 @@ const deleteNurseNote = async (id, nurseUserId) => {
    these but they didn't exist in the legacy service, so the two
    PATCH endpoints always threw TypeError).
 ───────────────────────────────────────────────────────────── */
+// R7az-S3 / D7-CRIT-4: refuse mutations when the parent nurse note is
+// already SUBMITTED — append-only invariant. Monitoring entries are
+// appended (never edited / removed in place); status updates only land
+// on a still-draft note. NABH MOM.4-style append-only on blood-product
+// administration records.
 const addBloodMonitoringEntry = async (noteId, entry) => {
   const note = await NurseNotes.findById(noteId);
   if (!note) throw new Error("Nurse note not found");
-  // Persist the monitoring entry under noteData.bloodTransfusion.monitoring[]
+  if (note.status === "submitted") {
+    const e = new Error("Cannot append blood-monitoring entry on a submitted note — create an addendum");
+    e.statusCode = 400;
+    throw e;
+  }
   const path = (note.noteData && note.noteData.bloodTransfusion) || {};
-  const monitoring = Array.isArray(path.monitoring) ? path.monitoring : [];
+  const monitoring = Array.isArray(path.monitoring) ? path.monitoring.slice() : [];
   monitoring.push({
     at: entry?.at || new Date(),
     pulse: entry?.pulse,
@@ -406,13 +504,22 @@ const addBloodMonitoringEntry = async (noteId, entry) => {
 const updateBloodTransfusionStatus = async (noteId, status, notes = "") => {
   const note = await NurseNotes.findById(noteId);
   if (!note) throw new Error("Nurse note not found");
+  if (note.status === "submitted") {
+    const e = new Error("Cannot change blood-transfusion status on a submitted note — create an addendum");
+    e.statusCode = 400;
+    throw e;
+  }
+  // Accept either a string or an object body — the legacy controller
+  // sometimes passes a status payload.
+  const finalStatus = typeof status === "string" ? status : status?.status;
+  const finalNotes  = typeof notes  === "string" ? notes  : (status?.notes || "");
   const path = (note.noteData && note.noteData.bloodTransfusion) || {};
   note.noteData = {
     ...note.noteData,
     bloodTransfusion: {
       ...path,
-      status,
-      statusNotes: notes,
+      status: finalStatus,
+      statusNotes: finalNotes,
       statusUpdatedAt: new Date(),
     },
   };

@@ -131,6 +131,16 @@ const DischargeSummarySchema = new mongoose.Schema(
     finalizedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
     finalizedByName: { type: String },
     finalizedAt: { type: Date },
+    // R7bb-FIX-E-4 / D3-CRIT-4: senior co-sign on Junior Resident-
+    // authored discharge summaries. Populated by a future endpoint
+    // (POST /discharge-summary/:id/cosign — Agent C will wire).
+    cosignedBy:     { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    cosignedByName: { type: String, trim: true, default: "" },
+    cosignedAt:     { type: Date, default: null },
+    // Audit row for any self-finalize WARN — the actor cleared the
+    // self-finalize gate without an actual senior co-sign because the
+    // attending isn't flagged mustCosign.
+    selfFinalizeAck: { type: Boolean, default: false },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" } },
@@ -140,6 +150,81 @@ const DischargeSummarySchema = new mongoose.Schema(
 DischargeSummarySchema.index({ UHID: 1, createdAt: -1 });
 DischargeSummarySchema.index({ admissionId: 1 });
 DischargeSummarySchema.index({ status: 1, createdAt: -1 });
+
+// ── R7az-D2-CRIT-2: schema-level guard against overwriting a finalized
+// discharge summary. Once status=finalized the document is a legal
+// record (insurance / medico-legal / NABH AAC.5). The only legitimate
+// edits at that point are minor amendments via a dedicated
+// "createAmendment" path (controller-owned by Agent D). Both
+// findOneAndUpdate and findByIdAndUpdate are intercepted here so
+// even bypass attempts via the model layer are blocked.
+//
+// Whitelist: if the caller is explicitly toggling status (e.g.
+// finalized → finalized with the same value) or adding metadata fields
+// the law allows post-finalize (mlrNumberSnapshot for stamp updates),
+// we allow that — anything else is refused.
+const FINALIZED_WHITELIST = new Set(["mlrNumberSnapshot"]);
+async function _refuseIfFinalized(next) {
+  try {
+    const query = this.getQuery();
+    const update = this.getUpdate() || {};
+    // Look up the target doc's current status.
+    const doc = await this.model.findOne(query).select("status").lean();
+    if (!doc || doc.status !== "finalized") return next();
+
+    // Allow no-op writes that only touch whitelisted fields.
+    const setKeys = Object.keys((update.$set) || {}).concat(
+      Object.keys(update).filter((k) => !k.startsWith("$")),
+    );
+    if (setKeys.length && setKeys.every((k) => FINALIZED_WHITELIST.has(k))) return next();
+
+    return next(new Error(
+      `Discharge summary ${doc._id || query._id} is finalized — refusing overwrite. ` +
+      `Create an amendment via the dedicated controller path instead (NABH AAC.5).`,
+    ));
+  } catch (e) {
+    return next(e);
+  }
+}
+DischargeSummarySchema.pre("findOneAndUpdate", _refuseIfFinalized);
+DischargeSummarySchema.pre("findByIdAndUpdate", _refuseIfFinalized);
+DischargeSummarySchema.pre("updateOne",         _refuseIfFinalized);
+
+// R7bf-I / A7-HIGH-10 — DischargeSummary state-machine guard.
+// In-codebase status enum is lowercase `["draft", "finalized"]`. The
+// existing _refuseIfFinalized middleware already blocks every direct
+// findOneAndUpdate / findByIdAndUpdate / updateOne; we add the same
+// constraint on direct doc.save() paths via the shared registry. A
+// "correction" route that wants to flip finalized → draft must:
+//   1. Set doc.__forceTransition = true AND doc.__forceAdminUserId =
+//      <Admin User._id> on the in-memory instance, AND
+//   2. Provide a non-empty correctionReason field (validated below)
+//      before save. Both gates are belt-and-braces — the route handler
+//      should also emit an audit row.
+const { attachStatusGuard: _dsGuard } = require("../../utils/statusTransitionGuard");
+_dsGuard(DischargeSummarySchema, { modelName: "DischargeSummary", field: "status" });
+
+// Require a non-empty correction reason on every finalized → draft flip
+// even when the admin force flag is set, so the audit row downstream
+// has the operator-supplied "why" attached.
+DischargeSummarySchema.pre("save", function (next) {
+  if (this.isNew) return next();
+  const prior = this.__prior_status;
+  if (prior === "finalized" && this.status === "draft") {
+    if (!this.__correctionReason || String(this.__correctionReason).trim().length < 5) {
+      const err = new Error(
+        "Cannot revert discharge summary to draft — set doc.__correctionReason " +
+        "(≥ 5 chars) describing why the correction is needed. NABH AAC.5 requires " +
+        "a documented rationale on every post-finalize edit.",
+      );
+      err.code = "MISSING_CORRECTION_REASON";
+      err.statusCode = 422;
+      err.status = 422;
+      return next(err);
+    }
+  }
+  next();
+});
 
 module.exports =
   mongoose.models.DischargeSummary ||

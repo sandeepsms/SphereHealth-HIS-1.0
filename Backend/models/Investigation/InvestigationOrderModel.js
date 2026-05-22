@@ -189,6 +189,18 @@ const InvestigationOrderSchema = new mongoose.Schema(
     cancelledAt: { type: Date },
     cancelledBy: { type: String },
     cancellationReason: { type: String },
+    // R7bb-FIX-E-13 / D6-HIGH-3: retest linkage. When a lab order is
+    // re-run (typically because the original sample hemolysed or the
+    // result didn't fit the clinical picture), the new InvestigationOrder
+    // carries parentOrderId so the trail (lineage of retests) is auditable
+    // and the lab can see "this is run #2, original is XYZ".
+    parentOrderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "InvestigationOrder",
+      default: null,
+      index: true,
+    },
+    retestReason: { type: String, trim: true, default: "" },
   },
   {
     timestamps: true,
@@ -274,6 +286,71 @@ InvestigationOrderSchema.index({ UHID: 1 });
 InvestigationOrderSchema.index({ orderStatus: 1 });
 InvestigationOrderSchema.index({ prescriptionId: 1 });
 InvestigationOrderSchema.index({ createdAt: -1 });
+
+// R7bf-I / A7-HIGH-6 + A7-HIGH-14 — Order + sample + result state machines.
+// Three intertwined state machines live on this collection:
+//   1. order.orderStatus  — PENDING / SAMPLE_COLLECTED / IN_PROGRESS /
+//                           COMPLETED / CANCELLED
+//   2. items[].sampleStatus — PENDING / COLLECTED / RECEIVED_AT_LAB /
+//                             REJECTED / N/A
+//   3. items[].resultStatus — PENDING / IN_PROGRESS / COMPLETED / VERIFIED
+// Pre-R7bf any of these could be flipped to any other value via a direct
+// PATCH. The audit caught two concrete defects:
+//   • REJECTED sample silently flipped to VERIFIED result (A7-HIGH-14)
+//   • LabOrder VERIFIED → REJECTED (A7-HIGH-6)
+// We enforce all three matrices below, plus the existing R7bf-pre lock
+// on verified-item mutations (kept intact).
+const { assertTransition: _ioAssert } = require("../../utils/statusTransitionGuard");
+
+InvestigationOrderSchema.post("init", function () {
+  this.__priorOrderStatus = this.orderStatus;
+  // Snapshot per-item sample + result status. We key by _id so reordering
+  // / splice ops don't false-positive.
+  this.__priorItemStatus = {};
+  if (Array.isArray(this.items)) {
+    for (const it of this.items) {
+      if (it && it._id) {
+        this.__priorItemStatus[String(it._id)] = {
+          sampleStatus: it.sampleStatus,
+          resultStatus: it.resultStatus,
+        };
+      }
+    }
+  }
+});
+
+InvestigationOrderSchema.pre("save", function (next) {
+  try {
+    // Header orderStatus
+    if (!this.isNew && this.isModified("orderStatus") && this.__priorOrderStatus) {
+      _ioAssert("InvestigationOrder", this.__priorOrderStatus, this.orderStatus, {
+        force: !!this.__forceTransition,
+        adminUserId: this.__forceAdminUserId || null,
+      });
+    }
+    // Per-item sample + result status
+    if (!this.isNew && Array.isArray(this.items) && this.__priorItemStatus) {
+      for (const it of this.items) {
+        if (!it || !it._id) continue;
+        const prior = this.__priorItemStatus[String(it._id)];
+        if (!prior) continue;     // newly added line
+        if (prior.sampleStatus && it.sampleStatus && prior.sampleStatus !== it.sampleStatus) {
+          _ioAssert("Sample", prior.sampleStatus, it.sampleStatus, {
+            force: !!this.__forceTransition,
+            adminUserId: this.__forceAdminUserId || null,
+          });
+        }
+        if (prior.resultStatus && it.resultStatus && prior.resultStatus !== it.resultStatus) {
+          _ioAssert("LabResult", prior.resultStatus, it.resultStatus, {
+            force: !!this.__forceTransition,
+            adminUserId: this.__forceAdminUserId || null,
+          });
+        }
+      }
+    }
+    next();
+  } catch (e) { next(e); }
+});
 
 module.exports =
   mongoose.models.InvestigationOrder ||

@@ -22,6 +22,9 @@ import { toast } from "react-toastify";
 import API_ENDPOINTS from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import DrugAutocomplete from "../../Components/clinical/DrugAutocomplete";
+// R7az-D5-HIGH-4 — toMoney() unwraps Decimal128/{$numberDecimal:"…"}
+// wire shapes for the per-drug unit-price stored on the indent line.
+import { toMoney } from "../../utils/money";
 
 const C = {
   primary: "#1d4ed8", accent: "#7c3aed",
@@ -132,18 +135,43 @@ export default function IndentRaisePage() {
     if (!admissionId) return;
     setLoading(true);
     try {
-      // Pharmacy stock rollup fetched in parallel — it's a single
-      // aggregated call (sum per drug) so the page stays fast even with
-      // 100s of drugs in inventory. Failure is non-fatal: the indent
-      // form still works without stock hints.
-      const [admRes, orderRes, stockRes] = await Promise.all([
+      // R7w: Two-step fetch — admission first, then doctor-orders keyed
+      // by the admission's UHID + admissionNumber.
+      //
+      // Previously this was one Promise.all that issued
+      //   GET /doctor-orders?admissionId=<ObjectId>&status=Active
+      // Two bugs in that URL:
+      //   1. Backend's GET /doctor-orders only filters by UHID + visitId
+      //      (the admissionNumber string). `admissionId` is silently
+      //      ignored, so the result set was every order ever.
+      //   2. `status=Active` does not exist in the DoctorOrder status
+      //      enum (Pending / Acknowledged / InProgress / Held / OnHold /
+      //      Completed / Cancelled / Stopped). The filter therefore
+      //      always returned an empty array — even on patients with
+      //      live prescriptions.
+      // Pharmacy stock rollup still runs in parallel — non-fatal failure.
+      const [admRes, stockRes] = await Promise.all([
         axios.get(`${API_ENDPOINTS.BASE}/admissions/${admissionId}`),
-        axios.get(`${API_ENDPOINTS.BASE}/doctor-orders?admissionId=${admissionId}&orderType=Medication&status=Active`)
-          .catch(() => ({ data: { data: [] } })),
         axios.get(`${API_ENDPOINTS.BASE}/pharmacy/stock`).catch(() => ({ data: { data: [] } })),
       ]);
-      setAdmission(admRes.data?.data || admRes.data);
-      const list = orderRes.data?.data || orderRes.data?.orders || [];
+      const adm = admRes.data?.data || admRes.data;
+      setAdmission(adm);
+
+      // Now query doctor-orders by the admission's actual identifiers.
+      // ACTIVE_STATUSES is the set of orders the nurse can still indent
+      // against — completed / cancelled / stopped doses are excluded.
+      const ACTIVE_STATUSES = "Pending,Acknowledged,InProgress,Held,OnHold";
+      const visitId = adm?.admissionNumber || adm?.ipdNo || "";
+      const uhid    = adm?.UHID || "";
+      let list = [];
+      if (uhid && visitId) {
+        try {
+          const orderRes = await axios.get(
+            `${API_ENDPOINTS.BASE}/doctor-orders?UHID=${encodeURIComponent(uhid)}&visitId=${encodeURIComponent(visitId)}&orderType=Medication&status=${encodeURIComponent(ACTIVE_STATUSES)}`,
+          );
+          list = orderRes.data?.data || orderRes.data?.orders || [];
+        } catch (_) { /* leave list empty — the form still works via Other Drug */ }
+      }
       setOrders(Array.isArray(list) ? list : []);
 
       // Build the dual-key lookup. The stock endpoint returns rows
@@ -197,7 +225,19 @@ export default function IndentRaisePage() {
 
   /* ── Manual / Other Drug — DrugAutocomplete pick + qty + reason ─ */
   const addOther = () => {
-    if (!otherDrug?._id) return toast.warn("Pick a drug from search");
+    // R7az-D5-HIGH-2 — Race-fix: only add when the user has explicitly
+    // re-picked a drug from the autocomplete AND the visible search
+    // string still matches that picked drug's display name. Pre-fix,
+    // typing past the selected drug (e.g. picking "Amox 500" then
+    // continuing to type "icillin 250") would still file the indent
+    // against "Amox 500" because we only checked _id. Now: if the user
+    // types past a selection we null `selectedDrug` (see onChange below)
+    // and the button gates on selectedDrug !== null.
+    if (!otherDrug?._id) return toast.warn("Pick a drug from the dropdown");
+    const expected = otherDrug.brandName || otherDrug.genericName || "";
+    if (otherDrugSearch.trim().toLowerCase() !== expected.trim().toLowerCase()) {
+      return toast.warn("Search text doesn't match selected drug — pick again from the dropdown");
+    }
     if (!Number(otherQty) || Number(otherQty) <= 0) return toast.warn("Quantity must be > 0");
     if (!otherReason.trim()) return toast.warn("Reason required for non-prescription indents");
     setItems(prev => [...prev, {
@@ -210,7 +250,10 @@ export default function IndentRaisePage() {
       requestedQty:  Number(otherQty),
       sourceType:    "Manual",
       reason:        otherReason.trim(),
-      unitPrice:     otherDrug.sellPriceCash || otherDrug.priceCash || 0,
+      // R7az-D5-HIGH-4 — Decimal128 unwrap so the indent line stores a
+      // plain JS number for unitPrice (previously could be `{ $numberDecimal: "12.50" }`
+      // which broke any downstream `Number(price) * qty` math).
+      unitPrice:     toMoney(otherDrug.sellPriceCash ?? otherDrug.priceCash),
     }]);
     setOtherDrug(null); setOtherDrugSearch(""); setOtherQty(1); setOtherReason("");
   };
@@ -249,6 +292,14 @@ export default function IndentRaisePage() {
   if (!admission) return <div style={{ padding: 60, color: C.danger, textAlign: "center" }}>Admission not found</div>;
 
   const patient = admission.patientId || {};
+  // R7az-D5-HIGH-3 — Block raising new indents against a discharged
+  // admission. Pre-fix, the page rendered the full form so a nurse could
+  // still POST /indents for a patient who was no longer in-house, the
+  // pharmacy would queue and dispense, and the bill would be left
+  // dangling against a closed admission.
+  const isDischarged =
+    (admission.status || "").toLowerCase() === "discharged" ||
+    !!admission.dischargedAt || !!admission.dischargeDate;
 
   return (
     <div style={{ background: C.bg, minHeight: "100vh", padding: "16px 20px 60px" }}>
@@ -299,8 +350,31 @@ export default function IndentRaisePage() {
         </div>
       </div>
 
+      {/* R7az-D5-HIGH-3 — Discharged admission banner. Prevents nurses
+          from raising indents on a patient who's already left the ward.
+          The Urgency selector + Add buttons + Submit button are all
+          disabled below when `isDischarged` is true. */}
+      {isDischarged && (
+        <div style={{
+          background: "#fef2f2", border: "1.5px solid #fca5a5",
+          borderRadius: 12, padding: "14px 18px", marginBottom: 14,
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          <i className="pi pi-ban" style={{ fontSize: 24, color: C.danger }} />
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.danger, marginBottom: 2 }}>
+              This patient has been discharged.
+            </div>
+            <div style={{ fontSize: 12, color: "#7f1d1d" }}>
+              Indents cannot be raised against a discharged admission. If a return-visit medication
+              is needed, raise it through OPD or contact the pharmacist directly.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Urgency selector */}
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, marginBottom: 14, opacity: isDischarged ? 0.5 : 1, pointerEvents: isDischarged ? "none" : "auto" }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 8 }}>Urgency</div>
         <div style={{ display: "flex", gap: 8 }}>
           {["Routine", "Urgent", "STAT"].map(u => {
@@ -389,10 +463,26 @@ export default function IndentRaisePage() {
             <div>
               <label style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Drug *</label>
               <div style={{ marginTop: 4 }}>
+                {/* R7az-D5-HIGH-2 — When the user types past a selection
+                    (e.g. picked "Amox 500" then continues typing), null
+                    selectedDrug so they must re-confirm by clicking a
+                    dropdown row again. The submit-side addOther() also
+                    verifies search-text matches the selected drug's
+                    canonical name (defence in depth). */}
                 <DrugAutocomplete
                   showLabel={false}
                   value={otherDrugSearch}
-                  onChange={(v) => { setOtherDrugSearch(v); if (!v) setOtherDrug(null); }}
+                  onChange={(v) => {
+                    setOtherDrugSearch(v);
+                    // If the typed text no longer matches the currently
+                    // selected drug, force re-selection.
+                    if (!v) {
+                      setOtherDrug(null);
+                    } else if (otherDrug) {
+                      const expected = (otherDrug.brandName || otherDrug.genericName || "").trim().toLowerCase();
+                      if (v.trim().toLowerCase() !== expected) setOtherDrug(null);
+                    }
+                  }}
                   onPick={(d) => { setOtherDrug(d); setOtherDrugSearch(d.brandName || d.genericName || ""); }}
                 />
                 {/* Live stock hint — appears the moment a drug is picked
@@ -500,11 +590,12 @@ export default function IndentRaisePage() {
           placeholder="e.g. CKD patient, avoid nephrotoxic. Substitute generic if Brand-X out of stock."
           style={{ width: "100%", marginTop: 6, padding: 10, border: `1px solid ${C.border}`, borderRadius: 8, fontFamily: "inherit", fontSize: 13, resize: "vertical", boxSizing: "border-box" }} />
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
-          <button onClick={submit} disabled={saving || items.length === 0} style={{
+          {/* R7az-D5-HIGH-3 — Submit hard-gated on isDischarged. */}
+          <button onClick={submit} disabled={saving || items.length === 0 || isDischarged} style={{
             padding: "10px 22px", background: C.primary, color: "#fff", border: "none",
-            borderRadius: 8, cursor: saving ? "wait" : (items.length === 0 ? "not-allowed" : "pointer"),
+            borderRadius: 8, cursor: saving ? "wait" : (items.length === 0 || isDischarged ? "not-allowed" : "pointer"),
             fontFamily: "inherit", fontWeight: 800, fontSize: 13,
-            opacity: items.length === 0 ? 0.5 : 1,
+            opacity: items.length === 0 || isDischarged ? 0.5 : 1,
           }}>
             {saving ? <><i className="pi pi-spin pi-spinner" /> Raising indent…</> : (
               <><i className="pi pi-send" style={{ marginRight: 6 }} />Raise indent to pharmacy</>

@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
+import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
@@ -103,11 +104,9 @@ function NutritionalContent({ patient }) {
 
   const handleSave = async () => {
     if (!patient) return;
+    // R7az-D5-CRIT-1 — POST first, only clearDraft + setSaved on 2xx.
     setSaving(true);
     const entry = { date: new Date().toISOString(), ...form, totalScore, atRisk, bmi };
-    const newHistory = [entry, ...history];
-    localStorage.setItem(`nabh_nutrition_${patient._id}`, JSON.stringify({ history:newHistory }));
-    setHistory(newHistory);
     try {
       await axios.post(`${API}/nursing-assessments/nutrition`, {
         patientId: patient._id, ...entry,
@@ -115,10 +114,17 @@ function NutritionalContent({ patient }) {
         nurseEmployeeId: user?.employeeId || "",
         nurseSignature: signature || undefined,
       });
-    } catch {}
-    clearDraft();
-    setSaving(false); setSaved(true);
-    setTimeout(()=>setSaved(false),2500);
+      const newHistory = [entry, ...history];
+      localStorage.setItem(`nabh_nutrition_${patient._id}`, JSON.stringify({ history: newHistory }));
+      setHistory(newHistory);
+      clearDraft();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      toast.error("Save failed: " + (err.response?.data?.message || err.message) + " — your draft is preserved, please retry.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (!patient) {

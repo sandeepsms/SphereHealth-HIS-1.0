@@ -20,6 +20,8 @@ router.get   ("/patient/:uhid/plans", requireAction("diet.read"),  ctrl.patientP
 router.get   ("/plan/:id",            requireAction("diet.read"),  ctrl.getPlan);
 router.post  ("/plan",                requireAction("diet.write"), ctrl.createPlan);
 router.put   ("/plan/:id",            requireAction("diet.write"), ctrl.updatePlan);
+// R7bb-FIX-E-9 / D6-CRIT-6: dietitian → kitchen indent push.
+router.post  ("/plan/:id/kitchen-indent", requireAction("diet.write"), ctrl.pushKitchenIndent);
 
 /* ── Dashboard stats ── */
 router.get   ("/stats",            requireAction("diet.read"),  ctrl.stats);

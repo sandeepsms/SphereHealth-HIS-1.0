@@ -29,19 +29,45 @@ class OPDController {
     }
   }
 
+  // R7az-D9-HIGH-1: Doctor-scope ownership check on single-visit reads.
+  // Pre-R7az any Doctor could fetch /opd/:visitNumber for any visit,
+  // including patients of other doctors — full PHI exposure across
+  // departments. Fetch then 403 on mismatch.
   async getOPDVisitById(req, res) {
     try {
       const visit = await opdService.getOPDVisitById(req.params.visitNumber);
       if (!visit) return res.status(404).json({ success: false, message: "Visit not found" });
+      if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+        const callerDoctorId = String(req.doctorProfile._id);
+        const visitDoctorId  = String(visit.doctorId?._id || visit.doctorId || "");
+        if (!visitDoctorId || visitDoctorId !== callerDoctorId) {
+          return res.status(403).json({
+            success: false,
+            message: "Not your OPD visit — you can only view visits assigned to you.",
+            code: "NOT_YOUR_VISIT",
+          });
+        }
+      }
       res.status(200).json({ success: true, data: visit });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }
   }
 
+  // R7az-D9-HIGH-1: Doctor-scope filter on patient history. A logged-in
+  // Doctor only sees the visits THEY conducted for this patient, not
+  // every OPD encounter across departments. Other roles see the full
+  // history. Done in-memory because getPatientOPDHistory doesn't yet
+  // accept filters.
   async getPatientOPDHistory(req, res) {
     try {
-      const history = await opdService.getPatientOPDHistory(req.params.patientId);
+      let history = await opdService.getPatientOPDHistory(req.params.patientId);
+      if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+        const callerDoctorId = String(req.doctorProfile._id);
+        history = (history || []).filter(v =>
+          String(v.doctorId?._id || v.doctorId || "") === callerDoctorId,
+        );
+      }
       res.status(200).json({ success: true, data: history });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -161,9 +187,18 @@ class OPDController {
   }
 
   // GET /opd/department/:departmentId?date=YYYY-MM-DD
+  // R7az-D3-HIGH-7: Doctor-scope post-filter. A Doctor calling
+  // /opd/department/:id sees only their own visits within the
+  // department (not the whole department's roster).
   async getVisitsByDepartment(req, res) {
     try {
-      const visits = await opdService.getVisitsByDepartment(req.params.departmentId, req.query.date);
+      let visits = await opdService.getVisitsByDepartment(req.params.departmentId, req.query.date);
+      if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+        const callerDoctorId = String(req.doctorProfile._id);
+        visits = (visits || []).filter(v =>
+          String(v.doctorId?._id || v.doctorId || "") === callerDoctorId,
+        );
+      }
       res.status(200).json({ success: true, data: visits });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -171,8 +206,22 @@ class OPDController {
   }
 
   // GET /opd/doctor/:doctorId?date=YYYY-MM-DD
+  // R7az-D9-HIGH-1: Doctor users may only read THEIR OWN OPD roster
+  // via this endpoint. Pre-R7az a Doctor could pass any other
+  // doctor's _id in the URL and read their entire patient list.
   async getVisitsByDoctor(req, res) {
     try {
+      if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
+        const callerDoctorId = String(req.doctorProfile._id);
+        const requestedId    = String(req.params.doctorId || "");
+        if (requestedId !== callerDoctorId) {
+          return res.status(403).json({
+            success: false,
+            message: "Doctors can only view their own OPD roster via this endpoint.",
+            code: "NOT_YOUR_ROSTER",
+          });
+        }
+      }
       const visits = await opdService.getVisitsByDoctor(req.params.doctorId, req.query.date);
       res.status(200).json({ success: true, data: visits });
     } catch (error) {

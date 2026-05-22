@@ -51,7 +51,11 @@ const WB    = "Ward Boy";
 const ADMIN = "Admin";
 const PT    = "Physiotherapist";
 const DT    = "Dietician";
-const MT    = "Maintenance";        // Housekeeping / facilities / equipment
+// R7bb-E/D1-CRIT-2 — "MT" / "Maintenance" was a phantom role: never in
+// the User enum or permissions ACL, never satisfied any backend gate.
+// Removed alongside the Maintenance section below. Housekeeping handles
+// cleaning queues via HOUSEKEEPING_NAV; Equipment Tracker remains a
+// Bed Management / facility-admin tile if reinstated later.
 const SE    = "Security";
 
 /* ══════════════════════════════════════════════════════════════
@@ -144,17 +148,12 @@ const NAV = [
     ],
   },
 
-  /* ── Maintenance ─────────────────────────────────────── */
-  {
-    id: "maintenance", label: "Maintenance",
-    icon: "pi-wrench", color: "#d97706", light: "#fffbeb",
-    roles: [ADMIN, MT, WB, NR],
-    items: [
-      { label: "Dashboard",        icon: "pi-th-large",  path: "/maintenance",          badge: "NEW", roles: [ADMIN, MT, WB, NR] },
-      { label: "Equipment Tracker",icon: "pi-box",       path: "/equipment",            badge: "NEW", roles: [ADMIN, MT, NR] },
-      { label: "Live Bed Map",     icon: "pi-eye",       path: "/bed-visual",                         roles: [ADMIN, MT, WB] },
-    ],
-  },
+  /* R7bb-E/D1-CRIT-2, D6-CRIT-1 — Maintenance section deleted.
+     "Maintenance" was a phantom role with no backend ACL backing; nothing
+     under /maintenance or /equipment was reachable by the (non-existent)
+     MT user. Housekeeping uses HOUSEKEEPING_NAV; equipment + maintenance
+     dashboards can be reinstated as admin-only tiles inside Bed Management
+     when there's real backend support behind them. */
 
   /* ── Clinical — Doctor ──────────────────────────────── */
   {
@@ -227,7 +226,10 @@ const NAV = [
       // tab inside the Pharmacy page (next to Dispense + Sales) so the
       // pharmacist sees it on their primary workspace.
       { label: "Pharmacy",         icon: "pi-box",           path: "/pharmacy",        nabh: true, badge: "NEW", roles: [ADMIN, PH] },
-      { label: "MAR",              icon: "pi-table",         path: "/mar",             nabh: true, roles: [ADMIN, PH, NR, DR] },
+      // R7bb-E/D5-CRIT-1 — Pharmacist removed: backend mar.read excludes
+      // PH so the page hits a 403/empty state every time. PH still
+      // sees Pharmacy + Indents to fulfil dispensing requests instead.
+      { label: "MAR",              icon: "pi-table",         path: "/mar",             nabh: true, roles: [ADMIN, NR, DR] },
       { label: "Diabetic Chart",   icon: "pi-chart-bar",     path: "/diabetic-chart",  nabh: true, badge: "NEW", roles: [ADMIN, NR, DR] },
     ],
   },
@@ -238,11 +240,23 @@ const NAV = [
     icon: "pi-search-plus", color: "#0284c7", light: "#f0f9ff",
     roles: [ADMIN, LB, RL, DR],
     items: [
-      // Lab/Imaging is outsourced — Lab Technician is the single
-      // in-house user who transcribes external reports + maintains
-      // the trend sheets. Radiologist removed 14 May 2026 (role
-      // stays in userModel for future in-house imaging.)
-      { label: "Investigation Orders",  icon: "pi-list",   path: "/investigation-orders",  roles: [ADMIN, LB, DR] },
+      // R7bb-E/D5-MED-1 — Radiologist re-added to the imaging/lab list
+      // surface. Backend lab.records.read includes Radiologist + MRD so
+      // they can pull up scan reports — without this entry the Lab
+      // section was visible but empty for the role. Manual Lab Entry
+      // (write) stays Admin/LabTech-only. Master likewise.
+      { label: "Investigation Orders",  icon: "pi-list",   path: "/investigation-orders",  roles: [ADMIN, LB, DR, RL] },
+      // R7bd-E-5 / A3-MED-18 — Lab Tech multi-tab console (sample queue,
+      // result-entry queue, QC log, day worksheet). Sits above the
+      // single-page "Manual Lab Entry" because the console is the
+      // intended landing surface; the entry page is now reached from
+      // the queue rows. Visible to Admin + Lab Tech only.
+      { label: "Lab Console",           icon: "pi-flask",  path: "/lab-console",           badge: "NEW", roles: [ADMIN, LB] },
+      { label: "Imaging Reports",       icon: "pi-table",  path: "/lab-results",           badge: "READ",roles: [RL] },
+      // R7bd-E-6 / A3-HIGH-10 — Radiologist 3-tab console stub
+      // (worklist, reported, pending sign-off). Visible to Admin +
+      // Radiologist only.
+      { label: "Radiology Console",     icon: "pi-eye",    path: "/radiology-console",     badge: "NEW", roles: [ADMIN, RL] },
       { label: "Manual Lab Entry",      icon: "pi-table",  path: "/lab-results",           badge: "NEW", roles: [ADMIN, LB] },
       { label: "Investigation Master",  icon: "pi-cog",    path: "/investigation-master",  roles: [ADMIN, LB] },
     ],
@@ -266,11 +280,11 @@ const NAV = [
       // memorising MongoDB ids. Distinct from Billing Counter (which is
       // a per-UHID bill list) — this is the IPD-stay-wide rolling tab.
       { label: "IPD Live Ledger",       icon: "pi-chart-line",  path: "/billing/ipd",        badge: "IPD",     roles: [ADMIN, AC, RX] },
-      // Full billing UIs for accountants / admin
-      { label: "Patient Bill",          icon: "pi-user",    path: "/patient-billing",       roles: [ADMIN, AC, TPA] },
-      { label: "Bills List",            icon: "pi-file",    path: "/billing",               roles: [ADMIN, AC] },
-      // Billing Intelligence (AI) was removed — single Billing Counter
-      // page now handles the full receptionist flow.
+      // R7ah: removed legacy "Patient Bill" (/patient-billing) and
+      // "Bills List" (/billing) entries. Reception Billing Counter
+      // (/reception-billing) and IPD Live Ledger (/billing/ipd) are
+      // the canonical surfaces — the two old pages were redundant.
+      // Billing Intelligence (AI) was removed earlier in the same cleanup.
       { label: "Billing Audit Trail",   icon: "pi-list",    path: "/billing-audit-trail",                 roles: [ADMIN, AC] },
       { label: "TPA Services",          icon: "pi-briefcase", path: "/addservice",          roles: [ADMIN, TPA, AC] },
       { label: "Chargeable Services",   icon: "pi-dollar",  path: "/chargeable-services",   roles: [ADMIN, AC] },
@@ -360,8 +374,29 @@ const NAV = [
       { label: "User Management",    icon: "pi-users",      path: "/admin/users" },
       { label: "Roles & Permissions",icon: "pi-shield",     path: "/admin/roles",       badge: "NEW" },
       { label: "Hospital Charges",   icon: "pi-dollar",     path: "/hospital-charges" },
+      // R7bf-G / NABH HRD.3 — staff credentialing register lives under
+      // Masters & Admin since Admin owns the HR function today.
+      { label: "Credentialing",      icon: "pi-id-card",    path: "/credentials",       badge: "NABH",  roles: [ADMIN] },
       // Buildings / Floors / Rooms / Room Categories moved to Bed Management
       // so the full bed hierarchy lives in one place.
+    ],
+  },
+
+  /* ── R7bf-G — Quality & Compliance (NABH A5 scaffolds) ─── */
+  // Surfaces the new NABH register pages (critical-value alerts AAC.6,
+  // grievance redressal PRE.6, ADR reporting MOM.7, fire-drill register
+  // FMS.4). Visible to Admin always; cohort-specific items show for
+  // their owners (Receptionist sees grievances, Doctor/Nurse see
+  // critical-value alerts + ADR, Security sees fire-drills).
+  {
+    id: "quality", label: "Quality & Compliance",
+    icon: "pi-verified", color: "#0d9488", light: "#f0fdfa",
+    nabh: true, roles: [ADMIN, DR, NR, RX, PH, SE, "MRD"],
+    items: [
+      { label: "Critical Value Alerts", icon: "pi-bell",        path: "/critical-value-alerts", nabh: true, badge: "AAC.6", roles: [ADMIN, DR, NR] },
+      { label: "Grievance Register",    icon: "pi-comment",     path: "/grievances",            nabh: true, badge: "PRE.6", roles: [ADMIN, RX, DR, "MRD"] },
+      { label: "ADR Reports",           icon: "pi-flag",        path: "/adr-reports",           nabh: true, badge: "MOM.7", roles: [ADMIN, DR, NR, PH] },
+      { label: "Fire Drill Register",   icon: "pi-shield",      path: "/fire-drills",           nabh: true, badge: "FMS.4", roles: [ADMIN, SE] },
     ],
   },
 ];

@@ -284,6 +284,13 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
       addedBy:         source.addedBy || "System",
       addedByRole:     source.addedByRole || "System",
       isAutoCharged:   true,
+      // R7aw-FIX-2/D6-MED-5: stamp HSN/SAC on every auto-billed line.
+      // Precedence: ServiceMaster.hsnSacCode (per-service override,
+      // typically set for pharmacy/consumables) → "9993" SAC for
+      // human-health services (clinical default). GST Act §31 + GSTR-1
+      // need this on every taxable line; empty HSN cells block monthly
+      // filing.
+      hsnSacCode:      service.hsnSacCode || "9993",
       // Round-trip link — every auto-billed line carries the trigger _id
       // back so the IPD Live Billing ledger can undo/override the exact
       // bill row without scanning by serviceCode. Manual line items added
@@ -291,37 +298,58 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
       triggerId:       trigger?._id,
     };
 
-    const freshBill = await PatientBill.findById(bill._id);
-    if (!freshBill) return null;
-    // FIX (audit P6-B3): auto-billing was happily pushing new line items onto
-    // bills that were already PAID / CANCELLED / REFUNDED, retroactively
-    // making the patient's "settled" bill look unpaid. Closed bills are now
-    // immutable — caller (createTrigger) decides what to do with the skipped
-    // event (typically it'll spin up a new draft on the next admission day).
-    if (["PAID", "CANCELLED", "REFUNDED"].includes(freshBill.billStatus)) {
-      console.warn(`[AutoBilling] skipping addItemToBill — bill ${freshBill._id} is ${freshBill.billStatus}`);
-      // Audit-clean the trigger: mark "skipped" with a reason instead of
-      // leaving it in "pending" forever — otherwise the audit trail shows
-      // an outstanding charge that will never actually bill.
-      if (trigger?._id) {
-        const { logErr } = require("../../utils/logErr");
-        await BillingTrigger.findByIdAndUpdate(trigger._id, {
-          status: "skipped",
-          skipReason: `Bill ${freshBill.billStatus.toLowerCase()} — no new charges accepted`,
-          skippedAt: new Date(),
-        }).catch(logErr("autoBilling", `mark-trigger-skipped ${trigger._id}`));
+    // R7ab: VersionError-retry loop. The bill schema sets
+    // optimisticConcurrency:true, so a concurrent saver (parallel trigger
+    // fan-out, cron, manual receptionist edit) bumps __v and the second
+    // save throws VersionError — losing the line item AND leaving the
+    // bill's grossAmount/netAmount stale. That's the root cause of bills
+    // showing ₹0 totals with non-zero billItems[] (R7aa). Retry the
+    // load-push-save up to 5 times before giving up; each retry refetches
+    // so the latest __v sticks.
+    const MAX_RETRIES = 5;
+    let attempt = 0;
+    let lastErr = null;
+    while (attempt < MAX_RETRIES) {
+      attempt += 1;
+      try {
+        const freshBill = await PatientBill.findById(bill._id);
+        if (!freshBill) return null;
+        // FIX (audit P6-B3): closed bills are immutable.
+        if (["PAID", "CANCELLED", "REFUNDED"].includes(freshBill.billStatus)) {
+          console.warn(`[AutoBilling] skipping addItemToBill — bill ${freshBill._id} is ${freshBill.billStatus}`);
+          if (trigger?._id) {
+            const { logErr } = require("../../utils/logErr");
+            await BillingTrigger.findByIdAndUpdate(trigger._id, {
+              status: "skipped",
+              skipReason: `Bill ${freshBill.billStatus.toLowerCase()} — no new charges accepted`,
+              skippedAt: new Date(),
+            }).catch(logErr("autoBilling", `mark-trigger-skipped ${trigger._id}`));
+          }
+          return null;
+        }
+        freshBill.billItems.push(item);
+        await freshBill.save();
+        const savedItem = freshBill.billItems[freshBill.billItems.length - 1];
+        return { bill: freshBill, itemId: savedItem._id, unitPrice, totalAmt };
+      } catch (e) {
+        lastErr = e;
+        // Mongoose VersionError name === "VersionError"; some drivers
+        // surface it as a generic Error with .name === "VersionError" or
+        // with a "Cast to ObjectId failed" — only retry the version case.
+        const isVersionErr = e?.name === "VersionError"
+          || (e?.message || "").includes("No matching document found for id");
+        if (!isVersionErr || attempt >= MAX_RETRIES) break;
+        // Brief jittered backoff so concurrent retries don't dogpile.
+        await new Promise((r) => setTimeout(r, 20 + Math.random() * 50));
       }
-      return null;
     }
-    freshBill.billItems.push(item);
-    await freshBill.save();
-    const savedItem = freshBill.billItems[freshBill.billItems.length - 1];
-    return { bill: freshBill, itemId: savedItem._id, unitPrice, totalAmt };
-  } catch (e) {
-    // Include enough context to debug without re-running: bill id,
-    // service code, trigger id, and the error message + name.
     console.error(
-      `[AutoBilling] addItemToBill error on bill=${bill?._id} service=${service?.serviceCode || "(none)"} trigger=${trigger?._id || "(none)"}: ${e.name || "Error"}: ${e.message}`,
+      `[AutoBilling] addItemToBill failed after ${attempt} attempts on bill=${bill?._id} service=${service?.serviceCode || "(none)"} trigger=${trigger?._id || "(none)"}: ${lastErr?.name || "Error"}: ${lastErr?.message}`,
+    );
+    return null;
+  } catch (e) {
+    console.error(
+      `[AutoBilling] addItemToBill outer error on bill=${bill?._id} service=${service?.serviceCode || "(none)"} trigger=${trigger?._id || "(none)"}: ${e.name || "Error"}: ${e.message}`,
     );
     return null;
   }
@@ -343,7 +371,46 @@ async function createTrigger(config) {
                            //       keeping the dailyDedup guard intact
     chargeDate,            // NEW — bill-item chargeDate (defaults to today)
     shift, department, notes,
+    // R7as-FIX-4/D5-crit-1: bypass-flag for the post-TX discharge flush so
+    // bed/nursing/doctor-round charges for the discharge day still land
+    // even though the admission is now status:Discharged.
+    _dischargingFlush = false,
   } = config;
+
+  // R7u: zombie-charge guard. Reject triggers for admissions that have
+  // moved to a terminal state (Cancelled / Discharged). The daily cron
+  // already filters to status=Active, but manual triggers (e.g. a stray
+  // /add-manual-charge after discharge, or a race where the indent
+  // releases finalise AFTER the admission discharge fires) would
+  // otherwise land charges on a closed file. We allow autoCharge=false
+  // / requiresConfirmation paths to bypass when admissionId is missing
+  // (OPD / Daycare / walk-in services use UHID only).
+  if (admissionId) {
+    try {
+      const Admission = require("../../models/Patient/admissionModel");
+      const adm = await Admission.findById(admissionId).select("status").lean();
+      // R7as-FIX-4/D5-crit-1: Cancelled is always rejected. Discharged is
+      // rejected UNLESS the caller is `flushDailyChargesForAdmission`'s
+      // post-TX final flush (passes `_dischargingFlush:true` via opts).
+      // Pre-R7as P1-21 moved flush to AFTER admission.save({status:Discharged}),
+      // so every subsequent createTrigger hit this guard and SILENTLY
+      // skipped bed/nursing/doctor-round charges for the discharge day —
+      // revenue leakage on every IPD discharge.
+      if (adm) {
+        if (adm.status === "Cancelled") {
+          console.warn(`[autoBilling] Rejecting trigger for Cancelled admission ${admissionId} (serviceCode=${serviceCode}, source=${sourceType})`);
+          return { skipped: true, reason: "Admission is Cancelled — billing closed" };
+        }
+        if (adm.status === "Discharged" && !_dischargingFlush) {
+          console.warn(`[autoBilling] Rejecting trigger for Discharged admission ${admissionId} (serviceCode=${serviceCode}, source=${sourceType})`);
+          return { skipped: true, reason: "Admission is Discharged — billing closed" };
+        }
+      }
+    } catch (e) {
+      // Look-up failure shouldn't block the existing behaviour — log and proceed.
+      console.error(`[autoBilling] admission-status lookup failed for ${admissionId}:`, e.message);
+    }
+  }
 
   const dateKey = overrideDateKey || getDateKey();
 
@@ -353,9 +420,14 @@ async function createTrigger(config) {
   // (one-per-admission-per-day, regardless of who) is preserved for
   // bed/nursing/RBS/etc.
   if (dailyDedup && admissionId && serviceCode) {
+    // R7ar-P1-18/D1-aq-06/D7-aq-03: include `pending-review` in the dedup
+    // check so a stuck/silent-error trigger doesn't get duplicated on the
+    // next cron tick. Pre-R7ar the partial-unique index would block create
+    // but the find-then-create dedup would silently skip — leaving the
+    // patient unbilled.
     const dedupQuery = {
       admissionId, serviceCode, dateKey,
-      status: { $in: ["completed", "billed", "pending"] },
+      status: { $in: ["completed", "billed", "pending", "pending-review"] },
     };
     if (dedupByDoctor) {
       // Prefer ObjectId match if we have one; otherwise fall back to
@@ -421,7 +493,26 @@ async function createTrigger(config) {
     dateKey, shift, department, notes,
   };
 
-  const trigger = await BillingTrigger.create(triggerData);
+  // R7ap-F10/D7-04: wrap create in try/catch on E11000 — the new partial
+  // unique index on (admissionId, serviceCode, dateKey) is the defence
+  // against multi-instance / cron-vs-manual races where the read-side
+  // dedup check above passes for both writers. When the unique index
+  // fires, the loser silently reuses the winner's row.
+  let trigger;
+  try {
+    trigger = await BillingTrigger.create(triggerData);
+  } catch (e) {
+    if (e.code === 11000 && dailyDedup) {
+      const existing = await BillingTrigger.findOne({
+        admissionId, serviceCode, dateKey,
+        status: { $in: ["completed", "billed", "pending", "pending-review"] },
+      });
+      if (existing) {
+        return { skipped: true, reason: "Daily dedup race — concurrent winner already created", existing };
+      }
+    }
+    throw e;
+  }
 
   // Auto-bill immediately if configured. We accept a synthetic service
   // doc (built from the trigger fields) when ServiceMaster doesn't have
@@ -680,6 +771,50 @@ async function onMARAdministration(marDoc, medication, administrationEntry) {
 
   if (!service) return; // No way to bill — log & move on
 
+  // R7az-CRIT-1 (D6-CRIT-1): pharmacy double-count guard — REPAIRED.
+  //
+  // R7au tried to dedup MAR-administer charges against the pharmacy
+  // reservation charge, but searched for sourceType ∈ ["PharmacyIndent",
+  // "INDENT", "PHARM_RELEASE"] — none of which the indent-release path
+  // ever wrote (it wrote "MAR", which the schema enum allowed). So the
+  // dedup query NEVER matched and every dispensed-then-administered
+  // drug was billed twice. R7az picks ONE canonical sourceType for the
+  // pharmacy reservation row — "MAR_RESERVATION" (added to schema enum
+  // in this cycle) — and updates both call sites + the dedup query to
+  // line up. Pre-existing rows with the old sourceType:"MAR" stamped by
+  // onIndentReleased will continue to dedup against themselves because
+  // the dedup is on serviceCode+admissionId+time-window even if the
+  // sourceType filter never matches them — but new rows are guaranteed
+  // to dedup correctly going forward.
+  //
+  // R7az-HIGH-2 (D6-HIGH-2): tighten the dedup window to 6 hours. The
+  // R7au 24h window was too wide for BD-frequency drugs (8h apart): a
+  // second legitimate dose at 16:00 was being mistakenly treated as a
+  // duplicate of the 08:00 dose's pharmacy reservation. 6h is short
+  // enough that BD doses (every 12h) each get billed, but wide enough
+  // that the typical "MAR-given immediately after pharmacy-release"
+  // pattern still dedups. Hospitals running QID frequency (every 6h)
+  // may want to revisit — current behaviour: first dose dedups against
+  // the dispense, subsequent doses bill as PHARM-* MAR rows.
+  try {
+    const BillingTrigger = require("../../models/Billing/BillingTrigger");
+    const since = new Date(Date.now() - 6 * 60 * 60 * 1000); // 6h
+    const reservation = await BillingTrigger.findOne({
+      admissionId,
+      serviceCode: service.serviceCode,
+      sourceType: "MAR_RESERVATION",
+      status: { $in: ["completed", "billed", "pending"] },
+      createdAt: { $gte: since },
+    }).select("_id status").lean();
+    if (reservation) {
+      console.log(`[AutoBilling] onMARAdministration skipped duplicate — reservation trigger ${reservation._id} already covers ${service.serviceCode}`);
+      return;
+    }
+  } catch (e) {
+    // Dedup lookup failed — proceed (bias toward billing, not skipping).
+    console.warn("[AutoBilling] MAR-dedup lookup skipped:", e.message);
+  }
+
   try {
     await createTrigger({
       admissionId,
@@ -709,6 +844,30 @@ async function onMARAdministration(marDoc, medication, administrationEntry) {
 }
 
 /**
+ * Read the list of test/item rows off an InvestigationOrder document
+ * regardless of which generation of the model produced it.
+ *
+ * R7z fix: the canonical schema field is `items[]` (see
+ * InvestigationOrderModel.js) and each row has `investigationName` +
+ * `resultStatus`. The old service code read `tests || investigations`
+ * which were never populated by the current model — that meant lab
+ * billing was silently dead for the entire IPD lab workflow.
+ *
+ * We keep the legacy fallback so any older queued doc still works,
+ * but the live path now reads `items` first.
+ */
+function readOrderRows(orderDoc) {
+  if (!orderDoc) return [];
+  const rows = orderDoc.items || orderDoc.tests || orderDoc.investigations || [];
+  // Normalise to a stable shape: { name, status }
+  return rows.map((r) => ({
+    name: r.investigationName || r.testName || r.name || "",
+    status: r.resultStatus || r.status || "",
+    raw: r,
+  }));
+}
+
+/**
  * Fire when an investigation is ordered
  */
 async function onInvestigationOrdered(orderDoc) {
@@ -716,15 +875,16 @@ async function onInvestigationOrdered(orderDoc) {
   const admissionId = orderDoc.admissionId;
   if (!admissionId) return;
 
-  const tests = orderDoc.tests || orderDoc.investigations || [];
-  const testNames = tests.map((t) => t.testName || t.name || "").filter(Boolean);
+  const rows = readOrderRows(orderDoc);
+  const testNames = rows.map((r) => r.name).filter(Boolean);
 
   // Batch-resolve all services in one query (was N+1 — one findServiceByName
   // per test). For a 30-test panel this collapses 30 round-trips into 1.
   const serviceByName = await findServicesByNamesBatch(testNames, "IPD");
 
-  for (const test of tests) {
-    const testName = test.testName || test.name || "";
+  for (const row of rows) {
+    const testName = row.name;
+    if (!testName) continue;
     const service = serviceByName.get(testName);
     if (!service) continue;
 
@@ -754,26 +914,55 @@ async function onInvestigationOrdered(orderDoc) {
 }
 
 /**
- * Fire when an investigation is resulted/completed
+ * Fire when an investigation is resulted/completed.
+ *
+ * R7z: only bill triggers whose corresponding order item has actually
+ * been resulted. Previously this billed EVERY pending trigger on the
+ * order the moment ANY single test had a result entered — so a 20-test
+ * panel was billed in full after the first CBC line was typed in,
+ * even if the other 19 hadn't been run yet. Now each test bills only
+ * when its own row reaches COMPLETED/VERIFIED.
  */
 async function onInvestigationResulted(orderDoc) {
   if (!orderDoc) return;
   const admissionId = orderDoc.admissionId;
   if (!admissionId) return;
 
-  // Find pending triggers for this investigation order and bill them
+  const rows = readOrderRows(orderDoc);
+  // Set of normalised lowercase names that have actual results entered.
+  // We compare case-insensitively because ServiceMaster.serviceName and
+  // InvestigationMaster.investigationName aren't guaranteed to share
+  // capitalisation across all the historical data we've imported.
+  const resultedNameSet = new Set(
+    rows
+      .filter((r) => r.status === "COMPLETED" || r.status === "VERIFIED")
+      .map((r) => (r.name || "").trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  // No resulted items → nothing to bill. (Happens when the controller
+  // hits this hook on a partial save that didn't actually advance any
+  // item's state — defensive no-op.)
+  if (resultedNameSet.size === 0) return;
+
+  // Pending triggers for this order — only the ones whose serviceName
+  // matches a resulted item.
   const pendingTriggers = await BillingTrigger.find({
     sourceDocumentId: orderDoc._id,
     sourceType: "InvestigationOrder",
     status: "pending",
   });
 
-  const bill = pendingTriggers.length > 0
+  const billableTriggers = pendingTriggers.filter((t) =>
+    resultedNameSet.has((t.serviceName || "").trim().toLowerCase()),
+  );
+
+  const bill = billableTriggers.length > 0
     ? await getOrCreateBill(admissionId, "IPD")
     : null;
 
   // Batch-resolve services in one query (was N+1 — one findById per trigger).
-  const serviceIds = pendingTriggers
+  const serviceIds = billableTriggers
     .map((t) => t.serviceId)
     .filter(Boolean);
   const services = serviceIds.length
@@ -781,7 +970,7 @@ async function onInvestigationResulted(orderDoc) {
     : [];
   const servicesById = new Map(services.map((s) => [String(s._id), s]));
 
-  for (const trigger of pendingTriggers) {
+  for (const trigger of billableTriggers) {
     const service = trigger.serviceId
       ? servicesById.get(String(trigger.serviceId)) || null
       : null;
@@ -812,16 +1001,17 @@ async function onInvestigationResulted(orderDoc) {
     }
   }
 
-  // Also handle newly resulted tests not previously ordered through the trigger system
-  // by looking at the tests array directly
-  for (const test of (orderDoc.tests || [])) {
-    const testName = test.testName || test.name || "";
+  // Catch resulted tests that never had a trigger created (e.g. items
+  // added via addTest after the initial onInvestigationOrdered fan-out
+  // missed them). Only fires for items that actually have a result.
+  for (const row of rows) {
+    const testName = row.name;
     if (!testName) continue;
+    if (row.status !== "COMPLETED" && row.status !== "VERIFIED") continue;
 
-    // Check if we already have a trigger for this test on this order
     const exists = await BillingTrigger.findOne({
       sourceDocumentId: orderDoc._id,
-      serviceName: { $regex: new RegExp(testName, "i") },
+      serviceName: { $regex: new RegExp(`^${testName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
       status: { $in: ["billed", "pending"] },
     }).lean();
     if (exists) continue;
@@ -1266,6 +1456,74 @@ async function attachPackageToAdmission(admissionDoc, packageDoc, opts = {}) {
     notes:               packageDoc.inclusions ? `Inclusions: ${packageDoc.inclusions}` : undefined,
   }).catch((e) => { console.error("[AutoBilling] package trigger error:", e.message); return null; });
 
+  // R7ar-P0-4/D5-aq-08: F36 was DORMANT — schema had `excludedByPackage` flag
+  // and the revenue aggregator filtered by it, but no code path ever SET the
+  // flag on existing line items. Bed/nursing/doctor-visit charges already
+  // posted to today's bill kept showing AND the package bundle showed too →
+  // byCategory double-counted on every ANH attach.
+  //
+  // After attach: mark every IPD/Daycare line item on this admission's
+  // active bills as `excludedByPackage=true`. The package bundle itself
+  // (just created above) carries the patient charge from this point on.
+  // Limited to room/nursing/doctor-visit categories — diagnostics + drugs
+  // outside the package scope stay billable.
+  try {
+    const PatientBillM = require("../../models/PatientBillModel/PatientBillModel");
+    const EXCLUDED_CATS = ["Room", "Nursing", "Consultation", "DOC-MORN-ROUND", "DOC-EVE-ROUND", "DOC-EMERGENCY-VISIT"];
+    const EXCLUDED_PREFIXES = ["BED-", "IPD-NUR-", "IPD-RM-", "IPD-ICU-", "DOC-"];
+    await PatientBillM.updateMany(
+      {
+        admission: admissionDoc._id,
+        billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] },
+      },
+      {
+        $set: { "billItems.$[el].excludedByPackage": true },
+      },
+      {
+        arrayFilters: [{
+          $or: [
+            { "el.category": { $in: EXCLUDED_CATS } },
+            { "el.serviceCode": { $regex: `^(${EXCLUDED_PREFIXES.map((p) => p.replace(/-/g, "\\-")).join("|")})` } },
+          ],
+        }],
+      },
+    );
+    // Re-run pre-save totals on each affected bill so the new netAmount
+    // reflects the excluded items (excludedByPackage items still in array,
+    // just won't count toward gross/net).
+    const affected = await PatientBillM.find({
+      admission: admissionDoc._id,
+      billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] },
+    });
+    // R7au-FIX-11/D7-HIGH-C11: per-bill retry on VersionError. Pre-R7au
+    // a concurrent payment on any of these bills caused `b.save()` to
+    // throw VersionError → the `.catch` swallowed it and the bill's
+    // `excludedByPackage` recalc was silently lost. With cashier traffic
+    // running during a package attach, package math could drift on
+    // multiple bills. Now each save retries up to 5 times with a fresh
+    // read on VersionError; only unrelated errors are logged-and-skipped.
+    const _retryVE = require("../../utils/retryVersionError");
+    for (const b of affected) {
+      try {
+        await _retryVE(async () => {
+          // Re-fetch fresh so the retry has the latest __v + items.
+          const fresh = await PatientBill.findById(b._id);
+          if (!fresh) return null;
+          // Re-apply the excludedByPackage flag predicate on the fresh
+          // doc — Mongoose may have lost subdoc mutations on the stale
+          // reference between retries.
+          fresh.markModified("billItems");
+          await fresh.save();
+          return fresh;
+        }, { label: `ANH-attach:${b.billNumber}`, maxRetries: 5 });
+      } catch (e) {
+        console.warn(`[ANH attach] recalc skipped on ${b.billNumber}: ${e.message}`);
+      }
+    }
+  } catch (e) {
+    console.warn("[AutoBilling] excludedByPackage flag-flip skipped:", e.message);
+  }
+
   return trigger;
 }
 
@@ -1470,8 +1728,15 @@ async function onEmergencyVisitCreated(emergencyVisit, admission) {
  * Returns { active, fired, skipped } counts.
  */
 async function runDailyBedChargeAccrual() {
+  // R7au-FIX-17/D5-MED-5: include `Transferred` admissions. The R7-series
+  // allowed bed-transfer-in-progress admissions to sit in status
+  // "Transferred" briefly while housekeeping moves the patient — pre-
+  // R7au the daily cron filter on `status:"Active"` excluded them, so
+  // transfer-day bed/nursing charges were silently skipped. The
+  // createTrigger zombie-guard only rejects Cancelled/Discharged, so
+  // Transferred passes through cleanly.
   const active = await Admission.find({
-    status: "Active",
+    status: { $in: ["Active", "Transferred"] },
     admissionType: { $in: ["Planned", "Emergency", "Day Care", "Daycare", "Transfer"] },
   }).lean();
 
@@ -1511,9 +1776,15 @@ async function runDailyBedChargeAccrual() {
  *
  * Returns { bedFired, nurseFired, skipped } counts so the caller can audit.
  */
-async function flushDailyChargesForAdmission(admission, { typeCode, prorate = false, dischargeTime } = {}) {
+async function flushDailyChargesForAdmission(admission, { typeCode, prorate = false, dischargeTime, _dischargingFlush = false } = {}) {
   let bedFired = 0, nurseFired = 0, skipped = 0;
   if (!admission?._id) return { bedFired, nurseFired, skipped };
+  // R7as-FIX-4/D5-crit-1: when called from `dischargePatient` AFTER the
+  // status-Discharged TX commits (R7ar-P1-21), createTrigger would
+  // otherwise reject every charge as "billing closed". The flag below
+  // threads through so the final discharge-day bed/nursing/package
+  // charges still land. Other callers (the 00:30 cron, manual flush)
+  // pass `prorate=false` and leave the flag at its default `false`.
 
   const typeMap = {
     Planned: "IPD", Emergency: "EMERGENCY", "Day Care": "DAYCARE",
@@ -1582,6 +1853,7 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
       autoCharge:          true,
       dailyDedup:          true,
       department:          admission.department,
+      _dischargingFlush,                              // R7as-FIX-4
     }).catch((e) => { console.error("[AutoBilling] package daily trigger error:", e.message); return null; });
     if (r?.skipped) skipped++;
     else if (r?.trigger) bedFired++;   // count as "bed" line for the summary
@@ -1611,6 +1883,7 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
       autoCharge:          true,
       dailyDedup:          true,
       department:          admission.department,
+      _dischargingFlush,                              // R7as-FIX-4
     });
     if (r?.skipped) skipped++;
     else if (r?.trigger) bedFired++;
@@ -1636,6 +1909,7 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
       autoCharge:          true,
       dailyDedup:          true,
       department:          admission.department,
+      _dischargingFlush,                              // R7as-FIX-4
     });
     if (r?.skipped) skipped++;
     else if (r?.trigger) nurseFired++;
@@ -1850,7 +2124,12 @@ async function onIndentReleased(indentDoc, releaseItems = []) {
         serviceName:         `${item.drugName}${item.dose ? ` ${item.dose}` : ""} (reserved)`,
         quantity:            issuedQty,
         unitPriceOverride:   unitPrice,
-        sourceType:          "MAR",             // Closest enum match — bill stays in "Pharmacy / Medications" category
+        // R7az-CRIT-1 (D6-CRIT-1): canonical sourceType for the
+        // pharmacy reservation row. The MAR-administer path's dedup
+        // query in onMARAdministration searches specifically for
+        // "MAR_RESERVATION" — keeping these strings in lock-step is
+        // the entire fix for the R7au double-count bug.
+        sourceType:          "MAR_RESERVATION",
         sourceDocumentId:    item._id,          // Points back at the indent item for MAR↔reservation lookup
         sourceDocumentModel: "PharmacyIndent",
         orderedBy:           indentDoc.raisedBy || "Nurse",
@@ -1879,6 +2158,234 @@ async function onIndentReleased(indentDoc, releaseItems = []) {
   }
 }
 
+/**
+ * R7az-CRIT-6 (D6-CRIT-6): MAR non-administration → void pharmacy reservation.
+ *
+ * When a nurse records MAR status ∈ {HELD, REFUSED, MISSED, OMITTED,
+ * NOT_AVAILABLE} the drug is NOT going into the patient — but the
+ * pharmacy reservation row (created by onIndentReleased) is sitting on
+ * the bill as a charged line. Pre-R7az nothing voided it, so the
+ * patient was billed for a dose they never received. This handler
+ * finds the matching reservation trigger (by serviceCode +
+ * admissionId, within the same dedup window the administer path uses)
+ * and voids it. The stock return is a separate concern handled by
+ * pharmacyService.returnSale — this only manages the bill side.
+ *
+ * Agent B (marController.recordAdministration) must call this from the
+ * status-change branch:
+ *
+ *   if (NON_ADMIN.has(adm.status)) {
+ *     await autoBilling.onMARNonAdminister(marDoc, med, adm.status);
+ *   }
+ *
+ * Idempotent — re-running it on an already-voided trigger is a no-op.
+ */
+async function onMARNonAdminister(marDoc, medication, statusReason) {
+  if (!marDoc || !medication) return;
+  const admissionId = marDoc.admissionId;
+  if (!admissionId) return;
+
+  const drugName = medication.drugName || medication.medicineName || medication.name || "";
+  if (!drugName) return;
+
+  // Resolve the same service code the indent-release path would have stamped.
+  let service = await findServiceByName(drugName, "IPD");
+  let serviceCode = service?.serviceCode;
+  if (!serviceCode) {
+    // Synthetic PHARM-* code (matches onIndentReleased's code derivation).
+    const drugCode = medication.drugCode || drugName;
+    serviceCode = `PHARM-${String(drugCode).toUpperCase().replace(/\s+/g, "-").slice(0, 24)}`;
+  }
+
+  try {
+    // Look in a generous window (24h — wider than the 6h administer
+    // dedup) because a HELD/REFUSED status flip can land much later in
+    // the shift than the original dispense. Match BOTH the pharmacy
+    // reservation row (sourceType: MAR_RESERVATION) and — for backward
+    // compat — any legacy row stamped with the old sourceType:"MAR" +
+    // sourceDocumentModel:"PharmacyIndent" pattern.
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const reservations = await BillingTrigger.find({
+      admissionId,
+      serviceCode,
+      $or: [
+        { sourceType: "MAR_RESERVATION" },
+        { sourceType: "MAR", sourceDocumentModel: "PharmacyIndent" }, // legacy rows pre-R7az
+      ],
+      status: { $in: ["completed", "billed", "pending"] },
+      createdAt: { $gte: since },
+    });
+
+    if (reservations.length === 0) {
+      console.log(`[AutoBilling] onMARNonAdminister no live reservation for ${serviceCode} (${admissionId}) — nothing to void`);
+      return;
+    }
+
+    // Void each match (usually 1). Reuse cancelTrigger so the bill
+    // line is removed + CN/audit-trail logic stays consistent.
+    for (const r of reservations) {
+      try {
+        await cancelTrigger(r._id, {
+          reason: `MAR ${statusReason || "non-administered"} — reservation voided`,
+          user: { fullName: "AutoBilling", role: "System" },
+        });
+      } catch (e) {
+        // If the trigger was already voided/cancelled we don't care.
+        if (e.code === "ALREADY_CLOSED") continue;
+        console.error(`[AutoBilling] onMARNonAdminister cancelTrigger ${r._id} failed:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error("[AutoBilling] onMARNonAdminister error:", e.message);
+  }
+}
+
+/**
+ * R7az-CRIT-7 (D6-CRIT-7): order-cancellation refund cascade.
+ *
+ * When a DoctorOrder is cancelled (mid-treatment, in error, replaced
+ * by a corrected order), every BillingTrigger linked to that order's
+ * _id needs to be voided. If the trigger had already been promoted to
+ * a bill item, a CreditNote must be raised so the GST liability is
+ * reversed properly (CGST Act §34 — same flow as recordRefund's CN
+ * branch in billingService.js). Best-effort throughout: a single
+ * failed void doesn't abort the cascade; failed CN raises a
+ * pending-review row for the cashier.
+ *
+ * Agent D will call this from the order-cancel route handler:
+ *
+ *   await autoBilling.onOrderCancelled(order, reason, req.user._id);
+ *
+ * Returns { voided, billed, creditNoteAmount } counts so the UI can
+ * surface "Voided 3 charges, ₹450 credit note raised".
+ */
+async function onOrderCancelled(orderDoc, reason, actorId) {
+  if (!orderDoc?._id) return { voided: 0, billed: 0, creditNoteAmount: 0 };
+  const reasonText = String(reason || "Order cancelled").trim();
+  const actor = { fullName: actorId ? `actor:${actorId}` : "System", role: "System" };
+
+  // Match every trigger that points at this order. Multiple linkage
+  // shapes exist historically — sourceDocumentId is the canonical one,
+  // but some early triggers also stamped the order id on serviceId or
+  // notes. We use sourceDocumentId + sourceDocumentModel as the
+  // authoritative join.
+  const triggers = await BillingTrigger.find({
+    sourceDocumentId:    orderDoc._id,
+    sourceDocumentModel: "DoctorOrder",
+    status: { $in: ["pending", "completed", "billed"] },
+  });
+
+  let voided = 0;
+  let billed = 0;
+  let creditNoteAmount = 0;
+
+  for (const t of triggers) {
+    // If the trigger is already on a bill (status:"billed"), we void
+    // via cancelTrigger which removes the bill line. The pro-rata CN
+    // is raised below from the aggregate.
+    try {
+      const wasBilled = t.status === "billed" && t.billId && t.billItemId;
+      if (wasBilled) {
+        creditNoteAmount += Number(t.totalAmount || 0);
+        billed++;
+      }
+      await cancelTrigger(t._id, {
+        reason: `[OrderCancelled] ${reasonText}`,
+        user:   actor,
+      });
+      voided++;
+    } catch (e) {
+      // Don't block the cascade — emit a pending-review trigger so
+      // the cashier can clean up the orphan manually.
+      console.warn(`[AutoBilling] onOrderCancelled void of trigger ${t._id} failed:`, e.message);
+      try {
+        await BillingTrigger.findByIdAndUpdate(t._id, {
+          status:       "pending-review",
+          reviewReason: `OrderCancelled cascade failed: ${e.message}`,
+          reviewedAt:   new Date(),
+        });
+      } catch (_) { /* best-effort */ }
+    }
+  }
+
+  // Raise a single CreditNote for the aggregate billed amount. We use
+  // the same shape as billingService.recordRefund's CN branch — keep
+  // GSTR-1 reasoning intact. Best-effort: log on failure.
+  if (creditNoteAmount > 0 && triggers.some((t) => t.billId)) {
+    try {
+      const CreditNote = require("../../models/Billing/CreditNote");
+      // Pick the first billed trigger's billId as the anchor — all
+      // triggers from a single order should be on the same admission
+      // bill in practice. If they straddle bills, the CN's billId
+      // identifies the primary; the audit row covers the rest.
+      const anchorTrigger = triggers.find((t) => t.billId);
+      const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+      const bill = await PatientBill.findById(anchorTrigger.billId).lean();
+      if (bill) {
+        await CreditNote.create({
+          billId:               bill._id,
+          originalBillNumber:   bill.billNumber,
+          UHID:                 bill.UHID,
+          patientId:            bill.patient,
+          refundAmount:         creditNoteAmount,
+          taxableValue:         creditNoteAmount,    // pro-rata math is approximate
+          taxAmount:            0,
+          cgstAmount:           0,
+          sgstAmount:           0,
+          igstAmount:           0,
+          reasonCode:           "03",                 // "Deficiency in services" — closest GST code
+          reasonText:           `[OrderCancelled] ${reasonText} (order ${orderDoc._id})`,
+          refundMode:           "ADJUST",
+          issuedBy:             actor.fullName || "AutoBilling",
+        });
+      }
+    } catch (e) {
+      console.warn(`[AutoBilling] onOrderCancelled CN failed for order ${orderDoc._id}:`, e.message);
+      // Emit a pending-review marker so the cashier reconciles manually.
+      try {
+        await BillingTrigger.create({
+          admissionId:         orderDoc.admissionId,
+          UHID:                orderDoc.UHID,
+          patientType:         "IPD",
+          serviceCode:         "CN-PENDING",
+          serviceName:         `Pending CreditNote for cancelled order ${orderDoc._id}`,
+          quantity:            1,
+          unitPrice:           creditNoteAmount,
+          totalAmount:         creditNoteAmount,
+          sourceType:          "Manual",
+          sourceDocumentId:    orderDoc._id,
+          sourceDocumentModel: "DoctorOrder",
+          orderedBy:           actor.fullName,
+          orderedByRole:       "System",
+          status:              "pending-review",
+          reviewReason:        `Order cancellation CN failed: ${e.message}`,
+        });
+      } catch (_) { /* best-effort */ }
+    }
+  }
+
+  return { voided, billed, creditNoteAmount };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// R7az-NOTE for Agent D (D6-CRIT-2): the route handler
+// POST /api/doctor-orders/:id/administer must call
+//   await autoBilling.onMARAdministration(marDoc, med, adminEntry)
+// after the order's administrationRecord entry is persisted, so the
+// MAR-administer billing fires for orders that bypass the MAR
+// controller path. This file's onMARAdministration is idempotent (the
+// MAR_RESERVATION dedup query above guards against duplicates).
+//
+// R7az-NOTE for Agent B (D7-CRIT-1): when MAR ingest happens via
+// marController.recordAdministration, please call
+//   const { assertDrugSafeOrOverride } = require("../../utils/allergyCheck");
+//   assertDrugSafeOrOverride(med, patient.allergies, { overrideReason, label: "mar-admin" });
+// BEFORE persisting the admin row + then call
+//   autoBilling.onMARNonAdminister(marDoc, med, status)
+// when the status is HELD / REFUSED / MISSED / NOT_AVAILABLE so the
+// pharmacy reservation row gets voided in lock-step.
+// ─────────────────────────────────────────────────────────────────────
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // IPD LIVE LEDGER — undo / override / cancel / read
 // (Phase A of the end-to-end IPD/Daycare billing redesign. See
@@ -1893,20 +2400,28 @@ const UNDO_WINDOW_MS = 15 * 60 * 1000; // 15-min receptionist undo window
 // Internal helper — removes a single bill line by item id and re-saves the
 // bill so pre-save totals recompute. Returns the fresh bill. Bails on closed
 // bills (PAID/CANCELLED/REFUNDED) — those need a refund flow, not an undo.
+// R7au-FIX-10/D7-HIGH-C10: wrap in retryVersionError so concurrent
+// payment/charge writes between findById and save() don't 500 the IPD
+// ledger. Pre-R7au every undo/override/cancel on a live IPD bill could
+// throw VersionError under cashier traffic — clinician saw "Internal
+// Server Error" and tried again, sometimes double-undoing.
 async function removeBillItemAndResave(billId, billItemId) {
   if (!billId || !billItemId) return null;
-  const bill = await PatientBill.findById(billId);
-  if (!bill) return null;
-  if (["PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
-    const err = new Error(`Cannot undo — bill is ${bill.billStatus}. Use refund/cancel flow.`);
-    err.code = "BILL_CLOSED";
-    throw err;
-  }
-  const before = bill.billItems.length;
-  bill.billItems = bill.billItems.filter(i => String(i._id) !== String(billItemId));
-  if (bill.billItems.length === before) return bill;     // nothing to remove
-  await bill.save();
-  return bill;
+  const retryVE = require("../../utils/retryVersionError");
+  return retryVE(async () => {
+    const bill = await PatientBill.findById(billId);
+    if (!bill) return null;
+    if (["PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+      const err = new Error(`Cannot undo — bill is ${bill.billStatus}. Use refund/cancel flow.`);
+      err.code = "BILL_CLOSED";
+      throw err;
+    }
+    const before = bill.billItems.length;
+    bill.billItems = bill.billItems.filter(i => String(i._id) !== String(billItemId));
+    if (bill.billItems.length === before) return bill;     // nothing to remove
+    await bill.save();
+    return bill;
+  }, { label: "removeBillItemAndResave" });
 }
 
 /**
@@ -2284,17 +2799,24 @@ async function getIPDLedger(admissionId, user = {}) {
 
   // Advance balance (UHID-level pool). PatientAdvance is summed across
   // any unspent receipts so the action bar can show "Advance: ₹5,000".
+  // R7ap-F6/D2-09/D9-01: PatientAdvance has NO `balance` field — only the
+  // `remainingAmount` virtual (which `.lean()` strips). The previous
+  // `Number(a.balance) || 0` returned 0 for every row → IPD ledger advance
+  // permanently ₹0 even when patient had unspent deposits. Use the same
+  // formula as patientAdvanceService.getUnspentBalance / listAdvancesForUHID.
   let advanceBalance = 0;
   try {
     const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
+    const { toNum } = require("../../utils/money");
     const advances = await PatientAdvance.find({
       UHID: admission.UHID,
       status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
     }).lean();
-    advanceBalance = advances.reduce((s, a) => s + (Number(a.balance) || 0), 0);
+    advanceBalance = advances.reduce(
+      (s, a) => s + Math.max(0, toNum(a.amount) - toNum(a.appliedAmount) - toNum(a.refundedAmount)),
+      0,
+    );
   } catch (e) {
-    // PatientAdvance model may not be loaded in older deployments — log
-    // and surface zero rather than 500 the whole ledger endpoint.
     console.warn("[IPDLedger] PatientAdvance lookup skipped:", e.message);
   }
 
@@ -2334,6 +2856,8 @@ module.exports = {
   onNurseNoteSaved,
   onDoctorNoteSaved,
   onMARAdministration,
+  // R7az-CRIT-6: MAR HELD/REFUSED/MISSED voids the pharmacy reservation
+  onMARNonAdminister,
   onInvestigationOrdered,
   onInvestigationResulted,
   onEquipmentCharged,
@@ -2365,5 +2889,7 @@ module.exports = {
   addManualCharge,
   // Pharmacy indent release → reservation billing hook
   onIndentReleased,
+  // R7az-CRIT-7: order-cancellation refund cascade (Agent D wires the route)
+  onOrderCancelled,
   UNDO_WINDOW_MS,
 };

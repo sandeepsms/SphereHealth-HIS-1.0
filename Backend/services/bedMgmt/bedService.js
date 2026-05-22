@@ -266,7 +266,10 @@ class BedService {
       if (!current) throw new Error("Bed not found");
       if (current.status === "Occupied" && status === "Available") {
         update.patient = null;
-        update.admission = null;
+        // R7bd-A-14 / A1-MED-17 — dead `admission` field removed from
+        // schema; `currentAdmission` is the canonical ref. We still
+        // $unset the legacy field in case the migration hasn't run yet,
+        // but no longer $set it to null (would re-introduce the field).
         update.currentAdmission = null;
         update["currentBooking.actualDischargeDate"] = new Date();
       }
