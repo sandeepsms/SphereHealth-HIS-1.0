@@ -53,18 +53,38 @@ const OPDPrescription = ({ settings, receipt = {} }) => {
     .map(s => s.trim())
     .filter(Boolean);
 
+  // R7bh-F5 / R7bg-8-CRIT-P3 (MCI Regulation 1.4.2): every prescription must
+  // carry the prescribing doctor's NMC/DMC registration number + council name.
+  // Resolve from multiple historical payload shapes:
+  //   - new structured shape: receipt.doctor.{dmcNumber|registrationNumber, councilName}
+  //   - legacy flat: receipt.doctorReg
+  const docDmc =
+    receipt.doctor?.dmcNumber ||
+    receipt.doctor?.registrationNumber ||
+    receipt.doctorReg ||
+    "—";
+  const docCouncil = receipt.doctor?.councilName || receipt.councilName || "Medical Council";
+  const regLine = docDmc === "—" ? "—" : `${docDmc} · ${docCouncil}`;
+
+  // R7bh-F5 / META-1: printCount drives PrintShell's DUPLICATE watermark.
+  // Fallback chain mirrors money.toNum shape.
+  const printCount = Number(
+    (receipt.printCount && (receipt.printCount.$numberDecimal ?? receipt.printCount)) || 0
+  ) || 0;
+
   return (
     <PrintShell
       settings={settings}
       documentTitle="OPD Prescription · Rx"
       serialNo={receipt.rxNo || receipt.visitNo}
+      printCount={printCount}
       infoItems={[
         { label: "Patient",    value: receipt.patientName },
         { label: "UHID",       value: receipt.uhid },
         { label: "Age / Sex",  value: [receipt.age && `${receipt.age}Y`, receipt.gender].filter(Boolean).join(" / ") },
         { label: "Mobile",     value: receipt.mobile },
         { label: "Doctor",     value: receipt.doctorName },
-        { label: "Reg. No",    value: receipt.doctorReg },
+        { label: "Reg. No",    value: regLine },
         { label: "Department", value: receipt.department },
         { label: "Visit Date", value: receipt.visitDate
             ? new Date(receipt.visitDate).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
