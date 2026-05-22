@@ -95,16 +95,20 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const hospState     = String(id.state || "").trim().toLowerCase();
   const isInterState  = !!customerState && !!hospState && customerState !== hospState;
 
+  // R7bh-F7 / R7bg-7-CRIT-5: Decimal128 wire-shape unwrap. Bare Number()
+  // on a {$numberDecimal:"…"} object returned NaN → entire totals card
+  // rendered "₹0". toNum() drains the right field name regardless of
+  // whether the back-end serialised it as Number, string, or Decimal128.
   const hsnMap = new Map();
   let subTotal = 0, totalDisc = 0, totalTaxable = 0, totalTax = 0;
   for (const it of items) {
-    const qty   = Number(it.quantity || it.qty || 0);
-    const rate  = Number(it.unitPrice || it.rate || 0);
-    const gst   = Number(it.gstRate ?? 12);
+    const qty   = toNum(it.quantity || it.qty);
+    const rate  = toNum(it.unitPrice || it.rate);
+    const gst   = toNum(it.gstRate ?? 12);
     const gross = qty * rate;
-    const disc  = Number(it.discountAmount != null ? it.discountAmount : gross * (Number(it.discountPercent || 0) / 100));
-    const taxable = Number(it.taxableAmount != null ? it.taxableAmount : gross - disc);
-    const tax     = Number(it.gstAmount != null ? it.gstAmount : taxable * (gst / 100));
+    const disc  = toNum(it.discountAmount != null ? it.discountAmount : gross * (toNum(it.discountPercent) / 100));
+    const taxable = toNum(it.taxableAmount != null ? it.taxableAmount : gross - disc);
+    const tax     = toNum(it.gstAmount != null ? it.gstAmount : taxable * (gst / 100));
     subTotal += gross; totalDisc += disc; totalTaxable += taxable; totalTax += tax;
     const hsn = it.hsnCode || "30049099";
     const key = `${hsn}__${gst}`;
@@ -114,9 +118,9 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   }
   const hsnRows = [...hsnMap.values()];
   const grandRaw   = totalTaxable + totalTax;
-  const grandTotal = Number(r.grandTotal != null ? r.grandTotal : Math.round(grandRaw));
-  const roundOff   = Number(r.roundOff != null ? r.roundOff : grandTotal - grandRaw);
-  const paid       = Number(r.amountPaid != null ? r.amountPaid : grandTotal);
+  const grandTotal = toNum(r.grandTotal != null ? r.grandTotal : Math.round(grandRaw));
+  const roundOff   = toNum(r.roundOff != null ? r.roundOff : grandTotal - grandRaw);
+  const paid       = toNum(r.amountPaid != null ? r.amountPaid : grandTotal);
   const balance    = Math.max(0, grandTotal - paid);
   const totals = { subTotal, totalDisc, totalTaxable, totalTax, grandTotal, roundOff, paid, balance };
   const hasControlled = items.some(it => it.schedule && /^(H|H1|X)$/i.test(it.schedule));
@@ -131,10 +135,11 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const returns       = Array.isArray(r.returns) ? r.returns : [];
   const supplements   = Array.isArray(r.supplements) ? r.supplements : [];
   const isRevised     = ["Partial-Return", "Refunded", "Cancelled", "Supplemented"].includes(r.status);
-  const refundTotal     = returns.reduce((s, x) => s + Number(x.refundAmount || 0), 0);
-  const supplementTotal = supplements.reduce((s, x) => s + Number(x.addedTotal || 0), 0);
-  const netAfter      = Math.max(0, Number(r.grandTotal || 0) + supplementTotal - refundTotal);
-  const patientCred   = Number(r.patientCredit || 0);
+  // R7bh-F7 / R7bg-7-CRIT-5: Decimal128 unwrap on refund/supplement money.
+  const refundTotal     = returns.reduce((s, x) => s + toNum(x.refundAmount), 0);
+  const supplementTotal = supplements.reduce((s, x) => s + toNum(x.addedTotal), 0);
+  const netAfter      = Math.max(0, toNum(r.grandTotal) + supplementTotal - refundTotal);
+  const patientCred   = toNum(r.patientCredit);
 
   /* Template choice — per-print override > pharmacy default > 1 */
   const tplId   = Number(r.template || r.billTemplate || r.pharmacySettings?.billTemplate || 1);

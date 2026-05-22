@@ -21,6 +21,8 @@
  */
 import React from "react";
 import "../print.css";
+import PrintWatermark from "../PrintWatermark";
+import { numberToIndianWords, toNum } from "../../../utils/printUtils";
 
 const _fmtAddr = (s = {}) => [
   s.addressLine1, s.addressLine2,
@@ -196,6 +198,17 @@ const PharmacyRegister = ({ settings = {}, receipt = {} }) => {
   const rows   = receipt.rows || [];
   const totals = receipt.totals || {};
   const accent = receipt.color || id.accent || "#475569";
+  // R7bh-F7 / R7bg-7-CRIT-3: watermark + amount-in-words wiring on
+  // statutory pharmacy register reprints. Total value (sales / purchase
+  // / closing stock) renders in words at the foot per GST §46 idiom +
+  // NABH AAC.7 financial-trail standard.
+  const printCount = toNum(receipt.printCount);
+  const totalForWords = toNum(
+    totals.grandTotal ?? totals["Grand Total"] ??
+    totals.totalValue ?? totals["Total Value"] ??
+    totals.totalAmount ?? totals.total ??
+    receipt.totalForWords
+  );
 
   // Honour per-print override, then settings, then default.
   const headerStyleId = receipt.headerStyle || ph.registerHeader || 1;
@@ -287,7 +300,12 @@ const PharmacyRegister = ({ settings = {}, receipt = {} }) => {
         }
       `}</style>
 
-      <div className={`pr-page pr-pharm-reg ${isGov ? "reg-gov" : ""}`} style={{ padding: 0, fontFamily: isGov ? "'Courier New', monospace" : "'DM Sans', system-ui, sans-serif", color: COL.ink }}>
+      <div className={`pr-page pr-pharm-reg ${isGov ? "reg-gov" : ""}`} style={{ padding: 0, fontFamily: isGov ? "'Courier New', monospace" : "'DM Sans', system-ui, sans-serif", color: COL.ink, position: "relative" }}>
+        {/* R7bh-F7 / R7bg-7-CRIT-3: DUPLICATE watermark on register reprints
+            so an auditor / inspector can spot a reissued copy at a glance.
+            Hidden on first print (printCount<=1). */}
+        <PrintWatermark printCount={printCount} />
+
         {/* HEADER — picked from the 5 styles */}
         <Header id={id} opts={opts} accent={accent} />
 
@@ -357,6 +375,18 @@ const PharmacyRegister = ({ settings = {}, receipt = {} }) => {
             </tbody>
           </table>
         </div>
+
+        {/* R7bh-F7 / R7bg-7-CRIT-4: total in words. GST §46 idiom — every
+            statutory register that carries a money total renders the
+            total in words at the foot so a tampered numeric cell can be
+            spotted on inspection. Only shown if a meaningful total is
+            present in receipt.totals or as receipt.totalForWords. */}
+        {totalForWords > 0 && (
+          <div style={{ padding: "10px 22px 0", fontSize: 10.5 }}>
+            <strong style={{ color: accent }}>Total in words:</strong>{" "}
+            <span style={{ fontWeight: 600 }}>{numberToIndianWords(totalForWords)}</span>
+          </div>
+        )}
 
         {/* SIGNATURES */}
         {opts.signatures && rows.length > 0 && (

@@ -465,6 +465,28 @@ const ACTIONS = {
   "compliance.firedrill.read":     ["Admin", "Security"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 
+  // ── R7bh-F6 — Accountant regulatory + cold-chain (NABH + GST + IT Act) ─
+  // Tax returns (GSTR-1, GSTR-3B export workflow) and TDS Form 16A.
+  // Both restricted to Admin + Accountant — they're financial records
+  // with portal-side ARNs and audit immutability. NABH AAC.7 expects
+  // a single auditable owner for outward filings; only the Accountant
+  // role consumes these endpoints today.
+  "tax.returns.write":             ["Admin", "Accountant"],
+  "tax.returns.read":              ["Admin", "Accountant"],
+  "tax.tds.write":                 ["Admin", "Accountant"],
+  "tax.tds.read":                  ["Admin", "Accountant"],
+  // Retention review register surface (compliance.retention.read). MRD
+  // owns the retention queue today; Admin gets read access for HIM
+  // oversight. Writes (mark-archived, restore, soft-delete) are deferred
+  // to a follow-up cycle pending DPDP / IT-44AA legal sign-off.
+  "compliance.retention.read":     ["Admin", "MRD"],
+  // Pharmacy cold-chain — F5's coordination contract. Write tier is
+  // bedside (Pharmacist + Nurse for vaccine fridge logs, Admin for
+  // master config); read also includes Doctor for clinical context
+  // (vaccine viability when prescribing).
+  "pharmacy.cold-chain.write":     ["Admin", "Pharmacist", "Nurse"],
+  "pharmacy.cold-chain.read":      ["Admin", "Pharmacist", "Nurse", "Doctor"],
+
   // ── R7bb-FIX-C-13 — DEAD-ACTION CANDIDATES ────────────────────────
   // Sweep below catalogues tokens that no Backend/routes/**/*.js
   // currently consults via requireAction(...). The Frontend `can()`

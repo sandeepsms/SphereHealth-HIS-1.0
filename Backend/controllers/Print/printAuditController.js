@@ -27,15 +27,28 @@ const ENTITY_MODEL = {
   PharmacyBill:       "PharmacySale",
   RefundReceipt:      "PatientBill", // refund is also a bill payment row
   AdvanceReceipt:     "PatientAdvance",
-  LabReport:          "LabRecord",
+  // R7bh-F1: model is registered as "LabReport" in labRecordsModels.js,
+  // not "LabRecord" — pre-R7bh the $inc no-op'd because Model lookup
+  // by name failed. Same key on both sides now.
+  LabReport:          "LabReport",
   DischargeSummary:   "DischargeSummary",
-  Prescription:       "OPDPrescription",
+  // R7bh-F1: model is registered as "Prescription" in
+  // models/Doctor/prescription.js — no model named "OPDPrescription"
+  // exists, so pre-R7bh the Model lookup failed and printCount
+  // never incremented.
+  Prescription:       "Prescription",
   ConsentForm:        "ConsentForm",
   MedicalCertificate: "MedicalCertificate",
   TPAAuthorization:   "PatientBill",
   MARSheet:           "Admission",
   DoctorOrderSheet:   "DoctorOrder",
   IPDFile:            "Admission",
+  // R7bh-F1 / META-1: openPrint() sweep introduced these — frontend
+  // emits printAudit:{entityType:"VisitorPass"} and "DoctorOrder" so
+  // the $inc lands on the right collection. PrintAudit enum updated
+  // in PrintAuditModel.js to accept both.
+  VisitorPass:        "VisitorPass",
+  DoctorOrder:        "DoctorOrder",
 };
 
 /**

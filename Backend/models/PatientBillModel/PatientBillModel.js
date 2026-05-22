@@ -575,6 +575,18 @@ PatientBillSchema.index({ billGeneratedAt: -1, billStatus: 1 });
 // day window without scanning the full collection.
 PatientBillSchema.index({ "payments.paidAt": -1 });
 
+// R7bh-F1 (R7bg-9-CRIT-5): sparse index on payments.voidedAt. Day Book
+// + IncomeService + DashboardsController each evaluate
+// `$or:[{"payments.paidAt": dayWindow}, {"payments.voidedAt": dayWindow}]`
+// for the reversed-refund leg (so a void on day D shows up in D's
+// collection). Pre-R7bh that branch fell back to COLLSCAN — the only
+// payments.* indexes covered paidAt. Sparse so existing un-voided
+// payments don't bloat the index; multikey across the embedded array.
+PatientBillSchema.index(
+  { "payments.voidedAt": -1 },
+  { sparse: true, name: "payment_voidedAt_sparse" },
+);
+
 // FIX (audit P6-B1): partial unique index that prevents two concurrent
 // getOrCreateDraftBill() callers from materialising two DRAFT rows for the
 // same patient+visitType+admission. Previously the find-then-insert pattern
@@ -637,7 +649,12 @@ async function _refuseDeleteIfTriggersReference(next) {
       let BillingTrigger;
       try { BillingTrigger = require("../Billing/BillingTrigger"); } catch (_) { /* circular-load tolerant */ }
       if (!BillingTrigger) return next();
-      const refCount = await BillingTrigger.countDocuments({ linkedBillId: id }).catch(() => 0);
+      // R7bh-F1 / META-2 (R7bg-6-CRIT-6): query field is `billId`, not
+      // `linkedBillId`. Pre-R7bh `linkedBillId` returned 0 unconditionally
+      // (no such field exists on BillingTrigger), so the guard never
+      // tripped and bills with linked triggers could be hard-deleted —
+      // leaving orphaned charges and breaking the autoBilling reconciler.
+      const refCount = await BillingTrigger.countDocuments({ billId: id }).catch(() => 0);
       if (refCount > 0) {
         const err = new Error(
           `Cannot delete bill — ${refCount} BillingTrigger row(s) reference it. ` +

@@ -84,9 +84,24 @@ function ShiftBlock() {
   useEffect(() => {
     const ctrl = new AbortController();
     refreshSession(ctrl.signal);
+    // R7bh-F1 / META-4 (R7bg-6-CRIT-5): switched to /api/reports/
+    // day-book — its byMode list is the reversal-aware view (voided
+    // refunds netted back IN). This page only reads byMode for the
+    // "cash collected today" tile, so we project the new payload's
+    // summary + byMode into the legacy shape the consumer expects.
     axios
-      .get(`${API}/billing/collection-summary?date=${todayISO()}`, { ...authHdr(), signal: ctrl.signal })
-      .then((r) => { if (!ctrl.signal.aborted) setToday(r.data?.summary); })
+      .get(`${API}/reports/day-book?date=${todayISO()}`, { ...authHdr(), signal: ctrl.signal })
+      .then((r) => {
+        if (ctrl.signal.aborted) return;
+        const d = r.data?.data || {};
+        setToday({
+          // Pre-existing consumer reads `today.byMode` for cash slice.
+          byMode: d.byMode || [],
+          // Keep totalCollected available for any future tiles.
+          totalCollected: d.summary?.collections,
+          txnCount:       d.summary?.collectionsCount,
+        });
+      })
       .catch(() => {});
     return () => ctrl.abort();
   }, []);

@@ -59,6 +59,12 @@ const VisitorPassSchema = new mongoose.Schema(
     issuedByRole: { type: String, default: "Receptionist" },
 
     notes: String,
+
+    // R7bh-F1 / R7bg-7-CRIT-2: PrintAudit infrastructure $incs this on
+    // every pass print/reprint. VisitorPass entityType added to the
+    // PrintAudit enum in R7bh-F1 so security gate-trail (FMS.7)
+    // captures reprints.
+    printCount: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

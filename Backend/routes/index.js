@@ -276,4 +276,23 @@ router.use("/grievances",            require("./Quality/grievanceRoutes"));
 router.use("/credentials",           require("./HR/credentialRoutes"));
 router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
 
+// ── R7bh-F6 — Accountant regulatory ────────────────────────────
+// GSTR-1/3B exporter + Form 16A workflow. Both gated by tax.returns.*
+// / tax.tds.* in Backend/config/permissions.js (Admin + Accountant).
+router.use("/tax-returns", require("./Tax/taxReturnRoutes"));
+router.use("/tds",         require("./Tax/tdsRoutes"));
+
+// ── R7bh-F5 — Pharmacy cold-chain (file owned by F5) ───────────
+// Mount only if the file exists so a partial F5 deploy doesn't crash
+// boot here. If F5 ships the route file later, this picks it up on
+// next restart.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/cold-chain", require("./Pharmacy/coldChainRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] cold-chain mount failed:", e.message);
+  }
+}
+
 module.exports = router;

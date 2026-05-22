@@ -176,23 +176,39 @@ async function getIndent(indentId) {
 }
 
 // ── acknowledgeIndent ─────────────────────────────────────────────
+// R7bh-F4 / R7bg-1-CRIT-4: atomic CAS on the status transition.
+// Pre-R7bh this was a load-then-modify-then-save sequence — two
+// pharmacists clicking "Acknowledge" concurrently would both pass the
+// `doc.status === "Raised"` check and both try to set themselves as the
+// acknowledger. The findOneAndUpdate predicate below guarantees only one
+// wins. If the predicate misses (already acked / cancelled / released)
+// we fall back to a read so the caller gets a deterministic 409 with the
+// current status surfaced in the message.
 async function acknowledgeIndent(indentId, user = {}) {
-  const doc = await PharmacyIndent.findById(indentId);
-  if (!doc) { const err = new Error("Indent not found"); err.status = 404; throw err; }
-  if (doc.status === "Cancelled" || doc.status === "Released") {
-    const err = new Error(`Indent is ${doc.status} — cannot acknowledge`);
-    err.code = "ALREADY_CLOSED"; throw err;
+  const updated = await PharmacyIndent.findOneAndUpdate(
+    { _id: indentId, status: "Raised" },
+    {
+      $set: {
+        status:           "Acknowledged",
+        acknowledgedBy:   user.fullName || user.name || "Pharmacist",
+        acknowledgedById: user._id || user.id || null,
+        acknowledgedAt:   new Date(),
+      },
+    },
+    { new: true, runValidators: true },
+  );
+  if (updated) return updated;
+  // Predicate missed — read current state to give a useful error.
+  const cur = await PharmacyIndent.findById(indentId).lean();
+  if (!cur) { const err = new Error("Indent not found"); err.status = 404; throw err; }
+  if (cur.status === "Acknowledged") {
+    // Idempotent — already acked (possibly by us on a network-flapped retry).
+    return cur;
   }
-  // Idempotent on re-acknowledge (in case the pharmacist's network
-  // flapped) — only update if currently Raised.
-  if (doc.status === "Raised") {
-    doc.status            = "Acknowledged";
-    doc.acknowledgedBy    = user.fullName || user.name || "Pharmacist";
-    doc.acknowledgedById  = user._id || user.id;
-    doc.acknowledgedAt    = new Date();
-    await doc.save();
-  }
-  return doc;
+  const err = new Error(`Indent is ${cur.status} — cannot acknowledge`);
+  err.code = "ALREADY_ACKED";
+  err.status = 409;
+  throw err;
 }
 
 // ── R7az-CRIT-5/D7-CRIT-3: FEFO atomic stock decrement ────────────
@@ -339,44 +355,66 @@ async function releaseIndent(indentId, { items = [], user = {}, adminOverride = 
   // findOneAndUpdate predicates; doing them outside the loop avoids
   // double-decrementing on a VersionError retry.
   //
-  // For each item the operator wants to release, find the matching
-  // indent line, validate the requested qty, and FEFO-decrement the
-  // batches. Collect picks for later persistence onto the indent.
+  // R7bh-F4 / R7bg-9-HIGH-1: parallelise the per-item FEFO pick. Pre-R7bh
+  // each item awaited sequentially — a 10-item indent ran 10 round-trips
+  // serially. Promise.all collapses to one round-trip per item in parallel.
+  // Each iteration touches a distinct (drugId, batches) namespace AND the
+  // findOneAndUpdate inside _fefoPickAndDecrement is itself atomic, so no
+  // shared mutable accumulator races between iterations.
   const releaseMap = new Map(items.map((r) => [String(r.itemId), r]));
   const allPicks = new Map(); // itemId → [{batchId, batchNo, qty, expiryDate}]
   // Track everything we decrement so we can roll back on overall failure.
   const allReservations = [];
-  try {
-    for (const item of preflight.items) {
-      const r = releaseMap.get(String(item._id));
-      if (!r) continue;
-      const issueNow = Number(r.issuedQty) || 0;
-      if (issueNow <= 0) continue;
-      const remainingRequested = Math.max(0, item.requestedQty - item.issuedQty);
-      const issuedClamped = Math.min(issueNow, remainingRequested);
-      if (issuedClamped <= 0) continue;
 
-      // No drugId on the item → legacy/manual entry without a Drug
-      // master. Skip FEFO + record only the legacy batchNumber the
-      // pharmacist typed. Audit trail loses a batchId in this case
-      // but the workflow still progresses.
-      if (!item.drugId) {
-        allPicks.set(String(item._id), []);
-        continue;
-      }
+  // Build the per-item task list first (synchronous validation), then
+  // fire FEFO in parallel.
+  const fefoTasks = []; // [{ itemId, drugId, qty }]
+  for (const item of preflight.items) {
+    const r = releaseMap.get(String(item._id));
+    if (!r) continue;
+    const issueNow = Number(r.issuedQty) || 0;
+    if (issueNow <= 0) continue;
+    const remainingRequested = Math.max(0, item.requestedQty - item.issuedQty);
+    const issuedClamped = Math.min(issueNow, remainingRequested);
+    if (issuedClamped <= 0) continue;
 
-      const picks = await _fefoPickAndDecrement(item.drugId, issuedClamped);
-      allPicks.set(String(item._id), picks);
-      for (const p of picks) allReservations.push(p);
+    // No drugId on the item → legacy/manual entry without a Drug
+    // master. Skip FEFO + record only the legacy batchNumber the
+    // pharmacist typed. Audit trail loses a batchId in this case
+    // but the workflow still progresses.
+    if (!item.drugId) {
+      allPicks.set(String(item._id), []);
+      continue;
     }
-  } catch (stockErr) {
-    // Roll back all reservations we already made — release is atomic.
+    fefoTasks.push({ itemId: String(item._id), drugId: item.drugId, qty: issuedClamped });
+  }
+
+  // Use Promise.allSettled so even if one task rejects, the others'
+  // successful reservations are still tracked and rolled back. With
+  // plain Promise.all we'd lose track of in-flight successes when one
+  // task threw — stock would silently leak.
+  const settled = await Promise.allSettled(
+    fefoTasks.map((t) => _fefoPickAndDecrement(t.drugId, t.qty)
+      .then((picks) => ({ itemId: t.itemId, picks }))),
+  );
+  const firstReject = settled.find((s) => s.status === "rejected");
+  // Collect reservations from successful tasks (regardless of whether
+  // any task failed) so we can roll back if needed.
+  for (const s of settled) {
+    if (s.status === "fulfilled") {
+      allPicks.set(s.value.itemId, s.value.picks);
+      for (const p of s.value.picks) allReservations.push(p);
+    }
+  }
+  if (firstReject) {
+    // Roll back every reservation that succeeded before we surface the
+    // failure — release is all-or-nothing.
     for (const p of allReservations) {
       await DrugBatch.findByIdAndUpdate(p.batchId, {
         $inc: { quantityOut: -p.qty, remaining: p.qty },
       }).catch(() => { /* best-effort */ });
     }
-    throw stockErr;
+    throw firstReject.reason;
   }
 
   // R7az-HIGH-4/D6-HIGH-4: wrap the mutate-save block in a
@@ -465,6 +503,13 @@ async function releaseIndent(indentId, { items = [], user = {}, adminOverride = 
   // Reservation billing — fire RESV-* BillingTriggers for each item
   // that just got dispensed. Done after save so the indent record is
   // durable even if billing hiccups.
+  //
+  // R7bh-F4 / R7bg-5-HIGH-1: pending-review fallback. Pre-R7bh a failure
+  // here logged silently and the indent moved on Released — the
+  // pharmacist's drugs were gone but no charge ever materialised on the
+  // patient's bill (revenue leak). Now we emit a pending-review row on
+  // BillingTrigger so the IPD Live Ledger's Stuck Triggers panel surfaces
+  // the gap and the operator can retry/clear it.
   try {
     const autoBilling = require("../Billing/autoBillingService");
     if (typeof autoBilling.onIndentReleased === "function") {
@@ -472,6 +517,30 @@ async function releaseIndent(indentId, { items = [], user = {}, adminOverride = 
     }
   } catch (e) {
     console.error("[Indent] reservation-billing error:", e.message);
+    try {
+      const BillingTrigger = require("../../models/Billing/BillingTrigger");
+      await BillingTrigger.create({
+        admissionId: savedDoc.admissionId,
+        patientId:   savedDoc.patientId,
+        UHID:        savedDoc.UHID,
+        patientType: "IPD",
+        serviceName: `Indent ${savedDoc.indentNumber || savedDoc._id} — reservation-billing failed`,
+        quantity:    1,
+        sourceType:  "MAR_RESERVATION",
+        sourceDocumentId:    savedDoc._id,
+        sourceDocumentModel: "PharmacyIndent",
+        orderedBy:    savedDoc.releasedBy || "Pharmacist",
+        orderedById:  savedDoc.releasedById || null,
+        orderedByRole:"Pharmacist",
+        triggeredBy:  "indent-release",
+        triggeredByRole: "System",
+        status:       "pending-review",
+        reviewReason: `indent-release-trigger-emit-failed: ${e.message}`,
+        orderDetails: `Indent ${savedDoc._id} released — autoBilling.onIndentReleased threw. Operator must reconcile manually.`,
+      });
+    } catch (logErr) {
+      console.error("[Indent] could not log pending-review trigger:", logErr.message);
+    }
   }
 
   return savedDoc;

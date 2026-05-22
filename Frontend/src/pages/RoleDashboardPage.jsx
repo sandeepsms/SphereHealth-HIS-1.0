@@ -18,9 +18,11 @@ import {
 } from "../Components/admin-theme";
 import { ROLES, MODULES, modulesForRole, homePathForRole } from "../config/permissions";
 import AdminHome from "./AdminHome";
+import { useVisiblePoll } from "../utils/pollingHelpers";
 
 import { API_BASE_URL as API } from "../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
+// R7bh-F9 / R7bg-10-HIGH-6 — token reads are sessionStorage-only.
+const authHdr = () => ({ headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token") || ""}` } });
 
 const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 
@@ -466,16 +468,32 @@ function AccountantDashboard({ user }) {
     (async () => {
       try {
         const today = new Date().toISOString().slice(0, 10);
-        const r = await axios.get(`${API}/billing/collection-summary?date=${today}`, { ...authHdr(), signal: ac.signal });
+        // R7bh-F1 / META-4 (R7bg-6-CRIT-5): the legacy /billing/
+        // collection-summary aggregator missed the reversed-refund
+        // cash-back leg. We now fire BOTH endpoints in parallel —
+        // the new /api/reports/day-book (dayBookService, A6-CRIT-6
+        // compliant) supplies the corrected `collections` total
+        // (which already nets reversed refunds back IN), while the
+        // legacy endpoint still supplies fields the day-book service
+        // doesn't expose (totalGross / totalPending / tpaPending /
+        // advanceDue / byVisitType / byDoctor). The day-book figure
+        // wins for `collected` + `txns`; everything else falls back
+        // to the legacy summary.
+        const [dayBookR, legacyR] = await Promise.allSettled([
+          axios.get(`${API}/reports/day-book?date=${today}`, { ...authHdr(), signal: ac.signal }),
+          axios.get(`${API}/billing/collection-summary?date=${today}`, { ...authHdr(), signal: ac.signal }),
+        ]);
         if (ac.signal.aborted) return;
-        const s = r.data?.summary || {};
+        const db = dayBookR.status === "fulfilled" ? (dayBookR.value.data?.data?.summary || {}) : {};
+        const ls = legacyR.status === "fulfilled" ? (legacyR.value.data?.summary    || {}) : {};
         setStats({
-          collected: s.totalCollected,
-          gross:     s.totalGross,
-          outstand:  s.totalPending,
-          tpaPend:   s.tpaPending,
-          txns:      s.txnCount,
-          advance:   s.advanceDue,
+          // Prefer day-book's reversal-aware figure; fall back to legacy.
+          collected: db.collections   ?? ls.totalCollected,
+          gross:     ls.totalGross,
+          outstand:  ls.totalPending,
+          tpaPend:   ls.tpaPending,
+          txns:      db.collectionsCount ?? ls.txnCount,
+          advance:   ls.advanceDue,
         });
       } catch (e) {
         if (!axios.isCancel(e)) console.error("[AccountantDashboard] stats fetch:", e?.message);
@@ -581,23 +599,22 @@ function SecurityDashboard({ user }) {
 
   // Auto-refresh every 60s. Three small fetches in parallel — each one's
   // failure (e.g. permission-not-granted) keeps the others' numbers live.
-  useEffect(() => {
-    let cancelled = false;
-    const fetchAll = async () => {
-      const [pass, gate, inc] = await Promise.all([
-        axios.get(`${API}/visitor-passes/stats`, authHdr()).then((r) => r.data?.data).catch(() => null),
-        axios.get(`${API}/gate-log/stats`,       authHdr()).then((r) => r.data?.data).catch(() => null),
-        axios.get(`${API}/incidents/stats`,      authHdr()).then((r) => r.data?.data).catch(() => null),
-      ]);
-      if (cancelled) return;
-      if (pass) setPassStats(pass);
-      if (gate) setGateStats(gate);
-      if (inc)  setIncStats(inc);
-    };
-    fetchAll();
-    const i = setInterval(fetchAll, 60000);
-    return () => { cancelled = true; clearInterval(i); };
+  // R7bh-F9 / R7bg-9-HIGH-4 — visibility-gated; pauses when the
+  // Security guard tabs away (e.g. to gate-log entry form), resumes on
+  // focus. Three stats endpoints × 60 s × idle hours adds up quickly
+  // on the security desk that leaves a dashboard open all shift.
+  const fetchAll = React.useCallback(async () => {
+    const [pass, gate, inc] = await Promise.all([
+      axios.get(`${API}/visitor-passes/stats`, authHdr()).then((r) => r.data?.data).catch(() => null),
+      axios.get(`${API}/gate-log/stats`,       authHdr()).then((r) => r.data?.data).catch(() => null),
+      axios.get(`${API}/incidents/stats`,      authHdr()).then((r) => r.data?.data).catch(() => null),
+    ]);
+    if (pass) setPassStats(pass);
+    if (gate) setGateStats(gate);
+    if (inc)  setIncStats(inc);
   }, []);
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useVisiblePoll(fetchAll, 60000, []);
 
   const v = (obj, key) => (obj == null ? "—" : obj?.[key] ?? 0);
 

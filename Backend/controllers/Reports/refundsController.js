@@ -34,6 +34,9 @@
 const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
 const { toNum }   = require("../../utils/money");
 const { parseHospitalDateRange, safeRegex } = require("../../utils/queryGuards");
+// R7bh-F8: envelope normalize — `{success, from, to, data, meta}` →
+// `sendOk(res, {from,to,rows}, meta)`.
+const { sendOk, sendErr } = require("../../utils/apiEnvelope");
 
 exports.getRefunds = async (req, res, next) => {
   try {
@@ -41,7 +44,7 @@ exports.getRefunds = async (req, res, next) => {
     try {
       ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 30, maxDays: 366 }));
     } catch (e) {
-      return res.status(e.status || 400).json({ success: false, message: e.message });
+      return sendErr(res, e, "VALIDATION", e.status || 400);
     }
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
     const match = {
@@ -91,12 +94,10 @@ exports.getRefunds = async (req, res, next) => {
       if (!r.voidedAt) total += r.amount;
     }
 
-    return res.json({
-      success: true,
-      from: from.toISOString().slice(0, 10),
-      to:   to.toISOString().slice(0, 10),
-      data: rows,
-      meta: { count: rows.length, totalRefunded: +total.toFixed(2), limit },
-    });
+    const fromStr = from.toISOString().slice(0, 10);
+    const toStr   = to.toISOString().slice(0, 10);
+    return sendOk(res,
+      { from: fromStr, to: toStr, rows },
+      { from: fromStr, to: toStr, count: rows.length, totalRefunded: +total.toFixed(2), limit });
   } catch (e) { next(e); }
 };

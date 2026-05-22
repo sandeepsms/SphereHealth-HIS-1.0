@@ -67,6 +67,15 @@ function printTPAAuth(bill) {
     doctorName:          bill.consultantName || a.attendingDoctor,
     doctorReg:           bill.consultantRegNo,
     doctorQualifications: bill.consultantQualifications,
+    // R7bh-F1 / META-1: PrintAudit anchor — TPAAuthorization shares
+    // PatientBill collection in ENTITY_MODEL map, so entityId=bill._id.
+    printAudit: {
+      entityType:   "TPAAuthorization",
+      entityId:     bill._id,
+      entityNumber: bill.tpaClaimNumber || bill.billNumber,
+      UHID:         p.UHID || bill.UHID,
+      patientName:  p.fullName || bill.patientName,
+    },
   });
 }
 

@@ -35,6 +35,10 @@ const Admission   = require("../../models/Patient/admissionModel");
 const OPD         = require("../../models/Patient/OPDModels");
 const { toNum }   = require("../../utils/money");
 const { parseHospitalDateRange } = require("../../utils/queryGuards");
+// R7bh-F8: standardise success and error envelope. The success body was
+// already `{success, data: {...}}` — kept identical via sendOk to avoid
+// breaking any consumer. Only the error branch is normalised.
+const { sendOk, sendErr } = require("../../utils/apiEnvelope");
 
 exports.getHospitalRegister = async (req, res, next) => {
   try {
@@ -42,7 +46,7 @@ exports.getHospitalRegister = async (req, res, next) => {
     try {
       ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 30, maxDays: 366 }));
     } catch (e) {
-      return res.status(e.status || 400).json({ success: false, message: e.message });
+      return sendErr(res, e, "VALIDATION", e.status || 400);
     }
 
     // R7bf-H A6-CRIT-2 (3): admittedCount EXCLUDES Daycare. We segregate
@@ -189,31 +193,30 @@ exports.getHospitalRegister = async (req, res, next) => {
     const grossSupply = toNum(t.grossSupply);
     const paid        = toNum(t.paid);
 
-    return res.json({
-      success: true,
-      data: {
-        from: from.toISOString().slice(0, 10),
-        to:   to.toISOString().slice(0, 10),
-        summary: {
-          admittedCount:       ipdAdmissions + emergencyAdmissions,  // EXCLUDES Daycare per A6-CRIT-2 (3)
-          ipdAdmissions,
-          daycareAdmissions,
-          emergencyAdmissions,
-          dischargedCount,
-          opdVisits,
-          billsGenerated:      t.billsGenerated || 0,
-          grossSupply,
-          paid,
-          outstanding:         +(grossSupply - paid).toFixed(2),
-        },
-        byVisitType: (facet.byVisitType || []).map((r) => ({
-          visitType: r._id || "Other",
-          count:     r.count,
-          gross:     toNum(r.gross),
-          paid:      toNum(r.paid),
-        })),
-        admittedByType,
+    const fromStr = from.toISOString().slice(0, 10);
+    const toStr   = to.toISOString().slice(0, 10);
+    return sendOk(res, {
+      from: fromStr,
+      to:   toStr,
+      summary: {
+        admittedCount:       ipdAdmissions + emergencyAdmissions,  // EXCLUDES Daycare per A6-CRIT-2 (3)
+        ipdAdmissions,
+        daycareAdmissions,
+        emergencyAdmissions,
+        dischargedCount,
+        opdVisits,
+        billsGenerated:      t.billsGenerated || 0,
+        grossSupply,
+        paid,
+        outstanding:         +(grossSupply - paid).toFixed(2),
       },
-    });
+      byVisitType: (facet.byVisitType || []).map((r) => ({
+        visitType: r._id || "Other",
+        count:     r.count,
+        gross:     toNum(r.gross),
+        paid:      toNum(r.paid),
+      })),
+      admittedByType,
+    }, { from: fromStr, to: toStr });
   } catch (e) { next(e); }
 };

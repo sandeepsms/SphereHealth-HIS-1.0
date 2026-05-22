@@ -143,7 +143,14 @@ const DischargeSummarySchema = new mongoose.Schema(
     selfFinalizeAck: { type: Boolean, default: false },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" } },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
+
+    // R7bh-F1 / R7bg-7-CRIT-2: PrintAudit infrastructure $incs this on
+    // every print/reprint. Pre-R7bh DischargeSummary had no printCount
+    // field so the $inc silently no-op'd, and DUPLICATE watermarks
+    // never rendered on reprinted discharge documents — breaking the
+    // NABH IMS.5 reprint trail.
+    printCount: { type: Number, default: 0 } },
   { timestamps: true, collection: "discharge_summaries" }
 );
 

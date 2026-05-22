@@ -13,7 +13,9 @@
  *   GET  /api/billing/:billId            → full bill (items + payments)
  *   POST /api/billing/:billId/generate   → finalize a DRAFT bill
  *   POST /api/billing/:billId/payment    → {amount, paymentMode, transactionId?, receivedBy?}
- *   GET  /api/billing/collection-summary?date=YYYY-MM-DD
+ *   GET  /api/reports/day-book?date=YYYY-MM-DD   (R7bh-F1: replaced
+ *     legacy /api/billing/collection-summary; new endpoint routes
+ *     through dayBookService and includes reversed-refund cash-back.)
  */
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
@@ -68,6 +70,16 @@ function printAdvanceReceipt(advance, patient) {
     method:       advance.paymentMode,
     refNo:        advance.transactionId,
     depositPurpose: advance.remarks || "hospitalization advance",
+    // R7bh-F1 / META-1: PrintAudit anchor — bumps printCount on the
+    // underlying PatientAdvance so reprints render the DUPLICATE
+    // watermark and a row lands in the PrintAudit register.
+    printAudit: {
+      entityType:   "AdvanceReceipt",
+      entityId:     advance._id,
+      entityNumber: advance.receiptNumber,
+      UHID:         patient.UHID,
+      patientName:  [patient.title, patient.fullName].filter(Boolean).join(" "),
+    },
   });
 }
 
@@ -97,6 +109,16 @@ function printAdvanceRefundReceipt(advance, patient) {
     sourceMethod:     advance.paymentMode,
     sourceAmount:     original,
     runningBalance:   Math.max(0, +(original - applied - refunded).toFixed(2)),
+    // R7bh-F1 / META-1: PrintAudit anchor — advance refunds carry the
+    // PatientAdvance._id (same row that backed the receipt) so the
+    // refund slip's printCount is tracked alongside its original.
+    printAudit: {
+      entityType:   "RefundReceipt",
+      entityId:     advance._id,
+      entityNumber: `${advance.receiptNumber}-RF`,
+      UHID:         patient.UHID,
+      patientName:  [patient.title, patient.fullName].filter(Boolean).join(" "),
+    },
   });
 }
 
@@ -167,9 +189,21 @@ export default function ReceptionBilling() {
     const istKey = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
     }).format(new Date());
-    return axios.get(`${API_ENDPOINTS.BILLING}/collection-summary?date=${istKey}`)
-      .then(({ data }) => setTodayCollection(data?.summary || data?.data?.summary || null))
-      .catch((e) => { if (!axios.isCancel(e)) console.error("[ReceptionBilling] collection-summary:", e?.message); });
+    // R7bh-F1 / META-4 (R7bg-6-CRIT-5): swap legacy collection-summary
+    // for /api/reports/day-book. The page reads only `totalCollected`
+    // from this payload, so we map `data.summary.collections` →
+    // `totalCollected` (day-book is the reversal-aware ledger).
+    return axios.get(`${API_ENDPOINTS.BASE}/reports/day-book?date=${istKey}`)
+      .then(({ data }) => {
+        const s = data?.data?.summary;
+        if (!s) { setTodayCollection(null); return; }
+        setTodayCollection({
+          totalCollected: s.collections,
+          txnCount:       s.collectionsCount,
+          netCashFlow:    s.netCashFlow,
+        });
+      })
+      .catch((e) => { if (!axios.isCancel(e)) console.error("[ReceptionBilling] day-book:", e?.message); });
   }, []);
 
   const load = useCallback(async (uhidArg) => {
@@ -702,6 +736,15 @@ export default function ReceptionBilling() {
       totalPaid:    Number(bill.advancePaid || 0),
       runningBalance: balanceAfter,
       remarks:      pay.remarks || "",
+      // R7bh-F1 / META-1: PrintAudit anchor — Receipt entityType maps
+      // to PatientBill in ENTITY_MODEL, so the bill's printCount bumps.
+      printAudit: {
+        entityType:   "Receipt",
+        entityId:     bill._id,
+        entityNumber: `${bill.billNumber}-P${(bill.payments || []).length || 1}`,
+        UHID:         patient?.UHID || bill.UHID,
+        patientName:  patient?.fullName || bill.patientName,
+      },
     });
   };
 
@@ -738,6 +781,15 @@ export default function ReceptionBilling() {
       sourceMethod:    source?.paymentMode || "—",
       sourceAmount:    source ? Number(source.amount) : null,
       runningBalance:  Number(bill.balanceAmount || 0),
+      // R7bh-F1 / META-1: PrintAudit anchor — RefundReceipt entityType
+      // maps to PatientBill so the source bill's printCount bumps.
+      printAudit: {
+        entityType:   "RefundReceipt",
+        entityId:     bill._id,
+        entityNumber: `${bill.billNumber}-R${refundCount}`,
+        UHID:         patient?.UHID || bill.UHID,
+        patientName:  patient?.fullName || bill.patientName,
+      },
     });
   };
 
@@ -783,6 +835,16 @@ export default function ReceptionBilling() {
       tax:         bill.taxAmount,
       paymentMethod: lastPay?.paymentMode,
       paymentRef:    lastPay?.transactionId,
+      // R7bh-F1 / META-1: PrintAudit anchor — both opd-receipt and
+      // service-receipt back into PatientBill, so we use Receipt
+      // entityType (maps to PatientBill in ENTITY_MODEL).
+      printAudit: {
+        entityType:   "Receipt",
+        entityId:     bill._id,
+        entityNumber: bill.billNumber,
+        UHID:         patient?.UHID,
+        patientName:  patient?.fullName,
+      },
     });
   };
 

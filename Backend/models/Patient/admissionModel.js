@@ -337,6 +337,12 @@ const AdmissionSchema = new mongoose.Schema(
       matchScore:         { type: Number, default: 0 },                  // for debugging / audit
       autoAttached:       { type: Boolean, default: false },             // true = matcher fired; false = manual
     },
+
+    // R7bh-F1 / R7bg-7-CRIT-2: PrintAudit infrastructure $incs this on
+    // every IPDFile / MARSheet print/reprint anchored to the admission.
+    // Pre-R7bh Admission had no printCount field → $inc no-op'd, NABH
+    // IMS.5 reprint trail incomplete.
+    printCount: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

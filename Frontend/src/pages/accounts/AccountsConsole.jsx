@@ -17,7 +17,7 @@
  *   GET  /api/billing?status=...&from=...&to=...&limit=...
  *   GET  /api/pharmacy/registers/gst?from=...&to=...
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
@@ -44,14 +44,50 @@ export default function AccountsConsole() {
   const [params, setParams] = useSearchParams();
   const initialTab = params.get("tab") || "daybook";
   const [tab, setTab] = useState(initialTab);
-  // Keep URL in sync when the user clicks an in-page tab (so deep links work).
+  // R7bh-F10 / R7bg-4-CRIT-3: bidirectional URL ↔ tab sync without
+  // the ping-pong stale-closure bug.
+  //
+  // The previous implementation had two effects:
+  //   1. on `tab` change → setParams(tab) if param differs
+  //   2. on `params` change → setTab(t) if state differs
+  //
+  // Race: clicking an in-page tab fires (1), which mutates `params`,
+  // which fires (2). (2) reads `tab` from React state's CURRENT render
+  // snapshot — for one tick (1)'s `tab` state had already been
+  // committed BUT (2)'s param-read returned the OLD param value
+  // (stale closure on `params`). After browser-back nav the two
+  // effects could chase each other, settling on whichever
+  // re-render won the race. Symptom in QA: clicking Refunds →
+  // Outstanding → browser-back left the tab on Outstanding but the
+  // URL on ?tab=refunds, or vice-versa.
+  //
+  // Fix: a tiny `lastSyncedTab` ref records the most recent value we
+  // wrote/read on either side. Both effects bail out if the source
+  // and the ref already agree — so a sync triggered by the OTHER
+  // effect doesn't fire a second cycle.
+  const lastSyncedTab = useRef(initialTab);
+  // Effect 1: state → URL. Only writes when state diverges from URL
+  // AND from the last sync we made — kills the "I just synced FROM
+  // URL, don't bounce back" loop.
   useEffect(() => {
-    if (params.get("tab") !== tab) setParams({ tab }, { replace: true });
+    const urlTab = params.get("tab") || "daybook";
+    if (urlTab === tab) return;
+    if (lastSyncedTab.current === tab) return;
+    lastSyncedTab.current = tab;
+    setParams({ tab }, { replace: true });
+    // setParams is stable across renders (react-router v6) so we can
+    // safely depend on `tab` only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
-  // Respond to back/forward navigation between sidebar entries.
+  // Effect 2: URL → state. Mirror guard. Reads the freshest `params`
+  // each time the URL changes (back/forward, sidebar link).
   useEffect(() => {
-    const t = params.get("tab") || "daybook";
-    if (t !== tab) setTab(t);
+    const urlTab = params.get("tab") || "daybook";
+    if (urlTab === tab) return;
+    if (lastSyncedTab.current === urlTab) return;
+    lastSyncedTab.current = urlTab;
+    setTab(urlTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
   return (
     <AdminPage>
@@ -107,8 +143,42 @@ function DayBookTab() {
   const refresh = async (signal) => {
     setLoading(true);
     try {
-      const r = await axios.get(`${API}/billing/collection-summary?date=${date}`, { ...authHdr(), signal });
-      if (!signal || !signal.aborted) setData(r.data || {});
+      // R7bh-F1 / META-4 (R7bg-6-CRIT-5): Day Book numbers now come
+      // from /api/reports/day-book (dayBookService) so the reversed-
+      // refund cash-back leg (A6-CRIT-6) feeds the totals correctly.
+      // We still hit the legacy /billing/collection-summary in
+      // parallel for byVisitType / byDoctor / advanceDue / tpaPending
+      // and for backward-compat (the new service doesn't expose those
+      // facets). When both succeed, day-book wins for collections +
+      // count + cash-in/out + byMode; the rest comes from legacy.
+      const [dbRes, legacyRes] = await Promise.allSettled([
+        axios.get(`${API}/reports/day-book?date=${date}`, { ...authHdr(), signal }),
+        axios.get(`${API}/billing/collection-summary?date=${date}`, { ...authHdr(), signal }),
+      ]);
+      if (signal && signal.aborted) return;
+      const legacy = legacyRes.status === "fulfilled" ? (legacyRes.value.data || {}) : {};
+      const db     = dbRes.status     === "fulfilled" ? (dbRes.value.data?.data || {}) : {};
+      const dbSum  = db.summary || {};
+      // Layer the corrected day-book totals on top of the legacy
+      // payload so all the existing render code keeps working.
+      const merged = {
+        ...legacy,
+        summary: {
+          ...(legacy.summary || {}),
+          // Day-book figures (reversal-aware) override legacy.
+          totalCollected:    dbSum.collections        ?? legacy.summary?.totalCollected,
+          txnCount:          dbSum.collectionsCount   ?? legacy.summary?.txnCount,
+          advanceDepositsIn: dbSum.advanceDepositsIn  ?? legacy.summary?.advanceDepositsIn,
+          advanceRefundsOut: dbSum.advanceRefundsOut  ?? legacy.summary?.advanceRefundsOut,
+          billRefundsOut:    dbSum.billRefundsOut     ?? legacy.summary?.billRefundsOut,
+          netCashFlow:       dbSum.netCashFlow        ?? legacy.summary?.netCashFlow,
+          // New fields the legacy never exposed (now surfacable in UI):
+          reversedRefunds:   dbSum.reversedRefunds    ?? legacy.summary?.reversedRefunds,
+          pharmacyRevenue:   dbSum.pharmacyRevenue    ?? legacy.summary?.pharmacyRevenue,
+        },
+        byMode: db.byMode?.length ? db.byMode : (legacy.byMode || []),
+      };
+      setData(merged);
     } catch (e) {
       if (!axios.isCancel(e) && !(signal && signal.aborted)) toast.error("Day Book load failed");
     }
@@ -644,14 +714,43 @@ function OutstandingTab() {
   const refresh = async (signal) => {
     setLoading(true);
     try {
-      const [t, c, a] = await Promise.all([
+      // R7bh-F1 / META-4 (R7bg-6-CRIT-5): fetch the new day-book
+      // payload alongside the legacy collection-summary so the
+      // Outstanding tab's "Today collection" KPI reflects the
+      // reversed-refund cash-back leg. Legacy still supplies
+      // advanceDue + totalPending (consumer reads `collection?.advanceDue`
+      // and `collection?.totalPending` below); day-book overlays the
+      // corrected totalCollected.
+      const [t, c, db, a] = await Promise.all([
         axios.get(`${API}/billing/tpa-cases`, { ...authHdr(), signal }).catch(() => null),
         axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, { ...authHdr(), signal }).catch(() => null),
+        axios.get(`${API}/reports/day-book?date=${todayISO()}`,            { ...authHdr(), signal }).catch(() => null),
         axios.get(`${API}/billing/aging`, { ...authHdr(), signal }).catch(() => null),
       ]);
       if (signal && signal.aborted) return;
       setTpaCases(t?.data?.data || t?.data?.cases || t?.data || []);
-      setCollection(c?.data?.summary || null);
+      const legacySum = c?.data?.summary || null;
+      const dbSum     = db?.data?.data?.summary || null;
+      // If we got both, splice the corrected totals over the legacy
+      // shape; if only one came back, fall back to whichever is here.
+      if (legacySum) {
+        setCollection({
+          ...legacySum,
+          totalCollected: dbSum?.collections      ?? legacySum.totalCollected,
+          txnCount:       dbSum?.collectionsCount ?? legacySum.txnCount,
+          netCashFlow:    dbSum?.netCashFlow      ?? legacySum.netCashFlow,
+        });
+      } else if (dbSum) {
+        // Day-book only: degrade gracefully (advanceDue / totalPending
+        // tiles will read undefined and the KPI fmtINR(undefined) → ₹0).
+        setCollection({
+          totalCollected: dbSum.collections,
+          txnCount:       dbSum.collectionsCount,
+          netCashFlow:    dbSum.netCashFlow,
+        });
+      } else {
+        setCollection(null);
+      }
       setAging(a?.data || null);
     } catch (e) {}
     if (!signal || !signal.aborted) setLoading(false);
@@ -945,8 +1044,20 @@ function ShiftTab() {
   useEffect(() => {
     const ctrl = new AbortController();
     refreshSession(ctrl.signal);
-    axios.get(`${API}/billing/collection-summary?date=${todayISO()}`, { ...authHdr(), signal: ctrl.signal })
-      .then(r => { if (!ctrl.signal.aborted) setToday(r.data?.summary); })
+    // R7bh-F1 / META-4 (R7bg-6-CRIT-5): switched to /api/reports/
+    // day-book — only the byMode slice is consumed below (for the
+    // shift's cash-collected tile), and the day-book's byMode
+    // includes the reversed-refund cash-back leg correctly.
+    axios.get(`${API}/reports/day-book?date=${todayISO()}`, { ...authHdr(), signal: ctrl.signal })
+      .then(r => {
+        if (ctrl.signal.aborted) return;
+        const d = r.data?.data || {};
+        setToday({
+          byMode: d.byMode || [],
+          totalCollected: d.summary?.collections,
+          txnCount:       d.summary?.collectionsCount,
+        });
+      })
       .catch(() => {});
     return () => ctrl.abort();
   }, []);

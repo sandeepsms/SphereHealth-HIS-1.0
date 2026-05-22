@@ -1,8 +1,12 @@
 /**
  * adrReportController.js  (R7bf-G / A5-CRIT-4 / NABH MOM.7)
  * Thin HTTP layer over services/Pharmacy/adrReportService.
+ *
+ * R7bh-F4 / R7bg-3-CRIT-12: envelope normalised via utils/apiEnvelope.
+ * Business logic remains with F5-CONT — this file only touches response shape.
  */
 const svc = require("../../services/Pharmacy/adrReportService");
+const { sendOk, sendErr } = require("../../utils/apiEnvelope");
 
 function _mapStatus(e) {
   if (e.status) return e.status;
@@ -22,10 +26,10 @@ const actor = (req) => ({
 exports.create = async (req, res, next) => {
   try {
     const doc = await svc.create(req.body || {}, actor(req));
-    res.status(201).json({ success: true, data: doc });
+    return sendOk(res, doc, undefined, 201);
   } catch (e) {
     const status = _mapStatus(e);
-    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    if (status !== 500) return sendErr(res, e, e.code, status);
     next(e);
   }
 };
@@ -34,10 +38,10 @@ exports.create = async (req, res, next) => {
 exports.update = async (req, res, next) => {
   try {
     const doc = await svc.update(req.params.id, req.body || {}, actor(req));
-    res.json({ success: true, data: doc });
+    return sendOk(res, doc);
   } catch (e) {
     const status = _mapStatus(e);
-    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    if (status !== 500) return sendErr(res, e, e.code, status);
     next(e);
   }
 };
@@ -46,10 +50,10 @@ exports.update = async (req, res, next) => {
 exports.submit = async (req, res, next) => {
   try {
     const doc = await svc.submit(req.params.id, actor(req));
-    res.json({ success: true, data: doc });
+    return sendOk(res, doc);
   } catch (e) {
     const status = _mapStatus(e);
-    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    if (status !== 500) return sendErr(res, e, e.code, status);
     next(e);
   }
 };
@@ -58,10 +62,10 @@ exports.submit = async (req, res, next) => {
 exports.filePvPI = async (req, res, next) => {
   try {
     const doc = await svc.filePvPI(req.params.id, req.body || {}, actor(req));
-    res.json({ success: true, data: doc });
+    return sendOk(res, doc);
   } catch (e) {
     const status = _mapStatus(e);
-    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    if (status !== 500) return sendErr(res, e, e.code, status);
     next(e);
   }
 };
@@ -70,10 +74,10 @@ exports.filePvPI = async (req, res, next) => {
 exports.reopen = async (req, res, next) => {
   try {
     const doc = await svc.reopen(req.params.id, actor(req), req.body?.reason || "");
-    res.json({ success: true, data: doc });
+    return sendOk(res, doc);
   } catch (e) {
     const status = _mapStatus(e);
-    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    if (status !== 500) return sendErr(res, e, e.code, status);
     next(e);
   }
 };
@@ -82,8 +86,8 @@ exports.reopen = async (req, res, next) => {
 exports.getOne = async (req, res, next) => {
   try {
     const doc = await svc.getById(req.params.id);
-    if (!doc) return res.status(404).json({ success: false, message: "ADR report not found" });
-    res.json({ success: true, data: doc });
+    if (!doc) return sendErr(res, "ADR report not found", "NOT_FOUND", 404);
+    return sendOk(res, doc);
   } catch (e) { next(e); }
 };
 
@@ -96,6 +100,6 @@ exports.list = async (req, res, next) => {
       severity: req.query?.severity,
       limit:    Number(req.query?.limit) || 100,
     });
-    res.json({ success: true, data, count: data.length });
+    return sendOk(res, data, { count: data.length });
   } catch (e) { next(e); }
 };

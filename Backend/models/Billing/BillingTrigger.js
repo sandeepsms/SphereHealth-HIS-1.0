@@ -1,4 +1,6 @@
 const mongoose = require("mongoose");
+const { toDec, decimalToNumber } = require("../../utils/money");
+const Dec = mongoose.Schema.Types.Decimal128;
 
 const BillingTriggerSchema = new mongoose.Schema({
   // ── Patient context ─────────────────────────────────────────
@@ -16,8 +18,12 @@ const BillingTriggerSchema = new mongoose.Schema({
   serviceCode:  String,
   serviceName:  String,
   quantity:     { type: Number, default: 1 },
-  unitPrice:    { type: Number, default: 0 },
-  totalAmount:  { type: Number, default: 0 },
+  // R7bh-F3 / R7bg-1-CRIT-6: money fields stored as Decimal128 so server-side
+  // arithmetic doesn't drift on long-stay admissions (IEEE-754 floats lose
+  // a cent per ~100 saves at ICU-tier rates). toJSON unwraps them back to
+  // numbers via utils/money.decimalToNumber, so wire shape is unchanged.
+  unitPrice:    { type: Dec, default: () => toDec(0) },
+  totalAmount:  { type: Dec, default: () => toDec(0) },
 
   // ── Clinical source ─────────────────────────────────────────
   // "Admission", "BedCharge", "Emergency" are fired by autoBillingService
@@ -56,6 +62,17 @@ const BillingTriggerSchema = new mongoose.Schema({
   completedByRole: { type: String, enum: ["Doctor","Nurse","System","Lab","Receptionist","Admin","Pharmacist","Accountant"] },
   completedAt:     Date,
   completionNotes: String,
+
+  // ── TRIGGER ATTRIBUTION (R7bh-F3 / R7bg-1-CRIT-6 / NABH-CRIT-A3) ───
+  // Pre-R7bh the trigger had orderedBy/completedBy but no single
+  // "who fired this trigger" pair — for cron-emitted bed/nursing/package
+  // rows the orderedBy field was literally "System" and there was no
+  // way to distinguish a cron emit from a service-layer emit in the
+  // audit trail. NABH (and any internal incident review) needs the
+  // emitting actor stamped on every charge row.
+  triggeredBy:     { type: String, default: null },                                       // display name
+  triggeredById:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  triggeredByRole: { type: String, default: null },                                        // Doctor|Nurse|Receptionist|System|Cron|Pharmacist|Admin
 
   // ── BILLING trail ───────────────────────────────────────────
   billId:     { type: mongoose.Schema.Types.ObjectId, ref: "PatientBill" },
@@ -173,5 +190,13 @@ BillingTriggerSchema.index({ admissionId: 1, status: 1, createdAt: -1 });
 // scanned all sourceTypes per admission — fine at small scale but slow
 // at long-stay-ICU cardinalities (~1k+ triggers per admission).
 BillingTriggerSchema.index({ admissionId: 1, createdAt: -1 });
+
+// R7bh-F3 / R7bg-1-CRIT-6: serialize Decimal128 money fields back to plain
+// JS Numbers on toJSON / toObject so the wire shape stays unchanged for
+// the IPDLedger / audit endpoints. Without this, unitPrice/totalAmount
+// would land in the JSON as { $numberDecimal: "300.00" } and break the
+// frontend's currency formatting.
+BillingTriggerSchema.set("toJSON",   { transform: decimalToNumber });
+BillingTriggerSchema.set("toObject", { transform: decimalToNumber });
 
 module.exports = mongoose.model("BillingTrigger", BillingTriggerSchema);

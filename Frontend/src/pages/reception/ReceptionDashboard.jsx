@@ -100,13 +100,36 @@ export default function ReceptionDashboard() {
     if (!silent) setLoading(true);
     try {
       const cfg = signal ? { signal } : {};
-      const [colRes, qRes, pRes] = await Promise.allSettled([
+      // R7bh-F1 / META-4 (R7bg-6-CRIT-5): added the new day-book
+      // endpoint alongside the legacy collection-summary so the
+      // dashboard's totals reflect the reversed-refund cash-back leg
+      // (A6-CRIT-6). Legacy still supplies byVisitType + advanceDue +
+      // tpaPending which the new service doesn't expose; day-book
+      // overrides totalCollected + txnCount so the KPI tiles show
+      // the corrected figure.
+      const [colRes, dayBookRes, qRes, pRes] = await Promise.allSettled([
         axios.get(`${API_ENDPOINTS.BASE}/billing/collection-summary`, { ...cfg, params: { date } }),
+        axios.get(`${API_ENDPOINTS.BASE}/reports/day-book`,           { ...cfg, params: { date } }),
         axios.get(`${API_ENDPOINTS.BASE}/doctors/dashboard/queues`, cfg),
         axios.get(`${API_ENDPOINTS.BASE}/presence/active`, cfg),
       ]);
       if (signal?.aborted) return;
-      if (colRes.status === "fulfilled") setCollection(colRes.value.data);
+      if (colRes.status === "fulfilled") {
+        const legacy = colRes.value.data || {};
+        const db = dayBookRes.status === "fulfilled" ? (dayBookRes.value.data?.data || {}) : {};
+        // Merge: day-book wins for collections + count + byMode (it
+        // has the correct reversed-refund cash-back logic).
+        const merged = {
+          ...legacy,
+          summary: {
+            ...(legacy.summary || {}),
+            totalCollected: db.summary?.collections      ?? legacy.summary?.totalCollected,
+            txnCount:       db.summary?.collectionsCount ?? legacy.summary?.txnCount,
+          },
+          byMode: db.byMode?.length ? db.byMode : (legacy.byMode || []),
+        };
+        setCollection(merged);
+      }
       if (qRes.status === "fulfilled")   setQueues(qRes.value.data?.data || []);
       if (pRes.status === "fulfilled")   setPresence(pRes.value.data?.data || []);
       // Surface individual failures (audit E-06). Individual rejections

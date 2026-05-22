@@ -44,6 +44,52 @@ const PatientBill    = require("../../models/PatientBillModel/PatientBillModel")
 const ServicePricing = require("../../models/ServicePricing/ServicePricingModel");
 const Admission      = require("../../models/Patient/admissionModel");
 const Room           = require("../../models/bedMgmt/roomModel");
+// R7bh-F3 / R7bg-6-CRIT-1: NaN guard for addItemToBill — every
+// pricing branch goes through toNum() so a malformed Decimal128
+// or undefined upstream value can never leak NaN into a BillItem
+// (which then poisoned grossAmount/netAmount across the whole bill).
+const { toNum } = require("../../utils/money");
+
+// R7bh-F3 / R7bg-1-CRIT-6 / NABH-CRIT-A3: every BillingTrigger.create() goes
+// through this helper so the new audit trio (triggeredBy/triggeredById/
+// triggeredByRole) is populated consistently. Callers pass a minimal
+// `actor = { userId, name, role }` and the helper fills the trigger doc.
+//
+//   - cron emits  (runDailyBedChargeAccrual / flushDailyChargesForAdmission)
+//     pass { name: "System", role: "Cron" }
+//   - service emits inherit from orderedBy* on the caller's payload when
+//     no explicit actor is given.
+//
+// The helper is a pure wrapper around BillingTrigger.create — every
+// existing E11000 / VersionError handling stays on the caller side.
+async function _emitTrigger(payload, actor = null) {
+  const data = { ...payload };
+  // Only populate fields that aren't already on the payload (caller can
+  // override explicitly for special cases like paper-trail rows where
+  // the actor differs from the orderedBy).
+  if (data.triggeredBy === undefined) {
+    data.triggeredBy =
+      actor?.name ||
+      data.orderedBy ||
+      data.completedBy ||
+      "System";
+  }
+  if (data.triggeredById === undefined) {
+    data.triggeredById =
+      actor?.userId ||
+      actor?._id ||
+      data.orderedById ||
+      data.completedById ||
+      null;
+  }
+  if (data.triggeredByRole === undefined) {
+    // Map "System" + dailyDedup to "Cron" so the audit ledger can
+    // distinguish a scheduled accrual from a user-initiated trigger.
+    const fallbackRole = data.orderedByRole || data.completedByRole || "System";
+    data.triggeredByRole = actor?.role || fallbackRole;
+  }
+  return BillingTrigger.create(data);
+}
 
 // ── Service-event map: maps clinical event types → service codes ──────────────
 // autoCharge: true = bill immediately when trigger created
@@ -257,12 +303,18 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
   try {
     let unitPrice;
     if (source.unitPriceOverride != null) {
-      unitPrice = Number(source.unitPriceOverride) || 0;
+      // R7bh-F3 / R7bg-6-CRIT-1: wrap every branch in toNum so a
+      // Decimal128, BSON wrapper, or stringy "300.00" never leaks
+      // NaN into the bill item. Pre-R7bh `Number(Decimal128)` returned
+      // NaN, which then poisoned grossAmount/netAmount across the
+      // whole bill via the pre-save aggregator.
+      unitPrice = toNum(source.unitPriceOverride);
     } else {
       const pricing = await ServicePricing.getPriceFor(service._id, bill.paymentType || "CASH", bill.tpa?.toString());
-      unitPrice = pricing?.finalPrice ?? service.defaultPrice ?? 0;
+      unitPrice = toNum(pricing?.finalPrice ?? service.defaultPrice ?? 0);
     }
-    const totalAmt   = unitPrice * (quantity || 1);
+    const qty        = Number(quantity) || 1;
+    const totalAmt   = toNum(unitPrice) * qty;
 
     const item = {
       serviceId:       service._id,
@@ -270,7 +322,7 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
       serviceName:     service.serviceName,
       category:        service.category,
       billingType:     service.billingType,
-      quantity:        quantity || 1,
+      quantity:        qty,
       unitPrice,
       grossAmount:     totalAmt,
       discountPercent: 0, discountAmount: 0,
@@ -375,6 +427,12 @@ async function createTrigger(config) {
     // bed/nursing/doctor-round charges for the discharge day still land
     // even though the admission is now status:Discharged.
     _dischargingFlush = false,
+    // R7bh-F3 / R7bg-1-CRIT-6 / NABH-CRIT-A3: explicit attribution trio.
+    // Callers MAY pass these to label the emit precisely (e.g. cron passes
+    // role:"Cron"). When omitted, _emitTrigger defaults from orderedBy*.
+    triggeredBy,
+    triggeredById,
+    triggeredByRole,
   } = config;
 
   // R7u: zombie-charge guard. Reject triggers for admissions that have
@@ -454,10 +512,13 @@ async function createTrigger(config) {
   // tariff (TPA/Corporate aware, looked up inside addItemToBill) →
   // ServiceMaster.defaultPrice → 0. We store the override here on the
   // trigger so the audit row reflects exactly what the patient will pay.
+  // R7bh-F3 / R7bg-6-CRIT-1: toNum-wrapped so a Decimal128 ServiceMaster
+  // defaultPrice can't leak NaN into trigger.unitPrice/totalAmount and
+  // (transitively) into the bill line item.
   const unitPrice   = unitPriceOverride != null
-    ? (Number(unitPriceOverride) || 0)
-    : (resolvedService?.defaultPrice ?? 0);
-  const totalAmount = unitPrice * (quantity || 1);
+    ? toNum(unitPriceOverride)
+    : toNum(resolvedService?.defaultPrice ?? 0);
+  const totalAmount = toNum(unitPrice) * (Number(quantity) || 1);
 
   // If a code was requested but ServiceMaster doesn't have it yet (common
   // for newly-introduced codes like DOC-MORN-ROUND or BED-ICU), accept
@@ -466,6 +527,18 @@ async function createTrigger(config) {
   // ServiceMaster rows from accumulated triggers.
   const canAutoCharge = autoCharge && (resolvedService || (serviceCode && unitPriceOverride != null && serviceName));
   const triggerStatus = canAutoCharge ? "completed" : requiresConfirmation ? "pending" : "pending";
+
+  // R7bh-F3 / R7bg-1-CRIT-6 / NABH-CRIT-A3: derive attribution role.
+  // Explicit triggeredByRole wins (cron callsites pass "Cron" explicitly).
+  // Otherwise mirror orderedByRole so service-layer emits keep their
+  // actor identity in the audit trail. NB: we do NOT auto-infer "Cron"
+  // from sourceType because both onAdmissionCreated (Day-1 bed/nursing)
+  // and the daily cron share the same sourceType+orderedByRole shape —
+  // only the call site knows which it is, and runDailyBedChargeAccrual
+  // / flushDailyChargesForAdmission pass triggeredByRole:"Cron" below.
+  const _autoRole = triggeredByRole != null
+    ? triggeredByRole
+    : (orderedByRole || "System");
 
   const triggerData = {
     admissionId, patientId, UHID, patientType,
@@ -486,6 +559,10 @@ async function createTrigger(config) {
     completedBy,   completedById,   completedByRole,
     completedAt:   completedBy ? new Date() : undefined,
     completionNotes,
+    // R7bh-F3 / R7bg-1-CRIT-6: emit-actor attribution trio.
+    triggeredBy:     triggeredBy   != null ? triggeredBy   : (orderedBy   || completedBy   || "System"),
+    triggeredById:   triggeredById != null ? triggeredById : (orderedById || completedById || null),
+    triggeredByRole: _autoRole,
     status: triggerStatus,
     autoCharged: autoCharge,
     requiresConfirmation,
@@ -500,7 +577,11 @@ async function createTrigger(config) {
   // fires, the loser silently reuses the winner's row.
   let trigger;
   try {
-    trigger = await BillingTrigger.create(triggerData);
+    // _emitTrigger is a thin wrapper that's a no-op when the trio is
+    // already populated (above) — kept on the path so future emits stay
+    // consistent and the helper has a single integration point to add
+    // future audit columns to.
+    trigger = await _emitTrigger(triggerData);
   } catch (e) {
     if (e.code === 11000 && dailyDedup) {
       const existing = await BillingTrigger.findOne({
@@ -1062,7 +1143,10 @@ async function onEquipmentCharged(chargeEntry, billItemId) {
     // Already manually billed elsewhere — leave a paper-trail trigger and
     // exit, so we don't double-add to the bill.
     try {
-      await BillingTrigger.create({
+      // R7bh-F3 / R7bg-1-CRIT-6: route through _emitTrigger so the
+      // audit attribution trio is populated. The nurse is both the
+      // orderer + completer here, so triggeredBy mirrors that.
+      await _emitTrigger({
         admissionId: chargeEntry.admissionId,
         patientId:   chargeEntry.patientId,
         UHID:        chargeEntry.UHID,
@@ -1070,8 +1154,14 @@ async function onEquipmentCharged(chargeEntry, billItemId) {
         serviceCode: `EQUIP-${chargeEntry.itemId?.toString().slice(-6) || "GEN"}`,
         serviceName: chargeEntry.itemName,
         quantity:    chargeEntry.quantity || 1,
-        unitPrice:   chargeEntry.unitPrice,
-        totalAmount: chargeEntry.totalAmount,
+        // R7bh-F3 / R7bg-6-CRIT-1: toNum-wrapped — the upstream
+        // NursingChargeEntry stores money as Decimal128, and
+        // {$numberDecimal} → schema's Decimal128 round-trip is fine,
+        // but downstream consumers reading the trigger directly
+        // (audit endpoints, IPDLedger byCategory aggregator) all
+        // expect a finite Number, which toNum guarantees.
+        unitPrice:   toNum(chargeEntry.unitPrice),
+        totalAmount: toNum(chargeEntry.totalAmount),
         sourceType:  "Equipment",
         sourceDocumentId:    chargeEntry._id,
         sourceDocumentModel: "NursingChargeEntry",
@@ -1085,7 +1175,7 @@ async function onEquipmentCharged(chargeEntry, billItemId) {
         autoCharged: true,
         dateKey: chargeEntry.dateKey || getDateKey(),
         shift: chargeEntry.shift,
-      });
+      }, { name: chargeEntry.chargedBy || "Nurse", role: "Nurse" });
     } catch (e) { console.error("[AutoBilling] onEquipmentCharged (paper-trail) error:", e.message); }
     return;
   }
@@ -1754,7 +1844,10 @@ async function runDailyBedChargeAccrual() {
     if (typeCode !== "IPD" && typeCode !== "DAYCARE") continue;
 
     try {
-      const result = await flushDailyChargesForAdmission(adm, { typeCode });
+      // R7bh-F3 / R7bg-1-CRIT-6: stamp every trigger emitted from the
+      // daily accrual cron with triggeredByRole:"Cron" so the audit
+      // ledger can split scheduled vs service-layer emits.
+      const result = await flushDailyChargesForAdmission(adm, { typeCode, _fromCron: true });
       bedFired   += result.bedFired;
       nurseFired += result.nurseFired;
       skipped    += result.skipped;
@@ -1776,8 +1869,13 @@ async function runDailyBedChargeAccrual() {
  *
  * Returns { bedFired, nurseFired, skipped } counts so the caller can audit.
  */
-async function flushDailyChargesForAdmission(admission, { typeCode, prorate = false, dischargeTime, _dischargingFlush = false } = {}) {
+async function flushDailyChargesForAdmission(admission, { typeCode, prorate = false, dischargeTime, _dischargingFlush = false, _fromCron = false } = {}) {
   let bedFired = 0, nurseFired = 0, skipped = 0;
+  // R7bh-F3 / R7bg-1-CRIT-6: when invoked by runDailyBedChargeAccrual the
+  // emit is a scheduled accrual — stamp every downstream createTrigger
+  // with triggeredByRole:"Cron". Discharge-time and manual flushes leave
+  // this falsy so the actor's identity is preserved.
+  const _cronRole = _fromCron ? "Cron" : undefined;
   if (!admission?._id) return { bedFired, nurseFired, skipped };
   // R7as-FIX-4/D5-crit-1: when called from `dischargePatient` AFTER the
   // status-Discharged TX commits (R7ar-P1-21), createTrigger would
@@ -1834,7 +1932,9 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
     hasPackage && (!pkg.maxLOSDays || pkg.maxLOSDays === 0 || dayN <= pkg.maxLOSDays);
 
   if (withinPackageWindow) {
-    const pkgRate = Number(pkg.unitPrice || 0) * prorateMultiplier;
+    // R7bh-F3 / R7bg-6-CRIT-1: toNum so a Decimal128 pkg.unitPrice
+    // can't produce NaN here either.
+    const pkgRate = toNum(pkg.unitPrice || 0) * prorateMultiplier;
     const r = await createTrigger({
       admissionId:         admission._id,
       patientId:           admission.patientId,
@@ -1854,6 +1954,7 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
       dailyDedup:          true,
       department:          admission.department,
       _dischargingFlush,                              // R7as-FIX-4
+      triggeredByRole:     _cronRole,                 // R7bh-F3 (undefined when not from cron)
     }).catch((e) => { console.error("[AutoBilling] package daily trigger error:", e.message); return null; });
     if (r?.skipped) skipped++;
     else if (r?.trigger) bedFired++;   // count as "bed" line for the summary
@@ -1884,6 +1985,7 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
       dailyDedup:          true,
       department:          admission.department,
       _dischargingFlush,                              // R7as-FIX-4
+      triggeredByRole:     _cronRole,                 // R7bh-F3
     });
     if (r?.skipped) skipped++;
     else if (r?.trigger) bedFired++;
@@ -1910,6 +2012,7 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
       dailyDedup:          true,
       department:          admission.department,
       _dischargingFlush,                              // R7as-FIX-4
+      triggeredByRole:     _cronRole,                 // R7bh-F3
     });
     if (r?.skipped) skipped++;
     else if (r?.trigger) nurseFired++;
@@ -2343,15 +2446,18 @@ async function onOrderCancelled(orderDoc, reason, actorId) {
       console.warn(`[AutoBilling] onOrderCancelled CN failed for order ${orderDoc._id}:`, e.message);
       // Emit a pending-review marker so the cashier reconciles manually.
       try {
-        await BillingTrigger.create({
+        // R7bh-F3 / R7bg-1-CRIT-6: route through _emitTrigger so the
+        // pending-review marker also carries the attribution trio. The
+        // actor on the cancellation is who fired the cascade.
+        await _emitTrigger({
           admissionId:         orderDoc.admissionId,
           UHID:                orderDoc.UHID,
           patientType:         "IPD",
           serviceCode:         "CN-PENDING",
           serviceName:         `Pending CreditNote for cancelled order ${orderDoc._id}`,
           quantity:            1,
-          unitPrice:           creditNoteAmount,
-          totalAmount:         creditNoteAmount,
+          unitPrice:           toNum(creditNoteAmount),
+          totalAmount:         toNum(creditNoteAmount),
           sourceType:          "Manual",
           sourceDocumentId:    orderDoc._id,
           sourceDocumentModel: "DoctorOrder",
@@ -2359,7 +2465,7 @@ async function onOrderCancelled(orderDoc, reason, actorId) {
           orderedByRole:       "System",
           status:              "pending-review",
           reviewReason:        `Order cancellation CN failed: ${e.message}`,
-        });
+        }, { name: actor.fullName || "System", role: actor.role || "System" });
       } catch (_) { /* best-effort */ }
     }
   }

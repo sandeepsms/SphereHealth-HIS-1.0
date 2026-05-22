@@ -1,8 +1,11 @@
 /**
  * stockTakeController.js  (R7bd-E-2 / A2-MED-18)
  * Thin HTTP layer over services/Pharmacy/stockTake.
+ *
+ * R7bh-F4 / R7bg-3-CRIT-12: envelope normalised via utils/apiEnvelope.
  */
 const svc = require("../../services/Pharmacy/stockTake");
+const { sendOk, sendErr } = require("../../utils/apiEnvelope");
 
 function _map(code) {
   if (code === "ARG_MISSING" || code === "INVALID_QTY" || code === "REASON_REQUIRED") return 400;
@@ -21,10 +24,10 @@ exports.create = async (req, res, next) => {
       scope:   req.body?.scope,
       user:    req.user || {},
     });
-    res.status(201).json({ success: true, data: doc });
+    return sendOk(res, doc, undefined, 201);
   } catch (e) {
     const status = e.status || _map(e.code);
-    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    if (status !== 500) return sendErr(res, e, e.code, status);
     next(e);
   }
 };
@@ -33,7 +36,7 @@ exports.create = async (req, res, next) => {
 exports.list = async (req, res, next) => {
   try {
     const list = await svc.listCounts(req.query || {});
-    res.json({ success: true, data: list, count: list.length });
+    return sendOk(res, list, { count: list.length });
   } catch (e) { next(e); }
 };
 
@@ -41,9 +44,9 @@ exports.list = async (req, res, next) => {
 exports.getOne = async (req, res, next) => {
   try {
     const doc = await svc.getCount(req.params.id);
-    res.json({ success: true, data: doc });
+    return sendOk(res, doc);
   } catch (e) {
-    if (e.status === 404) return res.status(404).json({ success: false, message: e.message });
+    if (e.status === 404) return sendErr(res, e, "NOT_FOUND", 404);
     next(e);
   }
 };
@@ -56,10 +59,10 @@ exports.enterPhysical = async (req, res, next) => {
       physicalQty: req.body?.physicalQty,
       reason:      req.body?.reason,
     });
-    res.json({ success: true, data: doc });
+    return sendOk(res, doc);
   } catch (e) {
     const status = e.status || _map(e.code);
-    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    if (status !== 500) return sendErr(res, e, e.code, status);
     next(e);
   }
 };
@@ -72,10 +75,10 @@ exports.verify = async (req, res, next) => {
       verifierId:   u._id || u.id,
       verifierName: u.fullName || u.employeeId || "Pharmacist",
     });
-    res.json({ success: true, data: out });
+    return sendOk(res, out);
   } catch (e) {
     const status = e.status || _map(e.code);
-    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    if (status !== 500) return sendErr(res, e, e.code, status);
     next(e);
   }
 };

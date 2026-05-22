@@ -673,6 +673,16 @@ function PrintModal({ data, dept, onClose }) {
       followUpDate:        data.followUpDate,
       followUpDoctor:      data.followUpDoctor || data.consultantName,
       warningSigns:        data.warningSigns,
+      // R7bh-F1 / META-1: PrintAudit anchor — the DischargeSummary
+      // document drives the printCount on its source row. NABH COP.7
+      // + IMS.5 require the reprint trail.
+      printAudit: {
+        entityType:   "DischargeSummary",
+        entityId:     data._id || data.dischargeSummaryId,
+        entityNumber: data.summaryNumber,
+        UHID:         data.UHID,
+        patientName:  data.patientName,
+      },
     });
   };
 

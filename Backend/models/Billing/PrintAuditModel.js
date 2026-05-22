@@ -35,6 +35,12 @@ const PrintAuditSchema = new mongoose.Schema(
         "MARSheet",
         "DoctorOrderSheet",
         "IPDFile",
+        // R7bh-F1 / META-1: additional entity types covered by the
+        // openPrint() callsite sweep. VisitorPass + DoctorOrder were
+        // missing from the enum, so PrintAudit POSTs from those flows
+        // returned 400 → no audit row, no printCount bump.
+        "VisitorPass",
+        "DoctorOrder",
       ],
       index: true,
     },

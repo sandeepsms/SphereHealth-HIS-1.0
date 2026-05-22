@@ -344,6 +344,15 @@ export const ACTIONS = {
   "compliance.firedrill.write":    ["Admin", "Security"],
   "compliance.firedrill.read":     ["Admin", "Security"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
+
+  // ── R7bh-F6 — Accountant regulatory + cold-chain (mirror of backend) ─
+  "tax.returns.write":             ["Admin", "Accountant"],
+  "tax.returns.read":              ["Admin", "Accountant"],
+  "tax.tds.write":                 ["Admin", "Accountant"],
+  "tax.tds.read":                  ["Admin", "Accountant"],
+  "compliance.retention.read":     ["Admin", "MRD"],
+  "pharmacy.cold-chain.write":     ["Admin", "Pharmacist", "Nurse"],
+  "pharmacy.cold-chain.read":      ["Admin", "Pharmacist", "Nurse", "Doctor"],
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */

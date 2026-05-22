@@ -184,15 +184,41 @@ class BillingService {
   }
 
   // ── 5. All bills for a UHID ───────────────────────────────────
+  // R7bh-F10 / R7bg-9-CRIT-4: perf hardening.
+  //   Pre-R7bh this method:
+  //     • no `.lean()` — every doc returned was a full Mongoose
+  //       hydrated instance with the BillItem sub-schema graph still
+  //       attached (same retained-graph problem R7aw documented for
+  //       getRevenueBreakdown). For an IPD patient who's been admitted
+  //       8 days with 60+ bill items per draft, a UHID with 12 bills
+  //       could push 40MB+ of retained schema meta into the response
+  //       cycle.
+  //     • no `.limit()` — a long-stay patient's lookup or a re-admit
+  //       could return 100+ historical bills, every one with full
+  //       billItems[] arrays.
+  //     • 3 chained `.populate()` — patient + tpa + admission round-
+  //       trips on every page hit (plus the per-doc hydration above).
+  //   Fix:
+  //     • `.lean({ virtuals: true })` — bypasses the BillItem sub-doc
+  //       hydration. Decimal128 unwrap is handled at the wire by the
+  //       toJSON transform (decimalToNumber) on lean output.
+  //     • `.limit(200)` — bounds the worst-case payload. A patient
+  //       legitimately needing > 200 bills is a data-quality issue
+  //       (re-admit chain) the operator should investigate via the
+  //       /billing?UHID=X paginated list, not this all-in-one read.
+  //     • Drop populate("admission") — the callers that actually
+  //       need bed/room data (DischargeQueue) fetch it from the
+  //       admission endpoint directly. patient + tpa stay because
+  //       every consumer renders them inline. If `getPatientWithBills`
+  //       (which calls this) needs richer admission data, the caller
+  //       layers it via a separate query (already does for `patient`).
   async getBillsByUHID(UHID) {
     return PatientBill.find({ UHID })
       .populate("patient", "fullName title contactNumber gender dateOfBirth")
       .populate("tpa", "tpaName tpaCode")
-      .populate(
-        "admission",
-        "admissionNumber bedNumber roomCategory status admissionDateTime",
-      )
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean({ virtuals: true });
   }
 
   // ── 6. Add service to bill ────────────────────────────────────
@@ -1244,12 +1270,61 @@ class BillingService {
     { amount, paymentMode, transactionId, receivedBy, receivedById, receivedByRole, remarks },
   ) {
     if (!amount || amount <= 0) throw new Error("Valid amount required");
+    // R7bh-F10 / R7bg-10-HIGH-4: paymentMode enum validation at the
+    // service boundary. Pre-R7bh the controller forwarded any string
+    // (e.g. "ESCROW", "BTC", "PayPal") which then either crashed at
+    // bill.save() with a cryptic Mongo ValidationError or, worse, the
+    // PaymentSchema enum guard fired AFTER the in-memory mutation so
+    // the bill ended up in a partially-modified state on retry. The
+    // ALLOWED_MODES set MUST match PatientBill PaymentSchema enum
+    // exactly (models/PatientBillModel/PatientBillModel.js:181) —
+    // ["CASH","CARD","UPI","CHEQUE","ONLINE","TPA_CLAIM","ADVANCE_ADJUSTMENT"].
+    // ADVANCE_ADJUSTMENT is created by patientAdvanceService only; the
+    // cashier flow can't pass it directly.
+    const ALLOWED_MODES = ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM"];
+    const normalizedMode = String(paymentMode || "").toUpperCase().trim();
+    if (!ALLOWED_MODES.includes(normalizedMode)) {
+      const err = new Error(
+        `Invalid paymentMode "${paymentMode}". Allowed: ${ALLOWED_MODES.join(", ")}`,
+      );
+      err.code = "INVALID_PAYMENT_MODE"; err.status = 400; throw err;
+    }
+    // Normalize for downstream writes — every payment row lands in
+    // canonical UPPERCASE so the shift / GST reconciliation queries
+    // don't have to case-fold at read time.
+    paymentMode = normalizedMode;
 
     const MAX_RETRIES = 5;
     let lastErr;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       const bill = await PatientBill.findById(billId);
       if (!bill) throw new Error("Bill not found");
+
+      // R7bh-F10 / R7bg-10-CRIT-3: duplicate-transactionId guard for
+      // non-CASH modes. Cashier hits [Record Payment] twice in 200ms
+      // (the cliché HIS double-click) and the same UPI ref lands as
+      // two distinct payment rows — bill jumps to OVERPAID, second
+      // request races the optimistic-concurrency retry. The TPA
+      // settlement path already enforces this (controller `tpaSettle`
+      // — duplicate UTR rejected); mirror the pattern at the bill leg.
+      // CASH has no canonical txn id so the guard skips it; cashiers
+      // who legitimately collect ₹500 cash twice in a row will pass
+      // through and the audit row + amount sum still tells the truth.
+      if (paymentMode !== "CASH" && transactionId && String(transactionId).trim()) {
+        const trimmed = String(transactionId).trim();
+        const dup = (bill.payments || []).find(
+          (p) => p.transactionId === trimmed
+              && (p.paymentMode || "").toUpperCase() === paymentMode
+              && !p.voidedAt
+              && Number(p.amount) > 0,
+        );
+        if (dup) {
+          const err = new Error(
+            `Duplicate transactionId '${trimmed}' for ${paymentMode} — payment already recorded on this bill (₹${dup.amount} at ${dup.paidAt}).`,
+          );
+          err.code = "DUPLICATE_TRANSACTION"; err.status = 409; throw err;
+        }
+      }
 
       if (bill.billStatus === "DRAFT") {
         throw new Error(
@@ -1643,6 +1718,36 @@ class BillingService {
           const ctrl = require("../../controllers/Billing/billingController");
           ctrl.invalidateDayBookCache?.();
         } catch (_) { /* best-effort */ }
+        // R7bh-F10 / R7bg-6-HIGH-7: TPA refund leg. When the refund mode
+        // is TPA_CLAIM the money has to flow back to the INSURER, not
+        // to the patient — but the actual bank-transfer leg lives
+        // downstream in the TPA receivable ledger (TpaPayable model
+        // — TBD). For now we emit a chronological audit row so the
+        // accountant's TPA-reconciliation tab can surface the pending
+        // reversal and chase the insurer. Pre-R7bh a TPA refund just
+        // landed a negative TPA_CLAIM payment row with no trace that
+        // anyone owed the insurer money.
+        if (payMode === "TPA_CLAIM") {
+          try {
+            const { emit } = require("../../models/Billing/BillingAudit");
+            await emit({
+              event:        "TPA_REFUND_PENDING_INSURER",
+              UHID:         bill.UHID,
+              patientId:    bill.patient,
+              billId:       bill._id,
+              billNumber:   bill.billNumber,
+              amount:       amt,
+              paymentMode:  "TPA_CLAIM",
+              transactionId,
+              actorId:      refundedById,
+              actorRole:    refundedByRole,
+              actorName:    refundedBy,
+              reason:       `TPA refund of ₹${amt} pending insurer-side reversal — ${String(reason).trim()}`,
+              before:       { tpaId: bill.tpa || null, status: "PENDING_REVERSAL" },
+              after:        { status: "PENDING_REVERSAL", utr: transactionId || null },
+            });
+          } catch (_) { /* best-effort */ }
+        }
         // R7ap-F15: refund audit row.
         try {
           const { emit } = require("../../models/Billing/BillingAudit");

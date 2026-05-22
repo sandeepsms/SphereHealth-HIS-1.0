@@ -19,10 +19,18 @@
 // sessionStorage instance.
 // ════════════════════════════════════════════════════════════════════
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { recordPrintAudit } from "../../utils/printUtils";
 
 const PrintPreviewModal = ({ open, slug, payload, onClose }) => {
   const iframeRef = useRef(null);
+  // R7bh-F1 / META-1 (R7bg-7-CRIT-8): pre-R7bh the modal Print
+  // button called `iframe.contentWindow.print()` directly, bypassing
+  // `recordPrintAudit()` — so any operator using the modal-preview
+  // path (vs new-tab path) never bumped the entity's printCount, no
+  // PrintAudit row landed, DUPLICATE watermark never rendered. Mirror
+  // the audit-then-print sequence that PrintPreviewPage already does.
+  const [auditing, setAuditing] = useState(false);
 
   // Stash the payload in sessionStorage so the iframe-mounted
   // PrintRouterPage picks it up the same way the new-tab path does.
@@ -42,6 +50,20 @@ const PrintPreviewModal = ({ open, slug, payload, onClose }) => {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
+
+  const handlePrint = async () => {
+    // R7bh-F1 / META-1: audit BEFORE iframe.print() so the post-bump
+    // printCount is what the watermark renders against (matches the
+    // new-tab path in PrintPreviewPage). Audit failures never block.
+    const audit = payload?.printAudit;
+    if (audit?.entityType && audit?.entityId) {
+      setAuditing(true);
+      try { await recordPrintAudit(audit); }
+      catch (_e) { /* swallow — never block print */ }
+      setAuditing(false);
+    }
+    try { iframeRef.current?.contentWindow?.print(); } catch (_e) {}
+  };
 
   if (!open) return null;
   const ts = Date.now();
@@ -85,15 +107,16 @@ const PrintPreviewModal = ({ open, slug, payload, onClose }) => {
           </strong>
           <div style={{ display: "flex", gap: 8 }}>
             <button
-              onClick={() => {
-                try { iframeRef.current?.contentWindow?.print(); } catch (_e) {}
-              }}
+              onClick={handlePrint}
+              disabled={auditing}
               style={{
                 background: "white", color: "#0f172a",
                 border: "none", padding: "6px 14px",
-                borderRadius: 6, fontWeight: 700, cursor: "pointer",
+                borderRadius: 6, fontWeight: 700,
+                cursor: auditing ? "wait" : "pointer",
+                opacity: auditing ? 0.7 : 1,
               }}
-            >Print</button>
+            >{auditing ? "Recording…" : "Print"}</button>
             <button
               onClick={onClose}
               style={{

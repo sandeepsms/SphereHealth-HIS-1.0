@@ -25,27 +25,47 @@ const DrugBatch   = require("../../models/Pharmacy/DrugBatchModel");
 const Supplier    = require("../../models/Pharmacy/SupplierModel");
 const Sale        = require("../../models/Pharmacy/PharmacySaleModel");
 const Settings    = require("../../models/Pharmacy/PharmacySettingsModel");
+const PharmacyDayClose = require("../../models/Pharmacy/PharmacyDayCloseModel");
 const Counter     = require("../../models/CounterModel");
 const Patient     = require("../../models/Patient/patientModel");
 const mongoose    = require("mongoose");
 const { assertDrugSafeOrOverride } = require("../../utils/allergyCheck");
+const scheduleXRegister = require("../../services/Pharmacy/scheduleXRegister");
 
 const todayISO  = () => new Date().toISOString().slice(0, 10);
 const isOid     = (v) => mongoose.Types.ObjectId.isValid(v);
+
+// ── R7bh-F4 / R7bg-3-HIGH-1: payment-mode normalisation ──────────
+// The PharmacySale model still uses Title-case enum ("Cash","Card","UPI",
+// "Mixed","Credit") — flipping that enum belongs to F2 backlog. For now
+// we normalise at the controller boundary so the API accepts any
+// case-permutation the front-end sends and persists the canonical form.
+const PAYMENT_MODE_MAP = {
+  CASH:   "Cash",
+  CARD:   "Card",
+  UPI:    "UPI",
+  MIXED:  "Mixed",
+  CREDIT: "Credit",
+};
+function _normPaymentMode(v, fallback = "Cash") {
+  const k = String(v || fallback).toUpperCase();
+  return PAYMENT_MODE_MAP[k] || fallback;
+}
+
 // Centralised error reply — Mongoose ValidationError → 400, bad cast → 400,
 // duplicate key → 409, everything else → 500. Caller passes (res, err).
 const sendErr   = (res, e) => {
   if (e?.name === "ValidationError") {
     const msg = Object.values(e.errors).map(x => x.message).join("; ");
-    return res.status(400).json({ success: false, message: msg });
+    return res.status(400).json({ success: false, message: msg, code: "VALIDATION" });
   }
   if (e?.name === "CastError") {
-    return res.status(400).json({ success: false, message: `Invalid id / cast — ${e.path}` });
+    return res.status(400).json({ success: false, message: `Invalid id / cast — ${e.path}`, code: "VALIDATION" });
   }
   if (e?.code === 11000) {
-    return res.status(409).json({ success: false, message: "Duplicate key — record already exists" });
+    return res.status(409).json({ success: false, message: "Duplicate key — record already exists", code: "DUPLICATE" });
   }
-  return res.status(500).json({ success: false, message: e?.message || "Server error" });
+  return res.status(500).json({ success: false, message: e?.message || "Server error", code: e?.code || null });
 };
 // Counter helper — schema uses `_id: String` as the scope key, not `name`.
 async function nextSeq(scope) {
@@ -75,33 +95,69 @@ exports.listDrugs = async (req, res) => {
   } catch (e) { sendErr(res, e); }
 };
 
+// R7bh-F4 / R7bg-9-CRIT-1: search via the new text index. For ≥ 2-char
+// queries we use $text + sort by textScore, .lean(), .limit(50). For
+// 1-char queries the text index can't help (Mongo's text $search needs
+// a token); we fall back to a bounded regex on `name` only (most common
+// path) capped at 50 rows.
 exports.searchDrugs = async (req, res) => {
   try {
     const q = (req.query.q || "").trim();
     if (!q) return res.json({ success: true, data: [] });
-    const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-    const drugs = await Drug.find({ isActive: true, $or: [{ name: rx }, { genericName: rx }, { brandName: rx }] })
-      .limit(25).lean();
+    if (q.length >= 2) {
+      const drugs = await Drug
+        .find(
+          { isActive: true, $text: { $search: q } },
+          { score: { $meta: "textScore" } },
+        )
+        .sort({ score: { $meta: "textScore" } })
+        .limit(50)
+        .lean();
+      return res.json({ success: true, data: drugs });
+    }
+    // Single-char fallback — anchored prefix on `name` so we hit the
+    // existing { name: 1 } index instead of a full scan.
+    const rx = new RegExp("^" + q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    const drugs = await Drug.find({ isActive: true, name: rx })
+      .limit(50)
+      .lean();
     res.json({ success: true, data: drugs });
   } catch (e) { sendErr(res, e); }
 };
 
+// R7bh-F4 / R7bg-10-HIGH-1: explicit field allow-list (drop `...req.body`
+// spread). Pre-R7bh a client could POST { _id: "...", isActive: true,
+// __v: 5, createdBy: "Admin" } and have those fields land on the new doc.
+const DRUG_ALLOWED_FIELDS = [
+  "name","genericName","brandName","manufacturer","form","strength","pack",
+  "category","schedule","hsnCode","gstRate","reorderLevel","defaultSalePrice",
+  "isHighAlert","isLASA","isNarcotic","requiresRefrigeration","isActive",
+];
+function _pickDrug(body = {}) {
+  const out = {};
+  for (const k of DRUG_ALLOWED_FIELDS) if (body[k] !== undefined) out[k] = body[k];
+  return out;
+}
+
 exports.createDrug = async (req, res) => {
   try {
-    const drug = await Drug.create({ ...req.body, createdBy: req.user?.fullName || "System" });
-    res.json({ success: true, data: drug });
+    const drug = await Drug.create({
+      ..._pickDrug(req.body || {}),
+      createdBy: req.user?.fullName || "System",
+    });
+    res.status(201).json({ success: true, data: drug });
   } catch (e) { sendErr(res, e); }
 };
 
 exports.updateDrug = async (req, res) => {
   try {
-    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid drug id" });
+    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid drug id", code: "VALIDATION" });
     const drug = await Drug.findByIdAndUpdate(
       req.params.id,
-      { $set: { ...req.body, updatedBy: req.user?.fullName || "System" } },
+      { $set: { ..._pickDrug(req.body || {}), updatedBy: req.user?.fullName || "System" } },
       { new: true, runValidators: true }
     );
-    if (!drug) return res.status(404).json({ success: false, message: "Drug not found" });
+    if (!drug) return res.status(404).json({ success: false, message: "Drug not found", code: "NOT_FOUND" });
     res.json({ success: true, data: drug });
   } catch (e) { sendErr(res, e); }
 };
@@ -126,18 +182,32 @@ exports.listSuppliers = async (req, res) => {
     res.json({ success: true, data: items });
   } catch (e) { sendErr(res, e); }
 };
+// R7bh-F4 / R7bg-10-HIGH-1: explicit allow-list for Supplier writes.
+const SUPPLIER_ALLOWED_FIELDS = [
+  "name","contactPerson","phone","email","address","city","state","pincode",
+  "gstin","panNumber","drugLicenseNo","bankAccount","ifscCode","creditDays","isActive",
+];
+function _pickSupplier(body = {}) {
+  const out = {};
+  for (const k of SUPPLIER_ALLOWED_FIELDS) if (body[k] !== undefined) out[k] = body[k];
+  return out;
+}
 exports.createSupplier = async (req, res) => {
   try {
-    const s = await Supplier.create({ ...req.body, createdBy: req.user?.fullName || "System" });
-    res.json({ success: true, data: s });
+    const s = await Supplier.create({
+      ..._pickSupplier(req.body || {}),
+      createdBy: req.user?.fullName || "System",
+    });
+    res.status(201).json({ success: true, data: s });
   } catch (e) { sendErr(res, e); }
 };
 exports.updateSupplier = async (req, res) => {
   try {
-    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid supplier id" });
+    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid supplier id", code: "VALIDATION" });
     const s = await Supplier.findByIdAndUpdate(req.params.id,
-      { $set: { ...req.body, updatedBy: req.user?.fullName || "System" } }, { new: true, runValidators: true });
-    if (!s) return res.status(404).json({ success: false, message: "Supplier not found" });
+      { $set: { ..._pickSupplier(req.body || {}), updatedBy: req.user?.fullName || "System" } },
+      { new: true, runValidators: true });
+    if (!s) return res.status(404).json({ success: false, message: "Supplier not found", code: "NOT_FOUND" });
     res.json({ success: true, data: s });
   } catch (e) { sendErr(res, e); }
 };
@@ -202,7 +272,27 @@ exports.recordGRN = async (req, res) => {
       location: location || "Main Pharmacy",
       createdBy: req.user?.fullName || "System",
     });
-    res.json({ success: true, data: batch, grnNumber });
+
+    // R7bh-F4 / R7bg-10-CRIT-2: bump the Schedule-X running balance on
+    // receipt so the CAS in scheduleXRegister.recordDispense has stock
+    // to deduct against. Best-effort — log on failure but don't fail
+    // the GRN itself (a missed balance bump shows as 0 in the register
+    // and the operator can reconcile manually).
+    if (drug.schedule === "X") {
+      try {
+        await scheduleXRegister.recordReceipt({
+          drugId,
+          qty,
+          receivedBy:   req.user?.fullName || "System",
+          receivedById: req.user?._id || null,
+        });
+      } catch (sxErr) {
+        console.error("[Pharmacy] GRN: Schedule-X balance bump failed for drug",
+          String(drugId), "qty", qty, ":", sxErr.message);
+      }
+    }
+
+    res.status(201).json({ success: true, data: batch, grnNumber });
   } catch (e) {
     if (e.code === 11000) return res.status(409).json({ success: false, message: "This batch already exists for this drug" });
     sendErr(res, e);
@@ -334,8 +424,12 @@ exports.dispense = async (req, res) => {
     const {
       patientUHID, patientName, contactNumber, age, gender, doctorName,
       saleType = "Walk-in", admissionId, admissionNumber, prescriptionRef,
-      items, paymentMode = "Cash", amountPaid, discountPercent = 0, remarks,
+      items, amountPaid, discountPercent = 0, remarks,
     } = req.body;
+
+    // R7bh-F4 / R7bg-3-HIGH-1: normalise paymentMode at the controller boundary
+    // so the model enum (still Title-case) accepts any case-permutation.
+    const paymentMode = _normPaymentMode(req.body.paymentMode, "Cash");
 
     // ── Sale-type / patient identity sanity checks ────────────────────
     // saleType drives the legal billing flow (walk-in is anonymous OTC,
@@ -387,11 +481,40 @@ exports.dispense = async (req, res) => {
     // Per-item validation BEFORE we touch any state.
     for (const it of items) {
       if (!it.drugId || !isOid(it.drugId)) {
-        return res.status(400).json({ success: false, message: `Invalid drugId on item "${it.drugName || ""}"` });
+        return res.status(400).json({ success: false, message: `Invalid drugId on item "${it.drugName || ""}"`, code: "VALIDATION" });
       }
       const q = Number(it.quantity);
       if (!Number.isFinite(q) || q <= 0) {
-        return res.status(400).json({ success: false, message: `Invalid quantity for "${it.drugName || it.drugId}" — must be > 0` });
+        return res.status(400).json({ success: false, message: `Invalid quantity for "${it.drugName || it.drugId}" — must be > 0`, code: "VALIDATION" });
+      }
+    }
+
+    // R7bh-F4 / R7bg-8-CRIT-P2: Schedule H / H1 / X drugs cannot be
+    // dispensed without a prescription reference + prescriber name. The
+    // master Drug schedule is the authority — we look up each drugId
+    // once and reject the whole sale (atomic) on the first violation.
+    // Schedule X gets the additional NDPS witness flow downstream
+    // via scheduleXRegister.recordDispense.
+    const drugMetaMap = new Map(); // drugId → { schedule, name }
+    for (const it of items) {
+      const key = String(it.drugId);
+      if (drugMetaMap.has(key)) continue;
+      const d = await Drug.findById(it.drugId).select("schedule name").lean();
+      if (d) drugMetaMap.set(key, d);
+    }
+    for (const it of items) {
+      const meta = drugMetaMap.get(String(it.drugId));
+      if (!meta) continue;
+      const sched = String(meta.schedule || "");
+      if (["H","H1","X"].includes(sched)) {
+        if (!String(it.prescriptionRef || prescriptionRef || "").trim() ||
+            !String(it.prescriberName || doctorName || "").trim()) {
+          return res.status(400).json({
+            success: false,
+            code: "RX_REF_REQUIRED",
+            message: `Drug "${meta.name}" is Schedule ${sched} — prescriptionRef + prescriberName are required on the item or sale`,
+          });
+        }
       }
     }
 
@@ -446,6 +569,7 @@ exports.dispense = async (req, res) => {
     // mid-loop shortage on item B unrolls item A's already-reserved
     // stock — the sale is all-or-nothing.
     const saleItems = [];
+    const scheduleXItems = []; // [{drugId, qty, prescriptionRef, prescriberName, drugName}]
     let subTotal = 0, totalGst = 0, totalDisc = 0;
     const consumedAll = []; // [{ batchId, qty }] across all items, for rollback
     try {
@@ -453,10 +577,27 @@ exports.dispense = async (req, res) => {
       const used = await fifoConsume(it.drugId, Number(it.quantity));
       // Track what we reserved so we can undo if a later item fails.
       for (const u of used) consumedAll.push({ batchId: u.batch._id, qty: u.used });
+      // Collect Schedule-X dispenses for the post-FIFO register call below.
+      const meta = drugMetaMap.get(String(it.drugId));
+      if (meta && meta.schedule === "X") {
+        for (const u of used) {
+          scheduleXItems.push({
+            drugId:          it.drugId,
+            qty:             u.used,
+            prescriptionRef: String(it.prescriptionRef || prescriptionRef || "").trim(),
+            prescriberName:  String(it.prescriberName || doctorName || "").trim(),
+            drugName:        meta.name,
+            batchId:         u.batch._id,
+          });
+        }
+      }
       // If split across batches, write one sale row per batch — keeps audit clean.
       for (const u of used) {
         const qty   = u.used;
-        const unit  = Number(it.unitPrice || u.batch.salePrice || 0);
+        // R7bh-F4 / R7bg-10-CRIT-1: ALWAYS use the batch's salePrice — never
+        // accept a client-supplied unitPrice. Pre-R7bh a malicious caller
+        // could POST { unitPrice: 0.01 } and walk out with discounted stock.
+        const unit  = Number(u.batch.salePrice || 0);
         const gstR  = Number(it.gstRate ?? 12);
         const discR = Number(it.discountPercent ?? discountPercent ?? 0);
         const gross = qty * unit;
@@ -512,12 +653,51 @@ exports.dispense = async (req, res) => {
       createdById: req.user?._id || null,
       remarks: remarks || "",
     });
+
+    // R7bh-F4 / R7bg-META-3 / R7bg-CRIT-P1: route Schedule-X dispenses
+    // through the dedicated register. The CAS in scheduleXRegister
+    // guarantees the running balance stays non-negative. We do this
+    // AFTER Sale.create so a failure here only short-circuits the
+    // Schedule-X audit emission (which is best-effort logged + the
+    // operator can reconcile manually) — the dispensed stock is already
+    // consumed via fifoConsume.
+    if (scheduleXItems.length > 0) {
+      for (const sx of scheduleXItems) {
+        try {
+          await scheduleXRegister.recordDispense({
+            drugId:        sx.drugId,
+            batchId:       sx.batchId,
+            qty:           sx.qty,
+            rx:            sx.prescriptionRef,
+            doctorName:    sx.prescriberName,
+            uhid:          patientUHID || "",
+            // NDPS two-person rule — the dispenser is the cashier; we
+            // accept an optional witnessId on the body. If missing, the
+            // register service will 400; we surface that as a Schedule-X
+            // audit warning since the Sale itself is already durable.
+            witnessName:   req.body?.witnessName || "",
+            witnessId:     req.body?.witnessId   || null,
+            dispensedBy:   req.user?.fullName    || "System",
+            dispensedById: req.user?._id         || null,
+            remarks:       `Sale ${sale.billNumber} — ${sx.drugName}`,
+          });
+        } catch (sxErr) {
+          console.error("[Pharmacy] dispense: Schedule-X register failed for drug",
+            String(sx.drugId), "sale", sale.billNumber, ":", sxErr.message);
+          // Don't fail the sale — log + flag in remarks for audit.
+          sale.remarks = (sale.remarks ? sale.remarks + " · " : "") +
+            `Schedule-X register pending: ${sx.drugName} qty=${sx.qty} reason=${sxErr.code || sxErr.message}`;
+          await sale.save().catch(() => {});
+        }
+      }
+    }
+
     // R7bf-H A6-HIGH-2: bust pharmacy revenue trend cache so the chart
     // doesn't lag the dashboard by up to 24h after a bulk sale.
     try {
       require("../Reports/dashboardsController").invalidatePharmacyTrendCache?.();
     } catch (_) { /* best-effort */ }
-    res.json({ success: true, data: sale });
+    res.status(201).json({ success: true, data: sale });
     } catch (consumeErr) {
       // Cross-item rollback (business audit F-03): if any item or the
       // Sale.create itself fails, undo every batch reservation we made
@@ -545,6 +725,10 @@ exports.dispense = async (req, res) => {
 
 exports.listSales = async (req, res) => {
   try {
+    // R7bh-F4 / R7bg-9-CRIT-3: range guard so callers can't request 5y of history.
+    const guard = _assertRange(req);
+    if (!guard.ok) return res.status(400).json({ success: false, code: "RANGE_TOO_LARGE", message: guard.message });
+
     const { from, to, status, saleType, uhid, q } = req.query;
     const where = {};
     if (status)   where.status = status;
@@ -559,7 +743,10 @@ exports.listSales = async (req, res) => {
       const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       where.$or = [{ billNumber: rx }, { patientName: rx }, { patientUHID: rx }];
     }
-    const sales = await Sale.find(where).sort({ createdAt: -1 }).limit(500).lean();
+    const { limit, skip } = _pagination(req, 200, 500);
+    const sales = await Sale.find(where).sort({ createdAt: -1 })
+      .skip(skip).limit(limit)
+      .lean();
     res.json({ success: true, data: sales });
   } catch (e) { sendErr(res, e); }
 };
@@ -749,14 +936,13 @@ exports.returnItems = async (req, res) => {
 ══════════════════════════════════════════════════════════════════ */
 exports.addItems = async (req, res) => {
   try {
-    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid sale id" });
-    const { items = [], paymentMode = "Cash", amountPaid, discountPercent = 0, reason = "", notes = "" } = req.body;
+    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid sale id", code: "VALIDATION" });
+    const { items = [], amountPaid, discountPercent = 0, reason = "", notes = "" } = req.body;
+    // R7bh-F4 / R7bg-3-HIGH-1: normalise paymentMode (any case → Title-case enum).
+    const paymentMode = _normPaymentMode(req.body.paymentMode, "Cash");
 
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ success: false, message: "items[] is required — at least one item to add" });
-    }
-    if (!["Cash","Card","UPI","Mixed","Credit"].includes(paymentMode)) {
-      return res.status(400).json({ success: false, message: "Invalid paymentMode" });
+      return res.status(400).json({ success: false, message: "items[] is required — at least one item to add", code: "VALIDATION" });
     }
 
     const sale = await Sale.findById(req.params.id);
@@ -792,7 +978,9 @@ exports.addItems = async (req, res) => {
       for (const u of used) consumedAll.push({ batchId: u.batch._id, qty: u.used });
       for (const u of used) {
         const qty   = u.used;
-        const unit  = Number(it.unitPrice || u.batch.salePrice || 0);
+        // R7bh-F4 / R7bg-10-CRIT-1: ALWAYS use the batch's salePrice — never
+        // trust a client-supplied unitPrice on supplementary invoices either.
+        const unit  = Number(u.batch.salePrice || 0);
         const gstR  = Number(it.gstRate ?? 12);
         const discR = Number(it.discountPercent ?? discountPercent ?? 0);
         const gross = qty * unit;
@@ -865,7 +1053,7 @@ exports.addItems = async (req, res) => {
 
     await sale.save();
 
-    res.json({ success: true, data: { sale, supplementRecord } });
+    res.status(201).json({ success: true, data: { sale, supplementRecord } });
     } catch (consumeErr) {
       // Cross-item rollback identical to dispense() (re-audit r7
       // follow-up). Unrolls every reservation so addItems() is
@@ -889,25 +1077,74 @@ exports.addItems = async (req, res) => {
 function round2(n) { return Math.round(n * 100) / 100; }
 function fmtINRSimple(n) { return `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`; }
 
+// R7bh-F4 / R7bg-1-CRIT-3 + R7bg-2-HIGH-2: cancelSale rewrite.
+//   • Atomic findOneAndUpdate with predicate { _id, status: "Completed" }
+//     so two pharmacists clicking "Cancel" race-safely (only one wins).
+//   • Stock restoration loop uses atomic findOneAndUpdate per batch
+//     ($inc) instead of the previous load-modify-save (which lost races
+//     with concurrent dispenses/returns).
+//   • SOD: the cancelling user must NOT be the same person who dispensed
+//     the sale, unless they're Admin (whose admin-override is audited).
 exports.cancelSale = async (req, res) => {
   try {
-    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid sale id" });
-    const s = await Sale.findById(req.params.id);
-    if (!s) return res.status(404).json({ success: false, message: "Sale not found" });
-    // Block cancellation if returns have already been issued — those refund
-    // slips have left the counter and adjusting them retroactively would
-    // mis-balance the GST register. Operator must reverse returns first.
-    if ((s.returns || []).length > 0) {
+    if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid sale id", code: "VALIDATION" });
+
+    // 1. Cheap pre-read for guard logic that doesn't need the atomic write
+    //    (returns-already-issued, SOD check). The actual status flip is
+    //    atomic below.
+    const pre = await Sale.findById(req.params.id).lean();
+    if (!pre) return res.status(404).json({ success: false, message: "Sale not found", code: "NOT_FOUND" });
+    if ((pre.returns || []).length > 0) {
       return res.status(409).json({
-        success: false,
+        success: false, code: "HAS_RETURNS",
         message: "Cannot cancel — this sale has refund slips on it. Reverse refunds first.",
       });
     }
-    if (s.status !== "Completed") {
-      return res.status(400).json({ success: false, message: `Only Completed sales can be cancelled (current: ${s.status})` });
+    if (pre.status !== "Completed") {
+      return res.status(409).json({
+        success: false, code: "ILLEGAL_TRANSITION",
+        message: `Only Completed sales can be cancelled (current: ${pre.status})`,
+      });
     }
 
-    // Per-item returned-qty map so we never over-restore stock.
+    // R7bh-F4 / R7bg-2-HIGH-2: SOD — block self-cancel unless Admin override.
+    const cancellerId = req.user?._id ? String(req.user._id) : "";
+    const dispenserId = pre.createdById ? String(pre.createdById) : "";
+    const isAdminOverride = req.user?.role === "Admin";
+    if (cancellerId && dispenserId && cancellerId === dispenserId && !isAdminOverride) {
+      return res.status(403).json({
+        success: false, code: "SOD_SELF_CANCEL",
+        message: "Self-cancel blocked — a different pharmacist (or an Admin override) must cancel this sale.",
+      });
+    }
+
+    // 2. Atomic CAS — set status to Cancelled iff still Completed. Caller
+    //    races with anyone else attempting cancel; whoever loses gets the
+    //    409 below.
+    const cancelStamp = new Date();
+    const cancelledById = req.user?._id || null;
+    const cancelledByName = req.user?.fullName || "System";
+    const s = await Sale.findOneAndUpdate(
+      { _id: req.params.id, status: "Completed" },
+      {
+        $set: {
+          status:        "Cancelled",
+          balanceDue:    0,
+          cancelledById,
+          cancelledByName,
+          cancelledAt:   cancelStamp,
+        },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!s) {
+      return res.status(409).json({
+        success: false, code: "ALREADY_CANCELLED",
+        message: "Sale already cancelled or transitioned by another writer.",
+      });
+    }
+
+    // 3. Per-item returned-qty map so we never over-restore stock.
     const returnedByItem = {};
     for (const r of (s.returns || [])) {
       for (const ri of (r.refundedItems || [])) {
@@ -917,41 +1154,77 @@ exports.cancelSale = async (req, res) => {
       }
     }
 
-    // Restore stock to the original batches — only what wasn't already returned.
+    // 4. Restore stock atomically — pure $inc deltas compose race-safely
+    //    against concurrent dispenses/returns. Pre-R7bh's load-modify-save
+    //    pattern raced with any in-flight write on the same batch.
     for (const it of s.items) {
       if (!it.batchId) continue;
       const alreadyReturned = returnedByItem[String(it._id)] || 0;
       const restoreQty = Math.max(0, Number(it.quantity || 0) - alreadyReturned);
       if (restoreQty <= 0) continue;
-      const b = await DrugBatch.findById(it.batchId);
-      if (b) {
-        b.quantityOut = Math.max(0, (b.quantityOut || 0) - restoreQty);
-        b.remaining   = Math.max(0, (b.quantityIn || 0) - (b.quantityOut || 0));
-        await b.save();
+      const restored = await DrugBatch.findOneAndUpdate(
+        { _id: it.batchId, isActive: true, quantityOut: { $gte: restoreQty } },
+        { $inc: { quantityOut: -restoreQty, remaining: restoreQty } },
+        { new: true },
+      );
+      if (!restored) {
+        console.error(
+          `[Pharmacy] cancelSale: could not restore qty=${restoreQty} to batch ${it.batchId} ` +
+          `(sale ${s._id}). Stock counts may need manual reconciliation.`,
+        );
       }
     }
 
-    // Money: any amount the patient already paid (minus refunds already
-    // issued) becomes patientCredit, since on cancellation we can't
-    // assume the cashier pays cash back instantly. The frontend can
-    // surface this for counter-staff payout.
+    // 5. Money flow + remarks via versioned save with retry. We touch
+    //    patientCredit / patientCreditLog (arrays) so optimistic
+    //    concurrency can collide if another endpoint pushed credit
+    //    mid-flight.
     const refundedSoFar  = (s.returns || []).reduce((t, r) => t + Number(r.refundAmount || 0), 0);
     const payable        = Math.max(0, Number(s.amountPaid || 0) - refundedSoFar);
-    if (payable > 0) {
-      s.patientCredit = round2((s.patientCredit || 0) + payable);
-      s.patientCreditLog.push({
-        amount: payable,
-        reason: "Sale cancelled — payment held as credit",
-        refSlip: s.billNumber,
-        byName: req.user?.fullName || "System",
-        byId:   req.user?._id || null,
-      });
+
+    try {
+      const retryVersionError = require("../../utils/retryVersionError");
+      await retryVersionError(async () => {
+        const fresh = await Sale.findById(s._id);
+        if (!fresh) return;
+        if (payable > 0) {
+          fresh.patientCredit = round2((fresh.patientCredit || 0) + payable);
+          fresh.patientCreditLog.push({
+            amount: payable,
+            reason: "Sale cancelled — payment held as credit",
+            refSlip: fresh.billNumber,
+            byName: cancelledByName,
+            byId:   cancelledById,
+          });
+        }
+        fresh.remarks = (fresh.remarks ? fresh.remarks + " · " : "") +
+          `Cancelled by ${cancelledByName} on ${cancelStamp.toISOString()}` +
+          (payable > 0 ? ` · ${fmtINRSimple(payable)} held as credit` : "") +
+          (isAdminOverride && cancellerId === dispenserId ? " · ADMIN-OVERRIDE self-cancel" : "");
+        await fresh.save();
+      }, { label: "cancelSale-credit" });
+    } catch (creditErr) {
+      console.error("[Pharmacy] cancelSale credit-update failed for sale",
+        String(s._id), ":", creditErr.message);
     }
-    s.balanceDue = 0;
-    s.status = "Cancelled";
-    s.remarks = (s.remarks ? s.remarks + " · " : "") + `Cancelled by ${req.user?.fullName || "System"} on ${new Date().toISOString()}` +
-      (payable > 0 ? ` · ${fmtINRSimple(payable)} held as credit` : "");
-    await s.save();
+
+    // 6. Audit on admin override (SOD breach).
+    if (isAdminOverride && cancellerId === dispenserId) {
+      try {
+        const { emit } = require("../../models/Billing/BillingAudit");
+        await emit({
+          event:     "SHIFT_CLOSED", // closest enum bucket for SOD override audit
+          actorId:   req.user?._id || null,
+          actorName: cancelledByName,
+          actorRole: req.user?.role || "Admin",
+          amount:    Number(s.grandTotal || 0),
+          reason:    `ADMIN_OVERRIDE_SELF_CANCEL: pharmacy sale ${s.billNumber} cancelled by dispenser via admin override`,
+          before:    { saleId: s._id, status: "Completed" },
+          after:     { saleId: s._id, status: "Cancelled", cancelledAt: cancelStamp },
+        }, { req });
+      } catch (_) { /* best-effort */ }
+    }
+
     res.json({ success: true, data: s });
   } catch (e) { sendErr(res, e); }
 };
@@ -1037,6 +1310,11 @@ exports.recordVendorReturn = async (req, res) => {
 
 exports.listVendorReturns = async (req, res) => {
   try {
+    // R7bh-F4 / R7bg-9-CRIT-3: bound the range + paginate.
+    const guard = _assertRange(req);
+    if (!guard.ok) return res.status(400).json({ success: false, code: "RANGE_TOO_LARGE", message: guard.message });
+    const { limit, skip } = _pagination(req, 200, 1000);
+
     const PharmacyVendorReturn = require("../../models/Pharmacy/PharmacyVendorReturnModel");
     const { vendor, batchId, from, to, reason } = req.query;
     const q = {};
@@ -1048,7 +1326,9 @@ exports.listVendorReturns = async (req, res) => {
       if (from) q.returnedAt.$gte = new Date(`${from}T00:00:00`);
       if (to)   q.returnedAt.$lte = new Date(`${to}T23:59:59.999`);
     }
-    const rows = await PharmacyVendorReturn.find(q).sort({ returnedAt: -1 }).limit(500).lean();
+    const rows = await PharmacyVendorReturn.find(q).sort({ returnedAt: -1 })
+      .skip(skip).limit(limit)
+      .lean();
     res.json({ success: true, count: rows.length, data: rows });
   } catch (e) { sendErr(res, e); }
 };
@@ -1056,36 +1336,23 @@ exports.listVendorReturns = async (req, res) => {
 /* ════════════════════════════════════════════════════════════════
    R7bb-FIX-E-14 / D6-HIGH-7: Pharmacy end-of-day cash close.
    Snapshots /pharmacy/stats for the day into a PharmacyDayClose doc
-   and emits an audit row. Pre-R7bb the day-end reconciliation lived
-   only on a paper register — pharmacist counted till, signed, no
-   queryable trail. Now Admin / Pharmacist can call this once per day
-   and the snapshot becomes the source of truth for the accountant.
-   ════════════════════════════════════════════════════════════════ */
-const PharmacyDayCloseSchema = new (require("mongoose").Schema)({
-  asOf:           { type: Date, required: true },
-  closedBy:       { type: String, trim: true, default: "" },
-  closedById:     { type: require("mongoose").Schema.Types.ObjectId, ref: "User", default: null },
-  closedByRole:   { type: String, trim: true, default: "" },
-  closedAt:       { type: Date, default: Date.now },
-  // Snapshot of the stats payload at close-time.
-  drugsCount:     { type: Number, default: 0 },
-  batchesInStock: { type: Number, default: 0 },
-  stockValue:     { type: Number, default: 0 },
-  todaySales:     { type: require("mongoose").Schema.Types.Mixed, default: {} },
-  monthSales:     { type: require("mongoose").Schema.Types.Mixed, default: {} },
-  cashOnHand:     { type: Number, default: 0 },
-  varianceNote:   { type: String, trim: true, default: "" },
-}, { timestamps: true });
-PharmacyDayCloseSchema.index({ asOf: 1 });
-const PharmacyDayClose = require("mongoose").models.PharmacyDayClose ||
-  require("mongoose").model("PharmacyDayClose", PharmacyDayCloseSchema);
+   and emits an audit row.
 
+   R7bh-F4 / R7bg-10-HIGH-5: schema lifted to its own file
+   (models/Pharmacy/PharmacyDayCloseModel.js) with a unique index on
+   `asOf` so two pharmacists clicking "Close Day" concurrently can't
+   create duplicate snapshots — findOneAndUpdate({ asOf }, ...,
+   { upsert: true, new: true }) collapses to one row.
+   ════════════════════════════════════════════════════════════════ */
 exports.closeDay = async (req, res) => {
   try {
-    const asOf = req.body?.asOf ? new Date(req.body.asOf) : new Date();
+    // Floor `asOf` to the start of the calendar day so the unique index
+    // collapses any two close-day calls on the same date.
+    const rawAsOf = req.body?.asOf ? new Date(req.body.asOf) : new Date();
+    const asOf = new Date(rawAsOf); asOf.setHours(0,0,0,0);
     // Re-use the same aggregation the /stats endpoint runs by calling it
     // inline. Cheaper than refactoring — only fires once per day.
-    const todayStart = new Date(asOf); todayStart.setHours(0,0,0,0);
+    const todayStart = new Date(asOf);
     const monthStart = new Date(asOf.getFullYear(), asOf.getMonth(), 1);
     const SALE_STATUSES = ["Completed", "Partial-Return", "Refunded", "Supplemented"];
     const [drugsCount, batches, todayAgg, monthAgg] = await Promise.all([
@@ -1101,25 +1368,34 @@ exports.closeDay = async (req, res) => {
       ]),
     ]);
     const stockValue = batches.reduce((s, b) => s + (b.remaining * (b.salePrice || b.mrp || 0)), 0);
-    const row = await PharmacyDayClose.create({
-      asOf,
-      closedBy:     req.user?.fullName || req.user?.employeeId || "Pharmacy",
-      closedById:   req.user?._id || req.user?.id || null,
-      closedByRole: req.user?.role || "",
-      drugsCount,
-      batchesInStock: batches.length,
-      stockValue:   Math.round(stockValue),
-      todaySales: {
-        count: todayAgg[0]?.count || 0,
-        total: Math.round(todayAgg[0]?.total || 0),
+
+    // Idempotent upsert keyed on the floored asOf — second click on the
+    // same day returns the existing row instead of failing the unique index.
+    const row = await PharmacyDayClose.findOneAndUpdate(
+      { asOf },
+      {
+        $setOnInsert: {
+          asOf,
+          closedBy:     req.user?.fullName || req.user?.employeeId || "Pharmacy",
+          closedById:   req.user?._id || req.user?.id || null,
+          closedByRole: req.user?.role || "",
+          drugsCount,
+          batchesInStock: batches.length,
+          stockValue:   Math.round(stockValue),
+          todaySales: {
+            count: todayAgg[0]?.count || 0,
+            total: Math.round(todayAgg[0]?.total || 0),
+          },
+          monthSales: {
+            count: monthAgg[0]?.count || 0,
+            total: Math.round(monthAgg[0]?.total || 0),
+          },
+          cashOnHand:   Number(req.body?.cashOnHand || 0),
+          varianceNote: String(req.body?.varianceNote || "").trim(),
+        },
       },
-      monthSales: {
-        count: monthAgg[0]?.count || 0,
-        total: Math.round(monthAgg[0]?.total || 0),
-      },
-      cashOnHand:   Number(req.body?.cashOnHand || 0),
-      varianceNote: String(req.body?.varianceNote || "").trim(),
-    });
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
     // Audit
     try {
       const { emit } = require("../../models/Billing/BillingAudit");
@@ -1137,19 +1413,46 @@ exports.closeDay = async (req, res) => {
   } catch (e) { sendErr(res, e); }
 };
 
+// R7bh-F4 / R7bg-9-CRIT-2: stats rewrite — collapse the DrugBatch.find().lean()
+// + in-memory reduce/filter (which materialised every batch row in Node and
+// often ate 100+ MB on hospitals with large catalogues) into a single $facet
+// aggregation on DrugBatch. The 6 Sale aggregations stay parallel since they
+// hit a different collection.
 exports.stats = async (req, res) => {
   try {
     const now = new Date();
     const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+    const horizon90 = new Date(now.getTime() + 90 * 86400000);
 
     const monthStart  = new Date(now.getFullYear(), now.getMonth(), 1);
     // Sales counted are anything that left the counter as a tax invoice —
     // Completed + Partial-Return + Refunded. Refunds are subtracted as a
     // separate aggregation so revenue is net of returns (matches register).
     const SALE_STATUSES = ["Completed", "Partial-Return", "Refunded", "Supplemented"];
-    const [drugsCount, batches, todaySalesAgg, monthSalesAgg, todayRefundAgg, monthRefundAgg, todaySuppAgg, monthSuppAgg] = await Promise.all([
+    const [drugsCount, batchFacet, todaySalesAgg, monthSalesAgg, todayRefundAgg, monthRefundAgg, todaySuppAgg, monthSuppAgg] = await Promise.all([
       Drug.countDocuments({ isActive: true }),
-      DrugBatch.find({ isActive: true, remaining: { $gt: 0 } }).lean(),
+      // Single facet aggregation — Mongo computes stockValue + expiring +
+      // expired + total count in one pipeline pass without ferrying batch
+      // rows over the wire.
+      DrugBatch.aggregate([
+        { $match: { isActive: true, remaining: { $gt: 0 } } },
+        { $facet: {
+            stockValue: [
+              { $group: { _id: null, total: { $sum: { $multiply: ["$remaining", { $ifNull: ["$salePrice", { $ifNull: ["$mrp", 0] }] }] } } } },
+            ],
+            batchesInStock: [
+              { $count: "n" },
+            ],
+            expiringWithin90Days: [
+              { $match: { expiryDate: { $gte: now, $lte: horizon90 } } },
+              { $count: "n" },
+            ],
+            alreadyExpired: [
+              { $match: { expiryDate: { $lt: now } } },
+              { $count: "n" },
+            ],
+        } },
+      ]),
       Sale.aggregate([
         { $match: { status: { $in: SALE_STATUSES }, createdAt: { $gte: todayStart } } },
         { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$grandTotal" } } },
@@ -1170,7 +1473,6 @@ exports.stats = async (req, res) => {
         { $match: { "returns.refundedAt": { $gte: monthStart } } },
         { $group: { _id: null, refund: { $sum: "$returns.refundAmount" } } },
       ]),
-      // Today's supplements — added items on existing bills (debit notes)
       Sale.aggregate([
         { $match: { status: { $in: ["Supplemented","Partial-Return"] }, createdAt: { $gte: todayStart } } },
         { $unwind: "$supplements" },
@@ -1185,9 +1487,11 @@ exports.stats = async (req, res) => {
       ]),
     ]);
 
-    const stockValue = batches.reduce((s, b) => s + (b.remaining * (b.salePrice || b.mrp || 0)), 0);
-    const expiringCount = batches.filter(b => b.expiryDate && new Date(b.expiryDate) <= new Date(Date.now() + 90 * 86400000)).length;
-    const expiredCount  = batches.filter(b => b.expiryDate && new Date(b.expiryDate) < now).length;
+    const facet = batchFacet[0] || {};
+    const stockValue    = facet.stockValue?.[0]?.total || 0;
+    const batchesCount  = facet.batchesInStock?.[0]?.n || 0;
+    const expiringCount = facet.expiringWithin90Days?.[0]?.n || 0;
+    const expiredCount  = facet.alreadyExpired?.[0]?.n || 0;
 
     const tGross  = todaySalesAgg[0]?.total || 0;
     const tRefund = todayRefundAgg[0]?.refund || 0;
@@ -1198,7 +1502,7 @@ exports.stats = async (req, res) => {
 
     res.json({ success: true, data: {
       drugsCount,
-      batchesInStock: batches.length,
+      batchesInStock: batchesCount,
       stockValue: Math.round(stockValue),
       expiringWithin90Days: expiringCount,
       alreadyExpired: expiredCount,
@@ -1223,25 +1527,47 @@ exports.stats = async (req, res) => {
 /* ════════════════════════════════════════════════════════════════
    PHARMACY SETTINGS — in-house vs outsourced print identity
 ══════════════════════════════════════════════════════════════════ */
+// R7bh-F4 / R7bg-10-HIGH-1 + R7bg-10-HIGH-5: explicit allow-list +
+// atomic upsert for the singleton PharmacySettings doc keyed by
+// `_id: "default"`. Pre-R7bh getSettings used findById-then-create which
+// would race on first-ever load; the new atomic upsert collapses any
+// race into a single row.
+const SETTINGS_ALLOWED_FIELDS = [
+  "mode","pharmacyName","tagline","logo","showLogoInPrint","showTagline",
+  "addressLine1","addressLine2","city","state","pincode","country",
+  "phone1","phone2","email","website",
+  "gstin","panNumber","drugLicenseNo","drugLicenseExp","fssaiNumber",
+  "bankName","bankAccount","ifscCode","bankBranch","upiId",
+  "headerColor","accentColor","billTemplate","defaultPaper",
+  "registerHeader","registerShowLogo","registerShowGstin","registerShowDL",
+  "registerShowContact","registerSerialColumn","registerSignatures","registerOrientation",
+  "footerNote","termsLine1","termsLine2","termsLine3","showModeBadge",
+];
+function _pickSettings(body = {}) {
+  const out = {};
+  for (const k of SETTINGS_ALLOWED_FIELDS) if (body[k] !== undefined) out[k] = body[k];
+  return out;
+}
+
 exports.getSettings = async (req, res) => {
   try {
-    const s = await Settings.findById("default").lean();
-    if (!s) {
-      // Return a default doc on first load so the frontend has shape to bind to.
-      const seeded = await Settings.create({ _id: "default" });
-      return res.json({ success: true, data: seeded });
-    }
+    // Atomic upsert — first load on a fresh DB returns the seeded doc
+    // without racing two parallel requests.
+    const s = await Settings.findByIdAndUpdate(
+      "default",
+      { $setOnInsert: { _id: "default" } },
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+    );
     res.json({ success: true, data: s });
   } catch (e) { sendErr(res, e); }
 };
 
 exports.updateSettings = async (req, res) => {
   try {
-    const body = { ...req.body, updatedBy: req.user?.fullName || "System" };
-    delete body._id;
+    const body = { ..._pickSettings(req.body || {}), updatedBy: req.user?.fullName || "System" };
     const s = await Settings.findByIdAndUpdate(
       "default",
-      { $set: body },
+      { $set: body, $setOnInsert: { _id: "default" } },
       { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
     );
     res.json({ success: true, data: s });
@@ -1260,17 +1586,52 @@ function _rangeFilter(req, field = "createdAt") {
   return Object.keys(f).length ? { [field]: f } : {};
 }
 
+// R7bh-F4 / R7bg-9-CRIT-3: hard-cap any from..to range at 90 days so a
+// caller can't blow up the server with a "give me 5 years of sales" GET.
+// Returns { ok: true } / { ok: false, message } so callers can early-exit
+// with 400 RANGE_TOO_LARGE.
+const _MAX_RANGE_MS = 90 * 86400000;
+function _assertRange(req) {
+  const { from, to } = req.query;
+  if (!from || !to) return { ok: true };
+  const f = new Date(from).getTime();
+  const t = new Date(to).getTime();
+  if (!Number.isFinite(f) || !Number.isFinite(t)) return { ok: true }; // let downstream error
+  if (t - f > _MAX_RANGE_MS) {
+    return {
+      ok: false,
+      message: "Date range too large — max 90 days. Narrow the from/to and retry.",
+    };
+  }
+  return { ok: true };
+}
+
+// Default pagination — registers cap at 200 rows unless caller asks for more.
+function _pagination(req, defaultLimit = 200, maxLimit = 1000) {
+  const limit = Math.max(1, Math.min(Number(req.query.limit) || defaultLimit, maxLimit));
+  const skip  = Math.max(0, Number(req.query.skip) || 0);
+  return { limit, skip };
+}
+
 // Sales register — bill-wise with HSN-wise GST split.
 // Includes Completed + Partial-Return + Refunded so the audit trail is
 // complete. Refund deltas are reported in their own column so the row
 // shows ORIGINAL totals (legal source) with a refund tail.
 exports.salesRegister = async (req, res) => {
   try {
+    // R7bh-F4 / R7bg-9-CRIT-3: bound the range + paginate the result so
+    // a "give me all sales" GET can't OOM the API box.
+    const guard = _assertRange(req);
+    if (!guard.ok) return res.status(400).json({ success: false, code: "RANGE_TOO_LARGE", message: guard.message });
+    const { limit, skip } = _pagination(req, 200, 1000);
+
     const where = {
       status: { $in: ["Completed", "Partial-Return", "Refunded", "Supplemented"] },
       ..._rangeFilter(req),
     };
-    const rows = await Sale.find(where).sort({ createdAt: 1 }).lean();
+    const rows = await Sale.find(where).sort({ createdAt: 1 })
+      .skip(skip).limit(limit)
+      .lean();
     const out = rows.map(s => {
       const hsnMap = new Map();
       let totalDisc = 0;
@@ -1331,8 +1692,14 @@ exports.salesRegister = async (req, res) => {
 // Purchase register — GRN-wise with supplier + GST claim.
 exports.purchaseRegister = async (req, res) => {
   try {
+    // R7bh-F4 / R7bg-9-CRIT-3: bound the range + paginate.
+    const guard = _assertRange(req);
+    if (!guard.ok) return res.status(400).json({ success: false, code: "RANGE_TOO_LARGE", message: guard.message });
+    const { limit, skip } = _pagination(req, 200, 1000);
+
     const where = { isActive: true, ..._rangeFilter(req, "createdAt") };
     const batches = await DrugBatch.find(where).sort({ createdAt: 1 })
+      .skip(skip).limit(limit)
       .populate("drugId", "name hsnCode gstRate category").lean();
     const out = batches.map(b => {
       const purchase = (b.quantityIn || 0) * (b.purchaseRate || 0);

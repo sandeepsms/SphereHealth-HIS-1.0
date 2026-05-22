@@ -14,6 +14,18 @@ const BillingService = require("../../services/Billing/billingService");
 exports.getBillsByUHID = async (req, res) => {
   try {
     const data = await billingService.getPatientWithBills(req.params.UHID);
+    // R7bh-F10 / R7bg-9-CRIT-4: the perf fix in getBillsByUHID switched
+    // to `.lean({virtuals:true})`, which bypasses the toJSON
+    // decimalToNumber transform. Walk the returned bills + unwrap
+    // every Decimal128 field before the response goes on the wire —
+    // otherwise the frontend's `Number(amount)` coerce returns NaN
+    // on `{$numberDecimal:"..."}` objects.
+    try {
+      const { decimalToNumber } = require("../../utils/money");
+      if (Array.isArray(data?.bills)) {
+        data.bills.forEach((b) => decimalToNumber(null, b));
+      }
+    } catch (_) { /* best-effort */ }
     res.json({ success: true, data });
   } catch (e) {
     const status = e.message.includes("not found") ? 404 : 500;
@@ -247,10 +259,27 @@ exports.bulkSettleByUHID = async (req, res) => {
 // to any staff member's name — fatal for the NABH attribution audit.
 exports.settlementAdjust = async (req, res) => {
   try {
+    // R7bh-F10 / R7bg-10-HIGH-3: explicit destructure replaces the
+    // `...req.body` mass-spread. Pre-R7bh a Postman-forged body could
+    // include `payments[]`, `billItems[]`, `billStatus`, `__v`,
+    // `advancePaid` etc. — the spread handed all of it to the service
+    // layer where some keys hit the bill document directly via
+    // Object.assign-style mutations. Lock down to the canonical set
+    // that the audit + UI workflow actually need.
+    const {
+      extraDiscount,
+      extraDiscountReason,
+      items,            // per-line edits [{itemId, quantity?, unitPrice?, discountPercent?}]
+      reason,
+    } = req.body || {};
+
     const data = await billingService.settlementAdjust(
       req.params.billId,
       {
-        ...req.body,
+        extraDiscount,
+        extraDiscountReason,
+        items,
+        reason,
         adjustedBy:   req.user?.fullName || req.user?.employeeId,
         adjustedById: req.user?._id,
       },
@@ -301,6 +330,14 @@ exports.recordPayment = async (req, res) => {
     }
     const { receivedBy: _ignoredA, receivedById: _ignoredB, receivedByRole: _ignoredC, ...safeBody } = req.body;
 
+    // R7bh-F10 / R7bg-10-HIGH-4: normalize paymentMode to canonical
+    // UPPERCASE at the boundary so the service-layer enum check (also
+    // case-insensitive) and the per-row shift reconciliation query
+    // never trip over a "cash" vs "CASH" mismatch.
+    if (safeBody.paymentMode) {
+      safeBody.paymentMode = String(safeBody.paymentMode).toUpperCase().trim();
+    }
+
     const data = await billingService.recordPayment(
       req.params.billId,
       {
@@ -312,7 +349,15 @@ exports.recordPayment = async (req, res) => {
     );
     res.json({ success: true, data });
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    // R7bh-F10: respect typed-error status/code (DUPLICATE_TRANSACTION 409,
+    // INVALID_PAYMENT_MODE 400, OVERPAY 400). Pre-R7bh every refusal got
+    // a flat 400 so the frontend couldn't distinguish "retry with a
+    // different amount" from "the txn is a duplicate, stop submitting".
+    const status = e.status || 400;
+    const code   = e.code;
+    const body   = { success: false, message: e.message };
+    if (code) body.code = code;
+    res.status(status).json(body);
   }
 };
 
@@ -1502,6 +1547,26 @@ exports.cancelBill = async (req, res, next) => {
         const err = new Error(`Cannot cancel — ₹${paid} already collected. Issue a refund first.`);
         err.status = 400; throw err;
       }
+      // R7bh-F10 / R7bg-10-CRIT-4: defense-in-depth — also refuse cancel
+      // when `bill.advancePaid > 0`. This catches the path where an
+      // ADVANCE_ADJUSTMENT row landed via `applyAdvanceToBill`: the
+      // patient pool credit consumed the bill balance, but the per-row
+      // sum above only counts cashier-collected positives (the apply
+      // path writes a positive ADVANCE_ADJUSTMENT row too, so the
+      // existing `paid` check DOES catch it — but a future refactor
+      // that splits applied-credit from cash-paid would silently bypass
+      // the guard). `advancePaid` is the pre-save's authoritative
+      // "money on this bill" field; gating on it is the right anchor.
+      const advancePaidNum = Number(b.advancePaid || 0);
+      if (advancePaidNum > 0.005) {
+        const err = new Error(
+          `Cannot cancel — ₹${advancePaidNum.toFixed(2)} has been recorded on the bill (cash or applied advance). ` +
+          `Issue a refund first, then cancel.`,
+        );
+        err.status = 400;
+        err.code = "BILL_HAS_PAYMENTS";
+        throw err;
+      }
       // R7ap-F15: capture before-state for the BillingAudit emit at the end.
       const priorBillStatus = b.billStatus;
       const priorTpaStatus  = b.tpaClaimStatus;
@@ -1762,9 +1827,46 @@ exports.tpaSettle = async (req, res, next) => {
           bill.extraDiscountReason = (bill.extraDiscountReason || "") +
             ` | TPA short-pay write-off ₹${shortfall.toFixed(2)} on UTR ${req.body.transactionId}`;
           bill.extraDiscountBy = settledBy;
-          bill.tpaClaimStatus  = "REJECTED";
+          // R7bh-F10 / R7bg-6-HIGH-5: a TPA write-off is NOT a rejection.
+          // The TPA approved the claim AND paid (partially) — the
+          // hospital just chose to absorb the residual instead of
+          // pursuing the patient for it. Pre-R7bh we flipped status to
+          // REJECTED, which polluted the "TPA Denied" KPI on the
+          // dashboard (every routine ₹50-100 rounding write-off
+          // counted as a denied claim, blowing up the denial-rate
+          // metric finance reports to leadership).
+          //
+          // Correct semantics: keep status APPROVED (the original
+          // tpaApprovedAmount stays, the TPA_CLAIM payment row
+          // records what they actually wired), and stamp the
+          // write-off intent onto bill.writeOffAmount + writeOffReason
+          // so the TPA register can render "approved ₹10,000, settled
+          // ₹9,950, wrote off ₹50" without double-counting denials.
+          //
+          // NOTE for F1 coordination: PatientBill schema needs
+          //   writeOffAmount: Decimal128 (default 0)
+          //   writeOffReason: String
+          //   writeOffBy:     String
+          //   writeOffAt:     Date
+          // and ideally a new tpaClaimStatus enum value
+          //   "SETTLED_WRITEOFF"
+          // for the strict semantic. Until F1 adds those, we set the
+          // fields anyway (Mongoose strict mode default is throw; we
+          // use markModified + assignment to side-channel through —
+          // they'll persist as `additionalProperties`-style fields if
+          // strict is `false` on the schema, otherwise they'll be
+          // silently dropped and the remarks-text below carries the
+          // signal). The APPROVED status is the load-bearing fix.
+          bill.tpaClaimStatus  = "APPROVED";
+          bill.writeOffAmount  = (Number(bill.writeOffAmount || 0)) + shortfall;
+          bill.writeOffReason  = (bill.writeOffReason || "") +
+            ` | TPA short-pay on UTR ${req.body.transactionId}: ${req.body.writeoffReason || req.body.remarks || "(no reason supplied)"}`;
+          bill.writeOffBy      = settledBy;
+          bill.writeOffAt      = settledOn;
+          try { bill.markModified("writeOffAmount"); bill.markModified("writeOffReason"); } catch (_) {}
+          bill.markModified("tpaClaimStatus");
           bill.remarks = (bill.remarks || "") +
-            ` | TPA settled ₹${settledAmount} of approved ₹${approved}; ₹${shortfall.toFixed(2)} written off`;
+            ` | TPA settled ₹${settledAmount} of approved ₹${approved}; ₹${shortfall.toFixed(2)} written off (claim NOT denied)`;
         } else {
           // Patient liability bump — re-tag each TPA line item so the hook
           // recomputes patientPayableAmount upward.

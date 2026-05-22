@@ -4,6 +4,9 @@
 // for dispense + verify (Pharmacist + Admin only) and `pharmacy.schedule-x.read`
 // for the register view (mirrors the Pharmacist tier — the register surfaces
 // PHI + narcotic provenance and stays inside the pharmacy team).
+// R7bh-F4 / R7bg-3-CRIT-2: no :id routes in this file (all endpoints
+// take their identifier from req.body), so validateObjectIdParam is not
+// applied here. Body-level id validation lives in the controller/service.
 const express = require("express");
 const router  = express.Router();
 const ctrl    = require("../../controllers/Pharmacy/scheduleXController");

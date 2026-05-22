@@ -31,6 +31,7 @@ import {
   DRUG_FORMS, DRUG_CATEGORIES, PAYMENT_MODES, SALE_TYPES,
 } from "../../Services/pharmacyService";
 import { confirm } from "../../Components/common/ConfirmDialog";
+import { useVisiblePoll, useDebounce } from "../../utils/pollingHelpers";
 
 /* HIS UHID bridge — call this with a UHID and get back a normalised
    { patientId, patientName, age, gender, contact, doctorName, admissionId,
@@ -134,25 +135,23 @@ const daysUntil = (d) => d ? Math.floor((new Date(d).getTime() - Date.now()) / 8
 function useLiveIndentStats(pollMs = 15000) {
   const [stats, setStats] = useState({ open: 0, stat: 0, urgent: 0 });
 
-  useEffect(() => {
-    let cancelled = false;
-    const fetchStats = async () => {
-      try {
-        const { data } = await axios.get(`${API_ENDPOINTS.BASE}/indents?openOnly=true`);
-        const list = Array.isArray(data?.data) ? data.data : [];
-        if (cancelled) return;
-        const stat    = list.filter(i => i.urgency === "STAT").length;
-        const urgent  = list.filter(i => i.urgency === "Urgent").length;
-        setStats({ open: list.length, stat, urgent });
-      } catch (_) {
-        // Non-fatal — keep the last-known counts. The dedicated
-        // PharmacyIndentsPage will surface its own error toast if needed.
-      }
-    };
-    fetchStats();
-    const id = setInterval(fetchStats, pollMs);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [pollMs]);
+  // R7bh-F9 / R7bg-9-HIGH-4 — visibility-gated. When the pharmacist
+  // tabs away to Dispense, the badge poll pauses and resumes on
+  // return. Drops ~240 background requests/hour per idle tab.
+  const fetchStats = React.useCallback(async () => {
+    try {
+      const { data } = await axios.get(`${API_ENDPOINTS.BASE}/indents?openOnly=true`);
+      const list = Array.isArray(data?.data) ? data.data : [];
+      const stat    = list.filter(i => i.urgency === "STAT").length;
+      const urgent  = list.filter(i => i.urgency === "Urgent").length;
+      setStats({ open: list.length, stat, urgent });
+    } catch (_) {
+      // Non-fatal — keep the last-known counts. The dedicated
+      // PharmacyIndentsPage will surface its own error toast if needed.
+    }
+  }, []);
+  useEffect(() => { fetchStats(); }, [fetchStats]);
+  useVisiblePoll(fetchStats, pollMs, []);
 
   return stats;
 }
@@ -349,12 +348,30 @@ function DrugsTab() {
   const [category, setCategory] = useState("");
   const [edit, setEdit] = useState(null);
   const [adding, setAdding] = useState(false);
+  // R7bh-F9 / R7bg-4-HIGH-1 — debounce the search box so we only hit
+  // /pharmacy/drugs after the pharmacist pauses typing (300 ms).
+  const debouncedQ = useDebounce(q, 300);
 
-  const refresh = async () => {
-    try { setDrugs((await listDrugs({ q, category })).data || []); }
-    catch (e) { toast.error(e.message); }
+  const refresh = async (signal) => {
+    try { setDrugs((await listDrugs({ q: debouncedQ, category }, { signal })).data || []); }
+    catch (e) {
+      // Aborts are expected when typing fast — swallow silently.
+      if (e.name === "AbortError") return;
+      toast.error(e.message);
+    }
   };
-  useEffect(() => { refresh(); }, [q, category]);
+  // R7bh-F9 / R7bg-4-HIGH-1 — AbortController cancels the previous
+  // in-flight request when the user keeps typing / flips category,
+  // preventing a stale response from clobbering fresh data.
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQ, category]);
+  // Local refresh wrapper for modal callbacks (no signal needed — they
+  // fire once on user action and won't race themselves).
+  const refreshNoSignal = () => refresh();
 
   const remove = async (d) => {
     // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
@@ -364,7 +381,7 @@ function DrugsTab() {
       danger: true,
       confirmLabel: "Deactivate",
     }))) return;
-    try { await deleteDrug(d._id); toast.success(`${d.name} deactivated`); refresh(); }
+    try { await deleteDrug(d._id); toast.success(`${d.name} deactivated`); refreshNoSignal(); }
     catch (e) { toast.error(e.message); }
   };
 
@@ -421,7 +438,7 @@ function DrugsTab() {
       </Table>
 
       {(adding || edit) && (
-        <DrugModal drug={edit} onClose={() => { setEdit(null); setAdding(false); }} onSaved={refresh} />
+        <DrugModal drug={edit} onClose={() => { setEdit(null); setAdding(false); }} onSaved={refreshNoSignal} />
       )}
     </div>
   );
@@ -784,6 +801,16 @@ function DispenseTab() {
         template:     phSet?.billTemplate || 1,
         defaultPaper: phSet?.defaultPaper || "half-a4",
         pharmacySettings: phSet,
+        // R7bh-F1 / META-1: PrintAudit anchor — PharmacyBill maps to
+        // PharmacySale in ENTITY_MODEL. Bumps printCount + writes
+        // DUPLICATE watermark on reprints (GST §35 / D&C audit trail).
+        printAudit: {
+          entityType:   "PharmacyBill",
+          entityId:     r.data._id,
+          entityNumber: r.data.billNumber,
+          UHID:         r.data.UHID || r.data.patient?.UHID,
+          patientName:  r.data.patientName || r.data.patient?.fullName,
+        },
       });
       setItems([]);
       clearLink();
@@ -957,12 +984,25 @@ function SalesTab() {
   const [to, setTo]     = useState("");
   const [returnSale, setReturnSale] = useState(null);    // the bill being returned
   const [addItemsSale, setAddItemsSale] = useState(null); // the bill to add items to
+  // R7bh-F9 / R7bg-4-HIGH-1 — debounce the bill / patient / UHID search.
+  const debouncedQ = useDebounce(q, 300);
 
-  const refresh = async () => {
-    try { setRows((await listSales({ q, from, to })).data || []); }
-    catch (e) { toast.error(e.message); }
+  const refresh = async (signal) => {
+    try { setRows((await listSales({ q: debouncedQ, from, to }, { signal })).data || []); }
+    catch (e) {
+      if (e.name === "AbortError") return;
+      toast.error(e.message);
+    }
   };
-  useEffect(() => { refresh(); }, [q, from, to]);
+  // R7bh-F9 / R7bg-4-HIGH-1 — AbortController per debounced query so
+  // a slow response doesn't overwrite a fresher one.
+  useEffect(() => {
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQ, from, to]);
+  const refreshNoSignal = () => refresh();
 
   const cancel = async (s) => {
     // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
@@ -973,7 +1013,7 @@ function SalesTab() {
       confirmLabel: "Cancel bill",
       cancelLabel: "Keep",
     }))) return;
-    try { await cancelSale(s._id); toast.success("Sale cancelled · stock restored"); refresh(); }
+    try { await cancelSale(s._id); toast.success("Sale cancelled · stock restored"); refreshNoSignal(); }
     catch (e) { toast.error(e.message); }
   };
 
@@ -1033,6 +1073,16 @@ function SalesTab() {
                       template:      phSet?.billTemplate || 1,
                       defaultPaper:  phSet?.defaultPaper || "half-a4",
                       pharmacySettings: phSet,
+                      // R7bh-F1 / META-1: PrintAudit anchor — reprint
+                      // from the sales register bumps printCount on
+                      // the PharmacySale so DUPLICATE watermark fires.
+                      printAudit: {
+                        entityType:   "PharmacyBill",
+                        entityId:     s._id,
+                        entityNumber: s.billNumber,
+                        UHID:         s.UHID || s.patient?.UHID,
+                        patientName:  s.patientName || s.patient?.fullName,
+                      },
                     });
                   }}
                   label="Print" />
@@ -1053,12 +1103,12 @@ function SalesTab() {
       {returnSale && (
         <ReturnModal sale={returnSale}
           onClose={() => setReturnSale(null)}
-          onDone={() => { setReturnSale(null); refresh(); }} />
+          onDone={() => { setReturnSale(null); refreshNoSignal(); }} />
       )}
       {addItemsSale && (
         <AddItemsModal sale={addItemsSale}
           onClose={() => setAddItemsSale(null)}
-          onDone={() => { setAddItemsSale(null); refresh(); }} />
+          onDone={() => { setAddItemsSale(null); refreshNoSignal(); }} />
       )}
     </div>
   );
@@ -1143,6 +1193,19 @@ function ReturnModal({ sale, onClose, onDone }) {
         refNo: rec.refundSlipNumber, reason: reason || `Pharmacy item return (${items.length} line(s))`,
         sourceReceiptNo: updated.billNumber, sourceMethod: updated.paymentMode,
         sourceAmount: updated.grandTotal, runningBalance: updated.balanceDue || 0,
+        // R7bh-F1 / META-1: PrintAudit anchor — pharmacy refund slip
+        // is tracked against its parent PharmacySale (RefundReceipt
+        // entityType maps to PatientBill in the controller, but for
+        // pharmacy refunds we want the printCount to land on the
+        // PharmacySale; use PharmacyBill entityType so the $inc hits
+        // the right collection).
+        printAudit: {
+          entityType:   "PharmacyBill",
+          entityId:     updated._id,
+          entityNumber: rec.refundSlipNumber,
+          UHID:         updated.patientUHID || updated.UHID,
+          patientName:  updated.patientName,
+        },
       });
       // Auto-open the revised tax invoice right after — caller can keep
       // both windows side-by-side.
@@ -1154,6 +1217,15 @@ function ReturnModal({ sale, onClose, onDone }) {
           pharmacySettings: phSet,
           // header overlay so the bill is clearly labelled as REVISED
           billLabel: "REVISED TAX INVOICE", revisionNote: `${updated.returns?.length || 1} return event(s) applied · latest ${rec.refundSlipNumber}`,
+          // R7bh-F1 / META-1: PrintAudit anchor — revised invoice
+          // reprint after a return event.
+          printAudit: {
+            entityType:   "PharmacyBill",
+            entityId:     updated._id,
+            entityNumber: updated.billNumber,
+            UHID:         updated.patientUHID || updated.UHID,
+            patientName:  updated.patientName,
+          },
         });
       }, 350);
 
@@ -1362,6 +1434,15 @@ function AddItemsModal({ sale, onClose, onDone }) {
           pharmacySettings: phSet,
           billLabel: "REVISED TAX INVOICE",
           revisionNote: `Supplementary slip ${rec.supplementSlipNumber} · ${fmtINR(rec.addedTotal)} added`,
+          // R7bh-F1 / META-1: PrintAudit anchor — supplementary
+          // (debit-note) reprint tracked against the parent sale.
+          printAudit: {
+            entityType:   "PharmacyBill",
+            entityId:     updated._id,
+            entityNumber: updated.billNumber,
+            UHID:         updated.patientUHID || updated.UHID,
+            patientName:  updated.patientName,
+          },
         });
       }, 350);
 

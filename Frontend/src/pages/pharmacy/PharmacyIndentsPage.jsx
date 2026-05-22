@@ -21,6 +21,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import API_ENDPOINTS from "../../config/api";
+import { useVisiblePoll } from "../../utils/pollingHelpers";
 
 const C = {
   primary: "#1d4ed8", accent: "#7c3aed",
@@ -73,28 +74,47 @@ export default function PharmacyIndentsPage({ embedded = false } = {}) {
   const [release, setRelease] = useState({ open: false, indent: null });
   const [busy, setBusy] = useState(false);
   const seenStatRef = useRef(new Set());     // remember STAT ids we've chimed for
+  // R7bh-F9 / R7bg-4-CRIT-1 — `load()` used to gate the chime on
+  // `list.length > 0` from closure, but `list` wasn't a dependency, so
+  // `useCallback` froze it at [] forever. After a filter flip the
+  // closure still read 0 and STAT chime fired on initial render of
+  // every filter view. Mirror the latest list length into a ref so the
+  // gate observes the *current* state without re-recreating `load`.
+  const listLenRef = useRef(0);
+  // R7bh-F9 / R7bg-4-CRIT-2 — the previous in-flight `/indents` fetch
+  // would race the next tick on slow networks and overwrite fresh data
+  // with stale results. Abort the prior request when the poll re-fires
+  // or filters change.
+  const abortRef = useRef(null);
 
   const load = useCallback(async () => {
+    // Cancel any in-flight previous request before launching a new one.
+    if (abortRef.current) { try { abortRef.current.abort(); } catch (_) {} }
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
       const params = new URLSearchParams();
       if (filterStatus === "open") params.set("openOnly", "true");
       else if (filterStatus) params.set("status", filterStatus);
       if (filterUrgency) params.set("urgency", filterUrgency);
-      const { data } = await axios.get(`${API_ENDPOINTS.BASE}/indents?${params}`);
+      const { data } = await axios.get(`${API_ENDPOINTS.BASE}/indents?${params}`, { signal: ctrl.signal });
       const fresh = Array.isArray(data?.data) ? data.data : [];
 
       // STAT-chime — chime once per STAT id we haven't seen in this
       // session. The seenStatRef is committed AFTER the chime so a
       // re-render or filter flip doesn't re-trigger.
       const newStats = fresh.filter(i => i.urgency === "STAT" && !seenStatRef.current.has(i._id));
-      if (newStats.length && list.length > 0) {     // skip on initial mount
+      if (newStats.length && listLenRef.current > 0) {  // skip on initial mount
         playChime();
         toast.warn(`STAT indent — ${newStats[0].patientName || newStats[0].UHID}`, { autoClose: 5000 });
       }
       newStats.forEach(i => seenStatRef.current.add(i._id));
 
+      listLenRef.current = fresh.length;
       setList(fresh);
     } catch (e) {
+      // Aborted polls are expected (next tick or filter change) — silent.
+      if (e.name === "CanceledError" || e.name === "AbortError" || axios.isCancel?.(e)) return;
       // Non-fatal — surface only on the first failure so toast spam
       // doesn't drown the queue during a flaky network.
       if (loading) toast.error("Could not load indents: " + (e.response?.data?.message || e.message));
@@ -107,10 +127,12 @@ export default function PharmacyIndentsPage({ embedded = false } = {}) {
   }, [filterStatus, filterUrgency]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => {
-    const id = setInterval(load, 10000);    // 10-second poll cadence
-    return () => clearInterval(id);
-  }, [load]);
+  // R7bh-F9 / R7bg-9-HIGH-4 — visibility-gated poll. Pauses when the
+  // pharmacist tabs away (e.g. to email), resumes + immediately
+  // refreshes on focus return.
+  useVisiblePoll(load, 10000, [filterStatus, filterUrgency]);
+  // Abort any straggling request on unmount.
+  useEffect(() => () => { if (abortRef.current) { try { abortRef.current.abort(); } catch (_) {} } }, []);
 
   /* ── Release modal helpers ────────────────────────────────── */
   // Auto-fetch the FEFO (first-expiry-first-out) batch + sale price for

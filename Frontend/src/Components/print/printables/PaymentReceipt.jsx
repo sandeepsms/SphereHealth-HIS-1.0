@@ -2,27 +2,45 @@
 // A general payment-received slip — cash, UPI, card, net banking, cheque.
 // Use for any incoming payment that isn't a full bill (e.g. a partial
 // settlement against an IPD running bill, or a follow-up OPD top-up).
+//
+// R7bh-F7 / R7bg-7-CRIT-4 + R7bg-7-CRIT-5 + R7bg-7-HIGH-1:
+//   • Decimal128 unwrap via toNum() everywhere (was bare Number()).
+//   • numberToIndianWords() handles paise — replaces legacy amountInWords
+//     which dropped the rupee/paise leg.
+//   • PrintWatermark / printCount wired via PrintShell so reprints carry
+//     the GST §48(4) DUPLICATE stamp.
 
 import React from "react";
 import PrintShell from "../PrintShell";
-import { fmtINR, amountInWords } from "../amountWords";
+import { fmtINR } from "../amountWords";
+import { numberToIndianWords, toNum } from "../../../utils/printUtils";
 
 const METHOD_STYLE = {
-  cash: { tone: "cash", label: "Cash" },
-  upi:  { tone: "upi",  label: "UPI" },
-  card: { tone: "card", label: "Card" },
-  net:  { tone: "net",  label: "Net Banking" },
+  cash:   { tone: "cash", label: "Cash" },
+  upi:    { tone: "upi",  label: "UPI" },
+  card:   { tone: "card", label: "Card" },
+  net:    { tone: "net",  label: "Net Banking" },
+  neft:   { tone: "neft", label: "NEFT" },
+  imps:   { tone: "imps", label: "IMPS" },
+  rtgs:   { tone: "rtgs", label: "RTGS" },
   cheque: { tone: "chq",  label: "Cheque" },
 };
 
-const PaymentReceipt = ({ settings, receipt = {} }) => {
-  const amount = Number(receipt.amount) || 0;
+const PaymentReceipt = ({ settings = {}, receipt = {} }) => {
+  // R7bg-7-CRIT-5: bare Number(amount) leaked {$numberDecimal:"…"} from
+  // the wire as NaN → big amount block rendered "₹0". Replaced with
+  // toNum() which unwraps Decimal128 + Number + string consistently.
+  const amount = toNum(receipt.amount);
+  const printCount = toNum(receipt.printCount);
   const m = METHOD_STYLE[String(receipt.method || "cash").toLowerCase()] || METHOD_STYLE.cash;
+  const runningBalance = toNum(receipt.runningBalance);
+
   return (
     <PrintShell
       settings={settings}
       documentTitle="Payment Receipt"
       serialNo={receipt.receiptNo}
+      printCount={printCount}
       infoItems={[
         { label: "Patient",    value: receipt.patientName },
         { label: "UHID",       value: receipt.uhid },
@@ -32,6 +50,7 @@ const PaymentReceipt = ({ settings, receipt = {} }) => {
             : new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
         { label: "Received By", value: receipt.receivedBy },
       ]}
+      signatureLabels={["Authorised Cashier", "Payer / Patient"]}
     >
       {/* Big amount block */}
       <div style={{
@@ -50,11 +69,16 @@ const PaymentReceipt = ({ settings, receipt = {} }) => {
           <span className={`pr-paymethod pr-paymethod--${m.tone}`}>
             {m.label}
           </span>
+          {(receipt.refNo || receipt.utrReference || receipt.utrRef) && (
+            <span style={{ marginLeft: 10, fontSize: 11, color: "#475569", fontFamily: "'DM Mono', monospace" }}>
+              Ref: {receipt.utrReference || receipt.utrRef || receipt.refNo}
+            </span>
+          )}
         </div>
       </div>
 
       <div className="pr-amount-words">
-        <strong>In words:</strong> {amountInWords(amount)}
+        <strong>In words:</strong> {numberToIndianWords(amount)}
       </div>
 
       {/* Payment-specific details */}
@@ -62,15 +86,19 @@ const PaymentReceipt = ({ settings, receipt = {} }) => {
         <div className="pr-section__title">Payment Details</div>
         <dl className="pr-kv">
           <dt>Mode</dt><dd>{m.label}</dd>
-          {receipt.refNo && (<><dt>Reference No</dt><dd>{receipt.refNo}</dd></>)}
-          {receipt.transactionId && (<><dt>Transaction ID</dt><dd>{receipt.transactionId}</dd></>)}
+          {receipt.refNo && (<><dt>Reference No</dt><dd style={{ fontFamily: "'DM Mono', monospace" }}>{receipt.refNo}</dd></>)}
+          {/* R7bg-7-HIGH-4: UTR aliases — accept all backend variants */}
+          {(receipt.utrReference || receipt.utrRef) && (
+            <><dt>UTR / Bank Ref</dt><dd style={{ fontFamily: "'DM Mono', monospace" }}>{receipt.utrReference || receipt.utrRef}</dd></>
+          )}
+          {receipt.transactionId && (<><dt>Transaction ID</dt><dd style={{ fontFamily: "'DM Mono', monospace" }}>{receipt.transactionId}</dd></>)}
           {receipt.cardLast4 && (<><dt>Card</dt><dd>****-****-****-{receipt.cardLast4}</dd></>)}
           {receipt.upiId && (<><dt>UPI ID</dt><dd>{receipt.upiId}</dd></>)}
           {receipt.bank && (<><dt>Bank</dt><dd>{receipt.bank}</dd></>)}
           {receipt.chequeNo && (<><dt>Cheque No</dt><dd>{receipt.chequeNo}</dd></>)}
           {receipt.purpose && (<><dt>Purpose</dt><dd>{receipt.purpose}</dd></>)}
           {receipt.runningBalance != null && (
-            <><dt>Running Balance</dt><dd>{fmtINR(receipt.runningBalance)}</dd></>
+            <><dt>Running Balance</dt><dd>{fmtINR(runningBalance)}</dd></>
           )}
         </dl>
       </div>

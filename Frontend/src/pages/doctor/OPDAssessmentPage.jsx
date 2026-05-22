@@ -1144,6 +1144,16 @@ export default function OPDAssessmentPage() {
       advice:          soap.advice ? String(soap.advice).split("\n").filter(Boolean) : [],
       followUpDate:    soap.followUpDate,
       followUpNotes:   soap.doctorNotes,
+      // R7bh-F1 / META-1: PrintAudit anchor — Prescription maps to
+      // OPDPrescription in ENTITY_MODEL. Visit/Prescription _id may
+      // not exist on a freshly drafted visit, fall back to visit _id.
+      printAudit: {
+        entityType:   "Prescription",
+        entityId:     v.prescriptionId || v._id,
+        entityNumber: v.visitNumber,
+        UHID:         v.UHID,
+        patientName:  v.patientName || v.UHID,
+      },
     });
   };
 

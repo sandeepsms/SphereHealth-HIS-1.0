@@ -52,7 +52,11 @@ const FireDrillSchema = new Schema(
 
     status: {
       type: String,
-      enum: ["SCHEDULED", "COMPLETED", "CANCELLED"],
+      // R7bh-F6 / R7bg CRIT-A: OVERDUE added so the fire-drill-overdue
+      // cron (Backend/services/Compliance/fireDrillOverdueCron.js) can
+      // flag SCHEDULED drills past their nextDrillDue / scheduledDate
+      // without losing the drill row entirely.
+      enum: ["SCHEDULED", "COMPLETED", "CANCELLED", "OVERDUE"],
       default: "SCHEDULED",
       index: true,
     },

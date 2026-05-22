@@ -100,10 +100,20 @@ async function todayRevenue(opts = {}) {
   ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
 
   // ── Pharmacy revenue ─────────────────────────────────────────────
+  // R7bh-F2: explicit allowlist instead of $nin so future statuses
+  // (e.g. a "Quarantined" state) don't accidentally book as revenue.
+  // Mirrors dayBookService.computeDayBook for ledger parity:
+  //   Completed       — sale finalised, money in drawer
+  //   Supplemented    — sale + addendum, money in drawer
+  //   Partial-Return  — partial return; original headline grandTotal
+  //                     still books, the refund leg is netted via the
+  //                     patientCredit accounting (per R7c-design).
+  // Excludes: Cancelled (no revenue), Refunded (fully reversed), Hold
+  // (sale not yet released to the till).
   const pharmacyAggP = PharmacySale.aggregate([
     { $match: {
         createdAt: { $gte: from, $lt: to },
-        status:    { $nin: ["Cancelled", "Refunded"] },   // partial-return still books revenue
+        status:    { $in: ["Completed", "Supplemented", "Partial-Return"] },
     } },
     { $group: {
         _id: null,

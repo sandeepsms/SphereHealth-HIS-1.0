@@ -20,6 +20,19 @@ import DoctorOrderSheet  from "./DoctorOrderSheet";
 import TPAAuthorization  from "./TPAAuthorization";
 import PharmacyBill      from "./PharmacyBill";
 import PharmacyRegister  from "./PharmacyRegister";
+// R7bh-F7 / R7bg-7-CRIT-3: 7 new accountant + NABH/GST registers.
+// SettlementStatement and CreditNotePrint are GST §34 / §46 receipts;
+// DayBookPrint, GstReportPrint, TpaSettlementPrint, CashierShiftClosePrint
+// close the daily / monthly / TPA / shift reconciliation gap that left
+// the Accountant role with no NABH-compliant printables. ScheduleXRegisterPrint
+// is the Narcotic Drugs & Psychotropic Substances Act register (D&C §66/67).
+import SettlementStatement   from "./SettlementStatement";
+import CreditNotePrint       from "./CreditNotePrint";
+import DayBookPrint          from "./DayBookPrint";
+import GstReportPrint        from "./GstReportPrint";
+import TpaSettlementPrint    from "./TpaSettlementPrint";
+import CashierShiftClosePrint from "./CashierShiftClosePrint";
+import ScheduleXRegisterPrint from "./ScheduleXRegisterPrint";
 // R7bf-F / A4-CRIT-2 + A4-HIGH-11: NABH AAC.3 compliant lab report.
 // Lives under Components/lab/ (not printables/) so the lab module can
 // import it independently, but registered here so it routes via the
@@ -45,6 +58,15 @@ export const PRINTABLES = {
   "interim-bill":     { component: FinalBill,         title: "Interim Bill (IPD)",        defaultPaper: "a4"      },
   "pharmacy-bill":    { component: PharmacyBill,      title: "Pharmacy GST Tax Invoice",  defaultPaper: "half-a4", defaultOrient: "portrait" },
   "pharmacy-register":{ component: PharmacyRegister,  title: "Pharmacy Register",         defaultPaper: "a4",      defaultOrient: "portrait" },
+
+  // ── Accountant / NABH / GST registers (R7bh-F7) ───────
+  "settlement-statement":  { component: SettlementStatement,    title: "Settlement Statement",      defaultPaper: "a4" },
+  "credit-note":           { component: CreditNotePrint,        title: "Credit Note (GST §34)",     defaultPaper: "a4" },
+  "day-book":              { component: DayBookPrint,           title: "Day Book / Cash Register",  defaultPaper: "a4" },
+  "gst-report":            { component: GstReportPrint,         title: "GST Outward Register",      defaultPaper: "a4" },
+  "tpa-settlement":        { component: TpaSettlementPrint,     title: "TPA Settlement Statement",  defaultPaper: "a4" },
+  "cashier-shift-close":   { component: CashierShiftClosePrint, title: "Cashier Shift Close",       defaultPaper: "a4" },
+  "schedule-x-register":   { component: ScheduleXRegisterPrint, title: "Schedule X Narcotics Register", defaultPaper: "a4", defaultOrient: "landscape" },
 
   // ── Clinical ──────────────────────────────────────────
   "opd-prescription": { component: OPDPrescription,   title: "OPD Prescription (Rx)",     defaultPaper: "a4"      },

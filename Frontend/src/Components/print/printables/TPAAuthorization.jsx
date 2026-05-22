@@ -5,6 +5,7 @@
 import React from "react";
 import PrintShell from "../PrintShell";
 import { fmtINR } from "../amountWords";
+import { toNum } from "../../../utils/printUtils";
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
@@ -15,6 +16,7 @@ const TPAAuthorization = ({ settings, receipt = {} }) => {
       settings={settings}
       documentTitle="Cashless / TPA Authorization Request"
       serialNo={r.requestNo}
+      printCount={toNum(r.printCount)}
       infoItems={[
         { label: "Patient",     value: r.patientName },
         { label: "UHID",        value: r.uhid },

@@ -24,9 +24,10 @@
  *   • Refuses dispense if qty <= 0 or batch not found.
  *   • Refuses verify if any dispense in the day already verified.
  */
-const ScheduleXEntry = require("../../models/Pharmacy/ScheduleXEntryModel");
-const Drug           = require("../../models/Pharmacy/DrugModel");
-const DrugBatch      = require("../../models/Pharmacy/DrugBatchModel");
+const ScheduleXEntry   = require("../../models/Pharmacy/ScheduleXEntryModel");
+const ScheduleXBalance = require("../../models/Pharmacy/ScheduleXBalanceModel");
+const Drug             = require("../../models/Pharmacy/DrugModel");
+const DrugBatch        = require("../../models/Pharmacy/DrugBatchModel");
 
 const { istStartOfToday } = require("../../utils/queryGuards");
 
@@ -93,58 +94,113 @@ async function recordDispense({
     if (!batch) { const e = new Error("Batch not found"); e.status = 404; throw e; }
   }
 
-  // Compute the opening (= prior closing) so the register row is self-
-  // consistent without a separate join at read time. Walk back from
-  // today's day-window to find the most recent prior row for the same
-  // (drug, batch). If none, opening = 0.
   const today = _istMidnight(new Date());
-  const last = await ScheduleXEntry.findOne({
-    drugId, batchId: batchId || null,
-    createdAt: { $lt: today },
-  }).sort({ createdAt: -1 }).lean();
-  const opening = Number(last?.closingBalance || 0);
-  // For dispense we ALSO need to factor in any rows already emitted today
-  // (could be multiple dispenses + the morning opening row).
-  const todayRows = await ScheduleXEntry.find({
-    drugId, batchId: batchId || null,
-    date: today,
-  }).sort({ createdAt: 1 }).lean();
-  const todayReceived  = todayRows.reduce((a, r) => a + (r.received  || 0), 0);
-  const todayDispensed = todayRows.reduce((a, r) => a + (r.dispensed || 0), 0);
-  const currentBalance = opening + todayReceived - todayDispensed;
-  if (currentBalance < n) {
-    const e = new Error(
-      `Insufficient Schedule-X balance for ${drug.name} — register shows ${currentBalance}, dispense requested ${n}`,
-    );
-    e.code = "INSUFFICIENT_REGISTER_BALANCE"; e.status = 409; throw e;
-  }
   // Refuse if the day has already been verified — append after verify is
   // a back-date attempt which would invalidate the signed daily total.
-  const verified = todayRows.find((r) => r.rowType === "VERIFY");
+  const verified = await ScheduleXEntry.findOne({
+    drugId, batchId: batchId || null, date: today, rowType: "VERIFY",
+  }).lean();
   if (verified) {
     const e = new Error(`Day ${today.toISOString().slice(0,10)} already verified — cannot append new dispense`);
     e.code = "DAY_LOCKED"; e.status = 409; throw e;
   }
 
-  const closing = currentBalance - n;
-  const row = await ScheduleXEntry.create({
-    date: today,
-    drugId, drugName: drug.name,
-    batchId: batchId || undefined,
-    batchNo: batch?.batchNo || "",
-    openingBalance: currentBalance,
-    received: 0,
-    dispensed: n,
-    closingBalance: closing,
-    prescriptionRef: rx || "",
-    doctorName,
-    patientUHID: uhid || "",
-    dispensedBy, dispensedById,
-    witnessName, witnessId,
-    rowType: "DISPENSE",
-    remarks,
-  });
-  return row.toObject();
+  // ── R7bh-F4 / R7bg-10-CRIT-2: TOCTOU-safe atomic CAS decrement.
+  // Previously the balance was computed by reading every prior row +
+  // subtracting today's dispenses — two concurrent dispensers both seeing
+  // "balance = 10, requesting 7" would both insert and leave the register
+  // at -4 (illegal under NDPS). The ScheduleXBalance.findOneAndUpdate
+  // below is atomic at the Mongo level: only one writer wins the
+  // predicate `balance >= n`, the other gets null → 409.
+  const balanceDoc = await ScheduleXBalance.findOneAndUpdate(
+    { drugId, balance: { $gte: n } },
+    {
+      $inc: { balance: -n },
+      $set: {
+        lastUpdatedBy:   dispensedBy || "",
+        lastUpdatedById: dispensedById || null,
+        lastUpdatedAt:   new Date(),
+      },
+    },
+    { new: true },
+  );
+  if (!balanceDoc) {
+    // Read current balance for a helpful error (best-effort; not critical).
+    const current = await ScheduleXBalance.findOne({ drugId }).lean();
+    const have = current ? Number(current.balance || 0) : 0;
+    const e = new Error(
+      `Insufficient Schedule-X balance for ${drug.name} — register shows ${have}, dispense requested ${n}`,
+    );
+    e.code = "INSUFFICIENT_REGISTER_BALANCE"; e.status = 409; throw e;
+  }
+
+  // For row metadata we still report opening = balanceBefore (= balance + n
+  // because we just deducted) and closing = balance (post-deduction). This
+  // keeps the printed register row internally consistent without a re-read.
+  const closing = Number(balanceDoc.balance || 0);
+  const opening = closing + n;
+
+  try {
+    const row = await ScheduleXEntry.create({
+      date: today,
+      drugId, drugName: drug.name,
+      batchId: batchId || undefined,
+      batchNo: batch?.batchNo || "",
+      openingBalance: opening,
+      received: 0,
+      dispensed: n,
+      closingBalance: closing,
+      prescriptionRef: rx || "",
+      doctorName,
+      patientUHID: uhid || "",
+      dispensedBy, dispensedById,
+      witnessName, witnessId,
+      rowType: "DISPENSE",
+      remarks,
+    });
+    return row.toObject();
+  } catch (createErr) {
+    // Compensation: restore the balance if the entry-row create failed
+    // (validation error, network blip, etc.). Best-effort — log and re-throw.
+    try {
+      await ScheduleXBalance.findOneAndUpdate(
+        { drugId },
+        { $inc: { balance: n } },
+      );
+    } catch (compErr) {
+      console.error(
+        "[ScheduleX] compensation restore failed for drugId",
+        String(drugId), "qty", n, ":", compErr.message,
+      );
+    }
+    throw createErr;
+  }
+}
+
+// ── recordReceipt ────────────────────────────────────────────────
+// Called when Schedule-X stock comes IN (GRN of a Schedule-X drug).
+// Atomic upsert that bumps the running balance.
+async function recordReceipt({ drugId, qty, receivedBy = "", receivedById = null } = {}) {
+  if (!drugId) {
+    const e = new Error("drugId required"); e.code = "ARG_MISSING"; throw e;
+  }
+  const n = Number(qty);
+  if (!Number.isFinite(n) || n <= 0) {
+    const e = new Error("qty must be > 0"); e.code = "INVALID_QTY"; throw e;
+  }
+  const updated = await ScheduleXBalance.findOneAndUpdate(
+    { drugId },
+    {
+      $inc: { balance: n },
+      $set: {
+        lastUpdatedBy:   receivedBy,
+        lastUpdatedById: receivedById,
+        lastUpdatedAt:   new Date(),
+      },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+  return updated.toObject();
 }
 
 // ── dailyBalance ─────────────────────────────────────────────────
@@ -250,6 +306,7 @@ async function verifyBalance(date, { verifierId, verifierName } = {}) {
 
 module.exports = {
   recordDispense,
+  recordReceipt,
   dailyBalance,
   verifyBalance,
 };
