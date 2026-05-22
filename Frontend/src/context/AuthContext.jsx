@@ -310,23 +310,55 @@ function ChangePasswordPrompt() {
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState("");
 
+  // R7bc-FIX-1: client-side mirror of Backend/utils/passwordPolicy.js so the
+  // user sees every failing rule INLINE before the round-trip, plus we
+  // surface the backend's `reasons[]` if it still rejects.
+  const policyChecks = (pw) => {
+    const r = [];
+    if (pw.length < 10) r.push("at least 10 characters");
+    if (!/[A-Z]/.test(pw)) r.push("an uppercase letter");
+    if (!/[a-z]/.test(pw)) r.push("a lowercase letter");
+    if (!/[0-9]/.test(pw)) r.push("a digit");
+    if (!/[^a-zA-Z0-9]/.test(pw)) r.push("a special character");
+    if (/\s/.test(pw)) r.push("no whitespace");
+    return r;
+  };
+
   const submit = async (e) => {
     e?.preventDefault?.();
     setErr("");
     if (!curr || !next1 || !next2) { setErr("All fields are required."); return; }
     if (next1 !== next2) { setErr("New passwords don't match."); return; }
-    if (next1.length < 8) { setErr("Use at least 8 characters."); return; }
     if (next1 === curr)  { setErr("New password must be different from the current one."); return; }
+    const missing = policyChecks(next1);
+    if (missing.length) {
+      setErr(`Password needs: ${missing.join(", ")}.`);
+      return;
+    }
     setBusy(true);
     try {
+      // R7bc-FIX-1: body key is `oldPassword` (matches backend controller —
+      // Backend/controllers/User/userController.js line 484). The prior key
+      // `currentPassword` made the backend reject every request as
+      // "Old password and new password are required" but the modal swallowed
+      // the error because the controller returned `success:false` not an HTTP
+      // error in some paths.
       await axios.put(
         `${API_ENDPOINTS.USERS}/change-password`,
-        { currentPassword: curr, newPassword: next1 },
+        { oldPassword: curr, newPassword: next1 },
       );
-      try { toast.success("Password updated. Continue working."); } catch (_) {}
+      try { toast.success("Password updated. Please sign in again with your new password."); } catch (_) {}
       clearMustChangePassword();
+      // R7bc-FIX-1: backend bumps tokenVersion on success → this session's JWT
+      // is now invalid. Force re-login so the user doesn't see a stream of
+      // 401s. Tiny delay so the toast is visible.
+      setTimeout(() => logout(), 800);
     } catch (e2) {
-      setErr(e2?.response?.data?.message || "Could not change password. Try again.");
+      const data = e2?.response?.data;
+      // R7bc-FIX-1: show the backend's `reasons[]` array if present so the
+      // user knows *which* rules they failed, not just the first one.
+      const reasons = Array.isArray(data?.reasons) ? data.reasons.join("; ") : null;
+      setErr(reasons || data?.message || "Could not change password. Try again.");
     } finally {
       setBusy(false);
     }
@@ -377,6 +409,12 @@ function ChangePasswordPrompt() {
             <input type="password" autoComplete="new-password"
               value={next2} onChange={(e) => setNext2(e.target.value)}
               style={{ width: "100%", marginTop: 4, padding: "8px 12px", border: "1.5px solid #cbd5e1", borderRadius: 8, fontSize: 13, outline: "none" }} />
+          </div>
+          {/* R7bc-FIX-1: inline policy hints so users know the rules upfront */}
+          <div style={{ fontSize: 11, color: "#475569", background: "#f1f5f9", border: "1px solid #cbd5e1", padding: "8px 10px", borderRadius: 7, lineHeight: 1.5 }}>
+            <div style={{ fontWeight: 700, marginBottom: 2 }}>Password must contain:</div>
+            • ≥10 characters &nbsp;•&nbsp; uppercase letter &nbsp;•&nbsp; lowercase letter<br />
+            • digit &nbsp;•&nbsp; special character &nbsp;•&nbsp; no spaces
           </div>
           {err && (
             <div style={{ fontSize: 12, color: "#dc2626", background: "#fef2f2", border: "1px solid #fecaca", padding: "8px 10px", borderRadius: 7, fontWeight: 600 }}>
