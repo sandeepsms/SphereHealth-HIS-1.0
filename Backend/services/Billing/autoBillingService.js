@@ -88,7 +88,45 @@ async function _emitTrigger(payload, actor = null) {
     const fallbackRole = data.orderedByRole || data.completedByRole || "System";
     data.triggeredByRole = actor?.role || fallbackRole;
   }
-  return BillingTrigger.create(data);
+  const trigger = await BillingTrigger.create(data);
+
+  // R7bj-F5 / R7bi-6-TBA-CRIT-1: emit a BillingAudit row for every
+  // BillingTrigger fired. Pre-R7bj the audit trail covered bill-side
+  // events (payment/refund/cancel/finalise) but NOT the trigger emit
+  // itself — so a 3 AM cron firing a phantom bed charge left no
+  // chronological audit footprint distinct from the bill item. NABH
+  // AAC.7 + GST Act §35 expect a single queryable timeline that
+  // includes the originating clinical event. Best-effort: the emit
+  // helper already swallows its own errors, and we wrap in a defensive
+  // try anyway so the audit miss never breaks billing.
+  try {
+    const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+    await emitBillingAudit({
+      event:      "TRIGGER_EMITTED",
+      UHID:       trigger.UHID,
+      admissionId: trigger.admissionId,
+      triggerId:  trigger._id,
+      amount:     trigger.totalAmount,
+      actorId:    actor?.userId || actor?._id || data.triggeredById || null,
+      actorName:  actor?.name   || data.triggeredBy   || "System",
+      actorRole:  actor?.role   || data.triggeredByRole || "Cron",
+      reason:     `Trigger emitted: ${trigger.serviceCode || trigger.sourceType}`,
+      after: {
+        triggerId:           trigger._id,
+        sourceType:          trigger.sourceType,
+        serviceCode:         trigger.serviceCode,
+        serviceName:         trigger.serviceName,
+        totalAmount:         trigger.totalAmount,
+        quantity:            trigger.quantity,
+        sourceDocumentId:    trigger.sourceDocumentId,
+        sourceDocumentModel: trigger.sourceDocumentModel,
+      },
+    });
+  } catch (e) {
+    console.warn("[autoBilling] audit emit failed (non-fatal):", e?.message || e);
+  }
+
+  return trigger;
 }
 
 // ── Service-event map: maps clinical event types → service codes ──────────────
@@ -316,6 +354,26 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
     const qty        = Number(quantity) || 1;
     const totalAmt   = toNum(unitPrice) * qty;
 
+    // R7bj-F5 / R7bi-6-TBA-CRIT-3: propagate GST attributes from
+    // ServiceMaster to the BillItem. Pre-R7bj auto-billed lines landed
+    // with isTaxable:false (schema default) regardless of the master's
+    // taxPercentage — so the bill's pre-save recalcTotals computed
+    // taxAmount=0 across every auto charge. The patient was undercharged
+    // and the hospital under-paid GST → GST Act §31 + GSTR-1 violation.
+    // The recalcTotals hook on PatientBill expects only isTaxable +
+    // taxPercent + hsnSacCode here; it derives taxAmount, cgstAmount,
+    // sgstAmount, igstAmount itself based on bill-level placeOfSupply.
+    // PatientBill schema enforces taxPercent ∈ {0, 0.25, 3, 5, 12, 18, 28}
+    // (Indian GST slabs). A ServiceMaster row with a typo / pre-GST legacy
+    // value (e.g. 8, 15) would fail the bill.save() validator and dump the
+    // whole bill into pending-review. Coerce off-slab values to 0 instead
+    // (operator can correct the master later). Spec-canonical 18% medical
+    // services slab stays untouched.
+    const _GST_SLABS = new Set([0, 0.25, 3, 5, 12, 18, 28]);
+    const _rawTaxPct = Number(service?.taxPercentage ?? service?.gstRate ?? 0) || 0;
+    const taxPercent = _GST_SLABS.has(_rawTaxPct) ? _rawTaxPct : 0;
+    const isTaxable  = taxPercent > 0;
+
     const item = {
       serviceId:       service._id,
       serviceCode:     service.serviceCode,
@@ -327,6 +385,13 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
       grossAmount:     totalAmt,
       discountPercent: 0, discountAmount: 0,
       netAmount:       totalAmt,
+      // R7bj-F5 / R7bi-6-TBA-CRIT-3: GST propagation. taxPercent must be
+      // one of {0, 0.25, 3, 5, 12, 18, 28} (PatientBill enum) — service
+      // master values not in that list will fail validation, so we coerce
+      // to 0 (and isTaxable=false) in that case. The 18% slab is the
+      // canonical Indian medical services GST rate.
+      isTaxable,
+      taxPercent:      isTaxable ? taxPercent : 0,
       tpaPayableAmount:     bill.paymentType === "TPA" ? totalAmt : 0,
       patientPayableAmount: bill.paymentType === "TPA" ? 0 : totalAmt,
       chargeDate:      source.chargeDate ? new Date(source.chargeDate) : new Date(),
@@ -382,6 +447,41 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
         freshBill.billItems.push(item);
         await freshBill.save();
         const savedItem = freshBill.billItems[freshBill.billItems.length - 1];
+
+        // R7bj-F5 / R7bi-6-TBA-CRIT-1: emit ITEM_ADDED audit row whenever
+        // a trigger → bill line lands. Pre-R7bj only the post-finalise
+        // BILL_GENERATED row existed; an auto-billed bed/nursing/MAR row
+        // accruing into a DRAFT bill left no audit footprint until the
+        // bill was finalised. Best-effort: emit is non-fatal.
+        try {
+          const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+          await emitBillingAudit({
+            event:      "ITEM_ADDED",
+            UHID:       freshBill.UHID,
+            billId:     freshBill._id,
+            billNumber: freshBill.billNumber,
+            triggerId:  trigger?._id,
+            amount:     totalAmt,
+            actorName:  source.addedBy     || "System",
+            actorRole:  source.addedByRole || "System",
+            reason:     `Bill line added: ${item.serviceCode} × ${qty}`,
+            after: {
+              billItemId: savedItem._id,
+              serviceCode: item.serviceCode,
+              serviceName: item.serviceName,
+              quantity:    qty,
+              unitPrice,
+              totalAmount: totalAmt,
+              isTaxable:   item.isTaxable,
+              taxPercent:  item.taxPercent,
+              hsnSacCode:  item.hsnSacCode,
+              triggerId:   trigger?._id,
+            },
+          });
+        } catch (e) {
+          console.warn("[autoBilling] ITEM_ADDED audit emit failed (non-fatal):", e?.message || e);
+        }
+
         return { bill: freshBill, itemId: savedItem._id, unitPrice, totalAmt };
       } catch (e) {
         lastErr = e;
@@ -496,6 +596,24 @@ async function createTrigger(config) {
     }
     const existing = await BillingTrigger.findOne(dedupQuery).lean();
     if (existing) {
+      // R7bj-F5 / R7bi-6-TBA-CRIT-1: TRIGGER_DEDUPED audit. Low-traffic
+      // event — only fires when the cron actually re-attempts a charge
+      // it had already filed today, so this isn't a flood. NABH wants
+      // the dedup to be queryable (so "why wasn't this billed?" can be
+      // answered without grep'ing logs).
+      try {
+        const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+        await emitBillingAudit({
+          event:       "TRIGGER_DEDUPED",
+          UHID:        UHID,
+          admissionId: admissionId,
+          triggerId:   existing._id,
+          actorName:   orderedBy || "System",
+          actorRole:   orderedByRole || "System",
+          reason:      `Daily dedup hit on ${serviceCode} (${dateKey})`,
+          after:       { skippedNewTrigger: true, winningTriggerId: existing._id, serviceCode, dateKey },
+        });
+      } catch (e) { /* non-fatal — emit helper already swallows */ }
       return { skipped: true, reason: "Daily dedup — already charged today", existing };
     }
   }
@@ -648,6 +766,22 @@ async function createTrigger(config) {
         reviewReason: reason,
         reviewedAt:   new Date(),
       }).catch(() => { /* best-effort flag */ });
+      // R7bj-F5 / R7bi-6-TBA-CRIT-1: TRIGGER_PENDING_REVIEW audit.
+      try {
+        const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+        await emitBillingAudit({
+          event:       "TRIGGER_PENDING_REVIEW",
+          UHID:        trigger.UHID,
+          admissionId: trigger.admissionId,
+          triggerId:   trigger._id,
+          billId:      bill?._id,
+          amount:      trigger.totalAmount,
+          actorName:   "AutoBilling",
+          actorRole:   "System",
+          reason,
+          after:       { status: "pending-review", serviceCode: trigger.serviceCode, billStatus: bill?.billStatus },
+        });
+      } catch (_) { /* non-fatal */ }
     } else {
       const reason = `getOrCreateBill returned null for admission=${admissionId} patientType=${patientType}`;
       console.warn(`[AutoBilling] ${reason} — trigger ${trigger?._id} (${trigger.serviceCode}) flagged pending-review`);
@@ -656,6 +790,21 @@ async function createTrigger(config) {
         reviewReason: reason,
         reviewedAt:   new Date(),
       }).catch(() => { /* best-effort flag */ });
+      // R7bj-F5 / R7bi-6-TBA-CRIT-1: TRIGGER_PENDING_REVIEW audit (bill-missing branch).
+      try {
+        const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+        await emitBillingAudit({
+          event:       "TRIGGER_PENDING_REVIEW",
+          UHID:        trigger.UHID,
+          admissionId: trigger.admissionId,
+          triggerId:   trigger._id,
+          amount:      trigger.totalAmount,
+          actorName:   "AutoBilling",
+          actorRole:   "System",
+          reason,
+          after:       { status: "pending-review", serviceCode: trigger.serviceCode },
+        });
+      } catch (_) { /* non-fatal */ }
     }
   }
 
@@ -2470,6 +2619,26 @@ async function onOrderCancelled(orderDoc, reason, actorId) {
     }
   }
 
+  // R7bj-F5 / R7bi-6-TBA-CRIT-1: ORDER_CANCELLED summary audit row. One
+  // row per order cancellation captures the cascade aggregate (so the
+  // GST register can show "Order X cancelled, ₹Y CN raised, N triggers
+  // voided"). Per-trigger void rows are already emitted inside
+  // cancelTrigger above.
+  try {
+    const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+    await emitBillingAudit({
+      event:     "ORDER_CANCELLED",
+      UHID:      orderDoc.UHID,
+      admissionId: orderDoc.admissionId,
+      amount:    creditNoteAmount,
+      actorId:   actorId,
+      actorName: actor.fullName,
+      actorRole: actor.role,
+      reason:    reasonText,
+      after:     { orderId: orderDoc._id, voided, billed, creditNoteAmount },
+    });
+  } catch (e) { console.warn("[autoBilling] ORDER_CANCELLED audit failed (non-fatal):", e?.message); }
+
   return { voided, billed, creditNoteAmount };
 }
 
@@ -2584,6 +2753,26 @@ async function undoTrigger(triggerId, { reason, user, skipTimeGate = false } = {
   trigger.voidedByRole  = user?.role || "System";
   trigger.voidReason    = String(reason).trim();
   await trigger.save();
+
+  // R7bj-F5 / R7bi-6-TBA-CRIT-1: TRIGGER_VOIDED audit row. Best-effort.
+  try {
+    const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+    await emitBillingAudit({
+      event:       "TRIGGER_VOIDED",
+      UHID:        trigger.UHID,
+      admissionId: trigger.admissionId,
+      triggerId:   trigger._id,
+      billId:      trigger.billId,
+      amount:      trigger.totalAmount,
+      actorId:     user?._id || user?.id,
+      actorName:   trigger.voidedBy,
+      actorRole:   trigger.voidedByRole,
+      reason:      `[Undo] ${trigger.voidReason}`,
+      before:      { status: "billed", serviceCode: trigger.serviceCode, totalAmount: trigger.totalAmount },
+      after:       { status: "voided" },
+    });
+  } catch (e) { console.warn("[autoBilling] TRIGGER_VOIDED audit failed (non-fatal):", e?.message); }
+
   return trigger;
 }
 
@@ -2703,6 +2892,26 @@ async function cancelTrigger(triggerId, { reason, user } = {}) {
   trigger.voidedByRole = user?.role || "System";
   trigger.voidReason   = `[Cancel] ${String(reason).trim()}`;
   await trigger.save();
+
+  // R7bj-F5 / R7bi-6-TBA-CRIT-1: TRIGGER_VOIDED audit row (cancel branch).
+  try {
+    const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+    await emitBillingAudit({
+      event:       "TRIGGER_VOIDED",
+      UHID:        trigger.UHID,
+      admissionId: trigger.admissionId,
+      triggerId:   trigger._id,
+      billId:      trigger.billId,
+      amount:      trigger.totalAmount,
+      actorId:     user?._id || user?.id,
+      actorName:   trigger.voidedBy,
+      actorRole:   trigger.voidedByRole,
+      reason:      trigger.voidReason,
+      before:      { status: "billed", serviceCode: trigger.serviceCode, totalAmount: trigger.totalAmount },
+      after:       { status: "cancelled" },
+    });
+  } catch (e) { console.warn("[autoBilling] TRIGGER_VOIDED audit failed (non-fatal):", e?.message); }
+
   return trigger;
 }
 

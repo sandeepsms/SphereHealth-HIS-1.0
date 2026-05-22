@@ -6,14 +6,23 @@
  * controllers don't have to reach into five separate paths. Each
  * collection is independent — no cross-references except UHID/user.
  *
- *   • WardShift        clock-in / clock-out + break tracking
+ *   • WardShift        clock-in / clock-out + break tracking + transition log
  *   • EquipmentLog     equipment issue / return register
  *   • WardSupplyLog    daily linen + BMW counts per ward
  *   • CodeBlueEvent    code-blue alert + response log (NABH IPSG.6)
  *   • MortuaryRecord   death + body-shift + family-handover register
+ *
+ * R7bj-F3:
+ *   • MortuaryRecord — append-only on body identity + status enum expanded
+ *     to include cremated/buried; 2-signatory witness required on
+ *     handed-over; terminal status (handed-over/cremated/buried) frozen
+ *     unless Admin force-override.  Auth 2-WB-CRIT-1.
+ *   • WardShift — transition history append on every status change.
  */
 const mongoose = require("mongoose");
 const { Schema } = mongoose;
+
+const TEN_YEARS_MS = 10 * 365 * 24 * 60 * 60 * 1000;
 
 /* ── 1. SHIFT ATTENDANCE ─────────────────────────────────────── */
 const BreakSchema = new Schema({
@@ -21,6 +30,16 @@ const BreakSchema = new Schema({
   endedAt:   { type: Date, default: null },
   reason:    { type: String, default: "" },     // lunch / tea / personal
 }, { _id: false });
+
+// R7bj-F3: shift state transitions (Active → OnBreak → Active → Closed).
+const ShiftTransitionSchema = new Schema({
+  from:     { type: String, default: "" },
+  to:       { type: String, required: true },
+  at:       { type: Date,   default: Date.now },
+  byUserId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+  byName:   { type: String, default: "" },
+  reason:   { type: String, default: "" },
+}, { _id: true });
 
 const WardShiftSchema = new Schema({
   user:           { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
@@ -32,6 +51,8 @@ const WardShiftSchema = new Schema({
   shiftNotes:     { type: String, default: "" },             // end-of-shift narrative
   handoverNotes:  { type: String, default: "" },             // pending tasks for next shift
   totalActiveMin: { type: Number, default: null },           // computed at close
+  // R7bj-F3: append-only ledger of state moves.
+  transitions:    { type: [ShiftTransitionSchema], default: [] },
 }, { timestamps: true });
 
 WardShiftSchema.pre("save", function (next) {
@@ -95,6 +116,13 @@ const WardSupplyLogSchema = new Schema({
     white:    { type: Number, default: 0 },   // sharps (translucent)
     black:    { type: Number, default: 0 },   // general
   },
+  // R7bj-F6 / NABH WB-CRIT-1 / BMW Rules 2016: link each daily supply
+  // log to the consolidated transport manifest that ultimately moved
+  // those bags off-site to the CBWTF. Null until the daily collection
+  // is sealed into a manifest; set by bmwManifestService.createManifest
+  // (downstream wiring) so the ward-day bag totals reconcile with the
+  // monthly state Pollution Control Board (Form IV) return.
+  bmwManifestId:  { type: Schema.Types.ObjectId, ref: "BmwTransportManifest", default: null, index: true },
   notes:          { type: String, default: "" },
 }, { timestamps: true });
 
@@ -157,14 +185,108 @@ const MortuaryRecordSchema = new Schema({
   receiverIdProof:       { type: String, default: "" },      // Aadhaar/PAN/etc.
   receiverIdNumber:      { type: String, default: "" },
   vehicleDetails:        { type: String, default: "" },
+  // R7bj-F3 / Auth 2-WB-CRIT-1: 2-sig witness on handover.
+  // Required when transitioning to `handed-over` (custom validator below).
+  witnessId:             { type: Schema.Types.ObjectId, ref: "User", default: null },
+  witnessName:           { type: String, default: "" },
+  witnessRole:           { type: String, default: "" },
+  witnessSignedAt:       { type: Date, default: null },
   status: {
     type: String,
-    enum: ["declared", "in-mortuary", "handed-over"],
+    // R7bj-F3: expanded enum to track post-handover disposal terminal states.
+    enum: ["declared", "in-cold-storage", "in-mortuary", "handed-over", "cremated", "buried"],
     default: "declared",
     index: true,
   },
   notes:                 { type: String, default: "" },
+  // R7bj-F3: 10y retention (NABH + medico-legal).
+  retainUntil:           { type: Date, default: () => new Date(Date.now() + TEN_YEARS_MS) },
+  legalHold:             { type: Boolean, default: false },
 }, { timestamps: true });
+
+// TTL on retainUntil (purge after 10y unless under legalHold).
+MortuaryRecordSchema.index(
+  { retainUntil: 1 },
+  { expireAfterSeconds: 0, partialFilterExpression: { legalHold: false } },
+);
+
+// Terminal states — once any of these are set, status cannot regress.
+const MORTUARY_TERMINAL = new Set(["handed-over", "cremated", "buried"]);
+
+// R7bj-F3: handover validator — requires witness + handoverBy when
+// status flips to `handed-over` on save.
+MortuaryRecordSchema.pre("save", function (next) {
+  if (this.status === "handed-over") {
+    const hasHandover = this.handoverAt && this.handoverBy && this.handoverByName;
+    const hasWitness  = this.witnessId && this.witnessName && this.witnessSignedAt;
+    if (!hasHandover) {
+      const err = new Error("MortuaryRecord: handed-over requires handoverAt/handoverBy/handoverByName");
+      err.statusCode = 400;
+      err.code = "MORTUARY_HANDOVER_INCOMPLETE";
+      return next(err);
+    }
+    if (!hasWitness) {
+      const err = new Error("MortuaryRecord: handed-over requires 2-signatory witness (witnessId/witnessName/witnessSignedAt)");
+      err.statusCode = 400;
+      err.code = "MORTUARY_WITNESS_REQUIRED";
+      return next(err);
+    }
+  }
+  next();
+});
+
+// R7bj-F3: append-only guard on terminal-status transitions.
+// Once status ∈ terminal set, blocking any status change unless
+// Admin force-override (caller sets options.adminOverride + reason).
+MortuaryRecordSchema.pre("findOneAndUpdate", async function (next) {
+  try {
+    const upd = this.getUpdate() || {};
+    const opts = this.getOptions() || {};
+    const $set = upd.$set || {};
+    const nextStatus = $set.status ?? upd.status;
+    if (!nextStatus) return next();
+
+    const adminOverride = opts.adminOverride === true;
+    const overrideReason = typeof opts.overrideReason === "string" && opts.overrideReason.trim().length > 0;
+
+    // Read current row to check whether status is already terminal.
+    const current = await this.model.findOne(this.getQuery()).lean();
+    if (current && MORTUARY_TERMINAL.has(current.status) && nextStatus !== current.status) {
+      if (!(adminOverride && overrideReason)) {
+        const err = new Error(
+          `MortuaryRecord: status "${current.status}" is terminal — Admin force-override + reason required to change`,
+        );
+        err.statusCode = 409;
+        err.code = "MORTUARY_STATUS_TERMINAL";
+        return next(err);
+      }
+    }
+    // When transitioning into handed-over via update, require witness fields too.
+    if (nextStatus === "handed-over") {
+      const wId  = $set.witnessId  ?? $set["witnessId"]  ?? current?.witnessId;
+      const wNm  = $set.witnessName ?? $set["witnessName"] ?? current?.witnessName;
+      const wAt  = $set.witnessSignedAt ?? $set["witnessSignedAt"] ?? current?.witnessSignedAt;
+      const hOv  = $set.handoverBy ?? current?.handoverBy;
+      const hNm  = $set.handoverByName ?? current?.handoverByName;
+      const hAt  = $set.handoverAt ?? current?.handoverAt;
+      if (!(wId && wNm && wAt)) {
+        const err = new Error("MortuaryRecord: handed-over requires witness 2-sig fields");
+        err.statusCode = 400;
+        err.code = "MORTUARY_WITNESS_REQUIRED";
+        return next(err);
+      }
+      if (!(hOv && hNm && hAt)) {
+        const err = new Error("MortuaryRecord: handed-over requires handoverBy/Name/At");
+        err.statusCode = 400;
+        err.code = "MORTUARY_HANDOVER_INCOMPLETE";
+        return next(err);
+      }
+    }
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
 
 module.exports = {
   WardShift:        mongoose.model("WardShift",        WardShiftSchema),

@@ -148,17 +148,35 @@ app.use(
 );
 app.use(globalLimiter);
 
-// R7av-FIX-14/D2-MED-3: Cache-Control on PHI endpoints. Pre-R7av no
-// PHI route emitted Cache-Control headers — shared proxy / browser-back
-// could leak patient data. We blanket every /api/patients, /api/billing,
-// /api/admissions, /api/mar, /api/doctor-notes, /api/mlc with
+// R7av-FIX-14/D2-MED-3 + R7bj-F10/5-HIGH-2: Cache-Control on PHI endpoints.
+// Pre-R7av no PHI route emitted Cache-Control headers — shared proxy /
+// browser-back could leak patient data. We blanket every PHI path with
 // `no-store, private` so intermediaries don't cache and a logout
 // browser-back can't replay the page.
+//
+// R7bj-F10 extends the list per R7bi-5-HIGH-2 — visitor-pass, gate-log,
+// dietitian patient plans, ward tasks, housekeeping ops, incidents,
+// physio session (R7bj-F1), kitchen indent + adverse food reactions
+// (R7bj-F2) all leak PHI (UHID, name, photo) on cached responses if a
+// shared workstation's browser-back is used after logout.
 app.use([
+  // Core PHI surfaces (R7av).
   "/api/patients", "/api/billing", "/api/admissions",
   "/api/mar", "/api/doctor-orders", "/api/doctor-notes", "/api/nursing-notes",
   "/api/mlc", "/api/vitals", "/api/discharge", "/api/patient-file",
   "/api/cashier-sessions", "/api/auth/me", "/api/auth/signature",
+  // R7bj-F10 / R7bi-5-HIGH-2 — new PHI paths.
+  "/api/visitor-passes",
+  "/api/gate-log",
+  "/api/dietitian/patient",
+  "/api/ward-tasks",
+  "/api/housekeeping",
+  "/api/incidents",
+  // R7bj-F1 — physio plan / session (PHI: diagnosis + therapy notes)
+  "/api/physio",
+  // R7bj-F2 — kitchen indent + food reactions (PHI: per-patient diet card)
+  "/api/kitchen-indent",
+  "/api/food-reactions",
 ], (req, res, next) => {
   res.set("Cache-Control", "no-store, private");
   next();

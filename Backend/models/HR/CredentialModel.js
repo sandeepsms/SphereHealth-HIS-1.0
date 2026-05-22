@@ -35,6 +35,11 @@ const CredentialSchema = new Schema(
     // ── Credential details ───────────────────────────────────
     credentialType: {
       type: String,
+      // R7bj-F6 / NABH DT-CRIT-1 / PT-CRIT-2 / SEC-CRIT-2 / HK:
+      // Added IDA RD licence (Dietitian), IAP registration (Physio),
+      // PSARA guard licence (Security), FSSAI food-handler training
+      // (Kitchen), and ICAN membership (Infection-Control). Without
+      // these the modules can't enforce role-bound credentialing.
       enum: [
         "MBBS", "MD", "MS", "MCh", "DM",
         "PG_DIPLOMA", "FELLOWSHIP",
@@ -42,6 +47,11 @@ const CredentialSchema = new Schema(
         "DIPLOMA_PHARMACY", "BPHARM", "MPHARM",
         "DMLT", "BMLT", "MMLT",
         "BPT", "MPT",
+        "RD_LICENCE",          // IDA Registered Dietitian
+        "IAP_REG",             // Indian Association of Physiotherapists
+        "PSARA_GUARD",         // Private Security Agencies Regulation Act 2005
+        "FSSAI_FOOD_HANDLER",  // FSSAI Schedule IV kitchen-staff training
+        "ICAN_MEMBER",         // Infection Control Academy of India / HIC
         "OTHER",
       ],
       required: true,

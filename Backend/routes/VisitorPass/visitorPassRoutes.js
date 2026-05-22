@@ -1,7 +1,13 @@
+/**
+ * visitorPassRoutes.js — Visitor / attendant pass register.
+ *
+ * R7bj-F4: validateObjectIdParam on every :id surface.
+ */
 const express = require("express");
 const router  = express.Router();
 const ctrl    = require("../../controllers/VisitorPass/visitorPassController");
 const { requireAction } = require("../../middleware/auth");
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // R7ab: writes now gated on reception.visitor-pass (Admin/Receptionist/
 // Security). Pre-R7ab any authenticated role could issue or revoke
@@ -16,7 +22,9 @@ router.post("/",                  requireAction("reception.visitor-pass"), ctrl.
 router.get ("/",                  requireAction("reception.visitor-pass"), ctrl.listPasses);
 router.get ("/active-count",      requireAction("reception.visitor-pass"), ctrl.activeCount);
 router.get ("/stats",             requireAction("reception.visitor-pass"), ctrl.stats);
-router.post("/:id/return",        requireAction("reception.visitor-pass"), ctrl.returnPass);
-router.post("/:id/revoke",        requireAction("reception.visitor-pass"), ctrl.revokePass);
+router.post("/:id/return",
+  validateObjectIdParam("id"), requireAction("reception.visitor-pass"), ctrl.returnPass);
+router.post("/:id/revoke",
+  validateObjectIdParam("id"), requireAction("reception.visitor-pass"), ctrl.revokePass);
 
 module.exports = router;

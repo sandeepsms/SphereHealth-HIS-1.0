@@ -231,6 +231,12 @@ const NAV = [
       // sees Pharmacy + Indents to fulfil dispensing requests instead.
       { label: "MAR",              icon: "pi-table",         path: "/mar",             nabh: true, roles: [ADMIN, NR, DR] },
       { label: "Diabetic Chart",   icon: "pi-chart-bar",     path: "/diabetic-chart",  nabh: true, badge: "NEW", roles: [ADMIN, NR, DR] },
+      // R7bj-F2 — Kitchen indent console (nurse raises meal indent,
+      // kitchen desk prepares, ward boy delivers). Visible to the four
+      // roles that participate in the loop. Lazy route /kitchen owned
+      // by F10 — if KitchenConsole.jsx isn't yet shipped the route
+      // renders the lazy-import-fallback page.
+      { label: "Kitchen Indent",   icon: "pi-shopping-cart", path: "/kitchen",         nabh: true, badge: "NEW", roles: [ADMIN, NR, PH, WB] },
     ],
   },
 
@@ -382,21 +388,29 @@ const NAV = [
     ],
   },
 
-  /* ── R7bf-G — Quality & Compliance (NABH A5 scaffolds) ─── */
-  // Surfaces the new NABH register pages (critical-value alerts AAC.6,
-  // grievance redressal PRE.6, ADR reporting MOM.7, fire-drill register
-  // FMS.4). Visible to Admin always; cohort-specific items show for
-  // their owners (Receptionist sees grievances, Doctor/Nurse see
-  // critical-value alerts + ADR, Security sees fire-drills).
+  /* ── R7bf-G + R7bj-F2/F6 — Quality & Compliance (NABH scaffolds) ─ */
+  // Surfaces the NABH register pages: AAC.6 critical-value alerts,
+  // PRE.6 grievance, MOM.7 ADR, FMS.4 fire drill, and the new R7bj
+  // additions — food-reaction sentinel events (F2), BMW transport
+  // manifest (F6 / BMWM 2016), code response / rapid response (F6),
+  // sharps-injury register (F6 / HRD.8).
   {
     id: "quality", label: "Quality & Compliance",
     icon: "pi-verified", color: "#0d9488", light: "#f0fdfa",
-    nabh: true, roles: [ADMIN, DR, NR, RX, PH, SE, "MRD"],
+    nabh: true, roles: [ADMIN, DR, NR, RX, PH, SE, DT, WB, "Housekeeping", "MRD"],
     items: [
-      { label: "Critical Value Alerts", icon: "pi-bell",        path: "/critical-value-alerts", nabh: true, badge: "AAC.6", roles: [ADMIN, DR, NR] },
-      { label: "Grievance Register",    icon: "pi-comment",     path: "/grievances",            nabh: true, badge: "PRE.6", roles: [ADMIN, RX, DR, "MRD"] },
-      { label: "ADR Reports",           icon: "pi-flag",        path: "/adr-reports",           nabh: true, badge: "MOM.7", roles: [ADMIN, DR, NR, PH] },
-      { label: "Fire Drill Register",   icon: "pi-shield",      path: "/fire-drills",           nabh: true, badge: "FMS.4", roles: [ADMIN, SE] },
+      { label: "Critical Value Alerts", icon: "pi-bell",                 path: "/critical-value-alerts", nabh: true, badge: "AAC.6", roles: [ADMIN, DR, NR] },
+      { label: "Grievance Register",    icon: "pi-comment",              path: "/grievances",            nabh: true, badge: "PRE.6", roles: [ADMIN, RX, DR, "MRD"] },
+      { label: "ADR Reports",           icon: "pi-flag",                 path: "/adr-reports",           nabh: true, badge: "MOM.7", roles: [ADMIN, DR, NR, PH] },
+      { label: "Fire Drill Register",   icon: "pi-shield",               path: "/fire-drills",           nabh: true, badge: "FMS.4", roles: [ADMIN, SE] },
+      // R7bj-F2 — adverse food reaction sentinel-event register.
+      { label: "Food Reactions",        icon: "pi-exclamation-triangle", path: "/food-reactions",        nabh: true, badge: "NEW",   roles: [ADMIN, DR, NR, DT, PH, "MRD"] },
+      // R7bj-F6 — biomedical waste manifest (cart-out → vendor → PCB).
+      { label: "BMW Manifest",          icon: "pi-truck",                path: "/bmw-manifest",          nabh: true, badge: "FMS.5", roles: [ADMIN, "Housekeeping", WB, "MRD"] },
+      // R7bj-F6 — code response (code blue / pink / purple / black) log.
+      { label: "Code Response Log",     icon: "pi-bolt",                 path: "/code-response",         nabh: true, badge: "NEW",   roles: [ADMIN, DR, NR, "MRD"] },
+      // R7bj-F6 — sharps-injury register (HRD.8 needle-stick reporting).
+      { label: "Sharps Injury",         icon: "pi-info-circle",          path: "/sharps-injury",         nabh: true, badge: "HRD.8", roles: [ADMIN, DR, NR, PH, LB, WB, "Housekeeping", "MRD"] },
     ],
   },
 ];

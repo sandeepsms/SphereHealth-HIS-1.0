@@ -295,4 +295,72 @@ try {
   }
 }
 
+// ── R7bj — new module mounts (F1/F2/F6) ───────────────────────────
+// Wired centrally by F10 with the try/catch fallback pattern so any
+// module shipping partial files (route file present, controller still
+// stubbed; or vice versa) doesn't crash boot. The catch only swallows
+// the "module not found" case — a real implementation bug (syntax /
+// require-chain explosion) still surfaces in the console.
+
+// R7bj-F1 — physiotherapy plan + session register.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/physio", require("./Clinical/physioRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] physio mount failed:", e.message);
+  }
+}
+
+// R7bj-F2 — kitchen indent (nurse → kitchen meal request workflow).
+try {
+  // eslint-disable-next-line global-require
+  router.use("/kitchen-indent", require("./Pharmacy/kitchenIndentRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] kitchen-indent mount failed:", e.message);
+  }
+}
+
+// R7bj-F2 — adverse food reactions register. Route file may not yet
+// exist (F2 split deliverable); try/catch keeps boot clean either way.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/food-reactions", require("./Clinical/adverseFoodReactionRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] food-reactions mount failed:", e.message);
+  }
+}
+
+// R7bj-F6 — biomedical waste transport manifest (NABH FMS / BMWM 2016).
+try {
+  // eslint-disable-next-line global-require
+  router.use("/bmw-manifest", require("./Compliance/bmwManifestRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] bmw-manifest mount failed:", e.message);
+  }
+}
+
+// R7bj-F6 — code response / rapid-response event log.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/code-response", require("./Compliance/codeResponseRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] code-response mount failed:", e.message);
+  }
+}
+
+// R7bj-F6 — sharps-injury register (HCW needle-stick reporting).
+try {
+  // eslint-disable-next-line global-require
+  router.use("/sharps-injury", require("./Clinical/sharpsInjuryRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] sharps-injury mount failed:", e.message);
+  }
+}
+
 module.exports = router;

@@ -20,6 +20,7 @@ import { useParams } from "react-router-dom";
 import MLClogo from "../assets/MLC.jpg";
 import Emergencylogo from "../assets/Emergency.jpg";
 import axios from "axios";
+import { unwrapResponse } from "../utils/apiResponse";
 
 // import { number } from "yup";
 
@@ -60,14 +61,24 @@ export default function Doctor() {
   }, [UHID]);
 
   // getAPI of ALLTEST name.........
+  // R7bj-F8: use unwrapResponse so we no longer rely on the `?legacy=1`
+  // shim — the new TPA envelope is { success, data, meta? }. We tolerate
+  // both `tpaName` (new camelCase) and `tpa_name` (legacy snake_case)
+  // while the controller normalises field names.
   useEffect(() => {
     const fetchData = async () => {
       try {
         const Testdata = await axios.get(
           `${API_BASE_URL}/Servicebilldata/getAllTestNames`,
         );
-        const formattedData = Testdata.data.map((item) => ({
-          label: item.tpa_name,
+        const { ok, data, error } = unwrapResponse(Testdata);
+        if (!ok) {
+          console.error("getAllTestNames failed:", error?.message);
+          return;
+        }
+        const rows = Array.isArray(data) ? data : [];
+        const formattedData = rows.map((item) => ({
+          label: item.tpaName || item.tpa_name,
           value: String(item._id),
         }));
         setTestName(formattedData);

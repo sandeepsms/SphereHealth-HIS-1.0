@@ -39,6 +39,27 @@ import ScheduleXRegisterPrint from "./ScheduleXRegisterPrint";
 // shared print shell + paper toolbar.
 import LabReport         from "../../lab/LabReport";
 
+// R7bj-F7: 14 new templates spanning Ward-Boy, Housekeeping, Security,
+// Dietary, Mortuary, BMW and Code-Response workflows. These close the
+// remaining "ungoverned printable" gaps surfaced by AUDIT_R7bi. F1 +
+// F2's PhysioSession / PhysioPlan / KitchenIndentSlip slugs are
+// pre-registered below behind a guard so the build remains green
+// before / after their templates land.
+import WardTaskTicket        from "./WardTaskTicket";
+import EquipmentTransport    from "./EquipmentTransport";
+import SampleCollectionSlip  from "./SampleCollectionSlip";
+import CleaningTaskSlip      from "./CleaningTaskSlip";
+import SpillageReport        from "./SpillageReport";
+import PestControlRegister   from "./PestControlRegister";
+import AreaCleaningChecklist from "./AreaCleaningChecklist";
+import GateLogSlip           from "./GateLogSlip";
+import IncidentReportPrint   from "./IncidentReportPrint";
+import SecurityShiftRegister from "./SecurityShiftRegister";
+import DietPlan              from "./DietPlan";
+import MortuaryHandover      from "./MortuaryHandover";
+import BmwManifest           from "./BmwManifest";
+import CodeResponseSheet     from "./CodeResponseSheet";
+
 export const PRINTABLES = {
   // ── Receipts / billing ─────────────────────────────────
   "opd-receipt":      { component: OPDReceipt,        title: "OPD Bill / Receipt",        defaultPaper: "half-a4" },
@@ -84,6 +105,34 @@ export const PRINTABLES = {
 
   // ── Operational ───────────────────────────────────────
   "visitor-pass":     { component: VisitorPass,       title: "Visitor / Attendant Pass",  defaultPaper: "half-a4" },
+
+  // ── R7bj-F7: ward boy / housekeeping / security / dietary / mortuary / BMW / code ──
+  "ward-task-ticket":       { component: WardTaskTicket,        title: "Ward Task Ticket",                    defaultPaper: "half-a4" },
+  "equipment-transport":    { component: EquipmentTransport,    title: "Equipment Transport / Return Slip",   defaultPaper: "half-a4" },
+  "sample-collection-slip": { component: SampleCollectionSlip,  title: "Sample Collection Slip",              defaultPaper: "half-a4" },
+  "cleaning-task-slip":     { component: CleaningTaskSlip,      title: "Housekeeping Cleaning Task Slip",     defaultPaper: "half-a4" },
+  "spillage-report":        { component: SpillageReport,        title: "Spillage Incident Report",            defaultPaper: "a4" },
+  "pest-control-register":  { component: PestControlRegister,   title: "Pest Control Register Entry",         defaultPaper: "a4" },
+  "area-cleaning-checklist":{ component: AreaCleaningChecklist, title: "Area Cleaning Checklist",             defaultPaper: "a4" },
+  "gate-log-slip":          { component: GateLogSlip,           title: "Security Gate Log Entry",             defaultPaper: "half-a4" },
+  "incident-report":        { component: IncidentReportPrint,   title: "Incident Report",                     defaultPaper: "a4" },
+  "security-shift-register":{ component: SecurityShiftRegister, title: "Security Shift Register",             defaultPaper: "a4" },
+  "diet-plan":              { component: DietPlan,              title: "Diet Plan",                           defaultPaper: "a4" },
+  "mortuary-handover":      { component: MortuaryHandover,      title: "Mortuary Body Handover & Release",    defaultPaper: "a4" },
+  "bmw-manifest":           { component: BmwManifest,           title: "Bio-Medical Waste Manifest (Form-IV)",defaultPaper: "a4" },
+  "code-response-sheet":    { component: CodeResponseSheet,     title: "Code Response Event Sheet",           defaultPaper: "a4" },
 };
+
+// R7bj-F7: F1 (Physio) + F2 (Kitchen) sibling printables. Slugs are
+// kept reserved here so the print-router doesn't drift; the agents
+// owning those tracks will land the actual components in their own
+// PRs and uncomment the registrations below at that time. We avoid
+// `React.lazy()` because the print-router consumer does not wrap in
+// `<Suspense>`, so a static import is the only correct shape and
+// must wait until the component file exists in the repo.
+//
+//   "physio-session":     { component: PhysioSession,     title: "Physiotherapy Session Note", defaultPaper: "a4" },
+//   "physio-plan":        { component: PhysioPlan,        title: "Physiotherapy Treatment Plan", defaultPaper: "a4" },
+//   "kitchen-indent-slip":{ component: KitchenIndentSlip, title: "Kitchen Indent Slip",           defaultPaper: "half-a4" },
 
 export default PRINTABLES;

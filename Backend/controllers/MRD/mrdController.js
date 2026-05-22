@@ -14,11 +14,21 @@
 //
 // Pre-R7bb the MRD console only listed discharges; there was no path
 // to track retention-due records or sign off on release.
+//
+// R7bj-F8 / R7bi-3-CRIT-1: envelope normalised via utils/apiEnvelope so
+// every response shares the { success, data, meta? } / { success, message,
+// code } contract. `total` and `count` moved into `meta`.
 // ════════════════════════════════════════════════════════════════════
 
 const mongoose = require("mongoose");
 const BillingAudit = require("../../models/Billing/BillingAudit");
 const Admission = require("../../models/Patient/admissionModel");
+// Lazy import keeps load order tolerant if the helper isn't ready yet.
+let _env;
+function env() {
+  if (!_env) _env = require("../../utils/apiEnvelope");
+  return _env;
+}
 
 // Lightweight collection for the release-log. One row per release event.
 const ReleaseLogSchema = new mongoose.Schema({
@@ -41,6 +51,7 @@ const MrdReleaseLog = mongoose.models.MrdReleaseLog ||
 // has been filed for them yet. The MRD reviewer signs off; admin
 // finalises via releaseFile.
 exports.retentionReview = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const limit  = Math.min(500, Math.max(1, parseInt(req.query.limit) || 50));
     const offset = Math.max(0, parseInt(req.query.offset) || 0);
@@ -57,27 +68,28 @@ exports.retentionReview = async (req, res) => {
       .select("_id event UHID billNumber retainUntil createdAt actorName")
       .lean();
     const total = await BillingAudit.countDocuments(q);
-    res.json({ success: true, count: rows.length, total, data: rows });
+    return sendOk(res, rows, { count: rows.length, total, limit, offset });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
 // POST /api/mrd/files/:id/release  { reason, fileType? }
 // Records a release event. Admin only — the route layer enforces.
 exports.releaseFile = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     if (req.user?.role !== "Admin" && req.user?.role !== "MRD") {
       // MRD can flag for release but Admin must finalise. We allow both
       // for the MVP; Admin still records as releasedBy.
-      return res.status(403).json({ success: false, message: "Admin or MRD role required" });
+      return sendErr(res, "Admin or MRD role required", "FORBIDDEN", 403);
     }
     const fileId = req.params.id;
     if (!mongoose.isValidObjectId(fileId)) {
-      return res.status(400).json({ success: false, message: "Invalid file id" });
+      return sendErr(res, "Invalid file id", "VALIDATION", 400);
     }
     const reason = String(req.body?.reason || "").trim();
-    if (!reason) return res.status(400).json({ success: false, message: "reason is required" });
+    if (!reason) return sendErr(res, "reason is required", "VALIDATION", 400);
 
     // Confirm the file actually exists in the audit collection (default
     // file type for the MVP).
@@ -85,13 +97,13 @@ exports.releaseFile = async (req, res) => {
     let UHID = "", fileRef = "", retainUntilAt = null;
     if (fileType === "AUDIT_ROW") {
       const row = await BillingAudit.findById(fileId).select("UHID billNumber retainUntil").lean();
-      if (!row) return res.status(404).json({ success: false, message: "Audit row not found" });
+      if (!row) return sendErr(res, "Audit row not found", "NOT_FOUND", 404);
       UHID = row.UHID || "";
       fileRef = row.billNumber || String(row._id);
       retainUntilAt = row.retainUntil || null;
     } else if (fileType === "ADMISSION") {
       const a = await Admission.findById(fileId).select("UHID admissionNumber actualDischargeDate").lean();
-      if (!a) return res.status(404).json({ success: false, message: "Admission not found" });
+      if (!a) return sendErr(res, "Admission not found", "NOT_FOUND", 404);
       UHID = a.UHID;
       fileRef = a.admissionNumber || String(a._id);
     }
@@ -107,8 +119,8 @@ exports.releaseFile = async (req, res) => {
       releasedById:   req.user._id || req.user.id || null,
       releasedByRole: req.user.role,
     });
-    res.status(201).json({ success: true, data: entry });
+    return sendOk(res, entry, undefined, 201);
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    return sendErr(res, e, e.code || "VALIDATION", 400);
   }
 };

@@ -9,7 +9,7 @@
  *   • Table of incidents with type / severity / location / status
  *   • Status row-action (Open → Investigating → Resolved / Escalated)
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
@@ -19,8 +19,9 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { API_BASE_URL as API } from "../../config/api";
 
+// R7bj-F9 / 10-X-HIGH-1: drop legacy localStorage fallback.
 const authHdr = () => ({
-  headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` },
+  headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token") || ""}` },
 });
 
 const fmtDT = (d) =>
@@ -73,16 +74,24 @@ export default function IncidentsPage() {
     } catch { /* keep previous */ }
   }, []);
 
+  // R7bj-F9 — AbortController on the filter-triggered list fetch so a rapid
+  // status-filter toggle doesn't race two responses (React 4-HIGH-2).
+  const listAbortRef = useRef(null);
   const fetchList = useCallback(async () => {
     setLoading(true);
+    if (listAbortRef.current) listAbortRef.current.abort();
+    const ctrl = new AbortController();
+    listAbortRef.current = ctrl;
     try {
       const params = new URLSearchParams();
       if (filterStatus) params.set("status", filterStatus);
       params.set("limit", "100");
-      const r = await axios.get(`${API}/incidents?${params}`, authHdr());
+      const r = await axios.get(`${API}/incidents?${params}`, { ...authHdr(), signal: ctrl.signal });
       setRows(r.data?.data || []);
     } catch (e) {
-      toast.error("Failed to load incidents");
+      if (e.name !== "CanceledError" && e.name !== "AbortError") {
+        toast.error("Failed to load incidents");
+      }
     }
     setLoading(false);
   }, [filterStatus]);

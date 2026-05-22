@@ -5,7 +5,7 @@
  * Exports 5 components (Shift / Equipment / Supplies / CodeBlue / Mortuary)
  * that the parent imports.
  */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
@@ -13,9 +13,11 @@ import {
   PrimaryButton, Modal, Field, C,
 } from "../../Components/admin-theme";
 import { useAuth } from "../../context/AuthContext";
+import { useDebounce } from "../../utils/pollingHelpers";
 
 import { API_BASE_URL as API } from "../../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
+// R7bj-F9 / 10-X-HIGH-1: drop legacy localStorage fallback (see WardBoyConsole).
+const authHdr = () => ({ headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token") || ""}` } });
 
 const fmtAgo = (d) => {
   if (!d) return "—";
@@ -178,16 +180,38 @@ export function EquipmentTab() {
   const [q, setQ] = useState("");
   const [showIssueModal, setShowIssueModal] = useState(false);
 
-  const refresh = async () => {
-    try {
-      const params = new URLSearchParams();
-      if (statusFilter) params.set("status", statusFilter);
-      if (q) params.set("q", q);
-      const r = await axios.get(`${API}/ward-ops/equipment?${params}`, authHdr());
-      setRows(r.data?.data || []);
-    } catch {}
+  // R7bj-F9 — debounce search-as-you-type (no longer waits for Enter) + cancel
+  // in-flight request on each filter change so a fast typist doesn't get a
+  // late stale response over-writing the fresh one.
+  const debouncedQ = useDebounce(q, 300);
+  const abortRef = useRef(null);
+
+  useEffect(() => {
+    if (abortRef.current) abortRef.current.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    const params = new URLSearchParams();
+    if (statusFilter) params.set("status", statusFilter);
+    if (debouncedQ) params.set("q", debouncedQ);
+    axios.get(`${API}/ward-ops/equipment?${params}`, { ...authHdr(), signal: ctrl.signal })
+      .then(r => setRows(r.data?.data || []))
+      .catch(e => { if (e.name !== "CanceledError" && e.name !== "AbortError") console.error(e); });
+    return () => ctrl.abort();
+  }, [statusFilter, debouncedQ]);
+
+  const refresh = () => {
+    // Forced refresh (Issue modal → onDone): bump statusFilter dep via setter
+    // would be wrong; just re-fire the same fetch by cancelling + re-running.
+    if (abortRef.current) abortRef.current.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    const params = new URLSearchParams();
+    if (statusFilter) params.set("status", statusFilter);
+    if (debouncedQ) params.set("q", debouncedQ);
+    axios.get(`${API}/ward-ops/equipment?${params}`, { ...authHdr(), signal: ctrl.signal })
+      .then(r => setRows(r.data?.data || []))
+      .catch(e => { if (e.name !== "CanceledError" && e.name !== "AbortError") console.error(e); });
   };
-  useEffect(() => { refresh(); }, [statusFilter]);
 
   const onReturn = async (id, condition) => {
     try { await axios.patch(`${API}/ward-ops/equipment/${id}/return`, { conditionOnReturn: condition }, authHdr()); toast.success("Returned."); refresh(); }
@@ -202,8 +226,8 @@ export function EquipmentTab() {
           {[{v: "issued", lbl: "Out"}, {v: "returned", lbl: "Returned"}, {v: "lost", lbl: "Lost"}, {v: "", lbl: "All"}].map(o => (
             <FilterPill key={o.v} label={o.lbl} value={o.v} current={statusFilter} setCurrent={setStatusFilter} color={C.purple} />
           ))}
-          <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && refresh()}
-            placeholder="Search name / serial / person…"
+          <input value={q} onChange={(e) => setQ(e.target.value)}
+            placeholder="Search name / serial / person… (auto)"
             style={{ flex: 1, minWidth: 200, padding: "6px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5 }} />
         </div>
         {rows.length === 0 ? (

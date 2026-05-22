@@ -1,49 +1,106 @@
-const GateLog = require("../../models/Security/GateLogModel");
+/**
+ * gateLogController.js — gate entry/exit register.
+ *
+ * R7bj-F4 hardening:
+ *   • SEC-CRIT-1 / Auth fork / Mongo CRIT-9: `recordedBy` and recorded-by
+ *     trio are NO LONGER trusted from body. They are derived from req.user
+ *     exclusively. Pre-fix, any Security user could forge "recordedBy:
+ *     Director" on a gate entry.
+ *   • SEC-CRIT-3 / replay attack: when a visitor pass is linked we re-check
+ *     status === "Active" AND validUntil > now BEFORE persisting the row.
+ *     A spent / revoked / expired pass returns 409 INVALID_OR_EXPIRED_PASS
+ *     so the attacker cannot re-use it at the gate after midnight.
+ *   • Every response moved to apiEnvelope.sendOk / sendErr.
+ */
+const GateLog     = require("../../models/Security/GateLogModel");
 const VisitorPass = require("../../models/VisitorPass/visitorPassModel");
+const { sendOk, sendErr } = require("../../utils/apiEnvelope");
 
 const handle = (fn) => async (req, res) => {
   try { return await fn(req, res); }
-  catch (e) { res.status(e.statusCode || 500).json({ success: false, message: e.message }); }
+  catch (e) { return sendErr(res, e, e?.code, e?.statusCode); }
 };
 
 /* POST /api/gate-log
    Records one gate event. */
 exports.create = handle(async (req, res) => {
   const b = req.body || {};
-  if (!b.personName || !String(b.personName).trim()) {
-    return res.status(400).json({ success: false, message: "personName is required" });
+  const {
+    direction, personType, personName, idProofType, idProofNumber,
+    contactNumber, vehicleNumber, gate, linkedPassNumber, visitorPassId,
+    purpose, notes,
+  } = b;
+
+  if (!personName || !String(personName).trim()) {
+    return sendErr(res, "personName is required", "VALIDATION", 400);
   }
-  if (!["in", "out"].includes(b.direction)) {
-    return res.status(400).json({ success: false, message: "direction must be 'in' or 'out'" });
+  if (!["in", "out"].includes(direction)) {
+    return sendErr(res, "direction must be 'in' or 'out'", "VALIDATION", 400);
   }
 
-  // If the user passed a visitor pass number / id, denormalise pass info.
+  // SEC-CRIT-3 / R7bj-F4: replay protection — when a pass is linked we
+  // require it to be Active + within its window. Spent passes cannot be
+  // re-presented at the gate. Pre-fix, the controller would denormalise
+  // a Revoked / Expired pass and persist the gate row anyway.
   let linked = {};
-  if (b.visitorPassId) {
-    const pass = await VisitorPass.findById(b.visitorPassId).lean();
-    if (pass) linked = { visitorPassId: pass._id, linkedPassNumber: pass.passNumber };
-  } else if (b.linkedPassNumber) {
-    const pass = await VisitorPass.findOne({ passNumber: b.linkedPassNumber }).lean();
-    if (pass) linked = { visitorPassId: pass._id, linkedPassNumber: pass.passNumber };
+  if (visitorPassId) {
+    const pass = await VisitorPass.findOne({
+      _id: visitorPassId,
+      status: "Active",
+      validUntil: { $gt: new Date() },
+    }).lean();
+    if (!pass) {
+      return sendErr(
+        res,
+        "Visitor pass is not active or has expired",
+        "INVALID_OR_EXPIRED_PASS",
+        409,
+      );
+    }
+    linked = { visitorPassId: pass._id, linkedPassNumber: pass.passNumber };
+  } else if (linkedPassNumber) {
+    const pass = await VisitorPass.findOne({
+      passNumber: linkedPassNumber,
+      status: "Active",
+      validUntil: { $gt: new Date() },
+    }).lean();
+    if (!pass) {
+      return sendErr(
+        res,
+        "Visitor pass not found, not active, or expired",
+        "INVALID_OR_EXPIRED_PASS",
+        409,
+      );
+    }
+    linked = { visitorPassId: pass._id, linkedPassNumber: pass.passNumber };
   }
+
+  // R7bj-F4 / Auth fork: recorded-by trio derived ONLY from req.user.
+  // We never read b.recordedBy / b.recordedById / b.recordedByRole.
+  const recordedBy     = req.user?.fullName || req.user?.email || "Security";
+  const recordedByName = req.user?.fullName || "";
+  const recordedById   = req.user?.id || null;
+  const recordedByRole = req.user?.role || "Security";
 
   const entry = await GateLog.create({
-    direction:      b.direction,
-    gate:           b.gate || "Main",
-    personType:     b.personType || "Visitor",
-    personName:     b.personName,
-    contactNumber:  b.contactNumber || "",
-    idProofType:    b.idProofType || null,
-    idProofNumber:  b.idProofNumber || "",
-    purpose:        b.purpose || "",
-    vehicleNumber:  b.vehicleNumber || "",
+    direction,
+    gate:           gate || "Main",
+    personType:     personType || "Visitor",
+    personName:     String(personName).trim(),
+    contactNumber:  contactNumber || "",
+    idProofType:    idProofType   || null,
+    idProofNumber:  idProofNumber || "",
+    purpose:        purpose || "",
+    vehicleNumber:  vehicleNumber || "",
     ...linked,
-    recordedBy:     b.recordedBy || req.user?.fullName || "Security",
-    recordedById:   req.user?.id || null,
-    recordedByRole: req.user?.role || "Security",
-    notes:          b.notes || "",
+    recordedAt:     new Date(),
+    recordedBy,
+    recordedByName,
+    recordedById,
+    recordedByRole,
+    notes:          notes || "",
   });
-  return res.status(201).json({ success: true, data: entry });
+  return sendOk(res, entry, null, 201);
 });
 
 /* GET /api/gate-log
@@ -74,10 +131,10 @@ exports.list = handle(async (req, res) => {
     GateLog.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
     GateLog.countDocuments(filter),
   ]);
-  return res.json({
-    success: true,
-    data: rows,
-    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+  return sendOk(res, rows, {
+    count: rows.length,
+    page, limit, total,
+    pages: Math.ceil(total / limit) || 0,
   });
 });
 
@@ -92,15 +149,12 @@ exports.stats = handle(async (req, res) => {
     GateLog.countDocuments({ direction: "out", createdAt: { $gte: startOfDay } }),
   ]);
 
-  return res.json({
-    success: true,
-    data: {
-      todayIn,
-      todayOut,
-      // Cheap on-premises proxy: today's net delta. Not a true headcount
-      // (people overnighting from yesterday aren't counted in), but it's
-      // useful for "is the gate quieter than usual right now?".
-      onPremisesDelta: Math.max(0, todayIn - todayOut),
-    },
+  return sendOk(res, {
+    todayIn,
+    todayOut,
+    // Cheap on-premises proxy: today's net delta. Not a true headcount
+    // (people overnighting from yesterday aren't counted in), but it's
+    // useful for "is the gate quieter than usual right now?".
+    onPremisesDelta: Math.max(0, todayIn - todayOut),
   });
 });

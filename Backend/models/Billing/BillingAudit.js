@@ -43,6 +43,18 @@ const BillingAuditSchema = new mongoose.Schema(
         "SETTLEMENT_ADJUSTED",       // settlementAdjust (extraDiscount/line edits)
         "ITEM_PRICE_OVERRIDDEN",     // BillingTrigger override
         "ITEM_CANCELLED",            // BillingTrigger cancel
+        // R7bj-F5 / R7bi-6-TBA-CRIT-1: BillingTrigger lifecycle events. Pre-R7bj
+        // every trigger emit/add/void/dedup-skip/pending-review left no audit row
+        // (only the resulting bill mutation was logged) — so a 3 AM cron firing
+        // a phantom bed-day charge that later got auto-billed produced ONE audit
+        // row for the bill item but ZERO for the trigger. NABH AAC.7 + GST Act §35
+        // want the originating clinical event in the chronological log too.
+        "TRIGGER_EMITTED",           // _emitTrigger / autoBillingService.createTrigger success
+        "ITEM_ADDED",                // addItemToBill success (trigger → bill line)
+        "TRIGGER_VOIDED",            // undoTrigger / cancelTrigger / onMARNonAdminister
+        "ORDER_CANCELLED",           // onOrderCancelled cascade summary
+        "TRIGGER_DEDUPED",           // dailyDedup or pre-dedup skip
+        "TRIGGER_PENDING_REVIEW",    // stuck trigger flagged for manual review
         // R7ar-P1-20/D6-aq-04: cashier shift lifecycle. The shift table
         // is the audit anchor for variance/handover; pre-R7ar opens and
         // closes left no chronological trace in BillingAudit, so the
@@ -148,6 +160,15 @@ const _FINANCIAL_EVENTS = new Set([
   "SETTLEMENT_ADJUSTED",
   "ITEM_PRICE_OVERRIDDEN",
   "ITEM_CANCELLED",
+  // R7bj-F5 / R7bi-6-TBA-CRIT-1: trigger lifecycle events that are
+  // money-affecting (emit/add/void/cancel) ride the 7y financial floor.
+  // TRIGGER_DEDUPED is intentionally NOT here — those are routine cron
+  // skips and would bloat the hot collection at ICU cardinalities.
+  "TRIGGER_EMITTED",
+  "ITEM_ADDED",
+  "TRIGGER_VOIDED",
+  "ORDER_CANCELLED",
+  "TRIGGER_PENDING_REVIEW",
 ]);
 const _ADMIN_EVENTS = new Set([
   "SHIFT_OPENED",

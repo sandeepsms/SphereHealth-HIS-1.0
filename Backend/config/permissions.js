@@ -487,6 +487,60 @@ const ACTIONS = {
   "pharmacy.cold-chain.write":     ["Admin", "Pharmacist", "Nurse"],
   "pharmacy.cold-chain.read":      ["Admin", "Pharmacist", "Nurse", "Doctor"],
 
+  // ── R7bj-F1 — Physiotherapy plan + session register ───────────
+  // Plan is the multi-day rehab prescription (treating Doctor + PT
+  // author it; Nurse reads to coordinate). Session is the per-visit
+  // record (PT + Admin only — Nurse reads but does not write).
+  // Replaces the legacy `physio.note.write` stub (left in place above
+  // for backwards-compat) with a proper plan/session split.
+  "physio.plan.read":              ["Admin", "Doctor", "Nurse", "Physiotherapist"],
+  "physio.plan.write":             ["Admin", "Doctor", "Physiotherapist"],
+  "physio.session.read":           ["Admin", "Doctor", "Nurse", "Physiotherapist"],
+  "physio.session.write":          ["Admin", "Physiotherapist"],
+
+  // ── R7bj-F2 — Kitchen indent (nurse → kitchen → ward boy → bed) ─
+  //   indent.read       — anyone touching the meal-delivery loop
+  //   indent.write      — Nurse raises / cancels; Pharmacist (kitchen
+  //                       desk today, until a Kitchen role exists)
+  //                       marks prepared/served
+  //   delivery.write    — Ward Boy marks DELIVERED at the bed (separate
+  //                       gate so a Ward Boy can hand-off without
+  //                       holding the broader kitchen.indent.write)
+  // Dietician on reads so they can audit calorie compliance.
+  "kitchen.indent.read":           ["Admin", "Nurse", "Pharmacist", "Ward Boy", "Dietician"],
+  "kitchen.indent.write":          ["Admin", "Nurse", "Pharmacist", "Dietician"],
+  "kitchen.delivery.write":        ["Admin", "Ward Boy", "Pharmacist"],
+
+  // R7bj-F2 — adverse food reaction register (sentinel-event for diet).
+  // Authoring restricted to bedside clinicians (Nurse / Doctor) + the
+  // Dietician who owns the diet plan; reads broaden to MRD + Pharmacist
+  // (cross-check against drug interactions).
+  "quality.food-reaction.read":    ["Admin", "Doctor", "Nurse", "Dietician", "Pharmacist", "MRD"],
+  "quality.food-reaction.write":   ["Admin", "Doctor", "Nurse", "Dietician"],
+
+  // ── R7bj-F6 — Compliance registers ────────────────────────────
+  //   compliance.bmw.*           — biomedical-waste transport manifest
+  //                                (BMWM 2016 + NABH FMS.5). Housekeeping
+  //                                + Ward Boy + Admin handle the daily
+  //                                cart-out; MRD reads for audit trail.
+  //   compliance.code-response.* — rapid-response / code blue / pink /
+  //                                purple event log. Doctor + Nurse +
+  //                                Admin file events; broader read so
+  //                                the Quality team can audit response
+  //                                times.
+  //   clinical.sharps-injury.*   — HCW needle-stick / sharps injury
+  //                                register (NABH HRD.8). Author is the
+  //                                injured staff member (any clinical
+  //                                role); read scoped to Admin + Doctor
+  //                                + the HR cohort (HR role isn't in
+  //                                the user enum yet, so Admin proxies).
+  "compliance.bmw.read":           ["Admin", "Housekeeping", "Ward Boy", "MRD"],
+  "compliance.bmw.write":          ["Admin", "Housekeeping", "Ward Boy"],
+  "compliance.code-response.read": ["Admin", "Doctor", "Nurse", "MRD"],
+  "compliance.code-response.write":["Admin", "Doctor", "Nurse"],
+  "clinical.sharps-injury.read":   ["Admin", "Doctor", "Nurse", "MRD"],
+  "clinical.sharps-injury.write":  ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Ward Boy", "Housekeeping"],
+
   // ── R7bb-FIX-C-13 — DEAD-ACTION CANDIDATES ────────────────────────
   // Sweep below catalogues tokens that no Backend/routes/**/*.js
   // currently consults via requireAction(...). The Frontend `can()`

@@ -25,9 +25,11 @@ import { useAuth } from "../../context/AuthContext";
 import {
   ShiftTab, SpillageTab, ChecklistTab, InventoryTab, PestTab,
 } from "./HousekeepingConsoleTabs";
+import { useVisiblePoll } from "../../utils/pollingHelpers";
 
 import { API_BASE_URL as API } from "../../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
+// R7bj-F9 / 10-X-HIGH-1: drop legacy localStorage fallback (authFetch clears it at boot).
+const authHdr = () => ({ headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token") || ""}` } });
 
 const TYPE_LABEL = {
   "routine":        "Routine",
@@ -89,7 +91,9 @@ export default function HousekeepingConsole() {
     try { const r = await axios.get(`${API}/housekeeping/tasks/stats`, authHdr()); setStats(r.data?.data || {}); }
     catch {}
   };
-  useEffect(() => { refreshStats(); const i = setInterval(refreshStats, 30000); return () => clearInterval(i); }, []);
+  // R7bj-F9 — visibility-gated polling for housekeeping stats.
+  useEffect(() => { refreshStats(); }, []);
+  useVisiblePoll(refreshStats, 30000, []);
 
   return (
     <AdminPage>
@@ -155,7 +159,8 @@ function AvailableTab({ onChange }) {
     } catch {}
     setLoading(false);
   };
-  useEffect(() => { refresh(); const i = setInterval(refresh, 30000); return () => clearInterval(i); }, [typeFilter]);
+  useEffect(() => { refresh(); }, [typeFilter]);
+  useVisiblePoll(refresh, 30000, [typeFilter]);
 
   const accept = async (t) => {
     try {
@@ -214,7 +219,8 @@ function MyTasksTab({ onChange }) {
     } catch {}
     setLoading(false);
   };
-  useEffect(() => { refresh(); const i = setInterval(refresh, 30000); return () => clearInterval(i); }, []);
+  useEffect(() => { refresh(); }, []);
+  useVisiblePoll(refresh, 30000, []);
 
   const start = async (t) => {
     try { await axios.patch(`${API}/housekeeping/tasks/${t._id}/start`, {}, authHdr()); toast.success("Started"); refresh(); onChange && onChange(); }

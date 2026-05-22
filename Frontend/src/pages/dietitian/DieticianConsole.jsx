@@ -24,7 +24,8 @@ import {
 import { useAuth } from "../../context/AuthContext";
 
 import { API_BASE_URL as API } from "../../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
+// R7bj-F9 / 10-X-HIGH-1: drop legacy localStorage fallback (authFetch clears it at boot).
+const authHdr = () => ({ headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token") || ""}` } });
 
 const CATEGORY_LABELS = {
   "weight-loss":     "Weight Loss",

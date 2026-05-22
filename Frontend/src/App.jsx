@@ -132,6 +132,10 @@ const WardBoyConsole          = lazy(() => import("./pages/wardboy/WardBoyConsol
 const WardManagerDashboard    = lazy(() => import("./pages/wardboy/WardManagerDashboard"));
 const HousekeepingConsole     = lazy(() => import("./pages/housekeeping/HousekeepingConsole"));
 const HousekeepingManagerDashboard = lazy(() => import("./pages/housekeeping/HousekeepingManagerDashboard"));
+// R7bj-F1 — Physiotherapy module greenfield (NABH COP.20)
+const PhysiotherapistConsole  = lazy(() => import("./pages/physiotherapist/PhysiotherapistConsole"));
+// R7bj-F2 — Kitchen indent close-loop (NABH COP.21, FSSAI)
+const KitchenConsole          = lazy(() => import("./pages/kitchen/KitchenConsole"));
 const LabResultsEntry         = lazy(() => import("./pages/lab/LabResultsEntry"));
 // R7bd-E-5 / A3-MED-18: Lab Tech multi-tab console (sample queue,
 // result-entry queue, QC log, day worksheet).
@@ -734,6 +738,16 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/housekeeping-manager" element={
               <RoleGuard action="house.manage"><HousekeepingManagerDashboard /></RoleGuard>
+            } />
+
+            {/* ── R7bj-F1 — Physiotherapy console (NABH COP.20 rehab) ── */}
+            <Route path="/physiotherapist" element={
+              <RoleGuard action="physio.plan.read"><PhysiotherapistConsole /></RoleGuard>
+            } />
+
+            {/* ── R7bj-F2 — Kitchen console (diet indent close-loop, NABH COP.21) ── */}
+            <Route path="/kitchen" element={
+              <RoleGuard action="kitchen.indent.read"><KitchenConsole /></RoleGuard>
             } />
 
             {/* ── Lab Technician manual data entry (outsourced workflow) ──
