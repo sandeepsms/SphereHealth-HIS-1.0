@@ -95,9 +95,13 @@ const ADRReportSchema = new Schema(
     reportedByRole: { type: String, trim: true, default: "" },
 
     // ── PvPI Submission ───────────────────────────────────────
+    // R7bn — added PVPI_FAILED so a transport failure during submission
+    // doesn't get optimistically flipped to PVPI_FILED with a null
+    // reference (which previously poisoned the audit trail — pre-R7bn
+    // the controller flipped status before checking submitter result).
     status: {
       type: String,
-      enum: ["DRAFT", "SUBMITTED", "PVPI_FILED"],
+      enum: ["DRAFT", "SUBMITTED", "PVPI_FILED", "PVPI_FAILED"],
       default: "DRAFT",
       index: true,
     },
@@ -106,6 +110,12 @@ const ADRReportSchema = new Schema(
     pvpiFiledAt:        { type: Date, default: null },
     pvpiFiledBy:        { type: Schema.Types.ObjectId, ref: "User", default: null },
     pvpiFiledByName:    { type: String, trim: true, default: "" },
+    // R7bn — observability for the submitter retry/backoff loop.
+    pvpiAttemptCount:     { type: Number, default: 0 },
+    pvpiLastAttemptedAt:  { type: Date, default: null },
+    pvpiLastErrorMessage: { type: String, default: "" },
+    pvpiLastErrorCode:    { type: String, default: "" },
+    pvpiSubmissionAttemptedAt: { type: Date, default: null },
 
     // ── Attachments ───────────────────────────────────────────
     // Document URLs — uploads are owned by a separate service in a

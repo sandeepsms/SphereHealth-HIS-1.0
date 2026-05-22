@@ -211,29 +211,59 @@ async function generatePvPIForm1(adrId) {
 }
 
 /**
- * R7bh-F5: submit ADR to PvPI via the stub submitter. Persists the
- * attempt + reference + flips status to PVPI_FILED.
+ * R7bh-F5: submit ADR to PvPI.
+ *
+ * R7bn — branched on submitter result.
+ *   - success=true: status → PVPI_FILED, persist pvpiReferenceNumber,
+ *     write success audit row.
+ *   - success=false: status → PVPI_FAILED, persist error, write failure
+ *     audit row. Caller (route handler) can replay later. Pre-R7bn this
+ *     code-path optimistically wrote PVPI_FILED with a null reference,
+ *     poisoning the audit trail on transport failure.
  */
 async function submitToPvPI(adrId, actor = {}) {
   const payload = await generatePvPIForm1(adrId);
   const submitter = require("./pvpiSubmitter");
   const result = await submitter.send(payload);
+  const now = new Date();
+  const succeeded = result && result.success === true && result.pvpiReference;
+
+  const $inc = { pvpiAttemptCount: 1 };
+  const $set = {
+    pvpiSubmissionAttemptedAt: now,
+    pvpiLastAttemptedAt: now,
+  };
+  let auditAction;
+  let auditDetail;
+
+  if (succeeded) {
+    Object.assign($set, {
+      status: "PVPI_FILED",
+      pvpiReferenceNumber: result.pvpiReference,
+      pvpiFiledAt: now,
+      pvpiFiledBy: actor._id || actor.id || null,
+      pvpiFiledByName: actor.fullName || actor.name || "",
+      pvpiLastErrorMessage: "",
+      pvpiLastErrorCode: "",
+    });
+    auditAction = "PVPI_SUBMITTED";
+    auditDetail = `transport=${result.transport || "stub"} ref=${result.pvpiReference}`;
+  } else {
+    Object.assign($set, {
+      status: "PVPI_FAILED",
+      pvpiLastErrorMessage: String(result?.errorMessage || result?.message || "Unknown PvPI transport error").slice(0, 500),
+      pvpiLastErrorCode: String(result?.errorCode || result?.statusCode || "TRANSPORT_FAIL").slice(0, 64),
+    });
+    auditAction = "PVPI_SUBMIT_FAILED";
+    auditDetail = `transport=${result?.transport || "unknown"} err=${$set.pvpiLastErrorMessage}`;
+  }
+
   const updated = await ADRReport.findByIdAndUpdate(
     adrId,
-    {
-      $set: {
-        status: "PVPI_FILED",
-        pvpiSubmissionAttemptedAt: new Date(),
-        pvpiReferenceNumber: result.pvpiReference,
-        pvpiFiledAt: new Date(),
-        pvpiFiledBy: actor._id || actor.id || null,
-        pvpiFiledByName: actor.fullName || actor.name || "",
-      },
-      $push: { auditTrail: _audit("PVPI_SUBMITTED", actor, `transport=${result.transport || "stub"}`) },
-    },
+    { $set, $inc, $push: { auditTrail: _audit(auditAction, actor, auditDetail) } },
     { new: true }
   );
-  return { report: updated, submission: result };
+  return { report: updated, submission: result, succeeded };
 }
 
 module.exports = {

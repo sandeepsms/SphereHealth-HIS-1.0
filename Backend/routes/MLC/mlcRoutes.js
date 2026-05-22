@@ -9,13 +9,18 @@ const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/MLC/mlcController");
 const { attemptAuth, attachDoctorProfile, requireAction } = require("../../middleware/auth");
+// R7bn-P1: 400 on a malformed :doctorId before findById throws CastError -> 500.
+// NOTE: :idOrMlr is intentionally polymorphic (accepts ObjectId OR MLR number
+// string like "RK0001") — see mlcService.getMLC / updateMLC / deleteMLC. Do
+// NOT guard those with validateObjectIdParam, it would reject valid MLR ids.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // Soft-auth + doctor profile resolver — list / read endpoints auto-restrict
 // to the logged-in doctor's MLCs. Non-doctor roles see everything.
 router.use(attemptAuth, attachDoctorProfile);
 
 // Literal routes BEFORE param routes to avoid /:idOrMlr swallowing them.
-router.get   ("/preview-prefix/:doctorId", requireAction("mlc.read"),  ctrl.previewPrefix);
+router.get   ("/preview-prefix/:doctorId", validateObjectIdParam("doctorId"), requireAction("mlc.read"),  ctrl.previewPrefix);
 
 router.get   ("/",            requireAction("mlc.read"),  ctrl.listMLC);
 router.post  ("/",            requireAction("mlc.write"), ctrl.createMLC);

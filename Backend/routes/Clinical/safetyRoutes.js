@@ -11,8 +11,10 @@
 const router = require("express").Router();
 const ctrl = require("../../controllers/Clinical/safetyController");
 const { requireAction } = require("../../middleware/auth");
+// R7bn-P1: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
-router.post("/critical-result/:id/acknowledge", requireAction("vitals.write"),     ctrl.acknowledgeCriticalResult);
+router.post("/critical-result/:id/acknowledge", validateObjectIdParam("id"), requireAction("vitals.write"),     ctrl.acknowledgeCriticalResult);
 router.post("/break-glass",                     requireAction("patient.export"),   ctrl.breakGlassAccess);
 // R7az-A/D9-HIGH: safety.write = Admin/Doctor/Nurse (doctors must be
 // able to two-ID-confirm and sign surgical checklists / pain
