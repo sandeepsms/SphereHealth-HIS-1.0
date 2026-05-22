@@ -157,6 +157,12 @@ const CompletePatientFilePage = lazy(() => import("./pages/patient/CompletePatie
 const MRDRecentDischargesPage = lazy(() => import("./pages/mrd/MRDRecentDischargesPage"));
 const GateLogPage = lazy(() => import("./pages/security/GateLogPage"));
 const IncidentsPage = lazy(() => import("./pages/security/IncidentsPage"));
+// R7bf-G / A5 NABH compliance scaffolds (CRIT-1/4/5/6/7)
+const CriticalValueAlertsPage = lazy(() => import("./pages/clinical/CriticalValueAlertsPage"));
+const GrievancesPage = lazy(() => import("./pages/quality/GrievancesPage"));
+const ADRReportsPage = lazy(() => import("./pages/quality/ADRReportsPage"));
+const FireDrillRegisterPage = lazy(() => import("./pages/compliance/FireDrillRegisterPage"));
+const CredentialingPage = lazy(() => import("./pages/hr/CredentialingPage"));
 const MARPage = lazy(() => import("./pages/clinical/MARPage"));
 const DiabeticChartPage = lazy(() => import("./pages/clinical/DiabeticChartPage"));
 const MaintenanceDashboardPage = lazy(() => import("./pages/maintenance/MaintenanceDashboardPage"));
@@ -539,6 +545,22 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/incidents" element={
               <RoleGuard action="security.incident-report"><IncidentsPage /></RoleGuard>
+            } />
+            {/* R7bf-G — NABH compliance scaffold pages (A5-CRIT-1/4/5/6/7) */}
+            <Route path="/critical-value-alerts" element={
+              <RoleGuard action="clinical.acknowledge-critical"><CriticalValueAlertsPage /></RoleGuard>
+            } />
+            <Route path="/grievances" element={
+              <RoleGuard action="quality.grievance.read"><GrievancesPage /></RoleGuard>
+            } />
+            <Route path="/adr-reports" element={
+              <RoleGuard action="pharmacy.adr.read"><ADRReportsPage /></RoleGuard>
+            } />
+            <Route path="/fire-drills" element={
+              <RoleGuard action="compliance.firedrill.read"><FireDrillRegisterPage /></RoleGuard>
+            } />
+            <Route path="/credentials" element={
+              <RoleGuard action="hr.credential.read"><CredentialingPage /></RoleGuard>
             } />
             <Route path="/tpa-cases" element={
               <RoleGuard allow={["Admin", "TPA Coordinator", "Receptionist", "Accountant"]}><TPACases /></RoleGuard>

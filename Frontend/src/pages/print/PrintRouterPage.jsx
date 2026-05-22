@@ -516,6 +516,11 @@ const PrintRouterPage = () => {
       toolbarTitle={cfg.title}
       defaultPaper={overridePaper}
       defaultOrient={overrideOrient}
+      /* R7bf-F / A4-CRIT-4: every payload may carry a printAudit block.
+         Callers opt in by setting payload.printAudit = { entityType,
+         entityId, entityNumber, UHID, patientName }; the PreviewPage
+         POSTs to /api/print-audit before window.print(). */
+      printAudit={payload?.printAudit}
     >
       <Component settings={settings} receipt={payload || {}} />
     </PrintPreviewPage>

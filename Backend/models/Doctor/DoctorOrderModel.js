@@ -286,20 +286,26 @@ DoctorOrderSchema.pre("save", function (next) {
    Legacy doc cleanup: status:"Held" → coerced to "OnHold" before
    matrix check, so old data doesn't break post-deploy.
 ─────────────────────────────────────────────────────────────────────── */
-const ALLOWED_TRANSITIONS = {
-  // Pending is the schema default — accept all reasonable moves from it.
+// R7bf-I / A7-HIGH-5 — DoctorOrder state-machine matrix is now sourced
+// from the shared registry (utils/statusTransitionGuard.js). The local
+// copy here is kept as a fallback (only used if the require fails — e.g.
+// circular-load in some unit-test bootstrap) so the model still self-
+// contains a sane matrix. The shared registry tightens Completed → []
+// (was previously [Modified]) — pre-R7bf a nurse / lab path could
+// "amend" an executed medication order which re-fired MAR scheduling
+// and was a documented re-administration risk. Now Completed is
+// terminal; amendments require the admin force flag + audit row.
+let SHARED = null;
+try { SHARED = require("../../utils/statusTransitionGuard"); } catch (_) { /* fallback */ }
+const ALLOWED_TRANSITIONS = (SHARED && SHARED.LEGAL_TRANSITIONS.DoctorOrder) || {
   Pending:     ["Acknowledged","Active","InProgress","OnHold","Stopped","Cancelled","Completed","Modified"],
   Acknowledged:["Active","InProgress","OnHold","Stopped","Cancelled","Completed","Modified"],
-  // Active is the operational mid-state — nurse acted on it.
   Active:      ["InProgress","OnHold","Stopped","Cancelled","Completed","Modified"],
   InProgress:  ["Completed","OnHold","Stopped","Cancelled","Modified"],
   OnHold:      ["Active","InProgress","Stopped","Cancelled"],
-  // Terminal states. Only an Admin override can re-open them, and even
-  // then only to a specific target (Modified for amendment, Active for
-  // re-instatement).
-  Stopped:     [],   // terminal — no transitions without admin override
-  Cancelled:   [],   // terminal
-  Completed:   ["Modified"], // amendment is the one legitimate post-terminal move
+  Stopped:     [],
+  Cancelled:   [],
+  Completed:   [],
   Modified:    ["Active","InProgress","Stopped","Cancelled","Completed"],
 };
 

@@ -70,6 +70,13 @@ BedTransferSchema.index(
   { unique: true, partialFilterExpression: { status: "PendingHandover" } },
 );
 
+// R7bf-I — BedTransfer state-machine guard via shared registry.
+// PendingHandover → Complete / Cancelled (terminal). The unique partial
+// index above already prevents two concurrent pending transfers; the
+// state guard prevents a Cancelled transfer from being silently re-opened.
+const { attachStatusGuard: _btGuard } = require("../../utils/statusTransitionGuard");
+_btGuard(BedTransferSchema, { modelName: "BedTransfer", field: "status" });
+
 module.exports =
   mongoose.models.BedTransfer ||
   mongoose.model("BedTransfer", BedTransferSchema);

@@ -374,8 +374,29 @@ const NAV = [
       { label: "User Management",    icon: "pi-users",      path: "/admin/users" },
       { label: "Roles & Permissions",icon: "pi-shield",     path: "/admin/roles",       badge: "NEW" },
       { label: "Hospital Charges",   icon: "pi-dollar",     path: "/hospital-charges" },
+      // R7bf-G / NABH HRD.3 — staff credentialing register lives under
+      // Masters & Admin since Admin owns the HR function today.
+      { label: "Credentialing",      icon: "pi-id-card",    path: "/credentials",       badge: "NABH",  roles: [ADMIN] },
       // Buildings / Floors / Rooms / Room Categories moved to Bed Management
       // so the full bed hierarchy lives in one place.
+    ],
+  },
+
+  /* ── R7bf-G — Quality & Compliance (NABH A5 scaffolds) ─── */
+  // Surfaces the new NABH register pages (critical-value alerts AAC.6,
+  // grievance redressal PRE.6, ADR reporting MOM.7, fire-drill register
+  // FMS.4). Visible to Admin always; cohort-specific items show for
+  // their owners (Receptionist sees grievances, Doctor/Nurse see
+  // critical-value alerts + ADR, Security sees fire-drills).
+  {
+    id: "quality", label: "Quality & Compliance",
+    icon: "pi-verified", color: "#0d9488", light: "#f0fdfa",
+    nabh: true, roles: [ADMIN, DR, NR, RX, PH, SE, "MRD"],
+    items: [
+      { label: "Critical Value Alerts", icon: "pi-bell",        path: "/critical-value-alerts", nabh: true, badge: "AAC.6", roles: [ADMIN, DR, NR] },
+      { label: "Grievance Register",    icon: "pi-comment",     path: "/grievances",            nabh: true, badge: "PRE.6", roles: [ADMIN, RX, DR, "MRD"] },
+      { label: "ADR Reports",           icon: "pi-flag",        path: "/adr-reports",           nabh: true, badge: "MOM.7", roles: [ADMIN, DR, NR, PH] },
+      { label: "Fire Drill Register",   icon: "pi-shield",      path: "/fire-drills",           nabh: true, badge: "FMS.4", roles: [ADMIN, SE] },
     ],
   },
 ];

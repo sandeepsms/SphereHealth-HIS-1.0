@@ -251,6 +251,47 @@ class AdmissionService {
         `Cannot discharge — admission status is already "${admission.status}"`,
       );
 
+    // ── R7bf-I / A7-CRIT-6 — Block discharge while an active OT / surgery
+    // booking exists for this admission. The HIS doesn't have a separate
+    // SurgeryBookingModel yet — we use DoctorOrder rows with orderType
+    // "Procedure" (the de-facto OT booking surrogate; Procedures are
+    // also where consentRequired is set + the OT charge-trigger fires).
+    // Any Procedure row in a non-terminal status (Pending/Acknowledged/
+    // Active/InProgress/OnHold/Modified) means the surgery isn't done.
+    // Forcing discharge would leave the bed flag freed before the patient
+    // is actually out of OT — bed-management corruption + a charge that
+    // can't post.
+    //
+    // Admin can override via `dischargeData.allowOverride` + reason
+    // (same path the bill-clearance gate already uses).
+    try {
+      const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
+      const ACTIVE = ["Pending", "Acknowledged", "Active", "InProgress", "OnHold", "Modified"];
+      const activeOT = await DoctorOrder.findOne({
+        UHID: admission.UHID,
+        orderType: "Procedure",
+        status: { $in: ACTIVE },
+      }).select("_id orderDetails.procedureName status").lean();
+      if (activeOT && !dischargeData.allowOverride) {
+        const err = new Error(
+          `Cannot discharge — active procedure / OT booking found ` +
+          `(order ${activeOT._id}, status: ${activeOT.status}` +
+          (activeOT.orderDetails?.procedureName ? `, ${activeOT.orderDetails.procedureName}` : "") +
+          `). Complete or cancel the procedure first, or pass allowOverride=true (Admin only) ` +
+          `with a documented reason for LAMA / abscond scenarios.`,
+        );
+        err.code = "ACTIVE_OT_BOOKING";
+        err.status = 409;
+        err.statusCode = 409;
+        throw err;
+      }
+    } catch (e) {
+      if (e.code === "ACTIVE_OT_BOOKING") throw e;
+      // Lookup failure is non-blocking — discharge can proceed (don't
+      // hold up a real LAMA on an infrastructure hiccup), but warn.
+      console.warn("[Discharge] OT-booking check skipped:", e.message);
+    }
+
     // ── NABH discharge-readiness gate (security/business audit F-01) ─────
     // Block the clinical discharge until the bill-counter workflow has at
     // least progressed past "BillCleared". Caller can pass

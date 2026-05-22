@@ -166,6 +166,19 @@ PharmacyIndentSchema.index({ status: 1, urgency: 1, raisedAt: 1 });
 PharmacyIndentSchema.index({ admissionId: 1, status: 1 });
 PharmacyIndentSchema.index({ UHID: 1, raisedAt: -1 });
 
+// R7bf-I / A7-CRIT-7 — Indent state-machine guard.
+// Pre-R7bf indentService.cancelIndent only blocked status === "Released".
+// PartiallyReleased was treated as still-cancellable, but at that point
+// the dispensed batches had ALREADY been debited from stock — silently
+// re-cancelling created a ghost-inventory state where the bill never
+// fired but the drug was gone. The registry now treats both
+// PartiallyReleased and Released as no-cancel terminals; the indent
+// service / controller will surface a 409 with code ILLEGAL_TRANSITION
+// and the operator is directed to use the return-indent / void-sale
+// flow instead.
+const { attachStatusGuard } = require("../../utils/statusTransitionGuard");
+attachStatusGuard(PharmacyIndentSchema, { modelName: "PharmacyIndent", field: "status" });
+
 module.exports =
   mongoose.models.PharmacyIndent ||
   mongoose.model("PharmacyIndent", PharmacyIndentSchema);

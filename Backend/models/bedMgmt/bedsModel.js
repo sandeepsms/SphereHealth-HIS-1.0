@@ -179,4 +179,14 @@ BedSchema.pre("save", function (next) {
   next();
 });
 
+// R7bf-I / A7-HIGH-12 — Bed state-machine guard.
+// Pre-R7bf admissionService.dischargePatient (and a couple of manual
+// reservation paths) could flip a bed straight from Maintenance →
+// Occupied. With NABH IPC.6 the bed MUST land on Available between
+// cleaning and re-occupancy so housekeeping can sign off + the
+// admission flow can re-check isolation flags. The registry now
+// forbids Maintenance → Occupied (must route via Available).
+const { attachStatusGuard: _bedGuard } = require("../../utils/statusTransitionGuard");
+_bedGuard(BedSchema, { modelName: "Bed", field: "status" });
+
 module.exports = mongoose.models.Beds || mongoose.model("Beds", BedSchema);

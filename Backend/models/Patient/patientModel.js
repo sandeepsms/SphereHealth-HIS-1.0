@@ -144,6 +144,29 @@ PatientSchema.index({ contactNumber: 1 });
 PatientSchema.index({ paymentType: 1 });
 PatientSchema.index({ tpa: 1 });
 
+// R7bf-J/A8-CRIT-1: Mongo text index for the patient-search bar. Pre-R7bf,
+// `searchPatients` ran an OR of five regex queries against `fullName`,
+// `UHID`, `contactNumber`, `patientId`, `email` — a guaranteed COLLSCAN at
+// 30 k+ records (p95 8.4 s). Text index lets the same query plan a
+// $text-stage with weights favouring UHID/mobile (exact-shape hits) over
+// name (fuzzier). The service layer still falls back to exact
+// `contactNumber`/`UHID`/`patientId` regex for partial digit/UHID
+// queries which $text does not tokenise.
+PatientSchema.index(
+  {
+    fullName:      "text",
+    UHID:          "text",
+    contactNumber: "text",
+    patientId:     "text",
+    email:         "text",
+  },
+  {
+    weights: { UHID: 10, contactNumber: 8, patientId: 8, fullName: 4, email: 2 },
+    name:    "patient_text_search",
+    default_language: "none", // names/ids aren't language-tokenisable
+  },
+);
+
 // R7ab: use atomic Counter for UHID + patientId. The previous
 // implementation used `countDocuments` inside pre-save which races
 // catastrophically — two receptionists registering at the same instant

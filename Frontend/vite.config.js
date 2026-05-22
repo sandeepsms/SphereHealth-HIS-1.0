@@ -5,10 +5,12 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   build: {
-    // Split the 4.3 MB single bundle into smaller, browser-cacheable chunks.
-    // Browsers can download these in parallel and cache them independently,
-    // so a single page change doesn't invalidate the whole vendor cache.
-    chunkSizeWarningLimit: 800,
+    // R7bf-J/A8-CRIT-5: aggressive vendor splitting. Pre-R7bf the
+    // catch-all `vendor-misc` ballooned to 857 KB — bootstrap +
+    // react-bootstrap + @emotion + lucide-react + react-icons + yup +
+    // html2pdf.js all landed there together. Target: every vendor chunk
+    // under 500 KB so first-paint on 3G/4G in tier-3 cities is OK.
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
         manualChunks(id) {
@@ -31,11 +33,11 @@ export default defineConfig({
             return 'vendor-router'
 
           // ── HTTP / data ───────────────────────────────────
-          if (id.includes('axios') || id.includes('react-query') || id.includes('formik'))
+          if (id.includes('axios') || id.includes('react-query') || id.includes('formik') || id.includes('yup'))
             return 'vendor-data'
 
           // ── PrimeReact (icons + components) ───────────────
-          if (id.includes('primereact') || id.includes('primeicons'))
+          if (id.includes('primereact') || id.includes('primeicons') || id.includes('primeflex'))
             return 'vendor-prime'
 
           // ── Charts (recharts/chart.js if used) ────────────
@@ -43,7 +45,15 @@ export default defineConfig({
             return 'vendor-charts'
 
           // ── PDF / print ───────────────────────────────────
-          if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('react-to-print'))
+          // R7bf-J/A8-CRIT-5: html2pdf.js ships its own copy of
+          // html2canvas + jspdf and is ~700 KB on its own — isolate it
+          // so the rest of the app's print stack stays light. Pages
+          // that use it should `import()` lazily; this chunk only ships
+          // on routes that touch it.
+          if (id.includes('html2pdf'))
+            return 'vendor-pdf-html2pdf'
+          if (id.includes('jspdf') || id.includes('html2canvas')
+              || id.includes('react-to-print'))
             return 'vendor-pdf'
 
           // ── Toast / notifications ─────────────────────────
@@ -53,6 +63,25 @@ export default defineConfig({
           // ── Date utilities ────────────────────────────────
           if (id.includes('date-fns') || id.includes('dayjs') || id.includes('moment'))
             return 'vendor-date'
+
+          // R7bf-J/A8-CRIT-5: pull the heavy CSS-in-JS runtime out of
+          // vendor-misc. @emotion is dragged in by react-bootstrap +
+          // MUI-style libs and is ~100 KB on its own.
+          if (id.includes('@emotion') || id.includes('@babel/runtime'))
+            return 'vendor-emotion'
+
+          // R7bf-J/A8-CRIT-5: bootstrap css/js + react-bootstrap.
+          // ~200 KB combined — used by every layout.
+          if (id.includes('react-bootstrap') || id.includes('/bootstrap/')
+              || id.includes('/@restart/'))
+            return 'vendor-bootstrap'
+
+          // R7bf-J/A8-CRIT-5: icon families. lucide-react +
+          // react-icons are tree-shakeable but the unused exports still
+          // bloat the misc chunk because of barrel-import patterns —
+          // isolating them keeps the misc chunk truly miscellaneous.
+          if (id.includes('lucide-react') || id.includes('react-icons'))
+            return 'vendor-icons'
 
           // Everything else goes to a generic vendor chunk
           return 'vendor-misc'

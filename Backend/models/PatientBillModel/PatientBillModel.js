@@ -355,7 +355,12 @@ const PatientBillSchema = new mongoose.Schema(
     billGeneratedAt: { type: Date },
     paidAt: { type: Date },
     generatedBy: { type: String, trim: true },
-    remarks: { type: String, trim: true } },
+    remarks: { type: String, trim: true },
+    // R7bf-F / A4-CRIT-4 + A4-CRIT-5: atomically incremented on every
+    // print/reprint. Source of truth for the DUPLICATE watermark
+    // (count > 1 → watermark renders).  Defaults to 0; the PrintAudit
+    // POST `$inc`s it to 1 on the first print.
+    printCount: { type: Number, default: 0, min: 0 } },
   {
     timestamps: true,
     // Serialize Decimal128 → Number on the wire so the existing frontend
@@ -606,6 +611,49 @@ PatientBillSchema.index(
 // two cashiers taking payment from the same bill at the same instant can't
 // silently clobber each other's payment row.
 PatientBillSchema.set("optimisticConcurrency", true);
+
+// R7bf-I / A7-HIGH-2 + A7-HIGH-3 — billStatus state-machine guard.
+// Pre-R7bf nothing prevented a controller from flipping a PAID bill back
+// to PARTIAL (the canonical "discount after payment" workaround that
+// silently downgraded the ledger) or REFUNDED → GENERATED (which would
+// double-charge the patient). The registry now treats PAID / REFUNDED /
+// CANCELLED as terminal; admin force flag + audit row is required to
+// override. The discount-after-payment workflow MUST instead create a
+// CreditNote / refund row.
+const { attachStatusGuard: _pbGuard } = require("../../utils/statusTransitionGuard");
+_pbGuard(PatientBillSchema, { modelName: "PatientBill", field: "billStatus" });
+
+// R7bf-I / A7-HIGH-3 — DRAFT bill cannot be deleted while a BillingTrigger
+// references it. Pre-R7bf the DRAFT-deletion endpoint hard-deleted the
+// PatientBill row; any BillingTrigger.linkedBillId still pointing at it
+// was orphaned (the trigger said "billed" but the bill was gone, so the
+// autoBilling reconciler never re-fired the charge).
+async function _refuseDeleteIfTriggersReference(next) {
+  try {
+    const filter = (this.getFilter && this.getFilter()) || (this.getQuery && this.getQuery()) || {};
+    const id = filter._id || filter.id;
+    if (!id) return next();
+    if (this.model && this.model.modelName === "PatientBill") {
+      let BillingTrigger;
+      try { BillingTrigger = require("../Billing/BillingTrigger"); } catch (_) { /* circular-load tolerant */ }
+      if (!BillingTrigger) return next();
+      const refCount = await BillingTrigger.countDocuments({ linkedBillId: id }).catch(() => 0);
+      if (refCount > 0) {
+        const err = new Error(
+          `Cannot delete bill — ${refCount} BillingTrigger row(s) reference it. ` +
+          `Cancel the bill instead (billStatus: CANCELLED) or detach the triggers first.`,
+        );
+        err.code = "BILL_HAS_LINKED_TRIGGERS";
+        err.statusCode = 409;
+        err.status = 409;
+        return next(err);
+      }
+    }
+    next();
+  } catch (e) { next(e); }
+}
+PatientBillSchema.pre("findOneAndDelete", _refuseDeleteIfTriggersReference);
+PatientBillSchema.pre("deleteOne",        _refuseDeleteIfTriggersReference);
 
 module.exports =
   mongoose.models.PatientBill ||

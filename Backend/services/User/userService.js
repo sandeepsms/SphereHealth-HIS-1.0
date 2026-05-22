@@ -231,7 +231,82 @@ class UserService {
   }
 
   // Activate user
-  async activateUser(id) {
+  //
+  // R7bf-I / A7-CRIT-5 — block Terminated → Active without explicit
+  // re-onboarding flow. Pre-R7bf any caller with user-admin permission
+  // could flip a Terminated employee back to Active in one PATCH. That
+  // bypassed:
+  //   • Background re-check (HRD.3 credentialing — privileges revoked
+  //     on termination must be re-issued explicitly)
+  //   • Document re-verification (PRE expired ID proofs, lapsed PG
+  //     registration, etc.)
+  //   • Access-review boards (a terminated user keeps their tokenVersion
+  //     bumped but role-grants from the prior tenure persisted; only a
+  //     fresh onboarding flow guarantees those are re-validated)
+  //
+  // Re-onboarding is implemented as a separate `reonboardTerminatedUser`
+  // service method (Agent owns later) that takes a checklist payload.
+  // Until then, the only escape is `{ force: true, adminUserId, reason }`
+  // — Admin override + audit row + reason text. Without all three the
+  // service throws RE_ONBOARDING_REQUIRED.
+  //
+  // Allowed paths via this method (no force):
+  //   Inactive  → Active        (regular reactivate)
+  //   Suspended → Active        (suspension lifted)
+  // Blocked without force:
+  //   Terminated → Active       (must re-onboard)
+  //   Any → Active when current already Active (no-op idempotent)
+  async activateUser(id, opts = {}) {
+    const current = await User.findById(id).select("status fullName employeeId").lean();
+    if (!current) throw new Error("User not found");
+
+    const force = !!opts.force;
+    const adminUserId = opts.adminUserId || null;
+    const reason = (opts.reason || "").trim();
+
+    if (current.status === "Terminated" && !force) {
+      const err = new Error(
+        `User ${current.employeeId || current.fullName || id} is in Terminated state. ` +
+        `Re-onboarding required — terminated employees cannot be reactivated via the standard activate flow. ` +
+        `Use the re-onboarding workflow (HRD.3) or pass { force:true, adminUserId, reason } for an admin-audited override.`,
+      );
+      err.code = "RE_ONBOARDING_REQUIRED";
+      err.statusCode = 409;
+      err.status = 409;
+      throw err;
+    }
+    if (current.status === "Terminated" && force) {
+      if (!adminUserId) {
+        const err = new Error("Force-activate of a Terminated user requires adminUserId");
+        err.code = "MISSING_ADMIN_ACTOR";
+        err.statusCode = 422;
+        err.status = 422;
+        throw err;
+      }
+      if (!reason || reason.length < 5) {
+        const err = new Error("Force-activate of a Terminated user requires a reason (≥ 5 chars)");
+        err.code = "MISSING_OVERRIDE_REASON";
+        err.statusCode = 422;
+        err.status = 422;
+        throw err;
+      }
+      // Audit (best-effort) — BillingAudit is the catch-all activity log
+      // in this codebase; UserActivityLog also exists but is patient-scoped.
+      try {
+        const { emit } = require("../../models/Billing/BillingAudit");
+        await emit({
+          event:     "ITEM_CANCELLED",    // closest existing enum — TODO add USER_FORCE_ACTIVATE
+          UHID:      null,
+          actorId:   adminUserId,
+          actorName: "Admin (force-activate)",
+          actorRole: "Admin",
+          reason:    `FORCE_ACTIVATE_TERMINATED_USER — userId=${id}, reason: ${reason}`,
+          before:    { status: "Terminated" },
+          after:     { status: "Active", forced: true },
+        });
+      } catch (_) { /* audit best-effort */ }
+    }
+
     const user = await User.findByIdAndUpdate(
       id,
       { isActive: true, status: "Active" },

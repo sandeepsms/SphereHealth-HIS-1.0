@@ -190,6 +190,42 @@ DischargeSummarySchema.pre("findOneAndUpdate", _refuseIfFinalized);
 DischargeSummarySchema.pre("findByIdAndUpdate", _refuseIfFinalized);
 DischargeSummarySchema.pre("updateOne",         _refuseIfFinalized);
 
+// R7bf-I / A7-HIGH-10 — DischargeSummary state-machine guard.
+// In-codebase status enum is lowercase `["draft", "finalized"]`. The
+// existing _refuseIfFinalized middleware already blocks every direct
+// findOneAndUpdate / findByIdAndUpdate / updateOne; we add the same
+// constraint on direct doc.save() paths via the shared registry. A
+// "correction" route that wants to flip finalized → draft must:
+//   1. Set doc.__forceTransition = true AND doc.__forceAdminUserId =
+//      <Admin User._id> on the in-memory instance, AND
+//   2. Provide a non-empty correctionReason field (validated below)
+//      before save. Both gates are belt-and-braces — the route handler
+//      should also emit an audit row.
+const { attachStatusGuard: _dsGuard } = require("../../utils/statusTransitionGuard");
+_dsGuard(DischargeSummarySchema, { modelName: "DischargeSummary", field: "status" });
+
+// Require a non-empty correction reason on every finalized → draft flip
+// even when the admin force flag is set, so the audit row downstream
+// has the operator-supplied "why" attached.
+DischargeSummarySchema.pre("save", function (next) {
+  if (this.isNew) return next();
+  const prior = this.__prior_status;
+  if (prior === "finalized" && this.status === "draft") {
+    if (!this.__correctionReason || String(this.__correctionReason).trim().length < 5) {
+      const err = new Error(
+        "Cannot revert discharge summary to draft — set doc.__correctionReason " +
+        "(≥ 5 chars) describing why the correction is needed. NABH AAC.5 requires " +
+        "a documented rationale on every post-finalize edit.",
+      );
+      err.code = "MISSING_CORRECTION_REASON";
+      err.statusCode = 422;
+      err.status = 422;
+      return next(err);
+    }
+  }
+  next();
+});
+
 module.exports =
   mongoose.models.DischargeSummary ||
   mongoose.model("DischargeSummary", DischargeSummarySchema);

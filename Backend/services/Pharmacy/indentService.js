@@ -478,20 +478,34 @@ async function releaseIndent(indentId, { items = [], user = {}, adminOverride = 
 }
 
 // ── cancelIndent ──────────────────────────────────────────────────
+//
+// R7bf-I / A7-CRIT-7 — A Released or PartiallyReleased indent has
+// already moved stock out of the pharmacy AND fired (or partially
+// fired) the BillingTrigger pipeline. Cancelling at that point creates
+// an inventory ghost (stock gone, bill never raised) and a billing
+// hole (trigger marked done, but the canceller doesn't know to refund).
+// The correct downstream flow is a return-indent / void-sale, not a
+// cancel. Pre-R7bf only `Released` was guarded.
 async function cancelIndent(indentId, { reason, user = {} } = {}) {
   const doc = await PharmacyIndent.findById(indentId);
   if (!doc) { const err = new Error("Indent not found"); err.status = 404; throw err; }
-  if (doc.status === "Released") {
-    const err = new Error("Cannot cancel a Released indent — drugs already dispensed");
-    err.code = "ALREADY_CLOSED"; throw err;
-  }
   if (doc.status === "Cancelled") return doc;   // idempotent
+  if (doc.status === "Released" || doc.status === "PartiallyReleased") {
+    const err = new Error(
+      `Cannot cancel a ${doc.status} indent — drugs already dispensed. ` +
+      `Use the returnIndent / void-sale flow to reverse stock + billing instead.`,
+    );
+    err.code = "ALREADY_CLOSED";
+    err.status = 409;
+    err.statusCode = 409;
+    throw err;
+  }
   doc.status        = "Cancelled";
   doc.cancelledBy   = user.fullName || user.name || "User";
   doc.cancelledById = user._id || user.id;
   doc.cancelledAt   = new Date();
   doc.cancelReason  = reason || "(no reason given)";
-  await doc.save();
+  await doc.save();   // pre-save state-machine guard will double-check the transition
   return doc;
 }
 

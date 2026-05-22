@@ -88,38 +88,16 @@ AppointmentSchema.pre("validate", async function (next) {
   next();
 });
 
-// Snapshot the prior status on every load so the state-machine guard
-// below can detect illegal transitions. Business audit F-06: the partial
-// unique index excludes Cancelled / NoShow from the doctor-slot-time
-// uniqueness check, so flipping a NoShow appointment back to Booked
-// could land two active appointments on the same slot (the first slot
-// "ghosted" out via NoShow, then re-Booked, while a concurrent caller
-// already booked the now-vacant slot). Force re-booking to go through
-// the regular Booking flow (a new appointment row), which hits the
-// unique index cleanly.
-AppointmentSchema.post("init", function () {
-  this._priorStatus = this.status;
-});
-
-AppointmentSchema.pre("save", function (next) {
-  if (!this.isNew && this._priorStatus) {
-    const prior = this._priorStatus;
-    const next$ = this.status;
-    const TERMINAL = new Set(["Cancelled", "NoShow", "Completed"]);
-    if (TERMINAL.has(prior) && next$ === "Booked") {
-      return next(new Error(
-        `Cannot re-book an appointment from terminal status "${prior}". ` +
-        `Create a new appointment for the patient instead.`,
-      ));
-    }
-    if (prior === "Completed" && next$ !== "Completed") {
-      return next(new Error(
-        `Cannot transition a Completed appointment to "${next$}".`,
-      ));
-    }
-  }
-  next();
-});
+// R7bf-I / A7-HIGH-4 — Appointment state-machine guard delegated to
+// the shared registry. Pre-R7bf the pre-save hook here only blocked
+// "terminal → Booked" and "Completed → anything"; SCHEDULED → COMPLETED
+// (skipping CheckedIn) was silently accepted, which broke OPD billing
+// (a no-show was being marked Completed by a faulty close-day cron and
+// then billed as a consultation). The registry now requires the
+// CheckedIn step before Completed. Business audit F-06 (terminal re-book)
+// is preserved by the registry's empty arrays on Cancelled / NoShow.
+const { attachStatusGuard } = require("../../utils/statusTransitionGuard");
+attachStatusGuard(AppointmentSchema, { modelName: "Appointment", field: "status" });
 
 module.exports =
   mongoose.models.Appointment ||

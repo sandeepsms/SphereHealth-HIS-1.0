@@ -61,6 +61,24 @@ const GstMonthlySnapshotSchema = new mongoose.Schema(
     netIgst:       { type: Dec, default: 0 },
     netTotalTax:   { type: Dec, default: 0 },
 
+    // ── R7bf-H / A6-CRIT-1: outward-supply split by source ─────────
+    // Pharmacy GST used to be missing from this snapshot entirely.
+    // gstService.aggregateGSTForMonth now $unionWith-s PharmacySale; the
+    // bySource block records the hospital vs pharmacy contribution so
+    // GSTR-1 line 12 (HSN summary) can be emitted by source if needed.
+    bySource: {
+      hospital: {
+        taxableValue: { type: Dec, default: 0 },
+        taxAmount:    { type: Dec, default: 0 },
+        itemCount:    { type: Number, default: 0 },
+      },
+      pharmacy: {
+        taxableValue: { type: Dec, default: 0 },
+        taxAmount:    { type: Dec, default: 0 },
+        itemCount:    { type: Number, default: 0 },
+      },
+    },
+
     // ── Lifecycle ──────────────────────────────────────────────────
     generatedAt:   { type: Date, default: Date.now },
     // Set when the accountant confirms the period matches their GSTR-1

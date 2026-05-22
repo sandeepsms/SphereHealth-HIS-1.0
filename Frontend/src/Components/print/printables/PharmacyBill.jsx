@@ -19,6 +19,8 @@ import React from "react";
 import "../print.css";
 import { fmtINR, amountInWords } from "../amountWords";
 import TEMPLATES from "./PharmacyBillTemplates";
+import PrintWatermark from "../PrintWatermark";
+import { toNum } from "../../../utils/printUtils";
 
 const _fmtDate = (d, opts) => d
   ? new Date(d).toLocaleDateString("en-IN", opts || { day: "2-digit", month: "short", year: "numeric" })
@@ -336,6 +338,14 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
             {r.status === "Cancelled" ? "CANCELLED" : "REVISED"}
           </div>
         )}
+
+        {/* R7bf-F / A4-CRIT-5: DUPLICATE watermark on reprints. Sits
+            inside the same .pr-page so it auto-positions with the
+            content. Hidden on first print (printCount<=1). */}
+        <PrintWatermark
+          printCount={toNum(r.printCount)}
+          recipient="RECIPIENT"
+        />
 
         <Chosen {...renderProps} />
 

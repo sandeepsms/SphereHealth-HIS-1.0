@@ -15,6 +15,7 @@
 
 import React from "react";
 import PrintShell from "../PrintShell";
+import { toNum } from "../../../utils/printUtils";
 
 const fmtDate = (d, withTime = false) => {
   if (!d) return "—";
@@ -49,11 +50,14 @@ const CompleteIPDFile = ({ settings, receipt = {} }) => {
   const consents       = Array.isArray(r.consents)       ? r.consents       : [];
   const vitalsOnAdm    = r.vitalsOnAdmission || {};
 
+  const printCount = toNum(r.printCount);
+
   return (
     <PrintShell
       settings={settings}
       documentTitle="Complete IPD File"
       serialNo={r.ipdNo}
+      printCount={printCount}
       infoItems={[
         { label: "Patient",     value: r.patientName },
         { label: "UHID",        value: r.uhid },
@@ -153,7 +157,69 @@ const CompleteIPDFile = ({ settings, receipt = {} }) => {
         </Section>
       )}
 
-      {/* ── 5. MAR / Treatment Chart ── */}
+      {/* R7bf-F / A4-HIGH-6: section order enforced —
+            5. Doctor Orders / Notes (BEFORE nursing — clinical
+               decision precedes execution)
+            6. Nursing Notes
+            7. MAR (medication chart — execution log)
+            8. Procedures / OT
+            9. Consents
+           10. Discharge summary
+          Pre-R7bf MAR came BEFORE doctor notes, putting execution
+          ahead of the orders that drove it — confused medical
+          records reviewers. */}
+
+      {/* ── 5. Doctor's notes / orders timeline ── */}
+      {doctorNotes.length > 0 && (
+        <Section title="Doctor's Orders &amp; Notes Timeline">
+          {doctorNotes.map((n, i) => (
+            <div key={i} style={{
+              borderLeft: "3px solid var(--pr-accent-color, #1d4ed8)",
+              padding: "6px 10px",
+              marginBottom: 6,
+              background: "#f8fafc",
+              borderRadius: "0 6px 6px 0",
+              breakInside: "avoid",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#475569", fontWeight: 700 }}>
+                <span>{n.noteType || "Note"} · {n.shift || ""}</span>
+                <span>{fmtDate(n.createdAt || n.date, true)}</span>
+              </div>
+              <div style={{ fontSize: 11, color: "#0f172a", whiteSpace: "pre-wrap", marginTop: 3 }}>
+                {n.content || n.text || n.note || ""}
+              </div>
+              {n.doctorName && <div style={{ fontSize: 10, color: "#64748b", marginTop: 3, fontStyle: "italic" }}>— {n.doctorName}</div>}
+            </div>
+          ))}
+        </Section>
+      )}
+
+      {/* ── 6. Nursing notes timeline ── */}
+      {nursingNotes.length > 0 && (
+        <Section title="Nursing Notes Timeline">
+          {nursingNotes.map((n, i) => (
+            <div key={i} style={{
+              borderLeft: "3px solid #db2777",
+              padding: "6px 10px",
+              marginBottom: 6,
+              background: "#fdf2f8",
+              borderRadius: "0 6px 6px 0",
+              breakInside: "avoid",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#9d174d", fontWeight: 700 }}>
+                <span>{n.noteType || "Care note"} · {n.shift || ""}</span>
+                <span>{fmtDate(n.createdAt || n.date, true)}</span>
+              </div>
+              <div style={{ fontSize: 11, color: "#0f172a", whiteSpace: "pre-wrap", marginTop: 3 }}>
+                {n.content || n.text || n.note || ""}
+              </div>
+              {n.nurseName && <div style={{ fontSize: 10, color: "#9d174d", marginTop: 3, fontStyle: "italic" }}>— {n.nurseName}</div>}
+            </div>
+          ))}
+        </Section>
+      )}
+
+      {/* ── 7. MAR / Treatment Chart ── */}
       {medications.length > 0 && (
         <div className="pr-section pr-page-break">
           <div className="pr-section__title">Medication Administration Record (MAR)</div>
@@ -186,56 +252,6 @@ const CompleteIPDFile = ({ settings, receipt = {} }) => {
         </div>
       )}
 
-      {/* ── 6. Doctor's notes timeline ── */}
-      {doctorNotes.length > 0 && (
-        <Section title="Doctor's Notes Timeline">
-          {doctorNotes.map((n, i) => (
-            <div key={i} style={{
-              borderLeft: "3px solid var(--pr-accent-color, #1d4ed8)",
-              padding: "6px 10px",
-              marginBottom: 6,
-              background: "#f8fafc",
-              borderRadius: "0 6px 6px 0",
-              breakInside: "avoid",
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#475569", fontWeight: 700 }}>
-                <span>{n.noteType || "Note"} · {n.shift || ""}</span>
-                <span>{fmtDate(n.createdAt || n.date, true)}</span>
-              </div>
-              <div style={{ fontSize: 11, color: "#0f172a", whiteSpace: "pre-wrap", marginTop: 3 }}>
-                {n.content || n.text || n.note || ""}
-              </div>
-              {n.doctorName && <div style={{ fontSize: 10, color: "#64748b", marginTop: 3, fontStyle: "italic" }}>— {n.doctorName}</div>}
-            </div>
-          ))}
-        </Section>
-      )}
-
-      {/* ── 7. Nursing notes timeline ── */}
-      {nursingNotes.length > 0 && (
-        <Section title="Nursing Notes Timeline">
-          {nursingNotes.map((n, i) => (
-            <div key={i} style={{
-              borderLeft: "3px solid #db2777",
-              padding: "6px 10px",
-              marginBottom: 6,
-              background: "#fdf2f8",
-              borderRadius: "0 6px 6px 0",
-              breakInside: "avoid",
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#9d174d", fontWeight: 700 }}>
-                <span>{n.noteType || "Care note"} · {n.shift || ""}</span>
-                <span>{fmtDate(n.createdAt || n.date, true)}</span>
-              </div>
-              <div style={{ fontSize: 11, color: "#0f172a", whiteSpace: "pre-wrap", marginTop: 3 }}>
-                {n.content || n.text || n.note || ""}
-              </div>
-              {n.nurseName && <div style={{ fontSize: 10, color: "#9d174d", marginTop: 3, fontStyle: "italic" }}>— {n.nurseName}</div>}
-            </div>
-          ))}
-        </Section>
-      )}
-
       {/* ── 8. Procedures ── */}
       {procedures.length > 0 && (
         <Section title="Procedures / OT Notes">
@@ -248,8 +264,34 @@ const CompleteIPDFile = ({ settings, receipt = {} }) => {
               {p.surgeon  && <KV label="Surgeon" value={p.surgeon} />}
               {p.assistant && <KV label="Assistant" value={p.assistant} />}
               {p.anesthesia && <KV label="Anesthesia" value={p.anesthesia} />}
+              {/* R7bf-F / A4-MED-6: scrub-tech + circulating-nurse anchors. */}
+              {p.scrubTech && <KV label="Scrub Tech / Nurse" value={p.scrubTech} />}
+              {p.circulatingNurse && <KV label="Circulating Nurse" value={p.circulatingNurse} />}
               {p.findings && <div style={{ marginTop: 3, fontSize: 11, whiteSpace: "pre-wrap" }}><strong>Findings: </strong>{p.findings}</div>}
               {p.notes    && <div style={{ marginTop: 3, fontSize: 11, whiteSpace: "pre-wrap" }}>{p.notes}</div>}
+              {/* Signature blocks — always rendered so the OT team has a
+                  physical sign-off space even when the procedure was
+                  entered via the digital form without typed names. */}
+              <div style={{
+                display: "grid", gridTemplateColumns: "repeat(4, 1fr)",
+                gap: 10, marginTop: 12, paddingTop: 8,
+                borderTop: "1px dashed #cbd5e1",
+              }}>
+                {[
+                  { lbl: "Surgeon",            v: p.surgeon },
+                  { lbl: "Anesthetist",        v: p.anesthesia || p.anesthetist },
+                  { lbl: "Scrub Tech / Nurse", v: p.scrubTech },
+                  { lbl: "Circulating Nurse",  v: p.circulatingNurse },
+                ].map((s, si) => (
+                  <div key={si} style={{ fontSize: 10, textAlign: "center" }}>
+                    <div style={{ height: 24, borderBottom: "1px solid #94a3b8" }} />
+                    <div style={{ marginTop: 3, color: "#475569", fontWeight: 700 }}>
+                      {s.lbl}
+                    </div>
+                    {s.v && <div style={{ color: "#0f172a", fontSize: 9.5 }}>{s.v}</div>}
+                  </div>
+                ))}
+              </div>
             </div>
           ))}
         </Section>

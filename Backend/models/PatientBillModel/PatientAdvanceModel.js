@@ -120,6 +120,11 @@ const PatientAdvanceSchema = new mongoose.Schema(
     // must exclude these rows or they double-count alongside the bill's
     // negative payment row (which is already counted as billRefundsOut).
     isRefundCredit: { type: Boolean, default: false },
+
+    // R7bf-F / A4-CRIT-4 + A4-CRIT-5: atomically incremented on every
+    // reprint of the advance/refund receipt. Drives the DUPLICATE
+    // watermark on copies 2+.
+    printCount: { type: Number, default: 0, min: 0 },
   },
   {
     timestamps: true,
@@ -213,6 +218,20 @@ PatientAdvanceSchema.index({ paidAt: -1 });
 PatientAdvanceSchema.index({ UHID: 1, paidAt: -1 });
 // R7ap-F14: dashboard hits this for "advance refunds in date range" query.
 PatientAdvanceSchema.index({ status: 1, refundedAt: -1 });
+
+// R7bf-I / A7-HIGH-13 — Advance state-machine guard.
+// The existing enum already constrains the field to the 5 known values
+// (ACTIVE, PARTIALLY_APPLIED, FULLY_APPLIED, REFUNDED, CANCELLED). The
+// state-auto-update hook above flips ACTIVE ↔ PARTIALLY_APPLIED ↔
+// FULLY_APPLIED based on `appliedAmount`, so the registry only fires
+// when a route handler explicitly mutates `status` (refund, cancel).
+// What we lock down here:
+//   • REFUNDED is terminal — no jump back to ACTIVE / *_APPLIED
+//     (would silently re-credit money already returned to the patient).
+//   • CANCELLED is terminal — same reasoning.
+//   • FULLY_APPLIED → REFUNDED only (refund-of-refund flow, audited).
+const { attachStatusGuard: _paGuard } = require("../../utils/statusTransitionGuard");
+_paGuard(PatientAdvanceSchema, { modelName: "PatientAdvance", field: "status" });
 
 module.exports =
   mongoose.models.PatientAdvance ||

@@ -80,6 +80,17 @@ function istStartOfDayPlus(days, now = new Date()) {
 }
 
 /**
+ * R7bf-H A6-HIGH-1: end-of-today IST boundary. Use in [start, end] range
+ * filters where the upper bound is the last instant of today in hospital
+ * timezone. Returns exclusive end (start of tomorrow in IST), which is the
+ * conventional half-open form for `$lt`. For `$lte`-style filters subtract
+ * 1ms or use `istStartOfDayPlus(0)` + custom math.
+ */
+function istEndOfToday(now = new Date()) {
+  return istStartOfDayPlus(1, now);
+}
+
+/**
  * R7ar-P1-9/D3-aq-05/D3-aq-06: parse a hospital-date query param.
  * Returns `null` for missing, throws for malformed input. Use to reject
  * `?from=abc` before it becomes `new Date("abc") = Invalid Date` which
@@ -136,6 +147,7 @@ module.exports = {
   validateObjectIdParam,
   istStartOfToday,
   istStartOfDayPlus,
+  istEndOfToday,            // R7bf-H A6-HIGH-1
   parseHospitalDate,        // R7ar-P1-9
   parseHospitalDateRange,   // R7ar-P1-9
 };

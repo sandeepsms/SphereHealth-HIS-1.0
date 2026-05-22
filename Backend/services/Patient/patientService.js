@@ -223,31 +223,77 @@ class PatientService {
   /* ══════════════════════════════════════════════
      SEARCH
   ══════════════════════════════════════════════ */
-  async searchPatients(searchTerm, limit = 10) {
+  async searchPatients(searchTerm, limit = 50) {
     if (!searchTerm || searchTerm.trim().length < 2) return [];
     const trimmed = searchTerm.trim();
-    // Escape regex meta-chars (same fix as getAllPatients) — phone searches
-    // like "+91…" or "(98)…" would otherwise throw "Invalid regular
-    // expression" and 500 the live patient-search bar.
+    const lim = Math.min(parseInt(limit) || 50, 50); // R7bf-J/A8-CRIT-1: hard cap
+    // R7bf-J/A8-CRIT-1: use the Mongo text index for fuzzy general search,
+    // falling back to exact-prefix lookups when the input looks like a
+    // phone/UHID/patient-id (text index doesn't tokenise digit sequences
+    // mid-string). Pre-R7bf this was a 5-way regex-OR COLLSCAN at 30k+
+    // patients (p95 8.4s). Now: index-backed and bounded by .limit(50).
     const esc = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const SELECT =
+      "fullName title UHID contactNumber email gender dateOfBirth maritalStatus department doctor completeAddress knownAllergies tpa companionName companionRelationship companionContact hasAppointment appointmentDate appointmentTime registrationType bloodGroup address totalOPDVisits totalEmergencyVisits totalIPDVisits totalDaycareVisits totalServicesVisits lastVisitDate";
+
+    const looksLikePhone   = /^[+0-9()\s-]{3,}$/.test(trimmed);
+    const looksLikeUHID    = /^UH\d/i.test(trimmed) || /^uh/i.test(trimmed);
+    const looksLikeIdToken = /^(opd|emg|ipd|day|svc)[-\s]?\d/i.test(trimmed);
+
+    // Exact-shape path: phone, UHID, patientId. These are highly selective
+    // (each has its own dedicated index) and reach via .find with a regex
+    // anchored at the start where possible.
+    if (looksLikePhone || looksLikeUHID || looksLikeIdToken) {
+      const or = [];
+      if (looksLikePhone)   or.push({ contactNumber: { $regex: esc } });
+      if (looksLikeUHID)    or.push({ UHID:          { $regex: `^${esc}`, $options: "i" } });
+      if (looksLikeIdToken) or.push({ patientId:     { $regex: `^${esc}`, $options: "i" } });
+      return Patient.find({ isActive: true, $or: or })
+        .populate("department", "departmentName")
+        .populate("doctor", "personalInfo")
+        .populate("tpa", "tpaName")
+        .select(SELECT)
+        .limit(lim)
+        .lean();
+    }
+
+    // General fuzzy path — Mongo $text. Use lean() and the score for sort
+    // so the most relevant hit (UHID/mobile match → highest weight) wins.
+    try {
+      const rows = await Patient.find(
+        { isActive: true, $text: { $search: trimmed } },
+        { score: { $meta: "textScore" } },
+      )
+        .populate("department", "departmentName")
+        .populate("doctor", "personalInfo")
+        .populate("tpa", "tpaName")
+        .select(SELECT)
+        .sort({ score: { $meta: "textScore" } })
+        .limit(lim)
+        .lean();
+      if (rows.length > 0) return rows;
+    } catch (_) {
+      // text index might not be built yet on a freshly-migrated DB —
+      // fall through to the safe regex path below.
+    }
+
+    // Last-resort fallback (e.g. text index missing, single-char token):
+    // narrow regex to ONLY fullName/email which are most useful for free
+    // text and skip the expensive 5-way OR scan.
     return Patient.find({
       isActive: true,
       $or: [
         { fullName: { $regex: esc, $options: "i" } },
-        { UHID: { $regex: esc, $options: "i" } },
-        { contactNumber: { $regex: esc, $options: "i" } },
-        { patientId: { $regex: esc, $options: "i" } },
-        { email: { $regex: esc, $options: "i" } },
+        { email:    { $regex: esc, $options: "i" } },
       ],
     })
       .populate("department", "departmentName")
       .populate("doctor", "personalInfo")
       .populate("tpa", "tpaName")
-      .select(
-        "fullName title UHID contactNumber email gender dateOfBirth maritalStatus department doctor completeAddress knownAllergies tpa companionName companionRelationship companionContact hasAppointment appointmentDate appointmentTime registrationType bloodGroup address totalOPDVisits totalEmergencyVisits totalIPDVisits totalDaycareVisits totalServicesVisits lastVisitDate",
-      )
+      .select(SELECT)
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit));
+      .limit(lim)
+      .lean();
   }
 
   /* ══════════════════════════════════════════════

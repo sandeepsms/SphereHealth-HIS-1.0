@@ -255,35 +255,59 @@ const OPDPrescription = ({ settings, receipt = {} }) => {
           }}>R<small style={{ fontSize: 10, marginLeft: -3 }}>x</small></span>
           Prescription
         </div>
+        {/* R7bf-F / A4-HIGH-3: explicit Meal Status column.
+            Pre-R7bf the field was concatenated into Instructions
+            ("After food · Route: Oral · ..."), making it easy for the
+            patient to miss. Now each med shows its own pill-coloured
+            Before food / After food / With food / Bedtime cell. */}
         <table className="pr-table" style={{ marginTop: 6 }}>
           <thead>
             <tr>
               <th style={{ width: 30 }}>#</th>
               <th>Medication</th>
-              <th style={{ width: 100 }}>Dose / Form</th>
-              <th className="center" style={{ width: 110 }}>Frequency</th>
-              <th className="center" style={{ width: 90 }}>Duration</th>
-              <th style={{ width: 180 }}>Instructions</th>
+              <th style={{ width: 90 }}>Dose / Form</th>
+              <th className="center" style={{ width: 100 }}>Frequency</th>
+              <th className="center" style={{ width: 90 }}>Meal Status</th>
+              <th className="center" style={{ width: 80 }}>Duration</th>
+              <th style={{ width: 160 }}>Instructions</th>
             </tr>
           </thead>
           <tbody>
             {drugs.length === 0 ? (
-              <tr><td colSpan={6} className="muted center" style={{ padding: 20, fontStyle: "italic" }}>
+              <tr><td colSpan={7} className="muted center" style={{ padding: 20, fontStyle: "italic" }}>
                 No medications prescribed.
               </td></tr>
-            ) : drugs.map((d, i) => (
-              <tr key={i}>
-                <td>{i + 1}</td>
-                <td>
-                  <div style={{ fontWeight: 700 }}>{d.name || d.drug || "—"}</div>
-                  {d.generic && <div className="muted" style={{ fontSize: 10 }}>({d.generic})</div>}
-                </td>
-                <td>{d.dose || d.strength || "—"}</td>
-                <td className="center">{d.frequency || d.freq || "—"}</td>
-                <td className="center">{d.duration || "—"}</td>
-                <td>{d.instructions || d.notes || ""}</td>
-              </tr>
-            ))}
+            ) : drugs.map((d, i) => {
+              const ms = d.mealStatus || d.meal || "";
+              const msTone = /before/i.test(ms) ? { bg: "#fef3c7", fg: "#92400e" }
+                : /after/i.test(ms)  ? { bg: "#dcfce7", fg: "#15803d" }
+                : /with/i.test(ms)   ? { bg: "#dbeafe", fg: "#1d4ed8" }
+                : /bed/i.test(ms)    ? { bg: "#ede9fe", fg: "#6d28d9" }
+                : null;
+              return (
+                <tr key={i}>
+                  <td>{i + 1}</td>
+                  <td>
+                    <div style={{ fontWeight: 700 }}>{d.name || d.drug || "—"}</div>
+                    {d.generic && <div className="muted" style={{ fontSize: 10 }}>({d.generic})</div>}
+                  </td>
+                  <td>{d.dose || d.strength || "—"}</td>
+                  <td className="center">{d.frequency || d.freq || "—"}</td>
+                  <td className="center">
+                    {ms ? (
+                      <span style={{
+                        background: msTone?.bg || "#f1f5f9",
+                        color:      msTone?.fg || "#475569",
+                        padding: "1px 7px", borderRadius: 8,
+                        fontSize: 10, fontWeight: 700, letterSpacing: ".2px",
+                      }}>{ms}</span>
+                    ) : "—"}
+                  </td>
+                  <td className="center">{d.duration || "—"}</td>
+                  <td>{d.instructions || d.notes || ""}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

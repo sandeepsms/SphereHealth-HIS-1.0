@@ -512,6 +512,11 @@ exports.dispense = async (req, res) => {
       createdById: req.user?._id || null,
       remarks: remarks || "",
     });
+    // R7bf-H A6-HIGH-2: bust pharmacy revenue trend cache so the chart
+    // doesn't lag the dashboard by up to 24h after a bulk sale.
+    try {
+      require("../Reports/dashboardsController").invalidatePharmacyTrendCache?.();
+    } catch (_) { /* best-effort */ }
     res.json({ success: true, data: sale });
     } catch (consumeErr) {
       // Cross-item rollback (business audit F-03): if any item or the

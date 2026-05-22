@@ -4,15 +4,21 @@
 
 import React from "react";
 import PrintShell from "../PrintShell";
-import { fmtINR, amountInWords } from "../amountWords";
+import { fmtINR } from "../amountWords";
+import { numberToIndianWords, toNum } from "../../../utils/printUtils";
 
 const AdvanceReceipt = ({ settings, receipt = {} }) => {
-  const amount = Number(receipt.amount) || 0;
+  const amount = toNum(receipt.amount);
+  const printCount = toNum(receipt.printCount);
   return (
     <PrintShell
       settings={settings}
-      documentTitle="Advance / Deposit Receipt"
+      // R7bf-F / A4-HIGH-4: title was "Tax Invoice" pre-R7bf because
+      // the advance template inherited bill chrome. Explicit override
+      // so customers can tell apart a deposit slip from a tax invoice.
+      documentTitle="Advance Receipt"
       serialNo={receipt.receiptNo}
+      printCount={printCount}
       infoItems={[
         { label: "Patient",    value: receipt.patientName },
         { label: "UHID",       value: receipt.uhid },
@@ -54,7 +60,7 @@ const AdvanceReceipt = ({ settings, receipt = {} }) => {
       </div>
 
       <div className="pr-amount-words">
-        <strong>In words:</strong> {amountInWords(amount)}
+        <strong>In words:</strong> {numberToIndianWords(amount)}
       </div>
 
       <div className="pr-section">
@@ -73,7 +79,7 @@ const AdvanceReceipt = ({ settings, receipt = {} }) => {
           <div className="pr-section__title">Estimated Total Cost</div>
           <div className="pr-section__body" style={{ display: "flex", justifyContent: "space-between", maxWidth: 360 }}>
             <span>Estimated package / treatment cost</span>
-            <strong style={{ color: "#713f12" }}>{fmtINR(receipt.estimatedCost)}</strong>
+            <strong style={{ color: "#713f12" }}>{fmtINR(toNum(receipt.estimatedCost))}</strong>
           </div>
           <div className="pr-section__body" style={{ display: "flex", justifyContent: "space-between", maxWidth: 360 }}>
             <span>Less: Advance received today</span>
@@ -85,7 +91,7 @@ const AdvanceReceipt = ({ settings, receipt = {} }) => {
             fontWeight: 800,
           }}>
             <span>Estimated Balance</span>
-            <strong>{fmtINR(Math.max(0, Number(receipt.estimatedCost) - amount))}</strong>
+            <strong>{fmtINR(Math.max(0, toNum(receipt.estimatedCost) - amount))}</strong>
           </div>
         </div>
       )}

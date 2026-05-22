@@ -341,53 +341,48 @@ const AdmissionSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-// State-machine guard: enforce legal status transitions. Without this any
-// caller can flip status from a terminal state back to Active (silently
-// reopening a Discharged or Cancelled admission), or skip the discharge
-// workflow entirely.
-//   ──> Active is the only non-terminal state.
-//   ──> Discharged / Cancelled are TERMINAL — no exit.
-//   ──> Transferred can return to Active (resumed care on a new bed).
-const LEGAL_STATUS_TRANSITIONS = {
-  // R7bd-A-2 / A1-CRIT-2 / R7bd-A-13: Active → Deleted is allowed
-  // (soft-delete via admissionService.deleteAdmission with force flag).
-  // Discharged → Active is intentionally NOT here — same-day reactivation
-  // goes through controller.reactivate which uses an atomic
-  // findOneAndUpdate so it bypasses pre("save"); that path now calls the
-  // shared _validateStatusTransition helper before issuing the update.
-  Active:      new Set(["Active", "Discharged", "Transferred", "Cancelled", "Deleted"]),
-  Transferred: new Set(["Transferred", "Active", "Discharged", "Cancelled", "Deleted"]),
-  Discharged:  new Set(["Discharged"]),
-  Cancelled:   new Set(["Cancelled"]),
-  Deleted:     new Set(["Deleted"]),
-};
-// R7bd-A-13 — exported so controller paths that mutate status via
-// findOneAndUpdate (which bypasses pre("save")) can validate transitions
-// themselves before issuing the update. Pre-R7bd `reactivate` made the
-// jump Discharged → Active without consulting this table.
+// State-machine guard: delegate to shared registry (R7bf-I / R7bd-D-9
+// META reship). Pre-R7bf this model rolled its own LEGAL_STATUS_TRANSITIONS
+// table; the registry now lives at utils/statusTransitionGuard.js and the
+// matrix here is the source of truth for the Admission collection.
+//
+// Backward compat: `validateStatusTransition(from, to)` is still exported
+// as a function returning a string-or-null (legacy controller paths that
+// mutate status via findOneAndUpdate use this). It's now a thin wrapper
+// around the shared assertTransition().
+//
+// Force-bypass: callers can set doc.__forceTransition + doc.__forceAdminUserId
+// on the in-memory doc before save() to bypass; the soft-delete path
+// (admissionService.deleteAdmission) already does this.
+const { assertTransition: _admAssert, LEGAL_TRANSITIONS: _LT } = require("../../utils/statusTransitionGuard");
+
+// Legacy shape — Set-of-allowed-targets per state, including self-loop.
+const LEGAL_STATUS_TRANSITIONS = Object.fromEntries(
+  Object.entries(_LT.Admission || {}).map(([from, list]) => [from, new Set([from, ...list])]),
+);
+
 function validateStatusTransition(from, to) {
   if (!from || from === to) return null; // no-op move always allowed
-  const allowed = LEGAL_STATUS_TRANSITIONS[from];
-  if (!allowed || allowed.has(to)) return null;
-  return `Illegal admission status transition: ${from} → ${to}. From "${from}", allowed states are: ${[...allowed].join(", ")}.`;
+  try {
+    _admAssert("Admission", from, to);
+    return null;
+  } catch (e) {
+    return e.message;
+  }
 }
+
 AdmissionSchema.pre("save", function (next) {
   if (this.isNew) return next();
   if (!this.isModified("status")) return next();
   const prev = this.$__.originalStatus;
-  // We stored the original status in post('init'); if missing (manual
-  // construct), skip the check — there's no baseline to compare to.
   if (!prev) return next();
-  const allowed = LEGAL_STATUS_TRANSITIONS[prev];
-  if (allowed && !allowed.has(this.status)) {
-    return next(
-      new Error(
-        `Illegal admission status transition: ${prev} → ${this.status}. ` +
-          `From "${prev}", allowed states are: ${[...allowed].join(", ")}.`,
-      ),
-    );
-  }
-  next();
+  try {
+    _admAssert("Admission", prev, this.status, {
+      force: !!this.__forceTransition,
+      adminUserId: this.__forceAdminUserId || null,
+    });
+    next();
+  } catch (e) { next(e); }
 });
 AdmissionSchema.post("init", function () {
   // Snapshot the loaded status so pre('save') can detect mutations.

@@ -480,13 +480,28 @@ exports.getRevenueBreakdown = async (req, res, next) => {
       { $addFields: {
           _paid:  { $toDouble: { $ifNull: ["$advancePaid", { $ifNull: ["$totalPaid", { $ifNull: ["$amountPaid", 0] }] }] } },
           _gross: { $toDouble: { $ifNull: ["$netAmount",   { $ifNull: ["$netPayable", { $ifNull: ["$grossAmount", { $ifNull: ["$totalAmount", 0] }] }] }] } },
+          // R7bf-H A6-CRIT-8: pull bill-level totals so byCategory.discount /
+          // .gst can be distributed using the largest-remainder method
+          // (so sum(byCategory.discount) === sum(totalDiscount) exactly).
+          _disc:  { $toDouble: { $ifNull: ["$totalDiscount", 0] } },
+          _tax:   { $toDouble: { $ifNull: ["$totalTaxAmount", { $ifNull: ["$totalGst", 0] }] } },
       } },
       { $facet: {
           // ── Top-level totals + visit-type + payer cuts ────────────
           // All three share the same per-bill row, so one $group each
           // is cheaper than $unwinding.
           totals: [
-            { $group: { _id: null, paid: { $sum: "$_paid" }, gross: { $sum: "$_gross" }, count: { $sum: 1 } } },
+            // R7bf-H A6-CRIT-8: include totalDiscount + totalGst so the
+            // grand totals match the sum of byCategory.discount / .gst
+            // after largest-remainder distribution in JS.
+            { $group: {
+                _id: null,
+                paid:     { $sum: "$_paid" },
+                gross:    { $sum: "$_gross" },
+                discount: { $sum: "$_disc" },
+                gst:      { $sum: "$_tax" },
+                count:    { $sum: 1 },
+            } },
           ],
           byVisitType: [
             { $group: {
@@ -585,12 +600,32 @@ exports.getRevenueBreakdown = async (req, res, next) => {
       });
 
     const facet = agg[0] || { totals: [], byVisitType: [], byPayer: [], byDepartment: [], byCategory: [] };
-    const t = facet.totals[0] || { paid: 0, gross: 0, count: 0 };
+    const t = facet.totals[0] || { paid: 0, gross: 0, discount: 0, gst: 0, count: 0 };
     const shape = (rows, keyName) => rows.map((r) => ({
       [keyName]: (r._id || "Other").toString(),
       count: r.count,
       paid:  toNum(r.paid),
       gross: toNum(r.gross),
+    }));
+
+    // R7bf-H A6-CRIT-8: distribute the bill-level totalDiscount + totalGst
+    // across byCategory rows using the largest-remainder method. Pre-R7bf
+    // the report rounded each category's share independently — sum
+    // disagreed with the bill total by ₹0.01-0.50 per bill. The
+    // largest-remainder method guarantees sum(byCategory.discount) ===
+    // totalDiscount exactly.
+    const billingMath = require("../../services/Billing/billingMath");
+    const catRows = shape(facet.byCategory, "category");
+    const weights = {};
+    for (const r of catRows) weights[r.category] = r.gross;
+    const totalDiscount = toNum(t.discount);
+    const totalGst      = toNum(t.gst);
+    const discMap = billingMath.distributeDiscount(weights, totalDiscount);
+    const gstMap  = billingMath.distributeGst(weights, totalGst);
+    const byCategory = catRows.map((r) => ({
+      ...r,
+      discount: discMap[r.category] || 0,
+      gst:      gstMap[r.category]  || 0,
     }));
 
       return {
@@ -602,10 +637,12 @@ exports.getRevenueBreakdown = async (req, res, next) => {
         totals: {
           paid:        toNum(t.paid),
           gross:       toNum(t.gross),
+          discount:    totalDiscount,        // R7bf-H A6-CRIT-8
+          gst:         totalGst,              // R7bf-H A6-CRIT-8
           outstanding: toNum(t.gross) - toNum(t.paid),
           count:       t.count,
         },
-        byCategory:   shape(facet.byCategory,   "category"),
+        byCategory,
         byVisitType:  shape(facet.byVisitType,  "visitType"),
         byPayer:      shape(facet.byPayer,      "payer"),
         byDepartment: shape(facet.byDepartment, "department"),
@@ -806,10 +843,11 @@ exports.getAging = async (req, res, next) => {
 
 // ── GET /api/billing  — paginated bills list (Accountant/Admin) ─
 // Filters: status, visitType, paymentType, UHID, billNumber, startDate, endDate
+// R7bf-H A6-CRIT-4: from/to aliases honoured so RefundsTab's date filter works.
 exports.listBills = async (req, res) => {
   try {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
-    const { page = 1, limit = 50, status, visitType, paymentType, UHID, billNumber, patientName, startDate, endDate } = req.query;
+    const { page = 1, limit = 50, status, visitType, paymentType, UHID, billNumber, patientName, startDate, endDate, from, to } = req.query;
     const query = {};
     // Enum values on the model are upper-case (DRAFT/GENERATED/PAID/etc.);
     // accept lower-case from the frontend dropdown and normalize.
@@ -822,10 +860,15 @@ exports.listBills = async (req, res) => {
     if (UHID)         query.UHID        = safeRegex(UHID);
     if (billNumber)   query.billNumber  = safeRegex(billNumber);
     if (patientName)  query.patientName = safeRegex(patientName);
-    if (startDate || endDate) {
+    // R7bf-H A6-CRIT-4: accept from/to aliases. RefundsTab posts ?from=&to=
+    // but the legacy code only read startDate/endDate so date filter was
+    // silently dropped — all-time refunds came back regardless of picker.
+    const startStr = startDate || from;
+    const endStr   = endDate   || to;
+    if (startStr || endStr) {
       query.billDate = {};
-      if (startDate) query.billDate.$gte = new Date(startDate);
-      if (endDate)   query.billDate.$lte = new Date(endDate);
+      if (startStr) query.billDate.$gte = new Date(startStr);
+      if (endStr)   query.billDate.$lte = new Date(endStr);
     }
     const skip = (Math.max(1, Number(page)) - 1) * Math.max(1, Number(limit));
     const [bills, total] = await Promise.all([
@@ -1098,13 +1141,32 @@ exports.getTPACases = async (req, res, next) => {
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
     const { safeRegex } = require("../../utils/queryGuards");
     const { decimalToNumber } = require("../../utils/money");
-    // R7ap-D3-08: gate on active states only so DRAFT/CANCELLED/REFUNDED
-    // bills don't pollute the TPA receivables count + outstanding total.
+    // R7bf-I / A6-CRIT-3 — exclude PAID + CANCELLED + REFUNDED from the
+    // "outstanding TPA cases" dashboard. Pre-R7bf the GENERATED/PARTIAL/PAID
+    // filter included PAID — for hospitals with rolling TPA settlements
+    // (the common case), the dashboard inflated the receivables count 10×
+    // because every already-paid claim of the last 90 days kept showing
+    // up. The TPA-cases tab is specifically for "claims I still need to
+    // chase money on" — once the UTR has hit, the claim is no longer
+    // outstanding. To see PAID claims, callers pass an explicit
+    // ?status= filter or use the /reports/tpa-settlement endpoint.
+    //
+    // Note: PAID bills can still be re-surfaced when an explicit
+    // ?status=APPROVED query asks for the approved-not-yet-settled view
+    // (since APPROVED bills with PAID flag exist when the patient
+    // co-paid before the TPA wired in). We honour the explicit override.
+    const explicitStatus = req.query.status;
     const filter = {
       paymentType: { $in: ["TPA", "CORPORATE"] },
-      billStatus:  { $in: ["GENERATED", "PARTIAL", "PAID"] },
+      billStatus:  { $nin: ["DRAFT", "PAID", "CANCELLED", "REFUNDED"] },
     };
-    if (req.query.status) filter.tpaClaimStatus = req.query.status;
+    if (explicitStatus) {
+      // Caller asked for a specific tpaClaimStatus — relax the billStatus
+      // filter so APPROVED-and-already-PAID claims surface when explicitly
+      // requested (audit / reconciliation use case).
+      filter.tpaClaimStatus = explicitStatus;
+      filter.billStatus = { $nin: ["DRAFT", "CANCELLED", "REFUNDED"] };
+    }
     // R7ap-D3-11: escape user-supplied regex to prevent ReDoS / dump-all.
     if (req.query.q) {
       const q = safeRegex(req.query.q);
@@ -1206,11 +1268,21 @@ exports.tpaApprove = async (req, res, next) => {
     const bill = await PatientBill.findById(req.params.billId);
     if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
 
-    const ALLOWED_FROM = ["SUBMITTED", "PENDING", "PARTIAL_APPROVED", "APPROVED"];
+    // R7bf-I / A7-CRIT-1 — tighten the allowed-from set. Pre-R7bf
+    // PENDING was treated like SUBMITTED, so a TPA Coordinator could
+    // approve a claim that was never actually submitted (skipping the
+    // pre-auth gate). PENDING is the post-create initial state; the
+    // claim MUST transition through SUBMITTED first via /tpa-preauth-submit.
+    // PARTIAL_APPROVED + APPROVED are kept (idempotent re-approval +
+    // top-up). REJECTED is intentionally NOT here — a rejected claim
+    // must be re-submitted (and the maker-checker actor clock resets).
+    const ALLOWED_FROM = ["SUBMITTED", "PARTIAL_APPROVED", "APPROVED"];
     if (!ALLOWED_FROM.includes(bill.tpaClaimStatus)) {
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
-        message: `Cannot approve — claim is in '${bill.tpaClaimStatus}' state (must be SUBMITTED / PENDING / PARTIAL_APPROVED).`,
+        code:    "ILLEGAL_TRANSITION",
+        message: `Cannot approve — claim is in '${bill.tpaClaimStatus}' state. ` +
+                 `Must first transition through SUBMITTED via /tpa-preauth-submit.`,
       });
     }
     if (bill.paymentType !== "TPA" && bill.paymentType !== "CORPORATE") {
@@ -1597,10 +1669,23 @@ exports.tpaSettle = async (req, res, next) => {
         const err = new Error("Bill not found"); err.status = 404; throw err;
       }
 
-      const ALLOWED = ["APPROVED", "PARTIAL_APPROVED", "SUBMITTED"];
+      // R7bf-I / A7-CRIT-2 — drop SUBMITTED from the settle-allowed set.
+      // Pre-R7bf a TPA Coordinator could settle a claim that the TPA
+      // desk had NOT yet approved — major financial integrity hole:
+      // money lands on the bill (TPA_CLAIM payment row) before the
+      // approval-amount gate runs, so any settled-amount mismatch
+      // could only be spotted post-hoc. Now the claim MUST be APPROVED
+      // (or PARTIAL_APPROVED for partial-claim top-ups) before settle.
+      const ALLOWED = ["APPROVED", "PARTIAL_APPROVED"];
       if (!ALLOWED.includes(bill.tpaClaimStatus)) {
-        const err = new Error(`Cannot settle — claim is in '${bill.tpaClaimStatus}' state (must be APPROVED / PARTIAL_APPROVED / SUBMITTED).`);
-        err.status = 400; throw err;
+        const err = new Error(
+          `Cannot settle — claim is in '${bill.tpaClaimStatus}' state. ` +
+          `Must be APPROVED or PARTIAL_APPROVED. Approve via /tpa-approve first.`,
+        );
+        err.code = "ILLEGAL_TRANSITION";
+        err.status = 409;
+        err.statusCode = 409;
+        throw err;
       }
       if (!["TPA", "CORPORATE"].includes(bill.paymentType)) {
         const err = new Error("Settle is only valid for TPA / Corporate bills");

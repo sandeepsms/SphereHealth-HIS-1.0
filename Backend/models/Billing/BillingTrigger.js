@@ -167,5 +167,11 @@ BillingTriggerSchema.index({ admissionId: 1, sourceType: 1, createdAt: -1 });
 // The IPD ledger page hits this on every load to find stuck triggers.
 BillingTriggerSchema.index({ status: 1, createdAt: -1 });
 BillingTriggerSchema.index({ admissionId: 1, status: 1, createdAt: -1 });
+// R7bf-J/A8-HIGH-1: compound index for IPDLedger's unfiltered audit-trail
+// read (no status, no sourceType — just admissionId + sort). Pre-R7bf
+// this fell back to the {admissionId,sourceType,createdAt} index which
+// scanned all sourceTypes per admission — fine at small scale but slow
+// at long-stay-ICU cardinalities (~1k+ triggers per admission).
+BillingTriggerSchema.index({ admissionId: 1, createdAt: -1 });
 
 module.exports = mongoose.model("BillingTrigger", BillingTriggerSchema);

@@ -327,6 +327,23 @@ export const ACTIONS = {
   // page wires it yet — kept as a stub so the role has somewhere to
   // attach a future requireAction.
   "physio.note.write":         ["Admin", "Physiotherapist"],
+
+  // ── R7bf-G — NABH compliance scaffold tokens (mirror of backend) ─
+  // Sidebar + page `can(...)` checks consult these; backend has the
+  // authoritative copy. See Backend/config/permissions.js header for
+  // the role-selection rationale (no dedicated HR / Safety Officer
+  // roles today, so the nearest functional cohort owns each register).
+  "clinical.acknowledge-critical": ["Admin", "Doctor", "Nurse"],
+  "clinical.emit-critical":        ["Admin", "Doctor", "Nurse", "Lab Technician"],
+  "pharmacy.adr.write":            ["Admin", "Doctor", "Pharmacist", "Nurse"],
+  "pharmacy.adr.read":             ["Admin", "Doctor", "Pharmacist", "Nurse"],
+  "quality.grievance.write":       ["Admin", "MRD", "Receptionist"],
+  "quality.grievance.read":        ["Admin", "MRD", "Receptionist", "Doctor"],
+  "hr.credential.write":           ["Admin"],
+  "hr.credential.read":            ["Admin", "Doctor"],
+  "compliance.firedrill.write":    ["Admin", "Security"],
+  "compliance.firedrill.read":     ["Admin", "Security"],
+  "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */

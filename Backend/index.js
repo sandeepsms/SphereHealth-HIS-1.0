@@ -264,29 +264,38 @@ const _cancelGstSnapshot = scheduleDaily("gst-monthly-snapshot", 2, 0, async () 
   const CreditNote        = require("./models/Billing/CreditNote");
   const GstMonthlySnapshot = require("./models/Billing/GstMonthlySnapshot");
 
-  // Outward supply — sum from billItems (post-discount, pre-tax + tax).
-  const billsAgg = await PatientBillModel.aggregate([
+  // R7bf-H / A6-CRIT-1: outward supply now includes BOTH hospital service
+  // GST (PatientBill.billItems) AND pharmacy GST (PharmacySale.items).
+  // Pre-R7bf the snapshot under-reported by ~30-40% of turnover (the
+  // entire pharmacy slice) — every monthly GSTR-1 filed was missing
+  // pharmacy sales. The aggregateGSTForMonth helper $unionWith-merges the
+  // two streams so this cron and the live register read the same number.
+  const gst = require("./services/Reports/gstService");
+  const combined = await gst.aggregateGSTForMonth(periodStart, periodEnd);
+  // bill count is still hospital-only — GSTR-1 line 4A counts INVOICES,
+  // not items. Pharmacy invoice count tracked separately via bySource.
+  const hospitalBillsCountAgg = await PatientBillModel.aggregate([
     { $match: {
         billGeneratedAt: { $gte: periodStart, $lt: periodEnd },
         billStatus:      { $nin: ["DRAFT", "CANCELLED"] },
     } },
-    { $unwind: "$billItems" },
-    { $match: { "billItems.excludedByPackage": { $ne: true } } },
-    { $group: {
-        _id: null,
-        billsCount:   { $addToSet: "$_id" },
-        taxableValue: { $sum: "$billItems.netAmount" },   // post-disc pre-tax
-        cgst:         { $sum: "$billItems.cgstAmount" },
-        sgst:         { $sum: "$billItems.sgstAmount" },
-        igst:         { $sum: "$billItems.igstAmount" },
-    } },
-    { $project: {
-        _id: 0,
-        billsCount:   { $size: "$billsCount" },
-        taxableValue: 1, cgst: 1, sgst: 1, igst: 1,
-    } },
+    { $count: "n" },
   ]);
-  const o = billsAgg[0] || { billsCount: 0, taxableValue: 0, cgst: 0, sgst: 0, igst: 0 };
+  const PharmacySaleModel = require("./models/Pharmacy/PharmacySaleModel");
+  const pharmacyBillsCountAgg = await PharmacySaleModel.aggregate([
+    { $match: {
+        createdAt: { $gte: periodStart, $lt: periodEnd },
+        status:    { $nin: ["Cancelled"] },
+    } },
+    { $count: "n" },
+  ]);
+  const o = {
+    billsCount:      (hospitalBillsCountAgg[0]?.n || 0) + (pharmacyBillsCountAgg[0]?.n || 0),
+    taxableValue:    combined.grossTotals.taxableValue,
+    cgst:            combined.grossTotals.cgst,
+    sgst:            combined.grossTotals.sgst,
+    igst:            combined.grossTotals.igst,
+  };
 
   // R7au-FIX-6/D6-CRIT-C4: GSTR-1 CDNR attribution. A CN reverses GST
   // against the ORIGINAL bill's tax period, not the CN's own date. If
@@ -367,6 +376,19 @@ const _cancelGstSnapshot = scheduleDaily("gst-monthly-snapshot", 2, 0, async () 
         netSgst:           toNum(o.sgst) - toNum(r.sgst),
         netIgst:           toNum(o.igst) - toNum(r.igst),
         netTotalTax:       totalTaxOut - totalReversed,
+        // R7bf-H / A6-CRIT-1: persist hospital vs pharmacy split.
+        bySource: {
+          hospital: {
+            taxableValue: combined.bySource.hospital.taxableValue,
+            taxAmount:    combined.bySource.hospital.taxAmount,
+            itemCount:    combined.bySource.hospital.itemCount,
+          },
+          pharmacy: {
+            taxableValue: combined.bySource.pharmacy.taxableValue,
+            taxAmount:    combined.bySource.pharmacy.taxAmount,
+            itemCount:    combined.bySource.pharmacy.itemCount,
+          },
+        },
         generatedAt:       new Date(),
       },
     },
@@ -441,10 +463,21 @@ const _cancelEodDaybook = scheduleDaily("eod-day-book", 23, 55, async () => {
 
 // F31 — Advance pool reconciliation (00:15 IST). Sum advances + applied +
 // refunded across all UHIDs and check the invariant `applied+refunded≤amount`.
+//
+// R7bf-J/A8-CRIT-3: cursor-based iteration. Pre-R7bf this loaded EVERY
+// PatientAdvance into memory at once — at 5 k advances × 12 audit
+// versions/row it spiked RSS to ~800 MB at 02:00 IST and OOM-killed the
+// process. Now we stream via .cursor({ batchSize: 200 }) so the working
+// set stays bounded regardless of collection size.
 const _cancelAdvanceRecon = scheduleDaily("advance-pool-recon", 0, 15, async () => {
-  const all = await PatientAdvanceModel.find({}).select("amount appliedAmount refundedAmount status UHID").lean();
-  let violations = 0; let total = 0; let applied = 0; let refunded = 0; let unspent = 0;
-  for (const a of all) {
+  let rows = 0, violations = 0, total = 0, applied = 0, refunded = 0, unspent = 0;
+  const cursor = PatientAdvanceModel
+    .find({})
+    .select("amount appliedAmount refundedAmount status UHID")
+    .lean()
+    .cursor({ batchSize: 200 });
+  for await (const a of cursor) {
+    rows += 1;
     const amt = toNum(a.amount), app = toNum(a.appliedAmount), ref = toNum(a.refundedAmount);
     total += amt; applied += app; refunded += ref; unspent += Math.max(0, amt - app - ref);
     if (app + ref > amt + 0.005) {
@@ -452,7 +485,7 @@ const _cancelAdvanceRecon = scheduleDaily("advance-pool-recon", 0, 15, async () 
       console.warn(`[advance-pool-recon] VIOLATION: UHID=${a.UHID} amt=${amt} applied=${app} refunded=${ref}`);
     }
   }
-  return { rows: all.length, total, applied, refunded, unspent, violations };
+  return { rows, total, applied, refunded, unspent, violations };
 });
 
 // R7ar-P1-22/D10-aq-02: F32 EOD shift-auto-close compute REAL cash flow
@@ -715,6 +748,60 @@ const _cancelReorderNotifier = scheduleDaily("reorder-notifier", 8, 0, async () 
   }
 });
 
+// ── R7bf-G — NABH compliance crons (A5-CRIT-1 + A5-CRIT-6) ─────
+//
+// Two new background workers ship with this cycle:
+//   • critical-value-alert escalator — every 5 min IST. Walks OPEN
+//     CriticalValueAlert rows whose age has crossed slaMinutes and
+//     flips them to ESCALATED so the on-duty team's UI bell flags
+//     the breach. Uses setInterval + the existing Mongo distributed
+//     lock (`cron:cv-alert-escalate`) so a multi-replica deploy
+//     doesn't double-fire. NOT IST-anchored (5-min cadence drifts
+//     trivially); lock TTL is 4 min so a peer can pick up promptly
+//     if the holder dies.
+//
+//   • expire-credentials — daily at 02:00 IST. Flips any VERIFIED
+//     Credential whose expiryDate has passed to EXPIRED. Idempotent
+//     bulk updateMany — safe to re-run.
+const _CRIT_ALERT_LOCK = "cron:cv-alert-escalate";
+let _cvAlertInterval = null;
+try {
+  const criticalValueAlerter = require("./services/Notification/criticalValueAlerter");
+  // First tick fires 2 min after boot to give the rest of the harness
+  // time to settle; then every 5 min on the dot. Lock TTL 4 min — short
+  // enough that a crashed holder doesn't block the next tick for long.
+  _cvAlertInterval = setInterval(async () => {
+    let acquired = false;
+    try {
+      acquired = await acquireLock(_CRIT_ALERT_LOCK, 4 * 60);
+      if (!acquired) return;
+      const r = await criticalValueAlerter.escalateOverdue();
+      if (r && (r.escalated || 0) > 0) {
+        console.log(`[cron:cv-alert-escalate] escalated ${r.escalated}/${r.scanned} open alerts`);
+      }
+    } catch (e) {
+      console.error("[cron:cv-alert-escalate] error:", e.stack || e.message);
+    } finally {
+      if (acquired) { try { await releaseLock(_CRIT_ALERT_LOCK); } catch (_) {} }
+    }
+  }, 5 * 60_000);
+  // Don't keep the event loop alive purely for this timer.
+  if (typeof _cvAlertInterval.unref === "function") _cvAlertInterval.unref();
+} catch (e) {
+  console.error("[cron:cv-alert-escalate] failed to register:", e.message);
+}
+
+const _cancelExpireCredentials = scheduleDaily("expire-credentials", 2, 0, async () => {
+  try {
+    const ctrl = require("./controllers/HR/credentialController");
+    const r = await ctrl.expireCredentials();
+    return r;
+  } catch (e) {
+    console.error("[cron:expire-credentials] error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
 // Keep a reference name for the graceful-shutdown handler below.
 const _autoBillingInterval = {
   _cancel: () => {
@@ -726,6 +813,8 @@ const _autoBillingInterval = {
     _cancelAuditArchive();           // R7ar-P1-20
     _cancelStuckTrigger();           // R7ar-P2-37
     _cancelReorderNotifier();        // R7bd-E-3
+    _cancelExpireCredentials();      // R7bf-G / A5-CRIT-6
+    if (_cvAlertInterval) clearInterval(_cvAlertInterval); // R7bf-G / A5-CRIT-1
   },
 };
 

@@ -427,6 +427,44 @@ const ACTIONS = {
   // to attach a `requireAction(...)`.
   "physio.note.write":         ["Admin", "Physiotherapist"],
 
+  // ── R7bf-G — NABH compliance scaffolds (A5 CRIT subset) ─────────
+  // Five new register surfaces. Role sets chosen against the user
+  // enum (no dedicated "HR" / "Charge Nurse" / "Safety Officer" roles
+  // exist today, so Admin + nearest functional cohort handles each):
+  //
+  //   clinical.acknowledge-critical / clinical.emit-critical —
+  //       AAC.6 critical-value alert. Acknowledge restricted to
+  //       bedside clinicians; emit broader so Lab Tech can fire
+  //       an alert when a flagged result lands.
+  //   pharmacy.adr.write / pharmacy.adr.read — MOM.7 adverse-drug
+  //       reaction register. Pharmacist + Doctor + Nurse + Admin
+  //       file reports; the same cohort reads (plus Pharmacist for
+  //       cross-checking against drug master).
+  //   quality.grievance.write / quality.grievance.read — PRE.6
+  //       grievance redressal. Reception + MRD raise + drive;
+  //       Doctor reads (clinical complaints are treatment-relevant).
+  //   hr.credential.write / hr.credential.read — HRD.3 staff
+  //       credentialing. Admin owns the register today (no formal
+  //       HR role); Doctor reads so they can audit their own row.
+  //   compliance.firedrill.write / compliance.firedrill.read —
+  //       FMS.4 fire-drill register. Admin + Security cohort owns
+  //       the drill log (no formal Safety Officer role).
+  //
+  // print.audit.write — Agent F's PrintAudit token, filed here so
+  // every reprint endpoint can `requireAction("print.audit.write")`.
+  // Mirrored to Frontend/src/config/permissions.js.
+  "clinical.acknowledge-critical": ["Admin", "Doctor", "Nurse"],
+  "clinical.emit-critical":        ["Admin", "Doctor", "Nurse", "Lab Technician"],
+  "pharmacy.adr.write":            ["Admin", "Doctor", "Pharmacist", "Nurse"],
+  "pharmacy.adr.read":             ["Admin", "Doctor", "Pharmacist", "Nurse"],
+  "quality.grievance.write":       ["Admin", "MRD", "Receptionist"],
+  "quality.grievance.read":        ["Admin", "MRD", "Receptionist", "Doctor"],
+  "hr.credential.write":           ["Admin"],
+  "hr.credential.read":            ["Admin", "Doctor"],
+  "compliance.firedrill.write":    ["Admin", "Security"],
+  "compliance.firedrill.read":     ["Admin", "Security"],
+  "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
+
   // ── R7bb-FIX-C-13 — DEAD-ACTION CANDIDATES ────────────────────────
   // Sweep below catalogues tokens that no Backend/routes/**/*.js
   // currently consults via requireAction(...). The Frontend `can()`

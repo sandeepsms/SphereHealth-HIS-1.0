@@ -211,6 +211,21 @@ MLCReportSchema.index({ doctorId: 1, mlrSeq: 1 });
 MLCReportSchema.index({ status: 1, createdAt: -1 });
 MLCReportSchema.index({ UHID: 1, createdAt: -1 });
 
+// R7bf-I / A7-CRIT-3 — MLC state-machine guard.
+// MLCs are medico-legal documents: a Closed report cannot drift back
+// to Draft / Finalized (the police/court audit chain depends on the
+// finalisation timestamp being immutable). Pre-R7bf there was no
+// schema-level guard; mlcController.close enforced "no further close"
+// but a direct service or migration could silently flip status.
+//
+// Force-bypass: set doc.__forceTransition = true AND
+// doc.__forceAdminUserId = <Admin User._id> on the in-memory doc
+// before save. The Admin route handler is expected to emit a
+// `BillingAudit` (or equivalent MLC audit) row with the reason; the
+// guard itself doesn't audit.
+const { attachStatusGuard } = require("../../utils/statusTransitionGuard");
+attachStatusGuard(MLCReportSchema, { modelName: "MLCReport", field: "status" });
+
 module.exports =
   mongoose.models.MLCReport ||
   mongoose.model("MLCReport", MLCReportSchema);

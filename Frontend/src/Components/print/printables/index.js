@@ -20,6 +20,11 @@ import DoctorOrderSheet  from "./DoctorOrderSheet";
 import TPAAuthorization  from "./TPAAuthorization";
 import PharmacyBill      from "./PharmacyBill";
 import PharmacyRegister  from "./PharmacyRegister";
+// R7bf-F / A4-CRIT-2 + A4-HIGH-11: NABH AAC.3 compliant lab report.
+// Lives under Components/lab/ (not printables/) so the lab module can
+// import it independently, but registered here so it routes via the
+// shared print shell + paper toolbar.
+import LabReport         from "../../lab/LabReport";
 
 export const PRINTABLES = {
   // ── Receipts / billing ─────────────────────────────────
@@ -47,6 +52,7 @@ export const PRINTABLES = {
   "ipd-file":         { component: CompleteIPDFile,   title: "Complete IPD File",         defaultPaper: "a4"      },
   "mar-sheet":        { component: MARSheet,          title: "MAR Sheet · Daily",         defaultPaper: "a4"      },
   "doctor-order":     { component: DoctorOrderSheet,  title: "Doctor's Order Sheet",      defaultPaper: "a4"      },
+  "lab-report":       { component: LabReport,         title: "Laboratory Report",         defaultPaper: "a4"      },
 
   // ── Letters / certificates / authorizations ───────────
   "consent-form":     { component: ConsentForm,       title: "Consent Form",              defaultPaper: "a4"      },

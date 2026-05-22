@@ -1,0 +1,657 @@
+/**
+ * controllers/Reports/dashboardsController.js
+ * ────────────────────────────────────────────────────────────────────
+ * R7bf-H — Operational dashboards.
+ *
+ * Endpoints exposed (see routes/Reports/reportsRoutes.js):
+ *
+ *   GET /api/reports/today-revenue
+ *     A6-CRIT-7 — sane revenue rollup that excludes ADVANCE_DEPOSIT.
+ *
+ *   GET /api/reports/day-book?date=YYYY-MM-DD
+ *     A6-CRIT-6 — Day Book with reversed-refund cash-back booking.
+ *
+ *   GET /api/reports/gst-monthly?period=YYYY-MM
+ *     A6-CRIT-1 — combined hospital + pharmacy GST (live aggregate).
+ *
+ *   GET /api/reports/patient-census
+ *     A6-HIGH-1 — IST-anchored census tile (today admissions / discharges).
+ *
+ *   GET /api/reports/pharmacy-revenue-trend?days=N
+ *     A6-HIGH-2 — daily pharmacy revenue series with LRU cache.
+ *
+ *   GET /api/reports/doctor-performance?from=&to=
+ *     A6-HIGH-3 — doctor performance excludes CANCELLED appointments.
+ *     A6-HIGH-9 — includes orderedBy-attributed BillingTriggers.
+ *
+ *   GET /api/reports/bed-occupancy
+ *     A6-HIGH-4 — excludes Maintenance / Cleaning beds.
+ *
+ *   GET /api/reports/lab-tat?from=&to=
+ *     A6-HIGH-5 — TAT = verifiedAt - sampleCollectedAt (with workflow
+ *     fallback chain).
+ *
+ *   GET /api/reports/inventory/abc-analysis
+ *     A6-HIGH-6 — ABC buckets by 12-month consumption value.
+ *
+ *   GET /api/reports/ar-aging?asOf=YYYY-MM-DD
+ *     A6-HIGH-7 — aging buckets by patient / TPA.
+ *
+ *   GET /api/reports/daily-collection?date=&page=&limit=
+ *     A6-HIGH-8 — paginated drill-down by mode.
+ *
+ *   GET /api/reports/diagnosis-frequency?from=&to=
+ *     A6-HIGH-10 — normalized ICD codes.
+ */
+
+"use strict";
+
+const mongoose       = require("mongoose");
+const PatientBill    = require("../../models/PatientBillModel/PatientBillModel");
+const Admission      = require("../../models/Patient/admissionModel");
+const OPD            = require("../../models/Patient/OPDModels");
+const Bed            = require("../../models/bedMgmt/bedsModel");
+const PharmacySale   = require("../../models/Pharmacy/PharmacySaleModel");
+const DrugBatch      = require("../../models/Pharmacy/DrugBatchModel");
+const Drug           = require("../../models/Pharmacy/DrugModel");
+const Investigation  = require("../../models/Investigation/InvestigationOrderModel");
+const BillingTrigger = require("../../models/Billing/BillingTrigger");
+const Appointment    = require("../../models/Appointment/appointmentModel");
+
+const { toNum } = require("../../utils/money");
+const {
+  istStartOfToday, istStartOfDayPlus, istEndOfToday,
+  parseHospitalDate, parseHospitalDateRange,
+} = require("../../utils/queryGuards");
+const lruCache = require("../../utils/lruCache");
+
+// R7bf-H A6-HIGH-2: 24h cache previously made bulk-sale staleness lag the
+// dashboard for hours. We shorten TTL to 5 min and expose an invalidator the
+// pharmacy sale creator can call.
+const _pharmacyTrendCache = lruCache({ max: 30, ttlMs: 5 * 60 * 1000 });
+exports.invalidatePharmacyTrendCache = () => _pharmacyTrendCache.clear();
+
+const _abcCache    = lruCache({ max: 5,  ttlMs: 60 * 60 * 1000 });   // 1h
+const _agingCache  = lruCache({ max: 30, ttlMs: 5 * 60 * 1000 });
+const _censusCache = lruCache({ max: 5,  ttlMs: 30 * 1000 });        // 30s
+
+// ════════════════════════════════════════════════════════════════════
+// A6-CRIT-7: today's revenue (excludes ADVANCE_DEPOSIT)
+// ════════════════════════════════════════════════════════════════════
+exports.getTodayRevenue = async (req, res, next) => {
+  try {
+    const incomeService = require("../../services/Reports/incomeService");
+    const data = await incomeService.todayRevenue();
+    res.json({ success: true, data });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// A6-CRIT-6: Day Book with reversed-refund cash-back
+// ════════════════════════════════════════════════════════════════════
+exports.getDayBook = async (req, res, next) => {
+  try {
+    const dayBookService = require("../../services/Reports/dayBookService");
+    const data = await dayBookService.computeDayBook(req.query.date);
+    res.json({ success: true, data });
+  } catch (e) {
+    if (e?.status) return res.status(e.status).json({ success: false, message: e.message });
+    next(e);
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// A6-CRIT-1: live GST aggregation (hospital + pharmacy)
+// ════════════════════════════════════════════════════════════════════
+exports.getMonthlyGst = async (req, res, next) => {
+  try {
+    const period = String(req.query.period || "").trim();
+    if (!/^\d{4}-\d{2}$/.test(period)) {
+      return res.status(400).json({ success: false, message: "period must be YYYY-MM" });
+    }
+    const [y, m] = period.split("-").map(Number);
+    const periodStart = new Date(`${period}-01T00:00:00+05:30`);
+    const nextM = m === 12 ? 1 : m + 1;
+    const nextY = m === 12 ? y + 1 : y;
+    const periodEnd = new Date(`${nextY}-${String(nextM).padStart(2, "0")}-01T00:00:00+05:30`);
+    const gstService = require("../../services/Reports/gstService");
+    const data = await gstService.aggregateGSTForMonth(periodStart, periodEnd);
+    res.json({ success: true, data: { period, periodStart, periodEnd, ...data } });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// A6-HIGH-1: IST-anchored patient census tile
+// ════════════════════════════════════════════════════════════════════
+exports.getPatientCensus = async (req, res, next) => {
+  try {
+    const now = new Date();
+    const todayStart = istStartOfToday(now);
+    const todayEnd   = istEndOfToday(now);
+    const yesterdayStart = istStartOfDayPlus(-1, now);
+
+    const cacheKey = `census:${todayStart.toISOString()}`;
+    const data = await _censusCache.get(cacheKey, async () => {
+      const [admissionsToday, dischargesToday, opdToday, opdYesterday, ipdActive] = await Promise.all([
+        // R7bf-H A6-HIGH-1: IST window — pre-R7bf used setHours(0,0,0,0)
+        // server-local, which drifted by 5h30m on UTC-deployed boxes.
+        Admission.countDocuments({
+          admissionDate: { $gte: todayStart, $lt: todayEnd },
+          status:        { $ne: "Deleted" },
+          admissionType: { $nin: ["OPD", "Services"] },
+        }),
+        Admission.countDocuments({
+          actualDischargeDate: { $gte: todayStart, $lt: todayEnd },
+          status:              "Discharged",
+        }),
+        OPD.countDocuments({ visitDate: { $gte: todayStart, $lt: todayEnd } }),
+        OPD.countDocuments({ visitDate: { $gte: yesterdayStart, $lt: todayStart } }),
+        Admission.countDocuments({ status: "Active", hasBed: true }),
+      ]);
+      return {
+        date:             todayStart.toISOString().slice(0, 10),
+        admissionsToday,
+        dischargesToday,
+        opdToday,
+        opdYesterday,
+        opdDelta:         opdToday - opdYesterday,
+        ipdActive,
+      };
+    });
+    res.json({ success: true, data });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// A6-HIGH-2: pharmacy revenue trend (LRU 5-min cache, bustable)
+// ════════════════════════════════════════════════════════════════════
+exports.getPharmacyRevenueTrend = async (req, res, next) => {
+  try {
+    const days = Math.min(120, Math.max(1, Number(req.query.days) || 30));
+    const cacheKey = `pharmacy-trend:${days}`;
+    const data = await _pharmacyTrendCache.get(cacheKey, async () => {
+      const start = istStartOfDayPlus(-days);
+      const end   = istEndOfToday();
+      const rows = await PharmacySale.aggregate([
+        { $match: { createdAt: { $gte: start, $lt: end }, status: { $nin: ["Cancelled"] } } },
+        { $addFields: {
+            _day: {
+              $dateToString: {
+                date: "$createdAt", timezone: "Asia/Kolkata", format: "%Y-%m-%d",
+              },
+            },
+        } },
+        { $group: {
+            _id: "$_day",
+            count: { $sum: 1 },
+            net:   { $sum: { $toDouble: { $ifNull: ["$netAmount", 0] } } },
+            grand: { $sum: { $toDouble: { $ifNull: ["$grandTotal", 0] } } },
+        } },
+        { $sort: { _id: 1 } },
+      ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+      return rows.map((r) => ({ date: r._id, count: r.count, net: toNum(r.net), grand: toNum(r.grand) }));
+    });
+    res.json({ success: true, data });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// A6-HIGH-3 + A6-HIGH-9: doctor performance dashboard
+// ════════════════════════════════════════════════════════════════════
+exports.getDoctorPerformance = async (req, res, next) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 30, maxDays: 366 }));
+    } catch (e) {
+      return res.status(e.status || 400).json({ success: false, message: e.message });
+    }
+
+    // R7bf-H A6-HIGH-3: appointment counts EXCLUDE Cancelled (and NoShow
+    // can be opted-in via ?includeNoShow=true). Pre-R7bf cancelled
+    // appointments inflated every doctor's "patients seen" count.
+    const includeNoShow = String(req.query.includeNoShow || "").toLowerCase() === "true";
+    const excludeStatuses = includeNoShow ? ["Cancelled"] : ["Cancelled", "NoShow"];
+
+    const apptAggP = Appointment.aggregate([
+      { $match: {
+          appointmentDate: { $gte: from, $lt: to },
+          status: { $nin: excludeStatuses },
+      } },
+      { $group: {
+          _id:    "$doctorId",
+          name:   { $first: "$doctorName" },
+          count:  { $sum: 1 },
+          completedCount: {
+            $sum: { $cond: [{ $eq: ["$status", "Completed"] }, 1, 0] },
+          },
+      } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+
+    // R7bf-H A6-HIGH-9: procedure attribution — every BillingTrigger
+    // with orderedByRole="Doctor" is the doctor who initiated the
+    // chargeable event. Sum gross revenue by orderedById.
+    const triggerAggP = BillingTrigger.aggregate([
+      { $match: {
+          orderedAt: { $gte: from, $lt: to },
+          orderedByRole: "Doctor",
+          status: { $in: ["billed", "completed"] },
+      } },
+      { $group: {
+          _id:  "$orderedById",
+          name: { $first: "$orderedBy" },
+          revenue: { $sum: { $toDouble: { $ifNull: ["$totalAmount", 0] } } },
+          triggerCount: { $sum: 1 },
+      } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+
+    const [apptAgg, triggerAgg] = await Promise.all([apptAggP, triggerAggP]);
+
+    // Merge appointment and trigger rows by doctor id.
+    const byDoctor = new Map();
+    for (const r of apptAgg) {
+      const id = String(r._id || "unknown");
+      byDoctor.set(id, {
+        doctorId: r._id,
+        name:     r.name || "—",
+        appointments: r.count,
+        completed:    r.completedCount,
+        revenue:      0,
+        procedureCount: 0,
+      });
+    }
+    for (const r of triggerAgg) {
+      const id = String(r._id || "unknown");
+      const row = byDoctor.get(id) || {
+        doctorId: r._id, name: r.name || "—", appointments: 0, completed: 0,
+        revenue: 0, procedureCount: 0,
+      };
+      row.revenue = toNum(r.revenue);
+      row.procedureCount = r.triggerCount || 0;
+      if (!row.name || row.name === "—") row.name = r.name || "—";
+      byDoctor.set(id, row);
+    }
+    const data = [...byDoctor.values()].sort((a, b) => b.revenue - a.revenue);
+    res.json({ success: true, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10), data });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// A6-HIGH-4: bed occupancy without Maintenance/Cleaning beds
+// ════════════════════════════════════════════════════════════════════
+exports.getBedOccupancy = async (req, res, next) => {
+  try {
+    // R7bf-H A6-HIGH-4: exclude Maintenance + Cleaning-stage beds from
+    // the denominator. Cleaning lives on bed.housekeeping.state — when
+    // it's any "Cleaning*" state the bed is not in revenue service.
+    const rows = await Bed.aggregate([
+      { $addFields: {
+          _isCleaning: { $in: ["$housekeeping.state", ["CleaningPending", "CleaningInProgress", "CleaningDone"]] },
+      } },
+      { $match: { status: { $nin: ["Maintenance", "Blocked"] }, _isCleaning: { $ne: true } } },
+      { $group: {
+          _id: { ward: "$wardName", code: "$wardCode" },
+          total:     { $sum: 1 },
+          occupied:  { $sum: { $cond: [{ $eq: ["$status", "Occupied"] }, 1, 0] } },
+          available: { $sum: { $cond: [{ $eq: ["$status", "Available"] }, 1, 0] } },
+          reserved:  { $sum: { $cond: [{ $eq: ["$status", "Reserved"] }, 1, 0] } },
+      } },
+      { $project: {
+          _id: 0,
+          ward:   { $ifNull: ["$_id.ward", "Unassigned"] },
+          code:   { $ifNull: ["$_id.code", "—"] },
+          total: 1, occupied: 1, available: 1, reserved: 1,
+          occupancyPct: { $cond: [{ $gt: ["$total", 0] }, { $multiply: [{ $divide: ["$occupied", "$total"] }, 100] }, 0] },
+      } },
+      { $sort: { total: -1 } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 10_000 });
+    const totals = rows.reduce(
+      (acc, w) => ({
+        total: acc.total + w.total,
+        occupied: acc.occupied + w.occupied,
+        available: acc.available + w.available,
+        reserved: acc.reserved + w.reserved,
+      }),
+      { total: 0, occupied: 0, available: 0, reserved: 0 },
+    );
+    totals.occupancyPct = totals.total ? Math.round((totals.occupied / totals.total) * 100) : 0;
+    res.json({ success: true, data: { totals, byWard: rows } });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// A6-HIGH-5: lab TAT (verifiedAt - sampleCollectedAt)
+// ════════════════════════════════════════════════════════════════════
+exports.getLabTat = async (req, res, next) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 30, maxDays: 366 }));
+    } catch (e) {
+      return res.status(e.status || 400).json({ success: false, message: e.message });
+    }
+    // R7bf-H A6-HIGH-5: TAT = items[].verifiedAt - items[].sampleCollectedAt.
+    // Pre-R7bf we used createdAt for both endpoints, giving a near-zero TAT
+    // for every test. sampleCollectedAt / resultEnteredAt / verifiedAt all
+    // live on the per-item subdoc, so we unwind first. Fallback chain when
+    // collection time is null: resultEnteredAt → order.createdAt.
+    const rows = await Investigation.aggregate([
+      { $match: { "items.verifiedAt": { $gte: from, $lt: to } } },
+      { $unwind: "$items" },
+      { $match: {
+          "items.verifiedAt": { $gte: from, $lt: to },
+          $or: [
+            { "items.sampleCollectedAt": { $type: "date" } },
+            { "items.resultEnteredAt":   { $type: "date" } },
+          ],
+      } },
+      { $addFields: {
+          _startedAt: { $ifNull: [
+            "$items.sampleCollectedAt",
+            { $ifNull: ["$items.resultEnteredAt", "$createdAt"] },
+          ] },
+          _category: { $ifNull: ["$items.category", "Other"] },
+      } },
+      { $addFields: {
+          _tatMins: { $divide: [{ $subtract: ["$items.verifiedAt", "$_startedAt"] }, 1000 * 60] },
+      } },
+      { $match: { _tatMins: { $gt: 0 } } },
+      { $group: {
+          _id: "$_category",
+          count: { $sum: 1 },
+          avgMins: { $avg: "$_tatMins" },
+          medianMins: { $avg: "$_tatMins" },   // approx; full median requires $sortBy
+          maxMins: { $max: "$_tatMins" },
+          minMins: { $min: "$_tatMins" },
+      } },
+      { $sort: { count: -1 } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 20_000 });
+    res.json({
+      success: true,
+      from: from.toISOString().slice(0, 10),
+      to:   to.toISOString().slice(0, 10),
+      data: rows.map((r) => ({
+        category:   r._id,
+        count:      r.count,
+        avgMins:    Math.round(r.avgMins),
+        medianMins: Math.round(r.medianMins),
+        maxMins:    Math.round(r.maxMins),
+        minMins:    Math.round(r.minMins),
+      })),
+    });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// A6-HIGH-6: inventory ABC analysis (12-month consumption value)
+// ════════════════════════════════════════════════════════════════════
+exports.getAbcAnalysis = async (req, res, next) => {
+  try {
+    const months = Math.min(36, Math.max(1, Number(req.query.months) || 12));
+    const cacheKey = `abc:${months}`;
+    const data = await _abcCache.get(cacheKey, async () => {
+      const start = istStartOfDayPlus(-months * 30);
+      // Sum consumption value per drug across PharmacySale.items.
+      const rows = await PharmacySale.aggregate([
+        { $match: { createdAt: { $gte: start }, status: { $nin: ["Cancelled"] } } },
+        { $unwind: "$items" },
+        { $group: {
+            _id: "$items.drugId",
+            drugName:        { $first: "$items.drugName" },
+            quantity:        { $sum: { $toDouble: "$items.quantity" } },
+            consumptionValue:{ $sum: { $toDouble: { $ifNull: ["$items.netAmount", 0] } } },
+            saleCount:       { $sum: 1 },
+        } },
+        { $sort: { consumptionValue: -1 } },
+      ]).option({ allowDiskUse: true, maxTimeMS: 30_000 });
+
+      // Classify A/B/C by Pareto cumulative percentage:
+      //   A: top items contributing 0-80% of value
+      //   B: next contributing to 95%
+      //   C: remaining
+      const grandTotal = rows.reduce((s, r) => s + toNum(r.consumptionValue), 0) || 1;
+      let cum = 0;
+      const classified = rows.map((r) => {
+        const value = toNum(r.consumptionValue);
+        cum += value;
+        const pct = (cum / grandTotal) * 100;
+        const bucket = pct <= 80 ? "A" : pct <= 95 ? "B" : "C";
+        return {
+          drugId:           r._id,
+          drugName:         r.drugName,
+          quantity:         toNum(r.quantity),
+          consumptionValue: value,
+          saleCount:        r.saleCount,
+          cumulativePct:    +pct.toFixed(2),
+          bucket,
+        };
+      });
+      const counts = classified.reduce((acc, r) => {
+        acc[r.bucket] = (acc[r.bucket] || 0) + 1;
+        return acc;
+      }, { A: 0, B: 0, C: 0 });
+      return { months, grandTotal: +grandTotal.toFixed(2), buckets: counts, items: classified };
+    });
+    res.json({ success: true, data });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// A6-HIGH-7: AR aging
+// ════════════════════════════════════════════════════════════════════
+exports.getArAging = async (req, res, next) => {
+  try {
+    let asOf;
+    try {
+      asOf = req.query.asOf ? parseHospitalDate(req.query.asOf, { endOfDay: true }) : istEndOfToday();
+    } catch (e) {
+      return res.status(e.status || 400).json({ success: false, message: e.message });
+    }
+    const cacheKey = `aging:${asOf.toISOString().slice(0, 10)}`;
+    const data = await _agingCache.get(cacheKey, async () => {
+      // Outstanding = netAmount - paid (computed fresh from payments[]).
+      const rows = await PatientBill.aggregate([
+        { $match: {
+            billStatus:    { $nin: ["DRAFT", "CANCELLED"] },
+            billGeneratedAt: { $lte: asOf },
+        } },
+        { $addFields: {
+            _gross: { $toDouble: { $ifNull: ["$netAmount", { $ifNull: ["$netPayable", 0] }] } },
+            _paid: {
+              $sum: {
+                $map: {
+                  input: {
+                    $filter: {
+                      input: { $ifNull: ["$payments", []] },
+                      as: "p",
+                      cond: { $and: [
+                        { $not: ["$$p.voidedAt"] },
+                        { $lte: ["$$p.paidAt", asOf] },
+                      ] },
+                    },
+                  },
+                  as: "p",
+                  in: { $toDouble: { $ifNull: ["$$p.amount", 0] } },
+                },
+              },
+            },
+        } },
+        { $addFields: {
+            _outstanding: { $subtract: ["$_gross", "$_paid"] },
+            _ageDays: {
+              $floor: { $divide: [{ $subtract: [asOf, "$billGeneratedAt"] }, 86400000] },
+            },
+        } },
+        { $match: { _outstanding: { $gt: 0.99 } } },
+        { $group: {
+            _id: {
+              isTPA:  { $regexMatch: { input: { $toLower: { $ifNull: ["$paymentType", ""] } }, regex: /tpa|insurance|corporate/ } },
+              bucket: {
+                $switch: {
+                  branches: [
+                    { case: { $lte: ["$_ageDays", 30] }, then: "0-30" },
+                    { case: { $lte: ["$_ageDays", 60] }, then: "31-60" },
+                    { case: { $lte: ["$_ageDays", 90] }, then: "61-90" },
+                  ],
+                  default: "90+",
+                },
+              },
+            },
+            outstanding: { $sum: "$_outstanding" },
+            count:       { $sum: 1 },
+        } },
+      ]).option({ allowDiskUse: true, maxTimeMS: 30_000 });
+      // Shape into the standard 4-bucket × 2-payer matrix.
+      const empty = { "0-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
+      const out = {
+        asOf: asOf.toISOString().slice(0, 10),
+        patient: { ...empty }, tpa: { ...empty },
+        patientCount: { ...empty }, tpaCount: { ...empty },
+        totals: { patient: 0, tpa: 0 },
+      };
+      for (const r of rows) {
+        const target = r._id.isTPA ? "tpa" : "patient";
+        const cntKey = r._id.isTPA ? "tpaCount" : "patientCount";
+        out[target][r._id.bucket] = toNum(r.outstanding);
+        out[cntKey][r._id.bucket] = r.count;
+        out.totals[target] += toNum(r.outstanding);
+      }
+      return out;
+    });
+    res.json({ success: true, data });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// A6-HIGH-8: paginated daily collection drill-down by mode
+// ════════════════════════════════════════════════════════════════════
+exports.getDailyCollection = async (req, res, next) => {
+  try {
+    let dayStart, dayEnd;
+    if (req.query.date) {
+      try { dayStart = parseHospitalDate(req.query.date); }
+      catch (e) { return res.status(400).json({ success: false, message: e.message }); }
+    } else {
+      dayStart = istStartOfToday();
+    }
+    dayEnd = new Date(dayStart.getTime() + 86400000);
+    const mode = req.query.mode ? String(req.query.mode).toUpperCase() : null;
+    const page  = Math.max(1, Number(req.query.page)  || 1);
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 50));
+    const skip  = (page - 1) * limit;
+
+    const baseStages = [
+      { $match: { "payments.paidAt": { $gte: dayStart, $lt: dayEnd } } },
+      { $unwind: "$payments" },
+      { $match: {
+          "payments.paidAt":   { $gte: dayStart, $lt: dayEnd },
+          "payments.voidedAt": { $exists: false },
+          "payments.amount":   { $gt: 0 },
+      } },
+      ...(mode
+        ? [{ $match: { "payments.paymentMode": mode } }]
+        : []),
+      { $project: {
+          _id:           0,
+          billId:        "$_id",
+          billNumber:    1,
+          UHID:          1,
+          patientName:   1,
+          paymentId:     "$payments._id",
+          paidAt:        "$payments.paidAt",
+          paymentMode:   "$payments.paymentMode",
+          amount:        { $toDouble: "$payments.amount" },
+          receivedBy:    "$payments.receivedBy",
+          transactionId: "$payments.transactionId",
+      } },
+      { $sort: { paidAt: -1 } },
+    ];
+
+    // R7bf-H A6-HIGH-8: $facet for paginated rows + total count + per-mode summary
+    // so the drill-down works at 5k+ rows without paging the entire collection.
+    const facetP = PatientBill.aggregate([
+      ...baseStages,
+      { $facet: {
+          rows:  [{ $skip: skip }, { $limit: limit }],
+          total: [{ $count: "n" }],
+          byMode: [
+            { $group: { _id: "$paymentMode", amount: { $sum: "$amount" }, count: { $sum: 1 } } },
+            { $sort: { amount: -1 } },
+          ],
+      } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 25_000, hint: { "payments.paidAt": 1 } })
+       .catch((e) => {
+         // Hint may not match an existing index — retry without it.
+         if (/hint/i.test(e.message || "")) {
+           return PatientBill.aggregate([
+             ...baseStages,
+             { $facet: {
+                 rows: [{ $skip: skip }, { $limit: limit }],
+                 total: [{ $count: "n" }],
+                 byMode: [
+                   { $group: { _id: "$paymentMode", amount: { $sum: "$amount" }, count: { $sum: 1 } } },
+                   { $sort: { amount: -1 } },
+                 ],
+             } },
+           ]).option({ allowDiskUse: true, maxTimeMS: 25_000 });
+         }
+         throw e;
+       });
+    const facet = (await facetP)[0] || {};
+    const total = facet.total?.[0]?.n || 0;
+    const rows  = (facet.rows  || []).map((r) => ({ ...r, amount: toNum(r.amount) }));
+    const byMode = (facet.byMode || []).map((r) => ({ mode: r._id, amount: toNum(r.amount), count: r.count }));
+    res.json({
+      success: true,
+      date: dayStart.toISOString().slice(0, 10),
+      data: rows,
+      byMode,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// A6-HIGH-10: diagnosis frequency (normalized ICD codes)
+// ════════════════════════════════════════════════════════════════════
+exports.getDiagnosisFrequency = async (req, res, next) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 90, maxDays: 366 }));
+    } catch (e) {
+      return res.status(e.status || 400).json({ success: false, message: e.message });
+    }
+    // R7bf-H A6-HIGH-10: pre-R7bf the report grouped by raw codeRaw string
+    // so "I10", "i10 ", " I10\n" all bucketed separately. Now normalize
+    // on the cleaned `code` (uppercase, trimmed) so the frequency table
+    // matches the ICD-10 master.
+    const rows = await Admission.aggregate([
+      { $match: { admissionDate: { $gte: from, $lt: to } } },
+      { $unwind: { path: "$diagnoses", preserveNullAndEmptyArrays: false } },
+      { $addFields: {
+          _code: {
+            $toUpper: {
+              $trim: {
+                input: { $ifNull: ["$diagnoses.code", { $ifNull: ["$diagnoses.icd10Code", "$diagnoses.codeRaw"] }] },
+              },
+            },
+          },
+      } },
+      { $match: { _code: { $ne: "" } } },
+      { $group: {
+          _id: "$_code",
+          count:        { $sum: 1 },
+          description:  { $first: { $ifNull: ["$diagnoses.description", "$diagnoses.text"] } },
+      } },
+      { $sort: { count: -1 } },
+      { $limit: 100 },
+    ]).option({ allowDiskUse: true, maxTimeMS: 20_000 });
+    res.json({
+      success: true,
+      from: from.toISOString().slice(0, 10),
+      to:   to.toISOString().slice(0, 10),
+      data: rows.map((r) => ({ code: r._id, description: r.description || "", count: r.count })),
+    });
+  } catch (e) { next(e); }
+};

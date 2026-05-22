@@ -543,3 +543,55 @@ html[data-paper="a5"] .pr-page {
     break-inside: avoid;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════
+   R7bf-F / A4-MED-5: keep each bill line on a single page (no
+   orphan last-line on page 2). Applies to any bill rendered as a
+   <table> with .pr-table where rows are tagged .bill-line-row,
+   AND to the legacy <div className="bill-line-row"> fallback.
+   ════════════════════════════════════════════════════════════ */
+.bill-line-row,
+.pr-table tr.bill-line-row {
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   R7bf-F / A4-MED-3: lab report defaults to 14pt for elderly-patient
+   readability. Driven by the `fontSize` prop on PrintShell — printable
+   passes it explicitly. This rule just provides the base when a
+   printable wraps itself in <div class="pr-lab-report"> as a CSS
+   targeting hook.
+   ════════════════════════════════════════════════════════════ */
+.pr-lab-report,
+.pr-lab-report .pr-section__body,
+.pr-lab-report .pr-table {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* GST tax-invoice tables get a slightly smaller default so the
+   HSN + qty + rate + GST split fits on a single landscape line. */
+.pr-gst-invoice .pr-table {
+  font-size: 10.5px;
+}
+.pr-gst-invoice .pr-table th,
+.pr-gst-invoice .pr-table td { padding: 5px 6px; }
+
+/* Watermark: keep stamping behaviour predictable across browsers.
+   The component already inlines the rotation and opacity, but the
+   color-adjust hint ensures Chrome's "background graphics" toggle
+   is honoured in print preview. */
+.pr-watermark {
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+@media print {
+  .pr-watermark {
+    /* The translucent text needs `position: fixed` to anchor against
+       the page (not the .pr-page element), which paged-media interprets
+       per printed sheet. Browsers vary — fall back gracefully. */
+    position: fixed;
+  }
+}
+

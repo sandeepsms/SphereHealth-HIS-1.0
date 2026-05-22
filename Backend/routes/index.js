@@ -204,6 +204,13 @@ router.use("/admin-ops",        require("./Admin/adminOpsRoutes"));
 // Admin "Mission Control" home — aggregate hospital-wide KPIs + feed
 router.use("/admin-dashboard",  require("./Admin/adminDashboardRoutes"));
 
+// R7bf-H: reports + dashboards surface (A6-CRIT + A6-HIGH coverage).
+//   /hospital-register, /refunds, /today-revenue, /day-book, /gst-monthly,
+//   /patient-census, /pharmacy-revenue-trend, /doctor-performance,
+//   /bed-occupancy, /lab-tat, /inventory/abc-analysis, /ar-aging,
+//   /daily-collection, /diagnosis-frequency
+router.use("/reports",          require("./Reports/reportsRoutes"));
+
 // Diabetic chart — RBS readings + sliding-scale insulin per admission
 router.use("/diabetic-chart",   require("./Clinical/diabeticChartRoutes"));
 
@@ -249,5 +256,24 @@ router.use("/incidents",        require("./Security/incidentReportRoutes"));
 
 // R7bb-FIX-E-12 / D6-HIGH-2: MRD retention review + file release.
 router.use("/mrd",              require("./MRD/mrdRoutes"));
+
+// R7bf-F / A4-CRIT-4: PrintAudit register — every reprint of a
+// bill/receipt/lab-report writes a row here and atomically bumps
+// the source entity's printCount. The frontend uses the returned
+// count to render the DUPLICATE watermark on copies 2+.
+router.use("/print-audit",      require("./Print/printAuditRoutes"));
+
+// ── R7bf-G — NABH compliance scaffolds (A5-CRIT-1/4/5/6/7) ─────
+// New register surfaces for critical-value alerts (AAC.6), ADR
+// reporting (MOM.7), patient grievance redressal (PRE.6), staff
+// credentialing (HRD.3), and fire-drill register (FMS.4). Each
+// quartet (model + service + controller + routes) lives alongside
+// the existing modules; mounts here in /api so the frontend pages
+// just need an axios call.
+router.use("/critical-value-alerts", require("./Clinical/criticalValueAlertRoutes"));
+router.use("/adr-reports",           require("./Pharmacy/adrRoutes"));
+router.use("/grievances",            require("./Quality/grievanceRoutes"));
+router.use("/credentials",           require("./HR/credentialRoutes"));
+router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
 
 module.exports = router;
