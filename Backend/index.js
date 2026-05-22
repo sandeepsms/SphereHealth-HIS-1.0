@@ -892,6 +892,17 @@ const _cancelRetentionReview = scheduleDaily("retention-review", 4, 0, async () 
   }
 });
 
+// R7bj-F9 — visitor-pass expiry every 5 min (moves expensive updateMany off
+// the visitorPassController hot path). Stale passes auto-flip Active → Expired
+// with autoExpiredAt stamp. setInterval (not IST-anchored cron) — cadence-based.
+const _cancelVisitorPassExpiry = (() => {
+  const { expireStalePasses } = require("./services/Compliance/visitorPassExpiryCron");
+  const interval = setInterval(() => { expireStalePasses().catch(() => {}); }, 5 * 60 * 1000);
+  if (typeof interval.unref === "function") interval.unref();
+  console.log("[cron:visitor-pass-expiry] armed — every 5 min");
+  return () => clearInterval(interval);
+})();
+
 // Keep a reference name for the graceful-shutdown handler below.
 const _autoBillingInterval = {
   _cancel: () => {
