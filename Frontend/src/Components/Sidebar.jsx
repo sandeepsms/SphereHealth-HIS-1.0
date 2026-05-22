@@ -168,6 +168,10 @@ const NAV = [
       { label: "Discharge Summary",     icon: "pi-sign-out",          path: "/discharge-summary",      roles: [ADMIN, DR], nabh: true },
       { label: "Consent Forms",         icon: "pi-shield",            path: "/consent-forms",          roles: [ADMIN, DR], nabh: true },
       { label: "Medico-Legal (MLC)",    icon: "pi-shield",            path: "/mlc",                    roles: [ADMIN, DR], nabh: true },
+      // R7bj-F1 — Physiotherapy console (NABH COP.20 rehab services).
+      // Visible to ADMIN + DR + PT (Physiotherapist) so doctor can
+      // raise + monitor; Physio actions sessions.
+      { label: "Physiotherapy Console", icon: "pi-bolt",              path: "/physiotherapist",        roles: [ADMIN, DR, PT], nabh: true, badge: "COP.20" },
     ],
   },
 
@@ -237,6 +241,10 @@ const NAV = [
       // by F10 — if KitchenConsole.jsx isn't yet shipped the route
       // renders the lazy-import-fallback page.
       { label: "Kitchen Indent",   icon: "pi-shopping-cart", path: "/kitchen",         nabh: true, badge: "NEW", roles: [ADMIN, NR, PH, WB] },
+      // R7bk — Cold-Chain Log (NABH MOM.2, WHO PQS E003). Pharmacist
+      // logs vaccine-fridge / insulin-fridge / freezer temps; auto-flag
+      // out-of-range as breach + nurse acknowledge.
+      { label: "Cold Chain Log",   icon: "pi-bolt",          path: "/cold-chain",      nabh: true, badge: "MOM.2", roles: [ADMIN, PH, NR, DR] },
     ],
   },
 
@@ -364,6 +372,9 @@ const NAV = [
       { label: "Outstanding",          icon: "pi-clock",       path: "/accounts?tab=outstanding",                roles: [ADMIN, AC] },
       { label: "Refunds & Audit",      icon: "pi-undo",        path: "/accounts?tab=refunds",                    roles: [ADMIN, AC] },
       { label: "Pharmacy Sales Reg.",  icon: "pi-receipt",     path: "/pharmacy?tab=registers",                  roles: [ADMIN, AC] },
+      // R7bk — GST + TDS regulatory exports (R7bh-F6 backend; UI in /tax-returns and /tds).
+      { label: "GSTR-1 / 3B",          icon: "pi-file",        path: "/tax-returns",              badge: "GST",     roles: [ADMIN, AC] },
+      { label: "TDS Form 16A",         icon: "pi-percentage",  path: "/tds",                      badge: "TDS",     roles: [ADMIN, AC] },
     ],
   },
 
@@ -449,6 +460,15 @@ const HOUSEKEEPING_NAV = [{
   id: "dashboard", label: "Dashboard",
   icon: "pi-sparkles", color: "#0d9488", light: "#f0fdfa",
   path: "/housekeeping", single: true, roles: ["Housekeeping"],
+}];
+
+// R7bj-F1 / R7bk — Physiotherapist hard-fork. Entire workflow (My
+// Patients / Today's Sessions / Plans) lives inside /physiotherapist.
+// NABH COP.20 rehabilitation services compliance.
+const PHYSIO_NAV = [{
+  id: "dashboard", label: "Dashboard",
+  icon: "pi-bolt", color: "#059669", light: "#ecfdf5",
+  path: "/physiotherapist", single: true, roles: ["Physiotherapist"],
 }];
 
 // Security — small focused workspace: dashboard, visitor passes, gate
@@ -564,10 +584,11 @@ const RECEPTION_NAV = [
 
 function filterNav(nav, userRole) {
   if (userRole === ADMIN) return nav; // Admin sees everything unfiltered
-  if (userRole === "Dietician")    return DIETICIAN_NAV;
-  if (userRole === "Ward Boy")     return WARD_BOY_NAV;
-  if (userRole === "Housekeeping") return HOUSEKEEPING_NAV;
-  if (userRole === "Security")     return SECURITY_NAV;
+  if (userRole === "Dietician")       return DIETICIAN_NAV;
+  if (userRole === "Ward Boy")        return WARD_BOY_NAV;
+  if (userRole === "Housekeeping")    return HOUSEKEEPING_NAV;
+  if (userRole === "Security")        return SECURITY_NAV;
+  if (userRole === "Physiotherapist") return PHYSIO_NAV;
   if (userRole === "Receptionist") return RECEPTION_NAV;
   return nav
     .filter(section => canSee(section.roles, userRole))

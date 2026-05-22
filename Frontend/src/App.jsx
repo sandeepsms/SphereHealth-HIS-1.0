@@ -136,6 +136,14 @@ const HousekeepingManagerDashboard = lazy(() => import("./pages/housekeeping/Hou
 const PhysiotherapistConsole  = lazy(() => import("./pages/physiotherapist/PhysiotherapistConsole"));
 // R7bj-F2 — Kitchen indent close-loop (NABH COP.21, FSSAI)
 const KitchenConsole          = lazy(() => import("./pages/kitchen/KitchenConsole"));
+// R7bk — Sidebar coverage stubs for backend-only modules
+const ColdChainPage           = lazy(() => import("./pages/pharmacy/ColdChainPage"));
+const FoodReactionsPage       = lazy(() => import("./pages/quality/FoodReactionsPage"));
+const BmwManifestPage         = lazy(() => import("./pages/compliance/BmwManifestPage"));
+const CodeResponsePage        = lazy(() => import("./pages/compliance/CodeResponsePage"));
+const SharpsInjuryPage        = lazy(() => import("./pages/clinical/SharpsInjuryPage"));
+const TaxReturnsPage          = lazy(() => import("./pages/accounts/TaxReturnsPage"));
+const TdsCertificatesPage     = lazy(() => import("./pages/accounts/TdsCertificatesPage"));
 const LabResultsEntry         = lazy(() => import("./pages/lab/LabResultsEntry"));
 // R7bd-E-5 / A3-MED-18: Lab Tech multi-tab console (sample queue,
 // result-entry queue, QC log, day worksheet).
@@ -748,6 +756,29 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* ── R7bj-F2 — Kitchen console (diet indent close-loop, NABH COP.21) ── */}
             <Route path="/kitchen" element={
               <RoleGuard action="kitchen.indent.read"><KitchenConsole /></RoleGuard>
+            } />
+
+            {/* ── R7bk — Sidebar coverage stubs for backend-only modules ── */}
+            <Route path="/cold-chain" element={
+              <RoleGuard action="pharmacy.cold-chain.read"><ColdChainPage /></RoleGuard>
+            } />
+            <Route path="/food-reactions" element={
+              <RoleGuard action="quality.food-reaction.read"><FoodReactionsPage /></RoleGuard>
+            } />
+            <Route path="/bmw-manifest" element={
+              <RoleGuard action="compliance.bmw.read"><BmwManifestPage /></RoleGuard>
+            } />
+            <Route path="/code-response" element={
+              <RoleGuard action="compliance.code-response.read"><CodeResponsePage /></RoleGuard>
+            } />
+            <Route path="/sharps-injury" element={
+              <RoleGuard action="clinical.sharps-injury.read"><SharpsInjuryPage /></RoleGuard>
+            } />
+            <Route path="/tax-returns" element={
+              <RoleGuard action="tax.returns.read"><TaxReturnsPage /></RoleGuard>
+            } />
+            <Route path="/tds" element={
+              <RoleGuard action="tax.tds.read"><TdsCertificatesPage /></RoleGuard>
             } />
 
             {/* ── Lab Technician manual data entry (outsourced workflow) ──
