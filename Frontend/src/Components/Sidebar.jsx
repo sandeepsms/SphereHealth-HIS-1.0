@@ -246,7 +246,17 @@ const NAV = [
       // section was visible but empty for the role. Manual Lab Entry
       // (write) stays Admin/LabTech-only. Master likewise.
       { label: "Investigation Orders",  icon: "pi-list",   path: "/investigation-orders",  roles: [ADMIN, LB, DR, RL] },
+      // R7bd-E-5 / A3-MED-18 — Lab Tech multi-tab console (sample queue,
+      // result-entry queue, QC log, day worksheet). Sits above the
+      // single-page "Manual Lab Entry" because the console is the
+      // intended landing surface; the entry page is now reached from
+      // the queue rows. Visible to Admin + Lab Tech only.
+      { label: "Lab Console",           icon: "pi-flask",  path: "/lab-console",           badge: "NEW", roles: [ADMIN, LB] },
       { label: "Imaging Reports",       icon: "pi-table",  path: "/lab-results",           badge: "READ",roles: [RL] },
+      // R7bd-E-6 / A3-HIGH-10 — Radiologist 3-tab console stub
+      // (worklist, reported, pending sign-off). Visible to Admin +
+      // Radiologist only.
+      { label: "Radiology Console",     icon: "pi-eye",    path: "/radiology-console",     badge: "NEW", roles: [ADMIN, RL] },
       { label: "Manual Lab Entry",      icon: "pi-table",  path: "/lab-results",           badge: "NEW", roles: [ADMIN, LB] },
       { label: "Investigation Master",  icon: "pi-cog",    path: "/investigation-master",  roles: [ADMIN, LB] },
     ],

@@ -259,6 +259,84 @@ class UserService {
     };
     const user = await User.findByIdAndUpdate(id, update, { new: true }).select("-password -passwordHistory");
     if (!user) throw new Error("User not found");
+
+    // ── R7bd-A-10 / A1-HIGH-11 — Reassign or flag active admissions ──
+    // Pre-R7bd terminating a doctor User left every Active admission with
+    // `attendingDoctorUserId = <terminated User._id>` quietly broken:
+    // JWT-based access checks failed (terminated user can't auth), nurse
+    // UI showed "Doctor: <Name (Terminated)>", and downstream billing
+    // continued to fire doctor-round charges against a non-existent
+    // attending. We never block the admission — clinical continuity wins
+    // — but we either auto-reassign to a documented co-consultant or
+    // raise `requiresReassignment:true` for reception to handle.
+    //
+    // STRATEGY (per admission, in order):
+    //   1. If admission.treatmentTeam has any non-terminated Active member,
+    //      promote them (the first one) — they're already on the team.
+    //   2. Else flag requiresReassignment:true + emit BillingAudit.
+    //
+    // Best-effort: any failure here is logged and swallowed; the
+    // termination of the user itself has already succeeded.
+    try {
+      const Admission = require("../../models/Patient/admissionModel");
+      const liveAdmissions = await Admission.find({
+        attendingDoctorUserId: id,
+        status: "Active",
+      });
+      let emit = null;
+      try { ({ emit } = require("../../models/Billing/BillingAudit")); } catch (_) {}
+      for (const adm of liveAdmissions) {
+        // 1. Pick a documented co-consultant from the treatment team.
+        const candidate = (adm.treatmentTeam || []).find((m) =>
+          m.status === "Active" && m.doctorId && String(m.doctorId) !== String(id),
+        );
+        if (candidate?.doctorId) {
+          adm.attendingDoctor       = candidate.doctorName || adm.attendingDoctor || "";
+          adm.attendingDoctorId     = candidate.doctorId;
+          // Try to resolve a User._id for the new attending (lazy lookup
+          // — these tend to be Doctor._id refs from the team picker).
+          try {
+            const Doctor = require("../../models/Doctor/doctorModel");
+            const docRow = await Doctor.findById(candidate.doctorId).select("loginUserId").lean();
+            adm.attendingDoctorUserId = docRow?.loginUserId || null;
+          } catch (_) { adm.attendingDoctorUserId = null; }
+          adm.requiresReassignment       = false;
+          adm.requiresReassignmentReason = "";
+          try { await adm.save(); } catch (e) {
+            console.warn("[terminateUser cascade] reassign-save failed for", adm._id, e.message);
+            continue;
+          }
+        } else {
+          // 2. No team member — flag for manual reassignment.
+          adm.requiresReassignment       = true;
+          adm.requiresReassignmentReason = `Attending doctor terminated: ${reason || "(no reason)"}`;
+          adm.requiresReassignmentAt     = new Date();
+          try { await adm.save(); } catch (e) {
+            console.warn("[terminateUser cascade] flag-save failed for", adm._id, e.message);
+            continue;
+          }
+          if (emit) {
+            try {
+              await emit({
+                event:       "ITEM_CANCELLED", // closest enum value — no dedicated DOCTOR_TERMINATED yet
+                UHID:        adm.UHID,
+                patientId:   adm.patientId,
+                admissionId: adm._id,
+                actorId:     null,
+                actorName:   "System (terminateUser cascade)",
+                actorRole:   "System",
+                reason:      `DOCTOR_TERMINATED_NEEDS_REASSIGN — User ${id} terminated; admission flagged for reassignment.`,
+                before:      { requiresReassignment: false },
+                after:       { requiresReassignment: true, terminatedDoctorUserId: String(id) },
+              });
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[terminateUser] admission-reassignment cascade skipped:", e.message);
+    }
+
     return user;
   }
 

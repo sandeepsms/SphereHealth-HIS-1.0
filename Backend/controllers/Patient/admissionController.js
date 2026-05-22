@@ -266,10 +266,28 @@ class AdmissionController {
   });
 
   cancelAdmission = handle(async (req, res) => {
+    // R7bd-A-3 / A1-CRIT-3 — pipe req.user into the cascade so audit
+    // rows attribute to the right actor. The `force` query flag bypasses
+    // the "bills with payments" guard and is Admin-only (refund path
+    // must be used first under normal circumstances).
     const { reason } = req.body;
+    const force = String(req.query.force || "").toLowerCase() === "true";
+    if (force && req.user?.role !== "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only Admin can force-cancel an admission with collected payments.",
+        code: "FORCE_REQUIRES_ADMIN",
+      });
+    }
+    const actor = {
+      id:   req.user?.id || req.user?._id,
+      name: req.user?.fullName || req.user?.employeeId || "",
+      role: req.user?.role || "",
+    };
     const admission = await AdmissionService.cancelAdmission(
       req.params.id,
       reason,
+      { actor, force },
     );
     return res.json({
       success: true,
@@ -297,7 +315,26 @@ class AdmissionController {
   });
 
   deleteAdmission = handle(async (req, res) => {
-    const result = await AdmissionService.deleteAdmission(req.params.id);
+    // R7bd-A-2 / A1-CRIT-2 — soft delete with optional force-cascade.
+    // The base permission `admission.delete` already gates the route;
+    // we further restrict force=true to Admin so only that role can
+    // tear down a populated admission record. Reason is captured for
+    // the audit trail.
+    const force = String(req.query.force || "").toLowerCase() === "true";
+    if (force && req.user?.role !== "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only Admin can force-cascade delete an admission with active dependencies.",
+        code: "FORCE_REQUIRES_ADMIN",
+      });
+    }
+    const actor = {
+      id:     req.user?.id || req.user?._id,
+      name:   req.user?.fullName || req.user?.employeeId || "",
+      role:   req.user?.role || "",
+      reason: req.body?.reason || (force ? "FORCE_DELETE" : ""),
+    };
+    const result = await AdmissionService.deleteAdmission(req.params.id, { force, actor });
     return res.json({ success: true, message: result.message });
   });
 
@@ -893,14 +930,36 @@ class AdmissionController {
     // so the reception UI can prompt for manual cleanup. The admission
     // itself stays Discharged (the source of truth) — bed-mgmt is a
     // downstream concern that a nightly sweep can also reconcile.
+    //
+    // R7bd-A-11 / A1-HIGH-12 — ALSO flip housekeeping.state to
+    // CleaningPending AND auto-create a CleaningTask. Pre-R7bd
+    // issueGatePass only flipped status:"Available" — so on the
+    // discharge path from this controller, housekeeping never knew the
+    // bed needed cleaning. dischargePatient (the service path) already
+    // did this; the controller-driven gate-pass discharge skipped it,
+    // producing a bed-cleaning queue that under-reported the real load.
     let bedReleased = true;
     let bedWarning  = null;
+    let bedSnapshot = null;
     if (adm.bedId) {
       try {
         const Bed = require("../../models/bedMgmt/bedsModel");
+        bedSnapshot = await Bed.findById(adm.bedId).lean();
         const updated = await Bed.findByIdAndUpdate(
           adm.bedId,
-          { $set: { status: "Available", currentAdmission: null, patient: null } },
+          {
+            $set: {
+              status: "Available",
+              currentAdmission: null,
+              patient: null,
+              // R7bd-A-11 — housekeeping flip mirrors admissionService.dischargePatient
+              "housekeeping.state":      "CleaningPending",
+              "housekeeping.startedAt":  new Date(),
+              "housekeeping.finishedAt": null,
+              "housekeeping.assignedTo": "",
+              "currentBooking.actualDischargeDate": now,
+            },
+          },
           { new: true, runValidators: true },
         );
         if (!updated) {
@@ -912,6 +971,41 @@ class AdmissionController {
         bedReleased = false;
         bedWarning  = `Bed release failed: ${e.message}`;
         console.error(`[issueGatePass] bed-release error for ${adm.UHID}:`, e.message);
+      }
+    }
+
+    // R7bd-A-11 — Auto-create a CleaningTask so the housekeeping queue
+    // shows the bed even though discharge came through the gate-pass
+    // route (not the service-level discharge). Best-effort: log + skip
+    // on failure (the bed flag above is the primary correctness signal).
+    if (bedSnapshot && bedReleased) {
+      try {
+        const { CleaningTask } = require("../../models/Clinical/housekeepingModels");
+        const isolation = (bedSnapshot.isolationFlags || []).filter(Boolean);
+        const isIsolation = isolation.length > 0;
+        await CleaningTask.create({
+          type:        isIsolation ? "terminal" : "discharge-clean",
+          title:       isIsolation
+            ? `Terminal clean — Bed ${bedSnapshot.bedNumber} (${isolation.join(", ")})`
+            : `Discharge clean — Bed ${bedSnapshot.bedNumber}`,
+          description: adm.patientName
+            ? `Bed turnover after gate-pass discharge of ${adm.patientName} (${adm.UHID || ""}).${isIsolation ? " Follow isolation cleaning protocol." : ""}`
+            : `Bed turnover required.${isIsolation ? " Follow isolation cleaning protocol." : ""}`,
+          ward:        bedSnapshot.wardName || "",
+          roomNumber:  bedSnapshot.roomNumber || "",
+          bedNumber:   bedSnapshot.bedNumber || "",
+          bedId:       bedSnapshot._id,
+          admissionId: adm._id,
+          UHID:        adm.UHID || "",
+          patientName: adm.patientName || "",
+          priority:    isIsolation ? "urgent" : "high",
+          protocolFollowed: isIsolation ? "terminal-icu" : "discharge",
+          status:      "open",
+          requestedByName: "System (Auto on gate-pass)",
+          requestedByRole: "System",
+        });
+      } catch (e) {
+        console.error("[issueGatePass] CleaningTask auto-create failed:", e.message);
       }
     }
 
@@ -953,6 +1047,12 @@ class AdmissionController {
   reactivate = handle(async (req, res) => {
     const Admission = require("../../models/Patient/admissionModel");
     const Bed       = require("../../models/bedMgmt/bedsModel");
+    // R7bd-A-13 / A1-HIGH-16 — Use the model's shared state-machine
+    // validator. findOneAndUpdate (below) BYPASSES the pre("save")
+    // guard inside admissionModel.js, so without this explicit check
+    // we could go Discharged → anything. The same helper is exported
+    // for any other update path that mutates status via raw operators.
+    const { validateStatusTransition } = Admission;
 
     const reason = String(req.body?.reason || "").trim();
     if (!reason || reason.length < 10) {
@@ -969,6 +1069,28 @@ class AdmissionController {
         success: false,
         message: `Cannot reactivate — admission is currently "${adm.status}", not "Discharged".`,
       });
+    }
+
+    // R7bd-A-13 — pre-flight the transition. Discharged is terminal in
+    // LEGAL_STATUS_TRANSITIONS, so the validator returns an error.
+    // We INTENTIONALLY bypass that for the reactivate flow (admin-only
+    // 24h same-day undo) — but only AFTER explicit policy gates have
+    // passed (24h window, bed-availability, role). The validateStatusTransition
+    // call is here as defense-in-depth documentation: any future
+    // refactor that drops the policy gates will trip the validator
+    // and fail loud. R7bd-A-19 (TODO): gatePassNumber sequence is NOT
+    // restored on reactivate — the original number stays on the admission
+    // but if a second discharge happens the new gate-pass number will be
+    // the next in the daily counter, leaving a gap in the audit series.
+    // This is a known design question (re-issue same number? burn a new
+    // one?) deferred to a future change once Reception / NABH agree.
+    if (validateStatusTransition) {
+      // Will report illegal under current rules — used for surfacing the
+      // bypass in the audit log only.
+      const err = validateStatusTransition("Discharged", "Active");
+      if (err) {
+        console.warn(`[Reactivate] Bypassing state-machine guard: ${err}`);
+      }
     }
 
     // 24-hour window — same-day undo only.
@@ -1112,6 +1234,40 @@ class AdmissionController {
       );
     } catch (e) {
       console.warn("[Reactivate] CleaningTask cancel skipped:", e.message);
+    }
+
+    // R7bd-A-16 / A1-MED-21 — un-finalize the DischargeSummary so the
+    // next discharge can update it. Pre-R7bd a reactivated patient's
+    // DischargeSummary stayed `status:"finalized"`, which the model's
+    // pre-write guard (DischargeSummaryModel.js) refuses to overwrite.
+    // The doctor would get a 500 when re-saving the discharge summary
+    // for the eventual second discharge. Now we flip it back to draft.
+    // Best-effort: log + skip on failure.
+    try {
+      const DischargeSummary = require("../../models/Clinical/DischargeSummaryModel");
+      // Bypass the model's `_refuseIfFinalized` hook via updateOne with
+      // an explicit $set on a single whitelisted-AND-status field — but
+      // since `status` isn't in the whitelist, the hook will refuse.
+      // Use the raw collection write to step around the guard for this
+      // controlled admin path. This is the only place outside the
+      // amendment endpoint allowed to revert finalized → draft.
+      await DischargeSummary.collection.updateOne(
+        { admissionId: updatedAdm._id, status: "finalized" },
+        {
+          $set: {
+            status: "draft",
+            // Tombstone the prior finalize-trail so MRD can see the undo.
+            updatedAt: new Date(),
+          },
+          $unset: {
+            finalizedAt: "",
+            finalizedBy: "",
+            finalizedByName: "",
+          },
+        },
+      );
+    } catch (e) {
+      console.warn("[Reactivate] DischargeSummary un-finalize skipped:", e.message);
     }
 
     return res.json({

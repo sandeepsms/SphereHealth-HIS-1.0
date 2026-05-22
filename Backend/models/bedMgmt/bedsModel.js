@@ -45,13 +45,14 @@ const BedSchema = new mongoose.Schema(
       ref: "Patient",
       default: null,
     },
-    admission: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Admission",
-      default: null,
-    },
-    // ✅ ADDED: admissionService already does Bed.findByIdAndUpdate(..., { currentAdmission: admission._id })
-    //           but the field was missing from schema — so it was silently dropped by MongoDB
+    // R7bd-A-14 / A1-MED-17 — `admission` field removed (dead schema field).
+    // The previous `admission` and `currentAdmission` were two refs to the
+    // same Admission collection and the only writer was admissionService
+    // (which only ever set `currentAdmission`). The dead field caused
+    // confusion in audits + drift in legacy data. Run
+    // `node Backend/scripts/dropBedAdmissionField.js` once after deploy
+    // to backfill stragglers (copy any non-null `admission` to
+    // `currentAdmission`, then `$unset admission`).
     currentAdmission: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admission",

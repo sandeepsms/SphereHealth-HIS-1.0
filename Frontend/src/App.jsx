@@ -133,6 +133,12 @@ const WardManagerDashboard    = lazy(() => import("./pages/wardboy/WardManagerDa
 const HousekeepingConsole     = lazy(() => import("./pages/housekeeping/HousekeepingConsole"));
 const HousekeepingManagerDashboard = lazy(() => import("./pages/housekeeping/HousekeepingManagerDashboard"));
 const LabResultsEntry         = lazy(() => import("./pages/lab/LabResultsEntry"));
+// R7bd-E-5 / A3-MED-18: Lab Tech multi-tab console (sample queue,
+// result-entry queue, QC log, day worksheet).
+const LabTechConsole          = lazy(() => import("./pages/lab/LabTechConsole"));
+// R7bd-E-6 / A3-HIGH-10: Radiologist console stub (worklist, reported,
+// pending sign-off).
+const RadiologistConsole      = lazy(() => import("./pages/radiology/RadiologistConsole"));
 
 // Clinical pages
 const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
@@ -715,6 +721,16 @@ function AppLayout({ collapsed, setCollapsed }) {
                 have its own workflow. */}
             <Route path="/lab-results" element={
               <RoleGuard action="lab.records.read"><LabResultsEntry /></RoleGuard>
+            } />
+            {/* R7bd-E-5 / A3-MED-18 — Lab Tech 4-tab console
+                (sample queue, result-entry queue, QC log, day worksheet). */}
+            <Route path="/lab-console" element={
+              <RoleGuard action="lab.read"><LabTechConsole /></RoleGuard>
+            } />
+            {/* R7bd-E-6 / A3-HIGH-10 — Radiologist 3-tab console stub
+                (worklist, reported, pending sign-off). */}
+            <Route path="/radiology-console" element={
+              <RoleGuard action="lab.verify"><RadiologistConsole /></RoleGuard>
             } />
 
             {/* ── Universal role dashboard ────────────────────────

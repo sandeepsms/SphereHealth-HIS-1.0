@@ -212,6 +212,12 @@ router.use("/equipment",        require("./Equipment/equipmentRoutes"));
 
 // Pharmacy — drug master, batches, GRN, dispense, sales register
 router.use("/pharmacy",         require("./Pharmacy/pharmacyRoutes"));
+// R7bd-E-1 / A2-MED-16 — NDPS Schedule-X register (separate from
+// Schedule H). Mounted under /api/pharmacy/schedule-x so the
+// pharmacist's UI lives next to the rest of the pharmacy surface.
+router.use("/pharmacy/schedule-x", require("./Pharmacy/scheduleXRoutes"));
+// R7bd-E-2 / A2-MED-18 — pharmacy cycle-count / stock-take ledger.
+router.use("/pharmacy/stock-take", require("./Pharmacy/stockTakeRoutes"));
 
 // Nurse → Pharmacy drug indent workflow (raise / acknowledge / release / cancel).
 // Mounted as /api/indents — kept separate from /pharmacy so a nurse with
@@ -230,6 +236,10 @@ router.use("/ward-ops",         require("./Clinical/wardOpsRoutes"));
 // Housekeeping — cleaning task board + spillage + inventory + checklist + pest + manager
 router.use("/housekeeping",     require("./Clinical/housekeepingRoutes"));
 
+// R7bd-E-4 / A3-HIGH-9 — Microbiology multi-step appender. MOUNTED
+// BEFORE the general /lab-records router so /api/lab-records/micro/*
+// resolves here (rather than 404ing in Agent C's controller).
+router.use("/lab-records/micro", require("./Lab/microRoutes"));
 // Lab records — manual trend sheets + imaging / micro / histopath reports
 router.use("/lab-records",      require("./Clinical/labRecordsRoutes"));
 

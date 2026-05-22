@@ -670,6 +670,51 @@ const _cancelAuditArchive = scheduleDaily("billing-audit-archive", 3, 30, async 
   return { moved: expired.length, deleted: del.deletedCount };
 });
 
+// R7bd-E-3 / A2-MED-17: low-stock reorder notifier. Runs at 08:00 IST
+// daily — early enough that procurement sees the list before the
+// supplier desk closes. Reuses the same aggregation as
+// pharmacyController.alerts.lowStock so the figures match the on-screen
+// pharmacy dashboard. Notifier is a stub (logs + audit row) until real
+// SMS/email/Slack wiring lands.
+const _cancelReorderNotifier = scheduleDaily("reorder-notifier", 8, 0, async () => {
+  try {
+    const DrugBatchM = require("./models/Pharmacy/DrugBatchModel");
+    const DrugM      = require("./models/Pharmacy/DrugModel");
+    const reorder    = require("./services/Notification/reorderNotifier");
+
+    const rollup = await DrugBatchM.aggregate([
+      { $match: { isActive: true, remaining: { $gt: 0 } } },
+      { $group: { _id: "$drugId", drugName: { $first: "$drugName" }, totalRemaining: { $sum: "$remaining" }, batchCount: { $sum: 1 } } },
+      { $lookup: { from: "pharmacydrugs", localField: "_id", foreignField: "_id", as: "drug" } },
+      { $unwind: { path: "$drug", preserveNullAndEmptyArrays: true } },
+      { $match: { $expr: { $lt: ["$totalRemaining", { $ifNull: ["$drug.reorderLevel", 10] }] } } },
+      { $project: { _id: 0, drugId: "$_id", drugName: { $ifNull: ["$drug.name", "$drugName"] },
+                    totalRemaining: 1, batchCount: 1,
+                    reorderLevel: { $ifNull: ["$drug.reorderLevel", 10] } } },
+      { $sort: { totalRemaining: 1 } },
+    ]);
+
+    // Out-of-stock items have no batches at all — still surface them so
+    // procurement knows to expedite the next purchase order.
+    const zeroStock = await DrugM.find({ isActive: true }).lean();
+    const stockDocs = await DrugBatchM.aggregate([
+      { $match: { isActive: true, remaining: { $gt: 0 } } },
+      { $group: { _id: "$drugId" } },
+    ]);
+    const stockedIds = new Set(stockDocs.map((s) => String(s._id)));
+    const outOfStock = zeroStock
+      .filter((d) => !stockedIds.has(String(d._id)))
+      .map((d) => ({ drugId: d._id, drugName: d.name, totalRemaining: 0, batchCount: 0, reorderLevel: d.reorderLevel || 10 }));
+
+    const items = [...rollup, ...outOfStock];
+    const out = await reorder.notifyLowStock(items, []);
+    return { items: items.length, sent: out.sent, channel: out.channel };
+  } catch (e) {
+    console.error("[reorder-notifier] cron error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
 // Keep a reference name for the graceful-shutdown handler below.
 const _autoBillingInterval = {
   _cancel: () => {
@@ -680,6 +725,7 @@ const _autoBillingInterval = {
     _cancelShiftAutoClose();
     _cancelAuditArchive();           // R7ar-P1-20
     _cancelStuckTrigger();           // R7ar-P2-37
+    _cancelReorderNotifier();        // R7bd-E-3
   },
 };
 

@@ -185,6 +185,11 @@ export const ACTIONS = {
   "pharmacy.add-items":    ["Admin", "Pharmacist"],
   "pharmacy.cancel":       ["Admin", "Pharmacist"],
   "pharmacy.settings":     ["Admin", "Pharmacist"],
+  // R7bd-E-1 / A2-MED-16 — Schedule-X register (mirror of backend).
+  "pharmacy.schedule-x.write": ["Admin", "Pharmacist"],
+  "pharmacy.schedule-x.read":  ["Admin", "Pharmacist"],
+  // R7bd-E-2 / A2-MED-18 — stock-take / cycle count (mirror of backend).
+  "pharmacy.stock-take":       ["Admin", "Pharmacist"],
 
   // Lab — outsourced workflow. Lab Technician does ALL data entry
   // for labs + micro + histopath; Radiologist re-enabled for imaging

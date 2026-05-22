@@ -44,6 +44,19 @@ class PatientAdvanceService {
     const patient = await Patient.findOne({ UHID: String(UHID).toUpperCase() });
     if (!patient) throw new Error(`Patient ${UHID} not found`);
 
+    // R7bd-A-18 / A1-MED-23 — refuse advance creation on an archived
+    // patient. Pre-R7bd a deletedPatient (soft) could still receive new
+    // deposits because the apply / refund / list flows all keyed off
+    // UHID without checking isActive. The receptionist would then see
+    // a deposit receipt for a patient who no longer existed in any
+    // active list.
+    if (patient.isActive === false) {
+      const err = new Error(`Patient ${UHID} is archived — cannot create new advance.`);
+      err.status = 409;
+      err.code   = "PATIENT_ARCHIVED";
+      throw err;
+    }
+
     const ALLOWED_MODES = ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE"];
     if (!ALLOWED_MODES.includes(String(paymentMode).toUpperCase())) {
       throw new Error(`Invalid payment mode "${paymentMode}". Allowed: ${ALLOWED_MODES.join(", ")}`);
@@ -187,7 +200,23 @@ class PatientAdvanceService {
           if (bill.billStatus === "REFUNDED")
             throw new Error("Refunded bill — no further payments allowed");
 
-          const remainingAdv  = Math.max(0, toNum(adv.amount) - toNum(adv.appliedAmount));
+          // R7bd-A-5 / A1-CRIT-6 — remainingAdv MUST subtract refundedAmount.
+          // Pre-R7bd a concurrent refund could land between our read of
+          // (appliedAmount) and our save: the refund flip from
+          // ACTIVE/PARTIALLY_APPLIED → REFUNDED writes
+          // refundedAmount=remaining and flips status. The apply then
+          // sees status=REFUNDED at next read and throws — but a *racing*
+          // apply that completed its read just before the refund could
+          // still attempt to consume the (now-refunded) remainder. The
+          // schema's pre-validate `applied + refunded ≤ amount` invariant
+          // catches the corruption at save time (errors out), but the
+          // cashier sees a confusing "invariant violation" message.
+          // Including refundedAmount in remainingAdv up-front means the
+          // apply throws "Nothing to apply" cleanly when the refund won
+          // the race.
+          const remainingAdv  = Math.max(0,
+            toNum(adv.amount) - toNum(adv.appliedAmount) - toNum(adv.refundedAmount),
+          );
           // R7am: compute the bill's effective balance using the LARGER
           // of stored `patientPayableAmount` vs `sum(billItems.netAmount)`.
           // Some bills have stale patentPayable=0 because recalcTotals

@@ -332,15 +332,181 @@ class PatientService {
   }
 
   /* ══════════════════════════════════════════════
-     DELETE (soft)
+     DELETE (soft, with cascade guard + force-cascade)
+     R7bd-A-1 / A1-CRIT-1
+     ──────────────────────────────────────────────────────────────
+     Pre-R7bd this was a one-liner that flipped isActive=false and
+     left ACTIVE admissions / unpaid bills / open advances orphaned.
+     A "deleted" patient could still appear on the IPD census via
+     their Admission, but lookups against the patient collection
+     returned "Patient not found" — a clinical / billing footgun.
+     Now:
+       • Default path (force=false): REFUSE with 409 if the patient
+         has any active admission, any non-terminal bill, or any
+         advance with positive balance. Operator must clean those up
+         first.
+       • Force path (force=true, admin-only): cascade soft-delete the
+         related rows in a controlled order (admissions → cancel,
+         bills → cancel, advances → mark CANCELLED) emitting a
+         BillingAudit row per cascade step so the audit chain is
+         intact. The patient is then archived.
+     The actor's identity is taken from `actor` so the route can pipe
+     req.user identity into the audit rows.
   ══════════════════════════════════════════════ */
-  async deletePatient(id) {
-    const patient = await Patient.findByIdAndUpdate(
-      id,
-      { isActive: false },
-      { new: true },
-    );
+  async deletePatient(id, { force = false, actor = {} } = {}) {
+    const Admission       = require("../../models/Patient/admissionModel");
+    const PatientBill     = require("../../models/PatientBillModel/PatientBillModel");
+    const PatientAdvance  = require("../../models/PatientBillModel/PatientAdvanceModel");
+
+    const patient = await Patient.findById(id);
     if (!patient) throw new Error("Patient not found");
+    if (patient.isActive === false) {
+      // Already archived — idempotent return, do not re-emit audit.
+      return patient;
+    }
+
+    // Probe the three blocking conditions in parallel.
+    const [activeAdmission, openBill, openAdvance] = await Promise.all([
+      Admission.findOne({ patientId: patient._id, status: "Active" }).select("_id admissionNumber").lean(),
+      PatientBill.exists({
+        patient: patient._id,
+        billStatus: { $nin: ["CANCELLED", "PAID", "REFUNDED"] },
+      }),
+      PatientAdvance.exists({
+        patientId: patient._id,
+        status:    { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
+      }),
+    ]);
+
+    if (!force) {
+      const reasons = [];
+      if (activeAdmission) reasons.push(`active admission ${activeAdmission.admissionNumber || activeAdmission._id}`);
+      if (openBill)        reasons.push("unpaid/uncancelled bill(s)");
+      if (openAdvance)     reasons.push("advance(s) with positive balance");
+      if (reasons.length) {
+        const err = new Error(
+          `Cannot delete patient — ${reasons.join("; ")}. ` +
+          `Resolve the open items first, or call with force=true (Admin) to cascade-soft-delete.`,
+        );
+        err.status = 409;
+        err.code   = "PATIENT_HAS_DEPENDENCIES";
+        throw err;
+      }
+    }
+
+    // Audit emitter (lazy load — avoid circular require at module init).
+    let emit = null;
+    try {
+      ({ emit } = require("../../models/Billing/BillingAudit"));
+    } catch (_) { /* audit best-effort */ }
+    const auditCommon = {
+      UHID:      patient.UHID,
+      patientId: patient._id,
+      actorId:   actor.id || null,
+      actorName: actor.name || "System",
+      actorRole: actor.role || "",
+    };
+
+    // Cascade path (force=true) — fan out soft-deletes/cancels with
+    // an audit row per touched object so the finance + clinical
+    // history stays reconstructable.
+    if (force) {
+      // 1. Active admissions → cancel via the safe service path so
+      //    bed + billing-trigger cascades run too.
+      try {
+        const admissionService = require("./admissionService");
+        const liveAdmissions = await Admission.find({
+          patientId: patient._id,
+          status: "Active",
+        }).select("_id").lean();
+        for (const a of liveAdmissions) {
+          try {
+            await admissionService.cancelAdmission(a._id, "PATIENT_DELETED_CASCADE", { actor, force: true });
+          } catch (e) {
+            console.warn(`[deletePatient cascade] cancelAdmission ${a._id} failed:`, e.message);
+          }
+        }
+      } catch (e) {
+        console.warn("[deletePatient cascade] admission cascade skipped:", e.message);
+      }
+
+      // 2. Open bills → mark CANCELLED with reason. Skip terminal ones.
+      try {
+        const openBills = await PatientBill.find({
+          patient: patient._id,
+          billStatus: { $nin: ["CANCELLED", "REFUNDED"] },
+        });
+        for (const b of openBills) {
+          const prev = b.billStatus;
+          b.billStatus = "CANCELLED";
+          b.cancellationReason = "PATIENT_DELETED_CASCADE";
+          try { await b.save(); } catch (e) { console.warn("[deletePatient cascade] bill save failed:", e.message); continue; }
+          if (emit) {
+            try {
+              await emit({
+                ...auditCommon,
+                event:      "BILL_CANCELLED",
+                billId:     b._id,
+                billNumber: b.billNumber,
+                reason:     "PATIENT_DELETED_CASCADE",
+                before:     { billStatus: prev },
+                after:      { billStatus: "CANCELLED" },
+              });
+            } catch (_) {}
+          }
+        }
+      } catch (e) {
+        console.warn("[deletePatient cascade] bill cascade skipped:", e.message);
+      }
+
+      // 3. Active advances → mark CANCELLED so the unspent balance
+      //    is removed from the patient's wallet. The cashier must
+      //    manually issue any external refund — this cascade only
+      //    closes the ledger row.
+      try {
+        const openAdvances = await PatientAdvance.find({
+          patientId: patient._id,
+          status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
+        });
+        for (const a of openAdvances) {
+          const prev = a.status;
+          a.status = "CANCELLED";
+          a.remarks = (a.remarks ? a.remarks + " | " : "") + "Cancelled by PATIENT_DELETED_CASCADE";
+          try { await a.save(); } catch (e) { console.warn("[deletePatient cascade] advance save failed:", e.message); continue; }
+          if (emit) {
+            try {
+              await emit({
+                ...auditCommon,
+                event:                "ADVANCE_REFUNDED", // closest enum value — semantic = "advance closed"
+                advanceId:            a._id,
+                advanceReceiptNumber: a.receiptNumber,
+                reason:               "PATIENT_DELETED_CASCADE",
+                before:               { status: prev },
+                after:                { status: "CANCELLED" },
+              });
+            } catch (_) {}
+          }
+        }
+      } catch (e) {
+        console.warn("[deletePatient cascade] advance cascade skipped:", e.message);
+      }
+    }
+
+    // Finally: archive the patient.
+    patient.isActive = false;
+    await patient.save();
+
+    if (emit) {
+      try {
+        await emit({
+          ...auditCommon,
+          event:  "USER_TERMINATED", // closest enum hit — patient archival fits the lifecycle bucket
+          reason: force ? "PATIENT_ARCHIVED (force cascade)" : "PATIENT_ARCHIVED",
+          after:  { isActive: false, force },
+        });
+      } catch (_) {}
+    }
+
     return patient;
   }
 
@@ -409,6 +575,32 @@ class PatientService {
       { $inc: { [field]: 1 }, lastVisitDate: new Date() },
       { new: true }
     );
+  }
+
+  /* ══════════════════════════════════════════════
+     R7bd-A-15 / A1-MED-19 — DECREMENT VISIT COUNT
+     ─────────────────────────────────────────────
+     Called from cancelAdmission and deleteAdmission cascade so the
+     patient's totalXxxVisits counter doesn't inflate when an admission
+     never actually happened. We `$inc: -1` then clamp at 0 with a
+     secondary update so a double-decrement (race) can't drive the
+     counter negative. Idempotency is best-effort: cron auto-recon
+     can re-sweep if cancels overlap.
+  ══════════════════════════════════════════════ */
+  async decrementVisitCount(patientId, type) {
+    const field = visitCounterField(type);
+    if (!field) return null;
+    // Two-step: $inc -1 to make it visible (Mongo doesn't have a "max(0,
+    // x-1)" atomic), then clamp negative to 0.
+    const after = await Patient.findByIdAndUpdate(
+      patientId,
+      { $inc: { [field]: -1 } },
+      { new: true },
+    );
+    if (after && (after[field] || 0) < 0) {
+      await Patient.findByIdAndUpdate(patientId, { $set: { [field]: 0 } });
+    }
+    return after;
   }
 
   async getPatientsByTPA(tpaId, filters = {}) {

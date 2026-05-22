@@ -150,6 +150,18 @@ const ACTIONS = {
   "pharmacy.add-items":    ["Admin", "Pharmacist"],
   "pharmacy.cancel":       ["Admin", "Pharmacist"],
   "pharmacy.settings":     ["Admin", "Pharmacist"],
+  // R7bd-E-1 / A2-MED-16 — NDPS Schedule-X register. Separate from the
+  // existing pharmacy.* tokens because narcotic dispense + daily
+  // verification are higher-stakes than routine Schedule-H dispense:
+  // the witness rule + append-only ledger are statutory under NDPS Rule
+  // 65. Read shares the same tier so the register isn't leaked outside
+  // the pharmacy team.
+  "pharmacy.schedule-x.write": ["Admin", "Pharmacist"],
+  "pharmacy.schedule-x.read":  ["Admin", "Pharmacist"],
+  // R7bd-E-2 / A2-MED-18 — pharmacy cycle-count / stock-take. Same tier
+  // as the rest of pharmacy; verification requires a SECOND pharmacist
+  // (separation-of-duties enforced in the service, not via permission).
+  "pharmacy.stock-take":       ["Admin", "Pharmacist"],
 
   // Lab — outsourced workflow. Lab Technician transcribes external reports
   // for every investigation type — labs, imaging, micro, histopath. Treating
