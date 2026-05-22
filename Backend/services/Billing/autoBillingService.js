@@ -48,7 +48,9 @@ const Room           = require("../../models/bedMgmt/roomModel");
 // pricing branch goes through toNum() so a malformed Decimal128
 // or undefined upstream value can never leak NaN into a BillItem
 // (which then poisoned grossAmount/netAmount across the whole bill).
-const { toNum } = require("../../utils/money");
+// R7bm-F6 / R7bl-2: toDec also re-exported for the onOrderCancelled
+// proportional GST distribution math (Decimal128 casts on CN write).
+const { toNum, toDec } = require("../../utils/money");
 
 // R7bh-F3 / R7bg-1-CRIT-6 / NABH-CRIT-A3: every BillingTrigger.create() goes
 // through this helper so the new audit trio (triggeredBy/triggeredById/
@@ -2531,14 +2533,73 @@ async function onOrderCancelled(orderDoc, reason, actorId) {
   let billed = 0;
   let creditNoteAmount = 0;
 
+  // R7bm-F6 / R7bl-2 — proportional GST distribution snapshot.
+  // Pre-R7bm the CN was raised with taxAmount=0, cgst=0, sgst=0, igst=0
+  // — flattening the reversal to a single bucket regardless of the
+  // original line tax mix. When the source bill straddled mixed slabs
+  // (e.g. medicines @ 5% + consumables @ 12%), the CDNR row in GSTR-1
+  // didn't match the original tax invoice's CGST/SGST/IGST split,
+  // producing reconciliation flags in the GSTR-1 vs GSTR-3B sanity
+  // check. The fix captures each bill line's per-item GST breakdown
+  // BEFORE cancelTrigger removes it, then writes the proportional
+  // split onto the CN.
+  //
+  // Each entry: { triggerId, netAmount, taxAmount, cgst, sgst, igst,
+  //               taxPercent, originalChargeId, lineTotal }
+  // where lineTotal = netAmount + taxAmount (the amount being reversed).
+  const PatientBillEarly = require("../../models/PatientBillModel/PatientBillModel");
+  const reversedLines = [];
+
   for (const t of triggers) {
     // If the trigger is already on a bill (status:"billed"), we void
     // via cancelTrigger which removes the bill line. The pro-rata CN
-    // is raised below from the aggregate.
+    // is raised below from the aggregate — but FIRST snapshot the
+    // bill item's per-line GST split so we can reconstruct the
+    // proportional tax distribution after the line is gone.
     try {
       const wasBilled = t.status === "billed" && t.billId && t.billItemId;
       if (wasBilled) {
-        creditNoteAmount += Number(t.totalAmount || 0);
+        // Snapshot the line BEFORE cancelTrigger nukes it. Use .lean()
+        // to avoid a save-hook side-effect; only the read matters here.
+        try {
+          const billDoc = await PatientBillEarly.findOne(
+            { _id: t.billId, "billItems._id": t.billItemId },
+            { billItems: { $elemMatch: { _id: t.billItemId } } },
+          ).lean();
+          const item = billDoc?.billItems?.[0];
+          if (item) {
+            const itemNet  = toNum(item.netAmount);
+            const itemTax  = toNum(item.taxAmount);
+            const itemCgst = toNum(item.cgstAmount);
+            const itemSgst = toNum(item.sgstAmount);
+            const itemIgst = toNum(item.igstAmount);
+            const lineTotal = itemNet + itemTax;
+            reversedLines.push({
+              triggerId:       t._id,
+              originalChargeId: item._id,
+              netAmount:       itemNet,
+              taxAmount:       itemTax,
+              cgstAmount:      itemCgst,
+              sgstAmount:      itemSgst,
+              igstAmount:      itemIgst,
+              taxPercent:      Number(item.taxPercent) || 0,
+              lineTotal,
+            });
+            creditNoteAmount += lineTotal;
+          } else {
+            // Item not found via the elemMatch path (rare — possibly
+            // the line was already removed by a parallel undo). Fall
+            // back to the trigger.totalAmount so the cascade aggregate
+            // is still correct, but per-line GST can't be split.
+            creditNoteAmount += Number(t.totalAmount || 0);
+          }
+        } catch (snapErr) {
+          // Snapshot failure must not block the cascade — fall back to
+          // the legacy aggregate. The CN will be raised with flattened
+          // tax (best the math can do without the line breakdown).
+          console.warn(`[AutoBilling] onOrderCancelled line snapshot failed for trigger ${t._id}:`, snapErr.message);
+          creditNoteAmount += Number(t.totalAmount || 0);
+        }
         billed++;
       }
       await cancelTrigger(t._id, {
@@ -2574,19 +2635,51 @@ async function onOrderCancelled(orderDoc, reason, actorId) {
       const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
       const bill = await PatientBill.findById(anchorTrigger.billId).lean();
       if (bill) {
+        // R7bm-F6 / R7bl-2 — proportional GST distribution across the
+        // reversed lines. Sum per-line taxableValue (netAmount) and
+        // per-line CGST/SGST/IGST so the CDNR row mirrors the original
+        // tax invoice's split exactly. Falls back to flat (tax=0) only
+        // when no line snapshot was captured (legacy / snapshot failure).
+        let taxableValue = 0;
+        let taxAmount    = 0;
+        let cgstAmount   = 0;
+        let sgstAmount   = 0;
+        let igstAmount   = 0;
+        for (const ln of reversedLines) {
+          taxableValue += ln.netAmount;
+          taxAmount    += ln.taxAmount;
+          cgstAmount   += ln.cgstAmount;
+          sgstAmount   += ln.sgstAmount;
+          igstAmount   += ln.igstAmount;
+        }
+        // If we didn't capture any line snapshots (e.g. older billed
+        // triggers without billItemId), fall back to the flat shape so
+        // the CN still records the gross refund — caller will log a
+        // reconciliation hint via the audit row.
+        const haveSnapshots = reversedLines.length > 0;
+        if (!haveSnapshots) {
+          taxableValue = creditNoteAmount;
+          taxAmount = cgstAmount = sgstAmount = igstAmount = 0;
+        }
+        // Round to 2dp for GSTR-1 row formatting. toDec handles the
+        // Decimal128 cast; we pre-round in Number space for the
+        // CreditNote schema's default coercion path.
+        const _round2 = (n) => Number((Number(n) || 0).toFixed(2));
         await CreditNote.create({
           billId:               bill._id,
           originalBillNumber:   bill.billNumber,
           UHID:                 bill.UHID,
           patientId:            bill.patient,
-          refundAmount:         creditNoteAmount,
-          taxableValue:         creditNoteAmount,    // pro-rata math is approximate
-          taxAmount:            0,
-          cgstAmount:           0,
-          sgstAmount:           0,
-          igstAmount:           0,
+          refundAmount:         toDec(_round2(creditNoteAmount)),
+          taxableValue:         toDec(_round2(taxableValue)),
+          taxAmount:            toDec(_round2(taxAmount)),
+          cgstAmount:           toDec(_round2(cgstAmount)),
+          sgstAmount:           toDec(_round2(sgstAmount)),
+          igstAmount:           toDec(_round2(igstAmount)),
           reasonCode:           "03",                 // "Deficiency in services" — closest GST code
-          reasonText:           `[OrderCancelled] ${reasonText} (order ${orderDoc._id})`,
+          reasonText:           haveSnapshots
+            ? `[OrderCancelled] ${reasonText} (order ${orderDoc._id}; ${reversedLines.length} line(s) reversed with per-line GST split)`
+            : `[OrderCancelled] ${reasonText} (order ${orderDoc._id}; line snapshots unavailable, tax flattened)`,
           refundMode:           "ADJUST",
           issuedBy:             actor.fullName || "AutoBilling",
         });
@@ -3207,4 +3300,10 @@ module.exports = {
   // R7az-CRIT-7: order-cancellation refund cascade (Agent D wires the route)
   onOrderCancelled,
   UNDO_WINDOW_MS,
+  // R7bm-F3 / META-3: exported for use by support-staff service-layer
+  // emit sites (physioService.completeSession, kitchenIndentService.markServed)
+  // so a single helper writes the trigger AND fires the TRIGGER_EMITTED
+  // BillingAudit row in one go. Pre-R7bm those sites called
+  // BillingTrigger.create() directly and the audit row was skipped.
+  _emitTrigger,
 };

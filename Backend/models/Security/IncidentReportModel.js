@@ -85,7 +85,14 @@ const IncidentReportSchema = new mongoose.Schema(
     description: { type: String, required: true, trim: true },
 
     personsInvolved: { type: [PersonInvolvedSchema], default: [] },
-    actionTaken:     { type: String, default: "" },
+    // R7bm-F1 / META-9: actionTaken was schema=String but the append-only
+    // guard demanded `$push` (only valid on arrays) → every legitimate
+    // non-Admin write hit 409 INCIDENT_ACTION_APPEND_ONLY. Switching to
+    // [String] turns the guard's $push expectation into a natural fit and
+    // preserves the append-only semantics (each entry = one action note
+    // in chronological order). Legacy rows with the old String value will
+    // auto-cast to a 1-element array on next save; new rows start as [].
+    actionTaken:     { type: [String], default: [] },
 
     status: {
       type: String,
@@ -147,9 +154,9 @@ IncidentReportSchema.index(
  *   may be added via $push).
  * Severity is normally frozen but Admin force-override allowed (caller
  *   sets `options.adminOverride: true` + provides options.overrideReason).
- * Mutable: status, actionTaken (append-only via $push), escalatedTo,
- *   statusHistory, resolvedAt, resolvedBy, attachments (append via $push),
- *   legalHold, retainUntil, updatedAt.
+ * Mutable: status, actionTaken (append via $push to [String] history;
+ *   R7bm-F1 / META-9), escalatedTo, statusHistory, resolvedAt, resolvedBy,
+ *   attachments (append via $push), legalHold, retainUntil, updatedAt.
  * personsInvolved: $push allowed (new row). Direct $set to the array or
  *   replacement of an existing element is blocked. */
 const INCIDENT_MUTABLE_SET = new Set([
@@ -190,11 +197,15 @@ function incidentAppendOnlyGuard(queryThis) {
       err.code = "INCIDENT_PERSONS_IMMUTABLE";
       throw err;
     }
-    // actionTaken: blocked via $set — must use $push to a future array (currently String).
-    // For backwards compat, allow $set on actionTaken only via Admin override; default-block.
-    if (key === "actionTaken") {
+    // R7bm-F1 / META-9: actionTaken is now [String] (was String). $push
+    // is the natural append-only path and passes through this guard
+    // because the setKeys loop only inspects $set/$unset/top-level
+    // operators. $set on the whole array remains blocked (would replace
+    // history). Admin override still permitted with reason for legal
+    // amendments.
+    if (key === "actionTaken" || key.startsWith("actionTaken.")) {
       if (!(adminOverride && overrideReason)) {
-        const err = new Error("IncidentReport.actionTaken is append-only — use $push on actionTaken history (or Admin override with reason)");
+        const err = new Error("IncidentReport.actionTaken is append-only — use $push on actionTaken (or Admin override with reason)");
         err.statusCode = 409;
         err.code = "INCIDENT_ACTION_APPEND_ONLY";
         throw err;
@@ -223,8 +234,10 @@ function incidentAppendOnlyGuard(queryThis) {
     }
   }
 
-  // ─ $pull on personsInvolved / statusHistory / attachments is blocked.
-  for (const arrField of ["personsInvolved", "statusHistory", "attachments"]) {
+  // ─ $pull on personsInvolved / statusHistory / attachments / actionTaken is blocked.
+  // (R7bm-F1 / META-9: actionTaken added — once a remediation note is
+  // recorded it can never be retroactively removed from the audit trail.)
+  for (const arrField of ["personsInvolved", "statusHistory", "attachments", "actionTaken"]) {
     if ($pull[arrField] !== undefined) {
       const err = new Error(`IncidentReport.${arrField}: $pull blocked — entries are immutable`);
       err.statusCode = 409;

@@ -108,6 +108,16 @@ const SharpsInjurySchema = new Schema(
 
     notes:      { type: String, default: "" },
     hospitalId: { type: Schema.Types.ObjectId, ref: "Hospital", default: null },
+
+    // R7bm-F7 — BMW Rules 2016 §13 / IPC §269 / ICMR HIV-PEP guideline:
+    // Sharps-injury records must be retained for at least 5 years from
+    // the date of the injury so a regulator audit (or a delayed
+    // sero-conversion claim) can reconstruct the exposure timeline.
+    // The date is recorded so a future scheduled-purge cron can sweep
+    // records past retention WITHOUT a TTL auto-delete (TTL is
+    // deliberately omitted — append-only / append-and-then-purge
+    // workflows are not equivalent for medico-legal records).
+    retainUntil: { type: Date, default: null, index: true },
   },
   { timestamps: true, collection: "sharps_injuries" },
 );
@@ -115,6 +125,19 @@ const SharpsInjurySchema = new Schema(
 SharpsInjurySchema.index({ status: 1, injuryDate: -1 });
 SharpsInjurySchema.index({ injuredById: 1, injuryDate: -1 });
 SharpsInjurySchema.index({ "source.patientUHID": 1 });
+
+// R7bm-F7 — compute retainUntil = createdAt + 5 years if not set.
+// Runs on insert only; updates do not move the retention horizon.
+const SHARPS_RETENTION_YEARS = 5;
+SharpsInjurySchema.pre("save", function (next) {
+  if (this.isNew && !this.retainUntil) {
+    const base = this.createdAt || this.injuryDate || new Date();
+    const d = new Date(base);
+    d.setFullYear(d.getFullYear() + SHARPS_RETENTION_YEARS);
+    this.retainUntil = d;
+  }
+  next();
+});
 
 // Once status === "CLOSED" no further mutation except for legal-hold /
 // note appends. Re-opening requires a dedicated admin override.

@@ -25,14 +25,28 @@ const fmtDT = (d) =>
 const BAG_COLORS = ["YELLOW", "RED", "BLUE", "WHITE", "BLACK", "CYTOTOXIC"];
 const CATEGORIES = ["INFECTIOUS", "ANATOMICAL", "SHARPS", "CHEMICAL", "CYTOTOXIC", "GENERAL"];
 
-const EMPTY_BAG = { barcode: "", bagColor: "YELLOW", category: "INFECTIOUS", weight_kg: "", fromWard: "" };
+// R7bm-F7 — `_rid` is a stable per-row id used as the React key.
+// Form rows are user-editable (barcode can be empty during typing) so
+// index keys cause field-blur focus loss when rows are added / removed
+// mid-edit. The id is local-only and stripped before POST.
+let _rowSeq = 0;
+const _nextRowId = () => `bagrow-${Date.now().toString(36)}-${(++_rowSeq).toString(36)}`;
+const makeBag = (overrides = {}) => ({
+  _rid: _nextRowId(),
+  barcode: "",
+  bagColor: "YELLOW",
+  category: "INFECTIOUS",
+  weight_kg: "",
+  fromWard: "",
+  ...overrides,
+});
 const EMPTY_FORM = {
   cbwtfName: "",
   cbwtfLicenceNumber: "",
   vehicleNumber: "",
   driverName: "",
   driverPhone: "",
-  bags: [{ ...EMPTY_BAG }],
+  bags: [makeBag()],
 };
 
 export default function BmwManifestPage() {
@@ -43,26 +57,43 @@ export default function BmwManifestPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
 
-  const fetchList = useCallback(async () => {
+  // R7bm-F7 — AbortController-aware fetch so that an in-flight load
+  // doesn't toast or setState into an unmounted page (the lifecycle was
+  // missing in R7bl, which caused a memory-leak warning during heavy
+  // tab-switching on the compliance dashboard).
+  const fetchList = useCallback(async (signal) => {
     setLoading(true);
     try {
-      const r = await axios.get(`${API}/bmw-manifest`, authHdr());
+      const r = await axios.get(`${API}/bmw-manifest`, { ...authHdr(), signal });
+      if (signal?.aborted) return;
       setRows(r.data?.data || []);
     } catch (e) {
+      if (e?.code === "ERR_CANCELED" || e?.name === "CanceledError" || signal?.aborted) return;
       toast.error(e?.response?.data?.message || "Failed to load");
+    } finally {
+      if (!signal?.aborted) setLoading(false);
     }
-    setLoading(false);
   }, []);
 
-  useEffect(() => { fetchList(); }, [fetchList]);
+  useEffect(() => {
+    const ac = new AbortController();
+    fetchList(ac.signal);
+    // Cancel in-flight requests on unmount. State resets are not safe
+    // post-unmount (React 18 warns); the modal + form state are tied
+    // to this component instance so they tear down naturally with it.
+    return () => ac.abort();
+  }, [fetchList]);
 
   const kpis = useMemo(() => ({
     total: rows.length,
     pendingPcb: rows.filter(r => !r.pcbReturnFiled).length,
     totalBags: rows.reduce((s, r) => s + (r.totalBags || 0), 0),
+    // R7bm-F7 — Total weight is the headline figure on the BMW Form-IV
+    // annual return; KPI card surfaces it alongside the other tallies.
+    totalWeight: rows.reduce((s, r) => s + Number(r.totalWeight_kg || 0), 0),
   }), [rows]);
 
-  const addBag = () => setForm({ ...form, bags: [...form.bags, { ...EMPTY_BAG }] });
+  const addBag = () => setForm({ ...form, bags: [...form.bags, makeBag()] });
   const setBag = (i, k, v) => {
     const bags = [...form.bags];
     bags[i] = { ...bags[i], [k]: v };
@@ -78,7 +109,9 @@ export default function BmwManifestPage() {
     try {
       const payload = {
         ...form,
-        bags: form.bags.map(b => ({ ...b, weight_kg: Number(b.weight_kg) || 0 })),
+        // Strip the local-only `_rid` React-key field before POST so the
+        // backend doesn't have to ignore it.
+        bags: form.bags.map(({ _rid, ...b }) => ({ ...b, weight_kg: Number(b.weight_kg) || 0 })),
       };
       await axios.post(`${API}/bmw-manifest`, payload, authHdr());
       toast.success("Manifest created");
@@ -100,6 +133,10 @@ export default function BmwManifestPage() {
         <KPI label="Total Manifests" value={kpis.total} color={C.blue} icon="pi-list" />
         <KPI label="Pending PCB" value={kpis.pendingPcb} color={C.amber} icon="pi-clock" />
         <KPI label="Bags Tracked" value={kpis.totalBags} color={C.green} icon="pi-box" />
+        {/* R7bm-F7 — Form-IV annual-return figure; red tone signals
+            "this is the regulator-reported number" so it can't go
+            unnoticed during the monthly close. */}
+        <KPI label="Total Weight (kg)" value={kpis.totalWeight.toFixed(2)} color={C.red} icon="pi-database" />
       </div>
 
       <Card title="Manifest Register" icon="pi-table">
@@ -143,7 +180,7 @@ export default function BmwManifestPage() {
           </Field>
           <div style={{ marginTop: 12, marginBottom: 6, fontWeight: 600 }}>Bags ({form.bags.length})</div>
           {form.bags.map((b, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.2fr 0.8fr 1fr 30px", gap: 6, marginBottom: 6, alignItems: "center" }}>
+            <div key={b._rid || `bag-${i}`} style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.2fr 0.8fr 1fr 30px", gap: 6, marginBottom: 6, alignItems: "center" }}>
               <input placeholder="Barcode" value={b.barcode} onChange={e => setBag(i, "barcode", e.target.value)} />
               <select value={b.bagColor} onChange={e => setBag(i, "bagColor", e.target.value)}>
                 {BAG_COLORS.map(c => <option key={c}>{c}</option>)}

@@ -84,6 +84,25 @@ const CodeResponseEventSchema = new Schema(
     linkedMortuaryId: { type: Schema.Types.ObjectId, ref: "MortuaryRecord",  default: null },
     linkedIncidentId: { type: Schema.Types.ObjectId, ref: "IncidentReport",  default: null },
 
+    // ─────────────────────────────────────────────────────────────
+    // R7bm-F7 — Auto-link to the patient's encounter at trigger time.
+    // For Code BLUE / RED responses we resolve the patient's current
+    // Active Admission and FREEZE the encounter / ward / bed snapshot
+    // onto the response record so the post-event review can reconstruct
+    // the chain without depending on later bed transfers or discharges.
+    // Resolved by codeResponseService.recordEvent when patientUHID is
+    // supplied without an explicit ward/bed; the snapshot is immutable
+    // (covered by POST_RESOLVE_ALLOWED below for resolution-time, but
+    // these fields are only written during the create flow so the
+    // append-only guard naturally protects them on update).
+    linkedAdmissionId:    { type: Schema.Types.ObjectId, ref: "Admission", default: null, index: true },
+    linkedWardId:         { type: Schema.Types.ObjectId, ref: "Ward",      default: null },
+    linkedWardName:       { type: String, default: "" },
+    linkedBedId:          { type: Schema.Types.ObjectId, ref: "Beds",      default: null },
+    linkedBedNumber:      { type: String, default: "" },
+    linkedRoomNumber:     { type: String, default: "" },
+    autoLinkedAt:         { type: Date, default: null },
+
     hospitalId: { type: Schema.Types.ObjectId, ref: "Hospital", default: null },
   },
   { timestamps: true, collection: "code_response_events" },

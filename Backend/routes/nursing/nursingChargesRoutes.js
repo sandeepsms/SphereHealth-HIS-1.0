@@ -7,6 +7,8 @@ const ctrl    = require("../../controllers/nursing/nursingChargesController");
 // that the rest of the manual-charge surface uses. The global authenticate()
 // in routes/index.js makes the per-route `authenticate` redundant.
 const { requireAction } = require("../../middleware/auth");
+// R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // R7bb-B/D4-HIGH-S1: all reads now gated on `billing.read` (Admin /
 // Accountant / Receptionist / TPA Coordinator). Pre-R7bb any
@@ -18,7 +20,7 @@ const { requireAction } = require("../../middleware/auth");
 router.get   ("/items",            requireAction("billing.read"), ctrl.getItems);
 router.post  ("/items",            requireAction("departments.write"), ctrl.createItem);
 router.put   ("/items/:id",        requireAction("departments.write"), ctrl.updateItem);
-router.delete("/items/:id",        requireAction("departments.write"), ctrl.deleteItem);
+router.delete("/items/:id",        validateObjectIdParam("id"), requireAction("departments.write"), ctrl.deleteItem);
 
 // ── Charge entries ────────────────────────────────────────────
 router.post  ("/log",              requireAction("billing.manual-charge"), ctrl.logItems);

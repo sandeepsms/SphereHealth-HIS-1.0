@@ -59,6 +59,21 @@ import DietPlan              from "./DietPlan";
 import MortuaryHandover      from "./MortuaryHandover";
 import BmwManifest           from "./BmwManifest";
 import CodeResponseSheet     from "./CodeResponseSheet";
+// R7bj-F1 + F2 sibling printables — Physio session/plan + Kitchen indent
+// slip. Templates landed in R7bj; R7bm-F1 activates the slug registrations
+// so openPrint("physio-session"|"physio-plan"|"kitchen-indent-slip", …)
+// finally routes to a real component instead of falling through to 404.
+import PhysioSession         from "./PhysioSession";
+import PhysioPlan            from "./PhysioPlan";
+import KitchenIndentSlip     from "./KitchenIndentSlip";
+// R7bm-F7 — three new regulatory-grade printables that close out the
+// last gaps surfaced by R7bl-8. SharpsInjuryPrint backs NABH HIC.6 +
+// BMW Rules 2016 §13 (5-year retention), ColdChainLogPrint backs
+// FSSAI 2.1.13 + D&C Schedule K + WHO PQS E003 (3-year retention),
+// AdverseFoodReactionPrint backs NABH COP.21 + JCI FMS.
+import SharpsInjuryPrint        from "./SharpsInjuryPrint";
+import ColdChainLogPrint        from "./ColdChainLogPrint";
+import AdverseFoodReactionPrint from "./AdverseFoodReactionPrint";
 
 export const PRINTABLES = {
   // ── Receipts / billing ─────────────────────────────────
@@ -121,18 +136,21 @@ export const PRINTABLES = {
   "mortuary-handover":      { component: MortuaryHandover,      title: "Mortuary Body Handover & Release",    defaultPaper: "a4" },
   "bmw-manifest":           { component: BmwManifest,           title: "Bio-Medical Waste Manifest (Form-IV)",defaultPaper: "a4" },
   "code-response-sheet":    { component: CodeResponseSheet,     title: "Code Response Event Sheet",           defaultPaper: "a4" },
-};
 
-// R7bj-F7: F1 (Physio) + F2 (Kitchen) sibling printables. Slugs are
-// kept reserved here so the print-router doesn't drift; the agents
-// owning those tracks will land the actual components in their own
-// PRs and uncomment the registrations below at that time. We avoid
-// `React.lazy()` because the print-router consumer does not wrap in
-// `<Suspense>`, so a static import is the only correct shape and
-// must wait until the component file exists in the repo.
-//
-//   "physio-session":     { component: PhysioSession,     title: "Physiotherapy Session Note", defaultPaper: "a4" },
-//   "physio-plan":        { component: PhysioPlan,        title: "Physiotherapy Treatment Plan", defaultPaper: "a4" },
-//   "kitchen-indent-slip":{ component: KitchenIndentSlip, title: "Kitchen Indent Slip",           defaultPaper: "half-a4" },
+  // ── R7bj-F1 / F2: Physio + Kitchen sibling printables ───────────
+  // Templates landed in R7bj; R7bm-F1 activated these registrations
+  // (the comment block previously held them back behind a "must wait
+  // until the component file exists" guard which was never lifted
+  // when the component files were added on disk). Slugs match the
+  // openPrint() callsites in physio + diet workflows.
+  "physio-session":         { component: PhysioSession,         title: "Physiotherapy Session Note",          defaultPaper: "a4" },
+  "physio-plan":            { component: PhysioPlan,            title: "Physiotherapy Treatment Plan",        defaultPaper: "a4" },
+  "kitchen-indent-slip":    { component: KitchenIndentSlip,     title: "Kitchen Indent Slip",                 defaultPaper: "half-a4" },
+
+  // ── R7bm-F7: regulatory printables for HIC.6 / cold-chain / food ADR ──
+  "sharps-injury":          { component: SharpsInjuryPrint,         title: "Sharps / Needle-stick Injury Report", defaultPaper: "a4" },
+  "cold-chain-log":         { component: ColdChainLogPrint,         title: "Cold-Chain Temperature Log",          defaultPaper: "a4", defaultOrient: "landscape" },
+  "adverse-food-reaction":  { component: AdverseFoodReactionPrint,  title: "Adverse Food Reaction Report",        defaultPaper: "a4" },
+};
 
 export default PRINTABLES;

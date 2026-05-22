@@ -36,8 +36,133 @@ const { toNum } = require("../../utils/money");
 // State code → fallback to env. GSTN uses 2-digit state codes; if the
 // hospital hasn't configured one, default to "29" (Karnataka) — keeps the
 // JSON valid; accountant can correct in the next regen.
-const HOSPITAL_STATE_CODE = process.env.HOSPITAL_STATE_CODE || "29";
+const HOSPITAL_STATE_CODE_RAW = process.env.HOSPITAL_STATE_CODE || "29";
 const HOSPITAL_GSTIN = process.env.HOSPITAL_GSTIN || "";
+
+// ─────────────────────────────────────────────────────────────────────
+// R7bm-F7 — GST state-code normalisation.
+//
+// Inter-state vs intra-state determination drives whether the invoice
+// carries CGST+SGST (intra) or IGST (inter). Getting it wrong corrupts
+// GSTR-1 *and* shifts ITC eligibility for the customer downstream.
+//
+// Pre-R7bm both `hospitalStateCode` and `placeOfSupply` were compared
+// as raw strings — so "29" vs "29 " vs "29-KA" vs "Karnataka" all
+// looked different and would mis-classify the supply. The helpers
+// below normalise both sides through the same pipeline + cross-check
+// against the official GSTN 2-digit state-code map.
+//
+// Reference: GST State Code List as notified by GSTN (1..38, with 99
+// reserved for "Other Territory" / OIDAR).
+// ─────────────────────────────────────────────────────────────────────
+const GST_STATE_CODE_MAP = {
+  "JAMMU AND KASHMIR": "01", "JAMMU & KASHMIR": "01", "J&K": "01",
+  "HIMACHAL PRADESH": "02", "HP": "02",
+  "PUNJAB": "03",
+  "CHANDIGARH": "04",
+  "UTTARAKHAND": "05", "UTTRAKHAND": "05",
+  "HARYANA": "06",
+  "DELHI": "07",
+  "RAJASTHAN": "08",
+  "UTTAR PRADESH": "09", "UP": "09",
+  "BIHAR": "10",
+  "SIKKIM": "11",
+  "ARUNACHAL PRADESH": "12",
+  "NAGALAND": "13",
+  "MANIPUR": "14",
+  "MIZORAM": "15",
+  "TRIPURA": "16",
+  "MEGHALAYA": "17",
+  "ASSAM": "18",
+  "WEST BENGAL": "19", "WB": "19",
+  "JHARKHAND": "20",
+  "ODISHA": "21", "ORISSA": "21",
+  "CHATTISGARH": "22", "CHHATTISGARH": "22",
+  "MADHYA PRADESH": "23", "MP": "23",
+  "GUJARAT": "24",
+  "DAMAN AND DIU": "25", "DAMAN & DIU": "25",
+  "DADRA AND NAGAR HAVELI": "26", "DADRA & NAGAR HAVELI": "26",
+  "MAHARASHTRA": "27",
+  "ANDHRA PRADESH (BEFORE)": "28",
+  "KARNATAKA": "29", "KA": "29",
+  "GOA": "30",
+  "LAKSHADWEEP": "31",
+  "KERALA": "32",
+  "TAMIL NADU": "33", "TN": "33",
+  "PUDUCHERRY": "34", "PONDICHERRY": "34",
+  "ANDAMAN AND NICOBAR ISLANDS": "35", "ANDAMAN & NICOBAR": "35",
+  "TELANGANA": "36",
+  "ANDHRA PRADESH": "37", "AP": "37",
+  "LADAKH": "38",
+  "OTHER TERRITORY": "97", "FOREIGN COUNTRY": "96", "OIDAR": "99",
+};
+
+/**
+ * Normalise a state value (string) into the canonical 2-digit GST
+ * state code. Accepts:
+ *   - "29", "29 ", "29-KA", "29-Karnataka", "29|KA" → "29"
+ *   - "Karnataka", "karnataka", "KA"               → "29"
+ *   - anything that already matches \d{2}          → kept verbatim
+ * Returns "" when the input cannot be resolved — caller asserts.
+ */
+function normalizeGstStateCode(raw) {
+  if (raw == null) return "";
+  let s = String(raw).trim().toUpperCase();
+  if (!s) return "";
+  // Prefix-digit form: "29-KA", "29|KA", "29 KA", "29Karnataka"
+  const prefixMatch = s.match(/^(\d{2})\b/);
+  if (prefixMatch) {
+    const code = prefixMatch[1];
+    if (Number(code) >= 1 && Number(code) <= 99) return code;
+  }
+  // Pure name lookup (with separators removed): "WEST BENGAL", "TAMIL_NADU"
+  const nameKey = s.replace(/[_\-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (GST_STATE_CODE_MAP[nameKey]) return GST_STATE_CODE_MAP[nameKey];
+  // Strip non-letters and retry
+  const lettersKey = s.replace(/[^A-Z]/g, "");
+  for (const [k, v] of Object.entries(GST_STATE_CODE_MAP)) {
+    if (k.replace(/[^A-Z]/g, "") === lettersKey) return v;
+  }
+  // Fall-through: numeric-only string of arbitrary length — keep last
+  // two digits if they look like a valid code, otherwise unresolved.
+  const digits = s.replace(/\D/g, "");
+  if (digits.length >= 2) {
+    const code = digits.slice(0, 2);
+    if (Number(code) >= 1 && Number(code) <= 99) return code;
+  }
+  return "";
+}
+
+const HOSPITAL_STATE_CODE = normalizeGstStateCode(HOSPITAL_STATE_CODE_RAW) || "29";
+
+/**
+ * Compare two state codes for intra-state supply. Returns true only
+ * when both sides resolve to the same canonical 2-digit code. Throws
+ * a helpful error if either side is empty after normalisation — this
+ * forces the operator to correct config before a corrupted GSTR-1 is
+ * generated rather than silently mis-classifying.
+ */
+function isIntraStateSupply(hospitalRaw, posRaw, { invoiceRef = "<unknown>" } = {}) {
+  const hospital = normalizeGstStateCode(hospitalRaw);
+  const pos      = normalizeGstStateCode(posRaw);
+  if (!hospital) {
+    const e = new Error(
+      `GSTR-1: hospital state code is empty / unresolved (raw="${hospitalRaw}"). ` +
+      `Set process.env.HOSPITAL_STATE_CODE to a 2-digit GSTN state code (e.g. "29" for Karnataka).`,
+    );
+    e.code = "GSTR1_HOSPITAL_STATE_EMPTY";
+    throw e;
+  }
+  if (!pos) {
+    const e = new Error(
+      `GSTR-1: placeOfSupply.state is empty / unresolved (raw="${posRaw}") for invoice ${invoiceRef}. ` +
+      `Each invoice must carry a 2-digit GSTN state code in placeOfSupply.`,
+    );
+    e.code = "GSTR1_POS_STATE_EMPTY";
+    throw e;
+  }
+  return { intraState: hospital === pos, hospital, pos };
+}
 
 // B2CL threshold per GSTN portal rules — invoices > ₹2.5L without GSTIN
 // must be listed individually rather than aggregated under b2c.
@@ -102,8 +227,17 @@ async function _bucketPatientBills(periodStart, periodEnd) {
     const cgst = toNum(b.cgstAmount);
     const sgst = toNum(b.sgstAmount);
     const igst = toNum(b.igstAmount);
-    const placeOfSupply = String(b.placeOfSupply || HOSPITAL_STATE_CODE);
-    const intraState = placeOfSupply === HOSPITAL_STATE_CODE;
+    // R7bm-F7 — normalise both sides through the canonical GSTN code map
+    // so "29" / "29-KA" / "Karnataka" all resolve identically. The helper
+    // throws if either side is empty so the accountant catches a config
+    // hole BEFORE a wrong GSTR-1 lands on the portal.
+    const posRaw = (b.placeOfSupply && (b.placeOfSupply.state || b.placeOfSupply.stateCode || b.placeOfSupply))
+      || HOSPITAL_STATE_CODE;
+    const { intraState, pos: placeOfSupply } = isIntraStateSupply(
+      HOSPITAL_STATE_CODE,
+      posRaw,
+      { invoiceRef: b.billNumber || String(b._id) },
+    );
     const taxable = netAmount; // netAmount is post-discount + pre-tax in this model
     // R7bh-F6: invoice-level rate derived from the dominant taxPercent in
     // billItems (or 0 if no taxable items). Simpler than GSTN's per-line
@@ -232,8 +366,14 @@ async function _bucketPharmacySales(periodStart, periodEnd, hsnMap) {
     const grandTotal = toNum(s.grandTotal);
     const totalGst = toNum(s.totalGst);
     const taxable = grandTotal - totalGst;
-    const placeOfSupply = String(s.placeOfSupply || HOSPITAL_STATE_CODE);
-    const intraState = placeOfSupply === HOSPITAL_STATE_CODE;
+    // R7bm-F7 — normalise + assert state codes for pharmacy invoices too.
+    const posRaw = (s.placeOfSupply && (s.placeOfSupply.state || s.placeOfSupply.stateCode || s.placeOfSupply))
+      || HOSPITAL_STATE_CODE;
+    const { intraState, pos: placeOfSupply } = isIntraStateSupply(
+      HOSPITAL_STATE_CODE,
+      posRaw,
+      { invoiceRef: s.invoiceNumber || String(s._id) },
+    );
 
     // dominant rate from items
     let dominantRate = 0;
@@ -354,7 +494,12 @@ async function _bucketCreditNotes(periodStart, periodEnd) {
     sgstAmount: toNum(c.sgstAmount),
     igstAmount: toNum(c.igstAmount),
     cessAmount: 0,
-    placeOfSupply: c.placeOfSupply || HOSPITAL_STATE_CODE,
+    // R7bm-F7 — normalise CN place-of-supply so the portal validator
+    // doesn't reject the row over a raw state name.
+    placeOfSupply: normalizeGstStateCode(
+      (c.placeOfSupply && (c.placeOfSupply.state || c.placeOfSupply.stateCode || c.placeOfSupply))
+        || HOSPITAL_STATE_CODE,
+    ) || HOSPITAL_STATE_CODE,
     customerGstin: c.customerGstin || "",
     reason: c.reason || "",
   }));
@@ -478,4 +623,9 @@ module.exports = {
   buildGSTR1JSON,
   previewGSTR1,
   _parsePeriodToRange, // exported for tests / controller validation
+  // R7bm-F7 — exported for tests + reuse by other Tax/* exporters
+  // (GSTR-3B does the same intra/inter decision; sharing the helper
+  // keeps the two reports in lock-step).
+  normalizeGstStateCode,
+  isIntraStateSupply,
 };

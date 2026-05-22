@@ -5,7 +5,7 @@
  *
  *   URL: /code-response
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
@@ -52,22 +52,44 @@ export default function CodeResponsePage() {
   const [resolveOutcome, setResolveOutcome] = useState("RESOLVED");
   const [resolveNotes, setResolveNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  // R7bm-F10 — AbortController + unmount cleanup. Reset modal/form state on
+  // unmount so a re-mount doesn't restore stale UI.
+  const abortRef = useRef(null);
+  const mountedRef = useRef(true);
 
   const fetchList = useCallback(async () => {
+    if (abortRef.current) abortRef.current.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (filterCode) params.set("code", filterCode);
       params.set("limit", "200");
-      const r = await axios.get(`${API}/code-response?${params}`, authHdr());
-      setRows(r.data?.data || []);
+      const r = await axios.get(`${API}/code-response?${params}`, { ...authHdr(), signal: ac.signal });
+      if (mountedRef.current) setRows(r.data?.data || []);
     } catch (e) {
-      toast.error(e?.response?.data?.message || "Failed to load");
+      if (axios.isCancel?.(e) || e?.name === "CanceledError" || e?.code === "ERR_CANCELED") return;
+      if (mountedRef.current) toast.error(e?.response?.data?.message || "Failed to load");
     }
-    setLoading(false);
+    if (mountedRef.current) setLoading(false);
   }, [filterCode]);
 
   useEffect(() => { fetchList(); }, [fetchList]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (abortRef.current) abortRef.current.abort();
+      setShowCreate(false);
+      setShowResolve(null);
+      setForm(EMPTY_FORM);
+      setResolveOutcome("RESOLVED");
+      setResolveNotes("");
+      setSaving(false);
+    };
+  }, []);
 
   const kpis = useMemo(() => ({
     open: rows.filter(r => !r.resolvedAt).length,

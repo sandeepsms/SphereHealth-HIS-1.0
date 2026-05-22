@@ -10,7 +10,7 @@
  *   • "+ Log Reading" button + Active Breaches table with Acknowledge action
  *   • Recent readings table (filterable by fridgeId)
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
@@ -51,24 +51,46 @@ export default function ColdChainPage() {
   const [ackNote, setAckNote] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // R7bm-F5 — AbortController on the filter-triggered fetch so a rapid
+  // fridge-filter keystroke doesn't race responses, plus unmount cleanup.
+  const abortRef = useRef(null);
+  const mountedRef = useRef(true);
   const fetchAll = useCallback(async () => {
+    if (abortRef.current) abortRef.current.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     setLoading(true);
     try {
       const [b, h] = await Promise.all([
-        axios.get(`${API}/cold-chain/breaches`, authHdr()),
+        axios.get(`${API}/cold-chain/breaches`, { ...authHdr(), signal: ctrl.signal }),
         fridgeFilter
-          ? axios.get(`${API}/cold-chain/fridge/${encodeURIComponent(fridgeFilter)}`, authHdr())
+          ? axios.get(`${API}/cold-chain/fridge/${encodeURIComponent(fridgeFilter)}`, { ...authHdr(), signal: ctrl.signal })
           : Promise.resolve({ data: { data: [] } }),
       ]);
+      if (!mountedRef.current) return;
       setBreaches(b.data?.data || []);
       setHistory(h.data?.data || []);
     } catch (e) {
-      toast.error(e?.response?.data?.message || "Failed to load cold-chain data");
+      if (e.name !== "CanceledError" && e.name !== "AbortError") {
+        toast.error(e?.response?.data?.message || "Failed to load cold-chain data");
+      }
     }
-    setLoading(false);
+    if (mountedRef.current) setLoading(false);
   }, [fridgeFilter]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    mountedRef.current = true;
+    fetchAll();
+    return () => {
+      mountedRef.current = false;
+      if (abortRef.current) abortRef.current.abort();
+      // Reset transient form state on unmount.
+      setForm(EMPTY_FORM);
+      setAckNote("");
+      setShowCreate(false);
+      setShowAck(null);
+    };
+  }, [fetchAll]);
 
   const kpis = useMemo(() => ({
     open: breaches.length,
@@ -127,7 +149,8 @@ export default function ColdChainPage() {
 
       <Card title="Active Breaches (unacknowledged)" icon="pi-exclamation-circle">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <SearchInput value={fridgeFilter} onChange={setFridgeFilter} placeholder="Filter by fridgeId (e.g. PHM-VAC-01)" />
+          {/* R7bm-F5 — SearchInput passes the raw event; pull e.target.value. */}
+          <SearchInput value={fridgeFilter} onChange={e => setFridgeFilter(e.target.value)} placeholder="Filter by fridgeId (e.g. PHM-VAC-01)" />
           {can("pharmacy.cold-chain.write") && (
             <PrimaryButton onClick={() => setShowCreate(true)}>+ Log Reading</PrimaryButton>
           )}

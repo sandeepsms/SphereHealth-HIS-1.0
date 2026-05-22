@@ -9,14 +9,16 @@ const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/Clinical/sharpsInjuryController");
 const { requireAction } = require("../../middleware/auth");
+// R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 router.get("/",                  requireAction("clinical.sharps-injury.read"),  ctrl.list);
-router.get("/:id",               requireAction("clinical.sharps-injury.read"),  ctrl.getOne);
+router.get("/:id",               validateObjectIdParam("id"), requireAction("clinical.sharps-injury.read"),  ctrl.getOne);
 
 router.post("/",                 requireAction("clinical.sharps-injury.write"), ctrl.create);
-router.put("/:id",               requireAction("clinical.sharps-injury.write"), ctrl.update);
-router.put("/:id/pep-started",   requireAction("clinical.sharps-injury.write"), ctrl.pepStarted);
-router.put("/:id/serology",      requireAction("clinical.sharps-injury.write"), ctrl.serology);
-router.put("/:id/close",         requireAction("clinical.sharps-injury.write"), ctrl.close);
+router.put("/:id",               validateObjectIdParam("id"), requireAction("clinical.sharps-injury.write"), ctrl.update);
+router.put("/:id/pep-started",   validateObjectIdParam("id"), requireAction("clinical.sharps-injury.write"), ctrl.pepStarted);
+router.put("/:id/serology",      validateObjectIdParam("id"), requireAction("clinical.sharps-injury.write"), ctrl.serology);
+router.put("/:id/close",         validateObjectIdParam("id"), requireAction("clinical.sharps-injury.write"), ctrl.close);
 
 module.exports = router;

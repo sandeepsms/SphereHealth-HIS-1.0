@@ -35,6 +35,41 @@ function _istYear() {
   return Number(new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric" }).format(new Date()));
 }
 
+// R7bm-F7 — ICMR HIV-PEP guideline + IPC §269 + NABH HIC.6:
+// every needle-stick / sharps-injury report should auto-schedule
+// serology retests at 6 weeks, 3 months, and 6 months from the
+// exposure date. Each follow-up window covers all three viruses
+// (HIV / HBsAg / HCV). The rows seed `followUpSerology[]` with
+// dueAt set; completedAt + result are filled in later via the
+// dedicated `recordSerologyResult` helper.
+const FOLLOWUP_OFFSETS_DAYS = [
+  { label: "6W", days: 42  },   // 6 weeks
+  { label: "3M", days: 90  },   // 3 months
+  { label: "6M", days: 182 },   // ~6 months
+];
+const FOLLOWUP_TESTS = ["HIV", "HBsAg", "HCV"];
+
+function _buildFollowupSchedule(injuryDate) {
+  const base = new Date(injuryDate || Date.now());
+  const out = [];
+  for (const win of FOLLOWUP_OFFSETS_DAYS) {
+    const due = new Date(base);
+    due.setDate(due.getDate() + win.days);
+    for (const test of FOLLOWUP_TESTS) {
+      out.push({
+        test,
+        dueAt: due,
+        completedAt: null,
+        result: "PENDING",
+        reportedById: null,
+        reportedByName: "",
+        notes: `Scheduled ${win.label} retest (ICMR HIV-PEP)`,
+      });
+    }
+  }
+  return out;
+}
+
 async function create(payload, actor = {}) {
   if (!payload) throw _err("ARG_MISSING", "payload is required", 400);
   if (!payload.injuredById) throw _err("ARG_MISSING", "injuredById is required", 400);
@@ -45,12 +80,20 @@ async function create(payload, actor = {}) {
   const seq = await nextSequence(`sharps_injury:${year}`);
   const incidentNumber = formatId(`SI-${year}`, seq, 4);  // SI-2026-0001
 
+  const injuryDate = payload.injuryDate ? new Date(payload.injuryDate) : new Date();
+  // R7bm-F7 — if caller did not pre-seed followUpSerology, auto-build
+  // the 6w / 3m / 6m × {HIV,HBsAg,HCV} schedule per ICMR HIV-PEP.
+  const incomingFollowups = Array.isArray(payload.followUpSerology) ? payload.followUpSerology : [];
+  const followUpSerology = incomingFollowups.length > 0
+    ? incomingFollowups
+    : _buildFollowupSchedule(injuryDate);
+
   const doc = await SharpsInjury.create({
     incidentNumber,
     injuredById:       payload.injuredById,
     injuredByName:     payload.injuredByName,
     injuredByRole:     payload.injuredByRole || "",
-    injuryDate:        payload.injuryDate ? new Date(payload.injuryDate) : new Date(),
+    injuryDate:        injuryDate,
     injuryLocation:    payload.injuryLocation || "",
     injuryDescription: payload.injuryDescription || "",
     device:            payload.device,
@@ -73,7 +116,7 @@ async function create(payload, actor = {}) {
       completedAt: payload.pepStatus?.completedAt ? new Date(payload.pepStatus.completedAt) : null,
       declinedReason: payload.pepStatus?.declinedReason || "",
     },
-    followUpSerology: Array.isArray(payload.followUpSerology) ? payload.followUpSerology : [],
+    followUpSerology: followUpSerology,
     notes:            payload.notes || "",
     status:           "OPEN",
     hospitalId:       actor.hospitalId || payload.hospitalId || null,

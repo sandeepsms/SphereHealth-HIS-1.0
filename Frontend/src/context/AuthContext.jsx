@@ -189,8 +189,13 @@ export function AuthProvider({ children }) {
       const t = getAuthToken();
       if (!t) return;
       try {
+        // R7bm-F9: mark as background poll so a transient 401 from /auth/me
+        // (mongo replica blip, network hiccup) doesn't punt the user. The
+        // interceptor's transient counter still handles persistent failures
+        // — they'll redirect once the user actively navigates.
         const res = await axios.get(API_ENDPOINTS.AUTH_ME, {
           headers: { Authorization: `Bearer ${t}` },
+          _isBackgroundPoll: true,
         });
         if (cancelled) return;
         const fresh = res.data?.user;
@@ -215,9 +220,9 @@ export function AuthProvider({ children }) {
           try { window.location.href = "/login"; } catch (_) {}
         }
       } catch (_) {
-        // 401s already trigger the interceptor logout above; other errors
-        // (network blip) are silently ignored — user can retry by
-        // refocusing.
+        // R7bm-F9: transient errors are deliberately swallowed here.
+        // A real session termination will surface on the user's next
+        // foreground action via the global interceptor (TOKEN_STALE etc.).
       }
     };
 

@@ -177,6 +177,13 @@ app.use([
   // R7bj-F2 — kitchen indent + food reactions (PHI: per-patient diet card)
   "/api/kitchen-indent",
   "/api/food-reactions",
+  // R7bm-F2 / R7bl-5-HIGH-1 — additional PHI / regulated surfaces.
+  "/api/cold-chain",
+  "/api/bmw-manifest",
+  "/api/code-response",
+  "/api/sharps-injury",
+  "/api/tax-returns",
+  "/api/tds",
 ], (req, res, next) => {
   res.set("Cache-Control", "no-store, private");
   next();
@@ -831,6 +838,23 @@ const _cancelExpireCredentials = scheduleDaily("expire-credentials", 2, 0, async
   }
 });
 
+// R7bm-F8 / R7bl close-out — pre-expiry credential notifier. Runs daily
+// at 09:00 IST (after the 02:00 expire-credentials flip but before the
+// hospital day starts at scale). Sends graduated reminders at T-30 / T-7 /
+// T-0 days so staff and HR see the expiry coming instead of getting
+// blocked at the door at 09:30 because their IAP/NMC/FSSAI/BMW credential
+// quietly ran out overnight. scheduleDaily wraps the call in the same
+// distributed-lock so multi-replica deploys don't double-email.
+const _cancelPreExpiryEmail = scheduleDaily("credential-pre-expiry-email", 9, 0, async () => {
+  try {
+    const cron = require("./jobs/preExpiryEmailCron");
+    return await cron.runPreExpirySweep();
+  } catch (e) {
+    console.error("[cron:credential-pre-expiry-email] error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
 // ── R7bh-F6 — accountant regulatory + NABH workflow crons ────────
 //
 //   • grievance-sla-escalate — every hour. Flips OPEN/IN_PROGRESS
@@ -915,6 +939,7 @@ const _autoBillingInterval = {
     _cancelStuckTrigger();           // R7ar-P2-37
     _cancelReorderNotifier();        // R7bd-E-3
     _cancelExpireCredentials();      // R7bf-G / A5-CRIT-6
+    _cancelPreExpiryEmail();         // R7bm-F8 / R7bl close-out
     if (_cvAlertInterval) clearInterval(_cvAlertInterval); // R7bf-G / A5-CRIT-1
     // R7bh-F6 — new crons
     if (_grievanceSlaInterval) clearInterval(_grievanceSlaInterval);

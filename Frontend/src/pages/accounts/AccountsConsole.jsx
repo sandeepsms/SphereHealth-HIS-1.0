@@ -33,7 +33,7 @@ import { toMoney, fmtINR0 as fmtINR, fmtINR2 } from "../../utils/money";
 // R7ap-F22/D4-16: per-tab error boundary so one component crash doesn't
 // blank the whole Accounts page.
 import ErrorBoundary from "../../Components/ErrorBoundary";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
+const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token"))}` } });
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const firstOfMonth = () => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); };
 

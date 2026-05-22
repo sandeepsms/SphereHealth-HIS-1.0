@@ -13,6 +13,8 @@ const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/Nurse/NurseStaffController");
 const { requireAction } = require("../../middleware/auth");
+// R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 router.post  ("/",                       requireAction("users.write"), ctrl.create);
 router.get   ("/",                       requireAction("ipd.read"),    ctrl.getAll);
@@ -20,6 +22,6 @@ router.get   ("/department/:deptId",     requireAction("ipd.read"),    ctrl.getB
 router.get   ("/:id",                    requireAction("ipd.read"),    ctrl.getById);
 router.put   ("/:id",                    requireAction("users.write"), ctrl.update);
 router.patch ("/:id/toggle-status",      requireAction("users.write"), ctrl.toggleStatus);
-router.delete("/:id",                    requireAction("users.write"), ctrl.remove);
+router.delete("/:id",                    validateObjectIdParam("id"), requireAction("users.write"), ctrl.remove);
 
 module.exports = router;

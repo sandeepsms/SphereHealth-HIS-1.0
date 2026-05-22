@@ -2,6 +2,8 @@ const express = require("express");
 const router  = express.Router();
 const ctrl    = require("../../controllers/Pharmacy/pharmacyController");
 const { requireAction } = require("../../middleware/auth");
+// R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 /* ── Reads ──
    Drug catalogue / stock / sales register: anyone in the pharmacy
@@ -13,13 +15,13 @@ router.get   ("/drugs",          requireAction("rx.read"),            ctrl.listD
 router.get   ("/drugs/search",   requireAction("rx.read"),            ctrl.searchDrugs);
 router.post  ("/drugs",          requireAction("pharmacy.settings"),  ctrl.createDrug);
 router.put   ("/drugs/:id",      requireAction("pharmacy.settings"),  ctrl.updateDrug);
-router.delete("/drugs/:id",      requireAction("pharmacy.settings"),  ctrl.deleteDrug);
+router.delete("/drugs/:id",      validateObjectIdParam("id"), requireAction("pharmacy.settings"),  ctrl.deleteDrug);
 
 // Suppliers — pharmacist + admin
 router.get   ("/suppliers",      requireAction("pharmacy.grn"),       ctrl.listSuppliers);
 router.post  ("/suppliers",      requireAction("pharmacy.settings"),  ctrl.createSupplier);
 router.put   ("/suppliers/:id",  requireAction("pharmacy.settings"),  ctrl.updateSupplier);
-router.delete("/suppliers/:id",  requireAction("pharmacy.settings"),  ctrl.deleteSupplier);
+router.delete("/suppliers/:id",  validateObjectIdParam("id"), requireAction("pharmacy.settings"),  ctrl.deleteSupplier);
 
 // GRN + batches + stock
 router.post  ("/grn",            requireAction("pharmacy.grn"),       ctrl.recordGRN);

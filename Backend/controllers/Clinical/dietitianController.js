@@ -237,11 +237,112 @@ exports.patientPlans = async (req, res) => {
   } catch (e) { return sendErr(res, e); }
 };
 
+// R7bm-F10 / R7bl-10 CRIT-1 IDOR: `getPlan` previously returned any plan
+// by :id with NO ownership / scope check. A Dietician (or any clinical
+// role holding diet.read) could enumerate plan _id's and pull plans for
+// patients outside their care, including allergen profiles and condition
+// lists — a PHI-grade IDOR per HIPAA §164.502.
+//
+// Fix: gate read by role + scope:
+//   • Admin / MRD / Auditor / Nurse  → full read (compliance + chart access)
+//   • Doctor                         → only plans whose patient is on the
+//                                      doctor's admission roster (attendingDoctor
+//                                      ID match, or admissionId points to one of
+//                                      their active admissions)
+//   • Dietician                      → only plans they assigned themselves
+//                                      (assignedBy / assessment.assessedBy ===
+//                                      req.user._id), OR plans for patients on
+//                                      an Admission whose dietitian assignment
+//                                      ties to them (MVP: assignedBy only —
+//                                      Admission has no `assignedDietitianId`
+//                                      column yet, future iteration)
+//   • Other roles                    → 403 FORBIDDEN_DIET_PLAN
+const PLAN_READ_FULL = ["Admin", "MRD", "Auditor", "Nurse"];
+
 exports.getPlan = async (req, res) => {
   try {
+    const role = req.user?.role || "";
+    const uid  = String(req.user?.id || req.user?._id || "");
+    if (!uid) {
+      return sendErr(res, "Authentication required", "FORBIDDEN_DIET_PLAN", 403);
+    }
+
     const p = await PatientDietPlan.findById(req.params.id).lean();
     if (!p) return sendErr(res, "Plan not found", "NOT_FOUND", 404);
-    return sendOk(res, p);
+
+    // Full-read roles bypass scope check.
+    if (PLAN_READ_FULL.includes(role)) return sendOk(res, p);
+
+    // Dietician: only their own plans.
+    if (role === "Dietician") {
+      const ownAssigned = String(p.assignedBy || "") === uid;
+      const ownAssessed = String(p.assessment?.assessedBy || "") === uid;
+      if (ownAssigned || ownAssessed) return sendOk(res, p);
+      return sendErr(
+        res,
+        "You may only read diet plans you assigned",
+        "FORBIDDEN_DIET_PLAN",
+        403,
+      );
+    }
+
+    // Doctor: must be the attending of the patient's admission. We resolve
+    // via Admission -> attendingDoctorId match against the Doctor profile
+    // linked to req.user.id (same convention as mlcController and the
+    // restrictToOwnDoctorPatients helper). The dietitian route stack does not
+    // run `attachDoctorProfile`, so we look up the Doctor doc inline.
+    if (role === "Doctor") {
+      let docId = String(req.doctorProfile?._id || "");
+      if (!docId) {
+        try {
+          const Doctor = require("../../models/Doctor/doctorModel");
+          const docRow = await Doctor.findOne({ loginUserId: req.user.id })
+            .select("_id").lean();
+          if (docRow?._id) docId = String(docRow._id);
+        } catch (e) { /* fall through to 403 */ }
+      }
+      if (!docId) {
+        // Doctor with no linked profile — can't scope, deny.
+        return sendErr(
+          res,
+          "Doctor profile not linked to login — cannot scope diet-plan read",
+          "FORBIDDEN_DIET_PLAN",
+          403,
+        );
+      }
+      try {
+        const Admission = require("../../models/Patient/admissionModel");
+        // Prefer the plan's admissionId. If absent (OPD diet-plan), fall back
+        // to any Active admission for this UHID where the doctor is attending.
+        const q = p.admissionId
+          ? { _id: p.admissionId }
+          : { UHID: p.UHID, status: "Active", attendingDoctorId: docId };
+        const adm = await Admission.findOne(q).select("attendingDoctorId attendingDoctorUserId").lean();
+        if (adm) {
+          const isAttending =
+            String(adm.attendingDoctorId || "") === docId ||
+            String(adm.attendingDoctorUserId || "") === uid;
+          if (isAttending) return sendOk(res, p);
+        }
+      } catch (e) {
+        // If Admission lookup fails, fall through to 403 — safer than leaking.
+        console.error("getPlan Admission scope-check error:", e.message);
+      }
+      return sendErr(
+        res,
+        "You may only read diet plans for patients on your roster",
+        "FORBIDDEN_DIET_PLAN",
+        403,
+      );
+    }
+
+    // All other roles (including unknown / stub roles): deny.
+    return sendErr(
+      res,
+      "Insufficient role for diet-plan read",
+      "FORBIDDEN_DIET_PLAN",
+      403,
+    );
   } catch (e) { return sendErr(res, e); }
 };
 

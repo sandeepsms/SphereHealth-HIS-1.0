@@ -40,14 +40,14 @@ const PAGE_NAMES = {
 function getActiveContext() {
   // Primary: SphereAI context saved by each page when it loads a patient
   try {
-    const ctx = localStorage.getItem("sphereai_active_patient");
+    const ctx = sessionStorage.getItem("sphereai_active_patient");
     if (ctx) return JSON.parse(ctx);
   } catch (_) {}
   // Fallback: legacy keys
   const uhid =
-    localStorage.getItem("doctorPanel_lastUhid") ||
-    localStorage.getItem("nursePanel_lastUhid") ||
-    localStorage.getItem("activePatientUhid") ||
+    sessionStorage.getItem("doctorPanel_lastUhid") ||
+    sessionStorage.getItem("nursePanel_lastUhid") ||
+    sessionStorage.getItem("activePatientUhid") ||
     null;
   return uhid ? { uhid, patientName: null } : null;
 }

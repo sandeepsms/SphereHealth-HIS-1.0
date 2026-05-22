@@ -15,13 +15,19 @@ import {
 } from "../../Components/admin-theme";
 import { useAuth } from "../../context/AuthContext";
 import { API_BASE_URL as API } from "../../config/api";
+import { toNum } from "../../utils/printUtils";
 
 const authHdr = () => ({
   headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token") || ""}` },
 });
 
+// R7bm-F4 / R7bl-4-HIGH-2 — defend against the Decimal128 wire shape
+// (`{$numberDecimal:"…"}`) that a missed unwrap on the server would
+// leak. Pre-R7bm we did `Number(field)` directly which returns NaN/0
+// on the object shape, so the KPI tiles rendered ₹0. toNum() walks
+// the shape and falls back gracefully on plain numbers / strings.
 const fmtINR = (n) =>
-  (Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+  toNum(n).toLocaleString("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString("en-IN", { day:"2-digit", month:"short", year:"numeric" }) : "—";
@@ -81,15 +87,19 @@ export default function TaxReturnsPage() {
       const b2c = preview.b2c || [];
       const b2b = preview.b2b || [];
       const hsn = preview.hsn || [];
+      // R7bm-F4 / R7bl-4-HIGH-2 — toNum() instead of bare Number(): the
+      // money fields could arrive as `{$numberDecimal:"…"}` if any new
+      // controller forgets the decimalToNumber unwrap. Backend taxReturnController
+      // is now patched but consumer-side defence is cheap.
       return {
-        b2cTaxable: b2c.reduce((s, x) => s + Number(x.taxableValue || 0), 0),
-        b2bTaxable: b2b.reduce((s, x) => s + Number(x.taxableValue || 0), 0),
-        totalCgst: [...b2c, ...b2b].reduce((s, x) => s + Number(x.cgstAmount || 0), 0),
-        totalSgst: [...b2c, ...b2b].reduce((s, x) => s + Number(x.sgstAmount || 0), 0),
-        totalIgst: [...b2c, ...b2b].reduce((s, x) => s + Number(x.igstAmount || 0), 0),
+        b2cTaxable: b2c.reduce((s, x) => s + toNum(x.taxableValue), 0),
+        b2bTaxable: b2b.reduce((s, x) => s + toNum(x.taxableValue), 0),
+        totalCgst: [...b2c, ...b2b].reduce((s, x) => s + toNum(x.cgstAmount), 0),
+        totalSgst: [...b2c, ...b2b].reduce((s, x) => s + toNum(x.sgstAmount), 0),
+        totalIgst: [...b2c, ...b2b].reduce((s, x) => s + toNum(x.igstAmount), 0),
         hsnCount: hsn.length,
-        invoiceCount: b2c.reduce((s, x) => s + Number(x.invoiceCount || 0), 0) +
-                       b2b.reduce((s, x) => s + Number(x.invoiceCount || 0), 0),
+        invoiceCount: b2c.reduce((s, x) => s + toNum(x.invoiceCount), 0) +
+                       b2b.reduce((s, x) => s + toNum(x.invoiceCount), 0),
       };
     }
     return preview;
@@ -139,10 +149,13 @@ export default function TaxReturnsPage() {
                 rows={(preview.hsn || []).map(h => [
                   h.hsnSac || "—",
                   h.uqc || "—",
-                  h.totalQuantity || 0,
+                  // R7bm-F4 — toNum unwraps the Decimal128 shape; bare
+                  // `h.totalQuantity || 0` would echo the `{$numberDecimal}`
+                  // object verbatim into the cell.
+                  toNum(h.totalQuantity),
                   fmtINR(h.totalValue),
                   fmtINR(h.taxableValue),
-                  h.rate || 0,
+                  toNum(h.rate),
                   fmtINR(h.cgstAmount),
                   fmtINR(h.sgstAmount),
                   fmtINR(h.igstAmount),

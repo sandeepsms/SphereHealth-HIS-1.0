@@ -5,7 +5,7 @@
  *
  *   URL: /sharps-injury
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
@@ -44,22 +44,43 @@ export default function SharpsInjuryPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  // R7bm-F10 — AbortController + unmount cleanup. Prevents the page from
+  // setState-ing after unmount (the React warning + memory leak), and aborts
+  // in-flight requests when the user navigates away mid-load.
+  const abortRef = useRef(null);
+  const mountedRef = useRef(true);
 
   const fetchList = useCallback(async () => {
+    if (abortRef.current) abortRef.current.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (filterStatus) params.set("status", filterStatus);
       params.set("limit", "200");
-      const r = await axios.get(`${API}/sharps-injury?${params}`, authHdr());
-      setRows(r.data?.data || []);
+      const r = await axios.get(`${API}/sharps-injury?${params}`, { ...authHdr(), signal: ac.signal });
+      if (mountedRef.current) setRows(r.data?.data || []);
     } catch (e) {
-      toast.error(e?.response?.data?.message || "Failed to load");
+      if (axios.isCancel?.(e) || e?.name === "CanceledError" || e?.code === "ERR_CANCELED") return;
+      if (mountedRef.current) toast.error(e?.response?.data?.message || "Failed to load");
     }
-    setLoading(false);
+    if (mountedRef.current) setLoading(false);
   }, [filterStatus]);
 
   useEffect(() => { fetchList(); }, [fetchList]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (abortRef.current) abortRef.current.abort();
+      // Reset transient form-state so re-mount starts fresh
+      setShowCreate(false);
+      setForm(EMPTY_FORM);
+      setSaving(false);
+    };
+  }, []);
 
   const kpis = useMemo(() => ({
     open: rows.filter(r => r.status === "OPEN").length,

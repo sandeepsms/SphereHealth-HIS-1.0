@@ -9,6 +9,11 @@
 const TdsCertificate = require("../../models/Tax/TdsCertificateModel");
 const generator = require("../../services/Tax/form16aGenerator");
 const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+const { decimalToNumber } = require("../../utils/money");
+// R7bm-F9: envelope helper. Folds `count`/`created`/`skipped` siblings
+// into the `meta` object so every method conforms to
+// `{ success, data, meta? }`. F4's decimalToNumber unwraps preserved.
+const { sendOk } = require("../../utils/apiEnvelope");
 
 const actor = (req) => ({
   _id: req.user?._id || req.user?.id,
@@ -34,11 +39,10 @@ exports.previewForm16A = async (req, res, next) => {
     if (!/^\d{4}-\d{2}$/.test(fy))
       return _err(res, 400, "BAD_FY", "fy must be e.g. 2026-27");
     const previews = await generator.previewForm16A(quarter, fy);
-    res.json({
-      success: true,
-      data: previews,
+    return sendOk(res, previews, {
       count: previews.length,
-      meta: { quarter, financialYear: fy },
+      quarter,
+      financialYear: fy,
     });
   } catch (e) {
     if (e.status)
@@ -100,13 +104,12 @@ exports.generateForm16A = async (req, res, next) => {
         skipped.push({ tpaParty: p.tpaParty.name, reason: err.message });
       }
     }
-    res.status(201).json({
-      success: true,
-      data: created,
+    return sendOk(res, created, {
       created: created.length,
       skipped,
-      meta: { quarter, financialYear: fy },
-    });
+      quarter,
+      financialYear: fy,
+    }, 201);
   } catch (e) {
     if (e.status)
       return res.status(e.status).json({ success: false, code: e.code, message: e.message });
@@ -174,7 +177,12 @@ exports.list = async (req, res, next) => {
       .sort({ financialYear: -1, quarter: -1 })
       .limit(limit)
       .lean();
-    res.json({ success: true, data: rows, count: rows.length });
+    // R7bm-F4 / R7bl-3-CRIT-2 — .lean() bypasses the model's toJSON
+    // transform; totalAmountPaid / totalTdsDeducted ship as `{$numberDecimal:"…"}`
+    // and the frontend's bare `Number(...)` then renders ₹0. Walk each row
+    // and unwrap Decimal128 → plain Number.
+    rows.forEach((r) => decimalToNumber(null, r));
+    return sendOk(res, rows, { count: rows.length });
   } catch (e) {
     next(e);
   }
@@ -184,6 +192,8 @@ exports.getOne = async (req, res, next) => {
   try {
     const doc = await TdsCertificate.findById(req.params.id).lean();
     if (!doc) return _err(res, 404, "NOT_FOUND", "Certificate not found");
+    // R7bm-F4 / R7bl-3-CRIT-2 — lean bypasses toJSON; unwrap Decimal128.
+    decimalToNumber(null, doc);
     res.json({ success: true, data: doc });
   } catch (e) {
     next(e);

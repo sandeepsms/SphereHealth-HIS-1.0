@@ -25,7 +25,13 @@
 const mongoose = require("mongoose");
 const KitchenIndent  = require("../../models/Pharmacy/KitchenIndentModel");
 const BillingTrigger = require("../../models/Billing/BillingTrigger");
-const { toDec, toNum } = require("../../utils/money");
+// R7bm-F3 / META-3 + 6-HIGH-2: route the meal trigger emit through the
+// central _emitTrigger helper so the TRIGGER_EMITTED BillingAudit row
+// fires alongside the BillingTrigger.create() — pre-R7bm we wrote the
+// trigger directly and the audit ledger had no chronological footprint
+// of the kitchen meal emit.
+const { _emitTrigger } = require("../Billing/autoBillingService");
+const { toDec, toNum, decimalToNumber } = require("../../utils/money");
 
 const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;       // 90 days
 const DIET_SERVICE_CODE = "IPD-SUP-003";              // "Meal Tray / Diet"
@@ -50,12 +56,18 @@ function _actor(a = {}) {
 
 // ── BillingTrigger emit helper ──────────────────────────────────────
 // R7bi-DK-CRIT-1: every SERVED meal must emit a per-meal trigger so
-// the patient is billed for the tray. orderedByRole/triggeredByRole
-// are restricted enums on BillingTrigger; "Kitchen" / "Ward Boy" are
-// not in the enum today (F5 to extend). We emit with "System" + put
-// the canonical role string in the free-text orderedBy/triggeredBy
-// fields and the notes payload so the cashier's audit still shows
-// "Kitchen" as the emit origin.
+// the patient is billed for the tray.
+//
+// R7bm-F3 / META-3 + R7bl-1-CRIT-2 + R7bl-6-HIGH-2:
+//   - sourceType is "DIET_MEAL" (R7bj-F5 extended the BillingTrigger.sourceType
+//     enum). Pre-R7bm we wrote "AutoCharge" because Kitchen/DIET_MEAL weren't
+//     in the enum yet; F5 added them, so the kind is now canonical.
+//   - orderedByRole / triggeredByRole are "Kitchen" (also added in F5 — was
+//     "System" pre-R7bj because the enum lacked Kitchen / Ward Boy).
+//   - The emit goes through the central _emitTrigger helper from
+//     autoBillingService so the TRIGGER_EMITTED BillingAudit row fires
+//     alongside the trigger create. Pre-R7bm we called BillingTrigger.create()
+//     directly and the audit ledger was blind to the meal emit.
 async function _emitMealTrigger(indent, actor) {
   if (!indent || !indent.admissionId) return null;
   const unitPrice   = toNum(indent.unitPrice);
@@ -80,7 +92,7 @@ async function _emitMealTrigger(indent, actor) {
   } catch (_) { /* non-fatal, fall through */ }
 
   try {
-    const trig = await BillingTrigger.create({
+    const trig = await _emitTrigger({
       admissionId:  indent.admissionId,
       UHID:         indent.UHID,
       patientType:  "IPD",
@@ -89,31 +101,38 @@ async function _emitMealTrigger(indent, actor) {
       quantity:     1,
       unitPrice:    toDec(unitPrice),
       totalAmount:  toDec(totalAmount),
-      originalUnitPrice: unitPrice,
-      originalQuantity:  1,
-      // R7bj-F2: BillingTrigger.sourceType enum currently lacks
-      // "KitchenIndent" / "DIET_MEAL" (F5-coord task to add). Use
-      // "AutoCharge" for now + carry the canonical kind in
-      // sourceDocumentModel + notes so the audit still reads cleanly
-      // and F5's enum migration is purely additive.
-      sourceType:          "AutoCharge",
+      // R7bj-F5 / R7bi-6-TBA-CRIT-2 + R7bl-1-MED-4: sticky-original snapshot
+      // stored as Decimal128. Pre-R7bl this was a raw Number which Mongoose
+      // auto-cast to Decimal128 — auto-cast is fragile (a NaN or string
+      // sneaks through the validator), so wrap explicitly with toDec for
+      // float-drift-free override audit.
+      originalUnitPrice: toDec(unitPrice),
+      originalQuantity:  toDec(1),
+      // R7bm-F3 / META-3 + R7bl-1-CRIT-2: canonical "kind" for kitchen-
+      // served meals. F5 added DIET_MEAL to the BillingTrigger.sourceType
+      // enum so the IPD ledger / dietetics audit can filter on it
+      // directly instead of inferring from sourceDocumentModel.
+      sourceType:          "DIET_MEAL",
       sourceDocumentId:    indent._id,
       sourceDocumentModel: "KitchenIndent",
       orderedBy:    a.fullName || "Kitchen",
       orderedById:  a._id,
-      // "Kitchen" / "Ward Boy" not in orderedByRole enum yet (F5 to
-      // extend). Fall back to "System" + put canonical role in
-      // notes/orderedBy/triggeredBy so attribution is preserved.
-      orderedByRole:   "System",
+      // R7bm-F3 / META-3 + R7bl-6-HIGH-2: "Kitchen" is now in the
+      // orderedByRole / triggeredByRole enum (F5). Stamp the canonical
+      // role on the row so the audit ledger shows the actual origin —
+      // pre-R7bm we fell back to "System" because the enum lacked it.
+      orderedByRole:   "Kitchen",
       triggeredBy:     a.fullName || "Kitchen",
       triggeredById:   a._id,
-      triggeredByRole: "System",
+      triggeredByRole: "Kitchen",
       status:       "pending",
       dateKey,
       autoCharged:  false,
       isDailyCharge: false,
       department:   "Dietetics",
-      notes:        `DIET_MEAL kind — kitchen-served meal. Slot=${indent.mealSlot}; ActorRole=${a.role || "Kitchen"}; IndentId=${indent._id}`,
+      notes:        `Kitchen-served meal. Slot=${indent.mealSlot}; ActorRole=${a.role || "Kitchen"}; IndentId=${indent._id}`,
+    }, {
+      userId: a._id, name: a.fullName || "Kitchen", role: "Kitchen",
     });
     // R7bj-F2 — back-ref so the kitchen UI can flag "already billed"
     // and a void can walk back to the indent row.
@@ -197,6 +216,32 @@ async function markServed(id, actor) {
 async function markDelivered(id, actor) {
   if (!_isValidId(id)) throw _err("Invalid indent id", 400, "INVALID_ID");
   const a = _actor(actor);
+
+  // R7bm-F8 / R7bl close-out — defence in depth: the
+  // /:id/mark-delivered route already runs credentialExpiryBlocker
+  // ("FSSAI_FOOD_HANDLER"), but markDelivered() is also reachable from
+  // ward-ops batch scripts and the kitchen E2E tests. Re-verify the
+  // actor's FSSAI Schedule IV food-handler certificate at the service
+  // boundary so neither path can hand over a meal tray without it.
+  // Fail-open on Mongo blips (same policy as the middleware).
+  if (a._id) {
+    try {
+      const { assertValidCredential } = require("../../middleware/credentialExpiryBlocker");
+      const v = await assertValidCredential(a._id, "FSSAI_FOOD_HANDLER");
+      if (!v.ok) {
+        throw _err(
+          v.message || "FSSAI food-handler training missing or expired — cannot deliver meal tray.",
+          403,
+          v.code || "CREDENTIAL_INVALID",
+        );
+      }
+    } catch (e) {
+      if (e && e.status === 403) throw e;
+      // eslint-disable-next-line no-console
+      console.warn("[kitchenIndentService.markDelivered] credential check skipped:", e.message);
+    }
+  }
+
   // R7bj-F2: if the caller's role is "Ward Boy" we enforce that the
   // trio is captured exactly as "Ward Boy" (NABH chain-of-custody
   // expects the specific handover role on the row, not the umbrella
@@ -285,10 +330,16 @@ async function listForKitchen({ date, status, mealSlot, limit = 200 } = {}) {
   q.scheduledFor = { $gte: from, $lt: to };
 
   const cap = Math.min(500, Math.max(1, Number(limit) || 200));
-  return KitchenIndent.find(q)
+  const rows = await KitchenIndent.find(q)
     .sort({ scheduledFor: 1, mealSlot: 1 })
     .limit(cap)
     .lean();
+  // R7bm-F4 / R7bl-3-CRIT-3 — .lean() bypasses the KitchenIndent toJSON
+  // transform so unitPrice/totalAmount ship as `{$numberDecimal:"…"}` to
+  // the kitchen console; explicitly unwrap Decimal128 → Number to match
+  // the wire shape produced by non-lean reads.
+  rows.forEach((r) => decimalToNumber(null, r));
+  return rows;
 }
 
 // ── Ward Boy delivery queue (SERVED, not yet DELIVERED) ─────────────
@@ -296,15 +347,24 @@ async function listForWardBoy({ wardId, limit = 200 } = {}) {
   const q = { status: "SERVED" };
   if (wardId) q.ward = String(wardId);    // ward name match (denormalised on indent)
   const cap = Math.min(500, Math.max(1, Number(limit) || 200));
-  return KitchenIndent.find(q)
+  const rows = await KitchenIndent.find(q)
     .sort({ servedAt: 1 })
     .limit(cap)
     .lean();
+  // R7bm-F4 / R7bl-3-CRIT-3 — unwrap Decimal128 (unitPrice / totalAmount)
+  // before the ward-boy delivery console receives the row.
+  rows.forEach((r) => decimalToNumber(null, r));
+  return rows;
 }
 
 async function getById(id) {
   if (!_isValidId(id)) return null;
-  return KitchenIndent.findById(id).lean();
+  const doc = await KitchenIndent.findById(id).lean();
+  if (!doc) return null;
+  // R7bm-F4 / R7bl-3-CRIT-3 — unwrap Decimal128 so callers don't have
+  // to defend against `{$numberDecimal:"…"}` shape on unitPrice / totalAmount.
+  decimalToNumber(null, doc);
+  return doc;
 }
 
 module.exports = {

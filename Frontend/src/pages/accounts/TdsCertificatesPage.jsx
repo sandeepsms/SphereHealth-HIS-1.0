@@ -14,13 +14,18 @@ import {
 } from "../../Components/admin-theme";
 import { useAuth } from "../../context/AuthContext";
 import { API_BASE_URL as API } from "../../config/api";
+import { toNum } from "../../utils/printUtils";
 
 const authHdr = () => ({
   headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token") || ""}` },
 });
 
+// R7bm-F4 / R7bl-4-HIGH-2 — toNum() unwraps the Decimal128 wire shape
+// (`{$numberDecimal:"…"}`). Bare `Number(field)` on that object returns
+// NaN → 0, which was the root cause of the ₹0 KPI tiles on this page
+// for any TDS row that arrived from a .lean() backend read.
 const fmtINR = (n) =>
-  (Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+  toNum(n).toLocaleString("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString("en-IN", { day:"2-digit", month:"short", year:"numeric" }) : "—";
@@ -81,10 +86,13 @@ export default function TdsCertificatesPage() {
 
   const totals = useMemo(() => {
     if (!preview?.parties) return null;
+    // R7bm-F4 / R7bl-4-HIGH-2 — toNum() instead of Number(): tolerates
+    // the `{$numberDecimal:"…"}` shape if any read path bypasses the
+    // model's toJSON unwrap.
     return {
       partyCount: preview.parties.length,
-      totalPaid: preview.parties.reduce((s, p) => s + Number(p.totalAmountPaid || 0), 0),
-      totalTds: preview.parties.reduce((s, p) => s + Number(p.totalTdsDeducted || 0), 0),
+      totalPaid: preview.parties.reduce((s, p) => s + toNum(p.totalAmountPaid), 0),
+      totalTds: preview.parties.reduce((s, p) => s + toNum(p.totalTdsDeducted), 0),
     };
   }, [preview]);
 

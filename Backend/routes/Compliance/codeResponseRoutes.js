@@ -12,13 +12,15 @@ const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/Compliance/codeResponseController");
 const { requireAction } = require("../../middleware/auth");
+// R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 router.get("/stats",              requireAction("compliance.code-response.read"),  ctrl.stats);
 router.get("/",                   requireAction("compliance.code-response.read"),  ctrl.list);
-router.get("/:id",                requireAction("compliance.code-response.read"),  ctrl.getOne);
+router.get("/:id",                validateObjectIdParam("id"), requireAction("compliance.code-response.read"),  ctrl.getOne);
 
 router.post("/",                  requireAction("compliance.code-response.write"), ctrl.create);
-router.put("/:id/responder",      requireAction("compliance.code-response.write"), ctrl.addResponder);
-router.put("/:id/resolve",        requireAction("compliance.code-response.write"), ctrl.resolve);
+router.put("/:id/responder",      validateObjectIdParam("id"), requireAction("compliance.code-response.write"), ctrl.addResponder);
+router.put("/:id/resolve",        validateObjectIdParam("id"), requireAction("compliance.code-response.write"), ctrl.resolve);
 
 module.exports = router;

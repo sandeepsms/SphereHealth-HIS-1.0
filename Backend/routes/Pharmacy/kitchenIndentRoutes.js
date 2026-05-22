@@ -22,6 +22,7 @@ const router  = express.Router();
 
 const ctrl = require("../../controllers/Pharmacy/kitchenIndentController");
 const { requireAction } = require("../../middleware/auth");
+const { credentialExpiryBlocker } = require("../../middleware/credentialExpiryBlocker");
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // ── Reads ──────────────────────────────────────────────────────────
@@ -58,9 +59,16 @@ router.put("/:id/cancel",
 
 // Delivery handover is a separate permission so a Ward Boy can mark
 // DELIVERED at the bed without holding the wider kitchen.indent.write.
+//
+// R7bm-F8 / R7bl close-out: FSSAI Schedule IV mandates that any staff
+// member handing over a meal tray at the bed holds a current
+// food-handler training certificate. credentialExpiryBlocker runs AFTER
+// the role gate; on missing/expired FSSAI_FOOD_HANDLER it 403s with code
+// CREDENTIAL_MISSING | CREDENTIAL_EXPIRED.
 router.put("/:id/mark-delivered",
   validateObjectIdParam("id"),
   requireAction("kitchen.delivery.write"),
+  credentialExpiryBlocker("FSSAI_FOOD_HANDLER"),
   ctrl.markDelivered,
 );
 

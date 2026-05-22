@@ -1843,26 +1843,27 @@ exports.tpaSettle = async (req, res, next) => {
           // so the TPA register can render "approved ₹10,000, settled
           // ₹9,950, wrote off ₹50" without double-counting denials.
           //
-          // NOTE for F1 coordination: PatientBill schema needs
-          //   writeOffAmount: Decimal128 (default 0)
-          //   writeOffReason: String
-          //   writeOffBy:     String
-          //   writeOffAt:     Date
-          // and ideally a new tpaClaimStatus enum value
-          //   "SETTLED_WRITEOFF"
-          // for the strict semantic. Until F1 adds those, we set the
-          // fields anyway (Mongoose strict mode default is throw; we
-          // use markModified + assignment to side-channel through —
-          // they'll persist as `additionalProperties`-style fields if
-          // strict is `false` on the schema, otherwise they'll be
-          // silently dropped and the remarks-text below carries the
-          // signal). The APPROVED status is the load-bearing fix.
+          // R7bm-F6 / META-5: schema fields are now declared on PatientBill
+          // (writeOffAmount: Decimal128, writeOffReason: String, writeOffBy:
+          // String, writeOffAt: Date) and the pre-save guard enforces
+          // append-only semantics — once stamped, writeOffAmount cannot
+          // decrease (only grow on subsequent partial settlements). The
+          // toN() unwrap is REQUIRED for the additive math: bill.writeOffAmount
+          // is now a Decimal128 wrapper, so plain Number(d128) returns NaN
+          // and the running total would corrupt on the first short-pay.
+          //
+          // tpaClaimStatus enum still lacks "SETTLED_WRITEOFF" — kept on
+          // APPROVED so the dashboard's "TPA Denied" KPI doesn't double-
+          // count routine write-offs as rejections.
           bill.tpaClaimStatus  = "APPROVED";
-          bill.writeOffAmount  = (Number(bill.writeOffAmount || 0)) + shortfall;
+          bill.writeOffAmount  = toN(bill.writeOffAmount) + shortfall;
           bill.writeOffReason  = (bill.writeOffReason || "") +
             ` | TPA short-pay on UTR ${req.body.transactionId}: ${req.body.writeoffReason || req.body.remarks || "(no reason supplied)"}`;
           bill.writeOffBy      = settledBy;
           bill.writeOffAt      = settledOn;
+          // markModified is now a no-op on declared fields, but kept for
+          // defensive forward-compat (Mongoose's change tracker reliably
+          // detects schema-declared scalar assignments).
           try { bill.markModified("writeOffAmount"); bill.markModified("writeOffReason"); } catch (_) {}
           bill.markModified("tpaClaimStatus");
           bill.remarks = (bill.remarks || "") +

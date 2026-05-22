@@ -11,6 +11,11 @@ const GstReturnSnapshot = require("../../models/Tax/GstReturnSnapshotModel");
 const gstr1 = require("../../services/Tax/gstr1Exporter");
 const gstr3b = require("../../services/Tax/gstr3bExporter");
 const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+const { decimalToNumber } = require("../../utils/money");
+// R7bm-F9: envelope helper — `count` moves to `meta` on list() so list()
+// matches `{ success, data, meta? }`. The F4 decimalToNumber unwrap on
+// list+getOne is preserved verbatim.
+const { sendOk } = require("../../utils/apiEnvelope");
 
 const actor = (req) => ({
   _id: req.user?._id || req.user?.id,
@@ -254,7 +259,13 @@ exports.list = async (req, res, next) => {
       // detail via /:id when they want the actual portal JSON.
       .select("-jsonPayload")
       .lean();
-    res.json({ success: true, data: rows, count: rows.length });
+    // R7bm-F4 / R7bl-3-CRIT-1 — .lean() bypasses the model's toJSON
+    // transform so summary.totalTaxable/Cgst/Sgst/Igst would ship as
+    // `{$numberDecimal:"…"}`. Walk each row and unwrap Decimal128 leaves
+    // back to plain JS numbers (matches the wire shape non-lean reads
+    // produce via decimalToNumber).
+    rows.forEach((r) => decimalToNumber(null, r));
+    return sendOk(res, rows, { count: rows.length });
   } catch (e) {
     next(e);
   }
@@ -264,6 +275,9 @@ exports.getOne = async (req, res, next) => {
   try {
     const doc = await GstReturnSnapshot.findById(req.params.id).lean();
     if (!doc) return _err(res, 404, "NOT_FOUND", "Snapshot not found");
+    // R7bm-F4 / R7bl-3-CRIT-1 — lean bypasses toJSON; unwrap Decimal128
+    // walk so summary.totalTaxable etc. ship as plain numbers.
+    decimalToNumber(null, doc);
     res.json({ success: true, data: doc });
   } catch (e) {
     next(e);

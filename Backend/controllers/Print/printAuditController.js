@@ -49,6 +49,36 @@ const ENTITY_MODEL = {
   // in PrintAuditModel.js to accept both.
   VisitorPass:        "VisitorPass",
   DoctorOrder:        "DoctorOrder",
+  // R7bm-F1 / META-4: 18 R7bj-F7 entity types — Ward-Boy, Housekeeping,
+  // Security, Dietary, Mortuary, BMW, Code-Response, Physio + Kitchen
+  // printables. Pre-R7bm the PrintAudit enum accepted these but
+  // ENTITY_MODEL had zero of them → $inc no-op'd → printCount returned
+  // 1 forever → DUPLICATE watermark never fired on reprints.
+  //
+  // `null` here means "no entity-level printCount field" — the audit
+  // row still lands and the count fallback below queries PrintAudit
+  // itself so the watermark still works. Use null for collections
+  // whose models don't carry a `printCount` (transient slips with
+  // no Mongoose model yet, or schemas where adding the field would
+  // bloat hot-path writes).
+  WardTask:              "WardTask",
+  EquipmentTransport:    null,
+  SampleCollection:      null,
+  CleaningTask:          "CleaningTask",
+  SpillageReport:        "SpillageIncident",
+  PestControl:           "PestControlSchedule",
+  AreaChecklist:         "AreaCleaningLog",
+  GateLog:               "GateLog",
+  IncidentReport:        "IncidentReport",
+  SecurityShiftRegister: null,
+  DietPlan:              "PatientDietPlan",
+  MortuaryHandover:      "MortuaryRecord",
+  BmwManifest:           "BmwTransportManifest",
+  CodeResponse:          "CodeResponseEvent",
+  PhysioSession:         "PhysioSession",
+  PhysioPlan:            "PhysioPlan",
+  KitchenIndent:         "KitchenIndent",
+  AdverseFoodReaction:   "AdverseFoodReaction",
 };
 
 /**
@@ -100,7 +130,15 @@ exports.recordPrint = async (req, res) => {
     // Use findOneAndUpdate with $inc so two simultaneous prints can't
     // both observe a stale count and overwrite. The new value comes
     // back via { new: true } so we know the post-bump count.
+    //
+    // R7bm-F1 / META-4: ENTITY_MODEL may legitimately map to `null`
+    // for entity types that don't carry a printCount field (transient
+    // slips). In that case we still need a stable copy number for the
+    // DUPLICATE watermark, so we fall back to counting prior PrintAudit
+    // rows for the same entityType+entityId pair and add 1 for the row
+    // we're about to write.
     let printCount = 1;
+    const hasMapping = Object.prototype.hasOwnProperty.call(ENTITY_MODEL, entityType);
     const modelName = ENTITY_MODEL[entityType];
     if (modelName) {
       try {
@@ -118,6 +156,17 @@ exports.recordPrint = async (req, res) => {
       } catch (_e) {
         // Model missing / collection unindexed / entity already deleted —
         // never block the print. The audit row still lands below.
+      }
+    } else if (hasMapping || !modelName) {
+      // modelName === null (no entity-level printCount field) OR no
+      // ENTITY_MODEL entry at all → fall back to PrintAudit-collection
+      // count so reprints still fire the DUPLICATE watermark.
+      try {
+        const prior = await PrintAudit.countDocuments({ entityType, entityId });
+        printCount = prior + 1;
+      } catch (_e) {
+        // PrintAudit unreachable — keep printCount at 1 so the print
+        // still proceeds; isDuplicate will be false this once.
       }
     }
 

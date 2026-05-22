@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API_ENDPOINTS } from "../../config/api";
@@ -537,7 +537,7 @@ function NursingNotesContent({ selectedPatient }) {
     const admissionId = patient._id;
     setEquipSaving(true);
     try {
-      const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+      const token = (sessionStorage.getItem("his_token"));
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const { data } = await axios.post(
         `${API_ENDPOINTS.NURSING_CHARGES}/log`,
@@ -649,7 +649,7 @@ function NursingNotesContent({ selectedPatient }) {
           toast.success(`Loaded: ${active.patientName || active.patientId?.fullName || searchUHID}`);
         }
         // ── SphereAI: store active patient context ──
-        localStorage.setItem("sphereai_active_patient", JSON.stringify({
+        sessionStorage.setItem("sphereai_active_patient", JSON.stringify({
           uhid: active.patientUHID || active.patientId?.UHID || searchUHID,
           patientId: String(active.patientId?._id || active.patientId || ""),
           ipdNo: ipd,
@@ -676,7 +676,7 @@ function NursingNotesContent({ selectedPatient }) {
       const admDoc = admissionDoc || patient;
       if (arr.length > 0 && admDoc?._id && !admDoc?.initialAssessment?.nurseCompleted) {
         try {
-          const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+          const token = (sessionStorage.getItem("his_token"));
           await axios.post(
             `${API_ENDPOINTS.ADMISSIONS}/${admDoc._id}/nurse-assessment`,
             {
@@ -865,7 +865,7 @@ function NursingNotesContent({ selectedPatient }) {
              on the Admission document so the gate lifts immediately.     ── */
       if (activeModal === "initial" && patient?._id) {
         try {
-          const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+          const token = (sessionStorage.getItem("his_token"));
           const signedByName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
           await axios.post(
             `${API_ENDPOINTS.ADMISSIONS}/${patient._id}/nurse-assessment`,
@@ -2054,7 +2054,7 @@ function NursingNotesContent({ selectedPatient }) {
           onClose={() => setConsentOrder(null)}
           onConfirm={async (hash) => {
             try {
-              const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+              const token = (sessionStorage.getItem("his_token"));
               const headers = token ? { Authorization: `Bearer ${token}` } : {};
               const nurseName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
               await axios.patch(

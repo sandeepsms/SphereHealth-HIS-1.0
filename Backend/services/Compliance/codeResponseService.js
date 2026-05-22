@@ -35,6 +35,53 @@ function _istYear() {
 
 const VALID_CODES = ["BLUE", "RED", "PINK", "GREY", "YELLOW", "WHITE", "BROWN", "BLACK"];
 
+// R7bm-F7 — Codes that warrant auto-linking the patient's current
+// Active Admission. BLUE = cardiac arrest, RED = fire (patient may
+// need evacuation), PINK = paediatric abduction (need bed-of-record),
+// WHITE = violence (where was the patient?). The others (GREY / BROWN
+// / BLACK / YELLOW) are mostly building-level and don't necessarily
+// have a single patient encounter — the auto-link still runs if the
+// caller passed a UHID, just gated by whether we find the admission.
+const AUTO_LINK_CODES = new Set(["BLUE", "RED", "PINK", "WHITE"]);
+
+/**
+ * R7bm-F7 — Resolve the patient's current Active Admission and return
+ * a frozen { admissionId, wardId, wardName, bedId, bedNumber,
+ * roomNumber } snapshot. Returns null when the patient has no active
+ * admission (walk-in, outpatient, or already discharged).
+ */
+async function _resolvePatientEncounter(patientUHID) {
+  if (!patientUHID) return null;
+  // Lazy-require to avoid a hard dependency at module-load time
+  // (admissionModel pulls in the Beds / Ward registrations chain).
+  let Admission;
+  try {
+    Admission = require("../../models/Patient/admissionModel");
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn("[codeResponseService] admissionModel unavailable, skipping auto-link:", e.message);
+    return null;
+  }
+  const adm = await Admission.findOne({
+    UHID: String(patientUHID).toUpperCase().trim(),
+    status: "Active",
+  })
+    .sort({ admissionDate: -1 })
+    .select("_id UHID bedId bedNumber roomNumber wardId")
+    .populate({ path: "wardId", select: "name wardName" })
+    .lean()
+    .catch(() => null);
+  if (!adm) return null;
+  return {
+    admissionId: adm._id,
+    wardId:      adm.wardId?._id || (adm.wardId && typeof adm.wardId === "object" ? null : adm.wardId) || null,
+    wardName:    adm.wardId?.name || adm.wardId?.wardName || "",
+    bedId:       adm.bedId || null,
+    bedNumber:   adm.bedNumber || "",
+    roomNumber:  adm.roomNumber || "",
+  };
+}
+
 async function recordEvent(code, payload = {}, actor = {}) {
   if (!code || !VALID_CODES.includes(String(code).toUpperCase())) {
     throw _err("ARG_INVALID", `code must be one of: ${VALID_CODES.join(",")}`, 400);
@@ -45,19 +92,52 @@ async function recordEvent(code, payload = {}, actor = {}) {
   const seq = await nextSequence(`code_response:${year}`);
   const eventNumber = formatId(`CR-${year}`, seq, 5);  // CR-2026-00001
 
+  const codeUpper = String(code).toUpperCase();
+  const uhid = payload.patientUHID ? String(payload.patientUHID).toUpperCase().trim() : "";
+
+  // R7bm-F7 — auto-link the patient's current Active Admission for
+  // Code BLUE / RED / PINK / WHITE (or whenever a UHID was passed).
+  // The snapshot is frozen at trigger time so a later bed transfer
+  // does not rewrite the response-timeline ward.
+  let snap = null;
+  const shouldAutoLink = !!uhid && (AUTO_LINK_CODES.has(codeUpper) || payload.autoLink === true);
+  if (shouldAutoLink) {
+    try {
+      snap = await _resolvePatientEncounter(uhid);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn("[codeResponseService] auto-link failed (non-fatal):", e.message);
+    }
+  }
+
+  // If the caller did not pass a bedNumber but we resolved one from
+  // the admission, fill it in; the explicit `location` text stays as
+  // the caller wrote it (it may be more specific, e.g. "ICU Bed 4
+  // side-table" vs the ward-level "ICU").
+  const bedNumber = payload.bedNumber || snap?.bedNumber || "";
+
   const doc = await CodeResponseEvent.create({
     eventNumber,
-    code:           String(code).toUpperCase(),
+    code:           codeUpper,
     location:       payload.location,
-    bedNumber:      payload.bedNumber || "",
+    bedNumber,
     alertedAt:      payload.alertedAt ? new Date(payload.alertedAt) : new Date(),
     alertedById:    actor._id || actor.id || null,
     alertedByName:  actor.fullName || actor.name || "",
-    patientUHID:    payload.patientUHID ? String(payload.patientUHID).toUpperCase().trim() : "",
+    patientUHID:    uhid,
     patientName:    payload.patientName || "",
     responders:     [],
     notes:          payload.notes || "",
     hospitalId:     actor.hospitalId || payload.hospitalId || null,
+
+    // R7bm-F7 — frozen auto-link snapshot
+    linkedAdmissionId: snap?.admissionId || null,
+    linkedWardId:      snap?.wardId      || null,
+    linkedWardName:    snap?.wardName    || "",
+    linkedBedId:       snap?.bedId       || null,
+    linkedBedNumber:   snap?.bedNumber   || "",
+    linkedRoomNumber:  snap?.roomNumber  || "",
+    autoLinkedAt:      snap ? new Date() : null,
   });
   return doc;
 }
@@ -184,4 +264,13 @@ async function stats({ from, to } = {}) {
   return rows;
 }
 
-module.exports = { recordEvent, addResponder, resolveEvent, getById, list, stats };
+module.exports = {
+  recordEvent,
+  addResponder,
+  resolveEvent,
+  getById,
+  list,
+  stats,
+  // R7bm-F7 — exported for tests / debug; not part of the public API.
+  _resolvePatientEncounter,
+};

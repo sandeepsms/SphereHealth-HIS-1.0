@@ -42,6 +42,11 @@ const PhysioPlan    = require("../../models/Clinical/PhysioPlanModel");
 const PhysioSession = require("../../models/Clinical/PhysioSessionModel");
 const Admission     = require("../../models/Patient/admissionModel");
 const BillingTrigger = require("../../models/Billing/BillingTrigger");
+// R7bm-F3 / META-3 + 6-HIGH-1: route the trigger emit through the central
+// _emitTrigger helper so the TRIGGER_EMITTED BillingAudit row fires alongside
+// the BillingTrigger.create() — pre-R7bm we wrote the trigger directly and
+// the audit ledger had no chronological footprint of the physio session emit.
+const { _emitTrigger } = require("../Billing/autoBillingService");
 const { toDec, toNum } = require("../../utils/money");
 
 const MODALITY_ENUM  = PhysioPlan.MODALITY_ENUM;
@@ -94,8 +99,20 @@ function _serviceCodeFor(sessionType = "") {
 // ── Billing emit ───────────────────────────────────────────────
 // PHY-CRIT-1/2/3: every COMPLETED session writes a BillingTrigger so the
 // IPD ledger picks it up via the same auto-bill sweep that handles MAR,
-// vitals, and nurse-notes. NOTE for F5: BillingTrigger.orderedByRole enum
-// must include "Physiotherapist" before this row can validate.
+// vitals, and nurse-notes.
+//
+// R7bm-F3 / META-3 + R7bl-1-CRIT-3 + R7bl-6-HIGH-1:
+//   - sourceType is "PHYSIO_SESSION" (R7bj-F5 extended the enum). Before
+//     R7bm we wrote "Procedure" because the enum hadn't been extended; the
+//     new value is now the canonical "kind" for the IPD ledger filter.
+//   - orderedByRole / completedByRole / triggeredByRole = "Physiotherapist"
+//     (also added to the enum in F5 — was failing validation silently and
+//     falling back to "System" pre-R7bj).
+//   - The emit goes through the central _emitTrigger helper from
+//     autoBillingService so the TRIGGER_EMITTED BillingAudit row fires
+//     alongside the trigger create. Pre-R7bm we called
+//     BillingTrigger.create() directly and the audit ledger was blind to
+//     the physio emit.
 async function _emitPhysioBillingTrigger(session, actor) {
   const fee = toNum(session.sessionFee);
   if (!session.admissionId) {
@@ -118,12 +135,18 @@ async function _emitPhysioBillingTrigger(session, actor) {
     quantity:     1,
     unitPrice:    toDec(fee),
     totalAmount:  toDec(fee),
+    // R7bj-F5 / R7bi-6-TBA-CRIT-2: sticky-original snapshot stored as
+    // Decimal128 so an override audit row reads "originally ₹X" without
+    // float drift.
+    originalUnitPrice: toDec(fee),
+    originalQuantity:  toDec(1),
 
-    sourceType:           "Procedure",   // Closest fit in the existing enum
-                                         // ("PHYSIO_SESSION" can be added
-                                         //  to BillingTrigger.sourceType
-                                         //  later; for now Procedure +
-                                         //  sourceDocumentModel disambiguates).
+    // R7bm-F3 / META-3 + R7bl-1-CRIT-3: canonical "kind" for support-staff
+    // physio billing. Was "Procedure" pre-R7bm; F5 added PHYSIO_SESSION to
+    // the BillingTrigger.sourceType enum so the IPD ledger filter and
+    // print-audit lookups can identify physio rows without scanning
+    // sourceDocumentModel.
+    sourceType:           "PHYSIO_SESSION",
     sourceDocumentId:     session._id,
     sourceDocumentModel:  "PhysioSession",
 
@@ -149,7 +172,14 @@ async function _emitPhysioBillingTrigger(session, actor) {
   };
 
   try {
-    const trigger = await BillingTrigger.create(payload);
+    // R7bm-F3 / META-3 + R7bl-6-HIGH-1: route through _emitTrigger so the
+    // TRIGGER_EMITTED BillingAudit row lands automatically. The helper
+    // already swallows audit-emit errors internally — the only failure
+    // mode that surfaces here is the underlying BillingTrigger.create
+    // (E11000 dedup race or schema validation), which we handle below.
+    const trigger = await _emitTrigger(payload, {
+      userId: a.id, name: a.name || "Physiotherapist", role: "Physiotherapist",
+    });
     return trigger;
   } catch (e) {
     // Duplicate (E11000) is benign — same session re-completed (shouldn't
@@ -160,7 +190,7 @@ async function _emitPhysioBillingTrigger(session, actor) {
     // the IPD ledger's "Stuck Triggers" sweep handles retries. Log and
     // continue.
     // eslint-disable-next-line no-console
-    console.error("[physioService] BillingTrigger.create failed:", e.message);
+    console.error("[physioService] _emitTrigger failed:", e.message);
     return null;
   }
 }
@@ -341,6 +371,35 @@ async function createSession(planId, payload = {}, actor = {}) {
 async function completeSession(id, actor = {}) {
   if (!mongoose.isValidObjectId(id)) throw _err(400, "Invalid session id", "VALIDATION");
   const a = _actorTrio(actor);
+
+  // R7bm-F8 / R7bl close-out — defence in depth: even though the route
+  // wires credentialExpiryBlocker("IAP_REG") before the controller, any
+  // future caller invoking completeSession from a background job / event
+  // handler / batch script that bypasses the route MUST still be blocked
+  // if their IAP registration has lapsed. The middleware-only check
+  // would leave that bypass route open; the service-layer assert closes
+  // the loop. Fail-open on Mongo blips (same policy as the middleware).
+  if (a.id) {
+    try {
+      const { assertValidCredential } = require("../../middleware/credentialExpiryBlocker");
+      const v = await assertValidCredential(a.id, "IAP_REG");
+      if (!v.ok) {
+        throw _err(
+          403,
+          v.message || "IAP_REG credential missing or expired — cannot complete physio session.",
+          v.code || "CREDENTIAL_INVALID",
+        );
+      }
+    } catch (e) {
+      // Programmer errors (thrown 403s above) carry our { status, code }
+      // shape — re-throw. Other surprises (e.g. require() failed) are
+      // logged and we proceed (fail-open).
+      if (e && e.status === 403) throw e;
+      // eslint-disable-next-line no-console
+      console.warn("[physioService.completeSession] credential check skipped:", e.message);
+    }
+  }
+
   // Atomic transition: only SCHEDULED or MISSED sessions can be completed.
   // Re-completing an already-COMPLETED row is a no-op (returns null and
   // we 409 — prevents double-billing).

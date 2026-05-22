@@ -10,12 +10,22 @@ const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/Compliance/bmwManifestController");
 const { requireAction } = require("../../middleware/auth");
+const { credentialExpiryBlocker } = require("../../middleware/credentialExpiryBlocker");
 
 router.get("/",                  requireAction("compliance.bmw.read"),  ctrl.list);
 router.get("/:id",               requireAction("compliance.bmw.read"),  ctrl.getOne);
 
 router.post("/",                 requireAction("compliance.bmw.write"), ctrl.create);
-router.put("/:id/handover",      requireAction("compliance.bmw.write"), ctrl.handover);
+
+// R7bm-F8 / R7bl close-out: handover is the sign-off moment where the
+// BMW Rules 2016 trained handler accepts the bio-medical-waste
+// consignment for transport. The handler MUST hold current
+// BMW-handler training. credentialExpiryBlocker runs AFTER the role
+// gate; on missing / expired BMW_HANDLER it 403s with
+// CREDENTIAL_MISSING | CREDENTIAL_EXPIRED.
+router.put("/:id/handover",      requireAction("compliance.bmw.write"),
+                                 credentialExpiryBlocker("BMW_HANDLER"),
+                                 ctrl.handover);
 router.put("/:id/pcb-filed",     requireAction("compliance.bmw.write"), ctrl.markPcbFiled);
 
 module.exports = router;

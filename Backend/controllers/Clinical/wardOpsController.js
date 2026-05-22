@@ -379,57 +379,127 @@ exports.mortuaryShift = async (req, res) => {
 
 exports.mortuaryHandover = async (req, res) => {
   try {
-    // R7bj-F4 Auth 2-WB-CRIT-1: handover requires BOTH the family member
-    // who collects the body AND a hospital witness (2-signature NABH AAC
-    // attestation). One actor as both signer + receiver is the loophole.
+    // R7bj-F4 Auth 2-WB-CRIT-1 + R7bm-F10 NABH ROM 3-sig:
+    // Body handover requires THREE distinct attestations + the family
+    // member who collects the body:
+    //   1. handoverBy        — hospital staff releasing the body (req.user)
+    //   2. witnessName/Id    — hospital witness (nurse / ward boy on duty,
+    //                          NOT the same person as handoverBy)
+    //   3. guardName/BadgeNo — security guard at the mortuary gate (the
+    //                          independent third party — NABH ROM mandates
+    //                          a guard signature to break the family-plus-
+    //                          ward-staff collusion path)
+    //   4. receivedBy        — family member collecting the body (verified
+    //                          distinct from witness AND guard)
+    // The witness, guard, and handover staff each persist with signedAt
+    // timestamps so the audit trail records WHEN each attestation was
+    // captured (not just "appears in record after the fact").
     const b = req.body || {};
     const {
       receivedBy, relationship, receiverPhone, receiverIdProof, receiverIdNumber,
-      vehicleDetails, witnessName, witnessId, notes,
+      vehicleDetails, witnessName, witnessId, witnessRole,
+      guardName, guardBadgeNo, guardId,
+      notes,
     } = b;
+
+    // 1. Required fields.
     if (!receivedBy || !relationship) {
       return sendErr(res, "receivedBy + relationship required", "VALIDATION", 400);
     }
     if (!witnessName || !String(witnessName).trim()) {
       return sendErr(
         res,
-        "witnessName is required — NABH 2-signature handover attestation",
+        "witnessName is required — NABH ROM 3-sig handover (hospital witness)",
         "WITNESS_REQUIRED",
         400,
       );
     }
-    if (String(witnessName).trim().toLowerCase() === String(receivedBy).trim().toLowerCase()) {
-      return sendErr(res, "Witness and receiver must be different people", "WITNESS_INVALID", 400);
+    if (!witnessId) {
+      // The schema's pre-save validator requires witnessId to be a User
+      // ObjectId. Reject early with a clearer message than the schema's.
+      return sendErr(
+        res,
+        "witnessId (User _id) is required for the hospital witness",
+        "WITNESS_REQUIRED",
+        400,
+      );
+    }
+    if (!guardName || !String(guardName).trim()) {
+      return sendErr(
+        res,
+        "guardName is required — NABH ROM 3-sig handover (security guard at gate)",
+        "GUARD_REQUIRED",
+        400,
+      );
     }
 
-    // Pre-load to enforce state transition (must be in-mortuary or declared).
+    // 2. Distinct-actor checks — no person may sign in two slots.
+    const receivedByN = String(receivedBy).trim().toLowerCase();
+    const witnessN    = String(witnessName).trim().toLowerCase();
+    const guardN      = String(guardName).trim().toLowerCase();
+    if (witnessN === receivedByN) {
+      return sendErr(res, "Witness and receiver must be different people", "WITNESS_INVALID", 400);
+    }
+    if (guardN === receivedByN) {
+      return sendErr(res, "Security guard and receiver must be different people", "GUARD_INVALID", 400);
+    }
+    if (guardN === witnessN) {
+      return sendErr(res, "Security guard and witness must be different people", "GUARD_INVALID", 400);
+    }
+    // Handover staff cannot also sign as witness or guard.
+    const handoverByName = await userName(req);
+    const handoverN = String(handoverByName || "").trim().toLowerCase();
+    if (handoverN && (handoverN === witnessN || handoverN === guardN)) {
+      return sendErr(
+        res,
+        "The releasing staff cannot also sign as witness or guard",
+        "HANDOVER_ACTOR_CONFLICT",
+        400,
+      );
+    }
+
+    // 3. Pre-load to enforce state transition (must be in-mortuary or declared).
     const existing = await MortuaryRecord.findById(req.params.id).lean();
     if (!existing) return sendErr(res, "Not found", "NOT_FOUND", 404);
     if (existing.status === "handed-over") {
       return sendErr(res, "Body already handed over", "ILLEGAL_TRANSITION", 409);
     }
 
-    const handoverByName = await userName(req);
-    const witnessTag = `witness:${String(witnessName).trim()}` +
-      (witnessId ? ` (id:${String(witnessId).trim()})` : "");
+    // 4. Persist all three signatures + audit metadata atomically. The
+    //    schema pre-update hook also re-checks witness + guard presence;
+    //    we mirror those constraints here for a friendlier API error.
+    const now = new Date();
     const combinedNotes = [
       typeof notes === "string" ? notes : "",
-      witnessTag,
+      `witness:${String(witnessName).trim()}${witnessId ? ` (id:${witnessId})` : ""}`,
+      `guard:${String(guardName).trim()}${guardBadgeNo ? ` (badge:${guardBadgeNo})` : ""}`,
     ].filter(Boolean).join(" · ");
 
     const row = await MortuaryRecord.findByIdAndUpdate(
       req.params.id,
       {
         $set: {
-          handoverAt:       new Date(),
+          // Releasing staff (signature 1).
+          handoverAt:       now,
           handoverBy:       req.user.id,
           handoverByName,
+          // Family receiver.
           receivedBy:       String(receivedBy).trim(),
           relationship:     String(relationship).trim(),
           receiverPhone:    receiverPhone    || "",
           receiverIdProof:  receiverIdProof  || "",
           receiverIdNumber: receiverIdNumber || "",
           vehicleDetails:   vehicleDetails   || "",
+          // Hospital witness (signature 2).
+          witnessId:        witnessId,
+          witnessName:      String(witnessName).trim(),
+          witnessRole:      typeof witnessRole === "string" ? witnessRole : "",
+          witnessSignedAt:  now,
+          // Security guard (signature 3).
+          guardId:          guardId || null,
+          guardName:        String(guardName).trim(),
+          guardBadgeNo:     guardBadgeNo ? String(guardBadgeNo).trim() : "",
+          guardSignedAt:    now,
           notes:            combinedNotes,
           status:           "handed-over",
         },

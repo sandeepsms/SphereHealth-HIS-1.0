@@ -5,7 +5,7 @@
  *
  *   URL: /food-reactions
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
@@ -51,21 +51,41 @@ export default function FoodReactionsPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
 
+  // R7bm-F5 — AbortController on the filter-triggered fetch so a rapid
+  // status-filter toggle doesn't race responses, plus unmount cleanup.
+  const abortRef = useRef(null);
+  const mountedRef = useRef(true);
   const fetchList = useCallback(async () => {
+    if (abortRef.current) abortRef.current.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (filterStatus) params.set("status", filterStatus);
       params.set("limit", "200");
-      const r = await axios.get(`${API}/food-reactions?${params}`, authHdr());
+      const r = await axios.get(`${API}/food-reactions?${params}`, { ...authHdr(), signal: ctrl.signal });
+      if (!mountedRef.current) return;
       setRows(r.data?.data || []);
     } catch (e) {
-      toast.error(e?.response?.data?.message || "Failed to load");
+      if (e.name !== "CanceledError" && e.name !== "AbortError") {
+        toast.error(e?.response?.data?.message || "Failed to load");
+      }
     }
-    setLoading(false);
+    if (mountedRef.current) setLoading(false);
   }, [filterStatus]);
 
-  useEffect(() => { fetchList(); }, [fetchList]);
+  useEffect(() => {
+    mountedRef.current = true;
+    fetchList();
+    return () => {
+      mountedRef.current = false;
+      if (abortRef.current) abortRef.current.abort();
+      // Reset transient form state on unmount.
+      setForm(EMPTY_FORM);
+      setShowCreate(false);
+    };
+  }, [fetchList]);
 
   const filtered = useMemo(() => {
     if (!q) return rows;
@@ -127,7 +147,8 @@ export default function FoodReactionsPage() {
 
       <Card title="Reactions Register" icon="pi-table">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 }}>
-          <SearchInput value={q} onChange={setQ} placeholder="Search UHID / patient / meal / allergen…" />
+          {/* R7bm-F5 — SearchInput passes the raw event; pull e.target.value. */}
+          <SearchInput value={q} onChange={e => setQ(e.target.value)} placeholder="Search UHID / patient / meal / allergen…" />
           <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
             <option value="">All statuses</option>
             {STATUSES.map(s => <option key={s}>{s}</option>)}

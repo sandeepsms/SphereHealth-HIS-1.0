@@ -18,6 +18,7 @@ const express = require("express");
 const router  = express.Router();
 const ctrl    = require("../../controllers/Clinical/physioController");
 const { requireAction } = require("../../middleware/auth");
+const { credentialExpiryBlocker } = require("../../middleware/credentialExpiryBlocker");
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // ── Plans ────────────────────────────────────────────────────
@@ -50,9 +51,15 @@ router.post  ("/plans/:planId/sessions",
   requireAction("physio.session.write"),
   ctrl.createSession);
 
+// R7bm-F8 / R7bl close-out: completing a physio session is a licensed
+// clinical act under NABH HRD.3 — the therapist's IAP (Indian Association
+// of Physiotherapists) registration MUST be current. credentialExpiryBlocker
+// runs AFTER requireAction so the role gate fires first; on missing /
+// expired IAP_REG it 403s with code CREDENTIAL_MISSING|CREDENTIAL_EXPIRED.
 router.put   ("/sessions/:id/complete",
   validateObjectIdParam("id"),
   requireAction("physio.session.write"),
+  credentialExpiryBlocker("IAP_REG"),
   ctrl.completeSession);
 
 router.put   ("/sessions/:id/cancel",

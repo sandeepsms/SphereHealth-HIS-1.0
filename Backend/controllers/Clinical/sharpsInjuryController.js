@@ -3,6 +3,10 @@
  * Thin HTTP layer over services/Clinical/sharpsInjuryService.
  */
 const svc = require("../../services/Clinical/sharpsInjuryService");
+// R7bm-F9: envelope helper — `count` → `meta` so list() conforms to
+// the canonical `{ success, data, meta? }` shape. Other methods left
+// untouched to avoid colliding with parallel regulatory work (F7).
+const { sendOk } = require("../../utils/apiEnvelope");
 
 function _mapStatus(e) {
   if (e.status) return e.status;
@@ -105,6 +109,6 @@ exports.list = async (req, res, next) => {
       to:          req.query?.to,
       limit:       Number(req.query?.limit) || 100,
     });
-    res.json({ success: true, data, count: data.length });
+    return sendOk(res, data, { count: data.length });
   } catch (e) { next(e); }
 };

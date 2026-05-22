@@ -2,6 +2,8 @@ const express = require("express");
 const router = express.Router();
 const userController = require("../../controllers/User/userController");
 const { authenticate, requireAction } = require("../../middleware/auth");
+// R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 /* All /users endpoints sit BELOW the global `authenticate` mount in
    routes/index.js, so req.user is always populated here. Each route
@@ -32,18 +34,18 @@ router.get("/employee/:employeeId",          requireAction("users.read"), userCo
 router.put("/change-password",               authenticate, requireAction("users.change-password-self"), userController.changePassword);
 
 // ─── Read-by-id ────────────────────────────────────────────────
-router.get("/:id",                           requireAction("users.read"), userController.getUserById);
+router.get("/:id",                           validateObjectIdParam("id"), requireAction("users.read"), userController.getUserById);
 
 // ─── Write endpoints — Admin only ──────────────────────────────
 router.post("/",                             requireAction("users.write"),          userController.createUser);
 router.post("/hod/assign",                   requireAction("users.write"),          userController.assignHOD);
-router.put("/:id",                           requireAction("users.write"),          userController.updateUser);
-router.put("/:id/deactivate",                requireAction("users.deactivate"),     userController.deactivateUser);
-router.put("/:id/activate",                  requireAction("users.deactivate"),     userController.activateUser);
+router.put("/:id",                           validateObjectIdParam("id"), requireAction("users.write"),          userController.updateUser);
+router.put("/:id/deactivate",                validateObjectIdParam("id"), requireAction("users.deactivate"),     userController.deactivateUser);
+router.put("/:id/activate",                  validateObjectIdParam("id"), requireAction("users.deactivate"),     userController.activateUser);
 // R7bb-FIX-A-10/D10-CRIT-2: dedicated terminate endpoint. Gated on the
 // same permission token as deactivate — both are HR write surfaces.
-router.put("/:id/terminate",                 requireAction("users.deactivate"),     userController.terminateUser);
-router.put("/:id/reset-password",            requireAction("users.reset-password"), userController.adminResetPassword);
-router.patch("/:id/signature",               requireAction("users.signature"),      userController.adminSetSignature);
+router.put("/:id/terminate",                 validateObjectIdParam("id"), requireAction("users.deactivate"),     userController.terminateUser);
+router.put("/:id/reset-password",            validateObjectIdParam("id"), requireAction("users.reset-password"), userController.adminResetPassword);
+router.patch("/:id/signature",               validateObjectIdParam("id"), requireAction("users.signature"),      userController.adminSetSignature);
 
 module.exports = router;

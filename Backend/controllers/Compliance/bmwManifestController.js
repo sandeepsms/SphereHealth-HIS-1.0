@@ -7,6 +7,9 @@
  * reach into the model directly.
  */
 const svc = require("../../services/Compliance/bmwManifestService");
+// R7bm-F9: canonical envelope helper — collapses `count` etc. into the
+// reserved `meta` field so the response shape stays `{ success, data, meta? }`.
+const { sendOk } = require("../../utils/apiEnvelope");
 
 function _mapStatus(e) {
   if (e.status) return e.status;
@@ -84,6 +87,6 @@ exports.list = async (req, res, next) => {
       pcbFiled: req.query?.pcbFiled,
       limit:    Number(req.query?.limit) || 100,
     });
-    res.json({ success: true, data, count: data.length });
+    return sendOk(res, data, { count: data.length });
   } catch (e) { next(e); }
 };

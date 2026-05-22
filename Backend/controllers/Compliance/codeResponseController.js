@@ -3,6 +3,9 @@
  * Thin HTTP layer over services/Compliance/codeResponseService.
  */
 const svc = require("../../services/Compliance/codeResponseService");
+// R7bm-F9: canonical envelope helper — `count` moves into `meta` so the
+// response stays `{ success, data, meta? }` per apiEnvelope contract.
+const { sendOk } = require("../../utils/apiEnvelope");
 
 function _mapStatus(e) {
   if (e.status) return e.status;
@@ -83,7 +86,7 @@ exports.list = async (req, res, next) => {
       uhid:    req.query?.uhid,
       limit:   Number(req.query?.limit) || 100,
     });
-    res.json({ success: true, data, count: data.length });
+    return sendOk(res, data, { count: data.length });
   } catch (e) { next(e); }
 };
 
@@ -91,6 +94,6 @@ exports.list = async (req, res, next) => {
 exports.stats = async (req, res, next) => {
   try {
     const rows = await svc.stats({ from: req.query?.from, to: req.query?.to });
-    res.json({ success: true, data: rows, count: rows.length });
+    return sendOk(res, rows, { count: rows.length });
   } catch (e) { next(e); }
 };

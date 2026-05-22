@@ -16,15 +16,17 @@ const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/Clinical/criticalValueAlertController");
 const { requireAction } = require("../../middleware/auth");
+// R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // Reads (operator dashboard, drill-down)
 router.get("/open",            requireAction("clinical.acknowledge-critical"), ctrl.listOpen);
 router.get("/by-uhid/:UHID",   requireAction("clinical.acknowledge-critical"), ctrl.byUHID);
-router.get("/:id",             requireAction("clinical.acknowledge-critical"), ctrl.getOne);
+router.get("/:id",             validateObjectIdParam("id"), requireAction("clinical.acknowledge-critical"), ctrl.getOne);
 
 // Writes
 router.post("/",               requireAction("clinical.emit-critical"),         ctrl.create);
-router.post("/:id/acknowledge",requireAction("clinical.acknowledge-critical"),  ctrl.acknowledge);
-router.post("/:id/close",      requireAction("clinical.acknowledge-critical"),  ctrl.close);
+router.post("/:id/acknowledge",validateObjectIdParam("id"), requireAction("clinical.acknowledge-critical"),  ctrl.acknowledge);
+router.post("/:id/close",      validateObjectIdParam("id"), requireAction("clinical.acknowledge-critical"),  ctrl.close);
 
 module.exports = router;

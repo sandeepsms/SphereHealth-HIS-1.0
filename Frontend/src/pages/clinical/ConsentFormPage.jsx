@@ -769,7 +769,7 @@ function ConsentFormPageContent({ selectedPatient }) {
   const [previewData, setPreviewData] = useState(null);
   const [previewType, setPreviewType] = useState(null);
 
-  const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+  const token = (sessionStorage.getItem("his_token"));
   const headers = { Authorization: `Bearer ${token}` };
 
   // Auto-fill when patient selected from AdmittedPatientPanel

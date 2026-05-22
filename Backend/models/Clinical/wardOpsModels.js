@@ -191,6 +191,15 @@ const MortuaryRecordSchema = new Schema({
   witnessName:           { type: String, default: "" },
   witnessRole:           { type: String, default: "" },
   witnessSignedAt:       { type: Date, default: null },
+  // R7bm-F10 / R7bl-MR-CRIT-1 (NABH ROM 3-sig): security guard is the third
+  // signatory on body handover. Hospital witness + family receiver alone
+  // can be a forged pair if both come from the family side; the security
+  // guard at the mortuary gate provides an independent attestation.
+  // Required when status transitions to `handed-over` (validators below).
+  guardId:               { type: Schema.Types.ObjectId, ref: "User", default: null },
+  guardName:             { type: String, default: "" },
+  guardBadgeNo:          { type: String, default: "" },
+  guardSignedAt:         { type: Date, default: null },
   status: {
     type: String,
     // R7bj-F3: expanded enum to track post-handover disposal terminal states.
@@ -213,12 +222,17 @@ MortuaryRecordSchema.index(
 // Terminal states — once any of these are set, status cannot regress.
 const MORTUARY_TERMINAL = new Set(["handed-over", "cremated", "buried"]);
 
-// R7bj-F3: handover validator — requires witness + handoverBy when
-// status flips to `handed-over` on save.
+// R7bj-F3 / R7bm-F10 NABH ROM 3-sig: handover validator — requires
+// handoverBy + hospital witness + security guard when status flips to
+// `handed-over` on save. All three sigs are mandatory; the family
+// receiver (receivedBy/relationship) is enforced separately at the
+// controller layer (validated against the witness so they can't be the
+// same person).
 MortuaryRecordSchema.pre("save", function (next) {
   if (this.status === "handed-over") {
     const hasHandover = this.handoverAt && this.handoverBy && this.handoverByName;
     const hasWitness  = this.witnessId && this.witnessName && this.witnessSignedAt;
+    const hasGuard    = this.guardName && this.guardSignedAt;
     if (!hasHandover) {
       const err = new Error("MortuaryRecord: handed-over requires handoverAt/handoverBy/handoverByName");
       err.statusCode = 400;
@@ -226,9 +240,15 @@ MortuaryRecordSchema.pre("save", function (next) {
       return next(err);
     }
     if (!hasWitness) {
-      const err = new Error("MortuaryRecord: handed-over requires 2-signatory witness (witnessId/witnessName/witnessSignedAt)");
+      const err = new Error("MortuaryRecord: handed-over requires hospital witness (witnessId/witnessName/witnessSignedAt)");
       err.statusCode = 400;
       err.code = "MORTUARY_WITNESS_REQUIRED";
+      return next(err);
+    }
+    if (!hasGuard) {
+      const err = new Error("MortuaryRecord: handed-over requires security-guard signature (guardName/guardSignedAt) — NABH ROM 3-sig");
+      err.statusCode = 400;
+      err.code = "MORTUARY_GUARD_REQUIRED";
       return next(err);
     }
   }
@@ -261,7 +281,8 @@ MortuaryRecordSchema.pre("findOneAndUpdate", async function (next) {
         return next(err);
       }
     }
-    // When transitioning into handed-over via update, require witness fields too.
+    // When transitioning into handed-over via update, require witness +
+    // guard fields too (NABH ROM 3-sig).
     if (nextStatus === "handed-over") {
       const wId  = $set.witnessId  ?? $set["witnessId"]  ?? current?.witnessId;
       const wNm  = $set.witnessName ?? $set["witnessName"] ?? current?.witnessName;
@@ -269,8 +290,11 @@ MortuaryRecordSchema.pre("findOneAndUpdate", async function (next) {
       const hOv  = $set.handoverBy ?? current?.handoverBy;
       const hNm  = $set.handoverByName ?? current?.handoverByName;
       const hAt  = $set.handoverAt ?? current?.handoverAt;
+      // R7bm-F10: security guard 3rd signature.
+      const gNm  = $set.guardName       ?? current?.guardName;
+      const gAt  = $set.guardSignedAt   ?? current?.guardSignedAt;
       if (!(wId && wNm && wAt)) {
-        const err = new Error("MortuaryRecord: handed-over requires witness 2-sig fields");
+        const err = new Error("MortuaryRecord: handed-over requires witness fields");
         err.statusCode = 400;
         err.code = "MORTUARY_WITNESS_REQUIRED";
         return next(err);
@@ -279,6 +303,12 @@ MortuaryRecordSchema.pre("findOneAndUpdate", async function (next) {
         const err = new Error("MortuaryRecord: handed-over requires handoverBy/Name/At");
         err.statusCode = 400;
         err.code = "MORTUARY_HANDOVER_INCOMPLETE";
+        return next(err);
+      }
+      if (!(gNm && gAt)) {
+        const err = new Error("MortuaryRecord: handed-over requires security-guard signature — NABH ROM 3-sig");
+        err.statusCode = 400;
+        err.code = "MORTUARY_GUARD_REQUIRED";
         return next(err);
       }
     }

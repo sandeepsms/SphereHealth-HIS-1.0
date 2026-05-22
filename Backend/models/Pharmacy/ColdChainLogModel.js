@@ -24,12 +24,36 @@ const ColdChainLogSchema = new mongoose.Schema(
     acknowledgedById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     acknowledgedByName: { type: String, default: null },
     hospitalId: { type: mongoose.Schema.Types.ObjectId, ref: "Hospital", default: null },
+
+    // R7bm-F7 — FSSAI 2.1.13 + D&C Schedule K + WHO PQS E003:
+    // cold-chain (vaccine/insulin/biologic) temperature logs must be
+    // retained for at least 3 years so an SPCB / FSSAI / WHO PQS
+    // inspection can reconstruct breach chronology and corrective
+    // action history. Recorded as a date marker only — a future
+    // scheduled-purge cron sweeps rows past this horizon. NO TTL is
+    // attached on purpose: dropping cold-chain rows must be a
+    // governed workflow (review + sign-off), not silent auto-delete.
+    retainUntil: { type: Date, default: null, index: true },
   },
   { timestamps: true }
 );
 
 ColdChainLogSchema.index({ fridgeId: 1, recordedAt: -1 });
 ColdChainLogSchema.index({ isBreachIncident: 1, acknowledgedAt: 1, recordedAt: -1 });
+
+// R7bm-F7 — set retainUntil = createdAt + 3 years on insert only.
+// The append-only ACK_ONLY guard below blocks updates so retainUntil
+// can never be back-dated from a portal request.
+const COLD_CHAIN_RETENTION_YEARS = 3;
+ColdChainLogSchema.pre("save", function (next) {
+  if (this.isNew && !this.retainUntil) {
+    const base = this.createdAt || this.recordedAt || new Date();
+    const d = new Date(base);
+    d.setFullYear(d.getFullYear() + COLD_CHAIN_RETENTION_YEARS);
+    this.retainUntil = d;
+  }
+  next();
+});
 
 // Append-only: block any non-ack mutation paths.
 const ACK_ONLY = new Set(["acknowledgedAt", "acknowledgedById", "acknowledgedByName", "correctiveAction", "updatedAt"]);
