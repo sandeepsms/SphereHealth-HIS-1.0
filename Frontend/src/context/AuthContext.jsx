@@ -38,7 +38,23 @@ export function AuthProvider({ children }) {
   // ChangePasswordPrompt component below.
   const [mustChangePassword, setMustChangePassword] = useState(false);
 
-  /* ── Restore session on mount ── */
+  /* ── Restore session on mount ──
+   * R7bu — Pre-R7bu the catch block nuked the session on ANY error.
+   * That meant a single transient blip on the first /auth/me of a
+   * fresh page load (Mongo replica lag, backend cold-start, network
+   * burp) silently logged the user out. Combined with React strict-
+   * mode double-mounting in dev + every route change re-running this
+   * effect, users saw "baar baar logout" symptoms.
+   *
+   * Now only nuke the session on definitive hard-logout codes from
+   * the backend. Transient errors keep the stored token in place and
+   * keep the in-memory user from the previous render so the UI stays
+   * logged in. Next foreground API call will surface the real state.
+   */
+  const HARD_LOGOUT_CODES = new Set([
+    "TOKEN_STALE", "ACCOUNT_INACTIVE", "ROLE_CHANGED",
+    "USER_DELETED", "TOKEN_REVOKED", "TOKEN_EXPIRED", "TOKEN_INVALID",
+  ]);
   useEffect(() => {
     const restore = async () => {
       const saved = getAuthToken();
@@ -46,6 +62,10 @@ export function AuthProvider({ children }) {
       try {
         const res = await axios.get(API_ENDPOINTS.AUTH_ME, {
           headers: { Authorization: `Bearer ${saved}` },
+          // R7bu: flag as background poll so the global interceptor's
+          // transient-counter doesn't accumulate this call against a
+          // user-initiated foreground action that may follow.
+          _isBackgroundPoll: true,
         });
         setUser(res.data.user);
         setDoctorProfile(res.data.doctorProfile || null);
@@ -55,12 +75,29 @@ export function AuthProvider({ children }) {
           setMustChangePassword(true);
         }
         setToken(saved);
-      } catch {
-        clearStoredToken();
-        setToken(null);
-        setUser(null);
-        setDoctorProfile(null);
-        setMustChangePassword(false);
+      } catch (err) {
+        // R7bu: only nuke the session on a definitive auth-end signal
+        // from the backend (HARD_LOGOUT_CODES). Anything else — network
+        // timeout, 5xx, Mongo blip, CORS preflight, backend restart —
+        // is recoverable; keep the token so the next foreground request
+        // either succeeds or surfaces a real auth code.
+        const status = err?.response?.status;
+        const code   = err?.response?.data?.code;
+        const isHardLogout = status === 401 && code && HARD_LOGOUT_CODES.has(code);
+        if (isHardLogout) {
+          clearStoredToken();
+          setToken(null);
+          setUser(null);
+          setDoctorProfile(null);
+          setMustChangePassword(false);
+        } else {
+          // Transient — keep token, keep user state (if we had any),
+          // and surface for diagnostics. Setting `token` so downstream
+          // code that gates on it (axios default header) still works.
+          setToken(saved);
+          // eslint-disable-next-line no-console
+          console.warn("[auth] /auth/me restore failed (transient, not logging out):", status, code, err?.message);
+        }
       } finally {
         setLoading(false);
       }
