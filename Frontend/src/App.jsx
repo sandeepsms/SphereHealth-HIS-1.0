@@ -174,6 +174,8 @@ const CriticalValueAlertsPage = lazy(() => import("./pages/clinical/CriticalValu
 const GrievancesPage = lazy(() => import("./pages/quality/GrievancesPage"));
 const ADRReportsPage = lazy(() => import("./pages/quality/ADRReportsPage"));
 const FireDrillRegisterPage = lazy(() => import("./pages/compliance/FireDrillRegisterPage"));
+// R7bo — NABH Inspection Dashboard (RBS / Emergency / Blood Transfusion).
+const NABHRegistersDashboard = lazy(() => import("./pages/compliance/NABHRegistersDashboard"));
 const CredentialingPage = lazy(() => import("./pages/hr/CredentialingPage"));
 const MARPage = lazy(() => import("./pages/clinical/MARPage"));
 const DiabeticChartPage = lazy(() => import("./pages/clinical/DiabeticChartPage"));
@@ -570,6 +572,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/fire-drills" element={
               <RoleGuard action="compliance.firedrill.read"><FireDrillRegisterPage /></RoleGuard>
+            } />
+            {/* R7bo — NABH Inspection Dashboard surfaces RBS, Emergency,
+                Blood Transfusion registers in a unified surveyor view. */}
+            <Route path="/compliance/nabh-registers" element={
+              <RoleGuard action="compliance.read"><NABHRegistersDashboard /></RoleGuard>
             } />
             <Route path="/credentials" element={
               <RoleGuard action="hr.credential.read"><CredentialingPage /></RoleGuard>

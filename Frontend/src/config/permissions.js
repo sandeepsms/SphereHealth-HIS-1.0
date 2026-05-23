@@ -343,6 +343,8 @@ export const ACTIONS = {
   "hr.credential.read":            ["Admin", "Doctor"],
   "compliance.firedrill.write":    ["Admin", "Security"],
   "compliance.firedrill.read":     ["Admin", "Security"],
+  // R7bo — NABH Inspection Dashboard (RBS / Emergency / Blood Transfusion).
+  "compliance.read":               ["Admin", "Doctor", "Nurse", "MRD"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 
   // ── R7bh-F6 — Accountant regulatory + cold-chain (mirror of backend) ─

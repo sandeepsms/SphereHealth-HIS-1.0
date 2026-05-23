@@ -275,6 +275,10 @@ router.use("/adr-reports",           require("./Pharmacy/adrRoutes"));
 router.use("/grievances",            require("./Quality/grievanceRoutes"));
 router.use("/credentials",           require("./HR/credentialRoutes"));
 router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
+// R7bo — NABH compliance registers (RBS / Emergency / Blood Transfusion).
+// Surveyors ask for these as chronological audit-grade logs; the registers
+// are auto-populated from existing clinical flows via nabhRegisterEmitter.
+router.use("/registers/nabh",        require("./Compliance/nabhRegisterRoutes"));
 
 // ── R7bh-F6 — Accountant regulatory ────────────────────────────
 // GSTR-1/3B exporter + Form 16A workflow. Both gated by tax.returns.*

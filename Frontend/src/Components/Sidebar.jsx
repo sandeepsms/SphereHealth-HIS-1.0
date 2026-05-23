@@ -422,6 +422,9 @@ const NAV = [
       { label: "Code Response Log",     icon: "pi-bolt",                 path: "/code-response",         nabh: true, badge: "NEW",   roles: [ADMIN, DR, NR, "MRD"] },
       // R7bj-F6 — sharps-injury register (HRD.8 needle-stick reporting).
       { label: "Sharps Injury",         icon: "pi-info-circle",          path: "/sharps-injury",         nabh: true, badge: "HRD.8", roles: [ADMIN, DR, NR, PH, LB, WB, "Housekeeping", "MRD"] },
+      // R7bo — NABH Inspection Dashboard: surveyor-ready unified view of
+      // RBS, Emergency, and Blood Transfusion registers (auto-populated).
+      { label: "NABH Registers",        icon: "pi-th-large",             path: "/compliance/nabh-registers", nabh: true, badge: "R7bo", roles: [ADMIN, DR, NR, "MRD"] },
     ],
   },
 ];

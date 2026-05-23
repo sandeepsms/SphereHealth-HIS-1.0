@@ -463,6 +463,12 @@ const ACTIONS = {
   "hr.credential.read":            ["Admin", "Doctor"],
   "compliance.firedrill.write":    ["Admin", "Security"],
   "compliance.firedrill.read":     ["Admin", "Security"],
+  // R7bo — NABH Inspection Dashboard + auto-populated registers
+  // (RBS / Emergency / Blood Transfusion). Read access for the NABH
+  // surveyor-facing roles (Admin, Doctor, Nurse, MRD); writes split
+  // by domain: RBS via vitals.write, transfusion via doctor-orders.write,
+  // emergency is auto-populated and not user-written.
+  "compliance.read":               ["Admin", "Doctor", "Nurse", "MRD"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 
   // ── R7bh-F6 — Accountant regulatory + cold-chain (NABH + GST + IT Act) ─
