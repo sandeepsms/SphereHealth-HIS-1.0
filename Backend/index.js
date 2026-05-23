@@ -148,23 +148,55 @@ app.use(
 );
 app.use(globalLimiter);
 
-// R7av-FIX-14/D2-MED-3: Cache-Control on PHI endpoints. Pre-R7av no
-// PHI route emitted Cache-Control headers — shared proxy / browser-back
-// could leak patient data. We blanket every /api/patients, /api/billing,
-// /api/admissions, /api/mar, /api/doctor-notes, /api/mlc with
+// R7av-FIX-14/D2-MED-3 + R7bj-F10/5-HIGH-2: Cache-Control on PHI endpoints.
+// Pre-R7av no PHI route emitted Cache-Control headers — shared proxy /
+// browser-back could leak patient data. We blanket every PHI path with
 // `no-store, private` so intermediaries don't cache and a logout
 // browser-back can't replay the page.
+//
+// R7bj-F10 extends the list per R7bi-5-HIGH-2 — visitor-pass, gate-log,
+// dietitian patient plans, ward tasks, housekeeping ops, incidents,
+// physio session (R7bj-F1), kitchen indent + adverse food reactions
+// (R7bj-F2) all leak PHI (UHID, name, photo) on cached responses if a
+// shared workstation's browser-back is used after logout.
 app.use([
+  // Core PHI surfaces (R7av).
   "/api/patients", "/api/billing", "/api/admissions",
   "/api/mar", "/api/doctor-orders", "/api/doctor-notes", "/api/nursing-notes",
   "/api/mlc", "/api/vitals", "/api/discharge", "/api/patient-file",
   "/api/cashier-sessions", "/api/auth/me", "/api/auth/signature",
+  // R7bj-F10 / R7bi-5-HIGH-2 — new PHI paths.
+  "/api/visitor-passes",
+  "/api/gate-log",
+  "/api/dietitian/patient",
+  "/api/ward-tasks",
+  "/api/housekeeping",
+  "/api/incidents",
+  // R7bj-F1 — physio plan / session (PHI: diagnosis + therapy notes)
+  "/api/physio",
+  // R7bj-F2 — kitchen indent + food reactions (PHI: per-patient diet card)
+  "/api/kitchen-indent",
+  "/api/food-reactions",
+  // R7bm-F2 / R7bl-5-HIGH-1 — additional PHI / regulated surfaces.
+  "/api/cold-chain",
+  "/api/bmw-manifest",
+  "/api/code-response",
+  "/api/sharps-injury",
+  "/api/tax-returns",
+  "/api/tds",
 ], (req, res, next) => {
   res.set("Cache-Control", "no-store, private");
   next();
 });
 
 // ── Eager-load Mongoose models so populate() across collections works ──────
+// R7bh-F3 / R7bg-1-CRIT-8: Hospital MUST be registered before any controller
+// that does `populate("hospitalId")` is loaded. Six R7bf-G schemas
+// (PrintAudit, CriticalValueAlert, ADRReport, Grievance, Credential,
+// FireDrill) ref "Hospital" — without an eager require the first
+// populate() call throws MissingSchemaError. Registered first in this
+// block on purpose so any later require chain inherits the registration.
+require("./models/HospitalModel");
 require("./models/bedMgmt/bedsModel");
 require("./models/bedMgmt/wardModel");
 require("./models/bedMgmt/roomModel");
@@ -177,6 +209,10 @@ require("./models/nursing/NursingConsumableItem");
 require("./models/nursing/NursingChargeEntry");
 require("./models/Billing/BillingTrigger");
 require("./models/Auth/TokenRevocationModel"); // jti revocation list (audit B-10)
+// R7bh-F6: Tax models eager-load so /api/tax-returns + /api/tds
+// controllers can resolve refs at first request.
+require("./models/Tax/GstReturnSnapshotModel");
+require("./models/Tax/TdsCertificateModel");
 
 // ── Connect DB then attach routes ──────────────────────────────────────────
 connectDB();
@@ -802,6 +838,95 @@ const _cancelExpireCredentials = scheduleDaily("expire-credentials", 2, 0, async
   }
 });
 
+// R7bm-F8 / R7bl close-out — pre-expiry credential notifier. Runs daily
+// at 09:00 IST (after the 02:00 expire-credentials flip but before the
+// hospital day starts at scale). Sends graduated reminders at T-30 / T-7 /
+// T-0 days so staff and HR see the expiry coming instead of getting
+// blocked at the door at 09:30 because their IAP/NMC/FSSAI/BMW credential
+// quietly ran out overnight. scheduleDaily wraps the call in the same
+// distributed-lock so multi-replica deploys don't double-email.
+const _cancelPreExpiryEmail = scheduleDaily("credential-pre-expiry-email", 9, 0, async () => {
+  try {
+    const cron = require("./jobs/preExpiryEmailCron");
+    return await cron.runPreExpirySweep();
+  } catch (e) {
+    console.error("[cron:credential-pre-expiry-email] error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
+// ── R7bh-F6 — accountant regulatory + NABH workflow crons ────────
+//
+//   • grievance-sla-escalate — every hour. Flips OPEN/IN_PROGRESS
+//     grievances past their slaHours window to ESCALATED. Uses the
+//     same setInterval + distributed-lock pattern as the cv-alert
+//     escalator so multi-replica deploys don't double-fire.
+//     (NABH PRE.6.)
+//   • fire-drill-overdue — daily @ 03:00 IST. Flips SCHEDULED drills
+//     whose scheduledDate has passed to OVERDUE. (NABH FMS.4.)
+//   • retention-review — daily @ 04:00 IST. Scans PatientBill /
+//     DoctorNote / MAR / DischargeSummary / ConsentForm / Prescription
+//     for documents older than the NABH IMS.3 retention floor. Writes
+//     a summary row to BillingAudit; no auto-purge.
+//
+const _GRIEVANCE_SLA_LOCK = "cron:grievance-sla-escalate";
+let _grievanceSlaInterval = null;
+try {
+  const grievanceSlaCron = require("./services/Quality/grievanceSlaCron");
+  // Tick every 30 min (cadence requirement: hourly per spec but 30-min
+  // ticks pick up SLA breaches faster while still being bounded). Lock
+  // TTL 25 min so a stalled holder doesn't block the next tick for long.
+  _grievanceSlaInterval = setInterval(async () => {
+    let acquired = false;
+    try {
+      acquired = await acquireLock(_GRIEVANCE_SLA_LOCK, 25 * 60);
+      if (!acquired) return;
+      const r = await grievanceSlaCron.runSlaEscalation();
+      if (r && (r.escalated || 0) > 0) {
+        console.log(`[cron:grievance-sla-escalate] escalated ${r.escalated}/${r.scanned} open ticket(s)`);
+      }
+    } catch (e) {
+      console.error("[cron:grievance-sla-escalate] error:", e.stack || e.message);
+    } finally {
+      if (acquired) { try { await releaseLock(_GRIEVANCE_SLA_LOCK); } catch (_) {} }
+    }
+  }, 30 * 60_000);
+  if (typeof _grievanceSlaInterval.unref === "function") _grievanceSlaInterval.unref();
+} catch (e) {
+  console.error("[cron:grievance-sla-escalate] failed to register:", e.message);
+}
+
+const _cancelFireDrillOverdue = scheduleDaily("fire-drill-overdue", 3, 0, async () => {
+  try {
+    const cron = require("./services/Compliance/fireDrillOverdueCron");
+    return await cron.runOverdueSweep();
+  } catch (e) {
+    console.error("[cron:fire-drill-overdue] error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
+const _cancelRetentionReview = scheduleDaily("retention-review", 4, 0, async () => {
+  try {
+    const svc = require("./services/MRD/retentionEnforcer");
+    return await svc.runRetentionReview();
+  } catch (e) {
+    console.error("[cron:retention-review] error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
+// R7bj-F9 — visitor-pass expiry every 5 min (moves expensive updateMany off
+// the visitorPassController hot path). Stale passes auto-flip Active → Expired
+// with autoExpiredAt stamp. setInterval (not IST-anchored cron) — cadence-based.
+const _cancelVisitorPassExpiry = (() => {
+  const { expireStalePasses } = require("./services/Compliance/visitorPassExpiryCron");
+  const interval = setInterval(() => { expireStalePasses().catch(() => {}); }, 5 * 60 * 1000);
+  if (typeof interval.unref === "function") interval.unref();
+  console.log("[cron:visitor-pass-expiry] armed — every 5 min");
+  return () => clearInterval(interval);
+})();
+
 // Keep a reference name for the graceful-shutdown handler below.
 const _autoBillingInterval = {
   _cancel: () => {
@@ -814,7 +939,12 @@ const _autoBillingInterval = {
     _cancelStuckTrigger();           // R7ar-P2-37
     _cancelReorderNotifier();        // R7bd-E-3
     _cancelExpireCredentials();      // R7bf-G / A5-CRIT-6
+    _cancelPreExpiryEmail();         // R7bm-F8 / R7bl close-out
     if (_cvAlertInterval) clearInterval(_cvAlertInterval); // R7bf-G / A5-CRIT-1
+    // R7bh-F6 — new crons
+    if (_grievanceSlaInterval) clearInterval(_grievanceSlaInterval);
+    _cancelFireDrillOverdue();
+    _cancelRetentionReview();
   },
 };
 
@@ -865,7 +995,11 @@ app.use((err, req, res, next) => {
 });
 
 // ── Listen + graceful shutdown ─────────────────────────────────────────────
-const PORT = process.env.PORT || 5000;
+// R7au-1: fallback port aligned with Frontend/src/config/api.js + .env. If
+// PORT env var fails to load (process spawned without env, hot-reload glitch),
+// Backend would listen on 5000 while Frontend hits 5050 → all API calls fail
+// → recurrent-logout symptom. Keep both sides in lock-step on 5050.
+const PORT = process.env.PORT || 5050;
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT} (env=${NODE_ENV})`);
 });

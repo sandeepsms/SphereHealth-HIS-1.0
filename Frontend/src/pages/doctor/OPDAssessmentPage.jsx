@@ -518,7 +518,7 @@ export default function OPDAssessmentPage() {
     if (!soap.provisionalDiagnosis.trim()) return toast.warn("Please enter a provisional diagnosis");
     setSaving(true);
     try {
-      const user = (() => { try { return JSON.parse(localStorage.getItem("his_user") || "{}"); } catch { return {}; } })();
+      const user = (() => { try { return JSON.parse(sessionStorage.getItem("his_user") || "{}"); } catch { return {}; } })();
       await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/assessment`, {
         // ...soap already includes the 6 new diagnosis fields
         // (provisionalDiagnosis + ICD, workingDiagnosis + ICD, finalDiagnosis + ICD)
@@ -923,7 +923,7 @@ export default function OPDAssessmentPage() {
       visitType: "OPD",
       orderType: "Procedure",
       orderDetails: { ...newProc, displayName: newProc.procedureName, consentRequired: newProc.consentRequired },
-      orderedBy: (() => { try { return JSON.parse(localStorage.getItem("his_user") || "{}").fullName || "Doctor"; } catch { return "Doctor"; } })(),
+      orderedBy: (() => { try { return JSON.parse(sessionStorage.getItem("his_user") || "{}").fullName || "Doctor"; } catch { return "Doctor"; } })(),
       orderedByRole: "Doctor",
       consentStatus: newProc.consentRequired ? "Pending" : "NotRequired",
       priority: "Routine",
@@ -949,7 +949,7 @@ export default function OPDAssessmentPage() {
   const handlePrint = () => {
     const v   = visit || {};
     const vit = v.vitals || {};
-    const docUser = (() => { try { return JSON.parse(localStorage.getItem("his_user") || "{}"); } catch { return {}; } })();
+    const docUser = (() => { try { return JSON.parse(sessionStorage.getItem("his_user") || "{}"); } catch { return {}; } })();
     const drName = v.consultantName || docUser?.fullName || docUser?.name || "Consultant";
 
     // Build a one-line summary of the structured Gen-Ex checklist so
@@ -1144,6 +1144,16 @@ export default function OPDAssessmentPage() {
       advice:          soap.advice ? String(soap.advice).split("\n").filter(Boolean) : [],
       followUpDate:    soap.followUpDate,
       followUpNotes:   soap.doctorNotes,
+      // R7bh-F1 / META-1: PrintAudit anchor — Prescription maps to
+      // OPDPrescription in ENTITY_MODEL. Visit/Prescription _id may
+      // not exist on a freshly drafted visit, fall back to visit _id.
+      printAudit: {
+        entityType:   "Prescription",
+        entityId:     v.prescriptionId || v._id,
+        entityNumber: v.visitNumber,
+        UHID:         v.UHID,
+        patientName:  v.patientName || v.UHID,
+      },
     });
   };
 
@@ -2748,7 +2758,7 @@ export default function OPDAssessmentPage() {
       {showSetup && (
         <SignaturePad
           existing={signature}
-          userName={(() => { try { return JSON.parse(localStorage.getItem("his_user")||"{}").fullName || "Doctor"; } catch { return "Doctor"; } })()}
+          userName={(() => { try { return JSON.parse(sessionStorage.getItem("his_user")||"{}").fullName || "Doctor"; } catch { return "Doctor"; } })()}
           onSave={async (dataUrl) => {
             await saveSignature(dataUrl);
             setShowSetup(false);

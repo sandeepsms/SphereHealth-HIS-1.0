@@ -316,6 +316,17 @@ function ClearBillModal({ admission, onClose, onCleared, userName }) {
           billTotal:    Number(w.finalBillAmount) || Number(amount) || 0,
           runningBalance: 0,
           remarks:      "Discharge final settlement",
+          // R7bh-F1 / META-1: PrintAudit anchor. Final settlement
+          // receipt is fired without a bill _id in hand, so fall back
+          // to a deterministic id-string composed of bill+admission
+          // so reprints of the SAME final receipt dedupe.
+          printAudit: {
+            entityType:   "Receipt",
+            entityId:     w.finalBillId || admission._id,
+            entityNumber: `${billNumber || admission.admissionNumber}-FINAL`,
+            UHID:         admission.UHID || admission.patientId?.UHID,
+            patientName:  admission.patientName,
+          },
         });
       } catch (_) { /* don't block on print issues */ }
 
@@ -348,6 +359,16 @@ function ClearBillModal({ admission, onClose, onCleared, userName }) {
             runningBalance: 0,
             receivedBy:   userName,
             issuedAt:     new Date().toISOString(),
+            // R7bh-F1 / META-1: PrintAudit anchor — refund of unspent
+            // advance is best tracked against the originating advance
+            // row when present, falling back to the admission.
+            printAudit: {
+              entityType:   "RefundReceipt",
+              entityId:     advances[0]?._id || admission._id,
+              entityNumber: `${billNumber || admission.admissionNumber}-REFUND`,
+              UHID:         admission.UHID || admission.patientId?.UHID,
+              patientName:  admission.patientName,
+            },
           });
           toast.info(`Refund of ₹${overage.toFixed(0)} owed to patient — slip printed`);
         }
@@ -483,6 +504,17 @@ function printDischargeSummary(adm) {
     advice:         adm.dischargeAdvice ? String(adm.dischargeAdvice).split("\n").filter(Boolean) : [],
     followUpDate:   adm.followUpDate,
     followUpDoctor: adm.attendingDoctor,
+    // R7bh-F1 / META-1: PrintAudit anchor — DischargeSummary maps to
+    // the DischargeSummary model when one exists; fallback to the
+    // admission so $inc still has somewhere to land. NABH IMS.5
+    // requires the reprint trail on discharge documents.
+    printAudit: {
+      entityType:   "DischargeSummary",
+      entityId:     w.dischargeSummaryId || adm._id,
+      entityNumber: w.summaryNumber || `DS-${(adm.ipdNo || "").replace(/[^A-Z0-9]/gi, "")}`,
+      UHID:         adm.UHID,
+      patientName:  adm.patientName,
+    },
   });
 }
 
@@ -513,6 +545,16 @@ function printFinalBill(adm) {
     tax:            w.tax,
     advanceReceived:w.advanceReceived,
     payments:       w.payments || [],
+    // R7bh-F1 / META-1: PrintAudit anchor — final bill prints map
+    // to PatientBill so the bill's printCount increments and the
+    // DUPLICATE watermark appears on reprints.
+    printAudit: {
+      entityType:   "Bill",
+      entityId:     w.finalBillId || adm._id,
+      entityNumber: w.finalBillNumber,
+      UHID:         adm.UHID,
+      patientName:  adm.patientName,
+    },
   });
 }
 

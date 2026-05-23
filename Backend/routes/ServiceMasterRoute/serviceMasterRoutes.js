@@ -16,22 +16,24 @@ const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/ServiceMaster/serviceMasterController");
 const { requireAction, adminOnly } = require("../../middleware/auth");
+// R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // ── Service catalog routes ────────────────────────────────────
 router.get("/grouped",        requireAction("services.read"), ctrl.getGrouped); // GET  /api/services/grouped?domain=IPD&applicableTo=IPD
 // R7bb-FIX-E-16: price-change requests must be registered BEFORE
 // the generic /:id GET so the literal segment doesn't get swallowed.
 router.get ("/price-change-requests",          requireAction("departments.write"), ctrl.listPriceChangeRequests);
-router.post("/price-change-requests/:id/approve", requireAction("departments.write"), ctrl.approvePriceChangeRequest);
-router.post("/price-change-requests/:id/reject",  requireAction("departments.write"), ctrl.rejectPriceChangeRequest);
+router.post("/price-change-requests/:id/approve", validateObjectIdParam("id"), requireAction("departments.write"), ctrl.approvePriceChangeRequest);
+router.post("/price-change-requests/:id/reject",  validateObjectIdParam("id"), requireAction("departments.write"), ctrl.rejectPriceChangeRequest);
 router.get("/",               requireAction("services.read"), ctrl.getAll); // GET  /api/services?category=ROOM&domain=IPD
-router.get("/:id/pricing",    requireAction("services.read"), ctrl.getPricing); // GET  /api/services/:id/pricing
-router.get("/:id",            requireAction("services.read"), ctrl.getById); // GET  /api/services/:id
+router.get("/:id/pricing",    validateObjectIdParam("id"), requireAction("services.read"), ctrl.getPricing); // GET  /api/services/:id/pricing
+router.get("/:id",            validateObjectIdParam("id"), requireAction("services.read"), ctrl.getById); // GET  /api/services/:id
 // Write gates — tariff mutation is admin-only.
 router.post("/seed",          adminOnly,                          ctrl.seed); // POST /api/services/seed  ← initial data
-router.post("/:id/pricing",   requireAction("departments.write"), ctrl.setPricing); // POST /api/services/:id/pricing
+router.post("/:id/pricing",   validateObjectIdParam("id"), requireAction("departments.write"), ctrl.setPricing); // POST /api/services/:id/pricing
 router.post("/",              requireAction("departments.write"), ctrl.create); // POST /api/services
-router.put("/:id",            requireAction("departments.write"), ctrl.update); // PUT  /api/services/:id
-router.delete("/:id",         requireAction("departments.write"), ctrl.remove); // DELETE /api/services/:id
+router.put("/:id",            validateObjectIdParam("id"), requireAction("departments.write"), ctrl.update); // PUT  /api/services/:id
+router.delete("/:id",         validateObjectIdParam("id"), requireAction("departments.write"), ctrl.remove); // DELETE /api/services/:id
 
 module.exports = router;

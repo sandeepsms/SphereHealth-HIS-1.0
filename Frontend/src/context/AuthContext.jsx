@@ -38,15 +38,64 @@ export function AuthProvider({ children }) {
   // ChangePasswordPrompt component below.
   const [mustChangePassword, setMustChangePassword] = useState(false);
 
-  /* ── Restore session on mount ── */
+  /* ── Restore session on mount ──
+   * R7bu — Pre-R7bu the catch block nuked the session on ANY error.
+   * That meant a single transient blip on the first /auth/me of a
+   * fresh page load (Mongo replica lag, backend cold-start, network
+   * burp) silently logged the user out. Combined with React strict-
+   * mode double-mounting in dev + every route change re-running this
+   * effect, users saw "baar baar logout" symptoms.
+   *
+   * Now only nuke the session on definitive hard-logout codes from
+   * the backend. Transient errors keep the stored token in place and
+   * keep the in-memory user from the previous render so the UI stays
+   * logged in. Next foreground API call will surface the real state.
+   */
+  const HARD_LOGOUT_CODES = new Set([
+    "TOKEN_STALE", "ACCOUNT_INACTIVE", "ROLE_CHANGED",
+    "USER_DELETED", "TOKEN_REVOKED", "TOKEN_EXPIRED", "TOKEN_INVALID",
+  ]);
+
+  // R7bu — decode JWT payload locally (no signature check, no network).
+  // Used on transient /auth/me failure so we can keep a minimal `user`
+  // state in memory while the backend recovers. ProtectedRoute guards
+  // gate on user being truthy — without this they kick to /login even
+  // though the token is still valid in storage.
+  const _decodeJwtPayloadUnsafe = (jwt) => {
+    try {
+      const parts = String(jwt || "").split(".");
+      if (parts.length !== 3) return null;
+      // base64url → base64; pad to length multiple of 4
+      let b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      while (b64.length % 4) b64 += "=";
+      const json = atob(b64);
+      const payload = JSON.parse(json);
+      if (payload.exp && payload.exp * 1000 < Date.now()) return null; // expired
+      return payload;
+    } catch (_) { return null; }
+  };
   useEffect(() => {
+    // R7au-2: cancellation flag — pre-R7au the restore() promise had no
+    // cancel path. If the user clicked Login while restore() was still
+    // pending (cold backend, slow Mongo), the restore catch could fire
+    // AFTER login() succeeded and silently overwrite the new user with the
+    // JWT-decoded fallback (or null on a hard-logout code). Symptom: user
+    // saw login succeed, navigated home, then 200ms later got kicked to
+    // /login or saw a stale user. Now every setState in this effect is
+    // guarded by `cancelled` so a late-arriving response is dropped.
+    let cancelled = false;
     const restore = async () => {
       const saved = getAuthToken();
-      if (!saved) { setLoading(false); return; }
+      if (!saved) { if (!cancelled) setLoading(false); return; }
       try {
         const res = await axios.get(API_ENDPOINTS.AUTH_ME, {
           headers: { Authorization: `Bearer ${saved}` },
+          // R7bu: flag as background poll so the global interceptor's
+          // transient-counter doesn't accumulate this call against a
+          // user-initiated foreground action that may follow.
+          _isBackgroundPoll: true,
         });
+        if (cancelled) return; // R7au-2
         setUser(res.data.user);
         setDoctorProfile(res.data.doctorProfile || null);
         // R7bb-E/S2 — /auth/me may also surface mustChangePassword
@@ -55,17 +104,61 @@ export function AuthProvider({ children }) {
           setMustChangePassword(true);
         }
         setToken(saved);
-      } catch {
-        clearStoredToken();
-        setToken(null);
-        setUser(null);
-        setDoctorProfile(null);
-        setMustChangePassword(false);
+      } catch (err) {
+        if (cancelled) return; // R7au-2 — swallow late failures after login/unmount
+        // R7bu: only nuke the session on a definitive auth-end signal
+        // from the backend (HARD_LOGOUT_CODES). Anything else — network
+        // timeout, 5xx, Mongo blip, CORS preflight, backend restart —
+        // is recoverable; keep the token so the next foreground request
+        // either succeeds or surfaces a real auth code.
+        const status = err?.response?.status;
+        const code   = err?.response?.data?.code;
+        const isHardLogout = status === 401 && code && HARD_LOGOUT_CODES.has(code);
+        if (isHardLogout) {
+          clearStoredToken();
+          setToken(null);
+          setUser(null);
+          setDoctorProfile(null);
+          setMustChangePassword(false);
+        } else {
+          // Transient — keep token + reconstruct a minimal user from
+          // the JWT payload so ProtectedRoute guards (which gate on
+          // user being truthy) don't kick the user to /login while
+          // the backend recovers. Next foreground /auth/me success
+          // will replace this with the canonical server-side user.
+          const payload = _decodeJwtPayloadUnsafe(saved);
+          if (payload?.id) {
+            // R7au-5: synthesize firstName/lastName from fullName so
+            // chrome components that still read user.firstName don't
+            // render "undefined undefined" while running on the JWT
+            // fallback user. Best-effort split — single-word fullName
+            // (e.g. "Admin") goes to firstName with empty lastName.
+            const nameParts = String(payload.fullName || "").trim().split(/\s+/);
+            const _firstName = nameParts[0] || "";
+            const _lastName  = nameParts.slice(1).join(" ") || "";
+            setUser({
+              _id: payload.id,
+              id: payload.id,
+              role: payload.role,
+              employeeId: payload.employeeId,
+              fullName: payload.fullName || "",
+              firstName: _firstName, // R7au-5
+              lastName:  _lastName,  // R7au-5
+              tokenVersion: payload.tokenVersion,
+              mustChangePassword: payload.mustChangePassword === true,
+              _restoredFromJwt: true, // diagnostic flag
+            });
+          }
+          setToken(saved);
+          // eslint-disable-next-line no-console
+          console.warn("[auth] /auth/me restore failed (transient, keeping session):", status, code, err?.message);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     restore();
+    return () => { cancelled = true; };
   }, []);
 
   /* ── Login ── */
@@ -185,12 +278,25 @@ export function AuthProvider({ children }) {
     if (!user) return;
 
     let cancelled = false;
+    // R7br: dedup /auth/me calls. Rapid Alt+Tab can fire 4+ focus events in
+    // a second; without this guard each fires a parallel /auth/me, all four
+    // landing close together — if Mongo replica lag returns even one
+    // transient 401, the interceptor's counter trips immediately. Shared
+    // promise across concurrent callers; reset to null on settle.
+    let inFlight = null;
     const refreshIfStale = async () => {
       const t = getAuthToken();
       if (!t) return;
+      if (inFlight) return inFlight;       // another call already in flight
+      inFlight = (async () => {
       try {
+        // R7bm-F9: mark as background poll so a transient 401 from /auth/me
+        // (mongo replica blip, network hiccup) doesn't punt the user. The
+        // interceptor's transient counter still handles persistent failures
+        // — they'll redirect once the user actively navigates.
         const res = await axios.get(API_ENDPOINTS.AUTH_ME, {
           headers: { Authorization: `Bearer ${t}` },
+          _isBackgroundPoll: true,
         });
         if (cancelled) return;
         const fresh = res.data?.user;
@@ -213,12 +319,23 @@ export function AuthProvider({ children }) {
           // Hard redirect so React state, route guards and module cache
           // all reload against the new role.
           try { window.location.href = "/login"; } catch (_) {}
+        } else if (user._restoredFromJwt) {
+          // R7bv — we were running on JWT-decoded minimal user data
+          // (backend was down when the page loaded). Now that /auth/me
+          // succeeded, replace with the canonical server-side user so
+          // fullName, doctorProfile, etc. show up properly. Same path
+          // hydrates doctorProfile that the restore() catch couldn't
+          // fetch.
+          setUser(fresh);
+          if (res.data?.doctorProfile) setDoctorProfile(res.data.doctorProfile);
         }
       } catch (_) {
-        // 401s already trigger the interceptor logout above; other errors
-        // (network blip) are silently ignored — user can retry by
-        // refocusing.
+        // R7bm-F9: transient errors are deliberately swallowed here.
+        // A real session termination will surface on the user's next
+        // foreground action via the global interceptor (TOKEN_STALE etc.).
       }
+      })().finally(() => { inFlight = null; });
+      return inFlight;
     };
 
     const onFocus = () => { refreshIfStale(); };
@@ -249,29 +366,67 @@ export function AuthProvider({ children }) {
      activity. Resets on any input. Idle is computed in real time off a
      timestamp ref so we don't reset a setTimeout on every keystroke
      (which would thrash). A single interval ticks once a minute and
-     compares wall-clock difference. */
+     compares wall-clock difference.
+
+     R7au-3: pre-R7au this fired INSTANTLY when a laptop woke from a
+     >30min sleep — `setInterval` doesn't tick while the OS is suspended
+     but `Date.now()` keeps walking forward, so the first tick after wake
+     found a 30min+ gap and force-logged-out before the user even saw the
+     screen. Two defenses:
+       1) visibilitychange + focus listeners bump idleRef when the tab
+          regains focus — treats "user came back to the tab" as activity.
+       2) gap-detection on the interval itself — if more than 90s elapsed
+          since the previous tick (laptop was almost certainly asleep),
+          treat the gap as suspension, NOT inactivity: bump idleRef to
+          "now" instead of firing logout. Genuine 30min idle ticks every
+          60s without these gaps, so the inactivity logout still fires
+          for actually-idle users. */
   const idleRef = useRef(Date.now());
   useEffect(() => {
     if (!user) return;
     const IDLE_MS = 30 * 60 * 1000; // 30 min
+    const TICK_MS = 60 * 1000;
+    const SUSPEND_GAP_MS = 90 * 1000; // R7au-3: gap > 90s = OS suspend, not idle
     const bump = () => { idleRef.current = Date.now(); };
     const evts = ["mousedown", "mousemove", "keydown", "touchstart", "wheel", "scroll"];
     for (const ev of evts) window.addEventListener(ev, bump, { passive: true });
+    // R7au-3: tab-return events also count as activity. Without these the
+    // user could Alt+Tab away for 31 minutes and get instantly logged out
+    // when they came back — same root cause as the suspend/wake case.
+    const onVisibility = () => { if (!document.hidden) bump(); };
+    const onFocus = () => bump();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
     idleRef.current = Date.now(); // reset on (re-)login
+    let _lastTickAt = Date.now(); // R7au-3: suspend-gap detector
 
     const id = setInterval(() => {
-      if (Date.now() - idleRef.current >= IDLE_MS) {
+      const now = Date.now();
+      const gap = now - _lastTickAt;
+      _lastTickAt = now;
+      // R7au-3: a tick gap >90s almost always means the OS was suspended
+      // (lid closed, sleep, hibernate) — Date.now() walked but setInterval
+      // did not. Treat that as a wake event, not as accumulated idle time.
+      if (gap > SUSPEND_GAP_MS) {
+        idleRef.current = now;
+        // eslint-disable-next-line no-console
+        console.info("[auth] idle timer: detected", Math.round(gap / 1000), "s gap (probable suspend) — resetting idle window");
+        return;
+      }
+      if (now - idleRef.current >= IDLE_MS) {
         try {
           toast.info("Logged out due to 30 minutes of inactivity.", { autoClose: 5000 });
         } catch (_) {}
         try { logout(); } catch (_) {}
         try { window.location.href = "/login"; } catch (_) {}
       }
-    }, 60 * 1000); // tick every minute
+    }, TICK_MS);
 
     return () => {
       clearInterval(id);
       for (const ev of evts) window.removeEventListener(ev, bump);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?._id]);
@@ -309,6 +464,20 @@ function ChangePasswordPrompt() {
   const [next2, setNext2] = useState("");
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState("");
+  // R7au-6: track the post-success logout timer so we can cancel it when
+  // the modal unmounts. Pre-R7au the setTimeout fired logout() 800ms after
+  // success no matter what — if the user closed the modal or navigated
+  // during that window, logout still fired against a stale component and
+  // kicked them mid-navigation. Now we clear the timer on unmount.
+  const _pendingLogoutRef = useRef(null);
+  useEffect(() => {
+    return () => {
+      if (_pendingLogoutRef.current) {
+        clearTimeout(_pendingLogoutRef.current);
+        _pendingLogoutRef.current = null;
+      }
+    };
+  }, []);
 
   // R7bc-FIX-1: client-side mirror of Backend/utils/passwordPolicy.js so the
   // user sees every failing rule INLINE before the round-trip, plus we
@@ -352,7 +521,13 @@ function ChangePasswordPrompt() {
       // R7bc-FIX-1: backend bumps tokenVersion on success → this session's JWT
       // is now invalid. Force re-login so the user doesn't see a stream of
       // 401s. Tiny delay so the toast is visible.
-      setTimeout(() => logout(), 800);
+      // R7au-6: store the timer ID so the unmount cleanup can cancel it
+      // if the user navigates away (or React StrictMode re-mounts) before
+      // the timer fires.
+      _pendingLogoutRef.current = setTimeout(() => {
+        _pendingLogoutRef.current = null;
+        logout();
+      }, 800);
     } catch (e2) {
       const data = e2?.response?.data;
       // R7bc-FIX-1: show the backend's `reasons[]` array if present so the

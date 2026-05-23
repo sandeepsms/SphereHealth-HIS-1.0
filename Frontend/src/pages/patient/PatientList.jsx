@@ -8,6 +8,7 @@ import { Card } from "primereact/card";
 import { Tag } from "primereact/tag";
 import { useNavigate } from "react-router-dom";
 import patientService from "../../Services/patient/patientService";
+import { unwrapResponse, unwrapList } from "../../utils/apiResponse";
 
 const PatientList = () => {
   const navigate = useNavigate();
@@ -22,12 +23,24 @@ const PatientList = () => {
     loadPatients();
   }, []);
 
+  // R7bj-F8: envelope adapter — replaces the `data.data || data.patients`
+  // chain of fallbacks now that getAllPatients/searchPatients honour the
+  // canonical {success, data, meta?} contract.
   const loadPatients = async () => {
     setLoading(true);
     try {
       const response = await patientService.getAllPatients();
-      const data = response.data.data || response.data;
-      setPatients(Array.isArray(data) ? data : data.patients || []);
+      const { ok, data, error } = unwrapResponse(response);
+      if (!ok) {
+        toast.current?.show({
+          severity: "error",
+          summary: "Error",
+          detail: error?.message || "Failed to load patients",
+        });
+        return;
+      }
+      const rows = Array.isArray(data) ? data : (data?.patients || []);
+      setPatients(rows);
     } catch (error) {
       toast.current?.show({
         severity: "error",
@@ -48,7 +61,16 @@ const PatientList = () => {
     setLoading(true);
     try {
       const response = await patientService.searchPatients(searchTerm);
-      setPatients(response.data.data || []);
+      const { ok, data, error } = unwrapList(response);
+      if (!ok) {
+        toast.current?.show({
+          severity: "error",
+          summary: "Error",
+          detail: error?.message || "Search failed",
+        });
+        return;
+      }
+      setPatients(data);
     } catch (error) {
       toast.current?.show({
         severity: "error",

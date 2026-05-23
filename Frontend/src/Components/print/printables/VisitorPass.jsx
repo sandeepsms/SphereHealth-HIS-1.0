@@ -4,6 +4,7 @@
 
 import React from "react";
 import PrintShell from "../PrintShell";
+import { toNum } from "../../../utils/printUtils";
 
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", {
   day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
@@ -16,6 +17,7 @@ const VisitorPass = ({ settings, receipt = {} }) => {
       settings={settings}
       documentTitle="Visitor / Attendant Pass"
       serialNo={r.passNo}
+      printCount={toNum(r.printCount)}
       infoItems={[
         { label: "Patient",   value: r.patientName },
         { label: "UHID",      value: r.uhid },

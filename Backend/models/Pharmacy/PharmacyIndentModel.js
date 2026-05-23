@@ -19,6 +19,8 @@
  */
 const mongoose = require("mongoose");
 const { nextSequence } = require("../../utils/counter");
+const { toDec, decimalToNumber } = require("../../utils/money");
+const Dec = mongoose.Schema.Types.Decimal128;
 
 // ── One drug requested in this indent ─────────────────────────────
 const IndentItemSchema = new mongoose.Schema({
@@ -74,7 +76,11 @@ const IndentItemSchema = new mongoose.Schema({
   //   returnTriggerId      — set when MAR rejects + stock returns
   reservationTriggerId: { type: mongoose.Schema.Types.ObjectId, ref: "BillingTrigger" },
   finalTriggerId:       { type: mongoose.Schema.Types.ObjectId, ref: "BillingTrigger" },
-  unitPriceSnapshot:    { type: Number, default: 0 },
+  // R7bh-F2: Decimal128 to match PharmacySale.items.unitPrice + the
+  // billing trigger pricing snapshot Decimal column. Number stored on
+  // legacy indents still deserialises fine (Mongoose accepts Number on
+  // read into a Decimal128 column).
+  unitPriceSnapshot:    { type: Dec, default: () => toDec(0) },
 
   // Substitution audit — pharmacist swapped Brand-X for Brand-Y (same
   // molecule, in-stock alternative). The orig*/ replaced* pair keeps the
@@ -143,7 +149,14 @@ const PharmacyIndentSchema = new mongoose.Schema({
   // nephrotoxic"), pharmacist replies via item-level notes for
   // substitution rationale.
   notes:         { type: String, trim: true },
-}, { timestamps: true });
+}, {
+  timestamps: true,
+  // R7bh-F2: unwrap Decimal128 → Number on serialization so
+  // unitPriceSnapshot (and any future money field) reaches the frontend
+  // as a plain JS Number.
+  toJSON:   { virtuals: true, transform: decimalToNumber },
+  toObject: { virtuals: true, transform: decimalToNumber },
+});
 
 // ── Pre-save: auto-number ─────────────────────────────────────────
 PharmacyIndentSchema.pre("save", async function (next) {

@@ -35,6 +35,37 @@ const PrintAuditSchema = new mongoose.Schema(
         "MARSheet",
         "DoctorOrderSheet",
         "IPDFile",
+        // R7bh-F1 / META-1: additional entity types covered by the
+        // openPrint() callsite sweep. VisitorPass + DoctorOrder were
+        // missing from the enum, so PrintAudit POSTs from those flows
+        // returned 400 → no audit row, no printCount bump.
+        "VisitorPass",
+        "DoctorOrder",
+        // R7bj-F7: ward-boy / housekeeping / security / dietary /
+        // mortuary / BMW / code-response printables. Pre-R7bj these
+        // flows had no entityType registered, so PrintAudit returned
+        // 400 (validation) and the reprint counter never advanced —
+        // making the R7bf-F DUPLICATE watermark and GST/NABH audit
+        // trail effectively missing for these roles. Also includes
+        // F1 (Physio) + F2 (Kitchen / Dietary) sibling printables.
+        "WardTask",
+        "EquipmentTransport",
+        "SampleCollection",
+        "CleaningTask",
+        "SpillageReport",
+        "PestControl",
+        "AreaChecklist",
+        "GateLog",
+        "IncidentReport",
+        "SecurityShiftRegister",
+        "DietPlan",
+        "MortuaryHandover",
+        "BmwManifest",
+        "CodeResponse",
+        "PhysioSession",
+        "PhysioPlan",
+        "KitchenIndent",
+        "AdverseFoodReaction",
       ],
       index: true,
     },

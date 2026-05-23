@@ -14,9 +14,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { AdminPage, Card, C } from "../Components/admin-theme";
+import { useVisiblePoll } from "../utils/pollingHelpers";
 
 import { API_BASE_URL as API } from "../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
+// R7bh-F9 / R7bg-10-HIGH-6 — Token reads are sessionStorage-only;
+// authFetch boot-time wipe clears any legacy localStorage copy.
+const authHdr = () => ({ headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token") || ""}` } });
 const fmtINR  = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 const greet   = () => {
   const h = new Date().getHours();
@@ -49,14 +52,25 @@ export default function AdminHome({ user }) {
   const [now,  setNow]  = useState(new Date());
   const [tick, setTick] = useState(0);   // forces relative-time re-render
 
-  /* Live clock + relative-time tick */
+  /* Live clock — 1s is cheap and only updates local state, leave it
+     unconditional so the displayed clock doesn't lag on tab return. */
   useEffect(() => {
-    const t1 = setInterval(() => setNow(new Date()),  1000);
-    const t2 = setInterval(() => setTick(x => x + 1), 30 * 1000);
-    return () => { clearInterval(t1); clearInterval(t2); };
+    const t1 = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t1);
   }, []);
 
-  /* Data fetch — initial + 30 s refresh */
+  /* R7bh-F9 / R7bg-9-HIGH-4 — relative-time tick is gated on tab
+     visibility. There's no value in advancing "5m ago" → "5m 30s
+     ago" while the user is in another tab; we'll snap-update on
+     focus return. */
+  useVisiblePoll(() => setTick(x => x + 1), 30 * 1000, []);
+
+  /* Data fetch — initial + 30 s refresh, visibility-gated. The
+     admin overview endpoint runs a $facet over admissions + bills +
+     payments + activity; trimming background polls cuts a noticeable
+     chunk off DB load on the mission-control screens that idle open
+     all day in the admin office. */
+  const [fetchSeq, setFetchSeq] = useState(0);
   useEffect(() => {
     let alive = true;
     const fetch = async () => {
@@ -66,9 +80,9 @@ export default function AdminHome({ user }) {
       } catch (e) { /* swallow — keep last good snapshot */ }
     };
     fetch();
-    const t = setInterval(fetch, 30 * 1000);
-    return () => { alive = false; clearInterval(t); };
-  }, []);
+    return () => { alive = false; };
+  }, [fetchSeq]);
+  useVisiblePoll(() => setFetchSeq(s => s + 1), 30 * 1000, []);
 
   const firstName = (user?.firstName || (user?.fullName || "").split(" ")[0] || "Admin").trim();
   const kpi  = data?.kpi  || {};

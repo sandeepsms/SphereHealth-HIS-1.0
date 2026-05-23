@@ -343,7 +343,42 @@ export const ACTIONS = {
   "hr.credential.read":            ["Admin", "Doctor"],
   "compliance.firedrill.write":    ["Admin", "Security"],
   "compliance.firedrill.read":     ["Admin", "Security"],
+  // R7bo — NABH Inspection Dashboard (RBS / Emergency / Blood Transfusion).
+  "compliance.read":               ["Admin", "Doctor", "Nurse", "MRD"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
+
+  // ── R7bh-F6 — Accountant regulatory + cold-chain (mirror of backend) ─
+  "tax.returns.write":             ["Admin", "Accountant"],
+  "tax.returns.read":              ["Admin", "Accountant"],
+  "tax.tds.write":                 ["Admin", "Accountant"],
+  "tax.tds.read":                  ["Admin", "Accountant"],
+  "compliance.retention.read":     ["Admin", "MRD"],
+  "pharmacy.cold-chain.write":     ["Admin", "Pharmacist", "Nurse"],
+  "pharmacy.cold-chain.read":      ["Admin", "Pharmacist", "Nurse", "Doctor"],
+
+  // ── R7bj-F1 — Physiotherapy plan + session register ───────────
+  // Mirror of Backend/config/permissions.js. Plan reads broad,
+  // writes narrow to Doctor / Physiotherapist; session writes
+  // narrowest (PT only, plus Admin).
+  "physio.plan.read":              ["Admin", "Doctor", "Nurse", "Physiotherapist"],
+  "physio.plan.write":             ["Admin", "Doctor", "Physiotherapist"],
+  "physio.session.read":           ["Admin", "Doctor", "Nurse", "Physiotherapist"],
+  "physio.session.write":          ["Admin", "Physiotherapist"],
+
+  // ── R7bj-F2 — Kitchen indent + adverse food reactions ─────────
+  "kitchen.indent.read":           ["Admin", "Nurse", "Pharmacist", "Ward Boy", "Dietician"],
+  "kitchen.indent.write":          ["Admin", "Nurse", "Pharmacist", "Dietician"],
+  "kitchen.delivery.write":        ["Admin", "Ward Boy", "Pharmacist"],
+  "quality.food-reaction.read":    ["Admin", "Doctor", "Nurse", "Dietician", "Pharmacist", "MRD"],
+  "quality.food-reaction.write":   ["Admin", "Doctor", "Nurse", "Dietician"],
+
+  // ── R7bj-F6 — Compliance registers (BMW, code response, sharps) ─
+  "compliance.bmw.read":           ["Admin", "Housekeeping", "Ward Boy", "MRD"],
+  "compliance.bmw.write":          ["Admin", "Housekeeping", "Ward Boy"],
+  "compliance.code-response.read": ["Admin", "Doctor", "Nurse", "MRD"],
+  "compliance.code-response.write":["Admin", "Doctor", "Nurse"],
+  "clinical.sharps-injury.read":   ["Admin", "Doctor", "Nurse", "MRD"],
+  "clinical.sharps-injury.write":  ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Ward Boy", "Housekeeping"],
 };
 
 /* ── Helpers ─────────────────────────────────────────────────────── */

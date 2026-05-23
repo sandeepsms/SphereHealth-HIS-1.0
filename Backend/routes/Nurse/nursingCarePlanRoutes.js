@@ -5,6 +5,8 @@ const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/Nurse/nursingCarePlanController");
 const { requireAction } = require("../../middleware/auth");
+// R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // R7bb-FIX-C-1/S1 (D4-CRIT): nursing-care-plan reads now gated on the
 // new explicit `nursing.care-plan.read` (Admin / Doctor / Nurse / MRD)
@@ -19,6 +21,6 @@ router.get   ("/:id",                                 requireAction("nursing.car
 router.put   ("/:id",                                 requireAction("mar.write"), ctrl.update);
 router.patch ("/:id/problem/:problemId/status",       requireAction("mar.write"), ctrl.updateProblemStatus);
 router.patch ("/:id/complete",                        requireAction("mar.write"), ctrl.complete);
-router.delete("/:id",                                 requireAction("mar.write"), ctrl.delete);
+router.delete("/:id",                                 validateObjectIdParam("id"), requireAction("mar.write"), ctrl.delete);
 
 module.exports = router;

@@ -40,6 +40,18 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
   const totalBill = toNum(r.totalAmount ?? r.totalBill ?? r.finalBillAmount);
   const printCount = toNum(r.printCount);
 
+  // R7bh-F5 / R7bg-8-CRIT-P3 (MCI Regulation 1.4.2): discharge summary must
+  // carry the attending consultant's NMC/DMC registration number + council
+  // name. Multiple historical payload shapes supported.
+  const consultDmc =
+    r.consultant?.dmcNumber ||
+    r.consultant?.registrationNumber ||
+    r.consultantDmc ||
+    r.consultantReg ||
+    "—";
+  const consultCouncil = r.consultant?.councilName || r.consultantCouncil || "Medical Council";
+  const consultRegLine = consultDmc === "—" ? "—" : `${consultDmc} · ${consultCouncil}`;
+
   return (
     <PrintShell
       settings={settings}
@@ -55,6 +67,7 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
         { label: "Discharged", value: fmtDate(r.dischargeDate, true) },
         { label: "Length of Stay", value: r.totalDays ? `${r.totalDays} day${r.totalDays === 1 ? "" : "s"}` : "—" },
         { label: "Consultant", value: r.consultantName },
+        { label: "Reg. No",    value: consultRegLine },
         { label: "Bed / Ward", value: [r.bedNumber, r.wardName].filter(Boolean).join(" · ") },
         { label: "Discharge Type", value: r.dischargeType || "Normal" },
       ]}

@@ -21,9 +21,13 @@ import {
 } from "../../Components/admin-theme";
 import { useAuth } from "../../context/AuthContext";
 import { ShiftTab, EquipmentTab, SuppliesTab, CodeBlueTab, MortuaryTab } from "./WardBoyConsoleTabs";
+import { useVisiblePoll } from "../../utils/pollingHelpers";
 
 import { API_BASE_URL as API } from "../../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
+// R7bj-F9 / 10-X-HIGH-1: legacy `localStorage` fallback removed — authFetch
+// boot now clears the stale key. Sticking to sessionStorage avoids
+// re-advertising the abandoned path to attackers reading our source map.
+const authHdr = () => ({ headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token") || ""}` } });
 
 const TYPE_LABEL = {
   transport: "Transport",
@@ -100,7 +104,10 @@ export default function WardBoyConsole() {
     try { const r = await axios.get(`${API}/ward-tasks/stats`, authHdr()); setStats(r.data?.data || {}); }
     catch {}
   }, []);
-  useEffect(() => { refreshStats(); const i = setInterval(refreshStats, 30000); return () => clearInterval(i); }, [refreshStats]);
+  // R7bj-F9 — visibility-gated polling: pauses while tab hidden, refreshes
+  // on focus, no more 24/7 background hammering of /ward-tasks/stats.
+  useEffect(() => { refreshStats(); }, [refreshStats]);
+  useVisiblePoll(refreshStats, 30000, [refreshStats]);
 
   return (
     <AdminPage>
@@ -169,7 +176,8 @@ function AvailableTab({ onChange }) {
     } catch (e) {}
     setLoading(false);
   }, [typeFilter]);
-  useEffect(() => { refresh(); const i = setInterval(refresh, 30000); return () => clearInterval(i); }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]);
+  useVisiblePoll(refresh, 30000, [refresh]);
 
   const accept = async (t) => {
     try {
@@ -229,7 +237,8 @@ function MyTasksTab({ onChange }) {
     } catch (e) {}
     setLoading(false);
   }, []);
-  useEffect(() => { refresh(); const i = setInterval(refresh, 30000); return () => clearInterval(i); }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]);
+  useVisiblePoll(refresh, 30000, [refresh]);
 
   const start = async (t) => {
     try {

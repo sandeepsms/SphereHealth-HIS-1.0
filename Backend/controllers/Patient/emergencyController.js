@@ -67,6 +67,14 @@ class EmergencyController {
         );
       } catch (e) { /* don't block visit creation */ }
 
+      // ── NABH Emergency Register auto-populate (R7bo / AAC.1) ──
+      try {
+        const emitter = require("../../services/Compliance/nabhRegisterEmitter");
+        emitter.emitEmergency({ visit, actor: req.user }).catch((e) =>
+          console.error("ER NABH register error:", e.message),
+        );
+      } catch (e) { /* don't block visit creation */ }
+
       res.status(201).json({
         success: true,
         message: "Emergency visit created successfully",
@@ -319,6 +327,20 @@ class EmergencyController {
         req.params.emergencyNumber,
         body,
       );
+
+      // ── NABH Emergency Register update (R7bo / AAC.1) ──
+      try {
+        const emitter = require("../../services/Compliance/nabhRegisterEmitter");
+        emitter.emitEmergencyDisposition({
+          visit,
+          actor: req.user,
+          disposition: body.disposition || visit.disposition,
+          admissionLinkId: visit.admissionId,
+          referredTo: body.referredTo,
+          notes: body.dispositionNotes,
+        }).catch((e) => console.error("ER NABH disposition error:", e.message));
+      } catch (e) { /* never block */ }
+
       res.status(200).json({
         success: true,
         message: "Disposition updated successfully",
@@ -385,6 +407,15 @@ class EmergencyController {
         req.params.emergencyNumber,
         triageCategory
       );
+
+      // ── NABH Emergency Register update (R7bo / AAC.1) ──
+      try {
+        const emitter = require("../../services/Compliance/nabhRegisterEmitter");
+        emitter.emitEmergencyTriage({ visit, actor: req.user }).catch((e) =>
+          console.error("ER NABH triage error:", e.message),
+        );
+      } catch (e) { /* never block */ }
+
       res.status(200).json({
         success: true,
         message: "Triage category updated successfully",

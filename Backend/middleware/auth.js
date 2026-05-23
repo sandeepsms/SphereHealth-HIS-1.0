@@ -38,7 +38,9 @@ const authenticate = async (req, res, next) => {
   let token = null;
 
   if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1];
+    // R7br: trim + split on whitespace so "Bearer  token" (double space) or
+    // "Bearer\ttoken" doesn't yield an empty token slot.
+    token = authHeader.trim().split(/\s+/)[1] || null;
   } else if (req.query && req.query.token && _queryTokenAllowed(req.originalUrl || req.path)) {
     // R7bb-A: query-token only honored on whitelisted SSE prefixes; anywhere
     // else it's ignored so tokens don't leak into proxy logs / browser history.
@@ -46,9 +48,12 @@ const authenticate = async (req, res, next) => {
   }
 
   if (!token)
-    // R7av-FIX-15/D2-HIGH-2: include `success:false` so the frontend
-    // can distinguish 401 from server downtime via `response.data.success`.
-    return res.status(401).json({ success: false, message: "Authentication required. Please login." });
+    // R7br: include `code: NO_TOKEN` so the frontend interceptor classifies
+    // this as a deliberate session-end (HARD_LOGOUT_CODES) — not a transient
+    // blip. Pre-R7br this was a code-less 401 that ticked the transient
+    // counter and intermittently held the user on the page for one more
+    // request before redirecting.
+    return res.status(401).json({ success: false, code: "NO_TOKEN", message: "Authentication required. Please login." });
 
   try {
     // R7bb-followup/FIX-A-16: JWT_SECRET rotation procedure needs a
@@ -58,7 +63,11 @@ const authenticate = async (req, res, next) => {
     // current secret, then fall back to each secondary secret for the
     // duration of the rotation window. Tokens signed by retired secrets
     // are rejected once their grace period passes.
-    const decoded = jwt.verify(token, JWT_SECRET);
+    // R7br: clockTolerance:10 absorbs ≤10s skew between the Node server
+    // clock and the JWT iat claim. Pre-R7br any drift (even 1s in the
+    // future) immediately threw and forced a logout. Default is 0 (zero
+    // tolerance). 10s matches typical NTP drift on production hosts.
+    const decoded = jwt.verify(token, JWT_SECRET, { clockTolerance: 10 });
 
     // R7bb-A: per-request user re-check. Without this, a token issued at
     // 09:00 stays valid until exp even if the user is terminated at 09:05,
@@ -118,7 +127,10 @@ const authenticate = async (req, res, next) => {
         const TokenRevocation = require("../models/Auth/TokenRevocationModel");
         const revoked = await TokenRevocation.exists({ jti: decoded.jti });
         if (revoked) {
-          return res.status(401).json({ message: "Session revoked. Please login again." });
+          // R7br: TOKEN_REVOKED is already a HARD_LOGOUT_CODE on the
+          // frontend; tag the response so the interceptor logs the user
+          // out immediately (no transient-counter delay).
+          return res.status(401).json({ success: false, code: "TOKEN_REVOKED", message: "Session revoked. Please login again." });
         }
       } catch (e) {
         // Lookup failed (e.g. Mongo blip) — fail open so a transient DB
@@ -169,16 +181,26 @@ const authenticate = async (req, res, next) => {
     }
     next();
   } catch (err) {
+    // R7br: both paths now carry a `code` field so the frontend interceptor
+    // classifies them as HARD_LOGOUT (deliberate session-end). Pre-R7br
+    // these were code-less 401s that ticked the transient counter, holding
+    // the user on a broken page for one extra request before redirecting.
     if (err.name === "TokenExpiredError")
-      return res.status(401).json({ message: "Session expired. Please login again." });
-    return res.status(401).json({ message: "Invalid token. Please login." });
+      return res.status(401).json({ success: false, code: "TOKEN_EXPIRED", message: "Session expired. Please login again." });
+    return res.status(401).json({ success: false, code: "TOKEN_INVALID", message: "Invalid token. Please login." });
   }
 };
 
 /* ── Role-based access: authorize(...roles) ── */
 const authorize = (...roles) => (req, res, next) => {
   if (!req.user)
-    return res.status(401).json({ message: "Not authenticated" });
+    // R7au-4: include `code: NOT_AUTHENTICATED`. Defense in depth — this
+    // path is normally unreachable because `authenticate` runs first, but
+    // if a route mounts authorize() WITHOUT authenticate() (or via the
+    // wrong order), a naked 401 here would tick the frontend's transient
+    // counter and randomly logout users. With a code present the
+    // interceptor classifies this as INTERNAL_NO_USER-equivalent.
+    return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set after authenticate" });
   if (!roles.includes(req.user.role))
     return res.status(403).json({
       message: `Access denied. Required role: ${roles.join(" or ")}. Your role: ${req.user.role}`,
@@ -198,7 +220,11 @@ const adminOnly = authorize("Admin");
 const { roleCan } = require("../config/permissions");
 const requireAction = (action) => (req, res, next) => {
   if (!req.user)
-    return res.status(401).json({ message: "Not authenticated" });
+    // R7au-4: same defense-in-depth as authorize() — if this fires it
+    // means a route forgot to mount authenticate() upstream. Return 500
+    // with INTERNAL_NO_USER so it's loud in the logs and the frontend
+    // doesn't punt the user mid-workflow.
+    return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set after authenticate" });
   if (!roleCan(req.user.role, action))
     return res.status(403).json({
       message: `Access denied. Action '${action}' is not permitted for role '${req.user.role}'.`,

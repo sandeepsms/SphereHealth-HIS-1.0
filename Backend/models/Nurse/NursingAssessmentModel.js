@@ -13,7 +13,7 @@ const NursingAssessmentSchema = new mongoose.Schema(
     type: {
       type: String,
       required: true,
-      enum: ["daily", "fall-risk", "pressure-area", "pain", "nutrition", "education"],
+      enum: ["daily", "fall-risk", "pressure-area", "pain", "nutrition", "education", "dvt"],
       index: true,
     },
     UHID:        { type: String, index: true },
@@ -39,6 +39,11 @@ const NursingAssessmentSchema = new mongoose.Schema(
             "fall-risk":    { morseScore: [0, 125] },
             "pressure-area":{ bradenScore: [6, 23] },
             nutrition:      { mustScore: [0, 10] },
+            // R7bq — Caprini VTE risk score (sum of weighted factors).
+            // Theoretical max ~40 in 2010 form; cap at 50 for safety margin.
+            // IMPROVE bleed score paired (max ~32). Both gate prophylaxis
+            // recommendation per NABH MOM.7 / AAC.4.
+            dvt:            { capriniScore: [0, 50], improveScore: [0, 50] },
           };
           const rules = checks[type] || {};
           for (const [k, [lo, hi]] of Object.entries(rules)) {

@@ -9,6 +9,7 @@ const router = express.Router();
 const ctrl = require("../../controllers/Nurse//shiftHandoverController");
 const validate = require("../../middleware/validateRequest");
 const { requireAction } = require("../../middleware/auth");
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 router.post(
   "/",
@@ -30,6 +31,6 @@ router.post(
 // Gated on `nurse-notes.read` (Admin/Doctor/Nurse/MRD).
 router.get  ("/by-admission",          requireAction("nurse-notes.read"), validate(["admissionId"]), ctrl.getByAdmission);
 router.get  ("/latest",                requireAction("nurse-notes.read"), validate(["uhid"]),        ctrl.getLatest);
-router.patch("/:id/verify",            requireAction("mar.write"), ctrl.verifyHandover);
+router.patch("/:id/verify",            validateObjectIdParam("id"), requireAction("mar.write"), ctrl.verifyHandover);
 
 module.exports = router;

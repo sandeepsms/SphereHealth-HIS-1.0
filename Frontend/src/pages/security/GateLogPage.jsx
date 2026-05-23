@@ -8,7 +8,7 @@
  *   • Card with "+ Log entry" / "+ Log exit" buttons opening the same modal
  *   • Table of the most-recent 100 entries with type / gate / person / pass
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
@@ -16,10 +16,12 @@ import {
   PrimaryButton, SearchInput, C,
 } from "../../Components/admin-theme";
 import { useAuth } from "../../context/AuthContext";
+import { useVisiblePoll } from "../../utils/pollingHelpers";
 import { API_BASE_URL as API } from "../../config/api";
 
+// R7bj-F9 / 10-X-HIGH-1: drop legacy localStorage fallback.
 const authHdr = () => ({
-  headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` },
+  headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token") || ""}` },
 });
 
 const fmtDT = (d) =>
@@ -56,6 +58,11 @@ export default function GateLogPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
 
+  // R7bj-F9 — AbortController cancels in-flight list fetch when filterDir
+  // flips before the response lands, so an older response can't overwrite
+  // a fresher one (React 4-HIGH-2).
+  const listAbortRef = useRef(null);
+
   const fetchStats = useCallback(async () => {
     try {
       const r = await axios.get(`${API}/gate-log/stats`, authHdr());
@@ -65,24 +72,28 @@ export default function GateLogPage() {
 
   const fetchList = useCallback(async () => {
     setLoading(true);
+    if (listAbortRef.current) listAbortRef.current.abort();
+    const ctrl = new AbortController();
+    listAbortRef.current = ctrl;
     try {
       const params = new URLSearchParams();
       if (filterDir) params.set("direction", filterDir);
       params.set("limit", "100");
-      const r = await axios.get(`${API}/gate-log?${params}`, authHdr());
+      const r = await axios.get(`${API}/gate-log?${params}`, { ...authHdr(), signal: ctrl.signal });
       setRows(r.data?.data || []);
     } catch (e) {
-      toast.error("Failed to load gate log");
+      if (e.name !== "CanceledError" && e.name !== "AbortError") {
+        toast.error("Failed to load gate log");
+      }
     }
     setLoading(false);
   }, [filterDir]);
 
-  useEffect(() => {
-    fetchStats();
-    fetchList();
-    const i = setInterval(() => { fetchStats(); fetchList(); }, 60000);
-    return () => clearInterval(i);
-  }, [fetchStats, fetchList]);
+  // R7bj-F9 — visibility-gated polling: 60 s tick pauses when the security
+  // desk locks the screen / tabs away. Initial fetch on mount + on
+  // filterDir change via the deps below.
+  useEffect(() => { fetchStats(); fetchList(); }, [fetchStats, fetchList]);
+  useVisiblePoll(() => { fetchStats(); fetchList(); }, 60000, [fetchStats, fetchList]);
 
   const filtered = useMemo(() => {
     if (!q) return rows;

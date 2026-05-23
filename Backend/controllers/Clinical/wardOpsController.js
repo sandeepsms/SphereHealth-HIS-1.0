@@ -1,6 +1,19 @@
 /**
  * wardOpsController.js — Ward Boy operations suite controller.
  *
+ * R7bj-F4 hardening:
+ *   • Replaced every `req.body` spread on writes with explicit allow-lists
+ *     (Mongo CRIT-2 / WB-CRIT-1).
+ *   • Server stamps actor trio + timestamps for issue / return / declare /
+ *     handover — never trusted from body.
+ *   • Mortuary declare: explicit role gate — Ward Boy may NOT declare a
+ *     death (Auth 2-WB-CRIT-2). Must be Doctor or Admin.
+ *   • Mortuary handover: now requires BOTH `receivedBy` AND `witnessName`
+ *     (NABH AAC 2-signature attestation — Auth 2-WB-CRIT-1).
+ *   • managerStats: 6 sequential awaits collapsed into a single Promise.all
+ *     (API 3-CRIT envelope normalisation: KPIs nested under data).
+ *   • Every response moved to apiEnvelope.sendOk / sendErr.
+ *
  * Endpoints exposed via /api/ward-ops:
  *   Shift     start / end / break-start / break-end / current / history
  *   Equipment list / issue / return
@@ -14,66 +27,70 @@ const {
 } = require("../../models/Clinical/wardOpsModels");
 const WardTask = require("../../models/Clinical/WardTaskModel");
 const userName = require("../../utils/userName");
+const { sendOk, sendErr } = require("../../utils/apiEnvelope");
 
 /* ── SHIFT ─────────────────────────────────────────────────── */
 exports.shiftCurrent = async (req, res) => {
   try {
     const s = await WardShift.findOne({ user: req.user.id, endedAt: null }).lean();
-    res.json({ success: true, data: s });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+    return sendOk(res, s);
+  } catch (e) { return sendErr(res, e); }
 };
 
 exports.shiftStart = async (req, res) => {
   try {
     // Guard against double-open shifts for the same user.
     const open = await WardShift.findOne({ user: req.user.id, endedAt: null }).lean();
-    if (open) return res.status(409).json({ success: false, message: "A shift is already open. Close it first.", data: open });
+    if (open) return sendErr(res, "A shift is already open. Close it first.", "ILLEGAL_TRANSITION", 409);
+    const ward = typeof req.body?.ward === "string" ? req.body.ward : "";
     const s = await WardShift.create({
-      user: req.user.id, userName: await userName(req),
-      ward: req.body?.ward || "",
+      user:      req.user.id,
+      userName:  await userName(req),
+      ward,
       startedAt: new Date(),
     });
-    res.status(201).json({ success: true, data: s });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    return sendOk(res, s, null, 201);
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
 exports.shiftEnd = async (req, res) => {
   try {
     const s = await WardShift.findOne({ user: req.user.id, endedAt: null });
-    if (!s) return res.status(404).json({ success: false, message: "No open shift" });
+    if (!s) return sendErr(res, "No open shift", "NOT_FOUND", 404);
     // Close any open break first.
     const lastBreak = s.breaks?.[s.breaks.length - 1];
     if (lastBreak && !lastBreak.endedAt) lastBreak.endedAt = new Date();
     s.endedAt        = new Date();
-    s.shiftNotes     = req.body?.shiftNotes     || "";
-    s.handoverNotes  = req.body?.handoverNotes  || "";
+    s.shiftNotes     = typeof req.body?.shiftNotes    === "string" ? req.body.shiftNotes    : "";
+    s.handoverNotes  = typeof req.body?.handoverNotes === "string" ? req.body.handoverNotes : "";
     await s.save();   // pre-save computes totalActiveMin
-    res.json({ success: true, data: s.toObject() });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    return sendOk(res, s.toObject());
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
 exports.shiftBreakStart = async (req, res) => {
   try {
     const s = await WardShift.findOne({ user: req.user.id, endedAt: null });
-    if (!s) return res.status(404).json({ success: false, message: "No open shift" });
+    if (!s) return sendErr(res, "No open shift", "NOT_FOUND", 404);
     const last = s.breaks?.[s.breaks.length - 1];
-    if (last && !last.endedAt) return res.status(409).json({ success: false, message: "Already on break" });
-    s.breaks.push({ startedAt: new Date(), reason: req.body?.reason || "" });
+    if (last && !last.endedAt) return sendErr(res, "Already on break", "ILLEGAL_TRANSITION", 409);
+    const reason = typeof req.body?.reason === "string" ? req.body.reason : "";
+    s.breaks.push({ startedAt: new Date(), reason });
     await s.save();
-    res.json({ success: true, data: s });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    return sendOk(res, s);
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
 exports.shiftBreakEnd = async (req, res) => {
   try {
     const s = await WardShift.findOne({ user: req.user.id, endedAt: null });
-    if (!s) return res.status(404).json({ success: false, message: "No open shift" });
+    if (!s) return sendErr(res, "No open shift", "NOT_FOUND", 404);
     const last = s.breaks?.[s.breaks.length - 1];
-    if (!last || last.endedAt) return res.status(409).json({ success: false, message: "No active break" });
+    if (!last || last.endedAt) return sendErr(res, "No active break", "ILLEGAL_TRANSITION", 409);
     last.endedAt = new Date();
     await s.save();
-    res.json({ success: true, data: s });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    return sendOk(res, s);
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
 exports.shiftHistory = async (req, res) => {
@@ -82,8 +99,8 @@ exports.shiftHistory = async (req, res) => {
     if (req.query?.from) filter.startedAt = { ...(filter.startedAt || {}), $gte: new Date(req.query.from) };
     if (req.query?.to)   filter.startedAt = { ...(filter.startedAt || {}), $lte: new Date(req.query.to) };
     const rows = await WardShift.find(filter).sort({ startedAt: -1 }).limit(50).lean();
-    res.json({ success: true, count: rows.length, data: rows });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+    return sendOk(res, rows, { count: rows.length });
+  } catch (e) { return sendErr(res, e); }
 };
 
 /* ── EQUIPMENT ─────────────────────────────────────────────── */
@@ -93,69 +110,114 @@ exports.equipmentList = async (req, res) => {
     const filter = {};
     if (status) filter.status = status;
     if (q) {
+      const { safeRegex } = require("../../utils/queryGuards");
+      const re = safeRegex(q);
       filter.$or = [
-        { equipmentName: new RegExp(q, "i") },
-        { category:      new RegExp(q, "i") },
-        { serialNumber:  new RegExp(q, "i") },
-        { issuedToName:  new RegExp(q, "i") },
+        { equipmentName: re },
+        { category:      re },
+        { serialNumber:  re },
+        { issuedToName:  re },
       ];
     }
     const rows = await EquipmentLog.find(filter).sort({ issuedAt: -1 }).limit(Math.min(Number(limit) || 100, 500)).lean();
-    res.json({ success: true, count: rows.length, data: rows });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+    return sendOk(res, rows, { count: rows.length });
+  } catch (e) { return sendErr(res, e); }
 };
 
 exports.equipmentIssue = async (req, res) => {
   try {
-    const body = req.body || {};
-    if (!body.equipmentName) return res.status(400).json({ success: false, message: "equipmentName required" });
-    body.issuedBy     = req.user.id;
-    body.issuedByName = await userName(req);
-    body.issuedAt     = new Date();
-    body.status       = "issued";
-    const row = await EquipmentLog.create(body);
-    res.status(201).json({ success: true, data: row });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    const b = req.body || {};
+    const {
+      equipmentName, category, serialNumber,
+      issuedToName, issuedTo: issuedToId, issuedToWard,
+      expectedReturnAt, notes,
+    } = b;
+    if (!equipmentName) return sendErr(res, "equipmentName required", "VALIDATION", 400);
+    const doc = {
+      equipmentName: String(equipmentName).trim(),
+      category:      category || "",
+      serialNumber:  serialNumber || "",
+      issuedTo:      issuedToId   || undefined,
+      issuedToName:  issuedToName || "",
+      issuedToWard:  issuedToWard || "",
+      expectedReturnAt: expectedReturnAt ? new Date(expectedReturnAt) : null,
+      notes:         notes || "",
+      // Server-stamped actor + time + status.
+      issuedBy:      req.user.id,
+      issuedByName:  await userName(req),
+      issuedAt:      new Date(),
+      status:        "issued",
+    };
+    const row = await EquipmentLog.create(doc);
+    return sendOk(res, row, null, 201);
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
 exports.equipmentReturn = async (req, res) => {
   try {
     const row = await EquipmentLog.findById(req.params.id);
-    if (!row) return res.status(404).json({ success: false, message: "Not found" });
-    if (row.status !== "issued") return res.status(409).json({ success: false, message: `Already ${row.status}` });
-    row.returnedAt         = new Date();
-    row.returnedToBy       = req.user.id;
-    row.returnedToName     = await userName(req);
-    row.conditionOnReturn  = req.body?.conditionOnReturn || "OK";
-    row.status             = row.conditionOnReturn === "Lost" ? "lost" : "returned";
-    if (req.body?.notes) row.notes = (row.notes ? row.notes + " · " : "") + req.body.notes;
+    if (!row) return sendErr(res, "Not found", "NOT_FOUND", 404);
+    if (row.status !== "issued") return sendErr(res, `Already ${row.status}`, "ILLEGAL_TRANSITION", 409);
+
+    const conditionOnReturn = typeof req.body?.conditionOnReturn === "string" ? req.body.conditionOnReturn : "OK";
+    const extraNote         = typeof req.body?.notes === "string" ? req.body.notes : "";
+
+    row.returnedAt        = new Date();
+    row.returnedToBy      = req.user.id;
+    row.returnedToName    = await userName(req);
+    row.conditionOnReturn = conditionOnReturn;
+    row.status            = conditionOnReturn === "Lost" ? "lost" : "returned";
+    if (extraNote) row.notes = (row.notes ? row.notes + " · " : "") + extraNote;
     await row.save();
-    res.json({ success: true, data: row });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    return sendOk(res, row);
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
-/* ── SUPPLIES (Linen + BMW) ────────────────────────────────── */
+/* ── SUPPLIES (Linen + BMW) ──────────────────────────────────
+   R7bj-F4: linen + bmw sub-docs are now schema-shape filtered before
+   write (was raw spread). Server stamps recorder. */
+function pickLinen(src) {
+  const s = src && typeof src === "object" ? src : {};
+  return {
+    issued:   Number(s.issued)   || 0,
+    returned: Number(s.returned) || 0,
+    soiled:   Number(s.soiled)   || 0,
+    lost:     Number(s.lost)     || 0,
+  };
+}
+function pickBmw(src) {
+  const s = src && typeof src === "object" ? src : {};
+  return {
+    yellow: Number(s.yellow) || 0,
+    red:    Number(s.red)    || 0,
+    blue:   Number(s.blue)   || 0,
+    white:  Number(s.white)  || 0,
+    black:  Number(s.black)  || 0,
+  };
+}
+
 exports.supplyUpsert = async (req, res) => {
   try {
-    const dateStr = req.body?.date || new Date().toISOString().slice(0, 10);
+    const b = req.body || {};
+    const dateStr = b.date || new Date().toISOString().slice(0, 10);
     const date = new Date(`${dateStr}T00:00:00`);
-    const ward = req.body?.ward || "Main";
+    const ward = typeof b.ward === "string" && b.ward.trim() ? b.ward.trim() : "Main";
     const recordedByName = await userName(req);
     const update = {
       $set: {
         date, ward,
-        recordedBy: req.user.id,
+        recordedBy:     req.user.id,
         recordedByName,
-        linen: req.body?.linen || {},
-        bmw:   req.body?.bmw   || {},
-        notes: req.body?.notes || "",
+        linen:          pickLinen(b.linen),
+        bmw:            pickBmw(b.bmw),
+        notes:          typeof b.notes === "string" ? b.notes : "",
       },
     };
     const row = await WardSupplyLog.findOneAndUpdate(
       { date, ward }, update, { new: true, upsert: true, setDefaultsOnInsert: true }
     ).lean();
-    res.json({ success: true, data: row });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    return sendOk(res, row);
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
 exports.supplyRecent = async (req, res) => {
@@ -163,8 +225,8 @@ exports.supplyRecent = async (req, res) => {
     const days = Number(req.query?.days) || 7;
     const from = new Date(); from.setDate(from.getDate() - days); from.setHours(0,0,0,0);
     const rows = await WardSupplyLog.find({ date: { $gte: from } }).sort({ date: -1 }).lean();
-    res.json({ success: true, count: rows.length, data: rows });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+    return sendOk(res, rows, { count: rows.length });
+  } catch (e) { return sendErr(res, e); }
 };
 
 /* ── CODE BLUE ─────────────────────────────────────────────── */
@@ -176,27 +238,35 @@ exports.codeBlueList = async (req, res) => {
     const from = new Date(); from.setDate(from.getDate() - days);
     filter.alertedAt = { $gte: from };
     const rows = await CodeBlueEvent.find(filter).sort({ alertedAt: -1 }).limit(200).lean();
-    res.json({ success: true, count: rows.length, data: rows });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+    return sendOk(res, rows, { count: rows.length });
+  } catch (e) { return sendErr(res, e); }
 };
 
 exports.codeBlueCreate = async (req, res) => {
   try {
-    const body = req.body || {};
-    if (!body.location) return res.status(400).json({ success: false, message: "location required" });
-    body.alertedBy     = req.user.id;
-    body.alertedByName = await userName(req);
-    body.alertedAt     = new Date();
-    body.outcome       = "ongoing";
-    const row = await CodeBlueEvent.create(body);
-    res.status(201).json({ success: true, data: row });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    const b = req.body || {};
+    const { location, bedNumber, UHID, patientName } = b;
+    if (!location || !String(location).trim()) return sendErr(res, "location required", "VALIDATION", 400);
+    const doc = {
+      location:      String(location).trim(),
+      bedNumber:     bedNumber   || "",
+      UHID:          UHID        || "",
+      patientName:   patientName || "",
+      // Server-stamped actor + time + outcome.
+      alertedBy:     req.user.id,
+      alertedByName: await userName(req),
+      alertedAt:     new Date(),
+      outcome:       "ongoing",
+    };
+    const row = await CodeBlueEvent.create(doc);
+    return sendOk(res, row, null, 201);
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
 exports.codeBlueAddResponder = async (req, res) => {
   try {
     const row = await CodeBlueEvent.findById(req.params.id);
-    if (!row) return res.status(404).json({ success: false, message: "Not found" });
+    if (!row) return sendErr(res, "Not found", "NOT_FOUND", 404);
     const arrivedAt = new Date();
     row.responders.push({
       user: req.user.id,
@@ -208,54 +278,87 @@ exports.codeBlueAddResponder = async (req, res) => {
       row.arrivalDelaySec = Math.round((arrivedAt - row.alertedAt) / 1000);
     }
     await row.save();
-    res.json({ success: true, data: row });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    return sendOk(res, row);
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
 exports.codeBlueClose = async (req, res) => {
   try {
+    const outcome = typeof req.body?.outcome === "string" ? req.body.outcome : "resuscitated";
+    const notes   = typeof req.body?.notes   === "string" ? req.body.notes   : "";
     const row = await CodeBlueEvent.findByIdAndUpdate(
       req.params.id,
-      {
-        $set: {
-          outcome:  req.body?.outcome || "resuscitated",
-          notes:    req.body?.notes   || "",
-          closedAt: new Date(),
-        },
-      },
+      { $set: { outcome, notes, closedAt: new Date() } },
       { new: true }
     ).lean();
-    if (!row) return res.status(404).json({ success: false, message: "Not found" });
-    res.json({ success: true, data: row });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    if (!row) return sendErr(res, "Not found", "NOT_FOUND", 404);
+    return sendOk(res, row);
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
-/* ── MORTUARY ──────────────────────────────────────────────── */
+/* ── MORTUARY ────────────────────────────────────────────────
+   Auth 2-WB-CRIT-2: Ward Boy must NOT be allowed to declare a death.
+   The route guard `ward.mortuary` includes Ward Boy (for body-shift +
+   handover assist) so we *additionally* gate declare here at the
+   controller level. */
 exports.mortuaryList = async (req, res) => {
   try {
     const filter = {};
     if (req.query?.status) filter.status = req.query.status;
     const rows = await MortuaryRecord.find(filter).sort({ deathDeclaredAt: -1 }).limit(100).lean();
-    res.json({ success: true, count: rows.length, data: rows });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+    return sendOk(res, rows, { count: rows.length });
+  } catch (e) { return sendErr(res, e); }
 };
 
 exports.mortuaryDeclare = async (req, res) => {
   try {
-    const body = req.body || {};
-    if (!body.UHID || !body.patientName) return res.status(400).json({ success: false, message: "UHID + patientName required" });
-    body.deathDeclaredAt     = body.deathDeclaredAt ? new Date(body.deathDeclaredAt) : new Date();
-    body.deathDeclaredBy     = req.user.id;
-    body.deathDeclaredByName = await userName(req);
-    body.status              = "declared";
-    const row = await MortuaryRecord.create(body);
-    res.status(201).json({ success: true, data: row });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    // R7bj-F4 Auth 2-WB-CRIT-2: explicit role gate. Ward Boy can shift
+    // a body & assist handover, but declaring death is Doctor / Admin
+    // only. NABH AAC.16 requires a registered medical practitioner.
+    const role = req.user?.role || "";
+    const ALLOWED_DECLARERS = ["Doctor", "Admin"];
+    if (!ALLOWED_DECLARERS.includes(role)) {
+      return sendErr(
+        res,
+        "Only a Doctor or Admin may declare a death. Ward Boy / Nurse can shift/handover.",
+        "FORBIDDEN_ROLE",
+        403,
+      );
+    }
+
+    const b = req.body || {};
+    const {
+      UHID, patientName, admissionId, age, gender,
+      deathDeclaredAt, causeOfDeath, isMLC, mlcNumber, notes,
+    } = b;
+    if (!UHID || !patientName) {
+      return sendErr(res, "UHID + patientName required", "VALIDATION", 400);
+    }
+    const doc = {
+      UHID:        String(UHID).toUpperCase().trim(),
+      patientName: String(patientName).trim(),
+      admissionId: admissionId || undefined,
+      age:         age != null ? Number(age) : null,
+      gender:      gender || "",
+      // Death event — server stamps declarer trio + now (if not provided).
+      deathDeclaredAt:     deathDeclaredAt ? new Date(deathDeclaredAt) : new Date(),
+      deathDeclaredBy:     req.user.id,
+      deathDeclaredByName: await userName(req),
+      causeOfDeath:        causeOfDeath || "",
+      isMLC:               !!isMLC,
+      mlcNumber:           mlcNumber || "",
+      notes:               notes || "",
+      status:              "declared",
+    };
+    const row = await MortuaryRecord.create(doc);
+    return sendOk(res, row, null, 201);
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
 exports.mortuaryShift = async (req, res) => {
   try {
     const shiftedByName = await userName(req);
+    const bodyTagId = typeof req.body?.bodyTagId === "string" ? req.body.bodyTagId : "";
     const row = await MortuaryRecord.findByIdAndUpdate(
       req.params.id,
       {
@@ -263,46 +366,148 @@ exports.mortuaryShift = async (req, res) => {
           shiftedToMortuaryAt: new Date(),
           shiftedBy:           req.user.id,
           shiftedByName,
-          bodyTagId:           req.body?.bodyTagId || "",
+          bodyTagId,
           status:              "in-mortuary",
         },
       },
       { new: true }
     ).lean();
-    if (!row) return res.status(404).json({ success: false, message: "Not found" });
-    res.json({ success: true, data: row });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    if (!row) return sendErr(res, "Not found", "NOT_FOUND", 404);
+    return sendOk(res, row);
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
 exports.mortuaryHandover = async (req, res) => {
   try {
-    const body = req.body || {};
-    if (!body.receivedBy || !body.relationship) {
-      return res.status(400).json({ success: false, message: "receivedBy + relationship required" });
+    // R7bj-F4 Auth 2-WB-CRIT-1 + R7bm-F10 NABH ROM 3-sig:
+    // Body handover requires THREE distinct attestations + the family
+    // member who collects the body:
+    //   1. handoverBy        — hospital staff releasing the body (req.user)
+    //   2. witnessName/Id    — hospital witness (nurse / ward boy on duty,
+    //                          NOT the same person as handoverBy)
+    //   3. guardName/BadgeNo — security guard at the mortuary gate (the
+    //                          independent third party — NABH ROM mandates
+    //                          a guard signature to break the family-plus-
+    //                          ward-staff collusion path)
+    //   4. receivedBy        — family member collecting the body (verified
+    //                          distinct from witness AND guard)
+    // The witness, guard, and handover staff each persist with signedAt
+    // timestamps so the audit trail records WHEN each attestation was
+    // captured (not just "appears in record after the fact").
+    const b = req.body || {};
+    const {
+      receivedBy, relationship, receiverPhone, receiverIdProof, receiverIdNumber,
+      vehicleDetails, witnessName, witnessId, witnessRole,
+      guardName, guardBadgeNo, guardId,
+      notes,
+    } = b;
+
+    // 1. Required fields.
+    if (!receivedBy || !relationship) {
+      return sendErr(res, "receivedBy + relationship required", "VALIDATION", 400);
     }
+    if (!witnessName || !String(witnessName).trim()) {
+      return sendErr(
+        res,
+        "witnessName is required — NABH ROM 3-sig handover (hospital witness)",
+        "WITNESS_REQUIRED",
+        400,
+      );
+    }
+    if (!witnessId) {
+      // The schema's pre-save validator requires witnessId to be a User
+      // ObjectId. Reject early with a clearer message than the schema's.
+      return sendErr(
+        res,
+        "witnessId (User _id) is required for the hospital witness",
+        "WITNESS_REQUIRED",
+        400,
+      );
+    }
+    if (!guardName || !String(guardName).trim()) {
+      return sendErr(
+        res,
+        "guardName is required — NABH ROM 3-sig handover (security guard at gate)",
+        "GUARD_REQUIRED",
+        400,
+      );
+    }
+
+    // 2. Distinct-actor checks — no person may sign in two slots.
+    const receivedByN = String(receivedBy).trim().toLowerCase();
+    const witnessN    = String(witnessName).trim().toLowerCase();
+    const guardN      = String(guardName).trim().toLowerCase();
+    if (witnessN === receivedByN) {
+      return sendErr(res, "Witness and receiver must be different people", "WITNESS_INVALID", 400);
+    }
+    if (guardN === receivedByN) {
+      return sendErr(res, "Security guard and receiver must be different people", "GUARD_INVALID", 400);
+    }
+    if (guardN === witnessN) {
+      return sendErr(res, "Security guard and witness must be different people", "GUARD_INVALID", 400);
+    }
+    // Handover staff cannot also sign as witness or guard.
     const handoverByName = await userName(req);
+    const handoverN = String(handoverByName || "").trim().toLowerCase();
+    if (handoverN && (handoverN === witnessN || handoverN === guardN)) {
+      return sendErr(
+        res,
+        "The releasing staff cannot also sign as witness or guard",
+        "HANDOVER_ACTOR_CONFLICT",
+        400,
+      );
+    }
+
+    // 3. Pre-load to enforce state transition (must be in-mortuary or declared).
+    const existing = await MortuaryRecord.findById(req.params.id).lean();
+    if (!existing) return sendErr(res, "Not found", "NOT_FOUND", 404);
+    if (existing.status === "handed-over") {
+      return sendErr(res, "Body already handed over", "ILLEGAL_TRANSITION", 409);
+    }
+
+    // 4. Persist all three signatures + audit metadata atomically. The
+    //    schema pre-update hook also re-checks witness + guard presence;
+    //    we mirror those constraints here for a friendlier API error.
+    const now = new Date();
+    const combinedNotes = [
+      typeof notes === "string" ? notes : "",
+      `witness:${String(witnessName).trim()}${witnessId ? ` (id:${witnessId})` : ""}`,
+      `guard:${String(guardName).trim()}${guardBadgeNo ? ` (badge:${guardBadgeNo})` : ""}`,
+    ].filter(Boolean).join(" · ");
+
     const row = await MortuaryRecord.findByIdAndUpdate(
       req.params.id,
       {
         $set: {
-          handoverAt:       new Date(),
+          // Releasing staff (signature 1).
+          handoverAt:       now,
           handoverBy:       req.user.id,
           handoverByName,
-          receivedBy:       body.receivedBy,
-          relationship:     body.relationship,
-          receiverPhone:    body.receiverPhone || "",
-          receiverIdProof:  body.receiverIdProof || "",
-          receiverIdNumber: body.receiverIdNumber || "",
-          vehicleDetails:   body.vehicleDetails || "",
-          notes:            body.notes || "",
+          // Family receiver.
+          receivedBy:       String(receivedBy).trim(),
+          relationship:     String(relationship).trim(),
+          receiverPhone:    receiverPhone    || "",
+          receiverIdProof:  receiverIdProof  || "",
+          receiverIdNumber: receiverIdNumber || "",
+          vehicleDetails:   vehicleDetails   || "",
+          // Hospital witness (signature 2).
+          witnessId:        witnessId,
+          witnessName:      String(witnessName).trim(),
+          witnessRole:      typeof witnessRole === "string" ? witnessRole : "",
+          witnessSignedAt:  now,
+          // Security guard (signature 3).
+          guardId:          guardId || null,
+          guardName:        String(guardName).trim(),
+          guardBadgeNo:     guardBadgeNo ? String(guardBadgeNo).trim() : "",
+          guardSignedAt:    now,
+          notes:            combinedNotes,
           status:           "handed-over",
         },
       },
       { new: true }
     ).lean();
-    if (!row) return res.status(404).json({ success: false, message: "Not found" });
-    res.json({ success: true, data: row });
-  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+    return sendOk(res, row);
+  } catch (e) { return sendErr(res, e, null, 400); }
 };
 
 /* ── MANAGER KPI DASHBOARD ─────────────────────────────────── */
@@ -310,14 +515,36 @@ exports.managerStats = async (req, res) => {
   try {
     const days = Number(req.query?.days) || 7;
     const from = new Date(); from.setDate(from.getDate() - days); from.setHours(0,0,0,0);
+    const now  = new Date();
 
-    // Per-ward-boy task completion stats over the window.
-    const tasks = await WardTask.find({
-      assignedTo: { $ne: null },
-      completedAt: { $gte: from },
-      status: "done",
-    }).select("assignedTo assignedToName type acceptedAt completedAt priority").lean();
+    // R7bj-F4 / API 3-CRIT-: 6 sequential awaits collapsed into one
+    // Promise.all so the manager dashboard loads in one round-trip.
+    const [
+      tasks,
+      activeShifts,
+      equipmentOutstanding,
+      equipmentOverdue,
+      codeBlueLast,
+      mortuaryPending,
+    ] = await Promise.all([
+      WardTask.find({
+        assignedTo: { $ne: null },
+        completedAt: { $gte: from },
+        status: "done",
+      }).select("assignedTo assignedToName type acceptedAt completedAt priority").lean(),
+      WardShift.find({ endedAt: null })
+        .select("user userName ward startedAt breaks").lean(),
+      EquipmentLog.countDocuments({ status: "issued" }),
+      EquipmentLog.countDocuments({
+        status: "issued",
+        expectedReturnAt: { $lt: now, $ne: null },
+      }),
+      CodeBlueEvent.find({ alertedAt: { $gte: from } })
+        .select("alertedAt outcome arrivalDelaySec location").lean(),
+      MortuaryRecord.countDocuments({ status: { $in: ["declared", "in-mortuary"] } }),
+    ]);
 
+    // Per-ward-boy task completion leaderboard.
     const byUser = {};
     for (const t of tasks) {
       const uid = String(t.assignedTo);
@@ -340,26 +567,12 @@ exports.managerStats = async (req, res) => {
       }))
       .sort((a, b) => b.completed - a.completed);
 
-    // Active shifts right now
-    const activeShifts = await WardShift.find({ endedAt: null })
-      .select("user userName ward startedAt breaks").lean();
+    const cbWithDelay = codeBlueLast.filter(e => e.arrivalDelaySec != null);
+    const avgCodeBlueDelaySec = cbWithDelay.length
+      ? Math.round(cbWithDelay.reduce((s, e) => s + e.arrivalDelaySec, 0) / cbWithDelay.length)
+      : null;
 
-    // Equipment outstanding
-    const equipmentOutstanding = await EquipmentLog.countDocuments({ status: "issued" });
-    const equipmentOverdue = await EquipmentLog.countDocuments({
-      status: "issued",
-      expectedReturnAt: { $lt: new Date(), $ne: null },
-    });
-
-    // Code blue rolling
-    const codeBlueLast7d = await CodeBlueEvent.find({ alertedAt: { $gte: from } })
-      .select("alertedAt outcome arrivalDelaySec location").lean();
-
-    // Mortuary pending
-    const mortuaryPending = await MortuaryRecord.countDocuments({ status: { $in: ["declared", "in-mortuary"] } });
-
-    res.json({
-      success: true,
+    return sendOk(res, {
       window: { days, from: from.toISOString().slice(0,10) },
       leaderboard,
       activeShifts,
@@ -368,19 +581,14 @@ exports.managerStats = async (req, res) => {
         activeShiftCount:        activeShifts.length,
         equipmentOutstanding,
         equipmentOverdue,
-        codeBlueCount:           codeBlueLast7d.length,
-        avgCodeBlueDelaySec:     codeBlueLast7d.filter(e => e.arrivalDelaySec != null).length
-          ? Math.round(
-              codeBlueLast7d.filter(e => e.arrivalDelaySec != null).reduce((s, e) => s + e.arrivalDelaySec, 0) /
-              codeBlueLast7d.filter(e => e.arrivalDelaySec != null).length
-            )
-          : null,
+        codeBlueCount:           codeBlueLast.length,
+        avgCodeBlueDelaySec,
         mortuaryPending,
       },
-      codeBlueRecent: codeBlueLast7d.slice(0, 10),
+      codeBlueRecent: codeBlueLast.slice(0, 10),
     });
   } catch (e) {
     console.error("[wardOps] managerStats error:", e);
-    res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };

@@ -44,6 +44,92 @@ const PatientBill    = require("../../models/PatientBillModel/PatientBillModel")
 const ServicePricing = require("../../models/ServicePricing/ServicePricingModel");
 const Admission      = require("../../models/Patient/admissionModel");
 const Room           = require("../../models/bedMgmt/roomModel");
+// R7bh-F3 / R7bg-6-CRIT-1: NaN guard for addItemToBill — every
+// pricing branch goes through toNum() so a malformed Decimal128
+// or undefined upstream value can never leak NaN into a BillItem
+// (which then poisoned grossAmount/netAmount across the whole bill).
+// R7bm-F6 / R7bl-2: toDec also re-exported for the onOrderCancelled
+// proportional GST distribution math (Decimal128 casts on CN write).
+const { toNum, toDec } = require("../../utils/money");
+
+// R7bh-F3 / R7bg-1-CRIT-6 / NABH-CRIT-A3: every BillingTrigger.create() goes
+// through this helper so the new audit trio (triggeredBy/triggeredById/
+// triggeredByRole) is populated consistently. Callers pass a minimal
+// `actor = { userId, name, role }` and the helper fills the trigger doc.
+//
+//   - cron emits  (runDailyBedChargeAccrual / flushDailyChargesForAdmission)
+//     pass { name: "System", role: "Cron" }
+//   - service emits inherit from orderedBy* on the caller's payload when
+//     no explicit actor is given.
+//
+// The helper is a pure wrapper around BillingTrigger.create — every
+// existing E11000 / VersionError handling stays on the caller side.
+async function _emitTrigger(payload, actor = null) {
+  const data = { ...payload };
+  // Only populate fields that aren't already on the payload (caller can
+  // override explicitly for special cases like paper-trail rows where
+  // the actor differs from the orderedBy).
+  if (data.triggeredBy === undefined) {
+    data.triggeredBy =
+      actor?.name ||
+      data.orderedBy ||
+      data.completedBy ||
+      "System";
+  }
+  if (data.triggeredById === undefined) {
+    data.triggeredById =
+      actor?.userId ||
+      actor?._id ||
+      data.orderedById ||
+      data.completedById ||
+      null;
+  }
+  if (data.triggeredByRole === undefined) {
+    // Map "System" + dailyDedup to "Cron" so the audit ledger can
+    // distinguish a scheduled accrual from a user-initiated trigger.
+    const fallbackRole = data.orderedByRole || data.completedByRole || "System";
+    data.triggeredByRole = actor?.role || fallbackRole;
+  }
+  const trigger = await BillingTrigger.create(data);
+
+  // R7bj-F5 / R7bi-6-TBA-CRIT-1: emit a BillingAudit row for every
+  // BillingTrigger fired. Pre-R7bj the audit trail covered bill-side
+  // events (payment/refund/cancel/finalise) but NOT the trigger emit
+  // itself — so a 3 AM cron firing a phantom bed charge left no
+  // chronological audit footprint distinct from the bill item. NABH
+  // AAC.7 + GST Act §35 expect a single queryable timeline that
+  // includes the originating clinical event. Best-effort: the emit
+  // helper already swallows its own errors, and we wrap in a defensive
+  // try anyway so the audit miss never breaks billing.
+  try {
+    const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+    await emitBillingAudit({
+      event:      "TRIGGER_EMITTED",
+      UHID:       trigger.UHID,
+      admissionId: trigger.admissionId,
+      triggerId:  trigger._id,
+      amount:     trigger.totalAmount,
+      actorId:    actor?.userId || actor?._id || data.triggeredById || null,
+      actorName:  actor?.name   || data.triggeredBy   || "System",
+      actorRole:  actor?.role   || data.triggeredByRole || "Cron",
+      reason:     `Trigger emitted: ${trigger.serviceCode || trigger.sourceType}`,
+      after: {
+        triggerId:           trigger._id,
+        sourceType:          trigger.sourceType,
+        serviceCode:         trigger.serviceCode,
+        serviceName:         trigger.serviceName,
+        totalAmount:         trigger.totalAmount,
+        quantity:            trigger.quantity,
+        sourceDocumentId:    trigger.sourceDocumentId,
+        sourceDocumentModel: trigger.sourceDocumentModel,
+      },
+    });
+  } catch (e) {
+    console.warn("[autoBilling] audit emit failed (non-fatal):", e?.message || e);
+  }
+
+  return trigger;
+}
 
 // ── Service-event map: maps clinical event types → service codes ──────────────
 // autoCharge: true = bill immediately when trigger created
@@ -257,12 +343,38 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
   try {
     let unitPrice;
     if (source.unitPriceOverride != null) {
-      unitPrice = Number(source.unitPriceOverride) || 0;
+      // R7bh-F3 / R7bg-6-CRIT-1: wrap every branch in toNum so a
+      // Decimal128, BSON wrapper, or stringy "300.00" never leaks
+      // NaN into the bill item. Pre-R7bh `Number(Decimal128)` returned
+      // NaN, which then poisoned grossAmount/netAmount across the
+      // whole bill via the pre-save aggregator.
+      unitPrice = toNum(source.unitPriceOverride);
     } else {
       const pricing = await ServicePricing.getPriceFor(service._id, bill.paymentType || "CASH", bill.tpa?.toString());
-      unitPrice = pricing?.finalPrice ?? service.defaultPrice ?? 0;
+      unitPrice = toNum(pricing?.finalPrice ?? service.defaultPrice ?? 0);
     }
-    const totalAmt   = unitPrice * (quantity || 1);
+    const qty        = Number(quantity) || 1;
+    const totalAmt   = toNum(unitPrice) * qty;
+
+    // R7bj-F5 / R7bi-6-TBA-CRIT-3: propagate GST attributes from
+    // ServiceMaster to the BillItem. Pre-R7bj auto-billed lines landed
+    // with isTaxable:false (schema default) regardless of the master's
+    // taxPercentage — so the bill's pre-save recalcTotals computed
+    // taxAmount=0 across every auto charge. The patient was undercharged
+    // and the hospital under-paid GST → GST Act §31 + GSTR-1 violation.
+    // The recalcTotals hook on PatientBill expects only isTaxable +
+    // taxPercent + hsnSacCode here; it derives taxAmount, cgstAmount,
+    // sgstAmount, igstAmount itself based on bill-level placeOfSupply.
+    // PatientBill schema enforces taxPercent ∈ {0, 0.25, 3, 5, 12, 18, 28}
+    // (Indian GST slabs). A ServiceMaster row with a typo / pre-GST legacy
+    // value (e.g. 8, 15) would fail the bill.save() validator and dump the
+    // whole bill into pending-review. Coerce off-slab values to 0 instead
+    // (operator can correct the master later). Spec-canonical 18% medical
+    // services slab stays untouched.
+    const _GST_SLABS = new Set([0, 0.25, 3, 5, 12, 18, 28]);
+    const _rawTaxPct = Number(service?.taxPercentage ?? service?.gstRate ?? 0) || 0;
+    const taxPercent = _GST_SLABS.has(_rawTaxPct) ? _rawTaxPct : 0;
+    const isTaxable  = taxPercent > 0;
 
     const item = {
       serviceId:       service._id,
@@ -270,11 +382,18 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
       serviceName:     service.serviceName,
       category:        service.category,
       billingType:     service.billingType,
-      quantity:        quantity || 1,
+      quantity:        qty,
       unitPrice,
       grossAmount:     totalAmt,
       discountPercent: 0, discountAmount: 0,
       netAmount:       totalAmt,
+      // R7bj-F5 / R7bi-6-TBA-CRIT-3: GST propagation. taxPercent must be
+      // one of {0, 0.25, 3, 5, 12, 18, 28} (PatientBill enum) — service
+      // master values not in that list will fail validation, so we coerce
+      // to 0 (and isTaxable=false) in that case. The 18% slab is the
+      // canonical Indian medical services GST rate.
+      isTaxable,
+      taxPercent:      isTaxable ? taxPercent : 0,
       tpaPayableAmount:     bill.paymentType === "TPA" ? totalAmt : 0,
       patientPayableAmount: bill.paymentType === "TPA" ? 0 : totalAmt,
       chargeDate:      source.chargeDate ? new Date(source.chargeDate) : new Date(),
@@ -330,6 +449,41 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
         freshBill.billItems.push(item);
         await freshBill.save();
         const savedItem = freshBill.billItems[freshBill.billItems.length - 1];
+
+        // R7bj-F5 / R7bi-6-TBA-CRIT-1: emit ITEM_ADDED audit row whenever
+        // a trigger → bill line lands. Pre-R7bj only the post-finalise
+        // BILL_GENERATED row existed; an auto-billed bed/nursing/MAR row
+        // accruing into a DRAFT bill left no audit footprint until the
+        // bill was finalised. Best-effort: emit is non-fatal.
+        try {
+          const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+          await emitBillingAudit({
+            event:      "ITEM_ADDED",
+            UHID:       freshBill.UHID,
+            billId:     freshBill._id,
+            billNumber: freshBill.billNumber,
+            triggerId:  trigger?._id,
+            amount:     totalAmt,
+            actorName:  source.addedBy     || "System",
+            actorRole:  source.addedByRole || "System",
+            reason:     `Bill line added: ${item.serviceCode} × ${qty}`,
+            after: {
+              billItemId: savedItem._id,
+              serviceCode: item.serviceCode,
+              serviceName: item.serviceName,
+              quantity:    qty,
+              unitPrice,
+              totalAmount: totalAmt,
+              isTaxable:   item.isTaxable,
+              taxPercent:  item.taxPercent,
+              hsnSacCode:  item.hsnSacCode,
+              triggerId:   trigger?._id,
+            },
+          });
+        } catch (e) {
+          console.warn("[autoBilling] ITEM_ADDED audit emit failed (non-fatal):", e?.message || e);
+        }
+
         return { bill: freshBill, itemId: savedItem._id, unitPrice, totalAmt };
       } catch (e) {
         lastErr = e;
@@ -375,6 +529,12 @@ async function createTrigger(config) {
     // bed/nursing/doctor-round charges for the discharge day still land
     // even though the admission is now status:Discharged.
     _dischargingFlush = false,
+    // R7bh-F3 / R7bg-1-CRIT-6 / NABH-CRIT-A3: explicit attribution trio.
+    // Callers MAY pass these to label the emit precisely (e.g. cron passes
+    // role:"Cron"). When omitted, _emitTrigger defaults from orderedBy*.
+    triggeredBy,
+    triggeredById,
+    triggeredByRole,
   } = config;
 
   // R7u: zombie-charge guard. Reject triggers for admissions that have
@@ -438,6 +598,24 @@ async function createTrigger(config) {
     }
     const existing = await BillingTrigger.findOne(dedupQuery).lean();
     if (existing) {
+      // R7bj-F5 / R7bi-6-TBA-CRIT-1: TRIGGER_DEDUPED audit. Low-traffic
+      // event — only fires when the cron actually re-attempts a charge
+      // it had already filed today, so this isn't a flood. NABH wants
+      // the dedup to be queryable (so "why wasn't this billed?" can be
+      // answered without grep'ing logs).
+      try {
+        const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+        await emitBillingAudit({
+          event:       "TRIGGER_DEDUPED",
+          UHID:        UHID,
+          admissionId: admissionId,
+          triggerId:   existing._id,
+          actorName:   orderedBy || "System",
+          actorRole:   orderedByRole || "System",
+          reason:      `Daily dedup hit on ${serviceCode} (${dateKey})`,
+          after:       { skippedNewTrigger: true, winningTriggerId: existing._id, serviceCode, dateKey },
+        });
+      } catch (e) { /* non-fatal — emit helper already swallows */ }
       return { skipped: true, reason: "Daily dedup — already charged today", existing };
     }
   }
@@ -454,10 +632,13 @@ async function createTrigger(config) {
   // tariff (TPA/Corporate aware, looked up inside addItemToBill) →
   // ServiceMaster.defaultPrice → 0. We store the override here on the
   // trigger so the audit row reflects exactly what the patient will pay.
+  // R7bh-F3 / R7bg-6-CRIT-1: toNum-wrapped so a Decimal128 ServiceMaster
+  // defaultPrice can't leak NaN into trigger.unitPrice/totalAmount and
+  // (transitively) into the bill line item.
   const unitPrice   = unitPriceOverride != null
-    ? (Number(unitPriceOverride) || 0)
-    : (resolvedService?.defaultPrice ?? 0);
-  const totalAmount = unitPrice * (quantity || 1);
+    ? toNum(unitPriceOverride)
+    : toNum(resolvedService?.defaultPrice ?? 0);
+  const totalAmount = toNum(unitPrice) * (Number(quantity) || 1);
 
   // If a code was requested but ServiceMaster doesn't have it yet (common
   // for newly-introduced codes like DOC-MORN-ROUND or BED-ICU), accept
@@ -466,6 +647,18 @@ async function createTrigger(config) {
   // ServiceMaster rows from accumulated triggers.
   const canAutoCharge = autoCharge && (resolvedService || (serviceCode && unitPriceOverride != null && serviceName));
   const triggerStatus = canAutoCharge ? "completed" : requiresConfirmation ? "pending" : "pending";
+
+  // R7bh-F3 / R7bg-1-CRIT-6 / NABH-CRIT-A3: derive attribution role.
+  // Explicit triggeredByRole wins (cron callsites pass "Cron" explicitly).
+  // Otherwise mirror orderedByRole so service-layer emits keep their
+  // actor identity in the audit trail. NB: we do NOT auto-infer "Cron"
+  // from sourceType because both onAdmissionCreated (Day-1 bed/nursing)
+  // and the daily cron share the same sourceType+orderedByRole shape —
+  // only the call site knows which it is, and runDailyBedChargeAccrual
+  // / flushDailyChargesForAdmission pass triggeredByRole:"Cron" below.
+  const _autoRole = triggeredByRole != null
+    ? triggeredByRole
+    : (orderedByRole || "System");
 
   const triggerData = {
     admissionId, patientId, UHID, patientType,
@@ -486,6 +679,10 @@ async function createTrigger(config) {
     completedBy,   completedById,   completedByRole,
     completedAt:   completedBy ? new Date() : undefined,
     completionNotes,
+    // R7bh-F3 / R7bg-1-CRIT-6: emit-actor attribution trio.
+    triggeredBy:     triggeredBy   != null ? triggeredBy   : (orderedBy   || completedBy   || "System"),
+    triggeredById:   triggeredById != null ? triggeredById : (orderedById || completedById || null),
+    triggeredByRole: _autoRole,
     status: triggerStatus,
     autoCharged: autoCharge,
     requiresConfirmation,
@@ -500,7 +697,11 @@ async function createTrigger(config) {
   // fires, the loser silently reuses the winner's row.
   let trigger;
   try {
-    trigger = await BillingTrigger.create(triggerData);
+    // _emitTrigger is a thin wrapper that's a no-op when the trio is
+    // already populated (above) — kept on the path so future emits stay
+    // consistent and the helper has a single integration point to add
+    // future audit columns to.
+    trigger = await _emitTrigger(triggerData);
   } catch (e) {
     if (e.code === 11000 && dailyDedup) {
       const existing = await BillingTrigger.findOne({
@@ -567,6 +768,22 @@ async function createTrigger(config) {
         reviewReason: reason,
         reviewedAt:   new Date(),
       }).catch(() => { /* best-effort flag */ });
+      // R7bj-F5 / R7bi-6-TBA-CRIT-1: TRIGGER_PENDING_REVIEW audit.
+      try {
+        const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+        await emitBillingAudit({
+          event:       "TRIGGER_PENDING_REVIEW",
+          UHID:        trigger.UHID,
+          admissionId: trigger.admissionId,
+          triggerId:   trigger._id,
+          billId:      bill?._id,
+          amount:      trigger.totalAmount,
+          actorName:   "AutoBilling",
+          actorRole:   "System",
+          reason,
+          after:       { status: "pending-review", serviceCode: trigger.serviceCode, billStatus: bill?.billStatus },
+        });
+      } catch (_) { /* non-fatal */ }
     } else {
       const reason = `getOrCreateBill returned null for admission=${admissionId} patientType=${patientType}`;
       console.warn(`[AutoBilling] ${reason} — trigger ${trigger?._id} (${trigger.serviceCode}) flagged pending-review`);
@@ -575,6 +792,21 @@ async function createTrigger(config) {
         reviewReason: reason,
         reviewedAt:   new Date(),
       }).catch(() => { /* best-effort flag */ });
+      // R7bj-F5 / R7bi-6-TBA-CRIT-1: TRIGGER_PENDING_REVIEW audit (bill-missing branch).
+      try {
+        const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+        await emitBillingAudit({
+          event:       "TRIGGER_PENDING_REVIEW",
+          UHID:        trigger.UHID,
+          admissionId: trigger.admissionId,
+          triggerId:   trigger._id,
+          amount:      trigger.totalAmount,
+          actorName:   "AutoBilling",
+          actorRole:   "System",
+          reason,
+          after:       { status: "pending-review", serviceCode: trigger.serviceCode },
+        });
+      } catch (_) { /* non-fatal */ }
     }
   }
 
@@ -1062,7 +1294,10 @@ async function onEquipmentCharged(chargeEntry, billItemId) {
     // Already manually billed elsewhere — leave a paper-trail trigger and
     // exit, so we don't double-add to the bill.
     try {
-      await BillingTrigger.create({
+      // R7bh-F3 / R7bg-1-CRIT-6: route through _emitTrigger so the
+      // audit attribution trio is populated. The nurse is both the
+      // orderer + completer here, so triggeredBy mirrors that.
+      await _emitTrigger({
         admissionId: chargeEntry.admissionId,
         patientId:   chargeEntry.patientId,
         UHID:        chargeEntry.UHID,
@@ -1070,8 +1305,14 @@ async function onEquipmentCharged(chargeEntry, billItemId) {
         serviceCode: `EQUIP-${chargeEntry.itemId?.toString().slice(-6) || "GEN"}`,
         serviceName: chargeEntry.itemName,
         quantity:    chargeEntry.quantity || 1,
-        unitPrice:   chargeEntry.unitPrice,
-        totalAmount: chargeEntry.totalAmount,
+        // R7bh-F3 / R7bg-6-CRIT-1: toNum-wrapped — the upstream
+        // NursingChargeEntry stores money as Decimal128, and
+        // {$numberDecimal} → schema's Decimal128 round-trip is fine,
+        // but downstream consumers reading the trigger directly
+        // (audit endpoints, IPDLedger byCategory aggregator) all
+        // expect a finite Number, which toNum guarantees.
+        unitPrice:   toNum(chargeEntry.unitPrice),
+        totalAmount: toNum(chargeEntry.totalAmount),
         sourceType:  "Equipment",
         sourceDocumentId:    chargeEntry._id,
         sourceDocumentModel: "NursingChargeEntry",
@@ -1085,7 +1326,7 @@ async function onEquipmentCharged(chargeEntry, billItemId) {
         autoCharged: true,
         dateKey: chargeEntry.dateKey || getDateKey(),
         shift: chargeEntry.shift,
-      });
+      }, { name: chargeEntry.chargedBy || "Nurse", role: "Nurse" });
     } catch (e) { console.error("[AutoBilling] onEquipmentCharged (paper-trail) error:", e.message); }
     return;
   }
@@ -1754,7 +1995,10 @@ async function runDailyBedChargeAccrual() {
     if (typeCode !== "IPD" && typeCode !== "DAYCARE") continue;
 
     try {
-      const result = await flushDailyChargesForAdmission(adm, { typeCode });
+      // R7bh-F3 / R7bg-1-CRIT-6: stamp every trigger emitted from the
+      // daily accrual cron with triggeredByRole:"Cron" so the audit
+      // ledger can split scheduled vs service-layer emits.
+      const result = await flushDailyChargesForAdmission(adm, { typeCode, _fromCron: true });
       bedFired   += result.bedFired;
       nurseFired += result.nurseFired;
       skipped    += result.skipped;
@@ -1776,8 +2020,13 @@ async function runDailyBedChargeAccrual() {
  *
  * Returns { bedFired, nurseFired, skipped } counts so the caller can audit.
  */
-async function flushDailyChargesForAdmission(admission, { typeCode, prorate = false, dischargeTime, _dischargingFlush = false } = {}) {
+async function flushDailyChargesForAdmission(admission, { typeCode, prorate = false, dischargeTime, _dischargingFlush = false, _fromCron = false } = {}) {
   let bedFired = 0, nurseFired = 0, skipped = 0;
+  // R7bh-F3 / R7bg-1-CRIT-6: when invoked by runDailyBedChargeAccrual the
+  // emit is a scheduled accrual — stamp every downstream createTrigger
+  // with triggeredByRole:"Cron". Discharge-time and manual flushes leave
+  // this falsy so the actor's identity is preserved.
+  const _cronRole = _fromCron ? "Cron" : undefined;
   if (!admission?._id) return { bedFired, nurseFired, skipped };
   // R7as-FIX-4/D5-crit-1: when called from `dischargePatient` AFTER the
   // status-Discharged TX commits (R7ar-P1-21), createTrigger would
@@ -1834,7 +2083,9 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
     hasPackage && (!pkg.maxLOSDays || pkg.maxLOSDays === 0 || dayN <= pkg.maxLOSDays);
 
   if (withinPackageWindow) {
-    const pkgRate = Number(pkg.unitPrice || 0) * prorateMultiplier;
+    // R7bh-F3 / R7bg-6-CRIT-1: toNum so a Decimal128 pkg.unitPrice
+    // can't produce NaN here either.
+    const pkgRate = toNum(pkg.unitPrice || 0) * prorateMultiplier;
     const r = await createTrigger({
       admissionId:         admission._id,
       patientId:           admission.patientId,
@@ -1854,6 +2105,7 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
       dailyDedup:          true,
       department:          admission.department,
       _dischargingFlush,                              // R7as-FIX-4
+      triggeredByRole:     _cronRole,                 // R7bh-F3 (undefined when not from cron)
     }).catch((e) => { console.error("[AutoBilling] package daily trigger error:", e.message); return null; });
     if (r?.skipped) skipped++;
     else if (r?.trigger) bedFired++;   // count as "bed" line for the summary
@@ -1884,6 +2136,7 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
       dailyDedup:          true,
       department:          admission.department,
       _dischargingFlush,                              // R7as-FIX-4
+      triggeredByRole:     _cronRole,                 // R7bh-F3
     });
     if (r?.skipped) skipped++;
     else if (r?.trigger) bedFired++;
@@ -1910,6 +2163,7 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
       dailyDedup:          true,
       department:          admission.department,
       _dischargingFlush,                              // R7as-FIX-4
+      triggeredByRole:     _cronRole,                 // R7bh-F3
     });
     if (r?.skipped) skipped++;
     else if (r?.trigger) nurseFired++;
@@ -2279,14 +2533,73 @@ async function onOrderCancelled(orderDoc, reason, actorId) {
   let billed = 0;
   let creditNoteAmount = 0;
 
+  // R7bm-F6 / R7bl-2 — proportional GST distribution snapshot.
+  // Pre-R7bm the CN was raised with taxAmount=0, cgst=0, sgst=0, igst=0
+  // — flattening the reversal to a single bucket regardless of the
+  // original line tax mix. When the source bill straddled mixed slabs
+  // (e.g. medicines @ 5% + consumables @ 12%), the CDNR row in GSTR-1
+  // didn't match the original tax invoice's CGST/SGST/IGST split,
+  // producing reconciliation flags in the GSTR-1 vs GSTR-3B sanity
+  // check. The fix captures each bill line's per-item GST breakdown
+  // BEFORE cancelTrigger removes it, then writes the proportional
+  // split onto the CN.
+  //
+  // Each entry: { triggerId, netAmount, taxAmount, cgst, sgst, igst,
+  //               taxPercent, originalChargeId, lineTotal }
+  // where lineTotal = netAmount + taxAmount (the amount being reversed).
+  const PatientBillEarly = require("../../models/PatientBillModel/PatientBillModel");
+  const reversedLines = [];
+
   for (const t of triggers) {
     // If the trigger is already on a bill (status:"billed"), we void
     // via cancelTrigger which removes the bill line. The pro-rata CN
-    // is raised below from the aggregate.
+    // is raised below from the aggregate — but FIRST snapshot the
+    // bill item's per-line GST split so we can reconstruct the
+    // proportional tax distribution after the line is gone.
     try {
       const wasBilled = t.status === "billed" && t.billId && t.billItemId;
       if (wasBilled) {
-        creditNoteAmount += Number(t.totalAmount || 0);
+        // Snapshot the line BEFORE cancelTrigger nukes it. Use .lean()
+        // to avoid a save-hook side-effect; only the read matters here.
+        try {
+          const billDoc = await PatientBillEarly.findOne(
+            { _id: t.billId, "billItems._id": t.billItemId },
+            { billItems: { $elemMatch: { _id: t.billItemId } } },
+          ).lean();
+          const item = billDoc?.billItems?.[0];
+          if (item) {
+            const itemNet  = toNum(item.netAmount);
+            const itemTax  = toNum(item.taxAmount);
+            const itemCgst = toNum(item.cgstAmount);
+            const itemSgst = toNum(item.sgstAmount);
+            const itemIgst = toNum(item.igstAmount);
+            const lineTotal = itemNet + itemTax;
+            reversedLines.push({
+              triggerId:       t._id,
+              originalChargeId: item._id,
+              netAmount:       itemNet,
+              taxAmount:       itemTax,
+              cgstAmount:      itemCgst,
+              sgstAmount:      itemSgst,
+              igstAmount:      itemIgst,
+              taxPercent:      Number(item.taxPercent) || 0,
+              lineTotal,
+            });
+            creditNoteAmount += lineTotal;
+          } else {
+            // Item not found via the elemMatch path (rare — possibly
+            // the line was already removed by a parallel undo). Fall
+            // back to the trigger.totalAmount so the cascade aggregate
+            // is still correct, but per-line GST can't be split.
+            creditNoteAmount += Number(t.totalAmount || 0);
+          }
+        } catch (snapErr) {
+          // Snapshot failure must not block the cascade — fall back to
+          // the legacy aggregate. The CN will be raised with flattened
+          // tax (best the math can do without the line breakdown).
+          console.warn(`[AutoBilling] onOrderCancelled line snapshot failed for trigger ${t._id}:`, snapErr.message);
+          creditNoteAmount += Number(t.totalAmount || 0);
+        }
         billed++;
       }
       await cancelTrigger(t._id, {
@@ -2322,19 +2635,51 @@ async function onOrderCancelled(orderDoc, reason, actorId) {
       const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
       const bill = await PatientBill.findById(anchorTrigger.billId).lean();
       if (bill) {
+        // R7bm-F6 / R7bl-2 — proportional GST distribution across the
+        // reversed lines. Sum per-line taxableValue (netAmount) and
+        // per-line CGST/SGST/IGST so the CDNR row mirrors the original
+        // tax invoice's split exactly. Falls back to flat (tax=0) only
+        // when no line snapshot was captured (legacy / snapshot failure).
+        let taxableValue = 0;
+        let taxAmount    = 0;
+        let cgstAmount   = 0;
+        let sgstAmount   = 0;
+        let igstAmount   = 0;
+        for (const ln of reversedLines) {
+          taxableValue += ln.netAmount;
+          taxAmount    += ln.taxAmount;
+          cgstAmount   += ln.cgstAmount;
+          sgstAmount   += ln.sgstAmount;
+          igstAmount   += ln.igstAmount;
+        }
+        // If we didn't capture any line snapshots (e.g. older billed
+        // triggers without billItemId), fall back to the flat shape so
+        // the CN still records the gross refund — caller will log a
+        // reconciliation hint via the audit row.
+        const haveSnapshots = reversedLines.length > 0;
+        if (!haveSnapshots) {
+          taxableValue = creditNoteAmount;
+          taxAmount = cgstAmount = sgstAmount = igstAmount = 0;
+        }
+        // Round to 2dp for GSTR-1 row formatting. toDec handles the
+        // Decimal128 cast; we pre-round in Number space for the
+        // CreditNote schema's default coercion path.
+        const _round2 = (n) => Number((Number(n) || 0).toFixed(2));
         await CreditNote.create({
           billId:               bill._id,
           originalBillNumber:   bill.billNumber,
           UHID:                 bill.UHID,
           patientId:            bill.patient,
-          refundAmount:         creditNoteAmount,
-          taxableValue:         creditNoteAmount,    // pro-rata math is approximate
-          taxAmount:            0,
-          cgstAmount:           0,
-          sgstAmount:           0,
-          igstAmount:           0,
+          refundAmount:         toDec(_round2(creditNoteAmount)),
+          taxableValue:         toDec(_round2(taxableValue)),
+          taxAmount:            toDec(_round2(taxAmount)),
+          cgstAmount:           toDec(_round2(cgstAmount)),
+          sgstAmount:           toDec(_round2(sgstAmount)),
+          igstAmount:           toDec(_round2(igstAmount)),
           reasonCode:           "03",                 // "Deficiency in services" — closest GST code
-          reasonText:           `[OrderCancelled] ${reasonText} (order ${orderDoc._id})`,
+          reasonText:           haveSnapshots
+            ? `[OrderCancelled] ${reasonText} (order ${orderDoc._id}; ${reversedLines.length} line(s) reversed with per-line GST split)`
+            : `[OrderCancelled] ${reasonText} (order ${orderDoc._id}; line snapshots unavailable, tax flattened)`,
           refundMode:           "ADJUST",
           issuedBy:             actor.fullName || "AutoBilling",
         });
@@ -2343,15 +2688,18 @@ async function onOrderCancelled(orderDoc, reason, actorId) {
       console.warn(`[AutoBilling] onOrderCancelled CN failed for order ${orderDoc._id}:`, e.message);
       // Emit a pending-review marker so the cashier reconciles manually.
       try {
-        await BillingTrigger.create({
+        // R7bh-F3 / R7bg-1-CRIT-6: route through _emitTrigger so the
+        // pending-review marker also carries the attribution trio. The
+        // actor on the cancellation is who fired the cascade.
+        await _emitTrigger({
           admissionId:         orderDoc.admissionId,
           UHID:                orderDoc.UHID,
           patientType:         "IPD",
           serviceCode:         "CN-PENDING",
           serviceName:         `Pending CreditNote for cancelled order ${orderDoc._id}`,
           quantity:            1,
-          unitPrice:           creditNoteAmount,
-          totalAmount:         creditNoteAmount,
+          unitPrice:           toNum(creditNoteAmount),
+          totalAmount:         toNum(creditNoteAmount),
           sourceType:          "Manual",
           sourceDocumentId:    orderDoc._id,
           sourceDocumentModel: "DoctorOrder",
@@ -2359,10 +2707,30 @@ async function onOrderCancelled(orderDoc, reason, actorId) {
           orderedByRole:       "System",
           status:              "pending-review",
           reviewReason:        `Order cancellation CN failed: ${e.message}`,
-        });
+        }, { name: actor.fullName || "System", role: actor.role || "System" });
       } catch (_) { /* best-effort */ }
     }
   }
+
+  // R7bj-F5 / R7bi-6-TBA-CRIT-1: ORDER_CANCELLED summary audit row. One
+  // row per order cancellation captures the cascade aggregate (so the
+  // GST register can show "Order X cancelled, ₹Y CN raised, N triggers
+  // voided"). Per-trigger void rows are already emitted inside
+  // cancelTrigger above.
+  try {
+    const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+    await emitBillingAudit({
+      event:     "ORDER_CANCELLED",
+      UHID:      orderDoc.UHID,
+      admissionId: orderDoc.admissionId,
+      amount:    creditNoteAmount,
+      actorId:   actorId,
+      actorName: actor.fullName,
+      actorRole: actor.role,
+      reason:    reasonText,
+      after:     { orderId: orderDoc._id, voided, billed, creditNoteAmount },
+    });
+  } catch (e) { console.warn("[autoBilling] ORDER_CANCELLED audit failed (non-fatal):", e?.message); }
 
   return { voided, billed, creditNoteAmount };
 }
@@ -2478,6 +2846,26 @@ async function undoTrigger(triggerId, { reason, user, skipTimeGate = false } = {
   trigger.voidedByRole  = user?.role || "System";
   trigger.voidReason    = String(reason).trim();
   await trigger.save();
+
+  // R7bj-F5 / R7bi-6-TBA-CRIT-1: TRIGGER_VOIDED audit row. Best-effort.
+  try {
+    const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+    await emitBillingAudit({
+      event:       "TRIGGER_VOIDED",
+      UHID:        trigger.UHID,
+      admissionId: trigger.admissionId,
+      triggerId:   trigger._id,
+      billId:      trigger.billId,
+      amount:      trigger.totalAmount,
+      actorId:     user?._id || user?.id,
+      actorName:   trigger.voidedBy,
+      actorRole:   trigger.voidedByRole,
+      reason:      `[Undo] ${trigger.voidReason}`,
+      before:      { status: "billed", serviceCode: trigger.serviceCode, totalAmount: trigger.totalAmount },
+      after:       { status: "voided" },
+    });
+  } catch (e) { console.warn("[autoBilling] TRIGGER_VOIDED audit failed (non-fatal):", e?.message); }
+
   return trigger;
 }
 
@@ -2597,6 +2985,26 @@ async function cancelTrigger(triggerId, { reason, user } = {}) {
   trigger.voidedByRole = user?.role || "System";
   trigger.voidReason   = `[Cancel] ${String(reason).trim()}`;
   await trigger.save();
+
+  // R7bj-F5 / R7bi-6-TBA-CRIT-1: TRIGGER_VOIDED audit row (cancel branch).
+  try {
+    const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+    await emitBillingAudit({
+      event:       "TRIGGER_VOIDED",
+      UHID:        trigger.UHID,
+      admissionId: trigger.admissionId,
+      triggerId:   trigger._id,
+      billId:      trigger.billId,
+      amount:      trigger.totalAmount,
+      actorId:     user?._id || user?.id,
+      actorName:   trigger.voidedBy,
+      actorRole:   trigger.voidedByRole,
+      reason:      trigger.voidReason,
+      before:      { status: "billed", serviceCode: trigger.serviceCode, totalAmount: trigger.totalAmount },
+      after:       { status: "cancelled" },
+    });
+  } catch (e) { console.warn("[autoBilling] TRIGGER_VOIDED audit failed (non-fatal):", e?.message); }
+
   return trigger;
 }
 
@@ -2892,4 +3300,10 @@ module.exports = {
   // R7az-CRIT-7: order-cancellation refund cascade (Agent D wires the route)
   onOrderCancelled,
   UNDO_WINDOW_MS,
+  // R7bm-F3 / META-3: exported for use by support-staff service-layer
+  // emit sites (physioService.completeSession, kitchenIndentService.markServed)
+  // so a single helper writes the trigger AND fires the TRIGGER_EMITTED
+  // BillingAudit row in one go. Pre-R7bm those sites called
+  // BillingTrigger.create() directly and the audit row was skipped.
+  _emitTrigger,
 };

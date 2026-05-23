@@ -18,12 +18,17 @@ const _post = async (path, body) => _j(await authFetch(`${BASE}${path}`, {
 const _put  = async (path, body) => _j(await authFetch(`${BASE}${path}`, {
   method: "PUT",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}),
 }));
-const _get  = async (path) => _j(await authFetch(`${BASE}${path}`));
+// R7bh-F9 / R7bg-4-HIGH-1 — accept an optional { signal } so search-as-
+// you-type callers can attach an AbortController and cancel in-flight
+// requests when the user keeps typing. Without this, fast typists
+// generate a fan-out of overlapping fetches whose responses can race
+// (last completed wins, not last issued) and stomp on fresh results.
+const _get  = async (path, opts = {}) => _j(await authFetch(`${BASE}${path}`, opts));
 const _del  = async (path) => _j(await authFetch(`${BASE}${path}`, { method: "DELETE" }));
 
 // Drugs
-export const listDrugs    = (params = {}) => _get(`/drugs${_qs(params)}`);
-export const searchDrugs  = (q)            => _get(`/drugs/search?q=${encodeURIComponent(q)}`);
+export const listDrugs    = (params = {}, opts) => _get(`/drugs${_qs(params)}`, opts);
+export const searchDrugs  = (q, opts)            => _get(`/drugs/search?q=${encodeURIComponent(q)}`, opts);
 export const createDrug   = (body)         => _post(`/drugs`, body);
 export const updateDrug   = (id, body)     => _put(`/drugs/${id}`, body);
 export const deleteDrug   = (id)           => _del(`/drugs/${id}`);
@@ -41,7 +46,7 @@ export const stockRollup   = ()                => _get(`/stock`);
 
 // Sales
 export const dispense      = (b)               => _post(`/sales`, b);
-export const listSales     = (params = {})     => _get(`/sales${_qs(params)}`);
+export const listSales     = (params = {}, opts) => _get(`/sales${_qs(params)}`, opts);
 export const getSale       = (id)              => _get(`/sales/${id}`);
 export const cancelSale    = (id)              => _post(`/sales/${id}/cancel`);
 export const returnSaleItems = (id, body)       => _post(`/sales/${id}/return`, body);

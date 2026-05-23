@@ -10,6 +10,7 @@ import { Checkbox } from "primereact/checkbox";
 import { AutoComplete } from "primereact/autocomplete";
 import emergencyService from "../../Services/patient/emergencyService";
 import patientService from "../../Services/patient/patientService";
+import { unwrapResponse } from "../../utils/apiResponse";
 
 const EmergencyForm = () => {
   const navigate = useNavigate();
@@ -78,10 +79,16 @@ const EmergencyForm = () => {
     }
   }, []);
 
+  // R7bj-F8: use unwrapResponse so we no longer hand-roll
+  // `data.data || data` fallbacks. The adapter handles both the new
+  // envelope and any controllers still on the legacy shape.
   const loadPatients = async () => {
     try {
       const response = await patientService.getAllPatients();
-      setPatients(response.data.data || response.data || []);
+      const { ok, data } = unwrapResponse(response);
+      if (!ok) return;
+      const rows = Array.isArray(data) ? data : (data?.patients || []);
+      setPatients(rows);
     } catch (error) {
       console.error("Error loading patients:", error);
     }
@@ -92,13 +99,22 @@ const EmergencyForm = () => {
       const response = await emergencyService.getEmergencyVisitById(
         emergencyNumber
       );
-      const emergency = response.data.data || response.data;
+      const { ok, data: emergency, error } = unwrapResponse(response);
+      if (!ok || !emergency) {
+        toast.current?.show({
+          severity: "error",
+          summary: "Error",
+          detail: error?.message || "Failed to load emergency case",
+        });
+        return;
+      }
       setFormData(emergency);
       if (emergency.patientId) {
         const patientRes = await patientService.getPatientById(
           emergency.patientId
         );
-        setSelectedPatient(patientRes.data.data || patientRes.data);
+        const { data: patientData } = unwrapResponse(patientRes);
+        setSelectedPatient(patientData);
       }
     } catch (error) {
       toast.current?.show({

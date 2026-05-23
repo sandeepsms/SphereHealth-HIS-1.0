@@ -9,13 +9,15 @@ const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/MLC/mlcController");
 const { attemptAuth, attachDoctorProfile, requireAction } = require("../../middleware/auth");
+// :idOrMlr accepts ObjectId OR MLR string ("RK0001") — do not guard it.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // Soft-auth + doctor profile resolver — list / read endpoints auto-restrict
 // to the logged-in doctor's MLCs. Non-doctor roles see everything.
 router.use(attemptAuth, attachDoctorProfile);
 
 // Literal routes BEFORE param routes to avoid /:idOrMlr swallowing them.
-router.get   ("/preview-prefix/:doctorId", requireAction("mlc.read"),  ctrl.previewPrefix);
+router.get   ("/preview-prefix/:doctorId", validateObjectIdParam("doctorId"), requireAction("mlc.read"),  ctrl.previewPrefix);
 
 router.get   ("/",            requireAction("mlc.read"),  ctrl.listMLC);
 router.post  ("/",            requireAction("mlc.write"), ctrl.createMLC);

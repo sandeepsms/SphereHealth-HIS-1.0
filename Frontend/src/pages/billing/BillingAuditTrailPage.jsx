@@ -328,7 +328,7 @@ export default function BillingAuditTrailPage() {
   };
 
   const authHeader = useCallback(() => {
-    const t = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+    const t = (sessionStorage.getItem("his_token"));
     return t ? { Authorization:`Bearer ${t}` } : {};
   }, []);
 

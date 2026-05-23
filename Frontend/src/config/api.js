@@ -4,8 +4,16 @@
 // Audit finding H-05: warn loudly when running in PROD without the env var
 // set so a misconfigured deploy doesn't silently try to hit a developer
 // laptop's localhost.
+//
+// R7au-1: fallback port was 5000 but Backend has been on 5050 since R7bt.
+// If .env failed to load (Vite not restarted after .env change, fresh
+// checkout, env-var typo) every API call went to a dead port → connection
+// refused → axios surfaced 0-status errors → the transient-401 counter
+// could not see them, but the AuthContext restore() still failed → user
+// kept getting punted to /login. Sync this fallback with the Backend
+// listening port so the dev-default path doesn't silently break.
 const RAW_API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-export const API_BASE_URL = RAW_API_BASE_URL || "http://localhost:5000/api";
+export const API_BASE_URL = RAW_API_BASE_URL || "http://localhost:5050/api";
 
 if (import.meta.env.PROD && !RAW_API_BASE_URL) {
   // eslint-disable-next-line no-console
@@ -85,6 +93,9 @@ export const API_ENDPOINTS = {
   MAR: `${API_BASE_URL}/mar`,
   NURSE_NOTES: `${API_BASE_URL}/nurse-notes`,
   NURSING_NOTES: `${API_BASE_URL}/nursing-notes`,
+  // R7bs — chip-page POSTs to /api/nursing-assessments/<type>. Dispatcher
+  // in nabhRegisterEmitter fans out type=dvt → DVTRegister (Caprini).
+  NURSING_ASSESSMENTS: `${API_BASE_URL}/nursing-assessments`,
   NURSING_CHARGES: `${API_BASE_URL}/nursing-charges`,
 
   // ── Doctor Orders ─────────────────────────────────────────────

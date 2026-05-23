@@ -15,6 +15,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 const mongoose = require("mongoose");
+const { decimalToNumber } = require("../../utils/money");
 
 const PharmacyVendorReturnSchema = new mongoose.Schema(
   {
@@ -71,7 +72,16 @@ const PharmacyVendorReturnSchema = new mongoose.Schema(
     },
     returnedByRole: { type: String, trim: true, default: "" },
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+    // R7bh-F2: serialize Decimal128 → Number on the wire. No money fields
+    // today, but a future debit-note total / refund amount field will land
+    // here; the transform is harmless on a Decimal128-free document and
+    // future-proofs any reader that lean()s with a Decimal128 field
+    // accidentally introduced upstream.
+    toJSON:   { virtuals: true, transform: decimalToNumber },
+    toObject: { virtuals: true, transform: decimalToNumber },
+  },
 );
 
 PharmacyVendorReturnSchema.index({ vendor: 1, returnedAt: -1 });

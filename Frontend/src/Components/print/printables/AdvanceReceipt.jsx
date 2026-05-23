@@ -7,9 +7,16 @@ import PrintShell from "../PrintShell";
 import { fmtINR } from "../amountWords";
 import { numberToIndianWords, toNum } from "../../../utils/printUtils";
 
-const AdvanceReceipt = ({ settings, receipt = {} }) => {
+const AdvanceReceipt = ({ settings = {}, receipt = {} }) => {
   const amount = toNum(receipt.amount);
   const printCount = toNum(receipt.printCount);
+  // R7bh-F7 / R7bg-7-HIGH-1: 2026 GST circular — advances ≥ ₹50,000 must
+  // capture the customer's GSTIN on the receipt (B2B threshold). The
+  // hospital's GSTIN already prints in PrintShell's header from settings.
+  const HIGH_VALUE_GST_THRESHOLD = 50000;
+  const customerGstin = receipt.customerGstin || receipt.gstin;
+  const requiresGstin = amount >= HIGH_VALUE_GST_THRESHOLD;
+  const missingGstinForHighValue = requiresGstin && !customerGstin;
   return (
     <PrintShell
       settings={settings}
@@ -32,6 +39,11 @@ const AdvanceReceipt = ({ settings, receipt = {} }) => {
         { label: "Receipt Date", value: receipt.date
             ? new Date(receipt.date).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
             : new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
+        // R7bh-F7 / R7bg-7-HIGH-1: hospital + customer GSTIN visible on
+        // the deposit receipt so corporate / TPA accounts can later claim
+        // input tax credit when the advance is adjusted on the final bill.
+        { label: "Hospital GSTIN", value: settings.gstin || "—" },
+        { label: "Customer GSTIN", value: customerGstin || (requiresGstin ? "MISSING — required for ≥ ₹50,000" : "—") },
       ]}
       signatureLabels={["Authorised Cashier", "Depositor / Patient"]}
     >
@@ -62,6 +74,30 @@ const AdvanceReceipt = ({ settings, receipt = {} }) => {
       <div className="pr-amount-words">
         <strong>In words:</strong> {numberToIndianWords(amount)}
       </div>
+
+      {missingGstinForHighValue && (
+        <div style={{
+          background: "#fef2f2", border: "1.5px solid #fecaca", color: "#7f1d1d",
+          padding: "8px 14px", borderRadius: 6, marginBottom: 12,
+          fontSize: 11, fontWeight: 700,
+        }}>
+          ⚠ GST COMPLIANCE — Advances of ₹50,000 or more require the depositor's GSTIN
+          (2026 GST circular). Please capture the customer's GSTIN before printing.
+        </div>
+      )}
+
+      {customerGstin && (
+        <div className="pr-section">
+          <div className="pr-section__title">Tax Identification</div>
+          <div className="pr-section__body" style={{ fontSize: 11 }}>
+            <div><strong>Hospital GSTIN:</strong> <span style={{ fontFamily: "'DM Mono', monospace" }}>{settings.gstin || "—"}</span></div>
+            <div style={{ marginTop: 2 }}>
+              <strong>Customer GSTIN:</strong> <span style={{ fontFamily: "'DM Mono', monospace" }}>{customerGstin}</span>
+            </div>
+            {receipt.customerLegalName && <div style={{ marginTop: 2 }}><strong>Legal Name:</strong> {receipt.customerLegalName}</div>}
+          </div>
+        </div>
+      )}
 
       <div className="pr-section">
         <div className="pr-section__title">Adjustment Note</div>

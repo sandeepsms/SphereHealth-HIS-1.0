@@ -1,7 +1,21 @@
+/**
+ * investigationOrderController.js — Lab/Radiology order HTTP layer.
+ *
+ * R7bj-F8 / R7bi-3-CRIT-1: envelope normalised via utils/apiEnvelope. The
+ * legacy `getAll` spread `...result` (pagination) at the top level and
+ * duplicated `data`; pagination now lives in `meta`.
+ */
 const svc = require("../../services/Investigation/investigationOrderService");
 const { logErr } = require("../../utils/logErr");
+// Lazy import keeps boot order tolerant.
+let _env;
+function env() {
+  if (!_env) _env = require("../../utils/apiEnvelope");
+  return _env;
+}
 
 exports.create = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const data = await svc.createOrder(req.body);
     // ── Auto-billing hook ──────────────────────────────────────
@@ -15,60 +29,67 @@ exports.create = async (req, res) => {
     } catch (e) {
       logErr("autoBilling", "load failure on investigation.create")(e);
     }
-    res.status(201).json({ success: true, data });
+    return sendOk(res, data, undefined, 201);
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    return sendErr(res, e, "VALIDATION", 400);
   }
 };
 
 exports.getAll = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const result = await svc.getOrders(req.query);
-    res.json({ success: true, ...result, data: result.orders });
+    const { orders = [], ...meta } = result || {};
+    return sendOk(res, orders, { count: orders.length, ...meta });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
 exports.getSummary = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const data = await svc.getDashboardSummary();
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
 exports.getByUHID = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const data = await svc.getOrdersByUHID(req.params.UHID);
-    res.json({ success: true, data });
+    const arr = Array.isArray(data) ? data : (data?.orders || []);
+    return sendOk(res, arr, { count: arr.length });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
 exports.getById = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const data = await svc.getOrderById(req.params.id);
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) {
-    res
-      .status(e.message === "Order not found" ? 404 : 500)
-      .json({ success: false, message: e.message });
+    const notFound = e.message === "Order not found";
+    return sendErr(res, e, notFound ? "NOT_FOUND" : null, notFound ? 404 : 500);
   }
 };
 
 exports.collectSample = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const data = await svc.collectSamples(req.params.id, req.body);
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    return sendErr(res, e, "VALIDATION", 400);
   }
 };
 
 exports.enterResults = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const data = await svc.enterResults(req.params.id, req.body);
     // ── Auto-billing hook ──────────────────────────────────────
@@ -78,22 +99,24 @@ exports.enterResults = async (req, res) => {
     } catch (e) {
       logErr("autoBilling", "load failure on investigation.result")(e);
     }
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    return sendErr(res, e, "VALIDATION", 400);
   }
 };
 
 exports.enterExternalResult = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const data = await svc.enterExternalResult(req.params.id, req.body);
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    return sendErr(res, e, "VALIDATION", 400);
   }
 };
 
 exports.verify = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const data = await svc.verifyResults(req.params.id, req.body);
     // ── Auto-billing hook ──────────────────────────────────────
@@ -103,36 +126,39 @@ exports.verify = async (req, res) => {
     } catch (e) {
       logErr("autoBilling", "load failure on investigation.result")(e);
     }
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    return sendErr(res, e, "VALIDATION", 400);
   }
 };
 
 exports.markPrinted = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const data = await svc.markReportPrinted(req.params.id, req.body);
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    return sendErr(res, e, "VALIDATION", 400);
   }
 };
 
 exports.cancel = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const data = await svc.cancelOrder(req.params.id, req.body);
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    return sendErr(res, e, "VALIDATION", 400);
   }
 };
 
 exports.addTest = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const data = await svc.addTest(req.params.id, req.body);
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    return sendErr(res, e, "VALIDATION", 400);
   }
 };
 
@@ -142,12 +168,13 @@ exports.addTest = async (req, res) => {
 // parentOrderId to the source. The default `items` cloned from the
 // source order, but caller can pass a subset.
 exports.requestRetest = async (req, res) => {
+  const { sendOk, sendErr } = env();
   try {
     const InvestigationOrder = require("../../models/Investigation/InvestigationOrderModel");
     const parent = await InvestigationOrder.findById(req.params.id).lean();
-    if (!parent) return res.status(404).json({ success: false, message: "Source order not found" });
+    if (!parent) return sendErr(res, "Source order not found", "NOT_FOUND", 404);
     if (!String(req.body?.reason || "").trim()) {
-      return res.status(400).json({ success: false, message: "reason is required for a retest" });
+      return sendErr(res, "reason is required for a retest", "VALIDATION", 400);
     }
     // Pick the items to retest. Default to all items from the parent.
     const wantedIds = Array.isArray(req.body?.items) && req.body.items.length
@@ -161,7 +188,7 @@ exports.requestRetest = async (req, res) => {
         externalLabName: it.externalLabName,
       }));
     if (!items.length) {
-      return res.status(400).json({ success: false, message: "No items to retest" });
+      return sendErr(res, "No items to retest", "VALIDATION", 400);
     }
     const data = await svc.createOrder({
       patientId:     parent.patientId,
@@ -185,8 +212,8 @@ exports.requestRetest = async (req, res) => {
     await InvestigationOrder.findByIdAndUpdate(data._id, {
       $set: { parentOrderId: parent._id, retestReason: String(req.body.reason).trim() },
     });
-    res.status(201).json({ success: true, data });
+    return sendOk(res, data, undefined, 201);
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    return sendErr(res, e, "VALIDATION", 400);
   }
 };

@@ -76,4 +76,15 @@ const DrugSchema = new mongoose.Schema(
 
 DrugSchema.index({ name: 1, strength: 1, manufacturer: 1 });
 
+// R7bh-F4 / R7bg-9-CRIT-1: text index for `searchDrugs` perf.
+// Pre-R7bh the search endpoint did a regex scan over name/genericName/brandName
+// without a backing index — on a 5k-drug master that's a full collection scan
+// per keystroke. Weighted text index lets Mongo use the inverted index +
+// $text $search for any query ≥ 2 chars. The controller still falls back to
+// exact-shape lookup for 1-char queries so the user sees something while typing.
+DrugSchema.index(
+  { name: "text", genericName: "text", brandName: "text" },
+  { weights: { name: 10, genericName: 8, brandName: 5 }, name: "drug_text_search" }
+);
+
 module.exports = mongoose.model("PharmacyDrug", DrugSchema);

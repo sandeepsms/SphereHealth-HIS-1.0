@@ -40,6 +40,7 @@
 
 const PatientBill    = require("../../models/PatientBillModel/PatientBillModel");
 const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
+const PharmacySale   = require("../../models/Pharmacy/PharmacySaleModel");
 const { toNum }      = require("../../utils/money");
 const { istStartOfToday, istEndOfToday, parseHospitalDate } = require("../../utils/queryGuards");
 
@@ -192,7 +193,49 @@ async function computeDayBook(dayOrStart) {
     } },
   ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
 
-  const [billsAgg, advIn, advOut] = await Promise.all([billsAggP, advanceInAggP, advanceOutAggP]);
+  // ── Pharmacy retail cash leg (R7bh-F2 / R7bg-1-CRIT-13) ─────────
+  // Pre-R7bh the Day Book ignored PharmacySale entirely → Bahi Khata
+  // under-reported by 30-40% on any hospital with an OTC counter. We
+  // fold pharmacy sales into the same cashIn computation, bucketed by
+  // paymentMode for the byMode breakdown.
+  //
+  // Status filter mirrors incomeService.todayRevenue: Completed +
+  // Supplemented + Partial-Return all contribute (the partial-return
+  // refund itself is captured on the *original* sale via patientCredit
+  // accounting; the headline grandTotal still reflects the booked
+  // revenue). Cancelled / Refunded are excluded (no cash inflow).
+  //
+  // paymentMode source is Title-case ("Cash"/"Card"/"UPI"/"Mixed"/
+  // "Credit") — UPPERCASE-normalize before bucketing so PHARMACY rows
+  // collide with the hospital `byMode` keys (CASH / CARD / UPI / …).
+  // R7bg-3-HIGH-1 case-drift fix.
+  const pharmacyAggP = PharmacySale.aggregate([
+    { $match: {
+        // saleDate isn't a column — createdAt is the truthful event time
+        // for a counter sale (mirrors incomeService).
+        createdAt: { $gte: start, $lt: end },
+        status: { $in: ["Completed", "Supplemented", "Partial-Return"] },
+    } },
+    { $addFields: {
+        _amt:  { $toDouble: { $ifNull: ["$grandTotal", 0] } },
+        _mode: { $toUpper: { $ifNull: ["$paymentMode", "Cash"] } },
+    } },
+    // Credit-mode sales DON'T touch the till — they bump patient
+    // balance only. Same logic as hospital ADVANCE_ADJUSTMENT.
+    { $match: { _mode: { $ne: "CREDIT" }, _amt: { $gt: 0 } } },
+    { $facet: {
+        total: [
+          { $group: { _id: null, total: { $sum: "$_amt" }, count: { $sum: 1 } } },
+        ],
+        byMode: [
+          { $group: { _id: "$_mode", total: { $sum: "$_amt" }, count: { $sum: 1 } } },
+        ],
+    } },
+  ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+
+  const [billsAgg, advIn, advOut, pharmacyAgg] = await Promise.all([
+    billsAggP, advanceInAggP, advanceOutAggP, pharmacyAggP,
+  ]);
   const facet = billsAgg[0] || {};
 
   const collections       = toNum(facet.collections?.[0]?.total);
@@ -211,8 +254,25 @@ async function computeDayBook(dayOrStart) {
   const advanceRefundsOut = toNum(advOut[0]?.total);
   const advanceRefundsCount = advOut[0]?.count || 0;
 
-  // Cash In = collections + advances + reversed refunds (cash back to drawer)
-  const cashIn  = +(collections + advanceDepositsIn + reversedRefunds).toFixed(2);
+  // ── Pharmacy retail (R7bg-1-CRIT-13) ────────────────────────────
+  const pharmacyFacet     = pharmacyAgg[0] || {};
+  const pharmacyRevenue   = toNum(pharmacyFacet.total?.[0]?.total);
+  const pharmacyCount     = pharmacyFacet.total?.[0]?.count || 0;
+  // Merge pharmacy byMode into the bill byMode list — keyed on the
+  // UPPERCASE paymentMode, sum amount + count where the keys overlap.
+  const byModeMap = new Map(byMode.map((r) => [r.mode, { ...r }]));
+  for (const r of pharmacyFacet.byMode || []) {
+    const mode = r._id;
+    const existing = byModeMap.get(mode) || { mode, amount: 0, count: 0 };
+    existing.amount = +(existing.amount + toNum(r.total)).toFixed(2);
+    existing.count  = (existing.count || 0) + (r.count || 0);
+    byModeMap.set(mode, existing);
+  }
+  const byModeMerged = Array.from(byModeMap.values()).sort((a, b) => b.amount - a.amount);
+
+  // Cash In = collections + advances + reversed refunds + pharmacy
+  //   (R7bg-1-CRIT-13 — pharmacy retail cash was missing entirely)
+  const cashIn  = +(collections + advanceDepositsIn + reversedRefunds + pharmacyRevenue).toFixed(2);
   // Cash Out = bill refunds + advance refunds + voided positive payments
   const cashOut = +(billRefundsOut + advanceRefundsOut + reversedPayments).toFixed(2);
   const netCashFlow = +(cashIn - cashOut - tdsDeducted).toFixed(2);
@@ -232,12 +292,14 @@ async function computeDayBook(dayOrStart) {
       billRefundsOut,
       reversedRefunds,         // R7bf-H A6-CRIT-6
       reversedPayments,
+      pharmacyRevenue,         // R7bh-F2 / R7bg-1-CRIT-13
+      pharmacyCount,
       tdsDeducted,
       cashIn,
       cashOut,
       netCashFlow,
     },
-    byMode,
+    byMode: byModeMerged,
   };
 }
 

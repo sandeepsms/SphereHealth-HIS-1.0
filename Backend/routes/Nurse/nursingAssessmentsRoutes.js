@@ -13,10 +13,11 @@ const express = require("express");
 const router  = express.Router();
 const NursingAssessment = require("../../models/Nurse/NursingAssessmentModel");
 const { attemptAuth, requireAction } = require("../../middleware/auth");
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 router.use(attemptAuth);
 
-const ALLOWED = ["daily", "fall-risk", "pressure-area", "pain", "nutrition", "education"];
+const ALLOWED = ["daily", "fall-risk", "pressure-area", "pain", "nutrition", "education", "dvt"];
 
 /* POST /api/nursing-assessments/:type
    Body: any payload object. We split out UHID / admissionId / patientName
@@ -37,6 +38,18 @@ router.post("/:type", requireAction("vitals.write"), async (req, res) => {
       recordedByUser: req.user?.id || null,
       data: rest,
     });
+
+    // R7bp — fan out to the NABH register matching this assessment type
+    // (pain → PainAssessmentRegister, fall-risk → FallRiskRegister,
+    // pressure-area → PressureUlcerRegister). Non-blocking: the assessment
+    // is already saved; register write failures must not roll it back.
+    try {
+      const emitter = require("../../services/Compliance/nabhRegisterEmitter");
+      emitter.emitFromNursingAssessment(doc, req.user).catch((e) =>
+        console.error("NABH register emit error:", e.message),
+      );
+    } catch (_) { /* swallow */ }
+
     return res.status(201).json({ success: true, data: doc });
   } catch (e) {
     return res.status(500).json({ success: false, message: e.message });
@@ -66,7 +79,7 @@ router.get("/", requireAction("mar.read"), async (req, res) => {
 });
 
 /* GET /api/nursing-assessments/:id — single record */
-router.get("/:id", requireAction("mar.read"), async (req, res) => {
+router.get("/:id", validateObjectIdParam("id"), requireAction("mar.read"), async (req, res) => {
   try {
     const doc = await NursingAssessment.findById(req.params.id).lean();
     if (!doc) return res.status(404).json({ success: false, message: "Not found" });

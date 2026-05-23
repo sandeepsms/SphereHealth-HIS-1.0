@@ -6,6 +6,7 @@
 
 import React from "react";
 import PrintShell from "../PrintShell";
+import { toNum } from "../../../utils/printUtils";
 
 const BODY_BY_TYPE = {
   admission: {
@@ -97,6 +98,7 @@ const ConsentForm = ({ settings, receipt = {} }) => {
       settings={settings}
       documentTitle={cfg.title}
       serialNo={r.consentNo}
+      printCount={toNum(r.printCount)}
       infoItems={[
         { label: "Patient",     value: r.patientName },
         { label: "UHID",        value: r.uhid },

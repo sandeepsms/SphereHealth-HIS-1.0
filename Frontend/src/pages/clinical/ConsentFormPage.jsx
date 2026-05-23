@@ -544,6 +544,16 @@ function ConsentPrintView({ data, type, onClose }) {
       signatoryName:    data.signedBy,
       signatoryRelation:data.relationToPatient,
       witnessName:      data.witnessName,
+      // R7bh-F1 / META-1: PrintAudit anchor — informed consent reprint
+      // trail is NABH PRE.2 / MOI.7 critical. ConsentForm maps to its
+      // own collection in ENTITY_MODEL.
+      printAudit: {
+        entityType:   "ConsentForm",
+        entityId:     data._id || data.consentId,
+        entityNumber: data.consentNumber || data.consentId,
+        UHID:         data.uhid,
+        patientName:  data.patientName,
+      },
     });
   };
 
@@ -759,7 +769,7 @@ function ConsentFormPageContent({ selectedPatient }) {
   const [previewData, setPreviewData] = useState(null);
   const [previewType, setPreviewType] = useState(null);
 
-  const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+  const token = (sessionStorage.getItem("his_token"));
   const headers = { Authorization: `Bearer ${token}` };
 
   // Auto-fill when patient selected from AdmittedPatientPanel

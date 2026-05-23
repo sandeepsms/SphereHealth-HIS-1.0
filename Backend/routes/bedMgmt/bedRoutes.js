@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const BedController = require("../../controllers/bedMgmt/bedController");
 const { requireAction } = require("../../middleware/auth");
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // R7bb-B/D4-HIGH-S1: every bed-management read now gated on `ipd.read`
 // (Admin / Doctor / Nurse / Receptionist). Pre-R7bb any authenticated
@@ -13,26 +14,26 @@ const { requireAction } = require("../../middleware/auth");
 router.post("/",      requireAction("departments.write"), BedController.createBeds);
 router.get("/",          requireAction("ipd.read"), BedController.getAllBeds);
 router.get("/available", requireAction("ipd.read"), BedController.getAvailableBeds);
-router.get("/:id",       requireAction("ipd.read"), BedController.getBedById);
-router.put("/:id",    requireAction("departments.write"), BedController.updateBed);
-router.delete("/:id", requireAction("departments.write"), BedController.deleteBed);
+router.get("/:id",       validateObjectIdParam("id"), requireAction("ipd.read"), BedController.getBedById);
+router.put("/:id",    validateObjectIdParam("id"), requireAction("departments.write"), BedController.updateBed);
+router.delete("/:id", validateObjectIdParam("id"), requireAction("departments.write"), BedController.deleteBed);
 
-router.get("/:id/pricing", requireAction("ipd.read"), BedController.getBedPricing);
+router.get("/:id/pricing", validateObjectIdParam("id"), requireAction("ipd.read"), BedController.getBedPricing);
 // Bed booking / discharge — Reception, Doctor, Admin (per ipd.assign-bed).
-router.post("/:id/book",      requireAction("ipd.assign-bed"), BedController.bookBed);
-router.post("/:id/discharge", requireAction("ipd.discharge"),  BedController.dischargeBed);
-router.get("/:id/estimate",   requireAction("ipd.read"), BedController.estimateCharges);
-router.patch("/:id/status",   requireAction("ipd.assign-bed"), BedController.updateBedStatus);
+router.post("/:id/book",      validateObjectIdParam("id"), requireAction("ipd.assign-bed"), BedController.bookBed);
+router.post("/:id/discharge", validateObjectIdParam("id"), requireAction("ipd.discharge"),  BedController.dischargeBed);
+router.get("/:id/estimate",   validateObjectIdParam("id"), requireAction("ipd.read"), BedController.estimateCharges);
+router.patch("/:id/status",   validateObjectIdParam("id"), requireAction("ipd.assign-bed"), BedController.updateBedStatus);
 
-router.get("/room/:roomId/capacity", requireAction("ipd.read"), BedController.checkRoomCapacity);
-router.get("/ward/:wardId/capacity", requireAction("ipd.read"), BedController.checkWardCapacity);
+router.get("/room/:roomId/capacity", validateObjectIdParam("roomId"), requireAction("ipd.read"), BedController.checkRoomCapacity);
+router.get("/ward/:wardId/capacity", validateObjectIdParam("wardId"), requireAction("ipd.read"), BedController.checkWardCapacity);
 
 // Housekeeping queue + state transitions — Housekeeping/WardBoy/Admin/Nurse.
 // R7az-A/D8-HIGH-3: pre-R7az both endpoints accepted any authenticated
 // role. Gated on ipd.assign-bed (Admin/Receptionist/Doctor) since they
 // directly flip bed occupancy state.
 router.get  ("/housekeeping/queue", requireAction("ipd.assign-bed"), BedController.getHousekeepingQueue);
-router.patch("/:id/housekeeping",   requireAction("ipd.assign-bed"), BedController.updateHousekeeping);
+router.patch("/:id/housekeeping",   validateObjectIdParam("id"), requireAction("ipd.assign-bed"), BedController.updateHousekeeping);
 
 // Reservation auto-expiry — Admin only (semi-cron operation).
 router.post("/reservations/expire-stale", requireAction("departments.write"), BedController.expireStaleReservations);

@@ -525,6 +525,15 @@ export default function IPDBillingLedger() {
         refNo:  p.transactionId,
         amount: toMoney(p.amount),
       })),
+      // R7bh-F1 / META-1: PrintAudit anchor — final IPD bill maps to
+      // PatientBill so the bill's printCount increments per print.
+      printAudit: {
+        entityType:   "Bill",
+        entityId:     data.bill?._id || data.admission._id,
+        entityNumber: data.bill?.billNumber || `FINAL-${data.admission.admissionNumber}`,
+        UHID:         data.admission.UHID,
+        patientName:  patient.fullName || data.admission.UHID,
+      },
     });
   };
 
@@ -570,6 +579,16 @@ export default function IPDBillingLedger() {
         refNo:  p.transactionId,
         amount: toMoney(p.amount),
       })),
+      // R7bh-F1 / META-1: PrintAudit anchor — interim bill prints
+      // are tracked against the underlying PatientBill so all three
+      // view-mode reprints (category/day/audit) share the same count.
+      printAudit: {
+        entityType:   "Bill",
+        entityId:     data.bill?._id || data.admission._id,
+        entityNumber: data.bill?.billNumber || `INTERIM-${data.admission.admissionNumber}`,
+        UHID:         data.admission.UHID,
+        patientName:  patient.fullName || data.admission.UHID,
+      },
     };
 
     // ── Audit Trail mode — full chronological log ─────────────────

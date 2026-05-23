@@ -1,4 +1,6 @@
 const mongoose = require("mongoose");
+const { toDec, decimalToNumber } = require("../../utils/money");
+const Dec = mongoose.Schema.Types.Decimal128;
 
 const BillingTriggerSchema = new mongoose.Schema({
   // ── Patient context ─────────────────────────────────────────
@@ -16,8 +18,12 @@ const BillingTriggerSchema = new mongoose.Schema({
   serviceCode:  String,
   serviceName:  String,
   quantity:     { type: Number, default: 1 },
-  unitPrice:    { type: Number, default: 0 },
-  totalAmount:  { type: Number, default: 0 },
+  // R7bh-F3 / R7bg-1-CRIT-6: money fields stored as Decimal128 so server-side
+  // arithmetic doesn't drift on long-stay admissions (IEEE-754 floats lose
+  // a cent per ~100 saves at ICU-tier rates). toJSON unwraps them back to
+  // numbers via utils/money.decimalToNumber, so wire shape is unchanged.
+  unitPrice:    { type: Dec, default: () => toDec(0) },
+  totalAmount:  { type: Dec, default: () => toDec(0) },
 
   // ── Clinical source ─────────────────────────────────────────
   // "Admission", "BedCharge", "Emergency" are fired by autoBillingService
@@ -34,11 +40,22 @@ const BillingTriggerSchema = new mongoose.Schema({
   // MAR administration path → "MAR"; the dedup query specifically looks
   // for "MAR_RESERVATION" to detect "this drug was already billed at
   // dispense".
+  // R7bj-F5 / R7bi-6-TBA-MED-1: enum extended to cover the new chargeable
+  // event types fired by support-staff agents (Physiotherapist, Dietician,
+  // Housekeeping, Security, Ward Boy, Kitchen). The `kind` set lives here on
+  // sourceType (the BillingTrigger.kind concept maps onto this field — there
+  // is no separate `kind` column on the schema). New PHYSIO_*/DIET_*/HK_*/
+  // SEC_*/WB_* values are added so the new emitters can land without
+  // tripping the schema enum validator.
   sourceType: {
     type: String,
     enum: ["NurseNote","DoctorNote","DoctorAssessment","MAR","MAR_RESERVATION","InvestigationOrder",
            "Equipment","CarePlan","Discharge","Procedure","DoctorVisit","Manual","AutoCharge",
-           "Admission","BedCharge","Emergency"],
+           "Admission","BedCharge","Emergency",
+           // R7bj-F5 / R7bi-6-TBA-MED-1: support-staff kinds
+           "PHYSIO_SESSION","DIET_MEAL","DIET_CONSULT",
+           "HK_LINEN","HK_LAUNDRY","HK_BMW",
+           "SEC_VISITOR_PASS","WB_TRANSPORT"],
     required: true },
   sourceDocumentId:    { type: mongoose.Schema.Types.ObjectId },
   sourceDocumentModel: String, // "NurseNote", "DoctorNote", "MAR", etc.
@@ -46,16 +63,34 @@ const BillingTriggerSchema = new mongoose.Schema({
   // ── ORDER trail (who advised/ordered) ──────────────────────
   orderedBy:     String,   // Doctor/Nurse name
   orderedById:   { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  orderedByRole: { type: String, enum: ["Doctor","Nurse","System","Lab","Receptionist","Admin","Pharmacist","Accountant"], default: "System" },
+  // R7bj-F5 / R7bi-6-TBA-MED-1: enum extended for support-staff roles. The
+  // new ICU-billing event emitters (Physiotherapist, Dietician, Housekeeping,
+  // Security, Ward Boy, Kitchen) carry these role labels — pre-R7bj they
+  // failed enum validation and the trigger silently fell back to "System",
+  // breaking actor attribution in the audit trail.
+  orderedByRole: { type: String, enum: ["Doctor","Nurse","System","Lab","Receptionist","Admin","Pharmacist","Accountant","Cron",
+                                          "Physiotherapist","Dietician","Housekeeping","Security","Ward Boy","Kitchen","Lab Technician","MRD"], default: "System" },
   orderedAt:     { type: Date, default: Date.now },
   orderDetails:  String,   // "Ordered CBC for monitoring" / "IV Cannulation performed"
 
   // ── COMPLETION trail (who completed the task) ───────────────
   completedBy:     String,
   completedById:   { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  completedByRole: { type: String, enum: ["Doctor","Nurse","System","Lab","Receptionist","Admin","Pharmacist","Accountant"] },
+  completedByRole: { type: String, enum: ["Doctor","Nurse","System","Lab","Receptionist","Admin","Pharmacist","Accountant","Cron",
+                                            "Physiotherapist","Dietician","Housekeeping","Security","Ward Boy","Kitchen","Lab Technician","MRD"] },
   completedAt:     Date,
   completionNotes: String,
+
+  // ── TRIGGER ATTRIBUTION (R7bh-F3 / R7bg-1-CRIT-6 / NABH-CRIT-A3) ───
+  // Pre-R7bh the trigger had orderedBy/completedBy but no single
+  // "who fired this trigger" pair — for cron-emitted bed/nursing/package
+  // rows the orderedBy field was literally "System" and there was no
+  // way to distinguish a cron emit from a service-layer emit in the
+  // audit trail. NABH (and any internal incident review) needs the
+  // emitting actor stamped on every charge row.
+  triggeredBy:     { type: String, default: null },                                       // display name
+  triggeredById:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  triggeredByRole: { type: String, default: null },                                        // Doctor|Nurse|Receptionist|System|Cron|Pharmacist|Admin
 
   // ── BILLING trail ───────────────────────────────────────────
   billId:     { type: mongoose.Schema.Types.ObjectId, ref: "PatientBill" },
@@ -98,8 +133,15 @@ const BillingTriggerSchema = new mongoose.Schema({
   // originalUnitPrice / originalQuantity are sticky from the very
   // first fire so we can show "originally ₹400, now ₹300" even
   // after multiple edits.
-  originalUnitPrice: Number,
-  originalQuantity:  Number,
+  // R7bj-F5 / R7bi-6-TBA-CRIT-2: store as Decimal128 (was Number) so the
+  // sticky-original snapshot matches the precision of the live unitPrice/
+  // totalAmount fields. Without this, IEEE-754 drift could make an
+  // override comparison fail (originally 300.00 stored as 299.999999…)
+  // and the audit comparison "originally ₹X" would render incorrectly.
+  // The toJSON unwrap below (decimalToNumber) walks recursively so the
+  // wire shape is unchanged for the IPD ledger.
+  originalUnitPrice: { type: Dec, default: () => toDec(0) },
+  originalQuantity:  { type: Dec, default: () => toDec(0) },
   overrideHistory: [{
     field:        String,                 // "unitPrice" / "quantity" / "totalAmount"
     oldValue:     mongoose.Schema.Types.Mixed,
@@ -173,5 +215,13 @@ BillingTriggerSchema.index({ admissionId: 1, status: 1, createdAt: -1 });
 // scanned all sourceTypes per admission — fine at small scale but slow
 // at long-stay-ICU cardinalities (~1k+ triggers per admission).
 BillingTriggerSchema.index({ admissionId: 1, createdAt: -1 });
+
+// R7bh-F3 / R7bg-1-CRIT-6: serialize Decimal128 money fields back to plain
+// JS Numbers on toJSON / toObject so the wire shape stays unchanged for
+// the IPDLedger / audit endpoints. Without this, unitPrice/totalAmount
+// would land in the JSON as { $numberDecimal: "300.00" } and break the
+// frontend's currency formatting.
+BillingTriggerSchema.set("toJSON",   { transform: decimalToNumber });
+BillingTriggerSchema.set("toObject", { transform: decimalToNumber });
 
 module.exports = mongoose.model("BillingTrigger", BillingTriggerSchema);

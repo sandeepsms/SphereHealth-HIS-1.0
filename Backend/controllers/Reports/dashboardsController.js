@@ -64,6 +64,10 @@ const {
   parseHospitalDate, parseHospitalDateRange,
 } = require("../../utils/queryGuards");
 const lruCache = require("../../utils/lruCache");
+// R7bh-F8: dashboards envelope normalization. Every response now uses
+// `sendOk(res, data, meta?)` — top-level scalars (from/to/date) move into
+// `meta`, and primary payloads land under `data`.
+const { sendOk, sendErr } = require("../../utils/apiEnvelope");
 
 // R7bf-H A6-HIGH-2: 24h cache previously made bulk-sale staleness lag the
 // dashboard for hours. We shorten TTL to 5 min and expose an invalidator the
@@ -82,7 +86,7 @@ exports.getTodayRevenue = async (req, res, next) => {
   try {
     const incomeService = require("../../services/Reports/incomeService");
     const data = await incomeService.todayRevenue();
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) { next(e); }
 };
 
@@ -93,9 +97,9 @@ exports.getDayBook = async (req, res, next) => {
   try {
     const dayBookService = require("../../services/Reports/dayBookService");
     const data = await dayBookService.computeDayBook(req.query.date);
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) {
-    if (e?.status) return res.status(e.status).json({ success: false, message: e.message });
+    if (e?.status) return sendErr(res, e, e.code || "BAD_REQUEST", e.status);
     next(e);
   }
 };
@@ -107,7 +111,7 @@ exports.getMonthlyGst = async (req, res, next) => {
   try {
     const period = String(req.query.period || "").trim();
     if (!/^\d{4}-\d{2}$/.test(period)) {
-      return res.status(400).json({ success: false, message: "period must be YYYY-MM" });
+      return sendErr(res, "period must be YYYY-MM", "VALIDATION", 400);
     }
     const [y, m] = period.split("-").map(Number);
     const periodStart = new Date(`${period}-01T00:00:00+05:30`);
@@ -116,7 +120,7 @@ exports.getMonthlyGst = async (req, res, next) => {
     const periodEnd = new Date(`${nextY}-${String(nextM).padStart(2, "0")}-01T00:00:00+05:30`);
     const gstService = require("../../services/Reports/gstService");
     const data = await gstService.aggregateGSTForMonth(periodStart, periodEnd);
-    res.json({ success: true, data: { period, periodStart, periodEnd, ...data } });
+    return sendOk(res, { period, periodStart, periodEnd, ...data }, { period });
   } catch (e) { next(e); }
 };
 
@@ -158,7 +162,7 @@ exports.getPatientCensus = async (req, res, next) => {
         ipdActive,
       };
     });
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) { next(e); }
 };
 
@@ -191,7 +195,7 @@ exports.getPharmacyRevenueTrend = async (req, res, next) => {
       ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
       return rows.map((r) => ({ date: r._id, count: r.count, net: toNum(r.net), grand: toNum(r.grand) }));
     });
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) { next(e); }
 };
 
@@ -204,7 +208,7 @@ exports.getDoctorPerformance = async (req, res, next) => {
     try {
       ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 30, maxDays: 366 }));
     } catch (e) {
-      return res.status(e.status || 400).json({ success: false, message: e.message });
+      return sendErr(res, e, "VALIDATION", e.status || 400);
     }
 
     // R7bf-H A6-HIGH-3: appointment counts EXCLUDE Cancelled (and NoShow
@@ -272,7 +276,11 @@ exports.getDoctorPerformance = async (req, res, next) => {
       byDoctor.set(id, row);
     }
     const data = [...byDoctor.values()].sort((a, b) => b.revenue - a.revenue);
-    res.json({ success: true, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10), data });
+    const fromStr = from.toISOString().slice(0, 10);
+    const toStr   = to.toISOString().slice(0, 10);
+    return sendOk(res,
+      { from: fromStr, to: toStr, rows: data },
+      { from: fromStr, to: toStr, count: data.length });
   } catch (e) { next(e); }
 };
 
@@ -315,7 +323,7 @@ exports.getBedOccupancy = async (req, res, next) => {
       { total: 0, occupied: 0, available: 0, reserved: 0 },
     );
     totals.occupancyPct = totals.total ? Math.round((totals.occupied / totals.total) * 100) : 0;
-    res.json({ success: true, data: { totals, byWard: rows } });
+    return sendOk(res, { totals, byWard: rows });
   } catch (e) { next(e); }
 };
 
@@ -328,7 +336,7 @@ exports.getLabTat = async (req, res, next) => {
     try {
       ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 30, maxDays: 366 }));
     } catch (e) {
-      return res.status(e.status || 400).json({ success: false, message: e.message });
+      return sendErr(res, e, "VALIDATION", e.status || 400);
     }
     // R7bf-H A6-HIGH-5: TAT = items[].verifiedAt - items[].sampleCollectedAt.
     // Pre-R7bf we used createdAt for both endpoints, giving a near-zero TAT
@@ -366,19 +374,19 @@ exports.getLabTat = async (req, res, next) => {
       } },
       { $sort: { count: -1 } },
     ]).option({ allowDiskUse: true, maxTimeMS: 20_000 });
-    res.json({
-      success: true,
-      from: from.toISOString().slice(0, 10),
-      to:   to.toISOString().slice(0, 10),
-      data: rows.map((r) => ({
-        category:   r._id,
-        count:      r.count,
-        avgMins:    Math.round(r.avgMins),
-        medianMins: Math.round(r.medianMins),
-        maxMins:    Math.round(r.maxMins),
-        minMins:    Math.round(r.minMins),
-      })),
-    });
+    const fromStr = from.toISOString().slice(0, 10);
+    const toStr   = to.toISOString().slice(0, 10);
+    const items = rows.map((r) => ({
+      category:   r._id,
+      count:      r.count,
+      avgMins:    Math.round(r.avgMins),
+      medianMins: Math.round(r.medianMins),
+      maxMins:    Math.round(r.maxMins),
+      minMins:    Math.round(r.minMins),
+    }));
+    return sendOk(res,
+      { from: fromStr, to: toStr, rows: items },
+      { from: fromStr, to: toStr, count: items.length });
   } catch (e) { next(e); }
 };
 
@@ -432,7 +440,7 @@ exports.getAbcAnalysis = async (req, res, next) => {
       }, { A: 0, B: 0, C: 0 });
       return { months, grandTotal: +grandTotal.toFixed(2), buckets: counts, items: classified };
     });
-    res.json({ success: true, data });
+    return sendOk(res, data);
   } catch (e) { next(e); }
 };
 
@@ -445,7 +453,7 @@ exports.getArAging = async (req, res, next) => {
     try {
       asOf = req.query.asOf ? parseHospitalDate(req.query.asOf, { endOfDay: true }) : istEndOfToday();
     } catch (e) {
-      return res.status(e.status || 400).json({ success: false, message: e.message });
+      return sendErr(res, e, "VALIDATION", e.status || 400);
     }
     const cacheKey = `aging:${asOf.toISOString().slice(0, 10)}`;
     const data = await _agingCache.get(cacheKey, async () => {
@@ -518,7 +526,7 @@ exports.getArAging = async (req, res, next) => {
       }
       return out;
     });
-    res.json({ success: true, data });
+    return sendOk(res, data, { asOf: asOf.toISOString().slice(0, 10) });
   } catch (e) { next(e); }
 };
 
@@ -530,7 +538,7 @@ exports.getDailyCollection = async (req, res, next) => {
     let dayStart, dayEnd;
     if (req.query.date) {
       try { dayStart = parseHospitalDate(req.query.date); }
-      catch (e) { return res.status(400).json({ success: false, message: e.message }); }
+      catch (e) { return sendErr(res, e, "VALIDATION", 400); }
     } else {
       dayStart = istStartOfToday();
     }
@@ -601,13 +609,11 @@ exports.getDailyCollection = async (req, res, next) => {
     const total = facet.total?.[0]?.n || 0;
     const rows  = (facet.rows  || []).map((r) => ({ ...r, amount: toNum(r.amount) }));
     const byMode = (facet.byMode || []).map((r) => ({ mode: r._id, amount: toNum(r.amount), count: r.count }));
-    res.json({
-      success: true,
-      date: dayStart.toISOString().slice(0, 10),
-      data: rows,
-      byMode,
-      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
-    });
+    const dateStr = dayStart.toISOString().slice(0, 10);
+    const pagination = { page, limit, total, pages: Math.ceil(total / limit) };
+    return sendOk(res,
+      { date: dateStr, rows, byMode, pagination },
+      { date: dateStr, total, page, limit });
   } catch (e) { next(e); }
 };
 
@@ -620,7 +626,7 @@ exports.getDiagnosisFrequency = async (req, res, next) => {
     try {
       ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 90, maxDays: 366 }));
     } catch (e) {
-      return res.status(e.status || 400).json({ success: false, message: e.message });
+      return sendErr(res, e, "VALIDATION", e.status || 400);
     }
     // R7bf-H A6-HIGH-10: pre-R7bf the report grouped by raw codeRaw string
     // so "I10", "i10 ", " I10\n" all bucketed separately. Now normalize
@@ -647,11 +653,11 @@ exports.getDiagnosisFrequency = async (req, res, next) => {
       { $sort: { count: -1 } },
       { $limit: 100 },
     ]).option({ allowDiskUse: true, maxTimeMS: 20_000 });
-    res.json({
-      success: true,
-      from: from.toISOString().slice(0, 10),
-      to:   to.toISOString().slice(0, 10),
-      data: rows.map((r) => ({ code: r._id, description: r.description || "", count: r.count })),
-    });
+    const fromStr = from.toISOString().slice(0, 10);
+    const toStr   = to.toISOString().slice(0, 10);
+    const items = rows.map((r) => ({ code: r._id, description: r.description || "", count: r.count }));
+    return sendOk(res,
+      { from: fromStr, to: toStr, rows: items },
+      { from: fromStr, to: toStr, count: items.length });
   } catch (e) { next(e); }
 };

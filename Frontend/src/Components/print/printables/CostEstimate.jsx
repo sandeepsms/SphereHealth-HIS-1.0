@@ -7,20 +7,22 @@
 import React from "react";
 import PrintShell from "../PrintShell";
 import { fmtINR, amountInWords } from "../amountWords";
+import { toNum } from "../../../utils/printUtils";
 
 const CostEstimate = ({ settings, receipt = {} }) => {
   const items = Array.isArray(receipt.items) ? receipt.items : [];
-  const subtotal = items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
-  const tax      = Number(receipt.tax) || 0;
+  const subtotal = items.reduce((s, it) => s + toNum(it.amount), 0);
+  const tax      = toNum(receipt.tax);
   const total    = subtotal + tax;
-  const totalLow  = receipt.totalLow  != null ? Number(receipt.totalLow)  : total * 0.9;
-  const totalHigh = receipt.totalHigh != null ? Number(receipt.totalHigh) : total * 1.15;
+  const totalLow  = receipt.totalLow  != null ? toNum(receipt.totalLow)  : total * 0.9;
+  const totalHigh = receipt.totalHigh != null ? toNum(receipt.totalHigh) : total * 1.15;
 
   return (
     <PrintShell
       settings={settings}
       documentTitle="Cost Estimate · Indicative"
       serialNo={receipt.estimateNo}
+      printCount={toNum(receipt.printCount)}
       infoItems={[
         { label: "Patient",      value: receipt.patientName },
         { label: "UHID",         value: receipt.uhid },

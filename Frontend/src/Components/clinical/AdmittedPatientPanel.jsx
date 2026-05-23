@@ -429,7 +429,7 @@ export default function AdmittedPatientPanel({ onPatientSelect, selectedId, page
     try {
       if (!silent) setLoading(true);
       else         setRefreshing(true);
-      const token   = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+      const token   = (sessionStorage.getItem("his_token"));
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const [activeRes, discRes] = await Promise.allSettled([
         // IPD-only — this panel is literally "Admitted patients", so

@@ -9,10 +9,16 @@ const express = require("express");
 const router = express.Router();
 const prescriptionController = require("../../controllers/Doctor/prescriptionController");
 const { requireAction } = require("../../middleware/auth");
+const { credentialExpiryBlocker } = require("../../middleware/credentialExpiryBlocker");
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // Create prescription
-router.post("/uhid/:uhid", requireAction("rx.write"), prescriptionController.createPrescription);
+// R7bm-F8 / R7bl close-out: writing a prescription is a licensed clinical
+// act under NMC Regulations 2002 + NABH HRD.3 — the doctor's NMC / state
+// medical council registration MUST be current. credentialExpiryBlocker
+// runs AFTER the role gate; on missing / expired NMC_REG it 403s with
+// CREDENTIAL_MISSING | CREDENTIAL_EXPIRED.
+router.post("/uhid/:uhid", requireAction("rx.write"), credentialExpiryBlocker("NMC_REG"), prescriptionController.createPrescription);
 // R7bb-B/D4-CRIT-S1: every GET on prescriptions now requires `rx.read`
 // (Admin / Doctor / Nurse / Pharmacist / Accountant). Pre-R7bb the routes
 // were unauthenticated-by-default behind global authenticate but had NO
@@ -45,12 +51,16 @@ router.get(
 );
 
 // Update prescription — clinical write; only Doctor/Admin
-router.put("/:id", validateObjectIdParam("id"), requireAction("rx.write"), prescriptionController.updatePrescription);
+// R7bm-F8: a doctor editing an Rx is still a licensed clinical act —
+// re-verify NMC registration.
+router.put("/:id", validateObjectIdParam("id"), requireAction("rx.write"), credentialExpiryBlocker("NMC_REG"), prescriptionController.updatePrescription);
 
 // Update prescription status (e.g. Active → Completed → Cancelled)
-router.patch("/:id/status", validateObjectIdParam("id"), requireAction("rx.write"), prescriptionController.updatePrescriptionStatus);
+// Status flips are also gated — only a credentialed doctor should close
+// a prescription, otherwise the credentialing audit trail breaks.
+router.patch("/:id/status", validateObjectIdParam("id"), requireAction("rx.write"), credentialExpiryBlocker("NMC_REG"), prescriptionController.updatePrescriptionStatus);
 
 // Delete prescription (soft delete) — clinical write
-router.delete("/:id", validateObjectIdParam("id"), requireAction("rx.write"), prescriptionController.deletePrescription);
+router.delete("/:id", validateObjectIdParam("id"), requireAction("rx.write"), credentialExpiryBlocker("NMC_REG"), prescriptionController.deletePrescription);
 
 module.exports = router;

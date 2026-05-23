@@ -360,5 +360,15 @@ function printPass(p) {
     mobile:        p.attendantPhone,
     idType:        p.idProofType,
     idNumber:      p.idProofNumber,
+    // R7bh-F1 / META-1: PrintAudit anchor — fires recordPrintAudit
+    // before window.print() in PrintPreviewPage, bumping printCount
+    // on the source entity for DUPLICATE watermark on reprints.
+    printAudit: {
+      entityType:   "VisitorPass",
+      entityId:     p._id,
+      entityNumber: p.passNumber,
+      UHID:         p.patientUHID,
+      patientName:  p.patientName,
+    },
   });
 }

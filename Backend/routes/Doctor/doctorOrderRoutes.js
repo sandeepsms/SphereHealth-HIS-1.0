@@ -4,6 +4,7 @@ const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
 // open (any authenticated clinician can view orders). Writes are
 // scoped to the appropriate role per Backend/config/permissions.js.
 const { requireAction, adminOnly } = require("../../middleware/auth");
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 /* ─────────────────────────────────────────────────────
    NABH High Alert Medication detection (shared util)
@@ -136,7 +137,7 @@ router.get("/", requireAction("doctor-notes.read"), async (req, res) => {
 });
 
 // GET /:id — single order
-router.get("/:id", requireAction("doctor-notes.read"), async (req, res) => {
+router.get("/:id", validateObjectIdParam("id"), requireAction("doctor-notes.read"), async (req, res) => {
   try {
     const order = await DoctorOrder.findById(req.params.id);
     if (!order) return res.status(404).json({ ok: false, message: "Not found" });
@@ -161,7 +162,7 @@ const PATCH_ALLOWED = new Set([
   "holdUntil", "holdReason", "delayReason",
   "remarks", "priority",
 ]);
-router.patch("/:id", requireAction("doctor-orders.write"), async (req, res) => {
+router.patch("/:id", validateObjectIdParam("id"), requireAction("doctor-orders.write"), async (req, res) => {
   try {
     const safe = {};
     for (const [k, v] of Object.entries(req.body || {})) {
@@ -184,7 +185,7 @@ router.patch("/:id", requireAction("doctor-orders.write"), async (req, res) => {
    NURSE — STEP COMPLETION
 ═══════════════════════════════════════════════════ */
 // POST /:id/step — nurse completes a workflow step
-router.post("/:id/step", requireAction("order.acknowledge"), async (req, res) => {
+router.post("/:id/step", validateObjectIdParam("id"), requireAction("order.acknowledge"), async (req, res) => {
   try {
     const { step, doneBy, notes, totalSteps } = req.body;
     if (!step || !doneBy) return res.status(400).json({ ok: false, message: "step and doneBy required" });
@@ -230,7 +231,7 @@ router.post("/:id/step", requireAction("order.acknowledge"), async (req, res) =>
  *   adverseEvent?, adverseDetails?,
  * }
  */
-router.post("/:id/administer", requireAction("mar.write"), async (req, res) => {
+router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.write"), async (req, res) => {
   try {
     const order = await DoctorOrder.findById(req.params.id);
     if (!order) return res.status(404).json({ ok: false, message: "Not found" });
@@ -361,7 +362,7 @@ router.post("/:id/administer", requireAction("mar.write"), async (req, res) => {
  * POST /:id/infusion-rate
  * Body: { changedBy, oldRate, newRate, reason, reasonDetail?, verifiedBy?, doctorInformed?, doctorName? }
  */
-router.post("/:id/infusion-rate", requireAction("mar.write"), async (req, res) => {
+router.post("/:id/infusion-rate", validateObjectIdParam("id"), requireAction("mar.write"), async (req, res) => {
   try {
     const { changedBy, oldRate, newRate, reason, reasonDetail, verifiedBy, doctorInformed, doctorName } = req.body;
     if (!changedBy || !newRate || !reason)
@@ -406,7 +407,7 @@ router.post("/:id/infusion-rate", requireAction("mar.write"), async (req, res) =
  * POST /:id/infusion-monitor
  * Body: { nurse, currentRate?, bp?, pulse?, spo2?, urineOutput?, volumeInfused?, siteCondition?, action?, remarks? }
  */
-router.post("/:id/infusion-monitor", requireAction("mar.write"), async (req, res) => {
+router.post("/:id/infusion-monitor", validateObjectIdParam("id"), requireAction("mar.write"), async (req, res) => {
   try {
     const { nurse, currentRate, bp, pulse, spo2, urineOutput, volumeInfused, siteCondition, action, remarks } = req.body;
     if (!nurse) return res.status(400).json({ ok: false, message: "nurse required" });
@@ -442,7 +443,7 @@ router.post("/:id/infusion-monitor", requireAction("mar.write"), async (req, res
  *   }
  * }
  */
-router.post("/:id/doctor-action", requireAction("order.stop"), async (req, res) => {
+router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("order.stop"), async (req, res) => {
   try {
     const { type, doneBy, reason, reasonDetail, holdUntil, orderDetails, substituteWith } = req.body;
     if (!type || !doneBy)
@@ -679,7 +680,7 @@ router.post("/seed-demo", adminOnly, async (req, res) => {
 });
 
 // DELETE /:id — cancel order
-router.delete("/:id", requireAction("doctor-orders.write"), async (req, res) => {
+router.delete("/:id", validateObjectIdParam("id"), requireAction("doctor-orders.write"), async (req, res) => {
   try {
     await DoctorOrder.findByIdAndUpdate(req.params.id, { status: "Cancelled" });
     res.json({ ok: true, message: "Order cancelled" });

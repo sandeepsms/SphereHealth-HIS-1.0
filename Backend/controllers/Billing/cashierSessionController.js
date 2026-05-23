@@ -9,7 +9,11 @@ const { toNum }      = require("../../utils/money");
 exports.getCurrentSession = async (req, res, next) => {
   try {
     const cashierId = req.user?._id;
-    if (!cashierId) return res.status(401).json({ success: false, message: "Authentication required" });
+    // R7br: defensive null-check — if we got here, authenticate() already
+    // validated the token, so missing req.user._id is an internal bug, not
+    // an auth failure. 500 (not 401) so the frontend interceptor doesn't
+    // trip the transient-counter cascade and force-logout the cashier.
+    if (!cashierId) return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set after authenticate" });
     const session = await CashierSession.findOne({ cashierId, status: "OPEN" }).lean();
     res.json({ success: true, data: session || null });
   } catch (e) { next(e); }
@@ -19,7 +23,11 @@ exports.getCurrentSession = async (req, res, next) => {
 exports.openSession = async (req, res, next) => {
   try {
     const cashierId = req.user?._id;
-    if (!cashierId) return res.status(401).json({ success: false, message: "Authentication required" });
+    // R7br: defensive null-check — if we got here, authenticate() already
+    // validated the token, so missing req.user._id is an internal bug, not
+    // an auth failure. 500 (not 401) so the frontend interceptor doesn't
+    // trip the transient-counter cascade and force-logout the cashier.
+    if (!cashierId) return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set after authenticate" });
     const openingCash = toNum(req.body?.openingCash);
     if (!Number.isFinite(openingCash) || openingCash < 0) {
       return res.status(400).json({ success: false, message: "openingCash must be a non-negative number" });
@@ -83,7 +91,11 @@ exports.openSession = async (req, res, next) => {
 exports.closeSession = async (req, res, next) => {
   try {
     const cashierId = req.user?._id;
-    if (!cashierId) return res.status(401).json({ success: false, message: "Authentication required" });
+    // R7br: defensive null-check — if we got here, authenticate() already
+    // validated the token, so missing req.user._id is an internal bug, not
+    // an auth failure. 500 (not 401) so the frontend interceptor doesn't
+    // trip the transient-counter cascade and force-logout the cashier.
+    if (!cashierId) return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set after authenticate" });
     const session = await CashierSession.findById(req.params.id);
     if (!session) return res.status(404).json({ success: false, message: "Shift not found" });
     if (String(session.cashierId) !== String(cashierId) && req.user.role !== "Admin") {
@@ -95,6 +107,49 @@ exports.closeSession = async (req, res, next) => {
     const closingCash = toNum(req.body?.closingCash);
     if (!Number.isFinite(closingCash) || closingCash < 0) {
       return res.status(400).json({ success: false, message: "closingCash must be a non-negative number" });
+    }
+
+    // R7bh-F10 / R7bg-6-HIGH-6: refuse close while this cashier still
+    // owns GENERATED / PARTIAL bills. The shift register treats
+    // close-time variance against EXPECTED collection, but a
+    // not-yet-collected bill is "expected ₹X later" cash — letting
+    // the shift close orphans the bill on the next cashier's drawer
+    // (whose `receivedById` filter will EXCLUDE it). Either the
+    // outgoing cashier collects/handovers, or an Admin force-closes
+    // with `?force=1` + a reason for the audit trail.
+    const force = String(req.query?.force || "").trim() === "1";
+    const unpaidOwned = await PatientBill.countDocuments({
+      "payments.receivedById": session.cashierId,
+      billStatus: { $in: ["GENERATED", "PARTIAL"] },
+    });
+    if (unpaidOwned > 0) {
+      if (!force) {
+        return res.status(409).json({
+          success: false,
+          code:    "UNPAID_BILLS_OUTSTANDING",
+          message: `Cannot close shift — ${unpaidOwned} bill(s) you initiated are still GENERATED / PARTIAL. ` +
+                   `Collect / handover before close, or pass ?force=1 (Admin) with a varianceNote.`,
+          meta:    { count: unpaidOwned, cashierId: String(session.cashierId) },
+        });
+      }
+      // Admin force-close is allowed but DEMANDS a non-empty
+      // varianceNote (we re-use the existing field to anchor the
+      // audit) AND must be initiated by Admin role only — Receptionist
+      // / Accountant can't bypass via a URL param.
+      if (req.user.role !== "Admin") {
+        return res.status(403).json({
+          success: false,
+          code:    "FORCE_REQUIRES_ADMIN",
+          message: "Admin only: cashier sessions with outstanding bills can only be force-closed by Admin.",
+        });
+      }
+      if (!req.body?.varianceNote || !String(req.body.varianceNote).trim()) {
+        return res.status(400).json({
+          success: false,
+          code:    "VARIANCE_NOTE_REQUIRED",
+          message: "Force-close requires varianceNote describing why the outstanding bills are being orphaned.",
+        });
+      }
     }
 
     // R7ar-P1-11/D1-aq-07: scope the cash-flow window to THIS cashier only.
@@ -137,10 +192,19 @@ exports.closeSession = async (req, res, next) => {
       receivedById:  session.cashierId,
     }).lean();
     for (const a of advanceDeposits) cashCollected += toNum(a.amount);
+    // R7bh-F10 / R7bg-6-HIGH-4: match advance refunds by `refundedById`
+    // (the operator's _id), not by `refundedBy` name. The name-based
+    // match was fragile — two cashiers sharing a display name (common
+    // in family-staffed clinics: "Priya M" + "Priya S" both saved as
+    // "Priya"), an HR rename, or any whitespace difference would silently
+    // drop the refund from the shift's cash-out side. PatientAdvance
+    // already records `refundedById` on the refund (see
+    // patientAdvanceService.refundAdvance) so we just need to filter on
+    // it instead of the display name.
     const advanceRefunds = await PatientAdvance.find({
-      refundedAt:  { $gte: windowStart, $lte: windowEnd },
-      refundMode:  "CASH",
-      refundedBy:  session.cashierName,   // refund records actor by name
+      refundedAt:    { $gte: windowStart, $lte: windowEnd },
+      refundMode:    "CASH",
+      refundedById:  session.cashierId,
     }).lean();
     for (const a of advanceRefunds) cashRefundedOut += toNum(a.refundedAmount);
 

@@ -8,6 +8,8 @@ const ctrl = require("../../controllers/Nurse/nurseNotesController");
 // (Admin/Doctor/Nurse/MRD) covers every GET, and `mar.write` remains on
 // every mutation.
 const { requireAction } = require("../../middleware/auth");
+// R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 router.get("/today/:ipdNo",                 requireAction("nurse-notes.read"), ctrl.getTodayNotes);
 router.get("/patient/:patientId",           requireAction("nurse-notes.read"), ctrl.getNotesByPatient);
@@ -17,11 +19,11 @@ router.get("/report/:ipdNo",                requireAction("nurse-notes.read"), c
 router.post("/",                            requireAction("mar.write"),        ctrl.createNote);
 // Query-param fallback: GET /nurse-notes?ipdNo=XXX (used by NursingNotesPage)
 router.get("/",                             requireAction("nurse-notes.read"), ctrl.getNotesByQuery);
-router.get("/:id",                          requireAction("nurse-notes.read"), ctrl.getNoteById);
-router.put("/:id",                          requireAction("mar.write"),        ctrl.updateNote);
-router.patch("/:id/confirm-order",          requireAction("mar.write"),        ctrl.confirmOrder);
-router.patch("/:id/blood-monitoring",       requireAction("mar.write"),        ctrl.addBloodMonitoring);
-router.patch("/:id/blood-status",           requireAction("mar.write"),        ctrl.updateBloodStatus);
-router.delete("/:id",                       requireAction("mar.write"),        ctrl.deleteNote);
+router.get("/:id",                          validateObjectIdParam("id"), requireAction("nurse-notes.read"), ctrl.getNoteById);
+router.put("/:id",                          validateObjectIdParam("id"), requireAction("mar.write"),        ctrl.updateNote);
+router.patch("/:id/confirm-order",          validateObjectIdParam("id"), requireAction("mar.write"),        ctrl.confirmOrder);
+router.patch("/:id/blood-monitoring",       validateObjectIdParam("id"), requireAction("mar.write"),        ctrl.addBloodMonitoring);
+router.patch("/:id/blood-status",           validateObjectIdParam("id"), requireAction("mar.write"),        ctrl.updateBloodStatus);
+router.delete("/:id",                       validateObjectIdParam("id"), requireAction("mar.write"),        ctrl.deleteNote);
 
 module.exports = router;

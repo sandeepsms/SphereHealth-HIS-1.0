@@ -256,6 +256,12 @@ const DoctorOrderSchema = new mongoose.Schema({
   }],
   currentStepIndex: { type: Number, default: -1 },
 
+  // R7bh-F1 / R7bg-7-CRIT-2: PrintAudit infrastructure $incs this on
+  // every doctor-order-sheet print/reprint. Pre-R7bh DoctorOrder had
+  // no printCount field, so $inc no-op'd → no DUPLICATE watermark on
+  // MAR / order-sheet reprints (NABH MOM.2 evidence gap).
+  printCount: { type: Number, default: 0 },
+
 }, { timestamps: true, collection: "doctor_orders" });
 
 /* ── Auto-set hamFlag before save ── */

@@ -12,6 +12,8 @@ const express = require("express");
 const router  = express.Router();
 const ctrl    = require("../../controllers/Equipment/equipmentController");
 const { requireAction } = require("../../middleware/auth");
+// R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // Reads — broad: any ward staff member needs to find a ventilator. Not
 // PHI but operational + commercial-sensitive (vendor / cost / serial
@@ -28,6 +30,6 @@ router.put   ("/:id",               requireAction("equipment.write"), ctrl.updat
 router.post  ("/:id/assign",        requireAction("equipment.write"), ctrl.assign);
 router.post  ("/:id/return",        requireAction("equipment.write"), ctrl.return);
 router.post  ("/:id/service",       requireAction("equipment.write"), ctrl.logService);
-router.delete("/:id",               requireAction("ward.admin"),      ctrl.retire);
+router.delete("/:id",               validateObjectIdParam("id"), requireAction("ward.admin"),      ctrl.retire);
 
 module.exports = router;

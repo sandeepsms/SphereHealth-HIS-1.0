@@ -17,6 +17,7 @@
  *     COL, fmtINR, amountInWords, _fmtDate, hasControlled }
  */
 import React from "react";
+import { ESCPOS_FEED_CUT } from "../../../utils/printUtils";
 
 /* ─────────────────────────────────────────────────────────────────
    1. CLASSIC MODERN — gradient masthead + side-by-side HSN/totals
@@ -307,6 +308,19 @@ export function T7_ReceiptStrip(p) {
         {id.footerNote || "Thank you for visiting"}<br/>
         Generated · {new Date().toLocaleString("en-IN")}
       </div>
+      {/* R7bh-F7 / R7bg-7-HIGH-2: ESC/POS feed + cut trailer for thermal
+          printers. T7 ("Receipt Strip") is the only template designed for
+          thermal kiosk hardware. The bytes are emitted invisibly so the
+          browser-side preview never shows them; the kiosk-mode print
+          wrapper hands the document to a service worker that POSTs the
+          full HTML to the local print daemon, which extracts these bytes
+          from `data-escpos-trailer` and appends them after the rendered
+          receipt body to feed past the cut bar + slice the paper. */}
+      <span
+        aria-hidden="true"
+        data-escpos-trailer={ESCPOS_FEED_CUT}
+        style={{ display: "none" }}
+      />
     </div>
   );
 }

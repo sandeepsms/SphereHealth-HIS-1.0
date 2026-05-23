@@ -1,8 +1,14 @@
 /**
  * scheduleXController.js  (R7bd-E-1 / A2-MED-16)
  * Thin HTTP layer over services/Pharmacy/scheduleXRegister.
+ *
+ * R7bh-F4 / R7bg-3-CRIT-12: envelope normalised via utils/apiEnvelope so
+ * every response shares the { success, data, meta? } / { success, message,
+ * code } contract. `meta.count` carries the array length so the wire
+ * shape is unchanged from the previous ad-hoc `count` top-level field.
  */
 const svc = require("../../services/Pharmacy/scheduleXRegister");
+const { sendOk, sendErr } = require("../../utils/apiEnvelope");
 
 function _mapStatus(code) {
   if (code === "ARG_MISSING" || code === "INVALID_QTY") return 400;
@@ -33,10 +39,10 @@ exports.dispense = async (req, res, next) => {
       dispensedById: u._id || u.id,
       remarks:       req.body?.remarks,
     });
-    res.status(201).json({ success: true, data: row });
+    return sendOk(res, row, undefined, 201);
   } catch (e) {
     const status = e.status || _mapStatus(e.code);
-    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    if (status !== 500) return sendErr(res, e, e.code, status);
     next(e);
   }
 };
@@ -45,7 +51,7 @@ exports.dispense = async (req, res, next) => {
 exports.register = async (req, res, next) => {
   try {
     const data = await svc.dailyBalance(req.query?.date || new Date());
-    res.json({ success: true, data, count: data.length });
+    return sendOk(res, data, { count: data.length });
   } catch (e) { next(e); }
 };
 
@@ -57,10 +63,10 @@ exports.verify = async (req, res, next) => {
       verifierId:   u._id || u.id,
       verifierName: u.fullName || u.employeeId || "Pharmacist",
     });
-    res.json({ success: true, data: out });
+    return sendOk(res, out);
   } catch (e) {
     const status = e.status || _mapStatus(e.code);
-    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code: e.code });
+    if (status !== 500) return sendErr(res, e, e.code, status);
     next(e);
   }
 };

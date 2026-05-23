@@ -13,6 +13,8 @@
 //   - find      (daily cron)                      ~line 509
 
 const mongoose = require("mongoose");
+const { toDec, decimalToNumber } = require("../../utils/money");
+const Dec = mongoose.Schema.Types.Decimal128;
 
 const AutoBilledItemsSchema = new mongoose.Schema(
   {
@@ -46,7 +48,10 @@ const AutoBilledItemsSchema = new mongoose.Schema(
       default: "PER_DAY",
     },
 
-    unitPrice: { type: Number, required: true, min: 0 },
+    // R7bh-F3 / R7bg-1-CRIT-7: money fields stored as Decimal128 so per-day
+    // accrual doesn't drift on long-stay admissions. min:0 is enforced
+    // server-side via toNum at write sites (Decimal128 has no native min).
+    unitPrice: { type: Dec, required: true, default: () => toDec(0) },
 
     appliedTariff: {
       type: String,
@@ -73,7 +78,10 @@ const AutoBilledItemsSchema = new mongoose.Schema(
       default: null,
     },
     totalBilledCount: { type: Number, default: 0 },
-    totalBilledAmount: { type: Number, default: 0 },
+    // R7bh-F3 / R7bg-1-CRIT-7: Decimal128 for the running sum of every
+    // accrual posted for this auto-bill row. Same drift rationale as
+    // unitPrice above.
+    totalBilledAmount: { type: Dec, default: () => toDec(0) },
   },
   { timestamps: true },
 );
@@ -85,6 +93,12 @@ AutoBilledItemsSchema.index(
 
 // Daily cron sweep — pulls active rows whose lastBilledDate < today.
 AutoBilledItemsSchema.index({ isActive: 1, lastBilledDate: 1 });
+
+// R7bh-F3 / R7bg-1-CRIT-7: serialize Decimal128 money back to JS Numbers
+// so existing consumers (billing summaries, IPD ledger row mappers) keep
+// reading plain numbers off the wire.
+AutoBilledItemsSchema.set("toJSON",   { transform: decimalToNumber });
+AutoBilledItemsSchema.set("toObject", { transform: decimalToNumber });
 
 module.exports =
   mongoose.models.AutoBilledItems ||

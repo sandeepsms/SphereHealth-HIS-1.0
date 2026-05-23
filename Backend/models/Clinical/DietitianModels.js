@@ -24,6 +24,10 @@
  * migration.
  */
 const mongoose = require("mongoose");
+// R7bj-F6 / NABH DT-CRIT-1 + KI-CRIT-1 / FSSAI Schedule IV: canonical
+// allergen vocabulary so PatientDietPlan, KitchenIndent, and the
+// adverse-food-reaction ADR all key off the same 14-item list.
+const { isFssaiAllergen, FSSAI_ALLERGENS } = require("../../utils/fssaiAllergens");
 
 /* ── DietPlanTemplate ───────────────────────────────────────── */
 const MealItemSchema = new mongoose.Schema({
@@ -109,10 +113,23 @@ const PatientDietPlanSchema = new mongoose.Schema({
     allergies:        { type: [String], default: [] },   // ["dairy", "nuts"] — free-text food category
     // R7bb-FIX-E-9 / D6-CRIT-6: structured food-allergen list. The kitchen
     // indent endpoint copies this into KitchenIndent.allergens so the cook
-    // checks against a curated enum (peanut/tree-nut/dairy/gluten/etc.)
-    // rather than free-text. Falls back to `allergies[]` if the dietitian
-    // doesn't populate it.
-    allergens:        { type: [String], default: [] },   // ["peanut","tree-nut","dairy","egg","gluten","soy","shellfish","fish","sesame"]
+    // checks against a curated enum rather than free-text. Falls back to
+    // `allergies[]` if the dietitian doesn't populate it.
+    //
+    // R7bj-F6 / NABH DT-CRIT-1 / FSSAI Schedule IV: items must come from
+    // the canonical FSSAI 14-allergen list (utils/fssaiAllergens.js).
+    // The validator is case-insensitive on input so a legacy lowercase
+    // value still passes — services should normalise to uppercase on
+    // write. Reading docs by FSSAI_ALLERGENS guarantees the kitchen and
+    // ADR pipelines agree on the vocabulary.
+    allergens: {
+      type: [String],
+      default: [],
+      validate: {
+        validator: (v) => !Array.isArray(v) ? true : v.every((a) => isFssaiAllergen(a)),
+        message: (props) => `allergens must come from FSSAI Schedule IV (${FSSAI_ALLERGENS.join(",")}); got "${props.value}"`,
+      },
+    },
     medications:      { type: [String], default: [] },   // notable drug interactions (warfarin → vit K)
 
     // Dietary habits

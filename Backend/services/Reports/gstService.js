@@ -81,13 +81,25 @@ async function aggregateGSTForMonth(periodStart, periodEnd) {
   ];
 
   // ── Pharmacy side (PharmacySale.items) ─────────────────────────
-  // PharmacySale.items.gstRate + gstAmount + taxableAmount. CGST/SGST
-  // are not stored split on the item — pharmacy bills are intra-state
-  // by default in this HIS, so we split 50/50 (mirrors the same
-  // assumption hospital-side made before R7av-FIX-6). When inter-state
-  // pharmacy work is added later this can be enriched via $lookup on
-  // patient.state vs hospital.state.
+  // R7bh-F2 / R7bg-1-CRIT-12: placeOfSupply-driven CGST/SGST/IGST split.
+  // Until R7bh PharmacySale had no placeOfSupply field, so this pipeline
+  // hard-split CGST=SGST=gst/2 even when the buyer was in another state
+  // (under-reporting IGST on GSTR-1). With placeOfSupply now first-class
+  // on PharmacySale, the split obeys:
+  //   intraState = (no placeOfSupply  ||  placeOfSupply === hospitalState)
+  //                → CGST = SGST = gstAmount / 2 ; IGST = 0
+  //   interState = otherwise
+  //                → CGST = SGST = 0 ; IGST = gstAmount
+  // If the SALE_ITEM already stored its own split (post-R7bh writers),
+  // those values win — we fall back to the placeOfSupply heuristic only
+  // when the split fields are empty/zero (legacy rows).
+  //
+  // Hospital state code resolves to:
+  //   1. process.env.HOSPITAL_STATE_CODE (preferred)
+  //   2. empty string → intra-state assumed everywhere (legacy default)
+  //
   // HSN comes from Drug master (denormalised here via $lookup).
+  const hospitalStateCode = (process.env.HOSPITAL_STATE_CODE || "").trim();
   const pharmacyPipeline = [
     { $match: {
         createdAt: { $gte: periodStart, $lt: periodEnd },
@@ -104,15 +116,50 @@ async function aggregateGSTForMonth(periodStart, periodEnd) {
         as: "_drug",
         pipeline: [{ $project: { hsnCode: 1 } }],
     } },
+    { $addFields: {
+        _gst: { $toDouble: { $ifNull: ["$items.gstAmount", 0] } },
+        _pos: { $trim: { input: { $ifNull: ["$placeOfSupply", ""] } } },
+        // Per-line split if writer provided it (post-R7bh sale writes).
+        _lineCgst: { $toDouble: { $ifNull: ["$items.cgstAmount", 0] } },
+        _lineSgst: { $toDouble: { $ifNull: ["$items.sgstAmount", 0] } },
+        _lineIgst: { $toDouble: { $ifNull: ["$items.igstAmount", 0] } },
+    } },
+    { $addFields: {
+        _hasLineSplit: { $gt: [
+          { $add: ["$_lineCgst", "$_lineSgst", "$_lineIgst"] }, 0,
+        ] },
+        _isInterState: {
+          $cond: [
+            // No hospital state configured → cannot detect inter-state.
+            { $eq: [hospitalStateCode, ""] },
+            false,
+            { $cond: [
+              // No placeOfSupply on the sale → fall back to intra-state.
+              { $eq: ["$_pos", ""] },
+              false,
+              { $ne: ["$_pos", hospitalStateCode] },
+            ] },
+          ],
+        },
+    } },
     { $project: {
         _id: 0,
         source:       { $literal: "pharmacy" },
         rate:         { $toDouble: "$items.gstRate" },
         taxableValue: { $toDouble: { $ifNull: ["$items.taxableAmount", 0] } },
-        cgst:         { $divide: [{ $toDouble: { $ifNull: ["$items.gstAmount", 0] } }, 2] },
-        sgst:         { $divide: [{ $toDouble: { $ifNull: ["$items.gstAmount", 0] } }, 2] },
-        igst:         { $literal: 0 },
-        taxAmount:    { $toDouble: { $ifNull: ["$items.gstAmount",  0] } },
+        cgst: { $cond: [
+          "$_hasLineSplit", "$_lineCgst",
+          { $cond: ["$_isInterState", 0, { $divide: ["$_gst", 2] }] },
+        ] },
+        sgst: { $cond: [
+          "$_hasLineSplit", "$_lineSgst",
+          { $cond: ["$_isInterState", 0, { $divide: ["$_gst", 2] }] },
+        ] },
+        igst: { $cond: [
+          "$_hasLineSplit", "$_lineIgst",
+          { $cond: ["$_isInterState", "$_gst", 0] },
+        ] },
+        taxAmount:    "$_gst",
         hsnSac:       { $ifNull: [{ $arrayElemAt: ["$_drug.hsnCode", 0] }, ""] },
     } },
   ];

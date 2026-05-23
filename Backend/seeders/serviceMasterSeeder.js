@@ -871,6 +871,11 @@ const SERVICES = [
     isAutoCharged: false,
     unitLabel: "per session",
     displayOrder: 802,
+    // R7bm-F10 / R7bl seed-tax: HSN 999316 (Human health services n.e.c.),
+    // 18% GST on diet/consultation services per CBIC notification 11/2017-CT.
+    isTaxable: true,
+    taxPercentage: 18,
+    hsnSacCode: "999316",
   },
   {
     serviceCode: "IPD-SUP-003",
@@ -884,6 +889,36 @@ const SERVICES = [
     isAutoCharged: false,
     unitLabel: "per day",
     displayOrder: 803,
+    // R7bm-F10 / R7bl seed-tax: HSN 999316 (Human health services n.e.c.),
+    // 18% GST on diet/consultation services per CBIC notification 11/2017-CT.
+    isTaxable: true,
+    taxPercentage: 18,
+    hsnSacCode: "999316",
+  },
+  // R7bm-F10 / R7bl seed-add: IPD physiotherapy session — referenced by
+  // services/Clinical/physioService.js, models/Clinical/PhysioSessionModel.js,
+  // and the kitchenIndentService.js but had no ServiceMaster row, breaking
+  // bill-line creation for ward physio sessions.
+  // Rate (₹500/session) and HSN (999316 — same human-health-services SAC
+  // as other in-hospital therapy services) are reasonable defaults — verify
+  // against the hospital's tariff card before go-live.
+  {
+    serviceCode: "IPD-PHY-001",
+    serviceName: "IPD Physiotherapy Session",
+    domain: "IPD",
+    category: "PROCEDURE",
+    subCategory: "Physiotherapy",
+    applicableTo: ["IPD"],
+    billingType: "PER_SESSION",
+    defaultPrice: 500,
+    isAutoCharged: false,
+    unitLabel: "per session",
+    displayOrder: 850,
+    isTaxable: true,
+    taxPercentage: 18,
+    hsnSacCode: "999316",
+    serviceType: "procedure",
+    chargeableBy: ["Doctor", "Nurse"],
   },
   {
     serviceCode: "IPD-SUP-004",

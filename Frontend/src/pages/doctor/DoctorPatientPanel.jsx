@@ -2019,7 +2019,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
   }, []);
 
   useEffect(()=>{
-    const u = searchParams.get("uhid") || localStorage.getItem("doctorPanel_lastUhid");
+    const u = searchParams.get("uhid") || sessionStorage.getItem("doctorPanel_lastUhid");
     if (u) { setSearchInput(u); setActiveUhid(u); loadAll(u); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2028,7 +2028,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
     const u = searchInput.trim().toUpperCase();
     if (!u) return;
     setActiveUhid(u);
-    localStorage.setItem("doctorPanel_lastUhid", u);
+    sessionStorage.setItem("doctorPanel_lastUhid", u);
     loadAll(u);
   };
 
@@ -2039,7 +2039,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
     if (!u) return;
     setSearchInput(u);
     setActiveUhid(u);
-    localStorage.setItem("doctorPanel_lastUhid", u);
+    sessionStorage.setItem("doctorPanel_lastUhid", u);
     loadAll(u);
   }, [selectedAdmission?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 

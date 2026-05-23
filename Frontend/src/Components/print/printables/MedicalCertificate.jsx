@@ -5,6 +5,7 @@
 
 import React from "react";
 import PrintShell from "../PrintShell";
+import { toNum } from "../../../utils/printUtils";
 
 const _fmt = (d) =>
   d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -76,6 +77,7 @@ const MedicalCertificate = ({ settings, receipt = {} }) => {
       settings={settings}
       documentTitle={CERT_TITLE[kind] || "Medical Certificate"}
       serialNo={r.certNo}
+      printCount={toNum(r.printCount)}
       infoItems={[
         { label: "Patient",      value: r.patientName },
         { label: "UHID",         value: r.uhid },

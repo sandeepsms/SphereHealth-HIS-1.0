@@ -4,6 +4,13 @@ const router = express.Router();
 const ctrl = require("../../controllers/Billing/billingController");
 const { attemptAuth, requireAction } = require("../../middleware/auth");
 const { validateObjectIdParam } = require("../../utils/queryGuards");
+// R7bh-F10 / R7bg-10-CRIT-3: Idempotency-Key guard on money-touching
+// POSTs. Cashier double-click, mobile+desktop dual post, network retry
+// → all replay the cached response instead of posting twice. Header
+// must be supplied by the client (`Idempotency-Key: <uuid>`); legacy
+// clients without the header keep their existing behaviour and rely
+// on the controller-level duplicate-transactionId check.
+const idempotencyGuard = require("../../middleware/idempotencyGuard");
 
 // R7ap-F25/D3-03: shorthand for the ObjectId guards. Catches malformed
 // params and 400s BEFORE the controller's findById throws CastError →
@@ -74,8 +81,8 @@ router.get("/uhid/:UHID/summary", requireAction("billing.read"), ctrl.getUhidSum
 // R7ar-P0-2/D3-aq-02: gate the bulk write paths. Pre-R7ar any logged-in
 // user could post a lump-sum cash collection or apply a discount across
 // every bill on a UHID.
-router.post("/uhid/:UHID/collect-all", requireAction("billing.write"),  ctrl.bulkCollectByUHID);
-router.post("/uhid/:UHID/bulk-settle", requireAction("billing.refund"), ctrl.bulkSettleByUHID);
+router.post("/uhid/:UHID/collect-all", requireAction("billing.write"),  idempotencyGuard("bulkCollectByUHID"), ctrl.bulkCollectByUHID);
+router.post("/uhid/:UHID/bulk-settle", requireAction("billing.refund"), idempotencyGuard("bulkSettleByUHID"), ctrl.bulkSettleByUHID);
 router.get("/price/:serviceId", requireAction("billing.read"), ctrl.getServicePrice); // R7ap-F5
 router.get("/daycare-check/:admissionId", requireAction("billing.read"), ctrl.checkDaycare); // R7ap-F5
 
@@ -121,7 +128,7 @@ router.get("/:billId", vBill, requireAction("billing.read"), ctrl.getBillById); 
 router.post("/create",                     requireAction("billing.write"),  ctrl.getOrCreateBill);
 router.post("/:billId/add-service",        vBill, requireAction("billing.write"),  ctrl.addService);
 router.post("/:billId/generate",           vBill, requireAction("billing.write"),  ctrl.generateBill);
-router.post("/:billId/payment",            vBill, requireAction("billing.write"),  ctrl.recordPayment);
+router.post("/:billId/payment",            vBill, requireAction("billing.write"),  idempotencyGuard("recordPayment"), ctrl.recordPayment);
 // 15-min same-cashier payment-reversal (cashier-typo undo).
 router.post("/:billId/payment/:paymentId/void",
   vBill, vPay, requireAction("billing.undo"), ctrl.voidPayment);
@@ -136,7 +143,7 @@ router.post("/:billId/settlement-adjust", vBill, requireAction("billing.refund")
 // the Receptionist tier — both require an Accountant (or Admin) per the
 // central ACTIONS map. Receptionists can record charges and payments but
 // cannot undo them.
-router.post("/:billId/refund",    vBill, requireAction("billing.refund"), ctrl.refundPayment);
+router.post("/:billId/refund",    vBill, requireAction("billing.refund"), idempotencyGuard("refundPayment"), ctrl.refundPayment);
 router.post("/:billId/cancel",    vBill, requireAction("billing.refund"), ctrl.cancelBill);
 router.post("/:billId/tpa-claim", vBill, requireAction("tpa.claim"),     ctrl.setTPAClaimStatus);
 // R7ar-P0-2: item CRUD is a billing write. Edit gate on override, delete on cancel-charge.
@@ -183,12 +190,12 @@ router.post("/admissions/:admissionId/detach-package",
 // billing.write. Pre-R7ab any authenticated role could post cash into
 // a patient's advance pool. Refund stays on billing.refund (Admin/
 // Accountant only).
-router.post("/advance",                          requireAction("billing.write"),  ctrl.createAdvance);
+router.post("/advance",                          requireAction("billing.write"),  idempotencyGuard("createAdvance"), ctrl.createAdvance);
 router.get ("/advance/uhid/:UHID",               requireAction("billing.read"),   ctrl.listAdvancesByUHID); // R7ap-F5
 // R7ap-F11: register BEFORE /advance/:advanceId/apply so /advance/refunds
 // doesn't get caught by the :advanceId param.
 router.get ("/advance/refunds",                  requireAction("billing.read"),   ctrl.listAdvanceRefunds);
-router.post("/advance/:advanceId/apply",         vAdv, requireAction("billing.write"),  ctrl.applyAdvanceToBill);
-router.post("/advance/:advanceId/refund",        vAdv, requireAction("billing.refund"), ctrl.refundAdvance);
+router.post("/advance/:advanceId/apply",         vAdv, requireAction("billing.write"),  idempotencyGuard("applyAdvanceToBill"), ctrl.applyAdvanceToBill);
+router.post("/advance/:advanceId/refund",        vAdv, requireAction("billing.refund"), idempotencyGuard("refundAdvance"),      ctrl.refundAdvance);
 
 module.exports = router;

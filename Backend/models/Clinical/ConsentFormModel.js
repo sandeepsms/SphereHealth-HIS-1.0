@@ -109,7 +109,13 @@ const ConsentFormSchema = new mongoose.Schema(
     }],
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" } },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
+
+    // R7bh-F1 / R7bg-7-CRIT-2: PrintAudit infrastructure $incs this on
+    // every print/reprint. Pre-R7bh ConsentForm had no printCount
+    // field, so $inc no-op'd and the DUPLICATE watermark + PrintAudit
+    // chain-of-custody (NABH PRE.4) didn't engage on reprints.
+    printCount: { type: Number, default: 0 } },
   { timestamps: true, collection: "consent_forms" }
 );
 

@@ -4,6 +4,7 @@ import { Card } from "primereact/card";
 import { Button } from "primereact/button";
 import { Tag } from "primereact/tag";
 import opdService from "../../Services/patient/opdService";
+import { unwrapResponse } from "../../utils/apiResponse";
 
 const OPDDetails = () => {
   const { visitNumber } = useParams();
@@ -17,8 +18,15 @@ const OPDDetails = () => {
 
   const loadVisit = async () => {
     try {
+      // R7bj-F8: use envelope adapter — drops the `data.data || data`
+      // fallback hack now that the controller honours apiEnvelope.
       const response = await opdService.getOPDVisitById(visitNumber);
-      setVisit(response.data.data || response.data);
+      const { ok, data, error } = unwrapResponse(response);
+      if (!ok) {
+        console.error("Error loading visit:", error?.message);
+        return;
+      }
+      setVisit(data);
     } catch (error) {
       console.error("Error loading visit:", error);
     } finally {

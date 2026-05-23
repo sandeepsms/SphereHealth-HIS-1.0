@@ -216,4 +216,60 @@ async function list({ uhid, status, category, limit = 100 } = {}) {
   return Grievance.find(q).sort({ raisedAt: -1 }).limit(Math.min(500, Math.max(1, limit))).lean();
 }
 
-module.exports = { create, update, assign, resolve, close, escalate, getById, list };
+/**
+ * Cron worker — find every grievance where:
+ *   • status ∈ ["OPEN", "IN_PROGRESS"]
+ *   • raisedAt + slaHours hours < now
+ * …and flip them to ESCALATED with reason="SLA breach". Returns
+ * { scanned, escalated } for the cron logger.
+ *
+ * Wrapped by services/Quality/grievanceSlaCron.js (R7bh-F6) so the
+ * scheduler in Backend/index.js doesn't reach inside grievanceService
+ * to find this helper. NABH PRE.6 — SLA-breach escalator.
+ */
+async function escalateOverdue() {
+  const now = new Date();
+  // Find OPEN / IN_PROGRESS rows; SLA check happens per-row because
+  // slaHours varies. Cap at 500 to keep the tick bounded.
+  const rows = await Grievance.find({
+    status: { $in: ["OPEN", "IN_PROGRESS"] },
+  })
+    .select("_id raisedAt slaHours status")
+    .limit(500)
+    .lean();
+  let scanned = 0;
+  let escalated = 0;
+  for (const r of rows) {
+    scanned += 1;
+    const raised = new Date(r.raisedAt).getTime();
+    const slaMs = (Number(r.slaHours) || 48) * 3600000;
+    if (!Number.isFinite(raised) || raised + slaMs >= now.getTime()) continue;
+    // CAS — only flip if still OPEN/IN_PROGRESS.
+    const updated = await Grievance.findOneAndUpdate(
+      { _id: r._id, status: { $in: ["OPEN", "IN_PROGRESS"] } },
+      {
+        $set: {
+          status: "ESCALATED",
+          escalatedAt: now,
+          escalatedTo: "Cron — SLA breach",
+        },
+        $push: {
+          auditTrail: {
+            action: "ESCALATED",
+            at: now,
+            byName: "System (grievance-sla-cron)",
+            byRole: "System",
+            fromStatus: r.status,
+            toStatus: "ESCALATED",
+            reason: "SLA breach",
+          },
+        },
+      },
+      { new: false },
+    );
+    if (updated) escalated += 1;
+  }
+  return { scanned, escalated };
+}
+
+module.exports = { create, update, assign, resolve, close, escalate, escalateOverdue, getById, list };

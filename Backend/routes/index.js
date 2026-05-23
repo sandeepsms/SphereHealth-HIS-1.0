@@ -275,5 +275,96 @@ router.use("/adr-reports",           require("./Pharmacy/adrRoutes"));
 router.use("/grievances",            require("./Quality/grievanceRoutes"));
 router.use("/credentials",           require("./HR/credentialRoutes"));
 router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
+// R7bo — NABH compliance registers (RBS / Emergency / Blood Transfusion).
+// Surveyors ask for these as chronological audit-grade logs; the registers
+// are auto-populated from existing clinical flows via nabhRegisterEmitter.
+router.use("/registers/nabh",        require("./Compliance/nabhRegisterRoutes"));
+
+// ── R7bh-F6 — Accountant regulatory ────────────────────────────
+// GSTR-1/3B exporter + Form 16A workflow. Both gated by tax.returns.*
+// / tax.tds.* in Backend/config/permissions.js (Admin + Accountant).
+router.use("/tax-returns", require("./Tax/taxReturnRoutes"));
+router.use("/tds",         require("./Tax/tdsRoutes"));
+
+// ── R7bh-F5 — Pharmacy cold-chain (file owned by F5) ───────────
+// Mount only if the file exists so a partial F5 deploy doesn't crash
+// boot here. If F5 ships the route file later, this picks it up on
+// next restart.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/cold-chain", require("./Pharmacy/coldChainRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] cold-chain mount failed:", e.message);
+  }
+}
+
+// ── R7bj — new module mounts (F1/F2/F6) ───────────────────────────
+// Wired centrally by F10 with the try/catch fallback pattern so any
+// module shipping partial files (route file present, controller still
+// stubbed; or vice versa) doesn't crash boot. The catch only swallows
+// the "module not found" case — a real implementation bug (syntax /
+// require-chain explosion) still surfaces in the console.
+
+// R7bj-F1 — physiotherapy plan + session register.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/physio", require("./Clinical/physioRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] physio mount failed:", e.message);
+  }
+}
+
+// R7bj-F2 — kitchen indent (nurse → kitchen meal request workflow).
+try {
+  // eslint-disable-next-line global-require
+  router.use("/kitchen-indent", require("./Pharmacy/kitchenIndentRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] kitchen-indent mount failed:", e.message);
+  }
+}
+
+// R7bj-F2 — adverse food reactions register. Route file may not yet
+// exist (F2 split deliverable); try/catch keeps boot clean either way.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/food-reactions", require("./Clinical/adverseFoodReactionRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] food-reactions mount failed:", e.message);
+  }
+}
+
+// R7bj-F6 — biomedical waste transport manifest (NABH FMS / BMWM 2016).
+try {
+  // eslint-disable-next-line global-require
+  router.use("/bmw-manifest", require("./Compliance/bmwManifestRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] bmw-manifest mount failed:", e.message);
+  }
+}
+
+// R7bj-F6 — code response / rapid-response event log.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/code-response", require("./Compliance/codeResponseRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] code-response mount failed:", e.message);
+  }
+}
+
+// R7bj-F6 — sharps-injury register (HCW needle-stick reporting).
+try {
+  // eslint-disable-next-line global-require
+  router.use("/sharps-injury", require("./Clinical/sharpsInjuryRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] sharps-injury mount failed:", e.message);
+  }
+}
 
 module.exports = router;

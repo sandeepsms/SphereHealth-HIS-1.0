@@ -304,7 +304,7 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
   const [ordersDate,  setOrdersDate]  = useState(new Date());   // date navigator
   const [nurseName,   setNurseName]   = useState(() => {
     try {
-      const u = JSON.parse(localStorage.getItem("his_user") || "{}");
+      const u = JSON.parse(sessionStorage.getItem("his_user") || "{}");
       return u.fullName || u.firstName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.name || "";
     } catch { return ""; }
   });

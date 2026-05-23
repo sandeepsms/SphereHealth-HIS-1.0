@@ -76,7 +76,7 @@ function recommendDose(scale, bg) {
 
 export default function DiabeticChartPage() {
   const { user } = useAuth();
-  const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+  const token = (sessionStorage.getItem("his_token"));
   const headers = { Authorization: `Bearer ${token}` };
 
   const [uhidIn,   setUhidIn]   = useState("");

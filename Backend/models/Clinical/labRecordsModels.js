@@ -115,6 +115,12 @@ const LabReportSchema = new Schema({
   reportedByName: { type: String, default: "" },
   verifiedBy:   { type: Schema.Types.ObjectId, ref: "User" },
   verifiedAt:   { type: Date, default: null },
+
+  // R7bh-F1 / R7bg-7-CRIT-2: PrintAudit infrastructure $incs this on
+  // every print/reprint. Pre-R7bh the LabReport collection had no
+  // printCount field so the $inc silently no-op'd and DUPLICATE
+  // watermarks never rendered on reprinted reports.
+  printCount: { type: Number, default: 0 },
 }, { timestamps: true });
 
 LabReportSchema.index({ UHID: 1, reportType: 1, reportDate: -1 });

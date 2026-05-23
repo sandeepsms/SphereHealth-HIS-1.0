@@ -6,6 +6,8 @@ const express = require("express");
 const router  = express.Router();
 const ctrl    = require("../../controllers/Appointment/appointmentController");
 const { requireAction } = require("../../middleware/auth");
+// R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // R7bb-B/D4-HIGH-S1: reads now gated. Appointment list exposes patient
 // name + phone + visit reason — desk-staff-only data. Slot grid is
@@ -18,7 +20,7 @@ router.get ("/slots",             requireAction("reception.register"), ctrl.getS
 // to reception.register in practice but flagged separately so the audit
 // surface can distinguish "the receptionist confirmed appointment #X" from
 // "the receptionist created a new walk-in registration".
-router.post("/:id/check-in",      requireAction("appointment.confirm"), ctrl.checkIn);
-router.post("/:id/cancel",        requireAction("reception.register"),  ctrl.cancel);
+router.post("/:id/check-in",      validateObjectIdParam("id"), requireAction("appointment.confirm"), ctrl.checkIn);
+router.post("/:id/cancel",        validateObjectIdParam("id"), requireAction("reception.register"),  ctrl.cancel);
 
 module.exports = router;

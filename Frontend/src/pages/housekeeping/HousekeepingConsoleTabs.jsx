@@ -8,7 +8,7 @@
  * (/api/ward-ops/shift/*). Shift is a cross-role primitive — there's
  * no separate "housekeeping shift" collection.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
@@ -17,7 +17,8 @@ import {
 import { useAuth } from "../../context/AuthContext";
 
 import { API_BASE_URL as API } from "../../config/api";
-const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token") || localStorage.getItem("his_token"))}` } });
+// R7bj-F9 / 10-X-HIGH-1: drop legacy localStorage fallback.
+const authHdr = () => ({ headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token") || ""}` } });
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtAgo = (d) => {
@@ -392,8 +393,27 @@ export function InventoryTab() {
   const [lowOnly, setLowOnly] = useState(false);
   const [show, setShow] = useState(false);
 
-  const refresh = async () => { try { const r = await axios.get(`${API}/housekeeping/inventory${lowOnly ? "?lowStock=true" : ""}`, authHdr()); setRows(r.data?.data || []); } catch {} };
-  useEffect(() => { refresh(); }, [lowOnly]);
+  // R7bj-F9 — cancel in-flight inventory fetch on rapid toggle so a slow
+  // earlier reply doesn't overwrite a fresher one (Perf HIGH-1).
+  const abortRef = useRef(null);
+  useEffect(() => {
+    if (abortRef.current) abortRef.current.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    axios.get(`${API}/housekeeping/inventory${lowOnly ? "?lowStock=true" : ""}`, { ...authHdr(), signal: ctrl.signal })
+      .then(r => setRows(r.data?.data || []))
+      .catch(e => { if (e.name !== "CanceledError" && e.name !== "AbortError") console.error(e); });
+    return () => ctrl.abort();
+  }, [lowOnly]);
+
+  const refresh = () => {
+    if (abortRef.current) abortRef.current.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    axios.get(`${API}/housekeeping/inventory${lowOnly ? "?lowStock=true" : ""}`, { ...authHdr(), signal: ctrl.signal })
+      .then(r => setRows(r.data?.data || []))
+      .catch(e => { if (e.name !== "CanceledError" && e.name !== "AbortError") console.error(e); });
+  };
 
   const receive = async (id) => {
     const qty = prompt("Quantity received?");

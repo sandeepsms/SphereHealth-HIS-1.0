@@ -11,12 +11,18 @@ import { numberToIndianWords, toNum } from "../../../utils/printUtils";
 const RefundReceipt = ({ settings, receipt = {} }) => {
   const amount = toNum(receipt.amount);
   const printCount = toNum(receipt.printCount);
-  // R7bf-F / A4-HIGH-5: refund mode + UTR reference. Use refundMode
-  // (preferred — set by the controller from the audit row), falling
-  // back to `method` for legacy callers. UTR comes from the bank API
-  // when the refund is an NEFT/IMPS transfer.
+  // R7bf-F / A4-HIGH-5 + R7bh-F7 / R7bg-7-HIGH-4: refund mode + UTR
+  // reference. Use refundMode (preferred — set by the controller from
+  // the audit row), falling back to `method` for legacy callers. UTR
+  // comes from the bank API when the refund is an NEFT/IMPS transfer.
+  // The backend uses 4 different aliases over different code paths —
+  // all 4 are mapped here so the slip never shows "—" when a real
+  // bank reference exists.
   const refundMode = receipt.refundMode || receipt.method || "Cash";
-  const utrReference = receipt.utrReference || receipt.utrRef || receipt.refundTransactionId;
+  const utrReference = receipt.utrReference
+    || receipt.utrRef
+    || receipt.refundTransactionId
+    || receipt.refNo;
   return (
     <PrintShell
       settings={settings}

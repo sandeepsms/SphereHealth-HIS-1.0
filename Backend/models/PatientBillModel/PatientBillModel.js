@@ -334,6 +334,7 @@ const PatientBillSchema = new mongoose.Schema(
         "APPROVED",
         "REJECTED",
         "PARTIAL_APPROVED",
+        "SETTLED_WRITEOFF",    // TPA paid short, hospital absorbed gap via writeOffAmount
       ],
       default: "NOT_APPLICABLE" },
     tpaClaimNumber: { type: String, trim: true },
@@ -349,6 +350,28 @@ const PatientBillSchema = new mongoose.Schema(
     tpaApprovedBy:           { type: String, trim: true, default: null },
     tpaApprovedById:         { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     tpaApprovedAt:           { type: Date, default: null },
+
+    // ── TPA write-off (R7bm-F6 / META-5) ──────────────────
+    // When TPA reconciliation comes back short (approved ₹10,000, settled
+    // ₹9,950), the hospital may choose to ABSORB the residual rather than
+    // pursue the patient for it. This is a write-off — semantically
+    // different from a denial. The TPA register renders "approved ₹X,
+    // settled ₹Y, wrote off ₹Z" without double-counting denials.
+    //
+    // Pre-R7bm the controller (billingController.tpaSettle) was writing
+    // these fields onto the bill, but the schema didn't declare them —
+    // Mongoose strict-mode silently dropped them, losing the audit
+    // trail. Now declared as proper Decimal128 (money) + audit fields.
+    //
+    // Append-only semantics enforced by the pre-save guard below:
+    // writeOffAmount can only GROW (multiple partial settlements may
+    // accrue write-offs on a single bill); it cannot decrease or be
+    // cleared without an admin force (caught by Mongoose schema +
+    // controller-level checks, not enforced here).
+    writeOffAmount: { type: Dec, default: () => toDec(0) },
+    writeOffReason: { type: String, trim: true, default: null },
+    writeOffBy:     { type: String, trim: true, default: null },
+    writeOffAt:     { type: Date, default: null },
 
     // ── Dates & Audit ─────────────────────────────────────
     billDate: { type: Date, default: Date.now },
@@ -531,13 +554,63 @@ PatientBillSchema.methods.recalcTotals = function () {
 // bill. The fix: only burn a billNumber when the bill is created in a
 // non-DRAFT state (rare — most paths create DRAFT first then call
 // generateFinalBill); DRAFT bills get their number at finalisation only.
+// R7bm-F6 / META-5 — snapshot writeOffAmount on document load so the
+// pre-save append-only guard can compare against the pre-mutation value.
+// Mongoose doesn't expose a stable "previous value" API for embedded
+// Decimal128 across all driver versions, so we keep our own snapshot.
+PatientBillSchema.post("init", function () {
+  try {
+    this._priorWriteOffAmount = toNum(this.writeOffAmount);
+  } catch (_) {
+    this._priorWriteOffAmount = 0;
+  }
+});
+
 PatientBillSchema.pre("save", async function (next) {
   if (this.isNew && !this.billNumber && this.billStatus && this.billStatus !== "DRAFT") {
     const year = new Date().getFullYear();
     const seq  = await nextSeqBill(`bill:${year}`);
     this.billNumber = `BILL-${year}-${String(seq).padStart(6, "0")}`;
   }
+
+  // R7bm-F6 / META-5 — append-only guard on writeOffAmount.
+  // Write-offs represent finance-team approved residual absorption on
+  // TPA short-pays; once stamped, they are part of the GST register's
+  // CDNR-adjacent narrative and CANNOT be silently reversed (that would
+  // re-open the patient's liability without a counter-entry). The only
+  // legal mutation is monotonic increase (additional shortfalls on
+  // later partial settlements accrue onto the same bill). To clear or
+  // reduce a write-off, the cashier MUST go through a credit-note /
+  // reversal flow that emits its own audit row.
+  if (!this.isNew && this.isModified("writeOffAmount")) {
+    const prior = Number(this._priorWriteOffAmount) || 0;
+    const now   = toNum(this.writeOffAmount);
+    if (prior > 0 && now + 0.0001 < prior) {
+      const err = new Error(
+        `writeOffAmount is append-only: cannot decrease ${prior.toFixed(2)} → ${now.toFixed(2)}. ` +
+        `Issue a credit note / reversal instead.`,
+      );
+      err.code = "WRITEOFF_APPEND_ONLY";
+      err.statusCode = 409;
+      err.status = 409;
+      return next(err);
+    }
+    // When a new write-off lands (amount grew) and the caller forgot to
+    // stamp the audit timestamp, fill it in defensively. writeOffBy is
+    // intentionally NOT fabricated here — the controller is the
+    // authoritative source for "who authorised this absorption" and a
+    // null actor must surface in the GST register rather than be hidden
+    // behind a "System" placeholder.
+    if (now > prior && !this.writeOffAt) {
+      this.writeOffAt = new Date();
+    }
+  }
+
   this.recalcTotals();
+
+  // Refresh the snapshot for any subsequent save() within the same
+  // request lifecycle (e.g. tpaSettle → save → secondary mutation).
+  this._priorWriteOffAmount = toNum(this.writeOffAmount);
   next();
 });
 
@@ -574,6 +647,18 @@ PatientBillSchema.index({ billGeneratedAt: -1, billStatus: 1 });
 // Multikey index lets the query pick up bills with any payment row in the
 // day window without scanning the full collection.
 PatientBillSchema.index({ "payments.paidAt": -1 });
+
+// R7bh-F1 (R7bg-9-CRIT-5): sparse index on payments.voidedAt. Day Book
+// + IncomeService + DashboardsController each evaluate
+// `$or:[{"payments.paidAt": dayWindow}, {"payments.voidedAt": dayWindow}]`
+// for the reversed-refund leg (so a void on day D shows up in D's
+// collection). Pre-R7bh that branch fell back to COLLSCAN — the only
+// payments.* indexes covered paidAt. Sparse so existing un-voided
+// payments don't bloat the index; multikey across the embedded array.
+PatientBillSchema.index(
+  { "payments.voidedAt": -1 },
+  { sparse: true, name: "payment_voidedAt_sparse" },
+);
 
 // FIX (audit P6-B1): partial unique index that prevents two concurrent
 // getOrCreateDraftBill() callers from materialising two DRAFT rows for the
@@ -637,7 +722,12 @@ async function _refuseDeleteIfTriggersReference(next) {
       let BillingTrigger;
       try { BillingTrigger = require("../Billing/BillingTrigger"); } catch (_) { /* circular-load tolerant */ }
       if (!BillingTrigger) return next();
-      const refCount = await BillingTrigger.countDocuments({ linkedBillId: id }).catch(() => 0);
+      // R7bh-F1 / META-2 (R7bg-6-CRIT-6): query field is `billId`, not
+      // `linkedBillId`. Pre-R7bh `linkedBillId` returned 0 unconditionally
+      // (no such field exists on BillingTrigger), so the guard never
+      // tripped and bills with linked triggers could be hard-deleted —
+      // leaving orphaned charges and breaking the autoBilling reconciler.
+      const refCount = await BillingTrigger.countDocuments({ billId: id }).catch(() => 0);
       if (refCount > 0) {
         const err = new Error(
           `Cannot delete bill — ${refCount} BillingTrigger row(s) reference it. ` +

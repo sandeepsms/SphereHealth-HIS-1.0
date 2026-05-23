@@ -203,7 +203,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
 
   // Auto-load my IPD patients on mount
   useEffect(() => {
-    const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+    const token = (sessionStorage.getItem("his_token"));
     if (!token) return;
     setPatientsLoading(true);
     axios.get(`${API_ENDPOINTS.ADMISSIONS}/my-patients?status=Active`, {
@@ -233,7 +233,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
     const uhid = location.state?.uhid;
     if (!uhid) return;
     setSearch(uhid);
-    const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+    const token = (sessionStorage.getItem("his_token"));
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     axios.get(`${API_ENDPOINTS.ADMISSIONS}?uhid=${uhid}`, { headers })
       .then(res => {
@@ -264,7 +264,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
   const fetchTreatmentOrders = async (uhid) => {
     if (!uhid) return;
     try {
-      const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+      const token = (sessionStorage.getItem("his_token"));
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const { data } = await axios.get(`${API_ENDPOINTS.DOCTOR_ORDERS}?UHID=${uhid}&limit=50`, { headers });
       const arr = Array.isArray(data) ? data : (data.data || data.orders || []);
@@ -321,7 +321,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
     if (!search.trim()) return;
     setLoading(true);
     try {
-      const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+      const token = (sessionStorage.getItem("his_token"));
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}?uhid=${search.trim()}`, { headers });
       const arr = Array.isArray(data) ? data : data.data || [];
@@ -354,7 +354,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
     if (!medForm.drug.trim()) { showToast("Drug name is required", "warn"); return; }
     if (!patient || !ipdNo) { showToast("Load a patient first", "warn"); return; }
     setOrderAddSaving(true);
-    const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+    const token = (sessionStorage.getItem("his_token"));
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const hamFlag = isHAM_IA(medForm.drug) || !!medForm.hamOverride;
     const times = FREQ_TIMES_IA[medForm.frequency] || ["08:00"];
@@ -389,7 +389,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
     if (!infForm.drugFluid.trim()) { showToast("Drug / fluid name is required", "warn"); return; }
     if (!patient || !ipdNo) { showToast("Load a patient first", "warn"); return; }
     setOrderAddSaving(true);
-    const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+    const token = (sessionStorage.getItem("his_token"));
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const hamFlag = isHAM_IA(infForm.drugFluid) || !!infForm.hamOverride;
     const docName = form.doctorName || doctorDisplayName;
@@ -433,7 +433,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
     }
     if (!isOwner) { showToast("Access denied — you are not the attending doctor for this patient", "err"); return; }
     setLoading(true);
-    const token = (sessionStorage.getItem("his_token") || localStorage.getItem("his_token"));
+    const token = (sessionStorage.getItem("his_token"));
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const payload = {
       ipdNo: effectiveIpdNo,

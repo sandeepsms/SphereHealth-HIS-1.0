@@ -91,13 +91,14 @@ async function submit(id, actor = {}) {
 }
 
 /**
- * File with PvPI (SUBMITTED → PVPI_FILED). Captures the PvPI ticket
- * reference returned by the central form.
+ * File with PvPI (SUBMITTED → PVPI_FILED, or PVPI_FAILED → PVPI_FILED
+ * for the "portal emailed the reference back later" path). Captures the
+ * PvPI ticket reference returned by the central form.
  */
 async function filePvPI(id, payload = {}, actor = {}) {
   if (!payload?.pvpiReferenceNumber) throw _err("ARG_MISSING", "pvpiReferenceNumber is required", 400);
   const updated = await ADRReport.findOneAndUpdate(
-    { _id: id, status: "SUBMITTED" },
+    { _id: id, status: { $in: ["SUBMITTED", "PVPI_FAILED"] } },
     {
       $set: {
         status: "PVPI_FILED",
@@ -121,13 +122,28 @@ async function filePvPI(id, payload = {}, actor = {}) {
 /**
  * Reopen a SUBMITTED / PVPI_FILED report back to DRAFT — typically used
  * if the PvPI desk asks for an amendment.
+ *
+ * R7bh-F5: maker-checker SoD — the original reporter cannot reopen
+ * their own report unless `options.force` is true AND an admin reason
+ * is supplied. This closes R7bg-2-HIGH-3 (silent rewrite of a
+ * regulator-facing record by the same actor).
  */
-async function reopen(id, actor = {}, reason = "") {
+async function reopen(id, actor = {}, reason = "", options = {}) {
+  const existing = await ADRReport.findById(id).lean();
+  if (!existing) throw _err("NOT_FOUND", "ADR report not found", 404);
+
+  const actorId = String(actor._id || actor.id || "");
+  const reporterId = String(existing.reportedBy || "");
+  if (actorId && reporterId && actorId === reporterId && !options.force) {
+    throw _err("SAME_ACTOR_REJECT", "Same actor as original reporter cannot reopen — maker-checker required (admin force only with reason)", 409);
+  }
+
+  const auditEntry = _audit("REOPENED", actor, options.force ? `force=true reason=${reason || "admin override"}` : reason);
   const updated = await ADRReport.findOneAndUpdate(
-    { _id: id, status: { $in: ["SUBMITTED", "PVPI_FILED"] } },
+    { _id: id, status: { $in: ["SUBMITTED", "PVPI_FILED", "PVPI_FAILED"] } },
     {
       $set: { status: "DRAFT", submittedAt: null, pvpiFiledAt: null },
-      $push: { auditTrail: _audit("REOPENED", actor, reason) },
+      $push: { auditTrail: { $each: [auditEntry], $slice: -200 } },
     },
     { new: true },
   );
@@ -148,4 +164,112 @@ async function list({ uhid, status, severity, limit = 100 } = {}) {
   return ADRReport.find(q).sort({ createdAt: -1 }).limit(Math.min(500, Math.max(1, limit))).lean();
 }
 
-module.exports = { create, update, submit, filePvPI, reopen, getById, list };
+/**
+ * R7bh-F5: PvPI Form 1 (Suspected ADR Reporting Form) JSON payload.
+ * Maps the stored ADR record onto the IPC Vigiflow field set so the
+ * report can be (eventually) auto-submitted via the PvPI API or
+ * exported as a paper form.
+ */
+async function generatePvPIForm1(adrId) {
+  const adr = await ADRReport.findById(adrId).populate("suspectedDrug").lean();
+  if (!adr) throw _err("NOT_FOUND", "ADR report not found", 404);
+  return {
+    formVersion: "PvPI-Form-1.0",
+    reportedAt: adr.createdAt,
+    reporter: {
+      name: adr.reportedByName || "",
+      role: adr.reportedByRole || "Healthcare Professional",
+    },
+    patient: {
+      UHID: adr.patientUHID,
+      name: adr.patientName || null,
+    },
+    drug: {
+      name: adr.suspectedDrug?.name || adr.suspectedDrugName || null,
+      brand: adr.suspectedDrug?.brandName || null,
+      generic: adr.suspectedDrug?.genericName || null,
+      manufacturer: adr.suspectedDrug?.manufacturer || null,
+      batch: adr.batchNumber || null,
+      expiry: adr.expiryDate || null,
+      route: adr.route || null,
+      dose: adr.dose || null,
+    },
+    reaction: {
+      description: adr.reactionDescription,
+      severity: adr.severity,
+      onsetDate: adr.onsetDate,
+      duration: adr.duration || null,
+    },
+    dechallenge: adr.dechallenge || null,
+    rechallenge: adr.rechallenge || null,
+    actionTaken: adr.actionTaken || null,
+    outcome: adr.outcome || null,
+    concomitantMeds: adr.concomitantMeds || [],
+    relevantHistory: adr.relevantHistory || null,
+    causalityAssessment: adr.causalityAssessment || null,
+    attachments: adr.attachments || [],
+  };
+}
+
+/**
+ * Submit ADR via pvpiSubmitter. The submitter is authoritative — its
+ * `success: true` covers both real HTTP 2xx and the stub-mode no-op
+ * (used until CDSCO credentials land). Branches the persisted state
+ * accordingly. PII never lands in the immutable audit row — only the
+ * status code does; full message stays in pvpiLastErrorMessage where
+ * it can be redacted/purged.
+ */
+async function submitToPvPI(adrId, actor = {}) {
+  const payload = await generatePvPIForm1(adrId);
+  const submitter = require("./pvpiSubmitter");
+  const result = await submitter.send(payload);
+  const now = new Date();
+  const succeeded = result && result.success === true;
+
+  const $inc = { pvpiAttemptCount: result?.attempts || 1 };
+  const $set = { pvpiLastAttemptedAt: now };
+  let auditAction;
+  let auditDetail;
+
+  if (succeeded) {
+    Object.assign($set, {
+      status: "PVPI_FILED",
+      pvpiReferenceNumber: result.pvpiReference || "",
+      pvpiFiledAt: now,
+      pvpiFiledBy: actor._id || actor.id || null,
+      pvpiFiledByName: actor.fullName || actor.name || "",
+      pvpiLastErrorMessage: "",
+      pvpiLastErrorCode: "",
+    });
+    auditAction = "PVPI_SUBMITTED";
+    auditDetail = `transport=${result.transport || "stub"} ref=${result.pvpiReference || "(none)"}`;
+  } else {
+    Object.assign($set, {
+      status: "PVPI_FAILED",
+      pvpiLastErrorMessage: String(result?.errorMessage || "Unknown PvPI transport error"),
+      pvpiLastErrorCode: String(result?.statusCode || "TRANSPORT_FAIL"),
+    });
+    auditAction = "PVPI_SUBMIT_FAILED";
+    auditDetail = `transport=${result?.transport || "unknown"} code=${$set.pvpiLastErrorCode}`;
+  }
+
+  const updated = await ADRReport.findByIdAndUpdate(
+    adrId,
+    { $set, $inc, $push: { auditTrail: { $each: [_audit(auditAction, actor, auditDetail)], $slice: -200 } } },
+    { new: true }
+  );
+  return { report: updated, submission: result };
+}
+
+module.exports = {
+  create,
+  update,
+  submit,
+  filePvPI,
+  reopen,
+  getById,
+  list,
+  // R7bh-F5
+  generatePvPIForm1,
+  submitToPvPI,
+};

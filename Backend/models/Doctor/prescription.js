@@ -134,6 +134,12 @@ const prescriptionSchema = new mongoose.Schema(
     // persisted with the prescription so a NABH reviewer can see why a
     // drug was prescribed against a known allergy.
     _allergyOverrideReason: { type: String, default: "" },
+
+    // R7bh-F1 / R7bg-7-CRIT-2: PrintAudit infrastructure $incs this
+    // on every prescription print/reprint. Pre-R7bh Prescription had
+    // no printCount field, so $inc no-op'd → no DUPLICATE watermark
+    // on reprinted Rx (D&C / NMC reprint trail gap).
+    printCount: { type: Number, default: 0 },
   },
   { timestamps: true },
 );
