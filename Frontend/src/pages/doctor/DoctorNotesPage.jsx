@@ -11,7 +11,13 @@ import "../../Components/clinical/clinical-forms.css";
 // timeline. Form modals + save/sign flow remain untouched.
 import "../../pages/patient/patient-file.css";
 import "./note-page-redesign.css";
-import { DoctorAssessmentContent } from "./DoctorAssessmentPage";
+// R7az — DoctorAssessmentContent import removed. The fullscreen Initial
+// Assessment modal that mounted this component is gone (user wanted a
+// single per-patient assessment surface). The "Initial Assessment" chip
+// in the Add Note card grid now opens the existing inline activeModal
+// === "initial" form (further down in this file) instead of popping a
+// modal. The standalone /doctor-opd-panel route still imports
+// DoctorAssessmentContent directly when needed.
 // R7ax — Inline-embed the 4 surfaces that used to live as standalone
 // sidebar entries (Emergency / Discharge / Consent / MLC). Importing
 // the named *Content components lets DoctorNotes render them as panels
@@ -206,7 +212,8 @@ function SBARBox({ letter, title, color, value, onChange, placeholder }) {
 function DoctorNotesContent({ selectedPatient }) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [showAssessmentModal, setShowAssessmentModal] = useState(false);
+  // R7az — showAssessmentModal state retired. Initial Assessment now uses
+  // the same inline activeModal flow as every other note type.
 
   const [searchUHID,   setSearchUHID]   = useState("");
   const [patient,      setPatient]      = useState(null);
@@ -456,15 +463,17 @@ function DoctorNotesContent({ selectedPatient }) {
   };
 
   const openModal = (id) => {
-    // Initial assessment always opens the new DoctorAssessmentContent modal
-    if (id === "initial") {
-      setShowAssessmentModal(true);
-      return;
-    }
-    // Workflow gate: if new admission and initial not done, block other notes
-    if (gateActive) {
+    // R7az — Initial Assessment no longer pops a fullscreen modal. It
+    // opens the inline activeModal === "initial" form (defined later in
+    // this file) like every other note type. Removes the "2 different
+    // emergency assessment surfaces" UX duplication the user flagged.
+    //
+    // Gate: when the IPD initial assessment isn't yet signed, every
+    // non-initial chip is blocked with a toast. We no longer auto-open
+    // any modal — the user just sees the toast and must click the
+    // "Initial Assessment" card themselves.
+    if (gateActive && id !== "initial") {
       toast.warn("⚠ Initial Assessment must be completed and signed before adding other notes", { autoClose: 4000 });
-      setShowAssessmentModal(true);
       return;
     }
     setActiveModal(id);
@@ -1060,7 +1069,12 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 </div>
               </div>
               <button
-                onClick={() => setShowAssessmentModal(true)}
+                onClick={() => {
+                  // R7az — navigate to the Add Note tile + auto-pick the
+                  // Initial Assessment card. No more modal popup.
+                  setActiveTile("addnote");
+                  setTimeout(() => openModal("initial"), 0);
+                }}
                 style={{ padding: "10px 22px", background: "#dc2626", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", boxShadow: "0 4px 14px rgba(220,38,38,.35)", flexShrink: 0 }}>
                 <i className="pi pi-clipboard" style={{ marginRight: 6, fontSize: 13 }} />
                 Write Initial Assessment
@@ -2958,60 +2972,10 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
         />
       )}
 
-      {/* ══ INITIAL ASSESSMENT MODAL ══ */}
-      {showAssessmentModal && (
-        <div
-          style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(15,23,42,.65)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-          onClick={() => setShowAssessmentModal(false)}
-        >
-          <div
-            style={{ background: "white", borderRadius: 16, width: "min(1100px, 96vw)", maxHeight: "92vh", display: "flex", flexDirection: "column", boxShadow: "0 24px 60px rgba(0,0,0,.35)", overflow: "hidden" }}
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Modal header */}
-            <div style={{ padding: "14px 22px", background: `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ width: 32, height: 32, borderRadius: 8, background: "rgba(255,255,255,.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <i className="pi pi-clipboard" style={{ fontSize: 15, color: "white" }} />
-                </span>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>Initial Assessment — NABH COP.1</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,.75)" }}>
-                    {patient?.patientName || patient?.patientId?.fullName || "—"} · IPD: {patient?.ipdNo || patient?.admissionNumber || "—"}
-                  </div>
-                </div>
-              </div>
-              <button onClick={() => setShowAssessmentModal(false)}
-                style={{ background: "rgba(255,255,255,.2)", border: "none", color: "white", fontSize: 20, cursor: "pointer", width: 32, height: 32, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>×</button>
-            </div>
-            {/* Scrollable content */}
-            <div style={{ flex: 1, overflowY: "auto", background: "#f0f2f5", padding: "20px 24px" }}>
-              <DoctorAssessmentContent
-                selectedPatient={patient}
-                onSaved={async () => {
-                  // Close the modal and reload patient so the gate drops immediately
-                  setShowAssessmentModal(false);
-                  if (patient) {
-                    const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
-                    // Re-fetch fresh admission to get doctorCompleted=true
-                    const token = (sessionStorage.getItem("his_token"));
-                    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-                    try {
-                      const { data } = await (await import("axios")).default.get(
-                        `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(patient.UHID || patient.uhid || "")}`,
-                        { headers }
-                      );
-                      const arr = Array.isArray(data) ? data : data.data || [];
-                      if (arr[0]) setPatient(arr[0]);
-                    } catch { /* fallback: patch local state */ }
-                    await fetchNotes(ipdNo);
-                  }
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* R7az — Initial Assessment modal removed. Doctors now do the
+          initial assessment inline via the Add Note → Initial Assessment
+          card; the gate banner above auto-navigates them there when the
+          IPD admission requires it. */}
     </div>
   );
 }
