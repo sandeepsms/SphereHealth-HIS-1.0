@@ -1119,11 +1119,62 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     todayNotes > 0 && { label: `${todayNotes} today`, tone: "accent" },
                   ].filter(Boolean),
                 },
+                /* ── R7av — relocated from Doctor sidebar ──
+                   Four full-page clinical surfaces (Emergency Assessment,
+                   Discharge Summary, Consent Forms, MLC) used to be
+                   top-level sidebar items. They now live as tiles here
+                   so the doctor lands on a single per-patient hub. The
+                   tile's `path` field is what tells the onClick handler
+                   below to navigate(path) instead of setActiveTile(id);
+                   the standalone routes are unchanged so deep-links keep
+                   working. */
+                {
+                  id: "emergency",
+                  path: "/emergency-assessment",
+                  title: "Emergency Assessment",
+                  subtitle: "ER triage + initial doctor assessment (NABH AAC.1)",
+                  icon: "pi-exclamation-circle",
+                  color: "#dc2626",
+                  tint: "#fee2e2",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                },
+                {
+                  id: "discharge",
+                  path: "/discharge-summary",
+                  title: "Discharge Summary",
+                  subtitle: "Final summary + follow-up + meds-on-discharge (AAC.4)",
+                  icon: "pi-sign-out",
+                  color: "#0891b2",
+                  tint: "#cffafe",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                },
+                {
+                  id: "consent",
+                  path: "/consent-forms",
+                  title: "Consent Forms",
+                  subtitle: "Surgical / anaesthesia / blood-tx / HIV consents (PRE.4)",
+                  icon: "pi-shield",
+                  color: "#9333ea",
+                  tint: "#f3e8ff",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                },
+                {
+                  id: "mlc",
+                  path: "/mlc",
+                  title: "Medico-Legal (MLC)",
+                  subtitle: "MLC register — police info, alleged history, exhibits",
+                  icon: "pi-flag",
+                  color: "#a16207",
+                  tint: "#fef3c7",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                },
               ].map(t => (
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setActiveTile(t.id)}
+                  // R7av — tiles with a `path` navigate to a standalone
+                  // route; legacy tiles flip `activeTile` to expand inline.
+                  onClick={() => t.path ? navigate(t.path) : setActiveTile(t.id)}
                   className="dnp-tile"
                   style={{ "--tile-color": t.color, "--tile-tint": t.tint }}
                   aria-label={`Open ${t.title}`}

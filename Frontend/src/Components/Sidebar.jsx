@@ -155,23 +155,29 @@ const NAV = [
      dashboards can be reinstated as admin-only tiles inside Bed Management
      when there's real backend support behind them. */
 
-  /* ── Clinical — Doctor ──────────────────────────────── */
+  /* ── Clinical — Doctor ────────────────────────────────
+     R7av — slim sidebar to 3 core entries. Emergency Assessment,
+     Discharge Summary, Consent Forms, and MLC now live as tiles INSIDE
+     the Doctor Notes page (same surface as Diagnosis / Orders / MAR /
+     Team) so a doctor lands on a single hub for everything they author
+     about a patient. The standalone routes still exist — the tiles
+     navigate to them — so deep-links from print headers and email
+     reminders keep working.
+
+     Physiotherapy Console removed from the Doctor sidebar too: it now
+     lives only under the Physiotherapist role's hard-forked nav
+     (see PHYSIO_NAV below). Doctors who need to peek at a physio plan
+     can deep-link to /physiotherapist?tab=plans from inside the patient
+     file or a doctor-order chip — keeping it on every doctor's sidebar
+     made the sidebar feel like a settings menu. */
   {
     id: "doctor", label: "Clinical — Doctor",
     icon: "pi-user-edit", color: "#7c3aed", light: "#f5f3ff",
     nabh: true, roles: [ADMIN, DR],
     items: [
-      { label: "Patient Panel",         icon: "pi-id-card",           path: "/doctor-patient-panel",  roles: [ADMIN, DR] },
-      { label: "OPD Assessment",        icon: "pi-file-edit",         path: "/doctor-opd-panel",       roles: [ADMIN, DR], nabh: true },
-      { label: "Doctor Notes",          icon: "pi-book",              path: "/doctor-notes",           roles: [ADMIN, DR], nabh: true },
-      { label: "Emergency Assessment",  icon: "pi-exclamation-circle",path: "/emergency-assessment",   roles: [ADMIN, DR], nabh: true },
-      { label: "Discharge Summary",     icon: "pi-sign-out",          path: "/discharge-summary",      roles: [ADMIN, DR], nabh: true },
-      { label: "Consent Forms",         icon: "pi-shield",            path: "/consent-forms",          roles: [ADMIN, DR], nabh: true },
-      { label: "Medico-Legal (MLC)",    icon: "pi-shield",            path: "/mlc",                    roles: [ADMIN, DR], nabh: true },
-      // R7bj-F1 — Physiotherapy console (NABH COP.20 rehab services).
-      // Visible to ADMIN + DR + PT (Physiotherapist) so doctor can
-      // raise + monitor; Physio actions sessions.
-      { label: "Physiotherapy Console", icon: "pi-bolt",              path: "/physiotherapist",        roles: [ADMIN, DR, PT], nabh: true, badge: "COP.20" },
+      { label: "Patient Panel",  icon: "pi-id-card",   path: "/doctor-patient-panel", roles: [ADMIN, DR] },
+      { label: "OPD Assessment", icon: "pi-file-edit", path: "/doctor-opd-panel",     roles: [ADMIN, DR], nabh: true },
+      { label: "Doctor Notes",   icon: "pi-book",      path: "/doctor-notes",         roles: [ADMIN, DR], nabh: true },
     ],
   },
 
