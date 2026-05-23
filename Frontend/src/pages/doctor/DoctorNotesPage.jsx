@@ -1205,7 +1205,17 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   tint: "#fef3c7",
                   badges: [{ label: "NABH", tone: "ok" }],
                 },
-              ].map(t => (
+              ].map(t => {
+                // R7bi — Doctor Initial Assessment gate. ALL tiles except
+                // the one whose MODULES grid contains the "initial"
+                // module ("addnote") stay locked until the doctor signs
+                // the Initial Assessment for this admission. Emergency
+                // Assessment (ER intake) also stays unlocked since it
+                // doubles as the initial-assessment surface for ER
+                // admissions per NABH AAC.1.
+                const isAssessmentTile = t.id === "addnote" || t.id === "emergency";
+                const locked = gateActive && !isAssessmentTile;
+                return (
                 <button
                   key={t.id}
                   type="button"
@@ -1214,20 +1224,27 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   // routes still exist for direct deep-links from email
                   // / print headers; the 4 inline panels below match
                   // those routes' content components.
-                  onClick={() => setActiveTile(t.id)}
-                  className="dnp-tile"
+                  onClick={() => {
+                    if (locked) {
+                      toast.error("⛔ Complete the Doctor Initial Assessment first (NABH COP.1). Open 'Add a Note' → Initial Assessment.", { autoClose: 5000 });
+                      return;
+                    }
+                    setActiveTile(t.id);
+                  }}
+                  className={`dnp-tile ${locked ? "dnp-tile--locked" : ""}`}
                   style={{ "--tile-color": t.color, "--tile-tint": t.tint }}
-                  aria-label={`Open ${t.title}`}
+                  aria-label={`Open ${t.title}${locked ? " (locked)" : ""}`}
+                  aria-disabled={locked}
                 >
                   <div className="dnp-tile__icon">
-                    <i className={`pi ${t.icon}`} />
+                    <i className={`pi ${locked ? "pi-lock" : t.icon}`} />
                   </div>
                   <div className="dnp-tile__body">
                     <div className="dnp-tile__title">{t.title}</div>
                     <div className="dnp-tile__subtitle">{t.subtitle}</div>
-                    {t.badges.length > 0 && (
+                    {(locked ? [{ label: "🔒 Initial Assessment required", tone: "warn" }] : t.badges).length > 0 && (
                       <div className="dnp-tile__badges">
-                        {t.badges.map((b, i) => (
+                        {(locked ? [{ label: "🔒 Initial Assessment required", tone: "warn" }] : t.badges).map((b, i) => (
                           <span key={i} className={`dnp-tile__badge dnp-tile__badge--${b.tone}`}>
                             {b.label}
                           </span>
@@ -1237,7 +1254,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   </div>
                   <i className="pi pi-chevron-right dnp-tile__chevron" aria-hidden />
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
 

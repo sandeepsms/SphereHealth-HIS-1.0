@@ -18,12 +18,12 @@ import FingerprintConsentModal from "../../Components/clinical/FingerprintConsen
 import IntegratedVitalsPanel from "../../Components/clinical/IntegratedVitalsPanel";
 import { saveVitalSheet, getVitalSheet } from "../../Services/vital/vitalService";
 import NursingPatientReport from "../../Components/nursing/NursingPatientReport";
-// R7bg — Client-side QR rendering for the patient header. The QR encodes
-// a plain-text patient summary (UHID, IPD#, name, age/sex, ward, bed,
-// admission date, latest diagnosis) so anyone with a phone can scan and
-// see the patient's identity + key data. Rendered locally (no PHI leaves
-// the browser to any third-party QR service).
-import { QRCodeSVG } from "qrcode.react";
+// R7bi — shared patient banner (Doctor + Nursing parity). Replaces the
+// inline JSX that lived here pre-R7bi (with R7bg's QR/IPD/age/diagnosis
+// enhancements now promoted into the shared component).
+import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
+// R7bi — QRCodeSVG import removed; the QR now lives inside the shared
+// PatientHeaderCard component, so this file no longer references it.
 
 /* ── Design tokens ── */
 const C = {
@@ -448,14 +448,19 @@ function NursingNotesContent({ selectedPatient }) {
   const [lateEntryReason, setLateEntryReason] = useState("");
 
   /* ── Initial Assessment Gate (NABH COP.2) ──
-     Gate lifts when:
-       1. Admission document has initialAssessment.nurseCompleted === true, OR
-       2. Patient already has nurse notes (they've been documenting → assessment was done)
-     Condition 2 handles legacy data where nurseCompleted was never persisted due to
-     the Mongoose strict-mode bug that has now been fixed.
+     R7bi re-enables the gate per the requirement that other notes
+     stay locked until the nurse files the Initial Assessment for THIS
+     admission. Lifts when:
+       1. Admission has initialAssessment.nurseCompleted === true, OR
+       2. Patient already has at least one nurse note saved (legacy
+          admissions where nurseCompleted was never persisted due to
+          the Mongoose strict-mode bug that has since been fixed).
+     The gate ONLY locks NEW work — the "initial" tile itself stays
+     unlocked, plus read-only history / vitals trend stays viewable.
   ── */
-  const nurseAssessmentDone = true;   // gate removed — all modules always accessible
-  const gateActive = false;           // NABH COP.2 gate disabled
+  const nurseAssessmentDone =
+    !!patient?.initialAssessment?.nurseCompleted || (notes?.length || 0) > 0;
+  const gateActive = !!patient && !nurseAssessmentDone;
   const [filterType, setFilterType] = useState("All");
   const [filterShift,setFilterShift]= useState("");
   const [shift,      setShift]      = useState(getShift());
@@ -1342,232 +1347,16 @@ function NursingNotesContent({ selectedPatient }) {
             </div>
           )}
 
-          {/* ── Patient Banner — R7bg enhanced ──
-              Now surfaces: DOB-derived age, gender, UHID, IPD admission
-              number, ward+bed, admission date, latest doctor diagnosis
-              (auto-refreshes from doctor-notes endpoint), and a QR code
-              encoding the patient summary for scan-and-go workflows.
-              Falls back gracefully on each field so partial data never
-              renders "?Y / ?". */}
-          {(() => {
-            // R7bg — DOB-based age fallback. Backend may not denormalise
-            // age onto the admission; if dob is present anywhere we compute.
-            const dob = patient.dob
-              || patient.dateOfBirth
-              || patient.patient?.dob
-              || patient.patient?.dateOfBirth
-              || patient.patientId?.dob
-              || patient.patientId?.dateOfBirth;
-            const ageFromDob = (() => {
-              if (!dob) return null;
-              const d = new Date(dob);
-              if (Number.isNaN(d.getTime())) return null;
-              const now = new Date();
-              let years = now.getFullYear() - d.getFullYear();
-              const m = now.getMonth() - d.getMonth();
-              if (m < 0 || (m === 0 && now.getDate() < d.getDate())) years--;
-              return years >= 0 && years < 150 ? years : null;
-            })();
-            const patName    = patient.patientName || patient.patient?.name || patient.patientId?.fullName || '—';
-            const initials   = patName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-            const ageRaw     = patient.age ?? patient.patient?.age ?? patient.patientId?.age ?? ageFromDob;
-            const age        = ageRaw != null && ageRaw !== "" ? ageRaw : '—';
-            const genderRaw  = patient.gender || patient.sex || patient.patient?.gender || patient.patient?.sex || patient.patientId?.gender || patient.patientId?.sex || '';
-            const gender     = genderRaw ? genderRaw[0].toUpperCase() : '—';
-            const uhidVal    = patient.uhid || patient.UHID || searchUHID;
-            // R7bg — IPD admission number is a separate identifier from
-            // UHID. Pre-R7bg the header only showed UHID; nurses asked
-            // for the IPD-YY-NN (R7ag) admission number too because
-            // that's what they write on charts and pharmacy slips.
-            const ipdNumVal  = patient.ipdNo || patient.admissionNumber || '—';
-            const bedVal     = patient.bedNumber ? `Bed ${patient.bedNumber}` : '—';
-            const wardVal    = patient.wardName || '—';
-            const admDate    = patient.admissionDate
-              ? new Date(patient.admissionDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-              : '—';
-            // R7bg — prefer the latest doctor-saved diagnosis over the
-            // (often-empty) admission-time admittingDiagnosis. The header
-            // auto-refreshes on focus via the new useEffect above.
-            const diagnosis  = latestDiagnosis?.text
-              || patient.diagnosis
-              || patient.admittingDiagnosis
-              || '—';
-            const consultant = patient.doctorName || patient.consultantName || '—';
-            const admType    = patient.admissionType?.toUpperCase() || 'IPD';
-            const allergies  = (patient.allergies || patient.knownAllergies || []).filter(Boolean);
-            const dayStay    = patient.admissionDate
-              ? Math.floor((Date.now() - new Date(patient.admissionDate)) / (1000 * 60 * 60 * 24))
-              : null;
-            const admTypeColor = admType === 'EMERGENCY'
-              ? { bg: '#fef2f2', color: '#dc2626', border: '#fca5a5' }
-              : admType === 'DAY CARE'
-              ? { bg: '#eff6ff', color: '#1d4ed8', border: '#93c5fd' }
-              : { bg: '#f5f3ff', color: '#7c3aed', border: '#c4b5fd' };
-            // R7bg — Patient summary encoded in the QR. Plain text so any
-            // QR reader (phone camera, dedicated scanner) shows the
-            // patient's identity + key data on scan. Rendered client-side
-            // via qrcode.react so no PHI leaves the browser.
-            const qrPayload = [
-              "SphereHealth HIS",
-              `UHID: ${uhidVal}`,
-              `IPD: ${ipdNumVal}`,
-              `Name: ${patName}`,
-              `Age/Sex: ${age}Y / ${gender}`,
-              `Ward: ${wardVal}`,
-              `Bed: ${bedVal}`,
-              `Adm: ${admDate}`,
-              `Consultant: ${consultant}`,
-              diagnosis !== '—' ? `Diagnosis: ${diagnosis}` : null,
-              allergies.length > 0 ? `Allergies: ${allergies.join(", ")}` : null,
-            ].filter(Boolean).join("\n");
-            return (
-              <div style={{ background: C.card, borderRadius: 16, marginBottom: 14, overflow: 'hidden', boxShadow: '0 2px 12px rgba(15,118,110,.08)', border: `1px solid ${C.border}` }}>
-                {/* Top gradient accent bar */}
-                <div style={{ height: 4, background: `linear-gradient(90deg, ${C.primary}, ${C.primaryMid}, #34d399)` }} />
-                <div style={{ padding: '18px 22px' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-
-                    {/* Left: avatar + core info */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1, minWidth: 0 }}>
-                      {/* Avatar circle */}
-                      <div style={{ flexShrink: 0, width: 56, height: 56, borderRadius: 14, background: `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 4px 12px ${C.primary}35` }}>
-                        <span style={{ fontSize: 20, fontWeight: 900, color: 'white', letterSpacing: '-1px' }}>{initials}</span>
-                      </div>
-                      {/* Name + tags */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 5 }}>
-                          <span style={{ fontSize: 17, fontWeight: 800, color: C.text }}>{patName}</span>
-                          <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: admTypeColor.bg, color: admTypeColor.color, border: `1px solid ${admTypeColor.border}` }}>
-                            {admType}
-                          </span>
-                          {patient.bloodGroup && (
-                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: C.redL, color: C.red, border: '1px solid #fca5a5', fontFamily: "'DM Mono',monospace" }}>
-                              🦸 {patient.bloodGroup}
-                            </span>
-                          )}
-                          {dayStay !== null && (
-                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: '#f0fdf4', color: '#15803d', border: '1px solid #86efac' }}>
-                              Day {dayStay + 1}
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ display: 'flex', gap: '6px 20px', flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            <span style={{ fontWeight: 700, color: C.text }}>{age === '—' || gender === '—' ? `${age}${age !== '—' ? 'Y' : ''} / ${gender}` : `${age}Y / ${gender}`}</span>
-                          </span>
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            UHID: <span style={{ fontWeight: 700, color: C.primary, fontFamily: "'DM Mono',monospace" }}>{uhidVal}</span>
-                          </span>
-                          {/* R7bg — IPD admission number. Separate from UHID
-                              (UHID is the patient's lifelong hospital ID;
-                              IPD-YY-NN is THIS admission's number). Nurses
-                              use this on charts + pharmacy slips. */}
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            IPD: <span style={{ fontWeight: 700, color: '#7c3aed', fontFamily: "'DM Mono',monospace" }}>{ipdNumVal}</span>
-                          </span>
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            🏥 <span style={{ fontWeight: 600, color: C.text }}>{wardVal}</span>
-                            {' · '}
-                            <span style={{ fontWeight: 600, color: C.text }}>{bedVal}</span>
-                          </span>
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            📅 <span style={{ fontWeight: 600, color: C.text }}>{admDate}</span>
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* R7bg — Right column: QR code + Change Patient stacked.
-                        The QR encodes the patient's summary (UHID, IPD, name,
-                        age/sex, ward, bed, admission date, diagnosis, allergies)
-                        so anyone with a phone can scan and see the patient's
-                        identity at the bedside. Rendered client-side via
-                        qrcode.react — no PHI leaves the browser. */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
-                      <div
-                        title="Scan with any QR reader for patient summary"
-                        style={{
-                          padding: 8, background: 'white', border: `1.5px solid ${C.border}`,
-                          borderRadius: 10, display: 'flex', flexDirection: 'column',
-                          alignItems: 'center', gap: 4,
-                          boxShadow: '0 1px 3px rgba(0,0,0,.06)',
-                        }}
-                      >
-                        <QRCodeSVG value={qrPayload} size={88} level="M" includeMargin={false} />
-                        <span style={{ fontSize: 8.5, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '.5px' }}>
-                          Scan
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => { setPatient(null); setNotes([]); setSearchUHID(''); setLatestDiagnosis(null); }}
-                        style={{
-                          padding: '7px 13px', border: '1.5px solid #fca5a5',
-                          borderRadius: 9, background: C.redL,
-                          fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                          color: C.red, display: 'flex', alignItems: 'center', gap: 5,
-                          transition: 'all .15s',
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 4px 14px ${C.red}25`; }}
-                        onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
-                      >
-                        <i className="pi pi-arrows-h" style={{ fontSize: 11 }} /> Change Patient
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Bottom: diagnosis + consultant + allergies */}
-                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${C.border}`, display: 'flex', gap: '8px 24px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <i className="pi pi-stethoscope" style={{ fontSize: 11, color: C.muted }} />
-                      <span style={{ fontSize: 12, color: C.muted }}>Consultant:</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{consultant}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      <i className="pi pi-tag" style={{ fontSize: 11, color: C.muted }} />
-                      <span style={{ fontSize: 12, color: C.muted }}>Diagnosis:</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{diagnosis}</span>
-                      {/* R7bg — Tier pill (Provisional/Working/Final) when the
-                          diagnosis came from the doctor's notes endpoint. Colour
-                          codes the certainty: Final = green, Working = blue,
-                          Provisional = amber. Falls back silently when the
-                          source is admission's admittingDiagnosis (no tier). */}
-                      {latestDiagnosis?.tier && (
-                        <span style={{
-                          padding: '2px 8px', borderRadius: 5, fontSize: 9.5, fontWeight: 800,
-                          letterSpacing: '.4px', textTransform: 'uppercase',
-                          background:
-                            latestDiagnosis.tier === 'Final'    ? '#dcfce7' :
-                            latestDiagnosis.tier === 'Working'  ? '#dbeafe' :
-                                                                 '#fef3c7',
-                          color:
-                            latestDiagnosis.tier === 'Final'    ? '#166534' :
-                            latestDiagnosis.tier === 'Working'  ? '#1d4ed8' :
-                                                                 '#92400e',
-                        }}>
-                          {latestDiagnosis.tier}
-                        </span>
-                      )}
-                      {latestDiagnosis?.icd10Code && (
-                        <span style={{ fontSize: 11, color: C.muted, fontFamily: "'DM Mono',monospace" }}>
-                          · ICD-10 {latestDiagnosis.icd10Code}
-                        </span>
-                      )}
-                    </div>
-                    {allergies.length > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: C.red, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <i className="pi pi-exclamation-triangle" style={{ fontSize: 11 }} /> ALLERGY:
-                        </span>
-                        {allergies.map(a => (
-                          <span key={a} style={{ background: C.redL, color: C.red, border: '1px solid #fca5a5', padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{a}</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
+          {/* R7bi — Shared PatientHeaderCard (Doctor + Nursing parity).
+              All visuals + QR/IPD/age/diagnosis-tier/ward logic now
+              live in Components/clinical/PatientHeaderCard.jsx.
+              Pre-R7bi this was 220 lines of inline JSX. */}
+          <PatientHeaderCard
+            patient={patient}
+            searchUHID={searchUHID}
+            latestDiagnosis={latestDiagnosis}
+            onChangePatient={() => { setPatient(null); setNotes([]); setSearchUHID(""); setLatestDiagnosis(null); }}
+          />
 
           {/* ══ TILE GRID (when no section is active) ════════════════════════
                 Nursing Notes is split into 5 tiles. Mirrors the Doctor
@@ -1681,27 +1470,48 @@ function NursingNotesContent({ selectedPatient }) {
                   badges: [{ label: "Print", tone: "info" }],
                   action: () => setShowReport(true),
                 },
-              ].map(t => (
+              ].map(t => {
+                // R7bi — Initial Assessment gate. When the nurse has not
+                // yet signed the Initial Assessment for THIS admission,
+                // ALL tiles except the two entry points to the assessment
+                // itself are locked:
+                //   • "addnote" — Add a Care Note → MODULES grid → "initial"
+                //   • "ipdassessment-nav" — direct nav to the full-page
+                //     /nursing-initial-assessment form
+                // Everything else (orders, MAR, equipment, timeline, care
+                // plan, vitals trend, print) stays locked until the nurse
+                // files the Initial Assessment.
+                const isAssessmentTile =
+                  t.id === "addnote" || t.id === "ipdassessment-nav";
+                const locked = gateActive && !isAssessmentTile;
+                return (
                 <button
                   key={t.id}
                   type="button"
                   // R7be — tiles with an `action` fire a custom handler
                   // (navigate / openReport); legacy tiles fall through to
                   // setActiveTile(id) to expand inline below the header.
-                  onClick={() => t.action ? t.action() : setActiveTile(t.id)}
-                  className="dnp-tile"
+                  onClick={() => {
+                    if (locked) {
+                      toast.error("⛔ Complete the Nursing Initial Assessment first (NABH COP.2). Open 'Add a Care Note' → Initial Assessment.", { autoClose: 5000 });
+                      return;
+                    }
+                    return t.action ? t.action() : setActiveTile(t.id);
+                  }}
+                  className={`dnp-tile ${locked ? "dnp-tile--locked" : ""}`}
                   style={{ "--tile-color": t.color, "--tile-tint": t.tint }}
-                  aria-label={`Open ${t.title}`}
+                  aria-label={`Open ${t.title}${locked ? " (locked)" : ""}`}
+                  aria-disabled={locked}
                 >
                   <div className="dnp-tile__icon">
-                    <i className={`pi ${t.icon}`} />
+                    <i className={`pi ${locked ? "pi-lock" : t.icon}`} />
                   </div>
                   <div className="dnp-tile__body">
                     <div className="dnp-tile__title">{t.title}</div>
                     <div className="dnp-tile__subtitle">{t.subtitle}</div>
-                    {t.badges.length > 0 && (
+                    {(locked ? [{ label: "🔒 Initial Assessment required", tone: "warn" }] : t.badges).length > 0 && (
                       <div className="dnp-tile__badges">
-                        {t.badges.map((b, i) => (
+                        {(locked ? [{ label: "🔒 Initial Assessment required", tone: "warn" }] : t.badges).map((b, i) => (
                           <span key={i} className={`dnp-tile__badge dnp-tile__badge--${b.tone}`}>
                             {b.label}
                           </span>
@@ -1711,7 +1521,8 @@ function NursingNotesContent({ selectedPatient }) {
                   </div>
                   <i className="pi pi-chevron-right dnp-tile__chevron" aria-hidden />
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
 

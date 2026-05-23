@@ -15,12 +15,22 @@
  *     onSearchChange={setSearchUHID}
  *     onLoad={loadPatient}
  *     loading={loading}
- *     diagnosis={diag}               // optional (doctor)
+ *     diagnosis={diag}               // optional (doctor extended dx)
+ *     latestDiagnosis={{ text, tier }} // optional (nurse pulls from doctor notes)
  *     actions={[{ label, icon, onClick, variant }]}
  *     onChangePatient={() => ...}
  *   />
+ *
+ * R7bi — Promoted from NursingNotes-only inline JSX to the shared
+ * component used by both Doctor + Nursing. Adds:
+ *   • QR code on the right (qrcode.react, client-side render only)
+ *   • Separate IPD admission-number pill (chart + pharmacy use it)
+ *   • DOB-derived age fallback for admissions where `age` wasn't snapshot
+ *   • Optional diagnosis tier pill (Final / Working / Provisional)
+ *   • Ward fallback chain — wardName → wardId.wardName → department
  */
 import React from "react";
+import { QRCodeSVG } from "qrcode.react";
 import "./PatientHeaderCard.css";
 
 const fmtDate = (d) =>
@@ -33,6 +43,12 @@ const admTypeClass = (admType) => {
   return "phc-chip-ipd";
 };
 
+const tierClass = (tier) => {
+  if (tier === "Final")   return "phc-tier-final";
+  if (tier === "Working") return "phc-tier-working";
+  return "phc-tier-provisional";
+};
+
 export default function PatientHeaderCard({
   patient,
   searchUHID = "",
@@ -40,6 +56,7 @@ export default function PatientHeaderCard({
   onLoad,
   loading = false,
   diagnosis = null,
+  latestDiagnosis = null,
   actions = [],
   onChangePatient,
   loadPlaceholder = "UHID / Admission No...",
@@ -81,19 +98,66 @@ export default function PatientHeaderCard({
   /* ───────── Banner ───────── */
   const patName    = patient.patientName || patient.patientId?.fullName || patient.patient?.name || "—";
   const initials   = patName.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
-  const age        = patient.patientId?.age ?? patient.age ?? patient.patient?.age ?? "?";
-  const gender     = (patient.patientId?.gender || patient.gender || patient.patient?.gender || "?")[0]?.toUpperCase();
+
+  // R7bi — DOB-derived age fallback. Backend may not denormalise `age`
+  // onto every admission; if a dob is present anywhere, compute years.
+  const dob = patient.dob
+    || patient.dateOfBirth
+    || patient.patientId?.dob
+    || patient.patientId?.dateOfBirth
+    || patient.patient?.dob
+    || patient.patient?.dateOfBirth;
+  const ageFromDob = (() => {
+    if (!dob) return null;
+    const d = new Date(dob);
+    if (Number.isNaN(d.getTime())) return null;
+    const now = new Date();
+    let years = now.getFullYear() - d.getFullYear();
+    const m = now.getMonth() - d.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < d.getDate())) years--;
+    return years >= 0 && years < 150 ? years : null;
+  })();
+  const ageRaw     = patient.patientId?.age ?? patient.age ?? patient.patient?.age ?? ageFromDob;
+  const age        = ageRaw != null && ageRaw !== "" ? ageRaw : "?";
+  const genderRaw  = patient.patientId?.gender || patient.gender || patient.patient?.gender || "";
+  const gender     = (genderRaw[0] || "?").toUpperCase();
   const uhidVal    = patient.UHID || patient.uhid || patient.patientUHID || searchUHID || "—";
-  const bedVal     = patient.bedId?.bedNumber || patient.bedNumber ? `Bed ${patient.bedId?.bedNumber || patient.bedNumber}` : "—";
-  const wardVal    = patient.wardId?.wardName || patient.wardName || patient.department || "—";
+  const ipdNumVal  = patient.ipdNo || patient.admissionNumber || "—";
+  const bedRaw     = patient.bedId?.bedNumber || patient.bedNumber;
+  const bedVal     = bedRaw ? `Bed ${bedRaw}` : "—";
+  // Ward fallback chain — denormalised wardName → populated Ward → department
+  const wardVal    = patient.wardName || patient.wardId?.wardName || patient.department || "—";
   const admDate    = fmtDate(patient.admissionDate);
-  const diagText   = patient.diagnosis || patient.admittingDiagnosis || patient.provisionalDiagnosis || "—";
+  // Prefer latestDiagnosis (live from doctor notes) over admission's
+  // admittingDiagnosis (often empty / stale at the time of read).
+  const diagText   = latestDiagnosis?.text
+    || patient.diagnosis
+    || patient.admittingDiagnosis
+    || patient.provisionalDiagnosis
+    || "—";
   const consultant = patient.attendingDoctor || patient.doctorName || patient.consultantName || "—";
   const admType    = patient.admissionType?.toUpperCase() || "IPD";
   const allergies  = (patient.allergies || patient.knownAllergies || []).filter(Boolean);
   const dayStay    = patient.admissionDate
     ? Math.floor((Date.now() - new Date(patient.admissionDate)) / (1000 * 60 * 60 * 24))
     : null;
+
+  /* QR payload — plain text so any phone-camera QR reader shows the
+     patient's identity + key data on scan. Rendered client-side via
+     qrcode.react so no PHI ever leaves the browser. */
+  const qrPayload = [
+    "SphereHealth HIS",
+    `UHID: ${uhidVal}`,
+    `IPD: ${ipdNumVal}`,
+    `Name: ${patName}`,
+    `Age/Sex: ${age}Y / ${gender}`,
+    `Ward: ${wardVal}`,
+    `Bed: ${bedRaw || "—"}`,
+    `Adm: ${admDate}`,
+    `Consultant: ${consultant}`,
+    diagText !== "—" ? `Diagnosis: ${diagText}` : null,
+    allergies.length > 0 ? `Allergies: ${allergies.join(", ")}` : null,
+  ].filter(Boolean).join("\n");
 
   /* Doctor-specific diagnosis fields (optional) */
   const dxFields = diagnosis ? [
@@ -117,7 +181,7 @@ export default function PatientHeaderCard({
               <div className="phc-name-row">
                 <span className="phc-name">{patName}</span>
                 <span className={`phc-chip ${admTypeClass(admType)}`}>{admType}</span>
-                {patient.bloodGroup && (
+                {patient.bloodGroup && patient.bloodGroup !== "Unknown" && (
                   <span className="phc-chip phc-chip-blood">🩸 {patient.bloodGroup}</span>
                 )}
                 {dayStay !== null && (
@@ -126,30 +190,37 @@ export default function PatientHeaderCard({
               </div>
               <div className="phc-meta-row">
                 <span className="phc-meta"><strong>{age}Y / {gender}</strong></span>
-                <span className="phc-meta">ID: <span className="phc-meta-id">{uhidVal}</span></span>
+                <span className="phc-meta">UHID: <span className="phc-meta-id">{uhidVal}</span></span>
+                <span className="phc-meta">IPD: <span className="phc-meta-ipd">{ipdNumVal}</span></span>
                 <span className="phc-meta">🏥 <strong>{wardVal}</strong> · <strong>{bedVal}</strong></span>
                 <span className="phc-meta">📅 <strong>{admDate}</strong></span>
               </div>
             </div>
           </div>
 
-          {/* Right: action buttons */}
-          <div className="phc-actions">
-            {actions.map((b) => (
-              <button
-                key={b.label}
-                onClick={b.onClick}
-                className={`phc-btn ${b.variant === "accent" ? "phc-btn-accent" : ""} ${b.variant === "danger" ? "phc-btn-danger" : ""}`}
-              >
-                <i className={`pi ${b.icon}`} />
-                {b.label}
-              </button>
-            ))}
-            {onChangePatient && (
-              <button onClick={onChangePatient} className="phc-btn phc-btn-danger">
-                <i className="pi pi-arrows-h" /> Change Patient
-              </button>
-            )}
+          {/* Right: QR + action buttons stacked */}
+          <div className="phc-right">
+            <div className="phc-qr-wrap" title="Scan with any QR reader for patient summary">
+              <QRCodeSVG value={qrPayload} size={88} level="M" />
+              <span className="phc-qr-label">Scan</span>
+            </div>
+            <div className="phc-actions">
+              {actions.map((b) => (
+                <button
+                  key={b.label}
+                  onClick={b.onClick}
+                  className={`phc-btn ${b.variant === "accent" ? "phc-btn-accent" : ""} ${b.variant === "danger" ? "phc-btn-danger" : ""}`}
+                >
+                  <i className={`pi ${b.icon}`} />
+                  {b.label}
+                </button>
+              ))}
+              {onChangePatient && (
+                <button onClick={onChangePatient} className="phc-btn phc-btn-danger">
+                  <i className="pi pi-arrows-h" /> Change Patient
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -164,6 +235,11 @@ export default function PatientHeaderCard({
             <i className="pi pi-tag phc-footer-icon" />
             <span className="phc-footer-label">Diagnosis:</span>
             <span className="phc-footer-value">{diagText}</span>
+            {latestDiagnosis?.tier && (
+              <span className={`phc-tier-pill ${tierClass(latestDiagnosis.tier)}`}>
+                {latestDiagnosis.tier}
+              </span>
+            )}
           </div>
           {allergies.length > 0 && (
             <div className="phc-allergies">

@@ -86,6 +86,14 @@ const AdmissionSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Ward",
       default: null },
+    // R7bi — denormalised ward name. Bed/ward lookups happen in many
+    // hot read paths (patient header, charts, pharmacy slips) so we
+    // mirror it on the admission at bed-assign / bed-transfer time.
+    // The Ward collection remains the source of truth — this is just
+    // a snapshot. Legacy admissions populated via wardId fallback in
+    // the frontend, and a one-shot backfill on backend boot copies
+    // wardName from Ward into Admission.wardName where missing.
+    wardName: { type: String, default: "" },
     floorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Floor",
