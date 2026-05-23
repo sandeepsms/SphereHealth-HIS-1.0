@@ -14,6 +14,7 @@
  * pattern ship the minimum register to close A5-CRIT-4.
  *
  * Lifecycle: DRAFT → SUBMITTED → PVPI_FILED
+ *                              ↘ PVPI_FAILED ↻ (retry via filePvPI or reopen)
  */
 const mongoose = require("mongoose");
 const { Schema } = mongoose;
@@ -21,7 +22,7 @@ const { Schema } = mongoose;
 const ADRAuditSchema = new Schema(
   {
     _id:      false,
-    action:   { type: String, enum: ["CREATED", "UPDATED", "SUBMITTED", "PVPI_FILED", "REOPENED"], required: true },
+    action:   { type: String, enum: ["CREATED", "UPDATED", "SUBMITTED", "PVPI_FILED", "PVPI_SUBMITTED", "PVPI_SUBMIT_FAILED", "REOPENED"], required: true },
     at:       { type: Date, default: Date.now },
     byName:   { type: String, default: "" },
     byRole:   { type: String, default: "" },
@@ -95,10 +96,6 @@ const ADRReportSchema = new Schema(
     reportedByRole: { type: String, trim: true, default: "" },
 
     // ── PvPI Submission ───────────────────────────────────────
-    // R7bn — added PVPI_FAILED so a transport failure during submission
-    // doesn't get optimistically flipped to PVPI_FILED with a null
-    // reference (which previously poisoned the audit trail — pre-R7bn
-    // the controller flipped status before checking submitter result).
     status: {
       type: String,
       enum: ["DRAFT", "SUBMITTED", "PVPI_FILED", "PVPI_FAILED"],
@@ -110,12 +107,10 @@ const ADRReportSchema = new Schema(
     pvpiFiledAt:        { type: Date, default: null },
     pvpiFiledBy:        { type: Schema.Types.ObjectId, ref: "User", default: null },
     pvpiFiledByName:    { type: String, trim: true, default: "" },
-    // R7bn — observability for the submitter retry/backoff loop.
     pvpiAttemptCount:     { type: Number, default: 0 },
     pvpiLastAttemptedAt:  { type: Date, default: null },
-    pvpiLastErrorMessage: { type: String, default: "" },
-    pvpiLastErrorCode:    { type: String, default: "" },
-    pvpiSubmissionAttemptedAt: { type: Date, default: null },
+    pvpiLastErrorMessage: { type: String, default: "", maxlength: 500 },
+    pvpiLastErrorCode:    { type: String, default: "", maxlength: 64 },
 
     // ── Attachments ───────────────────────────────────────────
     // Document URLs — uploads are owned by a separate service in a

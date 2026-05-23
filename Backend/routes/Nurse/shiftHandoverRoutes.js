@@ -9,7 +9,6 @@ const router = express.Router();
 const ctrl = require("../../controllers/Nurse//shiftHandoverController");
 const validate = require("../../middleware/validateRequest");
 const { requireAction } = require("../../middleware/auth");
-// R7bn-P1: 400 on a malformed :id before findById throws CastError -> 500.
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 router.post(

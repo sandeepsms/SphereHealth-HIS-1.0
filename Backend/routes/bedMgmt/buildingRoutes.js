@@ -2,7 +2,6 @@ const express = require("express");
 const router = express.Router();
 const BuildingController = require("../../controllers/bedMgmt/buildingController");
 const { requireAction } = require("../../middleware/auth");
-// R7bn-P1: 400 on a malformed :id before findById throws CastError -> 500.
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // Building master — Admin-only writes; reads are part of the bed-map

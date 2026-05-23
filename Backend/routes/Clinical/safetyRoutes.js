@@ -11,7 +11,6 @@
 const router = require("express").Router();
 const ctrl = require("../../controllers/Clinical/safetyController");
 const { requireAction } = require("../../middleware/auth");
-// R7bn-P1: 400 on a malformed :id before findById throws CastError -> 500.
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 router.post("/critical-result/:id/acknowledge", validateObjectIdParam("id"), requireAction("vitals.write"),     ctrl.acknowledgeCriticalResult);

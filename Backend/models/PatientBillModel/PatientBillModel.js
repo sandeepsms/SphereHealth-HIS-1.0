@@ -334,11 +334,7 @@ const PatientBillSchema = new mongoose.Schema(
         "APPROVED",
         "REJECTED",
         "PARTIAL_APPROVED",
-        // R7bn — TPA settled the claim short of approved amount; the
-        // hospital absorbed the gap via PatientBill.writeOffAmount. This
-        // is a distinct terminal state from APPROVED (full) or REJECTED
-        // (denied) so finance reports can tally absorbed losses.
-        "SETTLED_WRITEOFF",
+        "SETTLED_WRITEOFF",    // TPA paid short, hospital absorbed gap via writeOffAmount
       ],
       default: "NOT_APPLICABLE" },
     tpaClaimNumber: { type: String, trim: true },

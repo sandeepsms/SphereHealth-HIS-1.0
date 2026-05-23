@@ -2,8 +2,6 @@ const express = require("express");
 const router = express.Router();
 const BedController = require("../../controllers/bedMgmt/bedController");
 const { requireAction } = require("../../middleware/auth");
-// R7bn-P1: 400 on a malformed :id (or :roomId / :wardId) before findById
-// throws CastError -> 500.
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // R7bb-B/D4-HIGH-S1: every bed-management read now gated on `ipd.read`

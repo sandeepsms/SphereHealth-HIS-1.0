@@ -2,7 +2,6 @@ const express = require("express");
 const router = express.Router();
 const RoomCategoryController = require("../../controllers/bedMgmt/roomCategoryController");
 const { requireAction } = require("../../middleware/auth");
-// R7bn-P1: 400 on a malformed :id before findById throws CastError -> 500.
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // Room-category master — Admin-only writes.

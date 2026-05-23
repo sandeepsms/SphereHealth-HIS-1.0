@@ -52,8 +52,8 @@ const CredentialSchema = new Schema(
         "PSARA_GUARD",         // Private Security Agencies Regulation Act 2005
         "FSSAI_FOOD_HANDLER",  // FSSAI Schedule IV kitchen-staff training
         "ICAN_MEMBER",         // Infection Control Academy of India / HIC
-        "BMW_HANDLER",         // R7bn — BMW Rules 2016 Schedule IV training (handler/operator sign-off)
-        "NMC_REG",             // R7bn — National Medical Commission registration (MD/MBBS practising licence)
+        "BMW_HANDLER",         // BMW Rules 2016 Schedule IV handler training
+        "NMC_REG",             // National Medical Commission practising registration
         "OTHER",
       ],
       required: true,

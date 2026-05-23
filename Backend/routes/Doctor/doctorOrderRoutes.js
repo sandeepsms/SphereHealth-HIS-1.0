@@ -4,7 +4,6 @@ const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
 // open (any authenticated clinician can view orders). Writes are
 // scoped to the appropriate role per Backend/config/permissions.js.
 const { requireAction, adminOnly } = require("../../middleware/auth");
-// R7bn-P1: 400 on a malformed :id before findById throws CastError -> 500.
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 /* ─────────────────────────────────────────────────────

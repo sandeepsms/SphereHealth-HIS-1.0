@@ -33,13 +33,15 @@ function safeRegex(str) {
  * the controller calls `findById` and throws CastError → 500. Usage:
  *   router.get("/:id", validateObjectIdParam("id"), ctrl.getById);
  * Created after the 2026-05-17 audit found ~15 controllers blindly trusting
- * `req.params.id` (finding C-08).
+ * `req.params.id` (finding C-08). Uses strict 24-hex match: mongoose's
+ * `isValidObjectId` also accepts any 12-byte string (e.g. "P000000001AB"),
+ * which previously slipped through and surfaced as a 404 instead of 400.
  */
+const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
 function validateObjectIdParam(paramName = "id") {
-  const mongoose = require("mongoose");
   return (req, res, next) => {
     const v = req.params[paramName];
-    if (!v || !mongoose.isValidObjectId(String(v))) {
+    if (!v || !OBJECT_ID_RE.test(String(v))) {
       return res.status(400).json({
         success: false,
         message: `Invalid ${paramName} — expected MongoDB ObjectId`,

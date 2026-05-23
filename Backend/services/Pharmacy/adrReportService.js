@@ -91,13 +91,14 @@ async function submit(id, actor = {}) {
 }
 
 /**
- * File with PvPI (SUBMITTED → PVPI_FILED). Captures the PvPI ticket
- * reference returned by the central form.
+ * File with PvPI (SUBMITTED → PVPI_FILED, or PVPI_FAILED → PVPI_FILED
+ * for the "portal emailed the reference back later" path). Captures the
+ * PvPI ticket reference returned by the central form.
  */
 async function filePvPI(id, payload = {}, actor = {}) {
   if (!payload?.pvpiReferenceNumber) throw _err("ARG_MISSING", "pvpiReferenceNumber is required", 400);
   const updated = await ADRReport.findOneAndUpdate(
-    { _id: id, status: "SUBMITTED" },
+    { _id: id, status: { $in: ["SUBMITTED", "PVPI_FAILED"] } },
     {
       $set: {
         status: "PVPI_FILED",
@@ -139,10 +140,10 @@ async function reopen(id, actor = {}, reason = "", options = {}) {
 
   const auditEntry = _audit("REOPENED", actor, options.force ? `force=true reason=${reason || "admin override"}` : reason);
   const updated = await ADRReport.findOneAndUpdate(
-    { _id: id, status: { $in: ["SUBMITTED", "PVPI_FILED"] } },
+    { _id: id, status: { $in: ["SUBMITTED", "PVPI_FILED", "PVPI_FAILED"] } },
     {
       $set: { status: "DRAFT", submittedAt: null, pvpiFiledAt: null },
-      $push: { auditTrail: auditEntry },
+      $push: { auditTrail: { $each: [auditEntry], $slice: -200 } },
     },
     { new: true },
   );
@@ -211,35 +212,29 @@ async function generatePvPIForm1(adrId) {
 }
 
 /**
- * R7bh-F5: submit ADR to PvPI.
- *
- * R7bn — branched on submitter result.
- *   - success=true: status → PVPI_FILED, persist pvpiReferenceNumber,
- *     write success audit row.
- *   - success=false: status → PVPI_FAILED, persist error, write failure
- *     audit row. Caller (route handler) can replay later. Pre-R7bn this
- *     code-path optimistically wrote PVPI_FILED with a null reference,
- *     poisoning the audit trail on transport failure.
+ * Submit ADR via pvpiSubmitter. The submitter is authoritative — its
+ * `success: true` covers both real HTTP 2xx and the stub-mode no-op
+ * (used until CDSCO credentials land). Branches the persisted state
+ * accordingly. PII never lands in the immutable audit row — only the
+ * status code does; full message stays in pvpiLastErrorMessage where
+ * it can be redacted/purged.
  */
 async function submitToPvPI(adrId, actor = {}) {
   const payload = await generatePvPIForm1(adrId);
   const submitter = require("./pvpiSubmitter");
   const result = await submitter.send(payload);
   const now = new Date();
-  const succeeded = result && result.success === true && result.pvpiReference;
+  const succeeded = result && result.success === true;
 
-  const $inc = { pvpiAttemptCount: 1 };
-  const $set = {
-    pvpiSubmissionAttemptedAt: now,
-    pvpiLastAttemptedAt: now,
-  };
+  const $inc = { pvpiAttemptCount: result?.attempts || 1 };
+  const $set = { pvpiLastAttemptedAt: now };
   let auditAction;
   let auditDetail;
 
   if (succeeded) {
     Object.assign($set, {
       status: "PVPI_FILED",
-      pvpiReferenceNumber: result.pvpiReference,
+      pvpiReferenceNumber: result.pvpiReference || "",
       pvpiFiledAt: now,
       pvpiFiledBy: actor._id || actor.id || null,
       pvpiFiledByName: actor.fullName || actor.name || "",
@@ -247,23 +242,23 @@ async function submitToPvPI(adrId, actor = {}) {
       pvpiLastErrorCode: "",
     });
     auditAction = "PVPI_SUBMITTED";
-    auditDetail = `transport=${result.transport || "stub"} ref=${result.pvpiReference}`;
+    auditDetail = `transport=${result.transport || "stub"} ref=${result.pvpiReference || "(none)"}`;
   } else {
     Object.assign($set, {
       status: "PVPI_FAILED",
-      pvpiLastErrorMessage: String(result?.errorMessage || result?.message || "Unknown PvPI transport error").slice(0, 500),
-      pvpiLastErrorCode: String(result?.errorCode || result?.statusCode || "TRANSPORT_FAIL").slice(0, 64),
+      pvpiLastErrorMessage: String(result?.errorMessage || "Unknown PvPI transport error"),
+      pvpiLastErrorCode: String(result?.statusCode || "TRANSPORT_FAIL"),
     });
     auditAction = "PVPI_SUBMIT_FAILED";
-    auditDetail = `transport=${result?.transport || "unknown"} err=${$set.pvpiLastErrorMessage}`;
+    auditDetail = `transport=${result?.transport || "unknown"} code=${$set.pvpiLastErrorCode}`;
   }
 
   const updated = await ADRReport.findByIdAndUpdate(
     adrId,
-    { $set, $inc, $push: { auditTrail: _audit(auditAction, actor, auditDetail) } },
+    { $set, $inc, $push: { auditTrail: { $each: [_audit(auditAction, actor, auditDetail)], $slice: -200 } } },
     { new: true }
   );
-  return { report: updated, submission: result, succeeded };
+  return { report: updated, submission: result };
 }
 
 module.exports = {

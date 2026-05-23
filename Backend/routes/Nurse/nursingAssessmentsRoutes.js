@@ -13,7 +13,6 @@ const express = require("express");
 const router  = express.Router();
 const NursingAssessment = require("../../models/Nurse/NursingAssessmentModel");
 const { attemptAuth, requireAction } = require("../../middleware/auth");
-// R7bn-P1: 400 on a malformed :id before findById throws CastError -> 500.
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 router.use(attemptAuth);

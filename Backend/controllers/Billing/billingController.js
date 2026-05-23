@@ -1852,10 +1852,11 @@ exports.tpaSettle = async (req, res, next) => {
           // is now a Decimal128 wrapper, so plain Number(d128) returns NaN
           // and the running total would corrupt on the first short-pay.
           //
-          // tpaClaimStatus enum still lacks "SETTLED_WRITEOFF" — kept on
-          // APPROVED so the dashboard's "TPA Denied" KPI doesn't double-
-          // count routine write-offs as rejections.
-          bill.tpaClaimStatus  = "APPROVED";
+          // Terminal SETTLED_WRITEOFF (R7bn) — TPA approved + paid in
+          // full from its side; hospital absorbed the gap. Distinct
+          // from APPROVED (full claim collected) and REJECTED (denied)
+          // so finance reports can tally absorbed losses separately.
+          bill.tpaClaimStatus  = "SETTLED_WRITEOFF";
           bill.writeOffAmount  = toN(bill.writeOffAmount) + shortfall;
           bill.writeOffReason  = (bill.writeOffReason || "") +
             ` | TPA short-pay on UTR ${req.body.transactionId}: ${req.body.writeoffReason || req.body.remarks || "(no reason supplied)"}`;
