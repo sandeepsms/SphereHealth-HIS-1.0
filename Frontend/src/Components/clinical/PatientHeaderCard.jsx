@@ -29,8 +29,10 @@
  *   • Optional diagnosis tier pill (Final / Working / Provisional)
  *   • Ward fallback chain — wardName → wardId.wardName → department
  */
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
+import axios from "axios";
+import { API_ENDPOINTS } from "../../config/api";
 import "./PatientHeaderCard.css";
 
 const fmtDate = (d) =>
@@ -142,6 +144,26 @@ export default function PatientHeaderCard({
     ? Math.floor((Date.now() - new Date(patient.admissionDate)) / (1000 * 60 * 60 * 24))
     : null;
 
+  // R7bn-5 / D6-fix: pull the twice-daily compliance summary so we can
+  // render a red OVERDUE / amber DUE_SOON banner. Re-fetches every 60s
+  // (and once on patient change) — the backend cron flips status every
+  // 15 min so 60s polling on the client is sufficient.
+  const [compliance, setCompliance] = useState(null);
+  useEffect(() => {
+    if (!patient?._id) { setCompliance(null); return; }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await axios.get(`${API_ENDPOINTS.BASE}/compliance/assessment-status/${patient._id}`);
+        if (cancelled) return;
+        setCompliance(res.data?.summary || null);
+      } catch (_) { /* silent — compliance is a soft UX nudge */ }
+    };
+    load();
+    const id = setInterval(load, 60 * 1000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [patient?._id]);
+
   /* QR payload — plain text so any phone-camera QR reader shows the
      patient's identity + key data on scan. Rendered client-side via
      qrcode.react so no PHI ever leaves the browser. */
@@ -249,6 +271,23 @@ export default function PatientHeaderCard({
               {allergies.map((a) => (
                 <span key={a} className="phc-allergy-chip">{a}</span>
               ))}
+            </div>
+          )}
+          {/* R7bn-5 / D6-fix: twice-daily compliance status banner.
+              Surfaces OVERDUE (red) or DUE_SOON (amber) only — when
+              everything is on schedule we render nothing so the header
+              stays compact. */}
+          {compliance && compliance.worst !== "OK" && (
+            <div className={`phc-compliance phc-compliance--${compliance.worst.toLowerCase()}`} title="Twice-daily assessment schedule (NABH COP.17)">
+              <i className={`pi ${compliance.worst === "OVERDUE" ? "pi-exclamation-circle" : "pi-clock"}`} />
+              <span className="phc-compliance-label">
+                {compliance.worst === "OVERDUE" ? "OVERDUE" : "DUE SOON"}
+              </span>
+              <span className="phc-compliance-count">
+                {compliance.overdue > 0 && <>{compliance.overdue} overdue</>}
+                {compliance.overdue > 0 && compliance.dueSoon > 0 && " · "}
+                {compliance.dueSoon > 0 && <>{compliance.dueSoon} due soon</>}
+              </span>
             </div>
           )}
         </div>

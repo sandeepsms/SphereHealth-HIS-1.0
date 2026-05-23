@@ -73,6 +73,67 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
       }
     }
 
+    // R7bn-4 / D7-1-fix: when orderType==="Medication", auto-seed the
+    // MAR so the nurse sees the drug on the Treatment Chart without
+    // requiring a separate Prescription save. Pre-fix MAR rows came
+    // exclusively from Prescription model — standalone DoctorOrder
+    // medications were never charted, so nurses didn't see them on
+    // MAR and couldn't administer/sign them.
+    if (order.orderType === "Medication" && order.admissionId) {
+      try {
+        const MAR = require("../../models/Clinical/MARModel");
+        const Patient = require("../../models/Patient/patientModel");
+        const today = new Date();
+        const marDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        const nextDay = new Date(marDate); nextDay.setDate(nextDay.getDate() + 1);
+
+        // Find or create the MAR for today + this ipdNo.
+        let mar = await MAR.findOne({
+          ipdNo: order.ipdNo || String(order.admissionId),
+          date: { $gte: marDate, $lt: nextDay },
+        });
+        if (!mar) {
+          const pat = order.patientId
+            ? await Patient.findById(order.patientId).select("_id UHID fullName").lean()
+            : null;
+          if (pat?._id) {
+            mar = await MAR.create({
+              patient: pat._id,
+              UHID: order.UHID || pat.UHID || "",
+              ipdNo: order.ipdNo || String(order.admissionId),
+              admissionId: order.admissionId,
+              patientName: order.patientName || pat.fullName || "",
+              date: marDate,
+              medications: [],
+            });
+          }
+        }
+        // Atomic $push of this med onto today's MAR.
+        if (mar) {
+          const medRow = {
+            drugName:   order.orderDetails?.medicineName || order.orderDetails?.displayName || "",
+            dose:       order.orderDetails?.dose || order.orderDetails?.dosage || "",
+            route:      order.orderDetails?.route || "",
+            frequency:  order.orderDetails?.frequency || "",
+            startDate:  order.startDate || new Date(),
+            endDate:    order.endDate || null,
+            isHighAlert:    !!order.hamFlag,
+            twoNurseRequired: !!order.twoNurseRequired,
+            prescribedBy:   order.doctorId || order.attendingDoctorId || null,
+            doctorOrderId:  order._id,
+            scheduledTimes: order.scheduledTimes || [],
+            administrations: [],
+          };
+          await MAR.updateOne(
+            { _id: mar._id },
+            { $push: { medications: medRow } },
+          );
+        }
+      } catch (e) {
+        console.error("[doctor-orders] MAR seed failed:", e?.message);
+      }
+    }
+
     // R7bn-1 / D9-fix: ClinicalAudit emit on every doctor-order create.
     try {
       const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");

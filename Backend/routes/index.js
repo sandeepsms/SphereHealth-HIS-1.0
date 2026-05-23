@@ -56,6 +56,7 @@ const dischargeSummaryRoutes = require("./Clinical/dischargeSummaryRoutes");
 const consentFormRoutes = require("./Clinical/consentFormRoutes");
 const nursingCarePlanRoutes = require("./Nurse/nursingCarePlanRoutes");
 const nursingAssessmentsRoutes = require("./Nurse/nursingAssessmentsRoutes");
+const assessmentComplianceRoutes = require("./Compliance/assessmentComplianceRoutes");
 // Path is lowercase 'ai' — uppercase 'AI' folder was a Windows
 // case-insensitive duplicate that shadowed this on case-sensitive
 // Linux deploys, shipping the old stub instead of the real Groq impl.
@@ -168,6 +169,9 @@ router.use("/discharge-summary", dischargeSummaryRoutes);
 router.use("/consent-forms", consentFormRoutes);
 router.use("/nursing-care-plans", nursingCarePlanRoutes);
 router.use("/nursing-assessments", nursingAssessmentsRoutes);
+// R7bn-5 / D6-fix: twice-daily compliance read API (used by the
+// Nursing/Doctor Notes header to render OVERDUE / DUE_SOON badges).
+router.use("/compliance", assessmentComplianceRoutes);
 router.use("/ai", aiRoutes);
 router.use("/mar", marRoutes);
 router.use("/nursing-charges", nursingChargesRoutes);

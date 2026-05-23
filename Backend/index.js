@@ -927,6 +927,27 @@ const _cancelVisitorPassExpiry = (() => {
   return () => clearInterval(interval);
 })();
 
+// R7bn-5 / D6-fix — twice-daily assessment compliance sweeper. Every 15 min
+// the sweeper flips status to OVERDUE / DUE_SOON for any assessment whose
+// nextDueAt has slipped past now. Frontend reads these via the
+// /api/compliance/assessment-status/:admissionId endpoint to render
+// red OVERDUE badges on the Nursing/Doctor Notes header.
+const _cancelAssessmentComplianceSweeper = (() => {
+  const { sweepOverdue } = require("./services/Compliance/assessmentComplianceService");
+  const interval = setInterval(() => {
+    sweepOverdue()
+      .then((r) => {
+        if (r?.overdue || r?.dueSoon) {
+          console.log(`[cron:assessment-compliance] overdue+=${r.overdue} dueSoon+=${r.dueSoon}`);
+        }
+      })
+      .catch((e) => console.error("[cron:assessment-compliance] sweep failed:", e?.message));
+  }, 15 * 60 * 1000);
+  if (typeof interval.unref === "function") interval.unref();
+  console.log("[cron:assessment-compliance] armed — every 15 min");
+  return () => clearInterval(interval);
+})();
+
 // Keep a reference name for the graceful-shutdown handler below.
 const _autoBillingInterval = {
   _cancel: () => {
@@ -945,6 +966,8 @@ const _autoBillingInterval = {
     if (_grievanceSlaInterval) clearInterval(_grievanceSlaInterval);
     _cancelFireDrillOverdue();
     _cancelRetentionReview();
+    _cancelVisitorPassExpiry();
+    _cancelAssessmentComplianceSweeper();   // R7bn-5
   },
 };
 

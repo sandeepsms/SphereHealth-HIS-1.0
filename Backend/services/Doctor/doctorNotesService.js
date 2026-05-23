@@ -256,6 +256,22 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
     });
   } catch (_) { /* silent — audit emit is non-blocking */ }
 
+  // R7bn-5 / D6-fix: count the signed doctor note as a "doctor-progress"
+  // assessment for twice-daily compliance tracking.
+  if (note.admissionId) {
+    try {
+      const { recordAssessment } = require("../Compliance/assessmentComplianceService");
+      recordAssessment({
+        admissionId: note.admissionId,
+        UHID: note.patientUHID || note.UHID,
+        patientName: note.patientName,
+        assessmentType: "doctor-progress",
+        role: "doctor",
+        actor: req?.user || { _id: doctorUserId, name: signedByName },
+      }).catch(() => {});
+    } catch (_) { /* silent */ }
+  }
+
   return note;
 };
 
