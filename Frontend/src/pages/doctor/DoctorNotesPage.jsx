@@ -86,21 +86,41 @@ const HAM_KW_IA = [
 ];
 const isHAM_IA = (name = "") => HAM_KW_IA.some(k => (name || "").toLowerCase().includes(k));
 
-/* ── NABH Note Modules ── */
+/* ── NABH Note Modules ──
+   R7aw — `nabh` (chapter code) + `description` (one-line summary) added to
+   every entry so the picker grid renders the same card layout used by the
+   Consent Form picker (PRE.3 / PRE.4 cards on /consent-forms). NABH codes
+   map to the most specific chapter that governs the note type:
+     AAC.1 — Initial Assessment             COP.10 — Procedures
+     MOM.4 — Medication & Infusion orders   COP.13 — Pre-operative
+     COP.1 — Daily progress / consultation  COP.14 — Post-operative
+     COP.5 — Critical / ICU care            COP.19 — Death
+     IMS.2 — Information Mgmt (amendments)                          */
 const MODULES = [
   // ── Priority top row ──
-  { id: "initial",     label: "Initial Assessment",    icon: "pi-clipboard",           border: "#fbbf24", color: "#92400e", bg: "#fffbeb", priority: true },
-  { id: "medication",  label: "Medication Orders",     icon: "pi-tablet",              border: "#93c5fd", color: C.blue,   bg: C.blueL   },
-  { id: "infusion",    label: "Infusion Orders",       icon: "pi-plus-circle",         border: "#99f6e4", color: C.teal,   bg: C.tealL   },
+  { id: "initial",     label: "Initial Assessment",    nabh: "AAC.1", description: "Comprehensive admission assessment + care plan initiation",
+    icon: "pi-clipboard",           border: "#fbbf24", color: "#92400e", bg: "#fffbeb", priority: true },
+  { id: "medication",  label: "Medication Orders",     nabh: "MOM.4", description: "STAT, regular, and PRN drug orders with allergy check",
+    icon: "pi-tablet",              border: "#93c5fd", color: C.blue,   bg: C.blueL   },
+  { id: "infusion",    label: "Infusion Orders",       nabh: "MOM.4", description: "IV access, infusion rate, and drip monitoring",
+    icon: "pi-plus-circle",         border: "#99f6e4", color: C.teal,   bg: C.tealL   },
   // ── Notes ──
-  { id: "daily",       label: "Daily Progress",       icon: "pi-file-edit",           border: C.blueB,   color: C.blue,   bg: C.blueL   },
-  { id: "icu",         label: "ICU / Critical Care",   icon: "pi-heart",               border: C.redB,    color: C.red,    bg: C.redL,    dot: true },
-  { id: "procedure",   label: "Procedure Note",        icon: "pi-cog",                 border: C.orangeB, color: C.orange, bg: C.orangeL },
-  { id: "consultation",label: "Consultation",          icon: "pi-users",               border: C.purpleB, color: C.purple, bg: C.purpleL },
-  { id: "preop",       label: "Pre-operative",         icon: "pi-clock",               border: C.tealB,   color: C.teal,   bg: C.tealL   },
-  { id: "postop",      label: "Post-operative",        icon: "pi-check-circle",        border: C.greenB,  color: C.green,  bg: C.greenL  },
-  { id: "death",       label: "Death Note",            icon: "pi-exclamation-triangle",border: "#94a3b8", color: C.slate,  bg: "#f1f5f9", dot: true },
-  { id: "amendment",   label: "Amendment",             icon: "pi-pencil",              border: C.amberB,  color: C.amber,  bg: C.amberL  },
+  { id: "daily",       label: "Daily Progress",        nabh: "COP.1", description: "Shift-wise SOAP progress — stable / improving / deteriorating",
+    icon: "pi-file-edit",           border: C.blueB,   color: C.blue,   bg: C.blueL   },
+  { id: "icu",         label: "ICU / Critical Care",   nabh: "COP.5", description: "Ventilator, vasopressors, goals of care, family counselling",
+    icon: "pi-heart",               border: C.redB,    color: C.red,    bg: C.redL,    dot: true },
+  { id: "procedure",   label: "Procedure Note",        nabh: "COP.10", description: "Procedural note — consent, aseptic technique, complications",
+    icon: "pi-cog",                 border: C.orangeB, color: C.orange, bg: C.orangeL },
+  { id: "consultation",label: "Consultation",          nabh: "COP.1", description: "Specialty consult — referral, recommendations, follow-up",
+    icon: "pi-users",               border: C.purpleB, color: C.purple, bg: C.purpleL },
+  { id: "preop",       label: "Pre-operative",         nabh: "COP.13", description: "Pre-op checklist — consent, NBM, bloods, anaesthetist review",
+    icon: "pi-clock",               border: C.tealB,   color: C.teal,   bg: C.tealL   },
+  { id: "postop",      label: "Post-operative",        nabh: "COP.14", description: "Post-op recovery — haemostasis, drains, ward transfer",
+    icon: "pi-check-circle",        border: C.greenB,  color: C.green,  bg: C.greenL  },
+  { id: "death",       label: "Death Note",            nabh: "COP.19", description: "Death summary — family informed, MLC notified, certificate",
+    icon: "pi-exclamation-triangle",border: "#94a3b8", color: C.slate,  bg: "#f1f5f9", dot: true },
+  { id: "amendment",   label: "Amendment",             nabh: "IMS.2", description: "Late entry / correction with witness + original retained",
+    icon: "pi-pencil",              border: C.amberB,  color: C.amber,  bg: C.amberL  },
 ];
 
 const NOTE_STYLE = {
@@ -1379,38 +1399,86 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               </button>
             </div>
 
-            {/* Module launcher — single compact pill bar, 2 groups, multi-row wrap */}
-            <div className="dnp-module-bar">
-              <span className="dnp-module-bar__group">Required / Treatment</span>
-              {MODULES.filter(m => m.id === "medication" || m.id === "infusion").map(m => {
-                const locked = gateActive && m.id !== "initial";
-                return (
-                  <button key={m.id} onClick={() => !locked && openModal(m.id)}
-                    className={`dnp-module-pill ${locked ? "dnp-module-pill--locked" : ""}`}
-                    style={{ "--mod-color": m.color, "--mod-tint": m.bg }}
-                    title={locked ? "Locked — complete Initial Assessment first" : m.label}>
-                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 12 }} />
-                    {m.label}
-                    {m.id === "initial" && gateActive && <span className="dnp-module-pill__chip dnp-module-pill__chip--required">REQ</span>}
-                    {m.id === "initial" && assessmentDone && <span className="dnp-module-pill__chip dnp-module-pill__chip--done">✓</span>}
-                  </button>
-                );
-              })}
-              <span className="dnp-module-bar__divider" aria-hidden />
-              <span className="dnp-module-bar__group">Notes</span>
-              {MODULES.filter(m => !m.priority && m.id !== "medication" && m.id !== "infusion").map(m => {
-                const locked = gateActive;
-                return (
-                  <button key={m.id} onClick={() => !locked && openModal(m.id)}
-                    className={`dnp-module-pill ${locked ? "dnp-module-pill--locked" : ""}`}
-                    style={{ "--mod-color": m.color, "--mod-tint": m.bg }}
-                    title={locked ? "Locked — complete Initial Assessment first" : m.label}>
-                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 12 }} />
-                    {m.label}
-                    {m.dot && !locked && <span className="dnp-module-pill__dot" />}
-                  </button>
-                );
-              })}
+            {/* ── R7aw — Note type picker (card grid) ──
+                Mirrors the /consent-forms "Select Consent Type" layout so
+                doctors get the same visual language across consent + notes.
+                Each card carries icon + label + NABH chapter code +
+                one-line description; locked cards (Initial-Assessment
+                gate active) show a lock icon + reduced opacity but stay
+                visible so the doctor can see WHAT they'll get once they
+                clear the gate. */}
+            <div style={{ background: C.card, borderRadius: 12, padding: "18px", border: `1.5px solid ${C.border}`, marginTop: 14 }}>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 3 }}>Select Note Type</div>
+                <div style={{ fontSize: 12, color: C.muted }}>
+                  Choose the appropriate NABH-compliant clinical note for this patient encounter
+                  {gateActive && (
+                    <span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 6, background: "#fffbeb", color: "#92400e", fontWeight: 700, fontSize: 11 }}>
+                      Initial Assessment required first
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+                {MODULES.map(m => {
+                  // Gate: when Initial Assessment is pending, every card
+                  // EXCEPT initial is locked. Click is a no-op + tooltip.
+                  const locked = gateActive && m.id !== "initial";
+                  const showInitialDone = m.id === "initial" && assessmentDone;
+                  const showInitialReq  = m.id === "initial" && gateActive;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => !locked && openModal(m.id)}
+                      disabled={locked}
+                      title={locked ? "Locked — complete Initial Assessment first" : m.label}
+                      style={{
+                        background: "white",
+                        border: `2px solid ${locked ? C.border : C.border}`,
+                        borderRadius: 12, padding: "14px 12px",
+                        cursor: locked ? "not-allowed" : "pointer",
+                        textAlign: "left", transition: "all .15s",
+                        display: "flex", flexDirection: "column", gap: 6,
+                        opacity: locked ? 0.55 : 1,
+                        position: "relative",
+                      }}
+                      onMouseEnter={e => { if (!locked) e.currentTarget.style.borderColor = m.color + "70"; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{
+                          width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                          background: m.bg,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 14, color: m.color }} />
+                        </span>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{m.label}</span>
+                            {m.dot && !locked && (
+                              <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.color, flexShrink: 0 }} aria-hidden />
+                            )}
+                          </div>
+                          <div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>{m.nabh}</div>
+                        </div>
+                        {showInitialReq && (
+                          <span style={{ padding: "2px 7px", borderRadius: 5, background: "#fef3c7", color: "#92400e", fontWeight: 800, fontSize: 9.5, letterSpacing: ".5px" }}>
+                            REQ
+                          </span>
+                        )}
+                        {showInitialDone && (
+                          <span style={{ padding: "2px 7px", borderRadius: 5, background: "#dcfce7", color: "#166534", fontWeight: 800, fontSize: 9.5, letterSpacing: ".5px" }}>
+                            ✓ DONE
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.4 }}>{m.description}</div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
           )}
