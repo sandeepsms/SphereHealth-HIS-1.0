@@ -31,7 +31,16 @@ const PrintShell = ({
   showBank = true,
   showSignatures = true,
   signatureLabels = ["Authorised Signatory", "Patient / Attendant"],
+  // OPD-PRINT-AUDIT Item 2 + 12: data URL of doctor's signature stamp.
+  // When present, rendered above the first signature line as <img>.
+  signatureImage,
+  // OPD-PRINT-AUDIT Item 12: ISO timestamp of e-sign; printed below the
+  // first signature line for medico-legal traceability.
+  signedAt,
   showTerms = true,
+  // OPD-PRINT-AUDIT Item 20: caller-provided header extra (e.g. QR code).
+  // Rendered top-right inside the patient info strip.
+  headerExtra,
   // R7bf-F / A4-CRIT-5: full-page DUPLICATE watermark when this is a
   // reprint. printCount=0/1 → original, no watermark. Caller passes the
   // value returned by recordPrintAudit() (utils/printUtils.js).
@@ -107,15 +116,37 @@ const PrintShell = ({
         {serialNo && <span className="pr-title-bar__no">{serialNo}</span>}
       </div>
 
-      {/* ── Info strip ── */}
-      {infoItems.length > 0 && (
-        <div className="pr-info-grid">
-          {infoItems.map((it, i) => (
-            <div key={i} className="pr-info-grid__item">
-              <div className="pr-info-grid__lbl">{it.label}</div>
-              <div className="pr-info-grid__val">{it.value || "—"}</div>
+      {/* ── Info strip ──
+           OPD-PRINT-AUDIT Item 20: when `headerExtra` is passed (QR code
+           on Rx) the strip becomes a flex row — grid of info items on the
+           left, extra slot on the right. */}
+      {(infoItems.length > 0 || headerExtra) && (
+        <div
+          className={headerExtra ? "pr-info-grid pr-info-grid--with-extra" : "pr-info-grid"}
+          style={headerExtra ? { display: "flex", alignItems: "center", gap: 14 } : undefined}
+        >
+          {infoItems.length > 0 && (
+            <div
+              style={headerExtra ? {
+                flex: 1,
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                gap: "6px 18px",
+              } : undefined}
+            >
+              {infoItems.map((it, i) => (
+                <div key={i} className="pr-info-grid__item">
+                  <div className="pr-info-grid__lbl">{it.label}</div>
+                  <div className="pr-info-grid__val">{it.value || "—"}</div>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
+          {headerExtra && (
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
+              {headerExtra}
+            </div>
+          )}
         </div>
       )}
 
@@ -139,7 +170,30 @@ const PrintShell = ({
           <div className="pr-signatures">
             {signatureLabels.map((label, i) => (
               <div key={i} className="pr-sig">
+                {/* OPD-PRINT-AUDIT Item 2 + 12: render doctor's signature
+                    image above the line on the first (doctor) signature
+                    block when the caller has provided one. */}
+                {i === 0 && signatureImage ? (
+                  <div style={{ height: 48, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+                    <img
+                      src={signatureImage}
+                      alt="signature"
+                      style={{ maxWidth: 180, maxHeight: 44, objectFit: "contain" }}
+                    />
+                  </div>
+                ) : null}
                 <div className="pr-sig__line">{label}</div>
+                {/* OPD-PRINT-AUDIT Item 12: signed-at timestamp under the
+                    doctor's signature line. Tiny grey so it doesn't compete
+                    with the label. */}
+                {i === 0 && signedAt ? (
+                  <div style={{ fontSize: 9, color: "#64748b", marginTop: 2, fontWeight: 500 }}>
+                    Signed {new Date(signedAt).toLocaleString("en-IN", {
+                      day: "2-digit", month: "short", year: "numeric",
+                      hour: "2-digit", minute: "2-digit",
+                    })}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

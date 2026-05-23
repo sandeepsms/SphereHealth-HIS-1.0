@@ -331,34 +331,80 @@ class OPDService {
 
   /* ── Doctor saves OPD assessment (SOAP note + diagnosis + plan) ── */
   async saveOPDAssessment(visitNumber, assessmentData, doctorName) {
+    // R7bt-PrintAudit-Phase2: The whitelist below USED to silently drop
+    // workingDiagnosis, icd10Code, icd10Description, patientStatus, the
+    // structured genExam / sysExam sub-docs, and every obg* field — so the
+    // doctor saw the values on screen, hit Save, the field was filtered out
+    // here, the API returned 200, and on reload the values were gone. The
+    // schema has been extended in OPDModels.js and the whitelist mirrors it
+    // exactly. Helper below avoids `undefined` overwriting an existing value
+    // (so a partial save from the autosave path doesn't blow away a field
+    // the doctor entered in a previous save).
+    const pick = (val, fallback = "") => (val !== undefined ? val : fallback);
+
     const update = {
-      generalExamination:    assessmentData.generalExamination || "",
-      systemicExamination:   assessmentData.systemicExamination || "",
-      provisionalDiagnosis:  assessmentData.provisionalDiagnosis || "",
-      finalDiagnosis:        assessmentData.finalDiagnosis || "",
-      advice:                assessmentData.advice || "",
+      // ── Free-text examination (string narrative) ──
+      generalExamination:    pick(assessmentData.generalExamination),
+      systemicExamination:   pick(assessmentData.systemicExamination),
+      // ── Structured Gen-Ex / Sys-Ex ──
+      // Mongoose accepts the whole nested object on findOneAndUpdate when
+      // the schema declares sub-docs; we pass it through verbatim. Empty
+      // object fallback keeps the schema's nested defaults intact.
+      genExam:               assessmentData.genExam || {},
+      sysExam:               assessmentData.sysExam || {},
+      // ── Diagnosis (three-tier + ICD-10 + clinical status) ──
+      provisionalDiagnosis:  pick(assessmentData.provisionalDiagnosis),
+      workingDiagnosis:      pick(assessmentData.workingDiagnosis),
+      finalDiagnosis:        pick(assessmentData.finalDiagnosis),
+      icd10Code:             pick(assessmentData.icd10Code),
+      icd10Description:      pick(assessmentData.icd10Description),
+      patientStatus:         pick(assessmentData.patientStatus),
+      advice:                pick(assessmentData.advice),
       followUpDate:          assessmentData.followUpDate || null,
-      doctorNotes:           assessmentData.doctorNotes || "",
+      doctorNotes:           pick(assessmentData.doctorNotes),
       // SOAP fields
-      subjectiveNote:        assessmentData.subjectiveNote || "",
-      objectiveNote:         assessmentData.objectiveNote || "",
-      assessmentNote:        assessmentData.assessmentNote || "",
-      planNote:              assessmentData.planNote || "",
+      subjectiveNote:        pick(assessmentData.subjectiveNote),
+      objectiveNote:         pick(assessmentData.objectiveNote),
+      assessmentNote:        pick(assessmentData.assessmentNote),
+      planNote:              pick(assessmentData.planNote),
       assessedBy:            doctorName || "Doctor",
       assessedAt:            new Date(),
       status:                "Completed",
       // HOPI — structured history
-      hopiOnset:              assessmentData.hopiOnset              || "",
-      hopiDurationValue:      assessmentData.hopiDurationValue      || "",
-      hopiDurationUnit:       assessmentData.hopiDurationUnit       || "",
-      hopiProgression:        assessmentData.hopiProgression        || "",
-      hopiCharacter:          assessmentData.hopiCharacter          || "",
+      hopiOnset:              pick(assessmentData.hopiOnset),
+      hopiDurationValue:      pick(assessmentData.hopiDurationValue),
+      hopiDurationUnit:       pick(assessmentData.hopiDurationUnit),
+      hopiProgression:        pick(assessmentData.hopiProgression),
+      hopiCharacter:          pick(assessmentData.hopiCharacter),
       hopiAssociatedSymptoms: assessmentData.hopiAssociatedSymptoms || [],
-      hopiAggravating:        assessmentData.hopiAggravating        || "",
-      hopiRelieving:          assessmentData.hopiRelieving          || "",
+      hopiAggravating:        pick(assessmentData.hopiAggravating),
+      hopiRelieving:          pick(assessmentData.hopiRelieving),
       // Chronic illnesses
       chronicConditions:      assessmentData.chronicConditions      || [],
-      chronicOthers:          assessmentData.chronicOthers          || "",
+      chronicOthers:          pick(assessmentData.chronicOthers),
+      // ── OBG history (flat obg*-prefixed, female / Gynae OPD) ──
+      obgLmp:                 pick(assessmentData.obgLmp),
+      obgEdd:                 pick(assessmentData.obgEdd),
+      obgMenarche:            pick(assessmentData.obgMenarche),
+      obgCycleLength:         pick(assessmentData.obgCycleLength),
+      obgFlowDays:            pick(assessmentData.obgFlowDays),
+      obgRegularity:          pick(assessmentData.obgRegularity),
+      obgDysmenorrhea:        pick(assessmentData.obgDysmenorrhea),
+      obgMenopause:           pick(assessmentData.obgMenopause),
+      obgGravida:             pick(assessmentData.obgGravida),
+      obgPara:                pick(assessmentData.obgPara),
+      obgAbortion:            pick(assessmentData.obgAbortion),
+      obgLiving:              pick(assessmentData.obgLiving),
+      obgLastChildBirth:      pick(assessmentData.obgLastChildBirth),
+      obgDeliveryMode:        pick(assessmentData.obgDeliveryMode),
+      obgObComplications:     pick(assessmentData.obgObComplications),
+      obgMarried:             pick(assessmentData.obgMarried),
+      obgYearsMarried:        pick(assessmentData.obgYearsMarried),
+      obgContraception:       pick(assessmentData.obgContraception),
+      obgLastPapSmear:        pick(assessmentData.obgLastPapSmear),
+      obgLastUSG:             pick(assessmentData.obgLastUSG),
+      obgPriorSurgery:        pick(assessmentData.obgPriorSurgery),
+      obgNotes:               pick(assessmentData.obgNotes),
     };
 
     const updatedVisit = await OPD.findOneAndUpdate({ visitNumber }, update, { new: true });

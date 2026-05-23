@@ -595,3 +595,35 @@ html[data-paper="a5"] .pr-page {
   }
 }
 
+/* ════════════════════════════════════════════════════════════════
+   OPD-PRINT-AUDIT Item 25 — pagination polish.
+
+   For multi-page Rx / lab / bill prints we need:
+     - Table column headers to repeat on every new page
+     - Drug / bill rows to never split across a page break
+     - Signatures + footer to stay together at the document end
+     - A "Page X of Y" stamp at the bottom centre of every sheet
+
+   The `.pr-section--allow-break` opt-in is for tall sections (20+ drug
+   prescriptions) where keeping the whole section together would force
+   a half-empty first page.
+═══════════════════════════════════════════════════════════════ */
+@media print {
+  .pr-table thead       { display: table-header-group; }
+  .pr-table tbody tr    { break-inside: avoid; page-break-inside: avoid; }
+  .pr-signatures,
+  .pr-footer            { break-inside: avoid; page-break-inside: avoid; }
+  .pr-section--allow-break {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+  @page {
+    margin: 14mm 10mm 16mm 10mm;
+    @bottom-center {
+      content: "Page " counter(page) " of " counter(pages);
+      font-size: 9px;
+      color: #6b7280;
+    }
+  }
+}
+
