@@ -1467,7 +1467,13 @@ function NursingNotesContent({ selectedPatient }) {
                   color: "#d97706",
                   tint: "#fef3c7",
                   badges: [{ label: "NABH", tone: "ok" }],
-                  action: () => navigate(`/ipd-assessment/${uhidVal}`),
+                  // R7bl — Bug fix: `uhidVal` used to be referenced here
+                  // but it's a local variable inside loadPatient() (line
+                  // 748), out-of-scope for this JSX closure. Clicks
+                  // threw a silent ReferenceError and the page never
+                  // navigated. Resolve from the loaded admission's UHID
+                  // (or the search box as a last resort).
+                  action: () => navigate(`/ipd-assessment/${encodeURIComponent(patient?.UHID || patient?.uhid || searchUHID || "")}`),
                 },
                 {
                   id: "print-nav",
