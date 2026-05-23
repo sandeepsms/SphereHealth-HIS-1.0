@@ -232,7 +232,19 @@ export function AuthProvider({ children }) {
      interceptor here so the user gets a meaningful "Session terminated"
      toast on TOKEN_STALE / ACCOUNT_INACTIVE / ROLE_CHANGED before the
      hard redirect. We attach exactly once via a ref so React StrictMode
-     doesn't double-bind. */
+     doesn't double-bind.
+
+     R7bb — Honor the `_isBackgroundPoll: true` request flag here, mirroring
+     the global axiosInterceptor in /config. Pre-R7bb this interceptor fired
+     logout() on EVERY hard-logout 401 — including background polls fired
+     by the focus / visibilitychange listeners on tab switch. Symptom:
+     when a user Alt-Tabbed away and came back, the focus listener kicked
+     off /auth/me as a background poll; if the backend's 60s LRU cache lag
+     (or any other transient race) made that one /auth/me return TOKEN_STALE,
+     this interceptor ripped the session away even though the global
+     interceptor would have correctly swallowed it. Now both interceptors
+     agree: background polls NEVER trigger an automatic logout. The
+     user's next foreground action will surface the real auth state. */
   const interceptorRef = useRef(null);
   useEffect(() => {
     if (interceptorRef.current != null) return;
@@ -241,6 +253,12 @@ export function AuthProvider({ children }) {
       (error) => {
         const status = error?.response?.status;
         const code   = error?.response?.data?.code;
+        const isBackgroundPoll = error?.config?._isBackgroundPoll === true;
+        // R7bb — bail before the toast + logout so background polls
+        // (focus refresh, idle ping, etc.) never punt the user.
+        if (isBackgroundPoll) {
+          return Promise.reject(error);
+        }
         if (status === 401 && (code === "TOKEN_STALE" || code === "ACCOUNT_INACTIVE" || code === "ROLE_CHANGED")) {
           // logout() scrubs PHI caches, the generic axios interceptor in
           // /config then hard-redirects to /login. Show the toast first so
