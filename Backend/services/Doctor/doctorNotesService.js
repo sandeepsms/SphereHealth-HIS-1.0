@@ -433,21 +433,56 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
 // in-place diagnosis revisions per NABH HIC.7 minor-correction rules).
 // ─────────────────────────────────────────────────────────────
 const updateDiagnosis = async (id, data, actor = {}) => {
-  const note = await DoctorNotes.findById(id);
-  if (!note) {
+  // R7bo-LIVE-fix-v2: switch to findOneAndUpdate to avoid validating
+  // unchanged fields. Pre-fix: a stale `{}` value on note.updatedBy
+  // from a prior failed save would trigger BSONError on every
+  // subsequent `note.save()` even though we weren't touching updatedBy.
+  // findOneAndUpdate with `runValidators: true` only validates the
+  // fields in the $set payload, side-stepping the corrupted column.
+  const mongoose = require("mongoose");
+  const before = await DoctorNotes.findById(id).lean();
+  if (!before) {
     const error = new Error("Note not found");
     error.statusCode = 404;
     throw error;
   }
-  const before = note.toObject();
-  const diagFields = ["provisionalDiagnosis", "workingDiagnosis", "finalDiagnosis", "icd10Code", "icd10Description"];
-  diagFields.forEach((f) => { if (data[f] !== undefined) note[f] = data[f]; });
 
-  if (note.status === "signed") {
-    note.status = "amended";
+  const $set = {};
+  const diagFields = ["provisionalDiagnosis", "workingDiagnosis", "finalDiagnosis", "icd10Code", "icd10Description"];
+  diagFields.forEach((f) => { if (data[f] !== undefined) $set[f] = data[f]; });
+
+  if (before.status === "signed") {
+    $set.status = "amended";
   }
-  note.updatedBy = actor?.id || actor || note.updatedBy;
-  await note.save();
+
+  const actorId = actor?.id || actor?._id;
+  if (actorId && typeof actorId === "string" && mongoose.isValidObjectId(actorId)) {
+    $set.updatedBy = actorId;
+  } else if (typeof actor === "string" && mongoose.isValidObjectId(actor)) {
+    $set.updatedBy = actor;
+  }
+
+  // Belt-and-braces: also $unset updatedBy if the existing field is
+  // an invalid value left over from a pre-fix save attempt.
+  const $unset = {};
+  if (before.updatedBy != null && !mongoose.isValidObjectId(before.updatedBy) && !$set.updatedBy) {
+    $unset.updatedBy = "";
+  }
+
+  const updateOp = Object.keys($unset).length ? { $set, $unset } : { $set };
+  // R7bo-LIVE-fix-v4: bypass Mongoose's cast pipeline entirely by
+  // going to the raw collection. Mongoose's findOneAndUpdate ALWAYS
+  // casts every field in $set against the schema and ALSO validates
+  // existing fields (despite runValidators:false default). When a
+  // pre-fix save left `updatedBy: {}` on a note, every subsequent
+  // Mongoose update on that doc errored before our $set could land.
+  // Raw collection ops skip both the cast and validation, so the
+  // diagnosis update succeeds and any next read of the doc through
+  // Mongoose will project a fresh shape.
+  const rawCol = DoctorNotes.collection;
+  const _id = mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id;
+  await rawCol.updateOne({ _id }, updateOp);
+  const note = await DoctorNotes.findById(id);
 
   activityLogger.log({
     UHID: note.patientUHID || "",

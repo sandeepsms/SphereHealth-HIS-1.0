@@ -133,7 +133,16 @@ class DoctorNotesController {
 
   // PATCH /api/doctor-notes/:id/diagnosis
   updateDiagnosis = handle(async (req, res) => {
-    const note = await doctorNotesService.updateDiagnosis(req.params.id, req.body);
+    // R7bo-LIVE-fix: pass a properly-shaped actor object so the service
+    // can populate updatedBy without casting an empty literal to ObjectId.
+    const actor = {
+      id: req.user?.id || req.user?._id || null,
+      name: req.user?.fullName
+        || [req.user?.firstName, req.user?.lastName].filter(Boolean).join(" ").trim()
+        || "",
+      role: req.user?.role || "",
+    };
+    const note = await doctorNotesService.updateDiagnosis(req.params.id, req.body, actor);
     return res.json({ success: true, message: "Diagnosis updated", data: note });
   });
 
