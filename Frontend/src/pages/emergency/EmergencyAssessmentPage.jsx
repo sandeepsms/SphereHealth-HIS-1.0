@@ -11,6 +11,13 @@ import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import SignatureStamp from "../../Components/signature/SignatureStamp";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+// R7ay — Shared clinical-form panels that used to be inline in OPD.
+// Emergency's Step 3 now mounts the same three modules (Prescription,
+// IV Infusion, Services & Orders → DRAFT bill) so the ER doctor has
+// the same authoring experience as OPD.
+import PrescriptionPanel from "../../Components/clinical/PrescriptionPanel";
+import InfusionPanel from "../../Components/clinical/InfusionPanel";
+import ServicesOrdersPanel from "../../Components/clinical/ServicesOrdersPanel";
 
 /* ── Design tokens ── */
 const C = {
@@ -154,8 +161,15 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
   const [exam, setExam]       = useState("");
   const [provDx, setProvDx]   = useState("");
 
-  /* ── Orders ── */
-  const [orders, setOrders] = useState([blankRx()]);
+  /* ── Orders — R7ay ──
+     Replaced the legacy flat `orders` table with three richer modules:
+       • meds      → PrescriptionPanel  (DrugAutocomplete + 7 fields/row)
+       • infusions → InfusionPanel       (fluid + rate + duration)
+       • Services & Orders → ServicesOrdersPanel (auto-creates DRAFT bill)
+     The Services & Orders panel manages its own bill state internally —
+     no need to plumb it through formData. */
+  const [meds, setMeds]           = useState([]);
+  const [infusions, setInfusions] = useState([]);
 
   /* ── Disposition ── */
   const [disposition, setDisposition] = useState("");
@@ -183,12 +197,12 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
   const sabd = (k, v) => setAbdomen(p => ({ ...p, [k]: v }));
   const scns = (k, v) => setCns(p => ({ ...p, [k]: v }));
 
-  /* ── Auto-save draft ── */
+  /* ── Auto-save draft — R7ay: orders→meds/infusions ── */
   const draftKey = uhid ? `sphere_draft_er_${uhid}` : null;
   const { savedAt, hasDraft, clearDraft } = useAutoSave(
     draftKey,
     { triageLevel, triageTime, arrivalMode, isMLC, mlcNumber, chiefComplaint, complaintDuration,
-      vitals, abcde, pmh, allergy, exam, provDx, orders, disposition, dispNotes,
+      vitals, abcde, pmh, allergy, exam, provDx, meds, infusions, disposition, dispNotes,
       consciousness, nutritionalStatus, physicalSigns, painScoreVAS, rs, cvs, abdomen, cns },
     2000
   );
@@ -221,9 +235,13 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
       try {
         const raw = localStorage.getItem(dKey);
         if (raw) {
+          // R7ay: orders → meds + infusions (legacy `orders` ignored on
+          // restore since the data shape no longer matches the Step 3 UI;
+          // services / labs / radiology now go through ServicesOrdersPanel
+          // which loads its own DRAFT bill from the backend on mount).
           const { _meta, triageLevel: tl, triageTime: tt, arrivalMode: am, isMLC: ml, mlcNumber: mn,
             chiefComplaint: cc, complaintDuration: cd, vitals: vt, abcde: ab, pmh: ph, allergy: al,
-            exam: ex, provDx: pd, orders: or, disposition: dp, dispNotes: dn,
+            exam: ex, provDx: pd, meds: md, infusions: inf, disposition: dp, dispNotes: dn,
             consciousness: co, nutritionalStatus: ns, physicalSigns: ps, painScoreVAS: pv,
             rs: rss, cvs: cv, abdomen: abd, cns: cn } = JSON.parse(raw);
           if (tl) setTriageLevel(tl);
@@ -239,7 +257,8 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
           if (al) setAllergy(al);
           if (ex) setExam(ex);
           if (pd) setProvDx(pd);
-          if (or) setOrders(or);
+          if (Array.isArray(md)) setMeds(md);
+          if (Array.isArray(inf)) setInfusions(inf);
           if (dp) setDisposition(dp);
           if (dn) setDispNotes(dn);
           if (co) setConsciousness(co);
@@ -257,9 +276,9 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
     finally { setLoadingPt(false); }
   };
 
-  const addOrder = () => setOrders(o => [...o, blankRx()]);
-  const removeOrder = id => setOrders(o => o.filter(x => x.id !== id));
-  const updateOrder = (id, key, val) => setOrders(o => o.map(x => x.id === id ? { ...x, [key]: val } : x));
+  // R7ay — legacy addOrder/removeOrder/updateOrder removed. Step 3 now
+  // delegates row management to the PrescriptionPanel / InfusionPanel /
+  // ServicesOrdersPanel components below; each owns its own + Add / × Remove.
 
   const handleSave = async (sign = false) => {
     if (!patient) { toast.warn("Load a patient first"); return; }
@@ -281,7 +300,11 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
           vitals, abcde, pmh, allergy, exam, provDx,
           generalExamination: { consciousness, nutritionalStatus, ...physicalSigns, painScoreVAS },
           systemicExamination: { rs, cvs, abdomen, cns },
-          orders: orders.filter(o => o.detail.trim()),
+          // R7ay — meds + infusions replace the legacy flat `orders` array.
+          // Services / lab / radiology orders go through the in-Panel DRAFT
+          // bill flow (ServicesOrdersPanel) so they don't ride this payload.
+          medications: meds.filter(m => (m.name || "").trim()),
+          infusions: infusions.filter(f => (f.name || "").trim()),
           disposition, dispNotes,
         },
       };
@@ -857,73 +880,78 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
           </div>
         </Section>
 
-        {/* ══ STEP 3: ORDERS ══ */}
-        <Section title="Step 3 — Emergency Orders" icon="pi-list" color={C.purple}
-          badge={`${orders.filter(o => o.detail).length} order(s)`}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ background: "#f8fafc" }}>
-                  {["#", "Type", "Drug / Detail", "Dose / Rate", "Route", "Frequency", "Priority", ""].map(h => (
-                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700,
-                      color: C.muted, textTransform: "uppercase", letterSpacing: ".6px",
-                      borderBottom: `1.5px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {orders.map((ord, idx) => (
-                  <tr key={ord.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                    <td style={{ padding: "8px 10px", fontSize: 12, fontWeight: 700, color: C.muted }}>{idx + 1}</td>
-                    <td style={{ padding: "6px 6px", minWidth: 110 }}>
-                      <select value={ord.type} onChange={e => updateOrder(ord.id, "type", e.target.value)}
-                        className="his-field" style={{ padding: "6px 8px" }}>
-                        {ORDER_TYPES.map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1).replace("_", " ")}</option>)}
-                      </select>
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 180 }}>
-                      <input value={ord.detail} onChange={e => updateOrder(ord.id, "detail", e.target.value)}
-                        placeholder="Drug / test / procedure name…" className="his-field" style={{ padding: "6px 8px" }} />
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 100 }}>
-                      <input value={ord.dose} onChange={e => updateOrder(ord.id, "dose", e.target.value)}
-                        placeholder="500mg / 1L" className="his-field" style={{ padding: "6px 8px" }} />
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 80 }}>
-                      <select value={ord.route} onChange={e => updateOrder(ord.id, "route", e.target.value)}
-                        className="his-field" style={{ padding: "6px 8px" }}>
-                        {ROUTES.map(r => <option key={r}>{r}</option>)}
-                      </select>
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 90 }}>
-                      <input value={ord.freq} onChange={e => updateOrder(ord.id, "freq", e.target.value)}
-                        placeholder="STAT / 8hrly" className="his-field" style={{ padding: "6px 8px" }} />
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 90 }}>
-                      <select value={ord.priority} onChange={e => updateOrder(ord.id, "priority", e.target.value)}
-                        className="his-field" style={{ padding: "6px 8px",
-                          color: ord.priority === "STAT" ? "#9f1239" : ord.priority === "URGENT" ? C.red : C.muted,
-                          fontWeight: 700 }}>
-                        {PRIORITIES.map(p => <option key={p}>{p}</option>)}
-                      </select>
-                    </td>
-                    <td style={{ padding: "6px 6px" }}>
-                      <button onClick={() => removeOrder(ord.id)}
-                        style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", padding: 4 }}>
-                        <i className="pi pi-trash" style={{ fontSize: 13 }} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {/* ══ STEP 3: ORDERS & PRESCRIPTIONS — R7ay ══
+            Replaces the legacy single-table emergency-orders block with
+            three richer modules mirroring the OPD doctor experience:
+              1. Prescription      — DrugAutocomplete + dose/freq/meal/duration/route
+              2. Infusions         — fluid datalist + rate/volume/duration/additives
+              3. Services & Orders — ServiceMaster picker that spins a
+                                     DRAFT ER bill, lab/imaging/consumable rows
+                                     billed on completion. */}
+        <Section title="Step 3 — Orders & Prescriptions" icon="pi-list" color={C.purple}
+          badge={`${meds.length} med · ${infusions.length} inf`}>
+
+          {/* ─── Prescription ─────────────────────────────────────── */}
+          <div style={{ marginBottom: 22 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
+              paddingBottom: 8, borderBottom: `1px solid ${C.border}` }}>
+              <span style={{ width: 26, height: 26, borderRadius: 6, background: C.amberL,
+                display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <i className="pi pi-pencil" style={{ fontSize: 12, color: C.amber }} />
+              </span>
+              <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>Prescription</span>
+              <span style={{ background: C.amberL, color: C.amber, border: `1px solid ${C.amber}30`,
+                fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 4 }}>
+                {meds.length} medication{meds.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <PrescriptionPanel
+              value={meds}
+              onChange={setMeds}
+              theme={{ warn: C.amber, border: C.border, dark: C.text, muted: C.muted, bg: C.bg }}
+            />
           </div>
-          <button onClick={addOrder}
-            style={{ marginTop: 12, padding: "7px 16px", border: `1.5px dashed ${C.red}60`,
-              borderRadius: 8, background: C.redL, cursor: "pointer",
-              fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: C.red }}>
-            <i className="pi pi-plus" style={{ marginRight: 6, fontSize: 11 }} /> Add Order
-          </button>
+
+          {/* ─── Infusions / IV Fluids ────────────────────────────── */}
+          <div style={{ marginBottom: 22 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
+              paddingBottom: 8, borderBottom: `1px solid ${C.border}` }}>
+              <span style={{ width: 26, height: 26, borderRadius: 6, background: C.tealL,
+                display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <i className="pi pi-tint" style={{ fontSize: 12, color: C.teal }} />
+              </span>
+              <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>Infusions / IV Fluids</span>
+              <span style={{ background: C.tealL, color: C.teal, border: `1px solid ${C.teal}30`,
+                fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 4 }}>
+                {infusions.length} infusion{infusions.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <InfusionPanel
+              value={infusions}
+              onChange={setInfusions}
+              theme={{ border: C.border, dark: C.text, muted: C.muted, bg: C.bg, accent: C.teal }}
+            />
+          </div>
+
+          {/* ─── Services & Orders → DRAFT ER bill ────────────────── */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
+              paddingBottom: 8, borderBottom: `1px solid ${C.border}` }}>
+              <span style={{ width: 26, height: 26, borderRadius: 6, background: C.accentL,
+                display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <i className="pi pi-list" style={{ fontSize: 12, color: C.accent }} />
+              </span>
+              <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>
+                Services & Orders — bills on completion
+              </span>
+            </div>
+            <ServicesOrdersPanel
+              uhid={patient?.UHID || uhid}
+              visitType="ER"
+              addedBy={user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "ER Doctor"}
+              theme={{ border: C.border, dark: C.text, muted: C.muted, bg: C.bg, accent: C.accent }}
+            />
+          </div>
         </Section>
 
         {/* ── Disposition ── */}
