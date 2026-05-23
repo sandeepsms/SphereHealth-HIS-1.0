@@ -361,18 +361,9 @@ function NursingNotesContent({ selectedPatient }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPatient?._id, selectedPatient?.UHID]);
 
-  /* R7bg — Refresh latest diagnosis when the tab regains focus.
-     If the doctor updated diagnosis in their notes while the nurse was
-     on another tab, this brings the new value back without forcing a
-     full reload. */
-  useEffect(() => {
-    if (!patient) return;
-    const ipd = patient.ipdNo || patient.admissionNumber || patient._id;
-    const onFocus = () => fetchLatestDiagnosis(ipd);
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patient?._id]);
+  // R7bg — Focus refresh useEffect MOVED below the `patient` useState
+  // declaration to avoid TDZ ReferenceError. See the relocated block
+  // after `const [patient, setPatient] = useState(null);`.
 
   /* Auto-load when /nursing-notes?uhid=… is opened from /bed-visual or
      /discharge-summary (mode=discharge). When ?mode=discharge is set the
@@ -426,6 +417,22 @@ function NursingNotesContent({ selectedPatient }) {
   }, []);
 
   const [patient,    setPatient]    = useState(null);
+
+  /* R7bg — Refresh latest diagnosis when the tab regains focus.
+     If the doctor updated diagnosis in their notes while the nurse was
+     on another tab, this brings the new value back without forcing a
+     full reload. Placed AFTER the `patient` useState declaration —
+     pre-fix this lived earlier and crashed because the deps array
+     `[patient?._id]` read `patient` while it was still in the temporal
+     dead zone (const declared later in the function body). */
+  useEffect(() => {
+    if (!patient) return;
+    const ipd = patient.ipdNo || patient.admissionNumber || patient._id;
+    const onFocus = () => fetchLatestDiagnosis(ipd);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient?._id]);
   const [notes,      setNotes]      = useState([]);
   const [loading,    setLoading]    = useState(false);
   const [activeModal,setActiveModal]= useState(null);
