@@ -85,6 +85,9 @@ export const API_ENDPOINTS = {
   MAR: `${API_BASE_URL}/mar`,
   NURSE_NOTES: `${API_BASE_URL}/nurse-notes`,
   NURSING_NOTES: `${API_BASE_URL}/nursing-notes`,
+  // R7bs — chip-page POSTs to /api/nursing-assessments/<type>. Dispatcher
+  // in nabhRegisterEmitter fans out type=dvt → DVTRegister (Caprini).
+  NURSING_ASSESSMENTS: `${API_BASE_URL}/nursing-assessments`,
   NURSING_CHARGES: `${API_BASE_URL}/nursing-charges`,
 
   // ── Doctor Orders ─────────────────────────────────────────────

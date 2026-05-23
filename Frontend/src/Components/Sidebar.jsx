@@ -424,9 +424,11 @@ const NAV = [
       { label: "Sharps Injury",         icon: "pi-info-circle",          path: "/sharps-injury",         nabh: true, badge: "HRD.8", roles: [ADMIN, DR, NR, PH, LB, WB, "Housekeeping", "MRD"] },
       // R7bo — NABH Inspection Dashboard: surveyor-ready unified view of
       // RBS, Emergency, and Blood Transfusion registers (auto-populated).
+      // R7bs — DVT (Caprini) chip lives inside the Nursing Notes page as
+      // requested (Assessment & Monitoring section, next to Fall Risk).
+      // No separate sidebar entry — keeps the chip-page consolidation
+      // discipline established by R7e (avoid duplicate nursing entries).
       { label: "NABH Registers",        icon: "pi-th-large",             path: "/compliance/nabh-registers", nabh: true, badge: "R7bo", roles: [ADMIN, DR, NR, "MRD"] },
-      // R7bq — Caprini DVT assessment entry point (auto-pops DVT register).
-      { label: "DVT Risk (Caprini)",    icon: "pi-shield",               path: "/nursing/caprini-dvt",       nabh: true, badge: "MOM.7", roles: [ADMIN, DR, NR] },
     ],
   },
 ];

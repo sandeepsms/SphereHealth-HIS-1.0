@@ -61,6 +61,10 @@ const MODULES = [
   { id: "wound",     label: "Wound / Dressing",           icon: "pi-pencil",                  border: "#fca5a5", color: C.red, bg: C.redL },
   { id: "skin",      label: "Skin / Pressure Assessment", icon: "pi-th-large",                border: "#86efac", color: "#166534", bg: C.greenL },
   { id: "fall",      label: "Fall Risk (Morse)",          icon: "pi-exclamation-triangle",    border: "#fdba74", color: C.orange, bg: C.orangeL },
+  // R7bs — DVT (Caprini) chip. Lives alongside Fall Risk because both are
+  // structured-risk scoring scales. Auto-pops the NABH DVT register via
+  // POST /api/nursing-assessments/dvt → nabhRegisterEmitter.emitDVT.
+  { id: "dvt",       label: "DVT (Caprini)",              icon: "pi-shield",                  border: "#a5b4fc", color: "#4338ca", bg: "#eef2ff" },
   { id: "procedure", label: "Procedure / Intervention",   icon: "pi-cog",                     border: "#c4b5fd", color: C.purple, bg: C.purpleL },
   { id: "discharge", label: "Discharge / Handover",       icon: "pi-sign-out",                border: "#6ee7b7", color: C.green, bg: C.greenL },
   { id: "mews",      label: "MEWS Score",                 icon: "pi-chart-bar",               border: "#fbbf24", color: "#92400e", bg: "#fffbeb", dot: true },
@@ -72,6 +76,90 @@ const MODULES = [
   { id: "nutrition", label: "Nutritional Assessment",     icon: "pi-apple",                   border: "#86efac", color: "#15803d", bg: "#dcfce7" },
   { id: "education", label: "Patient Education",          icon: "pi-book",                    border: "#c4b5fd", color: "#6d28d9", bg: "#f5f3ff" },
 ];
+
+/* ── R7bs — Caprini 2010 VTE risk factor catalogue (weighted) ──
+ * Mirrors CapriniDVTAssessmentPage.jsx so the nursing-notes chip and the
+ * standalone Caprini page share the same scoring source of truth. */
+const CAPRINI_FACTORS_BY_WEIGHT = {
+  5: [
+    { code: "STROKE_LT_1M",             label: "Stroke (<1 mo)" },
+    { code: "ELECTIVE_LE_ARTHROPLASTY", label: "Elective major LE arthroplasty" },
+    { code: "HIP_PELVIS_LEG_FRACTURE",  label: "Hip / pelvis / leg fracture (<1 mo)" },
+    { code: "ACUTE_SPINAL_CORD_INJURY", label: "Acute spinal-cord injury w/ paralysis (<1 mo)" },
+    { code: "MULTIPLE_TRAUMA",          label: "Multiple trauma (<1 mo)" },
+  ],
+  3: [
+    { code: "AGE_GE_75",                label: "Age ≥ 75 years" },
+    { code: "HISTORY_DVT_PE",           label: "History of DVT / PE" },
+    { code: "FAMILY_HISTORY_THROMBOSIS",label: "Family history of thrombosis" },
+    { code: "FACTOR_V_LEIDEN",          label: "Factor V Leiden mutation" },
+    { code: "PROTHROMBIN_20210A",       label: "Prothrombin 20210A mutation" },
+    { code: "LUPUS_ANTICOAGULANT",      label: "Lupus anticoagulant" },
+    { code: "ANTICARDIOLIPIN_AB",       label: "Anticardiolipin antibodies" },
+    { code: "ELEVATED_HOMOCYSTEINE",    label: "Elevated serum homocysteine" },
+    { code: "HIT_HISTORY",              label: "Heparin-induced thrombocytopenia (HIT)" },
+    { code: "OTHER_THROMBOPHILIA",      label: "Other thrombophilia" },
+  ],
+  2: [
+    { code: "AGE_61_74",                label: "Age 61–74 years" },
+    { code: "ARTHROSCOPIC_SURGERY",     label: "Arthroscopic surgery" },
+    { code: "MAJOR_OPEN_SURGERY",       label: "Major open surgery (>45 min)" },
+    { code: "LAPAROSCOPIC_GT_45",       label: "Laparoscopic surgery (>45 min)" },
+    { code: "MALIGNANCY",               label: "Malignancy (present or prior)" },
+    { code: "BEDREST_GT_72H",           label: "Patient confined to bed (>72 h)" },
+    { code: "IMMOBILIZING_CAST",        label: "Immobilizing plaster cast (<1 mo)" },
+    { code: "CENTRAL_VENOUS_LINE",      label: "Central venous access" },
+  ],
+  1: [
+    { code: "AGE_41_60",                label: "Age 41–60 years" },
+    { code: "MINOR_SURGERY",            label: "Minor surgery planned" },
+    { code: "BMI_OVER_25",              label: "BMI > 25 kg/m²" },
+    { code: "SWOLLEN_LEGS",             label: "Swollen legs (current)" },
+    { code: "VARICOSE_VEINS",           label: "Varicose veins" },
+    { code: "PREGNANCY_POSTPARTUM",     label: "Pregnancy / postpartum (<1 mo)", femaleOnly: true },
+    { code: "RECURRENT_ABORTION",       label: "Recurrent / unexplained spontaneous abortion", femaleOnly: true },
+    { code: "OCP_HRT",                  label: "On OCP / HRT", femaleOnly: true },
+    { code: "SEPSIS_LT_1M",             label: "Sepsis (<1 mo)" },
+    { code: "LUNG_DISEASE_LT_1M",       label: "Serious lung disease incl. pneumonia (<1 mo)" },
+    { code: "ABNORMAL_PFT",             label: "Abnormal PFT (COPD)" },
+    { code: "ACUTE_MI",                 label: "Acute myocardial infarction" },
+    { code: "CHF_LT_1M",                label: "Congestive heart failure (<1 mo)" },
+    { code: "IBD_HISTORY",              label: "History of inflammatory bowel disease" },
+    { code: "MEDICAL_BEDREST",          label: "Medical patient at bed rest" },
+  ],
+};
+const IMPROVE_BLEED_FACTORS = [
+  { code: "MOD_RENAL_FAIL",  label: "Moderate renal failure (GFR 30–59)",       points: 1 },
+  { code: "MALE",            label: "Male sex",                                  points: 1 },
+  { code: "AGE_40_84",       label: "Age 40–84 years",                           points: 1.5 },
+  { code: "CURRENT_CANCER",  label: "Current cancer",                            points: 2 },
+  { code: "RHEUMATIC",       label: "Rheumatic disease",                         points: 2 },
+  { code: "CV_CATHETER",     label: "Central venous catheter",                   points: 2 },
+  { code: "ICU_CCU",         label: "ICU / CCU admission",                       points: 2.5 },
+  { code: "SEV_RENAL_FAIL",  label: "Severe renal failure (GFR <30)",            points: 2.5 },
+  { code: "HEPATIC_FAILURE", label: "Hepatic failure (INR >1.5)",                points: 2.5 },
+  { code: "AGE_GE_85",       label: "Age ≥ 85 years",                            points: 3.5 },
+  { code: "PLT_LT_50",       label: "Platelets <50 × 10⁹/L",                     points: 4 },
+  { code: "RECENT_BLEED",    label: "Bleeding in 3 mo before admission",         points: 4 },
+  { code: "GU_ULCER",        label: "Active gastroduodenal ulcer",               points: 4.5 },
+];
+const DVT_CONTRAINDICATIONS = [
+  "Active clinically significant bleeding",
+  "Severe thrombocytopenia (<50 × 10⁹/L)",
+  "Known / suspected HIT",
+  "Coagulopathy (INR >1.5, not on warfarin)",
+  "Recent intracranial / spinal / ophthalmic surgery (<14 days)",
+  "Severe uncontrolled hypertension (BP >230/120)",
+  "Neuraxial anaesthesia within timing window",
+  "Known LMWH / UFH / DOAC hypersensitivity",
+];
+function _capriniTier(score) {
+  if (score >= 9) return { tier: "Highest", bg: "#fef2f2", color: "#991b1b" };
+  if (score >= 5) return { tier: "High",    bg: "#fff7ed", color: "#9a3412" };
+  if (score >= 3) return { tier: "Moderate",bg: "#eff6ff", color: "#1d4ed8" };
+  if (score >= 1) return { tier: "Low",     bg: "#f8fafc", color: "#475569" };
+  return                  { tier: "Very Low", bg: "#f8fafc", color: "#64748b" };
+}
 
 /* ── Note badge styles ── */
 const NOTE_STYLE = {
@@ -357,6 +445,17 @@ function NursingNotesContent({ selectedPatient }) {
   const [wound,     setWound]     = useState({ type: "Surgical", site: "", length: "", width: "", depth: "", exudateAmt: "None", exudateType: "Serous", healingStage: "Granulating", surroundingSkin: "Intact", tunneling: false, undermining: false, odour: false, dressing: "", painDuring: "", nextDressingDate: "", swabSent: false });
   const [skin,      setSkin]      = useState({ area: "", b1: "4", b2: "4", b3: "4", b4: "4", b5: "4", b6: "3", stage: "Stage I", intervention: "", repositioned: false, repositionFreq: "2-hourly" });
   const [fallRisk,  setFallRisk]  = useState({ m1: "0", m2: "0", m3: "0", m4: "0", m5: "0", m6: "0", intBedRails: false, intCallBell: false, intNonSlip: false, intBedLowest: false, intSupervision: false, intPatientEd: false, intFamilyEd: false });
+  // R7bs — Caprini DVT/VTE risk factor selections. Keys mirror the
+  // CAPRINI_FACTORS table below; values are simple booleans. The IMPROVE
+  // bleed-risk factors share the same selection object (improveSelected)
+  // for clean state management. Saving emits to /api/nursing-assessments/dvt
+  // which fans out to the NABH DVT register via emitFromNursingAssessment.
+  const [dvtSelected, setDvtSelected] = useState({});
+  const [dvtImproveSelected, setDvtImproveSelected] = useState({});
+  const [dvtContras, setDvtContras] = useState([]);
+  const [dvtContraNotes, setDvtContraNotes] = useState("");
+  const [dvtTrigger, setDvtTrigger] = useState("Admission");
+  const [dvtSaving, setDvtSaving] = useState(false);
   const [procedure, setProcedure] = useState({ procedureName: "", indication: "", site: "", laterality: "N/A", time: "", consentObtained: true, performedBy: "", designation: "Staff Nurse", assistant: "", sterile: true, position: "Supine", outcome: "Tolerated Well", complications: "None", specimenSent: false, specimenType: "", postProcVitals: "", followUp: "" });
   const [discharge, setDischarge] = useState({ type: "Shift Handover", situation: "", background: "", assessment: "", recommendation: "", incomingNurse: "", patientStatus: "Stable", educationGiven: false, educationTopics: "", followUpDate: "", valuablesHandedOver: false });
   const [mews,      setMews]      = useState({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
@@ -2681,6 +2780,173 @@ function NursingNotesContent({ selectedPatient }) {
                           </label>
                         ))}
                       </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── R7bs — DVT (Caprini) Risk Assessment (NABH MOM.7 + AAC.4) ── */}
+              {activeModal === "dvt" && (() => {
+                const isFemale = patient?.gender === "Female" || patient?.patientId?.gender === "Female";
+                // Live total
+                let capriniTotal = 0;
+                Object.entries(CAPRINI_FACTORS_BY_WEIGHT).forEach(([w, list]) => {
+                  list.forEach((f) => {
+                    if (!dvtSelected[f.code]) return;
+                    if (f.femaleOnly && !isFemale) return;
+                    capriniTotal += Number(w);
+                  });
+                });
+                const tierInfo = _capriniTier(capriniTotal);
+                let improveTotal = 0;
+                IMPROVE_BLEED_FACTORS.forEach((f) => { if (dvtImproveSelected[f.code]) improveTotal += f.points; });
+                improveTotal = Math.round(improveTotal * 10) / 10;
+                const improveHigh = improveTotal >= 7;
+                const escalated = capriniTotal >= 5;
+                const toggle = (code, setter) => setter((s) => ({ ...s, [code]: !s[code] }));
+                const toggleContra = (label) =>
+                  setDvtContras((c) => (c.includes(label) ? c.filter((x) => x !== label) : [...c, label]));
+
+                const saveDVT = async () => {
+                  const uhid = patient?.UHID || patient?.uhid || patient?.patientId?.UHID || patient?.patientId?.uhid;
+                  if (!uhid) { toast.error("Patient UHID missing"); return; }
+                  const factorBreakdown = [];
+                  Object.entries(CAPRINI_FACTORS_BY_WEIGHT).forEach(([w, list]) => {
+                    list.forEach((f) => {
+                      if (!dvtSelected[f.code]) return;
+                      if (f.femaleOnly && !isFemale) return;
+                      factorBreakdown.push({ code: f.code, label: f.label, points: Number(w) });
+                    });
+                  });
+                  const payload = {
+                    UHID: uhid,
+                    patientName: patient?.fullName || patient?.firstName || patient?.patientId?.fullName || "",
+                    admissionId: patient?.admissionId || patient?._id || undefined,
+                    capriniScore: capriniTotal,
+                    improveScore: Object.keys(dvtImproveSelected).length > 0 ? improveTotal : undefined,
+                    factorBreakdown,
+                    contraindications: dvtContras,
+                    contraindicationNotes: dvtContraNotes,
+                    reassessmentTrigger: dvtTrigger,
+                  };
+                  setDvtSaving(true);
+                  try {
+                    const r = await axios.post(`${API_ENDPOINTS.NURSING_ASSESSMENTS || "/api/nursing-assessments"}/dvt`, payload);
+                    if (r.data?.success) {
+                      toast.success(`Caprini ${capriniTotal} (${tierInfo.tier}) saved — DVT register updated`);
+                      // Reset for next entry
+                      setDvtSelected({}); setDvtImproveSelected({}); setDvtContras([]); setDvtContraNotes("");
+                    } else {
+                      toast.error(r.data?.message || "Save failed");
+                    }
+                  } catch (e) {
+                    toast.error(e?.response?.data?.message || "Save failed");
+                  }
+                  setDvtSaving(false);
+                };
+
+                return (
+                  <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                    {/* Score header */}
+                    <div style={{ background:"#f8fafc", border:`1px solid ${C.border}`, borderRadius:10, padding:"12px 14px" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
+                        <div>
+                          <div style={{ fontSize:12, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px" }}>Caprini VTE Risk Score · NABH MOM.7</div>
+                          <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>Auto-populates the NABH DVT register on save · escalates to treating doctor if ≥ 5</div>
+                        </div>
+                        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                          <div style={{ background:tierInfo.bg, color:tierInfo.color, border:`1.5px solid ${tierInfo.color}30`, borderRadius:8, padding:"6px 18px", fontWeight:800, fontSize:16 }}>
+                            {capriniTotal} — {tierInfo.tier}
+                          </div>
+                          {Object.keys(dvtImproveSelected).length > 0 && (
+                            <div style={{ background: improveHigh?"#fef2f2":"#f0f9ff", color: improveHigh?"#991b1b":"#0c4a6e", border:`1.5px solid ${(improveHigh?"#991b1b":"#0c4a6e")}30`, borderRadius:8, padding:"6px 14px", fontWeight:700, fontSize:13 }}>
+                              IMPROVE {improveTotal} · Bleed {improveHigh?"High":"Low"}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {escalated && (
+                        <div style={{ marginTop:10, padding:"8px 12px", background:"#fef2f2", border:"1px solid #fecaca", borderRadius:6, color:"#991b1b", fontSize:12, fontWeight:600 }}>
+                          ⚠ Caprini ≥ 5 — treating doctor will be notified for prophylaxis order (60 min SLA).
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Caprini factor groups */}
+                    {[5, 3, 2, 1].map((weight) => (
+                      <div key={weight} style={{ border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px" }}>
+                        <div style={{ fontSize:11, fontWeight:800, color:C.muted, textTransform:"uppercase", letterSpacing:".5px", marginBottom:8 }}>{weight}-point factors</div>
+                        <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:6 }}>
+                          {CAPRINI_FACTORS_BY_WEIGHT[weight].map((f) => {
+                            if (f.femaleOnly && !isFemale) return null;
+                            const on = !!dvtSelected[f.code];
+                            return (
+                              <label key={f.code} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontSize:12, fontWeight:600, color: on?"#4338ca":C.text, padding:"6px 10px", border:`1.5px solid ${on?"#a5b4fc":C.border}`, borderRadius:8, background: on?"#eef2ff":"white", transition:"all .15s" }}>
+                                <input type="checkbox" checked={on} onChange={() => toggle(f.code, setDvtSelected)} style={{ accentColor:"#4f46e5", width:13, height:13 }} />
+                                {f.label}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* IMPROVE bleed (optional) */}
+                    <div style={{ border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px" }}>
+                      <div style={{ fontSize:11, fontWeight:800, color:C.muted, textTransform:"uppercase", letterSpacing:".5px", marginBottom:8 }}>IMPROVE Bleeding Risk (optional · gates pharmacological prophylaxis safety)</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:6 }}>
+                        {IMPROVE_BLEED_FACTORS.map((f) => {
+                          const on = !!dvtImproveSelected[f.code];
+                          return (
+                            <label key={f.code} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontSize:12, fontWeight:600, color: on?"#9a3412":C.text, padding:"6px 10px", border:`1.5px solid ${on?"#fed7aa":C.border}`, borderRadius:8, background: on?"#fff7ed":"white", transition:"all .15s" }}>
+                              <input type="checkbox" checked={on} onChange={() => toggle(f.code, setDvtImproveSelected)} style={{ accentColor:"#ea580c", width:13, height:13 }} />
+                              {f.label} <span style={{ marginLeft:"auto", fontSize:10, color:C.muted }}>+{f.points}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Contraindications */}
+                    <div style={{ border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px" }}>
+                      <div style={{ fontSize:11, fontWeight:800, color:C.muted, textTransform:"uppercase", letterSpacing:".5px", marginBottom:8 }}>Contraindications to Pharmacological Prophylaxis</div>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:6 }}>
+                        {DVT_CONTRAINDICATIONS.map((c) => {
+                          const on = dvtContras.includes(c);
+                          return (
+                            <label key={c} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontSize:12, fontWeight:600, color: on?C.red:C.text, padding:"6px 10px", border:`1.5px solid ${on?"#fca5a5":C.border}`, borderRadius:8, background: on?"#fef2f2":"white", transition:"all .15s" }}>
+                              <input type="checkbox" checked={on} onChange={() => toggleContra(c)} style={{ accentColor:C.red, width:13, height:13 }} />
+                              {c}
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <textarea
+                        value={dvtContraNotes}
+                        onChange={(e) => setDvtContraNotes(e.target.value)}
+                        rows={2}
+                        placeholder="Free-text notes / specifics (max 1000 chars)"
+                        style={{ width:"100%", marginTop:8, padding:"6px 10px", border:`1.5px solid ${C.border}`, borderRadius:8, fontSize:12, fontFamily:"inherit" }}
+                      />
+                    </div>
+
+                    {/* Reassessment trigger + save */}
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:12, alignItems:"end" }}>
+                      <div>
+                        <div style={{ fontSize:11, fontWeight:800, color:C.muted, textTransform:"uppercase", letterSpacing:".5px", marginBottom:4 }}>Reassessment trigger</div>
+                        <select value={dvtTrigger} onChange={(e) => setDvtTrigger(e.target.value)} style={sel}>
+                          {["Admission", "Q-Shift", "Condition-Change", "Post-Op", "Bleeding-Event", "Pre-Discharge"].map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <button
+                        onClick={saveDVT}
+                        disabled={dvtSaving}
+                        style={{ padding:"10px 18px", borderRadius:8, border:"none", background: dvtSaving?"#94a3b8":"#4f46e5", color:"white", fontWeight:700, fontSize:13, cursor: dvtSaving?"not-allowed":"pointer" }}
+                      >
+                        {dvtSaving ? "Saving…" : "Save DVT Assessment"}
+                      </button>
                     </div>
                   </div>
                 );
