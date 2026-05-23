@@ -297,6 +297,15 @@ export function AuthProvider({ children }) {
           // Hard redirect so React state, route guards and module cache
           // all reload against the new role.
           try { window.location.href = "/login"; } catch (_) {}
+        } else if (user._restoredFromJwt) {
+          // R7bv — we were running on JWT-decoded minimal user data
+          // (backend was down when the page loaded). Now that /auth/me
+          // succeeded, replace with the canonical server-side user so
+          // fullName, doctorProfile, etc. show up properly. Same path
+          // hydrates doctorProfile that the restore() catch couldn't
+          // fetch.
+          setUser(fresh);
+          if (res.data?.doctorProfile) setDoctorProfile(res.data.doctorProfile);
         }
       } catch (_) {
         // R7bm-F9: transient errors are deliberately swallowed here.
