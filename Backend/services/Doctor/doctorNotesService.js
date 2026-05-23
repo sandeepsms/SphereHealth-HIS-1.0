@@ -138,28 +138,29 @@ const createDoctorNote = async (data, doctorUserId) => {
 // ─────────────────────────────────────────────────────────────
 // Sign draft → orders visible to nurse + push to TreatmentChart
 // ─────────────────────────────────────────────────────────────
-const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}) => {
-  const note = await DoctorNotes.findById(noteId);
-  if (!note) {
+const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req = null) => {
+  // R7bn-2 / D10-fix: do a pre-check via .lean() to validate ownership
+  // and signer identity, then perform the transition with an atomic
+  // CAS-style findOneAndUpdate that ONLY matches docs still in "draft"
+  // status. If two clients sign at once, only one wins — the second
+  // gets null back and we tell the caller the note was already signed.
+  const noteDraft = await DoctorNotes.findById(noteId).lean();
+  if (!noteDraft) {
     const error = new Error("Note not found");
     error.statusCode = 404;
     throw error;
   }
-  if (note.status === "signed") {
+  if (noteDraft.status === "signed") {
     const error = new Error("Note already signed");
     error.statusCode = 400;
     throw error;
   }
-  // FIX (audit P11-B2): if the note was created without a doctor (legacy
-  // path), attach the signing user as the doctor at sign-time instead of
-  // letting an unauthenticated sign go through. The ownership check still
-  // applies for notes that already have a doctor.
-  if (note.doctor && doctorUserId && note.doctor.toString() !== doctorUserId.toString()) {
+  if (noteDraft.doctor && doctorUserId && noteDraft.doctor.toString() !== doctorUserId.toString()) {
     const error = new Error("Not authorised to sign this note");
     error.statusCode = 403;
     throw error;
   }
-  if (!note.doctor && !doctorUserId) {
+  if (!noteDraft.doctor && !doctorUserId) {
     const error = new Error("Cannot sign — no doctor user context");
     error.statusCode = 401;
     throw error;
@@ -169,8 +170,8 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}) => {
   // note. Previously signedByName / signedByReg / signature were only ever
   // set on the create path; sign-later notes finalised with empty fields
   // and the printed copy looked unsigned in court / audit review.
-  let signedByName = signaturePayload.signedByName || note.signedByName || "";
-  let signedByReg  = signaturePayload.signedByReg  || note.signedByReg  || "";
+  let signedByName = signaturePayload.signedByName || noteDraft.signedByName || "";
+  let signedByReg  = signaturePayload.signedByReg  || noteDraft.signedByReg  || "";
   try {
     if ((!signedByName || !signedByReg) && doctorUserId) {
       const User = require("../../models/User/userModel");
@@ -183,14 +184,33 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}) => {
     }
   } catch (_) { /* fall back to existing values */ }
 
-  if (!note.doctor && doctorUserId) note.doctor = doctorUserId;
-  note.status = "signed";
-  note.signedAt = new Date();
-  note.signedByName = signedByName;
-  note.signedByReg  = signedByReg;
-  if (signaturePayload.signature) note.signature = signaturePayload.signature;
-  note.updatedBy = doctorUserId;
-  await note.save();
+  // R7bn-2 / D10-fix: status-guarded atomic transition. The `status:
+  // "draft"` predicate in the query ensures only ONE concurrent signer
+  // wins — the second's findOneAndUpdate returns null, we surface a
+  // 409 to the caller. Pre-fix, two doctors signing at once both got
+  // 200 OK, the TreatmentChart helper ran twice, and the auto-billing
+  // double-fired (idempotency saved us at the bill layer but the
+  // duplicate signature legs in the audit trail were real).
+  const signFields = {
+    status: "signed",
+    signedAt: new Date(),
+    signedByName,
+    signedByReg,
+    updatedBy: doctorUserId,
+  };
+  if (!noteDraft.doctor && doctorUserId) signFields.doctor = doctorUserId;
+  if (signaturePayload.signature) signFields.signature = signaturePayload.signature;
+
+  const note = await DoctorNotes.findOneAndUpdate(
+    { _id: noteId, status: "draft" },
+    { $set: signFields },
+    { new: true, runValidators: true },
+  );
+  if (!note) {
+    const error = new Error("Note already signed by another user");
+    error.statusCode = 409;
+    throw error;
+  }
 
   // FIX (audit P11-B4): addDoctorOrders dedupe — the TreatmentChart helper
   // is idempotent by order._id under the hood, but if a note ever gets
@@ -212,6 +232,29 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}) => {
     const { logErr } = require("../../utils/logErr");
     logErr("autoBilling", "load failure on doctor-note service save")(e);
   }
+
+  // R7bn-1 / D9-fix: emit ClinicalAudit row for the NABH AAC.7 trail.
+  // Sign is the highest-stakes event on a doctor note (legal attestation),
+  // so this row gets the 7-year retention floor.
+  try {
+    const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+    emitClinicalAudit({
+      req,
+      event: "DOCTOR_NOTE_SIGNED",
+      UHID: note.patientUHID || note.UHID,
+      admissionId: note.admissionId,
+      patientId: note.patientId,
+      patientName: note.patientName,
+      targetType: "DoctorNote",
+      targetId: note._id,
+      after: {
+        noteType: note.noteType,
+        signedAt: note.signedAt,
+        signedByName,
+        signedByReg,
+      },
+    });
+  } catch (_) { /* silent — audit emit is non-blocking */ }
 
   return note;
 };
@@ -420,6 +463,52 @@ const updateDiagnosis = async (id, data, actor = {}) => {
       status:               note.status,
     },
   }).catch((e) => console.error("[doctorNotes] updateDiagnosis audit failed:", e.message));
+
+  // R7bn-4 / D7-3-fix: diagnosis sync hook. Pre-fix the doctor's
+  // diagnosis update only landed on the doctor-note document — the
+  // admission's provisionalDiagnosis / finalDiagnosis stayed stale,
+  // so the Discharge Summary (which reads from admission) couldn't
+  // auto-fill diagnosis and the doctor had to re-enter it. NABH HIC.5
+  // expects traceable single-source-of-truth for the patient's working
+  // diagnosis. Sync to admission whenever the doctor changes diagnosis.
+  if (note.admissionId) {
+    try {
+      const Admission = require("../../models/Patient/admissionModel");
+      const $set = {};
+      if (note.provisionalDiagnosis) $set.provisionalDiagnosis = note.provisionalDiagnosis;
+      if (note.finalDiagnosis)        $set.finalDiagnosis = note.finalDiagnosis;
+      if (Object.keys($set).length) {
+        await Admission.findByIdAndUpdate(note.admissionId, { $set });
+      }
+    } catch (e) {
+      console.error("[doctorNotes] diagnosis sync to admission failed:", e.message);
+    }
+  }
+
+  // R7bn-1 / D9-fix: ClinicalAudit emit on diagnosis update.
+  try {
+    const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+    emitClinicalAudit({
+      actor,
+      event: "DIAGNOSIS_UPDATED",
+      UHID: note.patientUHID || note.UHID,
+      admissionId: note.admissionId,
+      patientId: note.patient,
+      patientName: note.patientName,
+      targetType: "DoctorNote.diagnosis",
+      targetId: note._id,
+      before: {
+        provisionalDiagnosis: before.provisionalDiagnosis,
+        workingDiagnosis:     before.workingDiagnosis,
+        finalDiagnosis:       before.finalDiagnosis,
+      },
+      after: {
+        provisionalDiagnosis: note.provisionalDiagnosis,
+        workingDiagnosis:     note.workingDiagnosis,
+        finalDiagnosis:       note.finalDiagnosis,
+      },
+    });
+  } catch (_) { /* silent */ }
 
   return note;
 };

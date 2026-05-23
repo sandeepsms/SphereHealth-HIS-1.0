@@ -582,27 +582,45 @@ class AdmissionController {
    */
   saveNurseInitialAssessment = handle(async (req, res) => {
     const Admission = require("../../models/Patient/admissionModel");
-    const admission = await Admission.findById(req.params.id);
-    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
+    const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
 
-    // Persist the full payload on a sub-doc so the assessment is traceable.
-    if (!admission.nurseInitialAssessment || typeof admission.nurseInitialAssessment !== "object") {
-      admission.nurseInitialAssessment = {};
-    }
-    Object.assign(admission.nurseInitialAssessment, req.body || {}, { savedAt: new Date() });
-    admission.markModified("nurseInitialAssessment");
+    // R7bn-2 / D10-fix: atomic $set instead of findById → mutate → save.
+    // Pre-fix, two clients (nurse + doctor) saving their own initial
+    // assessments at the same instant would both load the same stale
+    // admission doc and the last .save() would clobber the other's
+    // changes. With $set on dotted paths we only touch the keys we own.
+    const nurseAssessment = { ...(req.body || {}), savedAt: new Date() };
+    const now = new Date();
+    const nurseName = req.body?.signoff?.name || req.body?.nurseName || "";
 
-    // Flip the gate flag too.
-    if (!admission.initialAssessment || typeof admission.initialAssessment !== "object") {
-      admission.initialAssessment = {};
-    }
-    admission.initialAssessment.nurseCompleted   = true;
-    admission.initialAssessment.nurseCompletedAt = new Date();
-    admission.initialAssessment.nurseName        = req.body?.signoff?.name || req.body?.nurseName || "";
-    admission.markModified("initialAssessment");
+    const updated = await Admission.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: {
+          nurseInitialAssessment: nurseAssessment,
+          "initialAssessment.nurseCompleted":   true,
+          "initialAssessment.nurseCompletedAt": now,
+          "initialAssessment.nurseName":        nurseName,
+        },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!updated) return res.status(404).json({ success: false, message: "Admission not found" });
 
-    await admission.save();
-    return res.json({ success: true, data: admission.nurseInitialAssessment });
+    // R7bn-1 / D9-fix: emit ClinicalAudit row for the NABH AAC.7 trail.
+    emitClinicalAudit({
+      req,
+      event: "INITIAL_ASSESSMENT_NURSE_SIGNED",
+      UHID: updated.UHID,
+      admissionId: updated._id,
+      patientId: updated.patientId,
+      patientName: updated.patientName,
+      targetType: "Admission.nurseInitialAssessment",
+      targetId: updated._id,
+      after: { nurseName, savedAt: now },
+    });
+
+    return res.json({ success: true, data: updated.nurseInitialAssessment });
   });
 
   /**
@@ -642,6 +660,27 @@ class AdmissionController {
       { new: true, runValidators: true },
     );
     if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
+
+    // R7bn-1 / D9-fix: ClinicalAudit emit on Initial Assessment sign-off.
+    // Both doctor + nurse signings cleared the NABH COP.1/COP.2 gate, so
+    // surveyors need a chronological trail showing who signed when.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: role === "doctor"
+          ? "INITIAL_ASSESSMENT_DOCTOR_SIGNED"
+          : "INITIAL_ASSESSMENT_NURSE_SIGNED",
+        UHID: admission.UHID,
+        admissionId: admission._id,
+        patientId: admission.patientId,
+        patientName: admission.patientName,
+        targetType: "Admission.initialAssessment",
+        targetId: admission._id,
+        after: { role, name, signedAt: now },
+      });
+    } catch (_) { /* silent — audit emit is non-blocking */ }
+
     return res.json({ success: true, message: `${role} initial assessment marked complete`, data: admission.initialAssessment });
   });
 

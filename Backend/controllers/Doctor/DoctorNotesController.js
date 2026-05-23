@@ -44,6 +44,25 @@ class DoctorNotesController {
       const { logErr } = require("../../utils/logErr");
       logErr("autoBilling", "load failure on doctor-note save")(e);
     }
+
+    // R7bn-1 / D9-fix: ClinicalAudit emit on doctor-note create (NABH
+    // AAC.7). 3y retention for drafts; the SIGNED event later in the
+    // lifecycle upgrades to 7y.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: note.status === "signed" ? "DOCTOR_NOTE_SIGNED" : "DOCTOR_NOTE_CREATED",
+        UHID: note.patientUHID || note.UHID,
+        admissionId: note.admissionId,
+        patientId: note.patientId,
+        patientName: note.patientName,
+        targetType: "DoctorNote",
+        targetId: note._id,
+        after: { noteType: note.noteType, status: note.status },
+      });
+    } catch (_) { /* silent */ }
+
     return res.status(201).json({ success: true, data: note });
   });
 
@@ -107,6 +126,7 @@ class DoctorNotesController {
       req.params.id,
       doctorUserId,
       { signature, signedByName, signedByReg },
+      req, // R7bn — pass req so signDoctorNote can emit ClinicalAudit with actor/ip/ua
     );
     return res.json({ success: true, message: "Note signed", data: note });
   });

@@ -243,6 +243,31 @@ class DischargeSummaryController {
       });
     }
 
+    // R7bn-1 / D9-fix: ClinicalAudit emit on discharge finalize (terminal
+    // clinical event, 7y retention floor per IMS.2). LAMA / Death cases
+    // surface via the nursingHandoverOverride* fields in the after-snapshot
+    // so an auditor can see WHY the nursing-handover gate was bypassed.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "DISCHARGE_SUMMARY_FINALIZED",
+        UHID: summary.UHID,
+        admissionId: summary.admissionId,
+        patientId: summary.patientId,
+        patientName: summary.patientName,
+        targetType: "DischargeSummary",
+        targetId: summary._id,
+        after: {
+          finalizedByName: summary.finalizedByName,
+          finalizedAt: summary.finalizedAt,
+          nursingHandoverOverride: !!summary.nursingHandoverOverride,
+          nursingHandoverOverrideReason: summary.nursingHandoverOverrideReason || "",
+        },
+        reason: summary.nursingHandoverOverrideReason || "",
+      });
+    } catch (_) { /* silent */ }
+
     // R7az-D8-CRIT-1..5: Discharge fast-path now flows through the SAME
     // service the receptionist workflow uses. Pre-R7az this controller
     // did inline `findByIdAndUpdate` on the admission + bed — bypassing

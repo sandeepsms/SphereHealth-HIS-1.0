@@ -47,6 +47,25 @@ exports.createMLC = async (req, res) => {
       { ...req.body, doctorId },
       actorFrom(req),
     );
+
+    // R7bn-1 / D9-fix + D1-fix: MLC creation is a high-stakes medico-
+    // legal event. Emit ClinicalAudit row with the 7y retention floor so
+    // surveyors + police inquiries can trace who/when/where.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "MLC_CREATED",
+        UHID: doc.UHID,
+        admissionId: doc.admissionId,
+        patientId: doc.patientId,
+        patientName: doc.patientName,
+        targetType: "MLC",
+        targetId: doc._id,
+        after: { mlrNumber: doc.mlrNumber, allegedHistory: (doc.allegedHistory || "").slice(0, 200) },
+      });
+    } catch (_) { /* silent */ }
+
     res.status(201).json({ success: true, data: doc });
   } catch (e) {
     res.status(400).json({ success: false, message: e.message });
@@ -181,6 +200,23 @@ exports.finalize = async (req, res) => {
       { $set: patch },
       { new: true, runValidators: true },
     );
+
+    // R7bn-1 / D9-fix: ClinicalAudit emit on MLC finalize (high-stakes).
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "MLC_FINALIZED",
+        UHID: doc.UHID,
+        admissionId: doc.admissionId,
+        patientId: doc.patientId,
+        patientName: doc.patientName,
+        targetType: "MLC",
+        targetId: doc._id,
+        after: { mlrNumber: doc.mlrNumber, finalizedBy: patch.finalizedBy, opinion: (patch.opinion || "").slice(0, 200) },
+      });
+    } catch (_) { /* silent */ }
+
     res.json({ success: true, data: doc });
   } catch (e) {
     res.status(400).json({ success: false, message: e.message });
