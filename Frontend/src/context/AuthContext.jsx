@@ -55,6 +55,25 @@ export function AuthProvider({ children }) {
     "TOKEN_STALE", "ACCOUNT_INACTIVE", "ROLE_CHANGED",
     "USER_DELETED", "TOKEN_REVOKED", "TOKEN_EXPIRED", "TOKEN_INVALID",
   ]);
+
+  // R7bu — decode JWT payload locally (no signature check, no network).
+  // Used on transient /auth/me failure so we can keep a minimal `user`
+  // state in memory while the backend recovers. ProtectedRoute guards
+  // gate on user being truthy — without this they kick to /login even
+  // though the token is still valid in storage.
+  const _decodeJwtPayloadUnsafe = (jwt) => {
+    try {
+      const parts = String(jwt || "").split(".");
+      if (parts.length !== 3) return null;
+      // base64url → base64; pad to length multiple of 4
+      let b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      while (b64.length % 4) b64 += "=";
+      const json = atob(b64);
+      const payload = JSON.parse(json);
+      if (payload.exp && payload.exp * 1000 < Date.now()) return null; // expired
+      return payload;
+    } catch (_) { return null; }
+  };
   useEffect(() => {
     const restore = async () => {
       const saved = getAuthToken();
@@ -91,12 +110,27 @@ export function AuthProvider({ children }) {
           setDoctorProfile(null);
           setMustChangePassword(false);
         } else {
-          // Transient — keep token, keep user state (if we had any),
-          // and surface for diagnostics. Setting `token` so downstream
-          // code that gates on it (axios default header) still works.
+          // Transient — keep token + reconstruct a minimal user from
+          // the JWT payload so ProtectedRoute guards (which gate on
+          // user being truthy) don't kick the user to /login while
+          // the backend recovers. Next foreground /auth/me success
+          // will replace this with the canonical server-side user.
+          const payload = _decodeJwtPayloadUnsafe(saved);
+          if (payload?.id) {
+            setUser({
+              _id: payload.id,
+              id: payload.id,
+              role: payload.role,
+              employeeId: payload.employeeId,
+              fullName: payload.fullName || "",
+              tokenVersion: payload.tokenVersion,
+              mustChangePassword: payload.mustChangePassword === true,
+              _restoredFromJwt: true, // diagnostic flag
+            });
+          }
           setToken(saved);
           // eslint-disable-next-line no-console
-          console.warn("[auth] /auth/me restore failed (transient, not logging out):", status, code, err?.message);
+          console.warn("[auth] /auth/me restore failed (transient, keeping session):", status, code, err?.message);
         }
       } finally {
         setLoading(false);
