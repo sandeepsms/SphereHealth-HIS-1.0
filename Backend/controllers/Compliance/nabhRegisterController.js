@@ -16,6 +16,9 @@
 const BloodSugarRegister = require("../../models/Compliance/BloodSugarRegisterModel");
 const EmergencyRegister = require("../../models/Compliance/EmergencyRegisterModel");
 const BloodTransfusionRegister = require("../../models/Compliance/BloodTransfusionRegisterModel");
+const PainAssessmentRegister = require("../../models/Compliance/PainAssessmentRegisterModel");
+const FallRiskRegister = require("../../models/Compliance/FallRiskRegisterModel");
+const PressureUlcerRegister = require("../../models/Compliance/PressureUlcerRegisterModel");
 const emitter = require("../../services/Compliance/nabhRegisterEmitter");
 
 function _dateRange(query) {
@@ -169,6 +172,40 @@ exports.listBloodTransfusion = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────
+// Pain / Fall-Risk / Pressure-Ulcer Registers (R7bp — auto-popped)
+// ─────────────────────────────────────────────────────────────────────────
+
+function _listRegister(Model, dateField) {
+  return async (req, res) => {
+    try {
+      const q = {};
+      if (req.query.UHID) q.UHID = String(req.query.UHID).toUpperCase();
+      if (req.query.admissionId) q.admissionId = req.query.admissionId;
+      if (req.query.severity) q.severity = req.query.severity;
+      if (req.query.riskTier) q.riskTier = req.query.riskTier;
+      if (req.query.escalated === "true") q.escalatedFlag = true;
+      if (req.query.highRisk === "true") q.highRiskFlag = true;
+      if (req.query.sentinel === "true") q.sentinelFlag = true;
+      const dr = _dateRange(req.query);
+      if (dr) q[dateField] = dr;
+
+      const { page, limit, skip } = _pageLimit(req.query);
+      const [rows, total] = await Promise.all([
+        Model.find(q).sort({ [dateField]: -1 }).skip(skip).limit(limit).lean(),
+        Model.countDocuments(q),
+      ]);
+      res.json({ success: true, data: rows, pagination: { page, limit, total } });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  };
+}
+
+exports.listPain          = _listRegister(PainAssessmentRegister, "assessedAt");
+exports.listFallRisk      = _listRegister(FallRiskRegister, "assessedAt");
+exports.listPressureUlcer = _listRegister(PressureUlcerRegister, "assessedAt");
+
+// ─────────────────────────────────────────────────────────────────────────
 // Dashboard summary
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -187,10 +224,13 @@ exports.dashboardSummary = async (req, res) => {
       return { todayCount, sevenDayCount, lastEntryAt: last ? (last[dateField] || last.createdAt) : null };
     }
 
-    const [bs, er, bt] = await Promise.all([
+    const [bs, er, bt, pn, fr, pu] = await Promise.all([
       summary(BloodSugarRegister, "takenAt"),
       summary(EmergencyRegister, "arrivalAt"),
       summary(BloodTransfusionRegister, "createdAt"),
+      summary(PainAssessmentRegister, "assessedAt"),
+      summary(FallRiskRegister, "assessedAt"),
+      summary(PressureUlcerRegister, "assessedAt"),
     ]);
 
     res.json({
@@ -199,6 +239,9 @@ exports.dashboardSummary = async (req, res) => {
         { id: "blood-sugar", name: "Blood Sugar (RBS) Register", route: "/compliance/nabh/blood-sugar", nabhRef: "AAC.4 + COP.1.b", ...bs },
         { id: "emergency", name: "Emergency Register", route: "/compliance/nabh/emergency", nabhRef: "AAC.1 + AAC.4", ...er },
         { id: "blood-transfusion", name: "Blood Transfusion Register", route: "/compliance/nabh/blood-transfusion", nabhRef: "MOM.4 + COP.16", ...bt },
+        { id: "pain", name: "Pain Assessment Register", route: "/compliance/nabh/pain", nabhRef: "IPSG.5 + COP.7", ...pn },
+        { id: "fall-risk", name: "Fall Risk Register", route: "/compliance/nabh/fall-risk", nabhRef: "PSQ + IPSG.6", ...fr },
+        { id: "pressure-ulcer", name: "Pressure Ulcer Register", route: "/compliance/nabh/pressure-ulcer", nabhRef: "HIC.4 + COP.8", ...pu },
       ],
     });
   } catch (e) {

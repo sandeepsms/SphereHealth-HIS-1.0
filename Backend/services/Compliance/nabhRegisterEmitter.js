@@ -30,6 +30,9 @@
 const BloodSugarRegister = require("../../models/Compliance/BloodSugarRegisterModel");
 const EmergencyRegister  = require("../../models/Compliance/EmergencyRegisterModel");
 const BloodTransfusionRegister = require("../../models/Compliance/BloodTransfusionRegisterModel");
+const PainAssessmentRegister  = require("../../models/Compliance/PainAssessmentRegisterModel");
+const FallRiskRegister        = require("../../models/Compliance/FallRiskRegisterModel");
+const PressureUlcerRegister   = require("../../models/Compliance/PressureUlcerRegisterModel");
 const { nextSequence } = require("../../utils/counter");
 
 const _CRIT_LOW  = Number(process.env.RBS_CRITICAL_LOW  || 70);
@@ -303,10 +306,267 @@ async function emitBloodTransfusion(args = {}) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Pain Assessment Register (R7bp — auto-pop from NursingAssessment type=pain)
+// ─────────────────────────────────────────────────────────────────────────
+
+function _painSeverity(score) {
+  const n = Number(score);
+  if (!Number.isFinite(n) || n <= 0) return "None";
+  if (n <= 3) return "Mild";
+  if (n <= 6) return "Moderate";
+  return "Severe";
+}
+
+async function emitPain(args = {}) {
+  try {
+    const { assessment, actor = {} } = args;
+    if (!assessment?._id || !assessment?.UHID) return null;
+    const data = assessment.data || {};
+    const score = Number(data.painScale);
+    if (!Number.isFinite(score)) return null;
+
+    const severity = _painSeverity(score);
+    const escalated = score >= 7;
+    const actorMeta = _actor(actor);
+
+    const row = await PainAssessmentRegister.create({
+      patientId: assessment.patientId || null,
+      UHID: assessment.UHID,
+      patientName: assessment.patientName || "",
+      admissionId: assessment.admissionId || null,
+      painScale: score,
+      severity,
+      scaleUsed: data.scaleUsed || "NRS",
+      site: data.site || "",
+      character: data.character || "",
+      durationMinutes: data.durationMinutes || null,
+      intervention: data.intervention || "",
+      reassessmentDue: data.reassessmentDue ? new Date(data.reassessmentDue) : null,
+      assessedAt: assessment.recordedAt || new Date(),
+      assessedBy: assessment.recordedBy || actorMeta.byName || "",
+      assessedByUserId: assessment.recordedByUser || actorMeta.byUserId,
+      assessedByRole: actorMeta.byRole,
+      sourceRef: assessment._id,
+      escalatedFlag: escalated,
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+      }, ...(escalated ? [{ action: "ESCALATED", at: new Date(), ...actorMeta }] : [])],
+    });
+    return row;
+  } catch (e) {
+    console.error("[nabhRegisterEmitter] emitPain:", e.message);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Fall Risk Register (auto-pop from NursingAssessment type=fall-risk)
+// ─────────────────────────────────────────────────────────────────────────
+
+function _morseRiskTier(score) {
+  const n = Number(score);
+  if (!Number.isFinite(n)) return "Low";
+  if (n >= 45) return "High";
+  if (n >= 25) return "Moderate";
+  return "Low";
+}
+
+async function emitFallRisk(args = {}) {
+  try {
+    const { assessment, actor = {} } = args;
+    if (!assessment?._id || !assessment?.UHID) return null;
+    const data = assessment.data || {};
+    const score = Number(data.morseScore);
+    if (!Number.isFinite(score)) return null;
+
+    const riskTier = _morseRiskTier(score);
+    const highRisk = riskTier === "High";
+    const actorMeta = _actor(actor);
+
+    const row = await FallRiskRegister.create({
+      patientId: assessment.patientId || null,
+      UHID: assessment.UHID,
+      patientName: assessment.patientName || "",
+      admissionId: assessment.admissionId || null,
+      morseScore: score,
+      riskTier,
+      historyOfFalling: !!data.historyOfFalling,
+      secondaryDx: !!data.secondaryDx,
+      ambulatoryAid: data.ambulatoryAid || "",
+      ivTherapy: !!data.ivTherapy,
+      gait: data.gait || "",
+      mentalStatus: data.mentalStatus || "",
+      interventionBundle: data.interventionBundle || "",
+      assessedAt: assessment.recordedAt || new Date(),
+      assessedBy: assessment.recordedBy || actorMeta.byName || "",
+      assessedByUserId: assessment.recordedByUser || actorMeta.byUserId,
+      assessedByRole: actorMeta.byRole,
+      sourceRef: assessment._id,
+      highRiskFlag: highRisk,
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+      }, ...(highRisk ? [{ action: "ESCALATED", at: new Date(), ...actorMeta }] : [])],
+    });
+    return row;
+  } catch (e) {
+    console.error("[nabhRegisterEmitter] emitFallRisk:", e.message);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Pressure Ulcer Register (auto-pop from NursingAssessment type=pressure-area)
+// ─────────────────────────────────────────────────────────────────────────
+
+function _bradenRiskTier(score) {
+  const n = Number(score);
+  if (!Number.isFinite(n)) return "No Risk";
+  if (n <= 9) return "Severe";
+  if (n <= 12) return "High";
+  if (n <= 14) return "Moderate";
+  if (n <= 18) return "Mild";
+  return "No Risk";
+}
+
+async function emitPressureUlcer(args = {}) {
+  try {
+    const { assessment, actor = {} } = args;
+    if (!assessment?._id || !assessment?.UHID) return null;
+    const data = assessment.data || {};
+    const score = Number(data.bradenScore);
+    if (!Number.isFinite(score)) return null;
+
+    const riskTier = _bradenRiskTier(score);
+    const ulcerPresent = !!data.ulcerPresent;
+    const ulcerStage = String(data.ulcerStage || "");
+    const hospitalAcquired = !!data.hospitalAcquired;
+    // HAPU stage III or worse = NABH sentinel event
+    const sentinel = hospitalAcquired && ["III", "IV", "Unstageable", "DTI"].includes(ulcerStage);
+    const actorMeta = _actor(actor);
+
+    const row = await PressureUlcerRegister.create({
+      patientId: assessment.patientId || null,
+      UHID: assessment.UHID,
+      patientName: assessment.patientName || "",
+      admissionId: assessment.admissionId || null,
+      bradenScore: score,
+      riskTier,
+      ulcerPresent,
+      ulcerStage,
+      ulcerSite: data.ulcerSite || "",
+      ulcerSize: data.ulcerSize || "",
+      hospitalAcquired,
+      repositioningFreq: data.repositioningFreq || "",
+      pressureMattress: !!data.pressureMattress,
+      nutritionConsult: !!data.nutritionConsult,
+      dressingType: data.dressingType || "",
+      assessedAt: assessment.recordedAt || new Date(),
+      assessedBy: assessment.recordedBy || actorMeta.byName || "",
+      assessedByUserId: assessment.recordedByUser || actorMeta.byUserId,
+      assessedByRole: actorMeta.byRole,
+      sourceRef: assessment._id,
+      sentinelFlag: sentinel,
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+      }],
+    });
+    return row;
+  } catch (e) {
+    console.error("[nabhRegisterEmitter] emitPressureUlcer:", e.message);
+    return null;
+  }
+}
+
+/**
+ * Dispatcher — called once from nursingAssessmentsRoutes after every
+ * NursingAssessment.create(). Branches by type so the route stays type-
+ * agnostic and new register types only require adding an emit* function
+ * here + a case below.
+ */
+async function emitFromNursingAssessment(assessment, actor = {}) {
+  if (!assessment?.type) return null;
+  switch (assessment.type) {
+    case "pain":          return emitPain({ assessment, actor });
+    case "fall-risk":     return emitFallRisk({ assessment, actor });
+    case "pressure-area": return emitPressureUlcer({ assessment, actor });
+    default:              return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Vitals → Blood Sugar bulk extractor (R7bp — auto-pop RBS from vital sheet)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Called from vitalSheetController.saveVitalSheet after the sheet is
+ * persisted. Iterates the sheet's tableData[] looking for blood-sugar
+ * readings (keys: bloodSugar / glucose / rbs / grbs — case-insensitive)
+ * and emits one BloodSugarRegister row per non-zero reading.
+ */
+async function emitBloodSugarFromVitalSheet(sheet, patient = {}, actor = {}) {
+  try {
+    if (!sheet || !Array.isArray(sheet.tableData)) return 0;
+    if (!patient?._id || !patient?.UHID) return 0;
+    const dateBase = sheet.date ? new Date(sheet.date) : new Date();
+    let emitted = 0;
+    const bgKeys = ["bloodsugar", "glucose", "rbs", "grbs", "fbs", "ppbs"];
+
+    for (const entry of sheet.tableData) {
+      const map = entry?.values;
+      if (!map) continue;
+      // mongoose Map → entries iterator; plain object also supported
+      const iter = typeof map.entries === "function" ? map.entries() : Object.entries(map);
+      for (const [k, v] of iter) {
+        if (!bgKeys.includes(String(k).toLowerCase().replace(/[\s_-]/g, ""))) continue;
+        const value = v?.value;
+        if (value == null || value === 0) continue;
+        const [hh, mm] = String(entry.time || "00:00").split(":").map(Number);
+        const takenAt = new Date(dateBase);
+        takenAt.setHours(hh || 0, mm || 0, 0, 0);
+        await emitBloodSugar({
+          patient,
+          admission: sheet.admissionId ? { _id: sheet.admissionId, admissionNumber: sheet.admissionNumber || "" } : null,
+          reading: {
+            value,
+            unit: v?.unit || "mg/dL",
+            type: String(k).toUpperCase().includes("FBS") ? "FBS"
+                : String(k).toUpperCase().includes("PPBS") ? "PPBS"
+                : "RBS",
+            sampleType: "capillary",
+            takenAt,
+            location: "Ward",
+            sourceRef: sheet._id,
+            sourceType: "VitalSheet",
+            notes: entry.notes || "",
+          },
+          actor,
+        });
+        emitted++;
+      }
+    }
+    return emitted;
+  } catch (e) {
+    console.error("[nabhRegisterEmitter] emitBloodSugarFromVitalSheet:", e.message);
+    return 0;
+  }
+}
+
 module.exports = {
   emitBloodSugar,
+  emitBloodSugarFromVitalSheet,
   emitEmergency,
   emitEmergencyTriage,
   emitEmergencyDisposition,
   emitBloodTransfusion,
+  emitPain,
+  emitFallRisk,
+  emitPressureUlcer,
+  emitFromNursingAssessment,
 };

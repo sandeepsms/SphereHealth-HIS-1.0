@@ -30,4 +30,9 @@ router.get("/emergency", requireAction("compliance.read"), ctrl.listEmergency);
 router.get("/blood-transfusion", requireAction("compliance.read"), ctrl.listBloodTransfusion);
 router.post("/blood-transfusion", requireAction("doctor-orders.write"), ctrl.createBloodTransfusion);
 
+// R7bp — auto-populated from NursingAssessment saves
+router.get("/pain",            requireAction("compliance.read"), ctrl.listPain);
+router.get("/fall-risk",       requireAction("compliance.read"), ctrl.listFallRisk);
+router.get("/pressure-ulcer",  requireAction("compliance.read"), ctrl.listPressureUlcer);
+
 module.exports = router;

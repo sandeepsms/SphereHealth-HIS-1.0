@@ -15,6 +15,23 @@ const handle = (fn) => async (req, res) => {
 // POST /api/vital-sheets
 exports.saveVitalSheet = handle(async (req, res) => {
   const data = await vitalSheetService.saveVitalSheet(req.body);
+
+  // R7bp — auto-populate NABH RBS register from any glucose readings
+  // present in the sheet. Non-blocking; register writes never fail the
+  // primary vital-sheet save.
+  try {
+    const emitter = require("../../services/Compliance/nabhRegisterEmitter");
+    const Patient = require("../../models/Patient/patientModel");
+    const patient = data?.UHID
+      ? await Patient.findOne({ UHID: data.UHID }).select("_id UHID fullName gender age").lean()
+      : null;
+    if (patient) {
+      emitter.emitBloodSugarFromVitalSheet(data, patient, req.user).catch((e) =>
+        console.error("NABH RBS emit error:", e.message),
+      );
+    }
+  } catch (_) { /* swallow */ }
+
   return res.status(200).json({ success: true, data });
 });
 

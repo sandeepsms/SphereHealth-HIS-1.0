@@ -38,6 +38,18 @@ router.post("/:type", requireAction("vitals.write"), async (req, res) => {
       recordedByUser: req.user?.id || null,
       data: rest,
     });
+
+    // R7bp — fan out to the NABH register matching this assessment type
+    // (pain → PainAssessmentRegister, fall-risk → FallRiskRegister,
+    // pressure-area → PressureUlcerRegister). Non-blocking: the assessment
+    // is already saved; register write failures must not roll it back.
+    try {
+      const emitter = require("../../services/Compliance/nabhRegisterEmitter");
+      emitter.emitFromNursingAssessment(doc, req.user).catch((e) =>
+        console.error("NABH register emit error:", e.message),
+      );
+    } catch (_) { /* swallow */ }
+
     return res.status(201).json({ success: true, data: doc });
   } catch (e) {
     return res.status(500).json({ success: false, message: e.message });

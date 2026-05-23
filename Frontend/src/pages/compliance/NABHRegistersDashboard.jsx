@@ -37,6 +37,9 @@ const REGISTER_TABS = [
   { id: "blood-sugar", label: "Blood Sugar (RBS)" },
   { id: "emergency", label: "Emergency" },
   { id: "blood-transfusion", label: "Blood Transfusion" },
+  { id: "pain", label: "Pain Assessment" },
+  { id: "fall-risk", label: "Fall Risk" },
+  { id: "pressure-ulcer", label: "Pressure Ulcer" },
 ];
 
 const tdStyle = { padding: "8px 12px", borderBottom: `1px solid ${C.border}`, fontSize: 12 };
@@ -242,6 +245,85 @@ export default function NABHRegistersDashboard() {
                     <td style={tdStyle}><Badge>{r.status}</Badge></td>
                     <td style={tdStyle}>{fmt(r.startedAt)}</td>
                     <td style={tdStyle}>{r.reaction?.occurred ? <Badge color="red">{r.reaction.type || "YES"}</Badge> : "—"}</td>
+                  </tr>
+                ))}
+              </Table>
+            </Card>
+          )}
+
+          {active === "pain" && (
+            <Card title={`Pain Assessment Register · ${rows.length} entries`}>
+              <Table cols={["Assessed At", "UHID", "Patient", "Score", "Severity", "Scale", "Site", "Intervention", "By"]}>
+                {rows.length === 0 ? (
+                  <EmptyRow span={9} text={loading ? "Loading…" : "No pain assessments in this range"} />
+                ) : rows.map((r) => (
+                  <tr key={r._id}>
+                    <td style={tdStyle}>{fmt(r.assessedAt)}</td>
+                    <td style={tdStyle}>{r.UHID}</td>
+                    <td style={tdStyle}>{r.patientName}</td>
+                    <td style={tdStyle}><strong>{r.painScale}</strong>/10</td>
+                    <td style={tdStyle}>
+                      <Badge color={r.severity === "Severe" ? "red" : r.severity === "Moderate" ? "orange" : r.severity === "Mild" ? "blue" : "muted"}>
+                        {r.severity}
+                      </Badge>
+                    </td>
+                    <td style={tdStyle}>{r.scaleUsed}</td>
+                    <td style={tdStyle}>{r.site || "—"}</td>
+                    <td style={tdStyle}>{r.intervention || "—"}</td>
+                    <td style={tdStyle}>{r.assessedBy || "—"}</td>
+                  </tr>
+                ))}
+              </Table>
+            </Card>
+          )}
+
+          {active === "fall-risk" && (
+            <Card title={`Fall Risk Register · ${rows.length} entries`}>
+              <Table cols={["Assessed At", "UHID", "Patient", "Morse", "Tier", "Hx Falls", "Gait", "Aid", "By"]}>
+                {rows.length === 0 ? (
+                  <EmptyRow span={9} text={loading ? "Loading…" : "No fall-risk assessments in this range"} />
+                ) : rows.map((r) => (
+                  <tr key={r._id}>
+                    <td style={tdStyle}>{fmt(r.assessedAt)}</td>
+                    <td style={tdStyle}>{r.UHID}</td>
+                    <td style={tdStyle}>{r.patientName}</td>
+                    <td style={tdStyle}><strong>{r.morseScore}</strong></td>
+                    <td style={tdStyle}>
+                      <Badge color={r.riskTier === "High" ? "red" : r.riskTier === "Moderate" ? "orange" : "blue"}>
+                        {r.riskTier}
+                      </Badge>
+                    </td>
+                    <td style={tdStyle}>{r.historyOfFalling ? "Yes" : "No"}</td>
+                    <td style={tdStyle}>{r.gait || "—"}</td>
+                    <td style={tdStyle}>{r.ambulatoryAid || "—"}</td>
+                    <td style={tdStyle}>{r.assessedBy || "—"}</td>
+                  </tr>
+                ))}
+              </Table>
+            </Card>
+          )}
+
+          {active === "pressure-ulcer" && (
+            <Card title={`Pressure Ulcer Register · ${rows.length} entries`}>
+              <Table cols={["Assessed At", "UHID", "Patient", "Braden", "Tier", "Ulcer", "Stage", "Site", "HAPU", "By"]}>
+                {rows.length === 0 ? (
+                  <EmptyRow span={10} text={loading ? "Loading…" : "No pressure-area assessments in this range"} />
+                ) : rows.map((r) => (
+                  <tr key={r._id}>
+                    <td style={tdStyle}>{fmt(r.assessedAt)}</td>
+                    <td style={tdStyle}>{r.UHID}</td>
+                    <td style={tdStyle}>{r.patientName}</td>
+                    <td style={tdStyle}><strong>{r.bradenScore}</strong></td>
+                    <td style={tdStyle}>
+                      <Badge color={r.riskTier === "Severe" ? "red" : r.riskTier === "High" ? "orange" : "blue"}>
+                        {r.riskTier}
+                      </Badge>
+                    </td>
+                    <td style={tdStyle}>{r.ulcerPresent ? "Yes" : "No"}</td>
+                    <td style={tdStyle}>{r.ulcerStage || "—"}</td>
+                    <td style={tdStyle}>{r.ulcerSite || "—"}</td>
+                    <td style={tdStyle}>{r.sentinelFlag ? <Badge color="red">SENTINEL</Badge> : r.hospitalAcquired ? <Badge color="orange">HAPU</Badge> : "—"}</td>
+                    <td style={tdStyle}>{r.assessedBy || "—"}</td>
                   </tr>
                 ))}
               </Table>
