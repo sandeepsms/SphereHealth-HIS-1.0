@@ -75,9 +75,18 @@ export function AuthProvider({ children }) {
     } catch (_) { return null; }
   };
   useEffect(() => {
+    // R7au-2: cancellation flag — pre-R7au the restore() promise had no
+    // cancel path. If the user clicked Login while restore() was still
+    // pending (cold backend, slow Mongo), the restore catch could fire
+    // AFTER login() succeeded and silently overwrite the new user with the
+    // JWT-decoded fallback (or null on a hard-logout code). Symptom: user
+    // saw login succeed, navigated home, then 200ms later got kicked to
+    // /login or saw a stale user. Now every setState in this effect is
+    // guarded by `cancelled` so a late-arriving response is dropped.
+    let cancelled = false;
     const restore = async () => {
       const saved = getAuthToken();
-      if (!saved) { setLoading(false); return; }
+      if (!saved) { if (!cancelled) setLoading(false); return; }
       try {
         const res = await axios.get(API_ENDPOINTS.AUTH_ME, {
           headers: { Authorization: `Bearer ${saved}` },
@@ -86,6 +95,7 @@ export function AuthProvider({ children }) {
           // user-initiated foreground action that may follow.
           _isBackgroundPoll: true,
         });
+        if (cancelled) return; // R7au-2
         setUser(res.data.user);
         setDoctorProfile(res.data.doctorProfile || null);
         // R7bb-E/S2 — /auth/me may also surface mustChangePassword
@@ -95,6 +105,7 @@ export function AuthProvider({ children }) {
         }
         setToken(saved);
       } catch (err) {
+        if (cancelled) return; // R7au-2 — swallow late failures after login/unmount
         // R7bu: only nuke the session on a definitive auth-end signal
         // from the backend (HARD_LOGOUT_CODES). Anything else — network
         // timeout, 5xx, Mongo blip, CORS preflight, backend restart —
@@ -117,12 +128,22 @@ export function AuthProvider({ children }) {
           // will replace this with the canonical server-side user.
           const payload = _decodeJwtPayloadUnsafe(saved);
           if (payload?.id) {
+            // R7au-5: synthesize firstName/lastName from fullName so
+            // chrome components that still read user.firstName don't
+            // render "undefined undefined" while running on the JWT
+            // fallback user. Best-effort split — single-word fullName
+            // (e.g. "Admin") goes to firstName with empty lastName.
+            const nameParts = String(payload.fullName || "").trim().split(/\s+/);
+            const _firstName = nameParts[0] || "";
+            const _lastName  = nameParts.slice(1).join(" ") || "";
             setUser({
               _id: payload.id,
               id: payload.id,
               role: payload.role,
               employeeId: payload.employeeId,
               fullName: payload.fullName || "",
+              firstName: _firstName, // R7au-5
+              lastName:  _lastName,  // R7au-5
               tokenVersion: payload.tokenVersion,
               mustChangePassword: payload.mustChangePassword === true,
               _restoredFromJwt: true, // diagnostic flag
@@ -133,10 +154,11 @@ export function AuthProvider({ children }) {
           console.warn("[auth] /auth/me restore failed (transient, keeping session):", status, code, err?.message);
         }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     restore();
+    return () => { cancelled = true; };
   }, []);
 
   /* ── Login ── */
@@ -344,29 +366,67 @@ export function AuthProvider({ children }) {
      activity. Resets on any input. Idle is computed in real time off a
      timestamp ref so we don't reset a setTimeout on every keystroke
      (which would thrash). A single interval ticks once a minute and
-     compares wall-clock difference. */
+     compares wall-clock difference.
+
+     R7au-3: pre-R7au this fired INSTANTLY when a laptop woke from a
+     >30min sleep — `setInterval` doesn't tick while the OS is suspended
+     but `Date.now()` keeps walking forward, so the first tick after wake
+     found a 30min+ gap and force-logged-out before the user even saw the
+     screen. Two defenses:
+       1) visibilitychange + focus listeners bump idleRef when the tab
+          regains focus — treats "user came back to the tab" as activity.
+       2) gap-detection on the interval itself — if more than 90s elapsed
+          since the previous tick (laptop was almost certainly asleep),
+          treat the gap as suspension, NOT inactivity: bump idleRef to
+          "now" instead of firing logout. Genuine 30min idle ticks every
+          60s without these gaps, so the inactivity logout still fires
+          for actually-idle users. */
   const idleRef = useRef(Date.now());
   useEffect(() => {
     if (!user) return;
     const IDLE_MS = 30 * 60 * 1000; // 30 min
+    const TICK_MS = 60 * 1000;
+    const SUSPEND_GAP_MS = 90 * 1000; // R7au-3: gap > 90s = OS suspend, not idle
     const bump = () => { idleRef.current = Date.now(); };
     const evts = ["mousedown", "mousemove", "keydown", "touchstart", "wheel", "scroll"];
     for (const ev of evts) window.addEventListener(ev, bump, { passive: true });
+    // R7au-3: tab-return events also count as activity. Without these the
+    // user could Alt+Tab away for 31 minutes and get instantly logged out
+    // when they came back — same root cause as the suspend/wake case.
+    const onVisibility = () => { if (!document.hidden) bump(); };
+    const onFocus = () => bump();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
     idleRef.current = Date.now(); // reset on (re-)login
+    let _lastTickAt = Date.now(); // R7au-3: suspend-gap detector
 
     const id = setInterval(() => {
-      if (Date.now() - idleRef.current >= IDLE_MS) {
+      const now = Date.now();
+      const gap = now - _lastTickAt;
+      _lastTickAt = now;
+      // R7au-3: a tick gap >90s almost always means the OS was suspended
+      // (lid closed, sleep, hibernate) — Date.now() walked but setInterval
+      // did not. Treat that as a wake event, not as accumulated idle time.
+      if (gap > SUSPEND_GAP_MS) {
+        idleRef.current = now;
+        // eslint-disable-next-line no-console
+        console.info("[auth] idle timer: detected", Math.round(gap / 1000), "s gap (probable suspend) — resetting idle window");
+        return;
+      }
+      if (now - idleRef.current >= IDLE_MS) {
         try {
           toast.info("Logged out due to 30 minutes of inactivity.", { autoClose: 5000 });
         } catch (_) {}
         try { logout(); } catch (_) {}
         try { window.location.href = "/login"; } catch (_) {}
       }
-    }, 60 * 1000); // tick every minute
+    }, TICK_MS);
 
     return () => {
       clearInterval(id);
       for (const ev of evts) window.removeEventListener(ev, bump);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?._id]);
@@ -404,6 +464,20 @@ function ChangePasswordPrompt() {
   const [next2, setNext2] = useState("");
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState("");
+  // R7au-6: track the post-success logout timer so we can cancel it when
+  // the modal unmounts. Pre-R7au the setTimeout fired logout() 800ms after
+  // success no matter what — if the user closed the modal or navigated
+  // during that window, logout still fired against a stale component and
+  // kicked them mid-navigation. Now we clear the timer on unmount.
+  const _pendingLogoutRef = useRef(null);
+  useEffect(() => {
+    return () => {
+      if (_pendingLogoutRef.current) {
+        clearTimeout(_pendingLogoutRef.current);
+        _pendingLogoutRef.current = null;
+      }
+    };
+  }, []);
 
   // R7bc-FIX-1: client-side mirror of Backend/utils/passwordPolicy.js so the
   // user sees every failing rule INLINE before the round-trip, plus we
@@ -447,7 +521,13 @@ function ChangePasswordPrompt() {
       // R7bc-FIX-1: backend bumps tokenVersion on success → this session's JWT
       // is now invalid. Force re-login so the user doesn't see a stream of
       // 401s. Tiny delay so the toast is visible.
-      setTimeout(() => logout(), 800);
+      // R7au-6: store the timer ID so the unmount cleanup can cancel it
+      // if the user navigates away (or React StrictMode re-mounts) before
+      // the timer fires.
+      _pendingLogoutRef.current = setTimeout(() => {
+        _pendingLogoutRef.current = null;
+        logout();
+      }, 800);
     } catch (e2) {
       const data = e2?.response?.data;
       // R7bc-FIX-1: show the backend's `reasons[]` array if present so the

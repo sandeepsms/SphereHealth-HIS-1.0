@@ -194,7 +194,13 @@ const authenticate = async (req, res, next) => {
 /* ── Role-based access: authorize(...roles) ── */
 const authorize = (...roles) => (req, res, next) => {
   if (!req.user)
-    return res.status(401).json({ message: "Not authenticated" });
+    // R7au-4: include `code: NOT_AUTHENTICATED`. Defense in depth — this
+    // path is normally unreachable because `authenticate` runs first, but
+    // if a route mounts authorize() WITHOUT authenticate() (or via the
+    // wrong order), a naked 401 here would tick the frontend's transient
+    // counter and randomly logout users. With a code present the
+    // interceptor classifies this as INTERNAL_NO_USER-equivalent.
+    return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set after authenticate" });
   if (!roles.includes(req.user.role))
     return res.status(403).json({
       message: `Access denied. Required role: ${roles.join(" or ")}. Your role: ${req.user.role}`,
@@ -214,7 +220,11 @@ const adminOnly = authorize("Admin");
 const { roleCan } = require("../config/permissions");
 const requireAction = (action) => (req, res, next) => {
   if (!req.user)
-    return res.status(401).json({ message: "Not authenticated" });
+    // R7au-4: same defense-in-depth as authorize() — if this fires it
+    // means a route forgot to mount authenticate() upstream. Return 500
+    // with INTERNAL_NO_USER so it's loud in the logs and the frontend
+    // doesn't punt the user mid-workflow.
+    return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set after authenticate" });
   if (!roleCan(req.user.role, action))
     return res.status(403).json({
       message: `Access denied. Action '${action}' is not permitted for role '${req.user.role}'.`,

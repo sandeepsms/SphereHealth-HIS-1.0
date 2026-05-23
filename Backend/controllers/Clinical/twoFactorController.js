@@ -116,9 +116,15 @@ exports.verifyOtp = async (req, res) => {
     const { token, otp } = req.body || {};
     if (!token || !otp) return res.status(400).json({ success: false, message: "token + otp required" });
     const row = otpStore.get(token);
-    if (!row || row.used)                      return res.status(401).json({ success: false, message: "OTP expired or already used" });
-    if (row.expiresAt < Date.now())            return res.status(401).json({ success: false, message: "OTP expired" });
-    if (row.hash !== hash(String(otp)))        return res.status(401).json({ success: false, message: "Invalid OTP" });
+    // R7au-4: code-tagged OTP failures. Pre-R7au these naked 401s ticked
+    // the frontend transient counter — two mistyped OTPs within 12s
+    // logged the user out of the 2FA flow they were trying to complete.
+    // These codes are NOT in HARD_LOGOUT_CODES, and the global interceptor
+    // now exempts /2fa/* routes from the transient counter (mirrors the
+    // /auth/login exemption) so user-error here stays inline.
+    if (!row || row.used)                      return res.status(401).json({ success: false, code: "OTP_USED", message: "OTP expired or already used" });
+    if (row.expiresAt < Date.now())            return res.status(401).json({ success: false, code: "OTP_EXPIRED", message: "OTP expired" });
+    if (row.hash !== hash(String(otp)))        return res.status(401).json({ success: false, code: "OTP_INVALID", message: "Invalid OTP" });
     row.used = true;
 
     const nonce = crypto.randomBytes(20).toString("hex");
@@ -137,10 +143,13 @@ exports.verifyOtp = async (req, res) => {
 // Middleware: routes that demand a 2FA nonce — check X-2FA-Nonce header.
 exports.requireTwoFactor = (purpose) => (req, res, next) => {
   const n = req.headers["x-2fa-nonce"];
-  if (!n) return res.status(401).json({ success: false, message: "2FA nonce required" });
+  // R7au-4: code-tag nonce failures. NONCE_REQUIRED / NONCE_INVALID are
+  // user-recoverable (re-request OTP) — frontend treats them as 2FA-flow
+  // errors via the /2fa exemption in axiosInterceptor, NOT as session-end.
+  if (!n) return res.status(401).json({ success: false, code: "NONCE_REQUIRED", message: "2FA nonce required" });
   const row = nonceStore.get(n);
   if (!row || row.used || row.expiresAt < Date.now()) {
-    return res.status(401).json({ success: false, message: "2FA nonce invalid or expired" });
+    return res.status(401).json({ success: false, code: "NONCE_INVALID", message: "2FA nonce invalid or expired" });
   }
   if (purpose && row.purpose !== purpose) {
     return res.status(403).json({ success: false, message: `2FA was for ${row.purpose}, this action requires ${purpose}` });

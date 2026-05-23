@@ -109,8 +109,11 @@ router.post("/login", async (req, res) => {
 
     // Collapse all failure modes (no user / wrong password / inactive) into a
     // single generic response so the auth surface doesn't leak account state.
+    // R7au-4: add `code: INVALID_CREDENTIALS`. The frontend interceptor
+    // already excludes /auth/login from the transient counter, but a tagged
+    // code is hygiene — surfaces cleanly in audit logs + future analytics.
     if (!user || !isMatch || inactive)
-      return res.status(401).json({ message: INVALID_CREDENTIALS });
+      return res.status(401).json({ success: false, code: "INVALID_CREDENTIALS", message: INVALID_CREDENTIALS });
 
     // R7bb-FIX-A-2: successful login — clear lockout counters via $set so we
     // don't trigger the password pre-save hook (which would re-hash on every
@@ -213,7 +216,12 @@ router.post("/change-password", authenticate, async (req, res) => {
     // user must prove they hold the admin-issued one-time password.
     const isMatch = await bcrypt.compare(currentPassword, user.password);
     if (!isMatch) {
-      return res.status(401).json({ success: false, message: "Current password is incorrect" });
+      // R7au-4: code `WRONG_CURRENT_PASSWORD` so the frontend transient
+      // counter can ignore this on the user-facing change-password modal
+      // (we extend the auth-form exemption list in axiosInterceptor.js).
+      // Two typos within 12s previously force-logged-out the very user
+      // who was actively typing into the modal.
+      return res.status(401).json({ success: false, code: "WRONG_CURRENT_PASSWORD", message: "Current password is incorrect" });
     }
 
     // R7bb-FIX-A-14: enforce NABH-grade complexity on the NEW password.

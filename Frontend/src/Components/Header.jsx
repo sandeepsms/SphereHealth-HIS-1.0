@@ -127,7 +127,18 @@ export default function Header() {
   const timeStr  = time.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const dateStr  = time.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
-  const displayName = user ? (user.fullName || `${user.firstName} ${user.lastName}`) : "Guest";
+  // R7au-5: when /auth/me transiently fails on cold boot, AuthContext
+  // reconstructs `user` from the JWT payload — which carries `fullName`
+  // but not `firstName`/`lastName`. The old fallback
+  // `${user.firstName} ${user.lastName}` then rendered the literal string
+  // "undefined undefined" in the chrome. Now we prefer fullName, fall
+  // back to the parts list (filtering undefined), then employeeId, then
+  // a generic "User" label so the header never displays the word
+  // "undefined".
+  const _nameParts = [user?.firstName, user?.lastName].filter(Boolean).join(" ");
+  const displayName = user
+    ? (user.fullName || _nameParts || user.employeeId || "User")
+    : "Guest";
   const initials    = displayName.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
   const roleColor   = user ? (ROLE_COLORS[user.role] || "#1e40af") : "#1e40af";
 

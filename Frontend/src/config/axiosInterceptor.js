@@ -119,9 +119,20 @@ axios.interceptors.response.use(
     const url    = error?.config?.url || "";
     const code   = error?.response?.data?.code;
     const isBackgroundPoll = error?.config?._isBackgroundPoll === true;
-    const isLoginRoute     = url.includes("/auth/login");
+    // R7au-7: auth-form routes are routes where 401 is an EXPECTED user-
+    // error response (wrong password / wrong OTP / expired nonce) — the
+    // page itself is the recovery surface. We must NOT increment the
+    // transient counter OR force a redirect for these, otherwise two
+    // typos within 12s would silently log the user out of the auth-form
+    // they're actively typing into. Pre-R7au this only covered /auth/login;
+    // R7au expands to change-password + 2FA so the entire auth UX is safe.
+    const isAuthFormRoute  =
+      url.includes("/auth/login") ||
+      url.includes("/auth/change-password") ||
+      url.includes("/users/change-password") || // legacy route
+      url.includes("/2fa/");
 
-    if (status !== 401 || isLoginRoute) {
+    if (status !== 401 || isAuthFormRoute) {
       return Promise.reject(error);
     }
 

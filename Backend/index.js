@@ -995,7 +995,11 @@ app.use((err, req, res, next) => {
 });
 
 // ── Listen + graceful shutdown ─────────────────────────────────────────────
-const PORT = process.env.PORT || 5000;
+// R7au-1: fallback port aligned with Frontend/src/config/api.js + .env. If
+// PORT env var fails to load (process spawned without env, hot-reload glitch),
+// Backend would listen on 5000 while Frontend hits 5050 → all API calls fail
+// → recurrent-logout symptom. Keep both sides in lock-step on 5050.
+const PORT = process.env.PORT || 5050;
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT} (env=${NODE_ENV})`);
 });
