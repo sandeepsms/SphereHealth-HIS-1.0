@@ -18,6 +18,10 @@ import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PrescriptionPanel from "../../Components/clinical/PrescriptionPanel";
 import InfusionPanel from "../../Components/clinical/InfusionPanel";
 import ServicesOrdersPanel from "../../Components/clinical/ServicesOrdersPanel";
+// R7bs — Bed selection inline in Disposition. When the ER doctor decides
+// to admit, the bed is allotted right here (status flipped to Reserved on
+// sign-and-submit) instead of handing off to Reception as a free-text note.
+import BedSelectionPanel from "../../Components/bed/BedSelectionPanel";
 
 /* ── Design tokens ── */
 const C = {
@@ -182,6 +186,14 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
   /* ── Disposition ── */
   const [disposition, setDisposition] = useState("");
   const [dispNotes, setDispNotes]     = useState("");
+  // R7bs — Bed allotted by ER doctor when admitting. Same shape as
+  // ReceptionConsole.bedData so the downstream admission service can
+  // consume either source interchangeably.
+  const [bedData, setBedData] = useState({
+    buildingId: null, floorId: null, wardId: null, roomId: null, bedId: null, bedNumber: null,
+  });
+  // Convenience: any "Admit to ..." decision needs a bed allotted.
+  const isAdmitDisposition = (disposition || "").startsWith("Admit to");
 
   /* ── General Examination ── */
   const [consciousness,    setConsciousness]    = useState("");
@@ -211,6 +223,7 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
     draftKey,
     { triageLevel, triageTime, arrivalMode, isMLC, mlcNumber, chiefComplaint, complaintDuration,
       vitals, abcde, pmh, allergy, exam, provDx, meds, infusions, disposition, dispNotes,
+      dispositionBed: bedData, // R7bs — survive a reload before sign-and-submit
       consciousness, nutritionalStatus, physicalSigns, painScoreVAS, rs, cvs, abdomen, cns },
     2000
   );
@@ -250,6 +263,7 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
           const { _meta, triageLevel: tl, triageTime: tt, arrivalMode: am, isMLC: ml, mlcNumber: mn,
             chiefComplaint: cc, complaintDuration: cd, vitals: vt, abcde: ab, pmh: ph, allergy: al,
             exam: ex, provDx: pd, meds: md, infusions: inf, disposition: dp, dispNotes: dn,
+            dispositionBed: db, // R7bs — restored if the doctor was mid-allot before refresh
             consciousness: co, nutritionalStatus: ns, physicalSigns: ps, painScoreVAS: pv,
             rs: rss, cvs: cv, abdomen: abd, cns: cn } = JSON.parse(raw);
           if (tl) setTriageLevel(tl);
@@ -269,6 +283,7 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
           if (Array.isArray(inf)) setInfusions(inf);
           if (dp) setDisposition(dp);
           if (dn) setDispNotes(dn);
+          if (db && typeof db === "object" && db.bedId) setBedData(db);
           if (co) setConsciousness(co);
           if (ns) setNutritionalStatus(ns);
           if (ps) setPhysicalSigns(p => ({ ...p, ...ps }));
@@ -295,6 +310,13 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
   const handleSave = async (sign = false) => {
     if (!patient) { toast.warn("Load a patient first"); return; }
     if (!triageLevel) { toast.warn("Select a triage level before saving"); return; }
+    // R7bs — when signing an admit decision, doctor MUST have picked a bed.
+    // We don't block plain drafts so the assessment can still autosave
+    // while the doctor is hunting for an available bed.
+    if (sign && isAdmitDisposition && !bedData.bedId) {
+      toast.error("Select a bed before signing — disposition is set to admit.");
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -318,6 +340,18 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
           medications: meds.filter(m => (m.name || "").trim()),
           infusions: infusions.filter(f => (f.name || "").trim()),
           disposition, dispNotes,
+          // R7bs — doctor-allotted bed travels with the assessment so the
+          // downstream admission flow (Reception → register IPD) can pre-fill
+          // the bed picker with what the ER doctor already chose.
+          dispositionBed: isAdmitDisposition && bedData.bedId ? {
+            buildingId: bedData.buildingId,
+            floorId:    bedData.floorId,
+            wardId:     bedData.wardId,
+            roomId:     bedData.roomId,
+            bedId:      bedData.bedId,
+            bedNumber:  bedData.bedNumber,
+            reservedAt: new Date().toISOString(),
+          } : null,
         },
       };
       let res;
@@ -329,6 +363,29 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
         setNoteId(res.data?.data?._id || res.data?._id);
       }
       clearDraft(); // clear auto-saved draft on successful save
+
+      // R7bs — On sign-and-submit with an Admit disposition + bed chosen,
+      // reserve the bed in the bed-management system so it disappears from
+      // Available + can't be double-allotted by Reception. Notes the link
+      // back to the assessment + patient for audit traceability. Non-fatal:
+      // if the PATCH fails (network blip or 409 someone-else-took-it) we
+      // toast the issue and let the doctor pick another bed; the assessment
+      // itself is already saved.
+      if (sign && isAdmitDisposition && bedData.bedId) {
+        try {
+          await axios.patch(`${API_ENDPOINTS.BEDS}/${bedData.bedId}/status`, {
+            status: "Reserved",
+            reservedFor: patient.UHID || uhid,
+            reservedForName: patient.fullName || "",
+            reservedBy: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
+            reservedAt: new Date().toISOString(),
+            note: `Reserved by ER doctor — ${disposition}. Assessment #${res.data?.data?._id || res.data?._id || ""}`.trim(),
+          });
+          toast.success(`Bed ${bedData.bedNumber || ""} reserved for patient ✓`);
+        } catch (bedErr) {
+          toast.error(`Bed ${bedData.bedNumber || ""} could not be reserved — ${bedErr?.response?.data?.message || "please re-select"}`);
+        }
+      }
 
       /* R7bk — Emergency Assessment IS the doctor's compulsory Initial
          Assessment for IPD admissions (NABH AAC.1). On sign-and-submit
@@ -1008,6 +1065,38 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
                 placeholder="Ward, bed, special instructions…" className="his-field" />
             </Field>
           </Grid2>
+
+          {/* R7bs — Inline bed selection when the doctor decides to admit.
+              The same BedSelectionPanel used by Reception lives here so the
+              doctor can allot the bed at decision time. On sign-and-submit
+              the bed status is flipped to "Reserved" with a link back to
+              this patient — Reception's admission registration sees the
+              reservation already in place. */}
+          {isAdmitDisposition && (
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px dashed ${C.border}` }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ width: 26, height: 26, borderRadius: 6, background: "#dcfce7", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <i className="pi pi-bed" style={{ fontSize: 12, color: "#16a34a" }} />
+                  </span>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>
+                      Bed Allotment <span style={{ color: C.red, fontWeight: 800 }}>*</span>
+                    </div>
+                    <div style={{ fontSize: 10.5, color: C.muted }}>
+                      Pick a bed now — it will be reserved for the patient on sign-and-submit.
+                    </div>
+                  </div>
+                </div>
+                {bedData.bedId && (
+                  <span style={{ background: "#dcfce7", color: "#166534", border: "1px solid #86efac", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700 }}>
+                    ✓ Bed selected: {bedData.bedNumber || "—"}
+                  </span>
+                )}
+              </div>
+              <BedSelectionPanel value={bedData} onChange={setBedData} />
+            </div>
+          )}
         </Section>
 
         {/* ── Sign-off + Signature ── */}
