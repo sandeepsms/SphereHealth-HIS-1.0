@@ -50,6 +50,49 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
       }));
     }
     const order = await DoctorOrder.create(body);
+
+    // R7bn-3 / D1-fix: when the doctor orders a blood transfusion, auto-
+    // populate the NABH BloodTransfusionRegister. Pre-fix the emitter
+    // existed but was never called from any controller — orders piled up
+    // but the NABH register stayed empty.
+    if (order.orderType === "BloodTransfusion") {
+      try {
+        const { emitBloodTransfusion } = require("../../services/Compliance/nabhRegisterEmitter");
+        const Patient = require("../../models/Patient/patientModel");
+        const Admission = require("../../models/Patient/admissionModel");
+        const patient = order.patientId
+          ? await Patient.findById(order.patientId).select("_id UHID fullName name age gender sex bloodGroup").lean()
+          : null;
+        const admission = order.admissionId
+          ? await Admission.findById(order.admissionId).select("_id admissionNumber wardName ward").lean()
+          : null;
+        emitBloodTransfusion({ order, patient: patient || {}, admission, actor: req.user || {} })
+          .catch((e) => console.error("[doctor-orders] emitBloodTransfusion error:", e?.message));
+      } catch (e) {
+        console.error("[doctor-orders] BloodTransfusion emit wiring failed:", e?.message);
+      }
+    }
+
+    // R7bn-1 / D9-fix: ClinicalAudit emit on every doctor-order create.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: order.orderType === "BloodTransfusion"
+          ? "TRANSFUSION_ORDERED"
+          : order.orderType === "Infusion"
+            ? "INFUSION_STARTED"
+            : "ORDER_CREATED",
+        UHID: order.UHID,
+        admissionId: order.admissionId,
+        patientId: order.patientId,
+        patientName: order.patientName,
+        targetType: "DoctorOrder",
+        targetId: order._id,
+        after: { orderType: order.orderType, summary: (order.orderDetails?.medicineName || order.description || "").slice(0, 200) },
+      });
+    } catch (_) { /* silent */ }
+
     res.status(201).json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
@@ -388,12 +431,38 @@ router.post("/:id/infusion-rate", validateObjectIdParam("id"), requireAction("ma
     if (order.twoNurseRequired && !verifiedBy)
       return res.status(422).json({ ok: false, message: "HAM infusion rate change requires second nurse verification" });
 
-    const entry = { changedAt: new Date(), changedBy, oldRate: oldRate || order.currentRate, newRate, reason, reasonDetail, verifiedBy, doctorInformed: !!doctorInformed, doctorName };
+    // R7bn-4 / D7-2-fix: doctorInformed defaults to true whenever a
+    // doctorName is supplied AND the change is non-emergency. The audit
+    // surfaced this flag as "exists but never set" — nurses adjusted
+    // rates and the field stayed false forever. New behaviour: explicit
+    // false is preserved; null/undefined + doctorName → assume informed.
+    const informed = doctorInformed === undefined || doctorInformed === null
+      ? !!doctorName
+      : !!doctorInformed;
+    const entry = { changedAt: new Date(), changedBy, oldRate: oldRate || order.currentRate, newRate, reason, reasonDetail, verifiedBy, doctorInformed: informed, doctorName };
     order.rateChanges.push(entry);
     order.currentRate = newRate;
-    order.auditLog.push({ step: `Rate changed: ${oldRate || "—"} → ${newRate} ml/hr`, doneBy: changedBy, doneAt: new Date(), notes: `Reason: ${reason}${reasonDetail ? ` — ${reasonDetail}` : ""}` });
+    order.auditLog.push({ step: `Rate changed: ${oldRate || "—"} → ${newRate} ml/hr`, doneBy: changedBy, doneAt: new Date(), notes: `Reason: ${reason}${reasonDetail ? ` — ${reasonDetail}` : ""}${informed ? ` (doctor informed)` : " (DOCTOR NOT INFORMED — flag for follow-up)"}` });
 
     await order.save();
+
+    // R7bn-1 / D9-fix: ClinicalAudit emit on infusion rate change.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "INFUSION_RATE_CHANGED",
+        UHID: order.UHID,
+        admissionId: order.admissionId,
+        patientId: order.patientId,
+        targetType: "DoctorOrder.infusion",
+        targetId: order._id,
+        before: { rate: oldRate || null },
+        after: { rate: newRate, changedBy, reason, doctorInformed: informed, doctorName },
+        reason: reasonDetail || reason,
+      });
+    } catch (_) { /* silent */ }
+
     res.json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });

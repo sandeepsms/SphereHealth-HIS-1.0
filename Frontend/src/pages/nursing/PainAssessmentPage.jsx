@@ -94,7 +94,7 @@ function PainContent({ patient }) {
 
   useEffect(() => {
     if (!patient) return;
-    const stored = localStorage.getItem(`nabh_pain_${patient._id}`);
+    const stored = sessionStorage.getItem(`nabh_pain_${patient._id}`);
     if (stored) {
       try {
         const data = JSON.parse(stored);
@@ -136,7 +136,7 @@ function PainContent({ patient }) {
         nurseSignature: signature || undefined,
       });
       const newHistory = [entry, ...history];
-      localStorage.setItem(`nabh_pain_${patient._id}`, JSON.stringify({ history: newHistory, reassessLog }));
+      sessionStorage.setItem(`nabh_pain_${patient._id}`, JSON.stringify({ history: newHistory, reassessLog }));
       setHistory(newHistory);
       clearDraft();
       setSaved(true);

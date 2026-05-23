@@ -1019,18 +1019,19 @@ async function onMARAdministration(marDoc, medication, administrationEntry) {
   // sourceType filter never matches them — but new rows are guaranteed
   // to dedup correctly going forward.
   //
-  // R7az-HIGH-2 (D6-HIGH-2): tighten the dedup window to 6 hours. The
-  // R7au 24h window was too wide for BD-frequency drugs (8h apart): a
-  // second legitimate dose at 16:00 was being mistakenly treated as a
-  // duplicate of the 08:00 dose's pharmacy reservation. 6h is short
-  // enough that BD doses (every 12h) each get billed, but wide enough
-  // that the typical "MAR-given immediately after pharmacy-release"
-  // pattern still dedups. Hospitals running QID frequency (every 6h)
-  // may want to revisit — current behaviour: first dose dedups against
-  // the dispense, subsequent doses bill as PHARM-* MAR rows.
+  // R7bn-4 / D7-4-fix: tighten dedup window from 6h → 2h. The R7az
+  // 6h window dedups BD (q12h) doses correctly but breaks QID (q6h):
+  // the second QID dose at +6h is treated as a duplicate of the
+  // first dose's pharmacy reservation. With a 2h window, only the
+  // "MAR-given immediately after pharmacy-release" case dedups —
+  // every subsequent dose (BD/TDS/QID/q4h) bills as a separate
+  // PHARM-* MAR row. Risk: if pharmacy releases > 2h before the
+  // nurse administers (rare — typically minutes), the first dose
+  // will bill twice. That risk is preferable to under-billing
+  // entire QID schedules.
   try {
     const BillingTrigger = require("../../models/Billing/BillingTrigger");
-    const since = new Date(Date.now() - 6 * 60 * 60 * 1000); // 6h
+    const since = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2h (R7bn)
     const reservation = await BillingTrigger.findOne({
       admissionId,
       serviceCode: service.serviceCode,

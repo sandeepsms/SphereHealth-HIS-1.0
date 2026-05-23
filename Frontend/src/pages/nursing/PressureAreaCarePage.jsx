@@ -188,7 +188,7 @@ function PressureAreaContent({ patient }) {
 
   useEffect(() => {
     if (!patient) return;
-    const stored = localStorage.getItem(`nabh_pressure_area_${patient._id}`);
+    const stored = sessionStorage.getItem(`nabh_pressure_area_${patient._id}`);
     if (stored) {
       try {
         const data = JSON.parse(stored);
@@ -243,7 +243,7 @@ function PressureAreaContent({ patient }) {
       });
       const newHistory = [entry, ...history];
       const payload = { history: newHistory, woundLog, pressurePoints };
-      localStorage.setItem(`nabh_pressure_area_${patient._id}`, JSON.stringify(payload));
+      sessionStorage.setItem(`nabh_pressure_area_${patient._id}`, JSON.stringify(payload));
       setHistory(newHistory);
       clearDraft();
       setSaved(true);

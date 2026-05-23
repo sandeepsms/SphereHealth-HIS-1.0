@@ -163,6 +163,17 @@ async function emitEmergency(args = {}) {
 
     const erNumber = await _generateErNumber();
     const actorMeta = _actor(actor);
+    // R7bn-6 / D2-fix: stamp door-to-doctor metrics + police info on
+    // creation, not just on disposition. NABH AAC.1 surveyors want
+    // these in the row from the start. firstSeenByDoctorAt defaults
+    // to triageAt when not separately recorded (typical small-ER
+    // workflow); doorToDoctorMinutes is the same diff vs arrival.
+    const arrivalAt = visit.arrivalDate ? new Date(visit.arrivalDate) : new Date();
+    const triageAt = visit.triageTime ? new Date(visit.triageTime) : null;
+    const firstSeenByDoctorAt = visit.firstSeenByDoctorAt
+      ? new Date(visit.firstSeenByDoctorAt)
+      : triageAt;
+
     const row = await EmergencyRegister.create({
       erNumber,
       patientId: visit.patientId,
@@ -173,9 +184,11 @@ async function emitEmergency(args = {}) {
       contactNumber: visit.contactNumber || "",
       emergencyId: visit._id,
       emergencyNumber: visit.emergencyNumber || "",
-      arrivalAt: visit.arrivalDate ? new Date(visit.arrivalDate) : new Date(),
-      triageAt: visit.triageTime ? new Date(visit.triageTime) : null,
-      doorToTriageMinutes: _diffMinutes(visit.triageTime, visit.arrivalDate),
+      arrivalAt,
+      triageAt,
+      doorToTriageMinutes: _diffMinutes(triageAt, arrivalAt),
+      firstSeenByDoctorAt,
+      doorToDoctorMinutes: _diffMinutes(firstSeenByDoctorAt, arrivalAt),
       triageCategory: visit.triageCategory || "Urgent",
       presentingComplaint: visit.presentingComplaints || "",
       modeOfArrival: visit.arrivalMode || "Walk-in",
@@ -183,6 +196,11 @@ async function emitEmergency(args = {}) {
       attendingDoctorId: visit.attendingDoctorId || null,
       isMLC: !!visit.isMLC,
       mlcNumber: visit.mlcNumber || "",
+      // R7bn-6 / D2-fix: police info — required when isMLC=true so the
+      // disposition step can verify the case is properly registered.
+      policeStation:  visit.policeStation  || "",
+      policeOfficer:  visit.policeOfficer  || "",
+      policeFIRNo:    visit.policeFIRNo    || "",
       auditTrail: [{
         action: "CREATED",
         at: new Date(),
@@ -192,8 +210,12 @@ async function emitEmergency(args = {}) {
     });
     return row;
   } catch (e) {
+    // R7bn-6 / D2-fix: silent-catch was masking real validation
+    // errors (missing UHID / unknown enum). Log to stderr so an
+    // operator monitoring the backend can see emit failures and
+    // investigate — the calling clinical write already succeeded.
     // eslint-disable-next-line no-console
-    console.error("[nabhRegisterEmitter] emitEmergency:", e.message);
+    console.error("[nabhRegisterEmitter] emitEmergency FAILED:", e.message, "— visitId:", args?.visit?._id);
     return null;
   }
 }
@@ -291,18 +313,31 @@ async function emitBloodTransfusion(args = {}) {
       bloodGroup: order.bloodGroup || patient.bloodGroup || "Unknown",
       rhFactor: order.rhFactor || "",
       unitsRequested: order.units || order.quantity || 1,
+      // R7bn-6 / D2-fix: consentSigned + preTransfusion vitals stamped
+      // at order time so the post-tx audit can verify NABH MOM.4 pre-
+      // checks. Frontend doctor-order form pushes these via `order.preTransfusion`.
+      preTransfusion: {
+        consentSigned: !!order?.preTransfusion?.consentSigned,
+        consentFormId: order?.preTransfusion?.consentFormId || null,
+        bp:    order?.preTransfusion?.bp    || "",
+        pulse: order?.preTransfusion?.pulse || null,
+        temp:  order?.preTransfusion?.temp  || null,
+        spo2:  order?.preTransfusion?.spo2  || null,
+      },
       status: "Draft",
       auditTrail: [{
         action: "ORDERED",
         at: new Date(),
         ...actorMeta,
-        notes: `units=${order.units || order.quantity || 1} group=${order.bloodGroup || "?"}`,
+        notes: `units=${order.units || order.quantity || 1} group=${order.bloodGroup || "?"} consent=${!!order?.preTransfusion?.consentSigned}`,
       }],
     });
     return row;
   } catch (e) {
+    // R7bn-6 / D2-fix: log the order id so an operator can correlate
+    // the failed emit back to the originating clinical write.
     // eslint-disable-next-line no-console
-    console.error("[nabhRegisterEmitter] emitBloodTransfusion:", e.message);
+    console.error("[nabhRegisterEmitter] emitBloodTransfusion FAILED:", e.message, "— orderId:", args?.order?._id);
     return null;
   }
 }

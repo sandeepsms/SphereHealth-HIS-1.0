@@ -67,7 +67,7 @@ function DailyNursingContent({ patient }) {
 
   useEffect(() => {
     if (!patient) return;
-    const stored = localStorage.getItem(`nabh_daily_nursing_${patient._id}`);
+    const stored = sessionStorage.getItem(`nabh_daily_nursing_${patient._id}`);
     if (stored) {
       try {
         const data = JSON.parse(stored);
@@ -139,7 +139,7 @@ function DailyNursingContent({ patient }) {
       });
       // Server ack received — now persist locally and mark saved.
       const newEntries = [entry, ...entries];
-      localStorage.setItem(`nabh_daily_nursing_${patient._id}`, JSON.stringify({ entries: newEntries }));
+      sessionStorage.setItem(`nabh_daily_nursing_${patient._id}`, JSON.stringify({ entries: newEntries }));
       setEntries(newEntries);
       clearDraft();
       setSaved(true);
