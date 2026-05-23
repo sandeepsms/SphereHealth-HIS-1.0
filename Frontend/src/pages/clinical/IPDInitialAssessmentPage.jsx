@@ -331,19 +331,31 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
   const [patient, setPatient]     = useState(null);
   const [admission, setAdmission] = useState(null); // active admission for initialAssessment gate
 
-  // Auto-load when patient selected from the panel
+  // R7bd — Auto-load patient when clicked from the admitted-patient
+  // side panel. Pre-R7bd this useEffect only pre-filled the UHID input
+  // field; the user then had to hit the "Load Patient" button to
+  // actually fetch the patient data. Now we ALSO fire loadPatient()
+  // with the UHID directly so the form renders immediately.
   useEffect(() => {
     if (selectedPatient?.UHID) {
       setUhid(selectedPatient.UHID);
       setIpdNo(selectedPatient.bedNumber || "");
       setWard(selectedPatient.wardName || "");
       setBedNo(selectedPatient.bedNumber || "");
+      loadPatient(selectedPatient.UHID);
     }
-  }, [selectedPatient]);
+    // loadPatient is a stable closure; depending on selectedPatient._id
+    // is enough to re-run only when the user picks a different patient.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPatient?._id, selectedPatient?.UHID]);
   const [loadingPt, setLoadingPt] = useState(false);
   const [saving, setSaving]       = useState(false);
   const [noteId, setNoteId]       = useState(null);
-  const [activeTab, setActiveTab] = useState("nursing"); // nursing | doctor
+  // R7bd — activeTab + Doctor Initial Assessment tab removed. This page
+  // is now nursing-only: the Doctor's initial assessment lives in the
+  // dedicated Doctor Notes → Initial Assessment flow, and combining
+  // both forms here was confusing nurses (the screenshot showed both
+  // tabs side-by-side when entering from Nursing Notes).
 
   /* ══ NURSING ASSESSMENT STATE ══ */
 
@@ -565,7 +577,8 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
     },
   });
 
-  const handleSave = async (sign = false, section = activeTab) => {
+  // R7bd — section defaults to "nursing" (the only remaining tab on this page).
+  const handleSave = async (sign = false, section = "nursing") => {
     if (!patient) { toast.warn("Load a patient first"); return; }
     setSaving(true);
     try {
@@ -699,31 +712,9 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
 
       {patient && (<>
 
-        {/* ── Tab switcher ── */}
-        <div style={{ display: "flex", gap: 0, marginBottom: 16,
-          background: C.card, border: `1px solid ${C.border}`, borderRadius: 10,
-          overflow: "hidden", width: "fit-content" }}>
-          {[
-            { key: "nursing", label: "Nursing Assessment", icon: "pi-heart", color: C.pink },
-            { key: "doctor",  label: "Doctor Initial Assessment", icon: "pi-stethoscope", color: C.accent },
-          ].map(tab => (
-            <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-              style={{
-                padding: "11px 24px", border: "none", cursor: "pointer",
-                background: activeTab === tab.key ? tab.color : "white",
-                color: activeTab === tab.key ? "white" : C.muted,
-                fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700,
-                display: "flex", alignItems: "center", gap: 7,
-                transition: "all .15s",
-              }}>
-              <i className={`pi ${tab.icon}`} style={{ fontSize: 13 }} />
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* ══════════════ NURSING TAB ══════════════ */}
-        {activeTab === "nursing" && (<>
+        {/* R7bd — Tab switcher + nursing-tab wrapper removed. Renders the
+            nursing assessment content directly (this page is now nursing-
+            only; see note on activeTab removal above). */}
 
           {/* ── Admission Details ── */}
           <Section title="Admission Details" icon="pi-calendar-plus" color={C.teal}>
@@ -1071,10 +1062,16 @@ function IPDInitialAssessmentContent({ selectedPatient }) {
             </div>
           </div>
 
-        </>)}
-
-        {/* ══════════════ DOCTOR TAB ══════════════ */}
-        {activeTab === "doctor" && (<>
+        {/* R7bd — Doctor Initial Assessment tab + entire form block
+            removed. The doctor's initial assessment now lives in the
+            dedicated Doctor Notes → Initial Assessment chip (Add a Note
+            card grid), keeping nursing and doctor authoring surfaces
+            cleanly separated. The Doctor Header / History / Physical
+            Examination / Diagnosis / Investigations / Treatment Plan /
+            Prescription / Diet & Activity / Follow-up / Sign-off panels
+            that used to render under {activeTab === "doctor"} have all
+            been removed. */}
+        {false && (<>
 
           {/* ── Doctor Header ── */}
           <Section title="Doctor & Admission Info" icon="pi-id-card" color={C.accent}>

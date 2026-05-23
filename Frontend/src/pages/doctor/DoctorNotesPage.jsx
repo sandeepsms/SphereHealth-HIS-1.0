@@ -283,10 +283,18 @@ function DoctorNotesContent({ selectedPatient }) {
   const doctorRegNo = user?.doctorDetails?.registrationNumber || user?.registrationNumber || "";
   const doctorId = user?.id || user?._id || "000000000000000000000001";
 
-  /* Auto-populate UHID from sidebar patient selection */
+  /* Auto-populate UHID from sidebar patient selection + auto-load.
+     R7bd — Pre-R7bd this only set the UHID in the search input and the
+     user had to click "Load Patient" themselves. Now we also fire
+     loadPatient(UHID) so the patient is fetched + form renders on a
+     single click in the side panel. */
   useEffect(() => {
-    if (selectedPatient?.UHID) setSearchUHID(selectedPatient.UHID);
-  }, [selectedPatient]);
+    if (selectedPatient?.UHID) {
+      setSearchUHID(selectedPatient.UHID);
+      loadPatient(selectedPatient.UHID);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPatient?._id, selectedPatient?.UHID]);
 
   /* Auto-load when /doctor-notes?uhid=… is opened from /bed-visual */
   useEffect(() => {
@@ -388,19 +396,26 @@ function DoctorNotesContent({ selectedPatient }) {
   );
   const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
 
-  /* ── Load Patient ── */
-  const loadPatient = async (e) => {
-    e?.preventDefault();
-    if (!searchUHID.trim()) return;
+  /* ── Load Patient ──
+     R7bd — accepts either a click/submit event OR a UHID string. The
+     admitted-patient side-panel auto-loads via `loadPatient(uhid)`
+     without an event; the inline "Load Patient" button keeps passing
+     its click event. When a UHID is passed directly we skip the
+     searchUHID lookup (which would be stale right after a setState). */
+  const loadPatient = async (eventOrUhid) => {
+    const directUhid = typeof eventOrUhid === "string" ? eventOrUhid : null;
+    if (!directUhid) eventOrUhid?.preventDefault?.();
+    const uhidVal = (directUhid || searchUHID).trim();
+    if (!uhidVal) return;
     setLoading(true);
     try {
-      const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(searchUHID.trim())}`);
+      const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(uhidVal)}`);
       const arr = Array.isArray(data) ? data : data.data || [];
       const active = arr[0];
       if (active) {
         setPatient(active);
         await fetchNotes(active.ipdNo || active.admissionNumber || active._id);
-        toast.success(`Loaded: ${active.patientName || active.patientId?.fullName || searchUHID}`);
+        toast.success(`Loaded: ${active.patientName || active.patientId?.fullName || uhidVal}`);
         // Restore auto-save draft if available for this patient
         const dKey = `sphere_draft_docnotes_${active._id}`;
         const raw = localStorage.getItem(dKey);

@@ -316,9 +316,17 @@ function NursingNotesContent({ selectedPatient }) {
   const [searchUHID, setSearchUHID] = useState("");
   const [ipdNoForDraft, setIpdNoForDraft] = useState("");
 
+  // R7bd — Auto-load on side-panel click. Pre-R7bd only set the input
+  // field; user had to click "Load Patient" themselves. Now we fire
+  // loadPatient(uhid) directly so a single click in the side panel
+  // fetches + renders the patient.
   useEffect(() => {
-    if (selectedPatient?.UHID) setSearchUHID(selectedPatient.UHID);
-  }, [selectedPatient]);
+    if (selectedPatient?.UHID) {
+      setSearchUHID(selectedPatient.UHID);
+      loadPatient(selectedPatient.UHID);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPatient?._id, selectedPatient?.UHID]);
 
   /* Auto-load when /nursing-notes?uhid=… is opened from /bed-visual or
      /discharge-summary (mode=discharge). When ?mode=discharge is set the
@@ -663,16 +671,23 @@ function NursingNotesContent({ selectedPatient }) {
     } finally { setEquipSaving(false); }
   };
 
-  /* ── Load patient ── */
-  const loadPatient = async (e) => {
-    e?.preventDefault();
-    if (!searchUHID.trim()) return;
+  /* ── Load patient ──
+     R7bd — accepts either a click/submit event OR a UHID string. The
+     admitted-patient side-panel auto-loads via `loadPatient(uhid)`
+     without an event; the inline "Load Patient" button keeps passing
+     its click event. When a UHID is passed directly we skip the
+     searchUHID lookup (which would be stale right after a setState). */
+  const loadPatient = async (eventOrUhid) => {
+    const directUhid = typeof eventOrUhid === "string" ? eventOrUhid : null;
+    if (!directUhid) eventOrUhid?.preventDefault?.();
+    const uhidVal = (directUhid || searchUHID).trim();
+    if (!uhidVal) return;
     setLoading(true);
     try {
       // Use /active endpoint — it returns { data: [...] } and already filters status:"Active"
       // Also supports ?UHID= filter (both cases handled in service)
       const { data } = await axios.get(
-        `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(searchUHID.trim())}`
+        `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(uhidVal)}`
       );
       const arr = Array.isArray(data) ? data : data.data || [];
       let active = arr[0]; // all results are already Active; take latest
@@ -685,7 +700,7 @@ function NursingNotesContent({ selectedPatient }) {
       if (!active) {
         try {
           const r = await axios.get(
-            `${API_ENDPOINTS.ADMISSIONS}?UHID=${encodeURIComponent(searchUHID.trim())}&status=Discharged`
+            `${API_ENDPOINTS.ADMISSIONS}?UHID=${encodeURIComponent(uhidVal)}&status=Discharged`
           );
           const dis = Array.isArray(r.data) ? r.data : r.data?.data || [];
           active = dis.sort((a, b) =>
