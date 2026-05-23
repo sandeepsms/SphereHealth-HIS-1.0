@@ -425,6 +425,8 @@ const NAV = [
       // R7bo — NABH Inspection Dashboard: surveyor-ready unified view of
       // RBS, Emergency, and Blood Transfusion registers (auto-populated).
       { label: "NABH Registers",        icon: "pi-th-large",             path: "/compliance/nabh-registers", nabh: true, badge: "R7bo", roles: [ADMIN, DR, NR, "MRD"] },
+      // R7bq — Caprini DVT assessment entry point (auto-pops DVT register).
+      { label: "DVT Risk (Caprini)",    icon: "pi-shield",               path: "/nursing/caprini-dvt",       nabh: true, badge: "MOM.7", roles: [ADMIN, DR, NR] },
     ],
   },
 ];

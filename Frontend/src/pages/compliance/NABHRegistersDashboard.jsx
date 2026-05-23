@@ -40,6 +40,7 @@ const REGISTER_TABS = [
   { id: "pain", label: "Pain Assessment" },
   { id: "fall-risk", label: "Fall Risk" },
   { id: "pressure-ulcer", label: "Pressure Ulcer" },
+  { id: "dvt", label: "DVT / VTE (Caprini)" },
 ];
 
 const tdStyle = { padding: "8px 12px", borderBottom: `1px solid ${C.border}`, fontSize: 12 };
@@ -323,6 +324,46 @@ export default function NABHRegistersDashboard() {
                     <td style={tdStyle}>{r.ulcerStage || "—"}</td>
                     <td style={tdStyle}>{r.ulcerSite || "—"}</td>
                     <td style={tdStyle}>{r.sentinelFlag ? <Badge color="red">SENTINEL</Badge> : r.hospitalAcquired ? <Badge color="orange">HAPU</Badge> : "—"}</td>
+                    <td style={tdStyle}>{r.assessedBy || "—"}</td>
+                  </tr>
+                ))}
+              </Table>
+            </Card>
+          )}
+
+          {active === "dvt" && (
+            <Card title={`DVT / VTE Caprini Register · ${rows.length} entries`}>
+              <Table cols={["Assessed At", "UHID", "Patient", "Caprini", "Tier", "IMPROVE", "Bleed", "Prophylaxis", "Escalation", "By"]}>
+                {rows.length === 0 ? (
+                  <EmptyRow span={10} text={loading ? "Loading…" : "No DVT assessments in this range"} />
+                ) : rows.map((r) => (
+                  <tr key={r._id}>
+                    <td style={tdStyle}>{fmt(r.assessedAt)}</td>
+                    <td style={tdStyle}>{r.UHID}</td>
+                    <td style={tdStyle}>{r.patientName}</td>
+                    <td style={tdStyle}><strong>{r.capriniScore}</strong></td>
+                    <td style={tdStyle}>
+                      <Badge color={
+                        r.capriniTier === "Highest" ? "red" :
+                        r.capriniTier === "High" ? "orange" :
+                        r.capriniTier === "Moderate" ? "blue" : "muted"
+                      }>
+                        {r.capriniTier}
+                      </Badge>
+                    </td>
+                    <td style={tdStyle}>{r.improveScore != null ? r.improveScore : "—"}</td>
+                    <td style={tdStyle}>{r.bleedingRiskFlag ? <Badge color="red">HIGH</Badge> : (r.improveTier || "—")}</td>
+                    <td style={tdStyle}>
+                      <Badge color={r.recommendedProphylaxis === "Combined" || r.recommendedProphylaxis === "Pharmacological" ? "orange" : r.recommendedProphylaxis === "Ambulation" ? "muted" : "blue"}>
+                        {r.recommendedProphylaxis}
+                      </Badge>
+                      {r.recommendedAgent ? <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{r.recommendedAgent}</div> : null}
+                    </td>
+                    <td style={tdStyle}>
+                      {r.escalatedFlag
+                        ? <Badge color={r.escalationStatus === "ADDRESSED" ? "green" : r.escalationStatus === "OVERDUE" ? "red" : "orange"}>{r.escalationStatus || "PENDING"}</Badge>
+                        : "—"}
+                    </td>
                     <td style={tdStyle}>{r.assessedBy || "—"}</td>
                   </tr>
                 ))}

@@ -19,6 +19,7 @@ const BloodTransfusionRegister = require("../../models/Compliance/BloodTransfusi
 const PainAssessmentRegister = require("../../models/Compliance/PainAssessmentRegisterModel");
 const FallRiskRegister = require("../../models/Compliance/FallRiskRegisterModel");
 const PressureUlcerRegister = require("../../models/Compliance/PressureUlcerRegisterModel");
+const DVTRegister = require("../../models/Compliance/DVTRegisterModel");
 const emitter = require("../../services/Compliance/nabhRegisterEmitter");
 
 function _dateRange(query) {
@@ -205,6 +206,30 @@ exports.listPain          = _listRegister(PainAssessmentRegister, "assessedAt");
 exports.listFallRisk      = _listRegister(FallRiskRegister, "assessedAt");
 exports.listPressureUlcer = _listRegister(PressureUlcerRegister, "assessedAt");
 
+// DVT register accepts extra filters: capriniTier, bleed, escalated
+exports.listDVT = async (req, res) => {
+  try {
+    const q = {};
+    if (req.query.UHID) q.UHID = String(req.query.UHID).toUpperCase();
+    if (req.query.admissionId) q.admissionId = req.query.admissionId;
+    if (req.query.capriniTier) q.capriniTier = req.query.capriniTier;
+    if (req.query.escalated === "true") q.escalatedFlag = true;
+    if (req.query.bleedingRisk === "true") q.bleedingRiskFlag = true;
+    if (req.query.escalationStatus) q.escalationStatus = req.query.escalationStatus;
+    const dr = _dateRange(req.query);
+    if (dr) q.assessedAt = dr;
+
+    const { page, limit, skip } = _pageLimit(req.query);
+    const [rows, total] = await Promise.all([
+      DVTRegister.find(q).sort({ assessedAt: -1 }).skip(skip).limit(limit).lean(),
+      DVTRegister.countDocuments(q),
+    ]);
+    res.json({ success: true, data: rows, pagination: { page, limit, total } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 // ─────────────────────────────────────────────────────────────────────────
 // Dashboard summary
 // ─────────────────────────────────────────────────────────────────────────
@@ -224,13 +249,14 @@ exports.dashboardSummary = async (req, res) => {
       return { todayCount, sevenDayCount, lastEntryAt: last ? (last[dateField] || last.createdAt) : null };
     }
 
-    const [bs, er, bt, pn, fr, pu] = await Promise.all([
+    const [bs, er, bt, pn, fr, pu, dv] = await Promise.all([
       summary(BloodSugarRegister, "takenAt"),
       summary(EmergencyRegister, "arrivalAt"),
       summary(BloodTransfusionRegister, "createdAt"),
       summary(PainAssessmentRegister, "assessedAt"),
       summary(FallRiskRegister, "assessedAt"),
       summary(PressureUlcerRegister, "assessedAt"),
+      summary(DVTRegister, "assessedAt"),
     ]);
 
     res.json({
@@ -242,6 +268,7 @@ exports.dashboardSummary = async (req, res) => {
         { id: "pain", name: "Pain Assessment Register", route: "/compliance/nabh/pain", nabhRef: "IPSG.5 + COP.7", ...pn },
         { id: "fall-risk", name: "Fall Risk Register", route: "/compliance/nabh/fall-risk", nabhRef: "PSQ + IPSG.6", ...fr },
         { id: "pressure-ulcer", name: "Pressure Ulcer Register", route: "/compliance/nabh/pressure-ulcer", nabhRef: "HIC.4 + COP.8", ...pu },
+        { id: "dvt", name: "DVT / VTE Caprini Register", route: "/compliance/nabh/dvt", nabhRef: "MOM.7 + AAC.4 + COP.12", ...dv },
       ],
     });
   } catch (e) {

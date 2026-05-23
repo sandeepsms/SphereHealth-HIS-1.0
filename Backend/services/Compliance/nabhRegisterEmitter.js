@@ -33,6 +33,7 @@ const BloodTransfusionRegister = require("../../models/Compliance/BloodTransfusi
 const PainAssessmentRegister  = require("../../models/Compliance/PainAssessmentRegisterModel");
 const FallRiskRegister        = require("../../models/Compliance/FallRiskRegisterModel");
 const PressureUlcerRegister   = require("../../models/Compliance/PressureUlcerRegisterModel");
+const DVTRegister             = require("../../models/Compliance/DVTRegisterModel");
 const { nextSequence } = require("../../utils/counter");
 
 const _CRIT_LOW  = Number(process.env.RBS_CRITICAL_LOW  || 70);
@@ -484,6 +485,111 @@ async function emitPressureUlcer(args = {}) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// DVT / Caprini Register (R7bq — auto-pop from NursingAssessment type=dvt)
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Caprini 2010 tier breakpoints. */
+function _capriniTier(score) {
+  const n = Number(score);
+  if (!Number.isFinite(n)) return "Very Low";
+  if (n >= 9) return "Highest";
+  if (n >= 5) return "High";
+  if (n >= 3) return "Moderate";
+  if (n >= 1) return "Low";
+  return "Very Low";
+}
+
+/** IMPROVE bleed-risk tier (≥7 = high). */
+function _improveTier(score) {
+  const n = Number(score);
+  if (!Number.isFinite(n)) return "";
+  return n >= 7 ? "High" : "Low";
+}
+
+/**
+ * Caprini × IMPROVE prophylaxis decision matrix. Returns:
+ *   { recommendedProphylaxis, recommendedAgent, recommendedDuration, escalated }
+ * Encodes the standard 5-tier × 2-bleed-tier guideline (ACCP 9th, IMPROVE
+ * 2011). Hard contraindications override pharmacological → mechanical-only.
+ */
+function _decideProphylaxis({ capriniTier, improveTier, contraindications = [] }) {
+  const hasContra = Array.isArray(contraindications) && contraindications.length > 0;
+  const highBleed = improveTier === "High" || hasContra;
+
+  switch (capriniTier) {
+    case "Very Low":
+      return { recommendedProphylaxis: "Ambulation", recommendedAgent: "", recommendedDuration: "" };
+    case "Low":
+      return { recommendedProphylaxis: "Mechanical", recommendedAgent: "IPC/SCD or graduated compression stockings", recommendedDuration: "Until ambulatory" };
+    case "Moderate":
+      return highBleed
+        ? { recommendedProphylaxis: "Mechanical-only-reassess", recommendedAgent: "IPC/SCD; reassess bleed risk q24h", recommendedDuration: "Until ambulatory" }
+        : { recommendedProphylaxis: "Pharmacological", recommendedAgent: "Enoxaparin 40 mg SC OD (or UFH 5000 U SC BD/TDS)", recommendedDuration: "Until ambulatory" };
+    case "High":
+    case "Highest":
+      return highBleed
+        ? { recommendedProphylaxis: "Mechanical-only-reassess", recommendedAgent: "IPC/SCD; daily bleed-risk reassessment, start pharmaco when safe", recommendedDuration: "Until bleed risk resolves" }
+        : { recommendedProphylaxis: "Combined", recommendedAgent: "Enoxaparin 40 mg SC OD + IPC/SCD (renal-dose 30 mg SC OD if CrCl<30)", recommendedDuration: capriniTier === "Highest" ? "Extended 28-35 days post-op" : "Until ambulatory; extend for major orthopaedic/cancer surgery" };
+    default:
+      return { recommendedProphylaxis: "Ambulation", recommendedAgent: "", recommendedDuration: "" };
+  }
+}
+
+async function emitDVT(args = {}) {
+  try {
+    const { assessment, actor = {} } = args;
+    if (!assessment?._id || !assessment?.UHID) return null;
+    const data = assessment.data || {};
+    const capriniScore = Number(data.capriniScore);
+    if (!Number.isFinite(capriniScore)) return null;
+
+    const improveScore = data.improveScore != null ? Number(data.improveScore) : null;
+    const capriniTier = _capriniTier(capriniScore);
+    const improveTier = improveScore != null ? _improveTier(improveScore) : "";
+    const bleedingRiskFlag = improveTier === "High";
+    const contraindications = Array.isArray(data.contraindications) ? data.contraindications : [];
+
+    const decision = _decideProphylaxis({ capriniTier, improveTier, contraindications });
+
+    const escalated = capriniTier === "High" || capriniTier === "Highest";
+    const actorMeta = _actor(actor);
+    const auditTrail = [{ action: "CREATED", at: new Date(), ...actorMeta, notes: `caprini=${capriniScore} tier=${capriniTier}` }];
+    if (escalated) auditTrail.push({ action: "ESCALATED", at: new Date(), ...actorMeta, notes: `auto-escalate Caprini ${capriniTier}` });
+    if (contraindications.length) auditTrail.push({ action: "CONTRAINDICATED", at: new Date(), ...actorMeta, notes: contraindications.join(", ") });
+
+    const row = await DVTRegister.create({
+      patientId: assessment.patientId || null,
+      UHID: assessment.UHID,
+      patientName: assessment.patientName || "",
+      admissionId: assessment.admissionId || null,
+      capriniScore,
+      capriniTier,
+      improveScore,
+      improveTier,
+      bleedingRiskFlag,
+      factorBreakdown: Array.isArray(data.factorBreakdown) ? data.factorBreakdown : [],
+      ...decision,
+      contraindications,
+      contraindicationNotes: String(data.contraindicationNotes || "").slice(0, 1000),
+      escalatedFlag: escalated,
+      escalationStatus: escalated ? "PENDING" : "",
+      escalationSlaMinutes: 60,
+      reassessmentTrigger: data.reassessmentTrigger || "Admission",
+      assessedAt: assessment.recordedAt || new Date(),
+      assessedBy: assessment.recordedBy || actorMeta.byName || "",
+      assessedByUserId: assessment.recordedByUser || actorMeta.byUserId,
+      assessedByRole: actorMeta.byRole,
+      sourceRef: assessment._id,
+      auditTrail,
+    });
+    return row;
+  } catch (e) {
+    console.error("[nabhRegisterEmitter] emitDVT:", e.message);
+    return null;
+  }
+}
+
 /**
  * Dispatcher — called once from nursingAssessmentsRoutes after every
  * NursingAssessment.create(). Branches by type so the route stays type-
@@ -496,6 +602,7 @@ async function emitFromNursingAssessment(assessment, actor = {}) {
     case "pain":          return emitPain({ assessment, actor });
     case "fall-risk":     return emitFallRisk({ assessment, actor });
     case "pressure-area": return emitPressureUlcer({ assessment, actor });
+    case "dvt":           return emitDVT({ assessment, actor });
     default:              return null;
   }
 }
@@ -568,5 +675,6 @@ module.exports = {
   emitPain,
   emitFallRisk,
   emitPressureUlcer,
+  emitDVT,
   emitFromNursingAssessment,
 };

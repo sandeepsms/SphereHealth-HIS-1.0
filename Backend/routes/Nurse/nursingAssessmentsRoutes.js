@@ -17,7 +17,7 @@ const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 router.use(attemptAuth);
 
-const ALLOWED = ["daily", "fall-risk", "pressure-area", "pain", "nutrition", "education"];
+const ALLOWED = ["daily", "fall-risk", "pressure-area", "pain", "nutrition", "education", "dvt"];
 
 /* POST /api/nursing-assessments/:type
    Body: any payload object. We split out UHID / admissionId / patientName

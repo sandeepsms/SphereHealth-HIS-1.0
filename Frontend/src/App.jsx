@@ -176,6 +176,8 @@ const ADRReportsPage = lazy(() => import("./pages/quality/ADRReportsPage"));
 const FireDrillRegisterPage = lazy(() => import("./pages/compliance/FireDrillRegisterPage"));
 // R7bo — NABH Inspection Dashboard (RBS / Emergency / Blood Transfusion).
 const NABHRegistersDashboard = lazy(() => import("./pages/compliance/NABHRegistersDashboard"));
+// R7bq — DVT/VTE Caprini assessment (auto-pops DVT register).
+const CapriniDVTAssessmentPage = lazy(() => import("./pages/nursing/CapriniDVTAssessmentPage"));
 const CredentialingPage = lazy(() => import("./pages/hr/CredentialingPage"));
 const MARPage = lazy(() => import("./pages/clinical/MARPage"));
 const DiabeticChartPage = lazy(() => import("./pages/clinical/DiabeticChartPage"));
@@ -577,6 +579,11 @@ function AppLayout({ collapsed, setCollapsed }) {
                 Blood Transfusion registers in a unified surveyor view. */}
             <Route path="/compliance/nabh-registers" element={
               <RoleGuard action="compliance.read"><NABHRegistersDashboard /></RoleGuard>
+            } />
+            {/* R7bq — Caprini DVT assessment. POST to /api/nursing-assessments/dvt
+                auto-populates the NABH DVT register (MOM.7 + AAC.4). */}
+            <Route path="/nursing/caprini-dvt" element={
+              <RoleGuard action="vitals.write"><CapriniDVTAssessmentPage /></RoleGuard>
             } />
             <Route path="/credentials" element={
               <RoleGuard action="hr.credential.read"><CredentialingPage /></RoleGuard>

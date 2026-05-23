@@ -34,5 +34,6 @@ router.post("/blood-transfusion", requireAction("doctor-orders.write"), ctrl.cre
 router.get("/pain",            requireAction("compliance.read"), ctrl.listPain);
 router.get("/fall-risk",       requireAction("compliance.read"), ctrl.listFallRisk);
 router.get("/pressure-ulcer",  requireAction("compliance.read"), ctrl.listPressureUlcer);
+router.get("/dvt",             requireAction("compliance.read"), ctrl.listDVT);
 
 module.exports = router;
