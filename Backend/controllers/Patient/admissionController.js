@@ -906,6 +906,23 @@ class AdmissionController {
           const patientShare = toNum(bill.patientPayableAmount) || toNum(bill.netAmount) || 0;
           bill.billStatus    = paid + 0.5 >= patientShare ? "PAID" : "PARTIAL";
           if (bill.billStatus === "PAID") bill.paidAt = new Date();
+          // R7bp-FIX (audit P0 — billNumber dup-null E11000): the bill we
+          // resolved above may still be DRAFT (the cashier never finalised
+          // it on the OPD desk — discharge is closing it directly). The
+          // PatientBill model now enforces `billStatus !== "DRAFT" ⇒
+          // billNumber present` via a path validator, so flipping a DRAFT
+          // bill to PAID/PARTIAL without stamping a billNumber first
+          // ValidationErrors on save. Use the centralised service-layer
+          // helper to stamp one atomically (idempotent — no-op if the
+          // bill already carries a number from an earlier finalise).
+          try {
+            const billingSvc = require("../../services/Billing/billingService");
+            if (typeof billingSvc.ensureBillNumberForNonDraft === "function") {
+              await billingSvc.ensureBillNumberForNonDraft(bill);
+            }
+          } catch (e) {
+            console.warn("[admissionController] ensureBillNumberForNonDraft failed (proceeding — model validator will catch):", e?.message || e);
+          }
           await bill.save();
         }
       }

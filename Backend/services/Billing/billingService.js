@@ -52,6 +52,37 @@ async function generateBillNumber() {
   return `BILL-${year}-${String(seq).padStart(6, "0")}`;
 }
 
+// R7bp-FIX (audit P0 — billNumber dup-null E11000) — defense-in-depth.
+// Pattern B (status-gated billNumber): the canonical commitment in this
+// codebase is that DRAFT bills carry `billNumber: null` and a fresh
+// sequence number is stamped only at finalisation (`generateFinalBill`)
+// — see R7at-FIX-11 in PatientBillModel.js. The pre-save hook on the
+// model already enforces this on `isNew` documents, but several writers
+// (discharge clearance in admissionController, ledger flips in
+// patientAdvanceService, etc.) mutate `billStatus` on an EXISTING DRAFT
+// bill and `bill.save()` without going through generateFinalBill — the
+// pre-save guard's `isNew` predicate skips them, so the bill lands in
+// PAID/PARTIAL/CANCELLED state with `billNumber: null`. Once Agent 1
+// drops the legacy plain `billNumber_1` index in favour of the partial-
+// unique replacement (filter `{ billNumber: { $type: "string" } }`),
+// nulls coexist freely — but NABH + IT-Rule-46 still demand that every
+// non-DRAFT bill have a real numbered identifier on the audit trail.
+//
+// `_ensureBillNumberForNonDraft` is the service-layer safety net: every
+// path that flips a bill to a non-DRAFT state runs this just before
+// save() so the invariant `billStatus !== "DRAFT" ⇒ billNumber set`
+// holds regardless of which writer flips the status. Idempotent — if
+// a billNumber is already assigned, returns immediately and burns no
+// sequence position (so a VersionError retry never doubles).
+async function _ensureBillNumberForNonDraft(bill) {
+  if (!bill) return;
+  if (bill.billStatus === "DRAFT") return;        // DRAFT may be null — by design
+  if (bill.billNumber) return;                    // already stamped, idempotent
+  // Use the same atomic Counter-backed generator as generateFinalBill so
+  // the sequence stays gap-less across both code paths.
+  bill.billNumber = await generateBillNumber();
+}
+
 class BillingService {
   // ── 1. Patient + all bills by UHID ───────────────────────────
   async getPatientWithBills(UHID) {
@@ -70,96 +101,118 @@ class BillingService {
   }
 
   // ── 2. Get existing DRAFT bill or create new one ──────────────
+  //
+  // R7bp-FIX (audit P0 — billNumber dup-null E11000) — race-safe upsert.
+  //
+  // Pre-R7bp this method used the classic find-then-create pattern:
+  //   1. PatientBill.findOne({UHID, visitType, billStatus:"DRAFT", admission})
+  //   2. if missing → new PatientBill(...).save()
+  // Two concurrent callers (the cashier's "Add Service" double-click;
+  // /api/billing/create racing with an auto-billing trigger) could both
+  // pass step 1 and both attempt step 2. The model carries a partial-
+  // unique index on `(UHID, visitType, admission)` filtered to
+  // `billStatus:"DRAFT"`, so the second insert always failed with E11000
+  // — the caller's catch refetched and returned the winner's row.
+  // That worked, but the FAILED insert was still attempted on disk,
+  // and on installations where the legacy plain `billNumber_1` index
+  // hadn't yet been replaced with the partial-unique variant, the
+  // collision surfaced on `billNumber: null` instead and the catch's
+  // refetch-by-filter found no match → re-thrown as a confusing
+  // duplicate-key error from the OPD Services & Orders panel.
+  //
+  // Now: collapse the find-or-insert into a single atomic
+  // `findOneAndUpdate({...DRAFT filter}, {$setOnInsert: {...}},
+  // {upsert:true, new:true})`. Mongo guarantees one writer wins; the
+  // loser's upsert reads the winner's document. No second-attempt
+  // insert, no E11000 surface on the happy path.
+  //
+  // We still catch E11000 defensively — it can fire on the partial-
+  // unique index during the millisecond between upsert dispatch and
+  // commit if a parallel writer with a slightly different filter
+  // (e.g. legacy bills missing the admission field) lands first. In
+  // that case the catch refetches by the canonical filter and returns
+  // the winner.
   async getOrCreateDraftBill(UHID, visitType, admissionId = null) {
     const Patient = require("../../models/Patient/patientModel");
 
     const patient = await Patient.findOne({ UHID }).populate("tpa");
     if (!patient) throw new Error(`Patient not found: ${UHID}`);
 
+    // Canonical filter — must match the partialFilterExpression on the
+    // `{UHID, visitType, admission} | billStatus:"DRAFT"` unique index.
     const filter = { UHID, visitType, billStatus: "DRAFT" };
     if (admissionId) filter.admission = admissionId;
+    else            filter.admission = null;       // explicit so the OPD
+                                                   // companion index matches
 
-    let bill = await PatientBill.findOne(filter);
-    if (bill) {
-      // Existing DRAFT bill — top up any missed days/visits (e.g. today's
-      // bed + nursing if the nightly cron hasn't fired yet). Idempotent
-      // via dailyDedup, so safe to call on every open.
-      if (admissionId) {
-        try {
-          const adm = await Admission.findById(admissionId).lean();
-          if (adm && (adm.status === "Active" || adm.status === "Transferred")) {
-            const autoBilling = require("./autoBillingService");
-            const r = await autoBilling.backfillAdmissionCharges(adm);
-            console.log(
-              `[Billing] top-up backfill for ADM ${adm.admissionNumber}:`,
-              `bed=${r.bedFired} nursing=${r.nurseFired}`,
-              `doctor=${r.doctorFired} consumables=${r.consumableFired}`,
-              `skipped=${r.skipped} errors=${r.errors}`,
-            );
-            const refreshed = await PatientBill.findById(bill._id);
-            if (refreshed) bill = refreshed;
-          }
-        } catch (e) {
-          console.error("[Billing] top-up backfill failed:", e.message);
-        }
-      }
-      return bill;
-    }
-
-    const billData = {
+    // setOnInsert payload — only applied if the upsert creates a new doc.
+    // billNumber is INTENTIONALLY omitted: DRAFT bills carry null per
+    // Pattern B (see _ensureBillNumberForNonDraft note above).
+    const adm = admissionId ? await Admission.findById(admissionId) : null;
+    const setOnInsert = {
       patient: patient._id,
-      UHID,
-      visitType,
       paymentType: patient.tpa ? "TPA" : "CASH",
       tpa: patient.tpa?._id || null,
       tpaName: patient.tpa?.tpaName || null,
-      billStatus: "DRAFT",
       billItems: [],
+      ...(adm ? { admissionNumber: adm.admissionNumber } : {}),
     };
 
-    if (admissionId) {
-      const adm = await Admission.findById(admissionId);
-      if (adm) {
-        billData.admission = admissionId;
-        billData.admissionNumber = adm.admissionNumber;
-      }
-    }
-
+    let bill;
+    let wasInserted = false;
     try {
-      bill = new PatientBill(billData);
-      await bill.save();
-      // Newly-created bill for an active admission — backfill bed, nursing
-      // and any orphaned doctor-note / consumable charges that piled up
-      // before the auto-billing engine had a bill to write to. Idempotent
-      // (createTrigger dedup guards make repeat calls a no-op).
-      if (admissionId) {
-        try {
-          const adm = await Admission.findById(admissionId).lean();
-          if (adm && (adm.status === "Active" || adm.status === "Transferred")) {
-            const autoBilling = require("./autoBillingService");
-            const r = await autoBilling.backfillAdmissionCharges(adm);
-            console.log(
-              `[Billing] backfill for ADM ${adm.admissionNumber}:`,
-              `bed=${r.bedFired} nursing=${r.nurseFired}`,
-              `doctor=${r.doctorFired} consumables=${r.consumableFired}`,
-              `skipped=${r.skipped} errors=${r.errors}`,
-            );
-            // Re-fetch so the freshly-billed items are returned to caller
-            const refreshed = await PatientBill.findById(bill._id);
-            if (refreshed) bill = refreshed;
-          }
-        } catch (e) {
-          console.error("[Billing] backfill failed (bill still created):", e.message);
-        }
-      }
-      return bill;
+      const before = await PatientBill.findOne(filter).select("_id").lean();
+      bill = await PatientBill.findOneAndUpdate(
+        filter,
+        { $setOnInsert: setOnInsert },
+        {
+          new: true,
+          upsert: true,
+          setDefaultsOnInsert: true,
+          // runValidators ensures required fields (e.g. patient) are
+          // present on insert; idempotent on update.
+          runValidators: true,
+        },
+      );
+      wasInserted = !before;
     } catch (err) {
-      if (err.code === 11000) {
+      // E11000 can still fire on a millisecond-tight race against the
+      // partial-unique index. Refetch with the canonical filter — the
+      // winner's row will be there.
+      if (err && err.code === 11000) {
         const existing = await PatientBill.findOne(filter);
         if (existing) return existing;
       }
       throw err;
     }
+
+    // Whether the bill is newly-inserted or existing, an IPD/DAYCARE
+    // open admission triggers a top-up backfill for bed / nursing /
+    // doctor-round / consumable charges that may have piled up before
+    // the bill existed (or while it was open). Idempotent — the
+    // dailyDedup guards in createTrigger make repeat calls no-ops.
+    if (admissionId) {
+      try {
+        const admLite = await Admission.findById(admissionId).lean();
+        if (admLite && (admLite.status === "Active" || admLite.status === "Transferred")) {
+          const autoBilling = require("./autoBillingService");
+          const r = await autoBilling.backfillAdmissionCharges(admLite);
+          console.log(
+            `[Billing] ${wasInserted ? "backfill" : "top-up backfill"} for ADM ${admLite.admissionNumber}:`,
+            `bed=${r.bedFired} nursing=${r.nurseFired}`,
+            `doctor=${r.doctorFired} consumables=${r.consumableFired}`,
+            `skipped=${r.skipped} errors=${r.errors}`,
+          );
+          // Re-fetch so the freshly-backfilled items are reflected.
+          const refreshed = await PatientBill.findById(bill._id);
+          if (refreshed) bill = refreshed;
+        }
+      } catch (e) {
+        console.error("[Billing] backfill failed (bill still returned):", e.message);
+      }
+    }
+
+    return bill;
   }
 
   // ── 3. Get single bill (fully populated) ─────────────────────
@@ -2332,4 +2385,15 @@ class BillingService {
   }
 }
 
-module.exports = new BillingService();
+// Singleton service exported with two extra module-level helpers attached
+// so external callers (controllers, sister services, scripts) can reach
+// the billNumber-stamping primitives without instantiating a new service
+// or rewriting the export shape.
+//   • generateBillNumber()             — atomic, race-safe; returns "BILL-YYYY-NNNNNN"
+//   • ensureBillNumberForNonDraft(bill) — idempotent; stamps a number iff
+//                                          the bill's billStatus is not DRAFT
+//                                          and billNumber is missing.
+const _svc = new BillingService();
+_svc.generateBillNumber = generateBillNumber;
+_svc.ensureBillNumberForNonDraft = _ensureBillNumberForNonDraft;
+module.exports = _svc;

@@ -95,32 +95,96 @@ exports.listDrugs = async (req, res) => {
   } catch (e) { sendErr(res, e); }
 };
 
-// R7bh-F4 / R7bg-9-CRIT-1: search via the new text index. For ≥ 2-char
-// queries we use $text + sort by textScore, .lean(), .limit(50). For
-// 1-char queries the text index can't help (Mongo's text $search needs
-// a token); we fall back to a bounded regex on `name` only (most common
-// path) capped at 50 rows.
+// R7bq-1-FIX / R7bh-F4 / R7bg-9-CRIT-1: drug autocomplete search.
+//
+// Pre-R7bq this used `$text: { $search: q }` over the `drug_text_search`
+// index. That broke real-world doctor typing because MongoDB's $text
+// operator is a *whole-word* stemmed search — it tokenises the corpus
+// on word boundaries, so "para" never matched "Paracetamol", "amox"
+// never matched "Amoxicillin", "cipro" never matched "Ciprofloxacin".
+// The doctor would type 4 chars and get an empty dropdown even though
+// the drug exists in the master + has stock in the pharmacy.
+//
+// Restored to a case-insensitive *contains* regex across name,
+// genericName, brandName, manufacturer — the same shape `listDrugs`
+// uses (and which actually returns hits for prefix queries). The {
+// name: 1 } and { genericName: 1 } indexes still help the optimizer
+// when the query is anchored at the start of the field; the worst
+// case (substring miss in the middle) is a 5k-row collection scan,
+// well under the latency budget for a typeahead.
+//
+// We then $lookup DrugBatch to compute the *pharmacy stock register*
+// view per drug — sum(remaining) → currentStock, max(mrp) →  mrp,
+// nearest expiry → soonestExpiry. The autocomplete row UI uses these
+// to show the doctor whether the SKU is actually in stock before
+// they prescribe it. Out-of-stock items are still returned (currentStock = 0)
+// so the doctor can prescribe a brand-new SKU that just hasn't been
+// received yet — never block Rx entry on inventory state.
 exports.searchDrugs = async (req, res) => {
   try {
     const q = (req.query.q || "").trim();
     if (!q) return res.json({ success: true, data: [] });
-    if (q.length >= 2) {
-      const drugs = await Drug
-        .find(
-          { isActive: true, $text: { $search: q } },
-          { score: { $meta: "textScore" } },
-        )
-        .sort({ score: { $meta: "textScore" } })
-        .limit(50)
-        .lean();
-      return res.json({ success: true, data: drugs });
-    }
-    // Single-char fallback — anchored prefix on `name` so we hit the
-    // existing { name: 1 } index instead of a full scan.
-    const rx = new RegExp("^" + q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-    const drugs = await Drug.find({ isActive: true, name: rx })
-      .limit(50)
-      .lean();
+
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const rx = new RegExp(escaped, "i");
+
+    // Single-char queries still fall back to anchored-prefix on `name`
+    // only — a 1-char contains-regex over four fields scans the whole
+    // master per keystroke and brings nothing useful to the doctor
+    // (the dropdown would have 80+ rows starting with "A").
+    const where = q.length === 1
+      ? { isActive: true, name: new RegExp("^" + escaped, "i") }
+      : { isActive: true, $or: [
+          { name:         rx },
+          { genericName:  rx },
+          { brandName:    rx },
+          { manufacturer: rx },
+        ] };
+
+    const drugs = await Drug.aggregate([
+      { $match: where },
+      // Stock register join — sum remaining units across active,
+      // unexpired batches per drug. Done as a sub-pipeline lookup
+      // so we can apply the isActive + remaining > 0 + expiry > now
+      // filters before grouping (smaller intermediate set than a
+      // plain localField/foreignField lookup).
+      { $lookup: {
+          from: "pharmacydrugbatches",
+          let: { drugId: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $and: [
+              { $eq: ["$drugId", "$$drugId"] },
+              { $eq: ["$isActive", true] },
+              { $gt: ["$remaining", 0] },
+              { $gt: ["$expiryDate", new Date()] },
+            ] } } },
+            { $group: {
+              _id: null,
+              currentStock: { $sum: "$remaining" },
+              mrp:          { $max: "$mrp" },
+              salePrice:    { $max: "$salePrice" },
+              soonestExpiry:{ $min: "$expiryDate" },
+            } },
+          ],
+          as: "stockAgg",
+        } },
+      { $addFields: {
+          currentStock: { $ifNull: [{ $arrayElemAt: ["$stockAgg.currentStock", 0] }, 0] },
+          mrp:          { $ifNull: [{ $arrayElemAt: ["$stockAgg.mrp", 0] },          "$defaultSalePrice"] },
+          salePrice:    { $ifNull: [{ $arrayElemAt: ["$stockAgg.salePrice", 0] },    "$defaultSalePrice"] },
+          soonestExpiry:{ $arrayElemAt: ["$stockAgg.soonestExpiry", 0] },
+          packSize:     "$pack",
+        } },
+      { $project: { stockAgg: 0 } },
+      // Rank in-stock items first, then alphabetical — so the doctor
+      // sees dispensable SKUs at the top of the dropdown without
+      // hiding out-of-stock entries (which they can still prescribe).
+      { $addFields: { _inStock: { $cond: [{ $gt: ["$currentStock", 0] }, 0, 1] } } },
+      { $sort: { _inStock: 1, name: 1 } },
+      { $project: { _inStock: 0 } },
+      { $limit: 50 },
+    ]);
+
     res.json({ success: true, data: drugs });
   } catch (e) { sendErr(res, e); }
 };

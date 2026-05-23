@@ -203,7 +203,24 @@ const ACTIONS = {
 
   // Billing
   "billing.read":          ["Admin", "Accountant", "Receptionist", "TPA Coordinator"],
-  "billing.write":         ["Admin", "Accountant", "Receptionist"],
+  // R7bp-FIX-PERMS / D8-CRIT — Doctor + Nurse added so the OPD / Emergency
+  // "Services & Orders" panel (ServicesOrdersPanel.jsx) can POST /billing/create
+  // + /billing/:billId/add-service. Pre-R7bp these were gated to
+  // Admin/Accountant/Receptionist only, so every Doctor click → silent 403.
+  // The 403 then masqueraded as the underlying billNumber-dup-key bug
+  // (toast read "Could not add to bill" / "duplicate key") because the
+  // user-facing UI couldn't distinguish 403 from 500-E11000.
+  //
+  // SAFE: this only grants the create-draft + add-service paths. The
+  // defense-in-depth `blockNonClinicalForDoctorNurse` middleware in
+  // middleware/auth.js (mounted in routes/index.js) still blocks every
+  // money-touching POST (/payment, /refund, /cancel, /settlement-adjust,
+  // /credit-notes, /advance/*, /cashier-sessions/*, /uhid/*/collect-all,
+  // /uhid/*/bulk-settle) for Doctor/Nurse — so the financial controls
+  // stay intact. Doctor/Nurse can attach a clinical order to a bill
+  // (orderStatus="Ordered", not billable until lab/radiology completes
+  // it), they CANNOT take payments or move money.
+  "billing.write":         ["Admin", "Accountant", "Receptionist", "Doctor", "Nurse"],
   "billing.refund":        ["Admin", "Accountant"],
   "billing.discount":      ["Admin", "Accountant"],
   // IPD Live Ledger — strict tiered actions per design memo

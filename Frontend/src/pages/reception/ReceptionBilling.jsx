@@ -276,6 +276,23 @@ export default function ReceptionBilling() {
       else toast.info("No OPD bill found yet — try again in a moment");
     } else if (action === "advance") {
       setShowAdvDlg(true);
+    } else if (action === "collect-all") {
+      // R7bp: deep-link from the Receptionist Dashboard's Patient Credit
+      // Ledger (multi-select footer "Collect All for Patient" button).
+      // The receptionist has already picked one UHID; opening the
+      // BulkCollectModal here lets the existing FIFO flow distribute the
+      // collected amount across every open bill for the patient.
+      // Guard: only fire when there's at least one open bill — otherwise
+      // the modal would render an empty allocation table and the apply
+      // button would no-op (R7am surfaces this same warning).
+      const openBills = (bills || []).filter((b) =>
+        ["GENERATED", "PARTIAL"].includes(b.billStatus),
+      );
+      if (openBills.length === 0) {
+        toast.info("No open bills found for this patient");
+      } else {
+        setShowBulkCollect(true);
+      }
     }
 
     // Self-consume so refresh doesn't re-pop the modal.

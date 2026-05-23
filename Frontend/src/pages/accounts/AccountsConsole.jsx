@@ -33,6 +33,9 @@ import { toMoney, fmtINR0 as fmtINR, fmtINR2 } from "../../utils/money";
 // R7ap-F22/D4-16: per-tab error boundary so one component crash doesn't
 // blank the whole Accounts page.
 import ErrorBoundary from "../../Components/ErrorBoundary";
+// R7bp: shared "bills with balance due" ledger card — also mounted on the
+// Receptionist dashboard, so the credit-list look stays in one place.
+import PatientCreditLedger from "../../Components/billing/PatientCreditLedger";
 const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token"))}` } });
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const firstOfMonth = () => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); };
@@ -825,40 +828,18 @@ function OutstandingTab() {
         </Card>
       </div>
 
-      {/* Patient credit ledger — non-TPA outstanding bills */}
+      {/* Patient credit ledger — non-TPA outstanding bills.
+          R7bp: extracted into Components/billing/PatientCreditLedger so the
+          Receptionist landing can mount the same card. AccountsConsole
+          stays read-only (selectable=false), preserving the legacy 30-row
+          listing. */}
       <div style={{ marginTop: 14 }}>
-        <Card title={`Patient credit ledger · ${aging?.patientCredit?.length || 0} bill${(aging?.patientCredit?.length || 0) === 1 ? "" : "s"} with balance due`} color={C.red} icon="pi-exclamation-circle">
-          {!aging?.patientCredit?.length ? (
-            <Empty icon="pi-money-bill" text="No patient credit outstanding. All non-TPA bills are paid in full." />
-          ) : (
-            <Table cols={[
-              { label: "Bill #" }, { label: "Patient" }, { label: "Age" },
-              { label: "Bucket" }, { label: "Gross", align: "right" }, { label: "Paid", align: "right" },
-              { label: "Due", align: "right" }, { label: "Action" },
-            ]}>
-              {aging.patientCredit.slice(0, 30).map((b, i) => (
-                <tr key={i}>
-                  <td style={{ fontFamily: "monospace", fontSize: 11.5 }}>{b.billNumber}</td>
-                  <td style={{ fontWeight: 700 }}>{b.patientName || b.UHID}</td>
-                  <td style={{ color: C.muted, fontSize: 11.5 }}>{b.ageDays}d</td>
-                  <td><Badge value={b.bucket} /></td>
-                  <td style={{ textAlign: "right" }}>{fmtINR2(b.gross)}</td>
-                  <td style={{ textAlign: "right" }}>{fmtINR2(b.paid)}</td>
-                  <td style={{ textAlign: "right", fontWeight: 800, color: C.red }}>{fmtINR2(b.due)}</td>
-                  <td>
-                    {/* R7ap-F4: route /billing/view/:id was deleted in R7ah.
-                        Open the workflow page (Reception Billing Counter) so
-                        the accountant can drill into payments, refund, print. */}
-                    <button onClick={() => navigate(`/reception-billing/${b.UHID}`)}
-                      style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.blue}40`, background: "#fff", color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                      Open
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </Table>
-          )}
-        </Card>
+        <PatientCreditLedger
+          rows={aging?.patientCredit || []}
+          selectable={false}
+          maxRows={30}
+          onOpenBill={(b) => navigate(`/reception-billing/${b.UHID}`)}
+        />
       </div>
 
       <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>

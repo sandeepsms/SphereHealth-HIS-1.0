@@ -349,6 +349,10 @@ export default function OPDAssessmentPage() {
   const [orderBillId,   setOrderBillId]   = useState(null);   // /api/billing DRAFT id
   const [orderBillNum,  setOrderBillNum]  = useState("");     // human-readable bill number
   const [orderSaving,   setOrderSaving]   = useState(false);
+  // R7bp-OPD-DUP — Synchronous re-entrancy lock; see ServicesOrdersPanel for
+  // the why. State alone leaks two POSTs through on rapid clicks because
+  // React batches the setOrderSaving call.
+  const orderSavingRef = useRef(false);
 
   // R7az-D4-HIGH-2 — Per-button double-tap guards. Pre-fix, fast double
   // clicks on "Add Medication" / "Add Investigation" / "Add Infusion"
@@ -775,9 +779,43 @@ export default function OPDAssessmentPage() {
     return bill._id;
   };
 
+  // R7bp-OPD-DUP — Pull the draft-bill lookup out of the useEffect so it
+  // can be re-fired from addOrderToBill's E11000 recovery path (and any
+  // future "refresh bill" action). Returns silently when there's no draft
+  // yet — that's the cold-start case.
+  const refreshOrderDraftBill = useCallback(async (signal) => {
+    const u = visit?.UHID || uhid;
+    if (!u) return;
+    try {
+      const { data } = await axios.get(
+        `${API_ENDPOINTS.BASE}/billing/uhid/${encodeURIComponent(u)}`,
+        signal ? { signal } : undefined,
+      );
+      const bills = data?.bills || data?.data?.bills || [];
+      const draft = bills.find(b => b.visitType === "OPD" && b.billStatus === "DRAFT");
+      if (draft) {
+        setOrderBillId(draft._id);
+        setOrderBillNum(draft.billNumber || "(DRAFT)");
+        setOrderItems(Array.isArray(draft.billItems) ? draft.billItems : []);
+      }
+    } catch (e) {
+      if (!axios.isCancel?.(e)) console.debug("[OPDAssessment] draft bill refresh skipped:", e?.message);
+    }
+  }, [visit?.UHID, uhid]);
+
   const addOrderToBill = async () => {
+    // R7bp-OPD-DUP — Synchronous re-entrancy guard. The button is also
+    // `disabled` while orderSaving is true, but React batches the state
+    // update so a hardware double-click (or an axios retry) can still fire
+    // two onClicks before the disabled paint lands. The ref flips
+    // immediately so the second call short-circuits before its POST.
+    if (orderSavingRef.current) return;
+    orderSavingRef.current = true;
     const svc = newOrder.service;
-    if (!svc?._id) return toast.warn("Pick a service from the list first");
+    if (!svc?._id) {
+      orderSavingRef.current = false;
+      return toast.warn("Pick a service from the list first");
+    }
     const qty = Math.max(1, Number(newOrder.qty) || 1);
 
     setOrderSaving(true);
@@ -804,9 +842,30 @@ export default function OPDAssessmentPage() {
       setNewOrder({ service: null, name: "", qty: 1, urgency: "Routine", instructions: "" });
       toast.success(`${svc.serviceName} ordered — will bill once completed`);
     } catch (e) {
-      toast.error(e?.response?.data?.message || e?.message || "Could not add to bill");
+      // R7bp-OPD-DUP — Surface the real backend error so the user isn't
+      // staring at a silent UI. Special-case E11000 (Mongo duplicate-key)
+      // because the bill-number generator briefly trips it when two writes
+      // race; the row almost always lands on the next render, so we
+      // auto-refresh after 1s and tell the user to retry.
+      const status = e?.response?.status;
+      const serverMsg =
+        e?.response?.data?.message ||
+        e?.response?.data?.error ||
+        e?.message ||
+        "Could not add to bill";
+      const isDupKey =
+        /E11000/i.test(serverMsg) ||
+        /duplicate key/i.test(serverMsg) ||
+        e?.response?.data?.code === 11000;
+      if (isDupKey) {
+        toast.error("Looks like the bill is still being created — please retry in a second.");
+        setTimeout(() => { refreshOrderDraftBill().catch(() => {}); }, 1000);
+      } else {
+        toast.error(`Failed to add service: ${serverMsg}${status ? ` (${status})` : ""}`);
+      }
     } finally {
       setOrderSaving(false);
+      orderSavingRef.current = false;
     }
   };
 
@@ -894,25 +953,9 @@ export default function OPDAssessmentPage() {
     const u = visit?.UHID || uhid;
     if (!u) return;
     const ac = new AbortController();
-    (async () => {
-      try {
-        const { data } = await axios.get(
-          `${API_ENDPOINTS.BASE}/billing/uhid/${encodeURIComponent(u)}`,
-          { signal: ac.signal },
-        );
-        const bills = data?.bills || data?.data?.bills || [];
-        const draft = bills.find(b => b.visitType === "OPD" && b.billStatus === "DRAFT");
-        if (draft) {
-          setOrderBillId(draft._id);
-          setOrderBillNum(draft.billNumber || "(DRAFT)");
-          setOrderItems(Array.isArray(draft.billItems) ? draft.billItems : []);
-        }
-      } catch (e) {
-        if (!axios.isCancel(e)) console.warn("[OPDAssessment] draft bill lookup:", e?.message);
-      }
-    })();
+    refreshOrderDraftBill(ac.signal);
     return () => ac.abort();
-  }, [visit?.UHID, uhid]);
+  }, [visit?.UHID, uhid, refreshOrderDraftBill]);
 
   const addProcedure = async () => {
     if (!newProc.procedureName.trim()) return toast.warn("Procedure name required");
@@ -2282,6 +2325,8 @@ export default function OPDAssessmentPage() {
                 <option value="25% Dextrose" />
                 <option value="50% Dextrose" />
                 <option value="Mannitol 20%" />
+                <option value="20% Human Albumin" />
+                <option value="5% Albumin" />
                 <option value="3% Hypertonic Saline" />
                 <option value="Insulin drip" />
                 <option value="Heparin drip" />

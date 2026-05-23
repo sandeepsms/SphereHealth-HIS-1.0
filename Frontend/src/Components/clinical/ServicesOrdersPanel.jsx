@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
@@ -42,44 +42,66 @@ const STATUS_PILL = {
   Cancelled:  { bg: "#fee2e2", fg: "#b91c1c", label: "Cancelled" },
 };
 
+/* R7bp-OPD-FILTER: visitType is the bill's own enum ("OPD" | "ER" |
+   "Daycare"), but ServiceMaster.applicableTo uses a different enum
+   ("OPD" | "IPD" | "DAYCARE" | "EMERGENCY" | "ALL"). Map between them
+   so the autocomplete actually filters to context-relevant rows. Without
+   this, Emergency was sending applicableTo="ER" which matched only rows
+   tagged "ALL" — every Emergency-specific service was invisible. */
+const VISIT_TYPE_TO_APPLICABLE = {
+  OPD:     "OPD",
+  ER:      "EMERGENCY",
+  Daycare: "DAYCARE",
+  IPD:     "IPD",
+};
+
 export default function ServicesOrdersPanel({ uhid, visitType = "OPD", addedBy = "Doctor", theme }) {
   const C = { ...DEFAULT_THEME, ...(theme || {}) };
+  const applicableTo = VISIT_TYPE_TO_APPLICABLE[visitType] || visitType;
 
   const [newOrder, setNewOrder] = useState({ service: null, name: "", qty: 1, urgency: "Routine", instructions: "" });
   const [orderItems, setOrderItems] = useState([]);
   const [orderBillId, setOrderBillId] = useState(null);
   const [orderBillNum, setOrderBillNum] = useState("");
   const [orderSaving, setOrderSaving] = useState(false);
+  // R7bp-OPD-DUP — Synchronous re-entrancy lock. A useState boolean
+  // wouldn't help here: two rapid clicks both run before React commits
+  // the first setOrderSaving(true), so both pass the if-check. A ref
+  // flips synchronously in the same tick → the second click bails out.
+  const orderSavingRef = useRef(false);
 
   /* ─── DRAFT-bill load on mount / uhid change ──────────────────
      Look for an existing DRAFT for this UHID + visitType so the doctor
      sees the partial bill if they revisit the page or another team
      member started it earlier. Silent fallback when no DRAFT — the next
      add-service click will spin one up via ensureDraftBill(). */
+  const refreshDraftBill = async (signal) => {
+    if (!uhid) return;
+    try {
+      const { data } = await axios.get(
+        `${API_ENDPOINTS.BASE}/billing/uhid/${encodeURIComponent(uhid)}`,
+        signal ? { signal } : undefined,
+      );
+      const bills = data?.bills || data?.data?.bills || [];
+      const draft = bills.find(b => b.visitType === visitType && b.billStatus === "DRAFT");
+      if (draft) {
+        setOrderBillId(draft._id);
+        setOrderBillNum(draft.billNumber || "(DRAFT)");
+        setOrderItems(Array.isArray(draft.billItems) ? draft.billItems : []);
+      }
+    } catch (e) {
+      if (e?.name !== "CanceledError" && e?.name !== "AbortError") {
+        console.debug("[ServicesOrdersPanel] draft lookup skipped:", e?.message);
+      }
+    }
+  };
+
   useEffect(() => {
     if (!uhid) return;
     const ac = new AbortController();
-    (async () => {
-      try {
-        const { data } = await axios.get(
-          `${API_ENDPOINTS.BASE}/billing/uhid/${encodeURIComponent(uhid)}`,
-          { signal: ac.signal },
-        );
-        const bills = data?.bills || data?.data?.bills || [];
-        const draft = bills.find(b => b.visitType === visitType && b.billStatus === "DRAFT");
-        if (draft) {
-          setOrderBillId(draft._id);
-          setOrderBillNum(draft.billNumber || "(DRAFT)");
-          setOrderItems(Array.isArray(draft.billItems) ? draft.billItems : []);
-        }
-      } catch (e) {
-        // Silent — no draft yet is the common case
-        if (e?.name !== "CanceledError" && e?.name !== "AbortError") {
-          console.debug("[ServicesOrdersPanel] draft lookup skipped:", e?.message);
-        }
-      }
-    })();
+    refreshDraftBill(ac.signal);
     return () => ac.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uhid, visitType]);
 
   const ensureDraftBill = async () => {
@@ -98,8 +120,18 @@ export default function ServicesOrdersPanel({ uhid, visitType = "OPD", addedBy =
   };
 
   const addOrderToBill = async () => {
+    // R7bp-OPD-DUP — Synchronous re-entrancy guard. The button is also
+    // `disabled` while orderSaving is true, but React batches the state
+    // update so a hardware double-click (or an axios retry) can still fire
+    // two onClicks before the disabled paint lands. The ref flips
+    // immediately so the second call short-circuits before its POST.
+    if (orderSavingRef.current) return;
+    orderSavingRef.current = true;
     const svc = newOrder.service;
-    if (!svc?._id) return toast.warn("Pick a service from the list first");
+    if (!svc?._id) {
+      orderSavingRef.current = false;
+      return toast.warn("Pick a service from the list first");
+    }
     const qty = Math.max(1, Number(newOrder.qty) || 1);
 
     setOrderSaving(true);
@@ -122,9 +154,30 @@ export default function ServicesOrdersPanel({ uhid, visitType = "OPD", addedBy =
       setNewOrder({ service: null, name: "", qty: 1, urgency: "Routine", instructions: "" });
       toast.success(`${svc.serviceName} ordered — will bill once completed`);
     } catch (e) {
-      toast.error(e?.response?.data?.message || e?.message || "Could not add to bill");
+      // R7bp-OPD-DUP — Surface the real backend error so the user isn't
+      // staring at a silent UI. Special-case E11000 (Mongo duplicate-key)
+      // because the bill-number generator briefly trips it when two writes
+      // race; the row almost always lands on the next render, so we
+      // auto-refresh after 1s and tell the user to retry.
+      const status = e?.response?.status;
+      const serverMsg =
+        e?.response?.data?.message ||
+        e?.response?.data?.error ||
+        e?.message ||
+        "Could not add to bill";
+      const isDupKey =
+        /E11000/i.test(serverMsg) ||
+        /duplicate key/i.test(serverMsg) ||
+        e?.response?.data?.code === 11000;
+      if (isDupKey) {
+        toast.error("Looks like the bill is still being created — please retry in a second.");
+        setTimeout(() => { refreshDraftBill().catch(() => {}); }, 1000);
+      } else {
+        toast.error(`Failed to add service: ${serverMsg}${status ? ` (${status})` : ""}`);
+      }
     } finally {
       setOrderSaving(false);
+      orderSavingRef.current = false;
     }
   };
 
@@ -271,7 +324,7 @@ export default function ServicesOrdersPanel({ uhid, visitType = "OPD", addedBy =
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2.2fr) minmax(0,0.6fr) minmax(0,0.9fr) minmax(0,1.4fr) auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
         <ServiceAutocomplete
           value={newOrder.name}
-          applicableTo={visitType}
+          applicableTo={applicableTo}
           onChange={(v) => setNewOrder(p => ({ ...p, name: v, service: null }))}
           onPick={(s) => setNewOrder(p => ({
             ...p,

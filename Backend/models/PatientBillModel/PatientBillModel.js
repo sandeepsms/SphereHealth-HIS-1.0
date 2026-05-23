@@ -206,10 +206,32 @@ const PaymentSchema = new mongoose.Schema(
 // ── Main bill ─────────────────────────────────────────────────
 const PatientBillSchema = new mongoose.Schema(
   {
-    // BILL-2026-000001 (auto-generated)
-    // sparse so multiple DRAFT bills (no billNumber yet) don't collide on
-    // the unique index. Only finalised bills get a billNumber.
-    billNumber: { type: String, unique: true, sparse: true },
+    // BILL-2026-000001 (auto-generated on finalisation only)
+    //
+    // R7bp-FIX (audit P0 — billNumber dup-null E11000): the unique index
+    // is declared SEPARATELY below as a PARTIAL index filtered to
+    // `{ billNumber: { $type: "string" } }`. We deliberately do NOT use
+    // `unique: true` here because:
+    //   1. Field-level `unique: true` generates a plain unique index that
+    //      treats `null` as a value — only ONE null is allowed across the
+    //      whole collection. With multiple concurrent DRAFT bills (no
+    //      billNumber yet) the second insert blows up with E11000.
+    //   2. `sparse: true` is not enough either — sparse only skips
+    //      documents where the FIELD IS ABSENT. A document with
+    //      `billNumber: null` is still indexed and still collides.
+    //   3. A partial filter on `$type: "string"` indexes only documents
+    //      where billNumber is an actual assigned string — so multiple
+    //      null/absent DRAFT bills coexist freely, while finalised bills
+    //      remain uniquely numbered (IT-Rule-46 gap-less invariant
+    //      preserved by the Counter sequence).
+    //
+    // Migration script `scripts/fixBillNumberIndex.js` drops the legacy
+    // `billNumber_1` plain-unique index from existing databases and
+    // creates this partial replacement. Mongoose only creates indexes
+    // declared in code if the index NAME is missing — once the legacy
+    // index is dropped, Mongoose auto-builds the new partial one on
+    // next syncIndexes() (or the migration script does it explicitly).
+    billNumber: { type: String, default: null },
 
     patient: {
       type: mongoose.Schema.Types.ObjectId,
@@ -322,7 +344,35 @@ const PatientBillSchema = new mongoose.Schema(
     billStatus: {
       type: String,
       enum: ["DRAFT", "GENERATING", "GENERATED", "PARTIAL", "PAID", "CANCELLED", "REFUNDED"],
-      default: "DRAFT" },
+      default: "DRAFT",
+      // R7bp-FIX (audit Dim 4): a FINAL bill must carry a billNumber.
+      // The pre-save hook already burns a number when a non-DRAFT bill
+      // is inserted; this validator is a belt-and-braces check so an
+      // accidental status-flip on an existing DRAFT (e.g. a controller
+      // bypassing finaliseBill) can't produce a finalised PatientBill
+      // without an IT-Rule-46 series number.
+      //
+      // Path validators that need access to a sibling field use `this`
+      // (the document). Returns true when the invariant holds, false
+      // when it's violated. Implemented as `validate: { validator }`
+      // rather than a pre-save hook so it composes cleanly with
+      // existing pre-save logic (recalcTotals, write-off guard) and
+      // can be skipped by `{ validateBeforeSave: false }` paths that
+      // legitimately want to bypass it (the GENERATING → DRAFT
+      // rollback inside generateFinalBill is one such case).
+      validate: {
+        validator: function (status) {
+          // DRAFT, GENERATING, CANCELLED can have null billNumber.
+          // GENERATED / PARTIAL / PAID / REFUNDED must have a string billNumber.
+          const finalised = ["GENERATED", "PARTIAL", "PAID", "REFUNDED"];
+          if (!finalised.includes(status)) return true;
+          return typeof this.billNumber === "string" && this.billNumber.length > 0;
+        },
+        message:
+          "billNumber is required when billStatus is GENERATED/PARTIAL/PAID/REFUNDED " +
+          "(IT-Rule-46 gap-less series — formal bills must carry a number).",
+      },
+    },
 
     // ── TPA Claim tracking ────────────────────────────────
     tpaClaimStatus: {
@@ -613,6 +663,25 @@ PatientBillSchema.pre("save", async function (next) {
   this._priorWriteOffAmount = toNum(this.writeOffAmount);
   next();
 });
+
+// R7bp-FIX (audit P0 — billNumber dup-null E11000): partial unique index.
+// Only enforces uniqueness on documents where billNumber is an actual
+// string. DRAFT bills carrying `billNumber: null` (or missing the field
+// entirely) are excluded from the index — they can coexist freely, which
+// is what NABH / Indian-healthcare practice expects: bill numbers are
+// formal financial-document identifiers, only stamped at finalisation.
+//
+// Named explicitly so the migration script can drop the legacy
+// `billNumber_1` plain-unique index and Mongoose syncIndexes() can
+// reconcile by NAME on next startup.
+PatientBillSchema.index(
+  { billNumber: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { billNumber: { $type: "string" } },
+    name: "billNumber_unique_partial",
+  },
+);
 
 PatientBillSchema.index({ UHID: 1 });
 PatientBillSchema.index({ patient: 1 });
