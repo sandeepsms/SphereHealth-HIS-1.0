@@ -33,7 +33,12 @@ const AdminRecordSchema = new mongoose.Schema({
   scheduledDate:  { type: Date },
   status: {
     type: String,
-    enum: ["pending","given","hold","not_available","delayed","skipped","refused","partial"],
+    // R7bq-J1 — "missed" added for the daily missed-dose cron + EOD sweep.
+    // NABH MOM.4 distinction: "skipped" = nurse made a clinical decision to
+    // skip (held/refused/clinical reason), "missed" = system observed that
+    // the scheduled window passed with no record at all. Both close the
+    // dose for completion-check purposes.
+    enum: ["pending","given","hold","not_available","delayed","skipped","refused","partial","missed"],
     default: "pending",
   },
   givenAt:        { type: Date },
@@ -157,6 +162,16 @@ const DoctorOrderSchema = new mongoose.Schema({
     frequency: String, duration: String, route: String,
     rate: String, accessSite: String, additives: String,
     dilution: String, totalVolume: String, titrationGoal: String, startTime: String,
+    // R7bq-1 / R7bq-3 — IV Medication dilution.
+    //   dilutionVolume     = number of ml of diluent for each dose
+    //   dilutionFluid      = which diluent (NS 0.9% / RL / D5W / etc.) — separate
+    //                        from the legacy free-text `dilution` so we can
+    //                        write a structured ml number to the I/O ledger
+    //                        when the nurse marks a dose given.
+    //   infuseOverMinutes  = how long to push/drip the diluted dose (min)
+    dilutionVolume:    { type: Number, default: null, min: 0, max: 5000 },
+    dilutionFluid:     { type: String, default: "" },
+    infuseOverMinutes: { type: Number, default: null, min: 0, max: 720 },
     // Blood Transfusion
     bloodGroup: String, crossMatchDone: String, premeds: String, monitoring: String,
     // Investigation / Radiology fields
@@ -188,6 +203,14 @@ const DoctorOrderSchema = new mongoose.Schema({
   orderedByRole: { type: String, default: "Doctor" },
   orderedAt:     { type: Date, default: Date.now },
 
+  // R7bq-J1 — course window. Set at order creation by parsing
+  // `orderDetails.duration` ("5 days", "1 week", etc). Used by the
+  // completion check to refuse "Completed" until the course window has
+  // actually closed (`endDate <= startOfToday`). Legacy orders without
+  // endDate fall back to the pre-J1 behaviour (terminal-status-only check).
+  courseDays:    { type: Number, default: null, min: 0, max: 90 },
+  endDate:       { type: Date, default: null, index: true },
+
   // R7az-CRIT-4 / R7az-HIGH-6 / R7az-MED-1 (D6-CRIT-4, D6-HIGH-6, D6-MED-1):
   // Order status. "Active" is the canonical alias for "Pending+Acknowledged"
   // in the doctor-orders UI; we accept both for backward-compat with the
@@ -212,6 +235,13 @@ const DoctorOrderSchema = new mongoose.Schema({
   infusionStarted:    { type: Date },
   infusionStopped:    { type: Date },
   stopReason:         { type: String },
+
+  // R7bq-L — when an IV_Fluid order is restarted as a fresh bag (POST
+  // /:id/restart), the new clone carries `parentOrderId` + `restartedFrom`
+  // pointing back to the previous bag. Used to render a "continued from bag
+  // #1" trail on the infusion card so the nurse can see lineage at a glance.
+  parentOrderId:  { type: mongoose.Schema.Types.ObjectId, ref: "DoctorOrder", default: null, index: true },
+  restartedFrom:  { type: mongoose.Schema.Types.ObjectId, ref: "DoctorOrder", default: null },
 
   acknowledgedBy: String,
   acknowledgedAt: Date,

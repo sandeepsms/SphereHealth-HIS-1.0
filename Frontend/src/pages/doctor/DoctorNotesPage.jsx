@@ -122,11 +122,12 @@ const MODULES = [
   // duplicate-shape doctor notes — the Emergency Assessment page is the
   // single source of truth, and on sign-and-submit it flips
   // admission.initialAssessment.doctorCompleted = true so the gate lifts.
-  // ── Priority top row ──
-  { id: "medication",  label: "Medication Orders",     nabh: "MOM.4", description: "STAT, regular, and PRN drug orders with allergy check",
-    icon: "pi-tablet",              border: "#93c5fd", color: C.blue,   bg: C.blueL   },
-  { id: "infusion",    label: "Infusion Orders",       nabh: "MOM.4", description: "IV access, infusion rate, and drip monitoring",
-    icon: "pi-plus-circle",         border: "#99f6e4", color: C.teal,   bg: C.tealL   },
+  // R7bp — "Medication Orders" + "Infusion Orders" tiles removed from this
+  // picker. Both are now exclusively handled by the dedicated Doctor Orders
+  // module (orderType: "Medication" / "IV_Fluid"), which feeds MAR, indents,
+  // pharmacy, and billing through a single source of truth. Keeping them as
+  // duplicate "note types" let the same drug be ordered in two places, with
+  // only one of them flowing into MAR / pharmacy.
   // ── Notes ──
   { id: "daily",       label: "Daily Progress",        nabh: "COP.1", description: "Shift-wise SOAP progress — stable / improving / deteriorating",
     icon: "pi-file-edit",           border: C.blueB,   color: C.blue,   bg: C.blueL   },
@@ -2524,7 +2525,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     {k:"subjective", l:"S — Subjective", c:C.blue, ph:"Patient's complaints today: pain, nausea, fever, functional status, how they feel…"},
                     {k:"objective",  l:"O — Objective",  c:C.teal, ph:"Examination findings: general appearance, chest, CVS, abdomen, neuro, wound…"},
                     {k:"assessment", l:"A — Assessment",  c:C.amber,ph:"Clinical impression, response to treatment, disease progression…"},
-                    {k:"plan",       l:"P — Plan",        c:C.green,ph:"Investigations ordered, medication changes (add/modify/stop), procedures, nursing orders, diet, activity…"},
+                    {k:"plan",       l:"P — Plan",        c:C.green,ph:"Narrative summary of today's plan: monitoring goals, expected response, nursing instructions, diet, activity, escalation triggers. (Diagnosis updates → Patient Diagnosis tile · Investigations / medications / procedures → Doctor Orders tile.)"},
                   ].map(s => (
                     <div key={s.k}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
@@ -2534,73 +2535,20 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       <textarea className="his-textarea" style={{ minHeight: 72, borderColor: s.c + "40" }} value={soap[s.k]} placeholder={s.ph} onChange={e => setSoap(p => ({ ...p, [s.k]: e.target.value }))} />
                     </div>
                   ))}
-                  {/* Diagnosis */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Provisional Diagnosis"><input className="his-field" value={diag.provisional} placeholder="Working diagnosis" onChange={e => setDiag(p => ({ ...p, provisional: e.target.value }))} /></FL>
-                    <FL label="Working Diagnosis"><input className="his-field" value={diag.working} placeholder="Current working diagnosis" onChange={e => setDiag(p => ({ ...p, working: e.target.value }))} /></FL>
-                    <FL label="Final Diagnosis"><input className="his-field" value={diag.final} placeholder="Confirmed diagnosis" onChange={e => setDiag(p => ({ ...p, final: e.target.value }))} /></FL>
-                    <FL label="ICD-10 Code"><input className="his-field" value={diag.icd10Code} placeholder="e.g. J18.9" onChange={e => setDiag(p => ({ ...p, icd10Code: e.target.value }))} /></FL>
-                    <FL label="ICD-10 Description"><input className="his-field" value={diag.icd10Description} placeholder="e.g. Unspecified pneumonia" onChange={e => setDiag(p => ({ ...p, icd10Description: e.target.value }))} /></FL>
-                    <FL label="Patient Status">
-                      <select className="his-select" value={diag.status} onChange={e => setDiag(p => ({ ...p, status: e.target.value }))}>
-                        {["Stable","Improving","Unchanged","Deteriorating","Critical","Ready for Discharge"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                  </div>
-                  {/* Investigations ordered */}
-                  <FL label="Investigations Ordered (comma-separated)">
-                    <input className="his-field" value={invx} placeholder="CBC, LFT, Chest X-Ray, USG Abdomen, ECG…" onChange={e => setInvx(e.target.value)} />
-                  </FL>
-                  {/* Inline Orders */}
-                  <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px" }}>Doctor Orders ({orders.length})</div>
-                      <button onClick={() => setShowOrderRow(true)} style={{ padding: "5px 14px", background: C.primaryL, color: C.primary, border: `1.5px solid ${C.blueB}`, borderRadius: 7, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
-                        <i className="pi pi-plus" style={{ fontSize: 10 }} /> Add Order
-                      </button>
-                    </div>
-                    {showOrderRow && (
-                      <div style={{ background: "white", border: `1px solid ${C.blueB}`, borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
-                          <FL label="Type">
-                            <select className="his-select" style={{ fontSize: 12 }} value={orderRow.type} onChange={e => setOrderRow(p => ({ ...p, type: e.target.value }))}>
-                              {["medication","iv_fluid","procedure","investigation","diet","nursing","other"].map(o=><option key={o} value={o}>{o}</option>)}
-                            </select>
-                          </FL>
-                          <FL label="Instruction *"><input className="his-field" style={{ fontSize: 12 }} value={orderRow.instruction} placeholder="Drug name & dose / order detail" onChange={e => setOrderRow(p => ({ ...p, instruction: e.target.value }))} /></FL>
-                          <FL label="Route">
-                            <select className="his-select" style={{ fontSize: 12 }} value={orderRow.route} onChange={e => setOrderRow(p => ({ ...p, route: e.target.value }))}>
-                              {["IV","IM","Oral","SC","SL","Topical","Inhalation",""].map(o=><option key={o}>{o||"—"}</option>)}
-                            </select>
-                          </FL>
-                          <FL label="Frequency"><input className="his-field" style={{ fontSize: 12 }} value={orderRow.frequency} placeholder="OD/BD/TDS" onChange={e => setOrderRow(p => ({ ...p, frequency: e.target.value }))} /></FL>
-                          <FL label="Duration"><input className="his-field" style={{ fontSize: 12 }} value={orderRow.duration} placeholder="3 days" onChange={e => setOrderRow(p => ({ ...p, duration: e.target.value }))} /></FL>
-                          <FL label="Priority">
-                            <select className="his-select" style={{ fontSize: 12, borderColor: orderRow.priority==="STAT"?C.red:orderRow.priority==="URGENT"?C.amber:"#e2e8f0" }} value={orderRow.priority} onChange={e => setOrderRow(p => ({ ...p, priority: e.target.value }))}>
-                              {["ROUTINE","URGENT","STAT"].map(o=><option key={o}>{o}</option>)}
-                            </select>
-                          </FL>
-                        </div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button onClick={addOrder} style={{ padding: "6px 18px", background: C.green, color: "white", border: "none", borderRadius: 7, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Add Order</button>
-                          <button onClick={() => setShowOrderRow(false)} style={{ padding: "6px 14px", background: "white", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 7, fontFamily: "'DM Sans',sans-serif", fontSize: 12, cursor: "pointer" }}>Cancel</button>
-                        </div>
-                      </div>
-                    )}
-                    {orders.length > 0 && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {orders.map((o, i) => (
-                          <div key={o._id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", background: "white", borderRadius: 6, border: `1px solid ${C.border}` }}>
-                            <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4, background: C.blueL, color: C.blue }}>{o.type}</span>
-                            <span style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>{o.instruction}</span>
-                            {o.route && <span style={{ fontSize: 10, color: C.muted }}>{o.route}</span>}
-                            {o.frequency && <span style={{ fontSize: 10, color: C.muted }}>{o.frequency}</span>}
-                            {o.priority !== "ROUTINE" && <span style={{ fontSize: 10, fontWeight: 700, color: o.priority==="STAT"?C.red:C.amber }}>{o.priority}</span>}
-                            <button onClick={() => setOrders(p => p.filter((_, ii) => ii !== i))} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontSize: 12, padding: 2 }}>×</button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                  {/* R7bp — Diagnosis / Investigations / Doctor Orders were removed
+                       from the Daily Progress note. Diagnosis lives on the dedicated
+                       "Patient Diagnosis" tile (PATCH /diagnosis), and all
+                       investigations + medication + IV / procedure orders live in
+                       the "Doctor Orders" module. Keeping them here duplicated the
+                       data entry and let the same diagnosis/order be entered in two
+                       places — confusing for the nurse, MAR, and ledger. SOAP narrative
+                       in the P (Plan) section above is still the place to describe
+                       intent; the actual orderable rows go through Doctor Orders. */}
+                  <div style={{ background: "#f0fdfa", border: `1px dashed ${C.teal}`, borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: C.muted }}>
+                    <i className="pi pi-info-circle" style={{ color: C.teal, fontSize: 13 }} />
+                    <span>
+                      <b style={{ color: C.teal }}>Diagnosis</b>, <b style={{ color: C.teal }}>investigations</b> &amp; <b style={{ color: C.teal }}>orders</b> are now entered from the dedicated <b>Patient Diagnosis</b> and <b>Doctor Orders</b> tiles. Use the P — Plan field above for narrative documentation only.
+                    </span>
                   </div>
                 </div>
               )}
@@ -2658,14 +2606,9 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   <FL label="Daily Goals / Targets">
                     <textarea className="his-textarea" style={{ minHeight: 60, borderColor: `${C.green}40` }} value={icu.dailyGoals} placeholder="Target SpO₂ >95%, MAP >65, urine >0.5ml/kg/hr, pain BPS <6, sedation RASS 0 to -2…" onChange={e=>setIcu(p=>({...p,dailyGoals:e.target.value}))} />
                   </FL>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Provisional Diagnosis"><input className="his-field" value={diag.provisional} placeholder="e.g. Septic shock — ARDS" onChange={e=>setDiag(p=>({...p,provisional:e.target.value}))} /></FL>
-                    <FL label="Patient Status">
-                      <select className="his-select" value={diag.status} onChange={e=>setDiag(p=>({...p,status:e.target.value}))}>
-                        {["Stable","Improving","Unchanged","Deteriorating","Critical","Moribund"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                  </div>
+                  {/* R7bp — Diagnosis/Status fields removed from ICU note. The active
+                       diagnosis lives on the Patient Diagnosis tile and is the single
+                       source of truth across all note types. */}
                 </div>
               )}
 

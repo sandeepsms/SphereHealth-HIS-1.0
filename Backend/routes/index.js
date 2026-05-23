@@ -63,6 +63,7 @@ const assessmentComplianceRoutes = require("./Compliance/assessmentComplianceRou
 const aiRoutes = require("./ai/aiRoutes");
 const marRoutes = require("./Clinical/marRoutes");
 const vitalSheetRoutes = require("./Vitals/vitalSheetRoutes");
+const intakeOutputRoutes = require("./Clinical/intakeOutputRoutes"); // R7bq-3 — I/O ledger
 
 // ═════════════════════════════════════════════════════════════
 // ROUTE REGISTRATION
@@ -174,6 +175,7 @@ router.use("/nursing-assessments", nursingAssessmentsRoutes);
 router.use("/compliance", assessmentComplianceRoutes);
 router.use("/ai", aiRoutes);
 router.use("/mar", marRoutes);
+router.use("/intake-output", intakeOutputRoutes); // R7bq-3 — fluid I/O ledger
 router.use("/nursing-charges", nursingChargesRoutes);
 router.use("/hospital-settings", hospitalSettingsRoutes);
 router.use("/vitalsheet", vitalSheetRoutes);

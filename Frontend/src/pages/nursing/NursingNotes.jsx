@@ -513,6 +513,11 @@ function NursingNotesContent({ selectedPatient }) {
   const [ivMedOrders,    setIvMedOrders]    = useState([]); // IV dilution volumes from Treatment Chart
   const [ivMedLoading,   setIvMedLoading]   = useState(false);
   const [includedMedIds, setIncludedMedIds] = useState(new Set());
+  // R7bq-5 — Auto-fed I/O ledger rows (source of truth). Populated from
+  // /api/intake-output. Drives the "Auto-recorded today" strip in the
+  // I/O modal — read-only, can be voided but never edited.
+  const [ioLedger,       setIoLedger]       = useState({ rows: [], totals: { in: 0, out: 0, net: 0 } });
+  const [ioLedgerLoading,setIoLedgerLoading]= useState(false);
   const [neuro,     setNeuro]     = useState({ gcse: "", gcsv: "", gcsm: "", pupils: "Equal & Reactive", pupilSizeL: "", pupilSizeR: "", lightReflex: "Present", seizure: false, orientation: "Alert & Oriented ×3", limbUL: "Normal", limbUR: "Normal", limbLL: "Normal", limbLR: "Normal" });
   const [pain,      setPain]      = useState({ scale: "NRS", score: "", location: "", type: "Acute", character: "Dull", onset: "Sudden", duration: "", frequency: "Constant", radiation: false, radiationSite: "", aggravating: "", relieving: "", painOnMovement: false, nonPharm: "", analgesicGiven: false, analgesic: "", analgesicRoute: "IV", analgesicTime: "", reassessScore: "", reassessTime: "" });
   const [wound,     setWound]     = useState({ type: "Surgical", site: "", length: "", width: "", depth: "", exudateAmt: "None", exudateType: "Serous", healingStage: "Granulating", surroundingSkin: "Intact", tunneling: false, undermining: false, odour: false, dressing: "", painDuring: "", nextDressingDate: "", swabSent: false });
@@ -592,6 +597,34 @@ function NursingNotesContent({ selectedPatient }) {
       })
       .catch(() => {})
       .finally(() => setIvMedLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeModal, patient]);
+
+  /* ── R7bq-5 — Fetch the I/O ledger (auto + manual rows from DB) when
+     the Intake/Output chip opens. This is the source of truth that the
+     MAR auto-hook and the hourly infusion cron write into. The old
+     ivMedOrders preview above stays as a checkbox helper for legacy
+     notes, but new rows render straight from the ledger below. ─── */
+  useEffect(() => {
+    if (activeModal !== "intake" || !patient) return;
+    const admissionId = patient?._id || patient?.admissionId;
+    const UHID = patient?.uhid || patient?.UHID || patient?.patientId?.uhid || patient?.patientId?.UHID;
+    if (!admissionId && !UHID) return;
+    const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay   = new Date(); endOfDay.setHours(23, 59, 59, 999);
+    setIoLedgerLoading(true);
+    const qs = new URLSearchParams();
+    if (admissionId) qs.append("admissionId", admissionId);
+    else if (UHID)   qs.append("UHID", UHID);
+    qs.append("from", startOfDay.toISOString());
+    qs.append("to",   endOfDay.toISOString());
+    axios.get(`${API_ENDPOINTS.INTAKE_OUTPUT}?${qs}`)
+      .then(({ data }) => {
+        const d = data?.data || { rows: [], totals: { in: 0, out: 0, net: 0 } };
+        setIoLedger(d);
+      })
+      .catch(() => setIoLedger({ rows: [], totals: { in: 0, out: 0, net: 0 } }))
+      .finally(() => setIoLedgerLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeModal, patient]);
 
@@ -2604,6 +2637,74 @@ function NursingNotesContent({ selectedPatient }) {
                 });
                 return (
                   <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+
+                    {/* ── R7bq-5 — Auto-recorded I/O Ledger (real DB rows)
+                         Populated by: MAR-given hook (R7bq-3) +
+                         hourly infusion cron (R7bq-4). Manual rows the
+                         nurse adds via the form below also land here
+                         on save. Read-only display; void via the × button. */}
+                    <div style={{ background:"#fafafa", border:"1.5px solid #d4d4d8", borderRadius:10, overflow:"hidden" }}>
+                      <div style={{ padding:"9px 14px", background:"#f4f4f5", borderBottom:"1px solid #d4d4d8", display:"flex", alignItems:"center", gap:8 }}>
+                        <i className="pi pi-clock" style={{ fontSize:13, color:"#52525b" }} />
+                        <span style={{ fontSize:12, fontWeight:700, color:"#27272a", textTransform:"uppercase", letterSpacing:".5px" }}>
+                          Today's Auto-Recorded I/O Ledger
+                        </span>
+                        {ioLedgerLoading && <i className="pi pi-spin pi-spinner" style={{ fontSize:11, marginLeft:"auto" }} />}
+                        {!ioLedgerLoading && (
+                          <span style={{ marginLeft:"auto", fontSize:11, color:"#52525b", fontWeight:600 }}>
+                            {ioLedger.rows.length} row{ioLedger.rows.length !== 1 ? "s" : ""}
+                            {ioLedger.rows.length > 0 && (
+                              <span style={{ marginLeft:8, fontFamily:"'DM Mono',monospace" }}>
+                                IN: <b style={{color:"#16a34a"}}>{ioLedger.totals.in}</b>
+                                {" · "}OUT: <b style={{color:"#dc2626"}}>{ioLedger.totals.out}</b>
+                                {" · "}NET: <b style={{color: ioLedger.totals.net >= 0 ? "#16a34a" : "#dc2626"}}>
+                                  {ioLedger.totals.net >= 0 ? "+" : ""}{ioLedger.totals.net} mL
+                                </b>
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                      {ioLedger.rows.length > 0 ? (
+                        <div style={{ maxHeight:260, overflowY:"auto" }}>
+                          {ioLedger.rows.map(r => {
+                            const isIn = r.direction === "IN";
+                            const srcBadge = {
+                              MAR: { label: "MAR", bg: "#fce7f3", color: "#be185d" },
+                              INFUSION_CRON: { label: "Infusion (auto)", bg: "#dbeafe", color: "#1d4ed8" },
+                              MANUAL: { label: "Manual", bg: "#f1f5f9", color: "#475569" },
+                              BLOOD_TRANSFUSION: { label: "Blood", bg: "#fef2f2", color: "#dc2626" },
+                              ORAL_INTAKE: { label: "Oral", bg: "#fef3c7", color: "#a16207" },
+                              CATHETER: { label: "Catheter", bg: "#fef3c7", color: "#a16207" },
+                              DRAIN: { label: "Drain", bg: "#fef3c7", color: "#a16207" },
+                            }[r.source] || { label: r.source, bg: "#f1f5f9", color: "#475569" };
+                            return (
+                              <div key={r._id} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 14px", borderBottom:"1px solid #e4e4e7", fontSize:12 }}>
+                                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10.5, color:"#71717a", minWidth:46 }}>
+                                  {new Date(r.ts).toLocaleTimeString("en-IN", { hour:"2-digit", minute:"2-digit", hour12:false })}
+                                </span>
+                                <span style={{ fontSize:9, fontWeight:800, padding:"1px 6px", borderRadius:3, background:srcBadge.bg, color:srcBadge.color, minWidth:80, textAlign:"center" }}>
+                                  {srcBadge.label}
+                                </span>
+                                <span style={{ fontSize:9, fontWeight:700, padding:"1px 6px", borderRadius:3, background:isIn?"#dcfce7":"#fee2e2", color:isIn?"#166534":"#991b1b" }}>
+                                  {r.direction}
+                                </span>
+                                <span style={{ flex:1, minWidth:0, color:"#27272a", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                                  {r.label || r.fluidType || "—"}
+                                </span>
+                                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:800, color: isIn ? "#16a34a" : "#dc2626", minWidth:62, textAlign:"right" }}>
+                                  {isIn ? "+" : "−"}{r.volumeML} mL
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : !ioLedgerLoading && (
+                        <div style={{ padding:"14px 18px", color:"#71717a", fontSize:11.5, fontStyle:"italic" }}>
+                          No auto-recorded entries today yet. They'll appear as the nurse marks doses given (Treatment Chart) and as the hourly infusion cron ticks for running drips.
+                        </div>
+                      )}
+                    </div>
 
                     {/* ── IV Medication Volumes from Treatment Chart ── */}
                     <div style={{ background:"#f0f9ff", border:"1.5px solid #bae6fd", borderRadius:10, overflow:"hidden" }}>

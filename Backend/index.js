@@ -927,6 +927,28 @@ const _cancelVisitorPassExpiry = (() => {
   return () => clearInterval(interval);
 })();
 
+// R7bq-4 — hourly intake sweep for running IV infusions. Walks every
+// active IV_Fluid order with infusionStarted set + infusionStopped
+// unset, and writes one IntakeOutputEntry row per (orderId, hourBucket)
+// using the doctor-ordered ml/hr rate. Idempotent via partial unique
+// index on intake_output_entries, so a restart mid-hour can't duplicate
+// rows. Stops automatically when totalVolume is reached.
+const _cancelInfusionIntakeCron = (() => {
+  const { arm } = require("./services/Clinical/infusionIntakeCron");
+  return arm({ intervalMs: 60 * 60 * 1000 });
+})();
+
+// R7bq-J1 — daily missed-dose sweep. Every 15 min, finds AR slots
+// with status="pending" whose scheduledDate is before today-midnight
+// and flips them to "missed" so the order-completion check can flip
+// the parent DoctorOrder InProgress → Completed once the course window
+// closes. Pre-J1, a past-day pending slot blocked the lifecycle forever
+// (NABH MOM.4 violation — "every dose must be accounted for").
+const _cancelMissedDoseCron = (() => {
+  const { arm } = require("./services/Clinical/missedDoseCron");
+  return arm({ intervalMs: 15 * 60 * 1000 });
+})();
+
 // R7bn-5 / D6-fix — twice-daily assessment compliance sweeper. Every 15 min
 // the sweeper flips status to OVERDUE / DUE_SOON for any assessment whose
 // nextDueAt has slipped past now. Frontend reads these via the
@@ -968,6 +990,8 @@ const _autoBillingInterval = {
     _cancelRetentionReview();
     _cancelVisitorPassExpiry();
     _cancelAssessmentComplianceSweeper();   // R7bn-5
+    _cancelInfusionIntakeCron();            // R7bq-4
+    _cancelMissedDoseCron();                // R7bq-J1
   },
 };
 
