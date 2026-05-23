@@ -186,6 +186,17 @@ router.post("/login", async (req, res) => {
         nurseDetails: user.nurseDetails,
         signature: user.signature || null,
         mustChangePassword: user.mustChangePassword === true,
+        // R7bc — include tokenVersion + isActive so the frontend's
+        // refreshIfStale focus-poll can compare them against /auth/me's
+        // fresh values without a false-positive mismatch. Pre-R7bc the
+        // login response omitted tokenVersion entirely, so for any user
+        // whose tokenVersion was > 0 (admin password reset, prior
+        // logout-all-devices, etc.), the very first focus event after
+        // login compared `0 ?? 0` (frontend) against `1` (DB) and force-
+        // logged them out — symptomatic in tab switch, alt-tab, AND
+        // screenshot-tool focus loss/regain cycles.
+        tokenVersion: user.tokenVersion || 0,
+        isActive: user.isActive !== false,
       },
     });
   } catch (err) {

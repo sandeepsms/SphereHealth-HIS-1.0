@@ -167,7 +167,24 @@ export function AuthProvider({ children }) {
     const { token: t, user: u, doctorProfile: dp, mustChangePassword: mcp } = res.data;
     setStoredToken(t); // R7y: writes to sessionStorage (per-tab)
     setToken(t);
-    setUser(u);
+    // R7bc — defensive backfill for tokenVersion (and isActive) on the
+    // login user object. The backend was already fixed to include both
+    // fields, but older deployments or in-flight cached client builds
+    // may still hit a backend that doesn't send them. Decode the JWT we
+    // just received and pull tokenVersion from its payload as a fallback
+    // — same value the backend's authenticate middleware will compare
+    // against on subsequent requests, so the frontend's refreshIfStale
+    // focus-poll won't compare undefined → 0 against fresh.tokenVersion
+    // and force-logout the user on a tab switch / screenshot.
+    const hydratedUser = { ...u };
+    if (hydratedUser.tokenVersion === undefined) {
+      const payload = _decodeJwtPayloadUnsafe(t);
+      if (payload && payload.tokenVersion !== undefined) {
+        hydratedUser.tokenVersion = payload.tokenVersion;
+      }
+    }
+    if (hydratedUser.isActive === undefined) hydratedUser.isActive = true;
+    setUser(hydratedUser);
     // R7bb-E/S2 — Backend can return `mustChangePassword: true` either at
     // top-level or nested on user. The ChangePasswordPrompt below will
     // block the UI until it's cleared. Login flow still completes (token
@@ -356,7 +373,23 @@ export function AuthProvider({ children }) {
       return inFlight;
     };
 
-    const onFocus = () => { refreshIfStale(); };
+    // R7bc — Debounce focus refresh to 5 minutes. Pre-R7bc every focus
+    // event (tab switch, Alt+Tab, screenshot-tool dismissal, OS popup
+    // dismissal, etc.) fired /auth/me. Even after R7bb cleaned up the
+    // interceptor side and R7bc gave login a tokenVersion, polling on
+    // every focus is still wasteful and any backend hiccup during the
+    // poll could surface as a disruption. We genuinely only need the
+    // staleness check when the user has been away long enough that an
+    // admin could realistically have changed their role / deactivated
+    // them — 5 minutes is more than enough.
+    let lastFocusRefreshAt = 0;
+    const FOCUS_REFRESH_DEBOUNCE_MS = 5 * 60 * 1000;
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - lastFocusRefreshAt < FOCUS_REFRESH_DEBOUNCE_MS) return;
+      lastFocusRefreshAt = now;
+      refreshIfStale();
+    };
     const onStorage = (e) => {
       // R7bb-FIX-D-22 / D8-HIGH-7 — cross-tab logout signal. When ANY
       // tab logs out it writes `his_logout_signal`; every other tab
