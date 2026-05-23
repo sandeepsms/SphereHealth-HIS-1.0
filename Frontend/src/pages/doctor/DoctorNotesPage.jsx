@@ -12,6 +12,18 @@ import "../../Components/clinical/clinical-forms.css";
 import "../../pages/patient/patient-file.css";
 import "./note-page-redesign.css";
 import { DoctorAssessmentContent } from "./DoctorAssessmentPage";
+// R7ax — Inline-embed the 4 surfaces that used to live as standalone
+// sidebar entries (Emergency / Discharge / Consent / MLC). Importing
+// the named *Content components lets DoctorNotes render them as panels
+// alongside Diagnosis / Orders / MAR / Team / Add Note / Timeline so
+// the "Back to All Sections" button returns to the tile grid without
+// a hard route change. Default-exported page versions still exist on
+// the standalone /emergency-assessment, /discharge-summary,
+// /consent-forms, /mlc routes for direct deep-links.
+import { EmergencyAssessmentPageContent } from "../emergency/EmergencyAssessmentPage";
+import { DischargeSummaryPageContent } from "../clinical/DischargeSummaryPage";
+import { ConsentFormPageContent } from "../clinical/ConsentFormPage";
+import { MLCPageContent } from "../mlc/MLCPage";
 import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import TreatmentTeamPanel from "../../Components/clinical/TreatmentTeamPanel";
@@ -1139,18 +1151,18 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     todayNotes > 0 && { label: `${todayNotes} today`, tone: "accent" },
                   ].filter(Boolean),
                 },
-                /* ── R7av — relocated from Doctor sidebar ──
+                /* ── R7av + R7ax — relocated from Doctor sidebar ──
                    Four full-page clinical surfaces (Emergency Assessment,
                    Discharge Summary, Consent Forms, MLC) used to be
-                   top-level sidebar items. They now live as tiles here
-                   so the doctor lands on a single per-patient hub. The
-                   tile's `path` field is what tells the onClick handler
-                   below to navigate(path) instead of setActiveTile(id);
-                   the standalone routes are unchanged so deep-links keep
-                   working. */
+                   top-level sidebar items. They now open INLINE as panels
+                   inside DoctorNotes (same pattern as Add a Note) so the
+                   "Back to All Sections" button returns straight to this
+                   tile grid — no hard route change, the doctor stays on
+                   the per-patient hub. Standalone routes are still
+                   registered in App.jsx so deep-links from email / print
+                   headers keep working. */
                 {
                   id: "emergency",
-                  path: "/emergency-assessment",
                   title: "Emergency Assessment",
                   subtitle: "ER triage + initial doctor assessment (NABH AAC.1)",
                   icon: "pi-exclamation-circle",
@@ -1160,7 +1172,6 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 },
                 {
                   id: "discharge",
-                  path: "/discharge-summary",
                   title: "Discharge Summary",
                   subtitle: "Final summary + follow-up + meds-on-discharge (AAC.4)",
                   icon: "pi-sign-out",
@@ -1170,7 +1181,6 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 },
                 {
                   id: "consent",
-                  path: "/consent-forms",
                   title: "Consent Forms",
                   subtitle: "Surgical / anaesthesia / blood-tx / HIV consents (PRE.4)",
                   icon: "pi-shield",
@@ -1180,7 +1190,6 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 },
                 {
                   id: "mlc",
-                  path: "/mlc",
                   title: "Medico-Legal (MLC)",
                   subtitle: "MLC register — police info, alleged history, exhibits",
                   icon: "pi-flag",
@@ -1192,9 +1201,12 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 <button
                   key={t.id}
                   type="button"
-                  // R7av — tiles with a `path` navigate to a standalone
-                  // route; legacy tiles flip `activeTile` to expand inline.
-                  onClick={() => t.path ? navigate(t.path) : setActiveTile(t.id)}
+                  // R7ax — every tile (legacy + the 4 R7av relocations)
+                  // now opens inline via setActiveTile. The standalone
+                  // routes still exist for direct deep-links from email
+                  // / print headers; the 4 inline panels below match
+                  // those routes' content components.
+                  onClick={() => setActiveTile(t.id)}
                   className="dnp-tile"
                   style={{ "--tile-color": t.color, "--tile-tint": t.tint }}
                   aria-label={`Open ${t.title}`}
@@ -1481,6 +1493,35 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               </div>
             </div>
           </div>
+          )}
+
+          {/* ══ R7ax — Embedded panels for the 4 relocated surfaces ══
+              Each block mounts the named *Content component exported by
+              the corresponding page. The component handles its own data
+              loading off the selectedPatient prop, so Doctor Notes just
+              passes through `patient` (its current selection state).
+              "Back to All Sections" (rendered above when activeTile !=
+              null) flips activeTile back to null and the tile grid
+              reappears. */}
+          {patient && activeTile === "emergency" && (
+            <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
+              <EmergencyAssessmentPageContent selectedPatient={patient} />
+            </div>
+          )}
+          {patient && activeTile === "discharge" && (
+            <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
+              <DischargeSummaryPageContent selectedPatient={patient} />
+            </div>
+          )}
+          {patient && activeTile === "consent" && (
+            <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
+              <ConsentFormPageContent selectedPatient={patient} />
+            </div>
+          )}
+          {patient && activeTile === "mlc" && (
+            <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
+              <MLCPageContent selectedPatient={patient} />
+            </div>
           )}
 
           {/* ── Notes Stats Bar ── */}

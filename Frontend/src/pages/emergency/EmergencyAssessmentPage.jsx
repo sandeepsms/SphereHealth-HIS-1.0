@@ -111,7 +111,7 @@ function VitalBox({ label, value, unit, onChange, critical }) {
 }
 
 /* ══════════════════════════════════════════════════════════ */
-function EmergencyAssessmentPageContent({ selectedPatient }) {
+export function EmergencyAssessmentPageContent({ selectedPatient }) {
   const { uhid: uhidParam } = useParams();
   const navigate  = useNavigate();
   const { user }  = useAuth();

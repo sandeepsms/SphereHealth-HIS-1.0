@@ -54,7 +54,12 @@ const INJURY_TYPES = [
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 
-export default function MLCPage() {
+/* R7ax — Named content export so DoctorNotes can embed the MLC dashboard
+   inline (Back to All Sections returns to the tile grid). selectedPatient
+   is accepted but currently ignored — the MLC dashboard intentionally
+   shows all MLCs for the logged-in doctor across patients. A future
+   enhancement could pre-filter by selectedPatient.UHID. */
+export function MLCPageContent({ selectedPatient: _selectedPatient } = {}) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const { user } = useAuth();
@@ -988,3 +993,8 @@ function Field({ label, value, mono, wide }) {
     </div>
   );
 }
+
+/* R7ax — Default export: same component, kept for the standalone /mlc
+   route registered in App.jsx. DoctorNotes uses the named MLCPageContent
+   export above so it can embed the dashboard inline. */
+export default MLCPageContent;

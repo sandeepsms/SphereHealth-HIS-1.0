@@ -729,7 +729,7 @@ function ConsentPrintView({ data, type, onClose }) {
 /* ══════════════════════════════════════
    MAIN PAGE
 ══════════════════════════════════════ */
-function ConsentFormPageContent({ selectedPatient }) {
+export function ConsentFormPageContent({ selectedPatient }) {
   const { user } = useAuth();
 
   // Views: "catalogue" | "form" | "list"

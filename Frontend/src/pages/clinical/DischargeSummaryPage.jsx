@@ -862,7 +862,7 @@ function PrintModal({ data, dept, onClose }) {
 /* ══════════════════════════════════════
    MAIN PAGE
 ══════════════════════════════════════ */
-function DischargeSummaryPageContent({ selectedPatient }) {
+export function DischargeSummaryPageContent({ selectedPatient }) {
   const { user } = useAuth();
   const [view, setView] = useState("catalogue"); // catalogue | form
   const [selectedDept, setSelectedDept] = useState(null);
