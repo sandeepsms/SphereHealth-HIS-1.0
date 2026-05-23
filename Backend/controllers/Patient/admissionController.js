@@ -208,7 +208,10 @@ class AdmissionController {
   // Admissions store `attendingDoctorId` as the Doctor model's _id (not the
   // User _id), so we resolve the doctor profile first and pass THAT id.
   getMyPatients = handle(async (req, res) => {
-    if (!req.user?.id) return res.status(401).json({ success: false, message: "Not authenticated" });
+    // R7br: defensive null-check — authenticate() guarantees req.user; if
+    // it's missing the bug is upstream. Return 500 (not 401) so the frontend
+    // interceptor doesn't trigger an auto-logout cascade.
+    if (!req.user?.id) return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set" });
     if (!req.doctorProfile?._id) {
       return res.status(404).json({ success: false, message: "No linked Doctor record" });
     }
@@ -223,7 +226,8 @@ class AdmissionController {
   // could never match attendingDoctorId. Result was isOwner:false for every
   // logged-in doctor, even on their own patients.
   checkAccess = handle(async (req, res) => {
-    if (!req.user?.id) return res.status(401).json({ success: false, message: "Not authenticated" });
+    // R7br: same defensive null-check as getMyPatients — 500 (not 401).
+    if (!req.user?.id) return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set" });
     const { admission, isOwner } = await AdmissionService.checkDoctorAccess(
       req.params.id,
       {

@@ -185,9 +185,17 @@ export function AuthProvider({ children }) {
     if (!user) return;
 
     let cancelled = false;
+    // R7br: dedup /auth/me calls. Rapid Alt+Tab can fire 4+ focus events in
+    // a second; without this guard each fires a parallel /auth/me, all four
+    // landing close together — if Mongo replica lag returns even one
+    // transient 401, the interceptor's counter trips immediately. Shared
+    // promise across concurrent callers; reset to null on settle.
+    let inFlight = null;
     const refreshIfStale = async () => {
       const t = getAuthToken();
       if (!t) return;
+      if (inFlight) return inFlight;       // another call already in flight
+      inFlight = (async () => {
       try {
         // R7bm-F9: mark as background poll so a transient 401 from /auth/me
         // (mongo replica blip, network hiccup) doesn't punt the user. The
@@ -224,6 +232,8 @@ export function AuthProvider({ children }) {
         // A real session termination will surface on the user's next
         // foreground action via the global interceptor (TOKEN_STALE etc.).
       }
+      })().finally(() => { inFlight = null; });
+      return inFlight;
     };
 
     const onFocus = () => { refreshIfStale(); };

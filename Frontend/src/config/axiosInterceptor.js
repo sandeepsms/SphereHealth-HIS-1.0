@@ -63,22 +63,36 @@ axios.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// R7bm-F9: explicit codes the BACKEND uses to signal "session is over,
-// nothing the client can do". Anything else 401 is treated as a transient
-// blip and given one retry's worth of grace before forcing redirect.
+// R7bm-F9 / R7br: explicit codes the BACKEND uses to signal "session is
+// over, nothing the client can do". Anything else 401 is treated as a
+// transient blip and given two retries' worth of grace before forcing
+// redirect.
+//
+// R7br expanded this set so EVERY 401 from `authenticate()` carries a code
+// — pre-R7br three paths returned naked 401s (no code, missing token,
+// generic verify failure) which made the interceptor wait for a second
+// 401 before logging out. Now all auth-middleware 401s are immediate
+// hard-logouts, and the transient counter only fires for true blips
+// (Mongo replica lag in non-auth controllers).
 const HARD_LOGOUT_CODES = new Set([
   "TOKEN_STALE",        // tokenVersion mismatch (remote logout / role change)
   "ACCOUNT_INACTIVE",   // user.isActive = false / Terminated / Suspended
   "ROLE_CHANGED",       // role rotated since token was issued
   "USER_DELETED",       // user record gone
   "TOKEN_REVOKED",      // jti in revocation list
+  "TOKEN_EXPIRED",      // R7br — natural session end (jwt exp)
+  "TOKEN_INVALID",      // R7br — malformed/forged JWT
+  "NO_TOKEN",           // R7br — Authorization header missing on a protected route
 ]);
 
-// Rolling counter for transient 401s. Two in a row (within
-// `TRANSIENT_WINDOW_MS`) trigger the redirect; a single one is swallowed.
+// R7br: rolling counter for transient 401s. Two within
+// `TRANSIENT_WINDOW_MS` trigger the redirect; a single one is swallowed.
+// Window widened from 8s → 12s — 8s was too tight for high-latency networks
+// (3G/5G in low-bandwidth wards), where a single Mongo blip + retry could
+// land back-to-back and force-logout even though both are recoverable.
 let _transient401Count = 0;
 let _transient401FirstAt = 0;
-const TRANSIENT_WINDOW_MS = 8_000;
+const TRANSIENT_WINDOW_MS = 12_000;
 const TRANSIENT_THRESHOLD = 2;
 
 function _redirectToLogin() {

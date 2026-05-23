@@ -9,7 +9,11 @@ const { toNum }      = require("../../utils/money");
 exports.getCurrentSession = async (req, res, next) => {
   try {
     const cashierId = req.user?._id;
-    if (!cashierId) return res.status(401).json({ success: false, message: "Authentication required" });
+    // R7br: defensive null-check — if we got here, authenticate() already
+    // validated the token, so missing req.user._id is an internal bug, not
+    // an auth failure. 500 (not 401) so the frontend interceptor doesn't
+    // trip the transient-counter cascade and force-logout the cashier.
+    if (!cashierId) return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set after authenticate" });
     const session = await CashierSession.findOne({ cashierId, status: "OPEN" }).lean();
     res.json({ success: true, data: session || null });
   } catch (e) { next(e); }
@@ -19,7 +23,11 @@ exports.getCurrentSession = async (req, res, next) => {
 exports.openSession = async (req, res, next) => {
   try {
     const cashierId = req.user?._id;
-    if (!cashierId) return res.status(401).json({ success: false, message: "Authentication required" });
+    // R7br: defensive null-check — if we got here, authenticate() already
+    // validated the token, so missing req.user._id is an internal bug, not
+    // an auth failure. 500 (not 401) so the frontend interceptor doesn't
+    // trip the transient-counter cascade and force-logout the cashier.
+    if (!cashierId) return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set after authenticate" });
     const openingCash = toNum(req.body?.openingCash);
     if (!Number.isFinite(openingCash) || openingCash < 0) {
       return res.status(400).json({ success: false, message: "openingCash must be a non-negative number" });
@@ -83,7 +91,11 @@ exports.openSession = async (req, res, next) => {
 exports.closeSession = async (req, res, next) => {
   try {
     const cashierId = req.user?._id;
-    if (!cashierId) return res.status(401).json({ success: false, message: "Authentication required" });
+    // R7br: defensive null-check — if we got here, authenticate() already
+    // validated the token, so missing req.user._id is an internal bug, not
+    // an auth failure. 500 (not 401) so the frontend interceptor doesn't
+    // trip the transient-counter cascade and force-logout the cashier.
+    if (!cashierId) return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set after authenticate" });
     const session = await CashierSession.findById(req.params.id);
     if (!session) return res.status(404).json({ success: false, message: "Shift not found" });
     if (String(session.cashierId) !== String(cashierId) && req.user.role !== "Admin") {

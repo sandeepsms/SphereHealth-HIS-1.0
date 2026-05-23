@@ -97,7 +97,9 @@ exports.getAllDoctors = async (req, res) => {
 /* ---------------------------------- */
 exports.getMyDoctorProfile = async (req, res) => {
   try {
-    if (!req.user?.id) return res.status(401).json({ success: false, message: "Not authenticated" });
+    // R7br: defensive null-check — authenticate() guarantees req.user; if it's
+    // missing the bug is upstream. 500 (not 401) so frontend doesn't logout.
+    if (!req.user?.id) return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set" });
     if (req.user.role !== "Doctor")
       return res.status(403).json({ success: false, message: "Only doctor users have a doctor profile" });
 
