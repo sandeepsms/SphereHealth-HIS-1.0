@@ -1321,32 +1321,25 @@ function NursingNotesContent({ selectedPatient }) {
                       </div>
                     </div>
 
-                    {/* Right: action buttons */}
-                    <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                      {[
-                        { label: 'Care Plan',       icon: 'pi-clipboard',  action: () => navigate('/nursing-care-plan') },
-                        { label: 'Vitals Trend',    icon: 'pi-chart-bar',  action: () => navigate('/vitalsView') },
-                        { label: 'Print / PDF',     icon: 'pi-print',      action: () => setShowReport(true), accent: true },
-                        { label: 'IPD Assessment',  icon: 'pi-file-check', action: () => navigate(`/ipd-assessment/${uhidVal}`), accent: true },
-                        { label: 'Change Patient',  icon: 'pi-arrows-h',   action: () => { setPatient(null); setNotes([]); setSearchUHID(''); }, danger: true },
-                      ].map(b => (
-                        <button key={b.label} onClick={b.action} style={{
-                          padding: '7px 13px',
-                          border: `1.5px solid ${b.danger ? '#fca5a5' : b.accent ? `${C.primary}35` : C.border}`,
-                          borderRadius: 9,
-                          background: b.danger ? C.redL : b.accent ? C.primaryL : 'white',
-                          fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                          color: b.danger ? C.red : b.accent ? C.primary : C.text,
-                          display: 'flex', alignItems: 'center', gap: 5,
-                          transition: 'all .15s',
-                          boxShadow: b.accent ? `0 2px 8px ${C.primary}20` : 'none',
-                        }}
-                          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 4px 14px ${b.danger ? C.red : C.primary}25`; }}
-                          onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = b.accent ? `0 2px 8px ${C.primary}20` : 'none'; }}>
-                          <i className={`pi ${b.icon}`} style={{ fontSize: 11 }} /> {b.label}
-                        </button>
-                      ))}
-                    </div>
+                    {/* R7be — Right: simplified to Change Patient only (mirrors
+                        Doctor Notes' cleaner patient header). Care Plan / Vitals
+                        Trend / Print-PDF / IPD Assessment were previously inline
+                        buttons here; they now live as tiles in the grid below,
+                        same UX pattern as the doctor's per-patient hub. */}
+                    <button
+                      onClick={() => { setPatient(null); setNotes([]); setSearchUHID(''); }}
+                      style={{
+                        padding: '7px 13px', border: '1.5px solid #fca5a5',
+                        borderRadius: 9, background: C.redL,
+                        fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                        color: C.red, display: 'flex', alignItems: 'center', gap: 5,
+                        transition: 'all .15s', flexShrink: 0,
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 4px 14px ${C.red}25`; }}
+                      onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
+                    >
+                      <i className="pi pi-arrows-h" style={{ fontSize: 11 }} /> Change Patient
+                    </button>
                   </div>
 
                   {/* Bottom: diagnosis + consultant + allergies */}
@@ -1442,11 +1435,61 @@ function NursingNotesContent({ selectedPatient }) {
                       : null,
                   ].filter(Boolean),
                 },
+                /* ── R7be — relocated from patient-header action buttons ──
+                   Care Plan / Vitals Trend / IPD Assessment / Print&PDF used
+                   to be inline pills above the tile grid; moving them into
+                   the grid as full tiles matches Doctor Notes' clean
+                   single-hub UX. `action` field fires a custom handler
+                   (navigate, openReport, etc.); the onClick below falls
+                   through to setActiveTile(id) for legacy inline tiles. */
+                {
+                  id: "careplan-nav",
+                  title: "Care Plan",
+                  subtitle: "Nursing care plan (NABH COP.8)",
+                  icon: "pi-heart-fill",
+                  color: "#16a34a",
+                  tint: "#dcfce7",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                  action: () => navigate("/nursing-care-plan"),
+                },
+                {
+                  id: "vitalstrend-nav",
+                  title: "Vitals Trend",
+                  subtitle: "BP / HR / RR / SpO₂ / Temp graphs over time",
+                  icon: "pi-chart-bar",
+                  color: "#0891b2",
+                  tint: "#cffafe",
+                  badges: [{ label: "Open", tone: "info" }],
+                  action: () => navigate("/vitalsView"),
+                },
+                {
+                  id: "ipdassessment-nav",
+                  title: "IPD Initial Assessment",
+                  subtitle: "Nursing admission assessment (NABH AAC.1)",
+                  icon: "pi-file-check",
+                  color: "#d97706",
+                  tint: "#fef3c7",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                  action: () => navigate(`/ipd-assessment/${uhidVal}`),
+                },
+                {
+                  id: "print-nav",
+                  title: "Print / PDF Report",
+                  subtitle: "Nursing patient report for insurance / file",
+                  icon: "pi-print",
+                  color: "#9333ea",
+                  tint: "#f3e8ff",
+                  badges: [{ label: "Print", tone: "info" }],
+                  action: () => setShowReport(true),
+                },
               ].map(t => (
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setActiveTile(t.id)}
+                  // R7be — tiles with an `action` fire a custom handler
+                  // (navigate / openReport); legacy tiles fall through to
+                  // setActiveTile(id) to expand inline below the header.
+                  onClick={() => t.action ? t.action() : setActiveTile(t.id)}
                   className="dnp-tile"
                   style={{ "--tile-color": t.color, "--tile-tint": t.tint }}
                   aria-label={`Open ${t.title}`}
