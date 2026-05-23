@@ -62,8 +62,13 @@ const lbl = {
    Doctor Notes' "Select Note Type" (R7aw) and the /consent-forms picker.
    Each card shows icon + label + NABH code + description. */
 const MODULES = [
-  { id: "initial",   label: "Initial Assessment",         nabh: "COP.2",        description: "Comprehensive admission assessment + care plan initiation",
-    icon: "pi-clipboard",            border: "#f9a8d4", color: "#be185d", bg: "#fdf2f8" },
+  // R7bj — "Initial Assessment" module removed from this inline picker.
+  // The COP.2 nurse Initial Assessment is filled on the dedicated full-
+  // page form at /nursing-initial-assessment (reached via the top-level
+  // "IPD Initial Assessment" tile, NABH AAC.1). Keeping a second
+  // inline-only entry point was redundant and produced two saves of
+  // the same assessment in two different shapes — the standalone page
+  // is the source of truth.
   { id: "daily",     label: "Daily Assessment",           nabh: "NS.4",         description: "Shift-wise nursing assessment — head-to-toe review",
     icon: "pi-calendar-plus",        border: "#bae6fd", color: "#0369a1", bg: "#e0f2fe" },
   { id: "vitals",    label: "Vital Signs",                nabh: "NS.4",         description: "BP / HR / RR / SpO₂ / Temp / Pain / GCS / Urine",
@@ -455,8 +460,10 @@ function NursingNotesContent({ selectedPatient }) {
        2. Patient already has at least one nurse note saved (legacy
           admissions where nurseCompleted was never persisted due to
           the Mongoose strict-mode bug that has since been fixed).
-     The gate ONLY locks NEW work — the "initial" tile itself stays
-     unlocked, plus read-only history / vitals trend stays viewable.
+     R7bj — Only the "IPD Initial Assessment" top-level tile (NABH
+     AAC.1, full /nursing-initial-assessment page) stays unlocked
+     while the gate is active. The inline COP.2 module that used to
+     live inside "Add a Care Note" was deleted in R7bj.
   ── */
   const nurseAssessmentDone =
     !!patient?.initialAssessment?.nurseCompleted || (notes?.length || 0) > 0;
@@ -914,9 +921,12 @@ function NursingNotesContent({ selectedPatient }) {
   };
 
   const openModal = (id) => {
-    /* Gate: block non-initial modules until nursing initial assessment is done */
-    if (gateActive && id !== "initial") {
-      toast.error("⛔ Nursing Initial Assessment must be completed first (NABH COP.2). Click 'Write Initial Assessment' to proceed.", { autoClose: 5000 });
+    /* R7bj — Gate: block ALL modules until the standalone Nursing
+       Initial Assessment is filed. The "initial" inline module is gone;
+       the only entry point now is the top-level "IPD Initial
+       Assessment" tile (NABH AAC.1 → /nursing-initial-assessment). */
+    if (gateActive) {
+      toast.error("⛔ Open the 'IPD Initial Assessment' tile and complete the Nursing Initial Assessment first (NABH AAC.1 / COP.2).", { autoClose: 5500 });
       return;
     }
     setActiveModal(id);
@@ -1392,11 +1402,10 @@ function NursingNotesContent({ selectedPatient }) {
                   icon: "pi-plus-circle",
                   color: "#0d9488",
                   tint: "#ccfbf1",
-                  badges: [
-                    gateActive
-                      ? { label: "Initial Assessment required", tone: "warn" }
-                      : { label: "Ready", tone: "ok" },
-                  ],
+                  // R7bj — Per-tile "Initial Assessment required" badge
+                  // collapsed into the global locked badge (rendered by
+                  // the tile loop below when `locked` is true).
+                  badges: [{ label: "Ready", tone: "ok" }],
                 },
                 {
                   id: "equipment",
@@ -1471,18 +1480,17 @@ function NursingNotesContent({ selectedPatient }) {
                   action: () => setShowReport(true),
                 },
               ].map(t => {
-                // R7bi — Initial Assessment gate. When the nurse has not
-                // yet signed the Initial Assessment for THIS admission,
-                // ALL tiles except the two entry points to the assessment
-                // itself are locked:
-                //   • "addnote" — Add a Care Note → MODULES grid → "initial"
-                //   • "ipdassessment-nav" — direct nav to the full-page
-                //     /nursing-initial-assessment form
-                // Everything else (orders, MAR, equipment, timeline, care
-                // plan, vitals trend, print) stays locked until the nurse
-                // files the Initial Assessment.
-                const isAssessmentTile =
-                  t.id === "addnote" || t.id === "ipdassessment-nav";
+                // R7bj — Initial Assessment gate. The ONLY entry point
+                // to the nurse Initial Assessment is now the standalone
+                // "IPD Initial Assessment" tile (NABH AAC.1 → the full
+                // /nursing-initial-assessment form). The previous inline
+                // COP.2 "Initial Assessment" module inside Add a Care
+                // Note was removed in R7bj — having two entry points was
+                // confusing and produced duplicate-shape saves.
+                //
+                // Until the nurse files that assessment, ALL other tiles
+                // (including Add a Care Note) stay locked.
+                const isAssessmentTile = t.id === "ipdassessment-nav";
                 const locked = gateActive && !isAssessmentTile;
                 return (
                 <button
@@ -1493,7 +1501,7 @@ function NursingNotesContent({ selectedPatient }) {
                   // setActiveTile(id) to expand inline below the header.
                   onClick={() => {
                     if (locked) {
-                      toast.error("⛔ Complete the Nursing Initial Assessment first (NABH COP.2). Open 'Add a Care Note' → Initial Assessment.", { autoClose: 5000 });
+                      toast.error("⛔ Complete the Nursing Initial Assessment first — open the 'IPD Initial Assessment' tile (NABH AAC.1).", { autoClose: 5500 });
                       return;
                     }
                     return t.action ? t.action() : setActiveTile(t.id);
@@ -1594,30 +1602,12 @@ function NursingNotesContent({ selectedPatient }) {
               </button>
             </div>
 
-          {/* ── Initial Assessment Gate Banner ── */}
-          {gateActive && (
-            <div style={{ background: "#fef2f2", border: "2px solid #fca5a5", borderRadius: 12, padding: "16px 20px", marginBottom: 14, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 4px 16px rgba(220,38,38,.12)" }}>
-              <div style={{ width: 44, height: 44, borderRadius: 10, background: "#fee2e2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <i className="pi pi-lock" style={{ fontSize: 20, color: "#dc2626" }} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 800, fontSize: 14, color: "#991b1b", display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ background: "#dc2626", color: "white", fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 4, letterSpacing: ".5px" }}>MANDATORY</span>
-                  Nursing Initial Assessment not completed — NABH COP.2
-                </div>
-                <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 4 }}>
-                  Nursing Initial Assessment must be completed before writing any other care notes (vitals, wound, MEWS, daily assessment, etc.) for this patient.
-                </div>
-              </div>
-              <button
-                onClick={() => openModal("initial")}
-                style={{ padding: "10px 22px", background: "#dc2626", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", boxShadow: "0 4px 14px rgba(220,38,38,.35)", flexShrink: 0 }}>
-                <i className="pi pi-clipboard" style={{ marginRight: 6, fontSize: 13 }} />
-                Write Initial Assessment
-              </button>
-            </div>
-          )}
-          {/* gate banners removed */}
+          {/* R7bj — Inline gate banner removed.
+              The "Add a Care Note" top-level tile is now itself locked
+              when gateActive is true, so this panel never renders while
+              the gate is on. Gating is enforced at the tile-grid level
+              with a 🔒 badge + redirect toast pointing at "IPD Initial
+              Assessment" (NABH AAC.1). */}
 
           {/* ── Nursing Notes Quick-View Banner (click → jump to timeline) ── */}
           {patient && (
@@ -1655,36 +1645,29 @@ function NursingNotesContent({ selectedPatient }) {
                 <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 3 }}>Select Note Type</div>
                 <div style={{ fontSize: 12, color: C.muted }}>
                   Choose the appropriate NABH-compliant clinical note for this patient encounter
-                  {gateActive && (
-                    <span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 6, background: "#fffbeb", color: "#92400e", fontWeight: 700, fontSize: 11 }}>
-                      Initial Assessment required first
-                    </span>
-                  )}
                 </div>
               </div>
+              {/* R7bj — Per-module lock logic removed. The parent "Add a
+                  Care Note" tile is already lockedwhen the Nursing Initial
+                  Assessment is not yet filed, so this picker only renders
+                  when the gate is OFF. Modules are always clickable here. */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
-                {MODULES.map(m => {
-                  const locked = gateActive && m.id !== "initial";
-                  const showInitialReq  = m.id === "initial" && gateActive;
-                  const showInitialDone = m.id === "initial" && !gateActive;
-                  return (
+                {MODULES.map(m => (
                     <button
                       key={m.id}
                       type="button"
-                      onClick={() => !locked && openModal(m.id)}
-                      disabled={locked}
-                      title={locked ? "Complete Nursing Initial Assessment first" : m.label}
+                      onClick={() => openModal(m.id)}
+                      title={m.label}
                       style={{
                         background: "white",
                         border: `2px solid ${C.border}`,
                         borderRadius: 12, padding: "14px 12px",
-                        cursor: locked ? "not-allowed" : "pointer",
+                        cursor: "pointer",
                         textAlign: "left", transition: "all .15s",
                         display: "flex", flexDirection: "column", gap: 6,
-                        opacity: locked ? 0.55 : 1,
                         position: "relative",
                       }}
-                      onMouseEnter={e => { if (!locked) e.currentTarget.style.borderColor = m.color + "70"; }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = m.color + "70"; }}
                       onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; }}
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1693,32 +1676,21 @@ function NursingNotesContent({ selectedPatient }) {
                           background: m.bg,
                           display: "flex", alignItems: "center", justifyContent: "center",
                         }}>
-                          <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 14, color: m.color }} />
+                          <i className={`pi ${m.icon}`} style={{ fontSize: 14, color: m.color }} />
                         </span>
                         <div style={{ minWidth: 0, flex: 1 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{m.label}</span>
-                            {m.dot && !locked && (
+                            {m.dot && (
                               <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.color, flexShrink: 0 }} aria-hidden />
                             )}
                           </div>
                           <div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>{m.nabh}</div>
                         </div>
-                        {showInitialReq && (
-                          <span style={{ padding: "2px 7px", borderRadius: 5, background: "#fef3c7", color: "#92400e", fontWeight: 800, fontSize: 9.5, letterSpacing: ".5px" }}>
-                            REQ
-                          </span>
-                        )}
-                        {showInitialDone && (
-                          <span style={{ padding: "2px 7px", borderRadius: 5, background: "#dcfce7", color: "#166534", fontWeight: 800, fontSize: 9.5, letterSpacing: ".5px" }}>
-                            ✓ DONE
-                          </span>
-                        )}
                       </div>
                       <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.4 }}>{m.description}</div>
                     </button>
-                  );
-                })}
+                ))}
               </div>
             </div>
           </div>
