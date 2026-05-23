@@ -521,19 +521,30 @@ const updateDiagnosis = async (id, data, actor = {}) => {
   // so the Discharge Summary (which reads from admission) couldn't
   // auto-fill diagnosis and the doctor had to re-enter it. NABH HIC.5
   // expects traceable single-source-of-truth for the patient's working
-  // diagnosis. Sync to admission whenever the doctor changes diagnosis.
-  if (note.admissionId) {
-    try {
-      const Admission = require("../../models/Patient/admissionModel");
-      const $set = {};
-      if (note.provisionalDiagnosis) $set.provisionalDiagnosis = note.provisionalDiagnosis;
-      if (note.finalDiagnosis)        $set.finalDiagnosis = note.finalDiagnosis;
-      if (Object.keys($set).length) {
-        await Admission.findByIdAndUpdate(note.admissionId, { $set });
+  // diagnosis.
+  //
+  // R7bo-LIVE-fix: DoctorNotes schema doesn't carry admissionId (only
+  // ipdNo + patientUHID), so look up the active admission by UHID and
+  // sync there. Falls back to ipdNo if UHID isn't on the note.
+  try {
+    const Admission = require("../../models/Patient/admissionModel");
+    const $set = {};
+    if (note.provisionalDiagnosis) $set.provisionalDiagnosis = note.provisionalDiagnosis;
+    if (note.finalDiagnosis)        $set.finalDiagnosis = note.finalDiagnosis;
+    if (Object.keys($set).length) {
+      const filter = note.admissionId
+        ? { _id: note.admissionId }
+        : note.patientUHID || note.UHID
+          ? { UHID: note.patientUHID || note.UHID, status: "Active" }
+          : note.ipdNo
+            ? { admissionNumber: note.ipdNo, status: "Active" }
+            : null;
+      if (filter) {
+        await Admission.findOneAndUpdate(filter, { $set }, { new: true });
       }
-    } catch (e) {
-      console.error("[doctorNotes] diagnosis sync to admission failed:", e.message);
     }
+  } catch (e) {
+    console.error("[doctorNotes] diagnosis sync to admission failed:", e.message);
   }
 
   // R7bn-1 / D9-fix: ClinicalAudit emit on diagnosis update.

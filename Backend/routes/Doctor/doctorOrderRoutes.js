@@ -141,7 +141,7 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
         req,
         event: order.orderType === "BloodTransfusion"
           ? "TRANSFUSION_ORDERED"
-          : order.orderType === "Infusion"
+          : order.orderType === "IV_Fluid"
             ? "INFUSION_STARTED"
             : "ORDER_CREATED",
         UHID: order.UHID,
