@@ -50,31 +50,53 @@ const lbl = {
   textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 5,
 };
 
-/* ── Module definitions ── */
+/* ── Module definitions ──
+   R7bf — `nabh` (chapter code) + `description` (one-line summary) added to
+   each entry so the picker grid renders the same card layout used by
+   Doctor Notes' "Select Note Type" (R7aw) and the /consent-forms picker.
+   Each card shows icon + label + NABH code + description. */
 const MODULES = [
-  { id: "vitals",    label: "Vital Signs",               icon: "pi-heart",                   border: "#bfdbfe", color: "#1d4ed8", bg: "#dbeafe" },
-  { id: "neuro",     label: "Neuro / GCS",               icon: "pi-eye",                     border: "#d8b4fe", color: C.purple, bg: C.purpleL },
-  { id: "pain",      label: "Pain Assessment",            icon: "pi-exclamation-circle",      border: "#fcd34d", color: "#b45309", bg: C.amberL },
-  { id: "intake",    label: "Intake / Output",            icon: "pi-sort-alt",                border: "#93c5fd", color: C.accent, bg: C.accentL },
-  { id: "iv",        label: "IV Infusion",                icon: "pi-plus-circle",             border: "#6ee7b7", color: C.teal, bg: C.tealL },
-  { id: "blood",     label: "Blood Transfusion",          icon: "pi-heart-fill",              border: "#fca5a5", color: "#9f1239", bg: "#fecaca", dot: true },
-  { id: "wound",     label: "Wound / Dressing",           icon: "pi-pencil",                  border: "#fca5a5", color: C.red, bg: C.redL },
-  { id: "skin",      label: "Skin / Pressure Assessment", icon: "pi-th-large",                border: "#86efac", color: "#166534", bg: C.greenL },
-  { id: "fall",      label: "Fall Risk (Morse)",          icon: "pi-exclamation-triangle",    border: "#fdba74", color: C.orange, bg: C.orangeL },
+  { id: "initial",   label: "Initial Assessment",         nabh: "COP.2",        description: "Comprehensive admission assessment + care plan initiation",
+    icon: "pi-clipboard",            border: "#f9a8d4", color: "#be185d", bg: "#fdf2f8" },
+  { id: "daily",     label: "Daily Assessment",           nabh: "NS.4",         description: "Shift-wise nursing assessment — head-to-toe review",
+    icon: "pi-calendar-plus",        border: "#bae6fd", color: "#0369a1", bg: "#e0f2fe" },
+  { id: "vitals",    label: "Vital Signs",                nabh: "NS.4",         description: "BP / HR / RR / SpO₂ / Temp / Pain / GCS / Urine",
+    icon: "pi-heart",                border: "#bfdbfe", color: "#1d4ed8", bg: "#dbeafe" },
+  { id: "neuro",     label: "Neuro / GCS",                nabh: "AAC.4",        description: "GCS, pupils, motor, posture (NIHSS for stroke)",
+    icon: "pi-eye",                  border: "#d8b4fe", color: C.purple, bg: C.purpleL },
+  { id: "pain",      label: "Pain Assessment",            nabh: "AAC.4",        description: "VAS / FLACC / numeric — onset, character, relief",
+    icon: "pi-exclamation-circle",   border: "#fcd34d", color: "#b45309", bg: C.amberL },
+  { id: "mews",      label: "MEWS Score",                 nabh: "COP.17",       description: "Modified Early Warning Score — escalation trigger",
+    icon: "pi-chart-bar",            border: "#fbbf24", color: "#92400e", bg: "#fffbeb", dot: true },
+  { id: "fall",      label: "Fall Risk (Morse)",          nabh: "AAC.4",        description: "Morse Fall Scale — risk score + precautions",
+    icon: "pi-exclamation-triangle", border: "#fdba74", color: C.orange, bg: C.orangeL },
   // R7bs — DVT (Caprini) chip. Lives alongside Fall Risk because both are
   // structured-risk scoring scales. Auto-pops the NABH DVT register via
   // POST /api/nursing-assessments/dvt → nabhRegisterEmitter.emitDVT.
-  { id: "dvt",       label: "DVT (Caprini)",              icon: "pi-shield",                  border: "#a5b4fc", color: "#4338ca", bg: "#eef2ff" },
-  { id: "procedure", label: "Procedure / Intervention",   icon: "pi-cog",                     border: "#c4b5fd", color: C.purple, bg: C.purpleL },
-  { id: "discharge", label: "Discharge / Handover",       icon: "pi-sign-out",                border: "#6ee7b7", color: C.green, bg: C.greenL },
-  { id: "mews",      label: "MEWS Score",                 icon: "pi-chart-bar",               border: "#fbbf24", color: "#92400e", bg: "#fffbeb", dot: true },
-  { id: "general",   label: "General Observation",        icon: "pi-file",                    border: "#d1d5db", color: "#374151", bg: C.grayL },
-  // ── Consolidated from sidebar ──
-  { id: "daily",     label: "Daily Assessment",           icon: "pi-calendar-plus",           border: "#bae6fd", color: "#0369a1", bg: "#e0f2fe" },
-  { id: "initial",   label: "Initial Assessment",         icon: "pi-clipboard",               border: "#f9a8d4", color: "#be185d", bg: "#fdf2f8" },
-  { id: "careplan",  label: "Care Plan",                  icon: "pi-heart-fill",              border: "#6ee7b7", color: "#065f46", bg: "#ecfdf5" },
-  { id: "nutrition", label: "Nutritional Assessment",     icon: "pi-apple",                   border: "#86efac", color: "#15803d", bg: "#dcfce7" },
-  { id: "education", label: "Patient Education",          icon: "pi-book",                    border: "#c4b5fd", color: "#6d28d9", bg: "#f5f3ff" },
+  { id: "dvt",       label: "DVT (Caprini)",              nabh: "MOM.7",        description: "Caprini VTE risk + IMPROVE bleeding score + prophylaxis",
+    icon: "pi-shield",               border: "#a5b4fc", color: "#4338ca", bg: "#eef2ff" },
+  { id: "skin",      label: "Skin / Pressure Assessment", nabh: "AAC.4",        description: "Braden / pressure ulcer staging, integrity check",
+    icon: "pi-th-large",             border: "#86efac", color: "#166534", bg: C.greenL },
+  { id: "intake",    label: "Intake / Output",            nabh: "COP.16",       description: "Oral / IV / NG intake vs urine / drains / NG-loss",
+    icon: "pi-sort-alt",             border: "#93c5fd", color: C.accent, bg: C.accentL },
+  { id: "iv",        label: "IV Infusion",                nabh: "MOM.4",        description: "IV access, infusion rate, drip monitoring",
+    icon: "pi-plus-circle",          border: "#6ee7b7", color: C.teal, bg: C.tealL },
+  { id: "blood",     label: "Blood Transfusion",          nabh: "COP.16",       description: "Whole blood / PRBC / FFP / Platelet — 2-nurse check",
+    icon: "pi-heart-fill",           border: "#fca5a5", color: "#9f1239", bg: "#fecaca", dot: true },
+  { id: "wound",     label: "Wound / Dressing",           nabh: "COP.15",       description: "Wound assessment, dressing change, drains",
+    icon: "pi-pencil",               border: "#fca5a5", color: C.red, bg: C.redL },
+  { id: "procedure", label: "Procedure / Intervention",   nabh: "COP.10",       description: "Nursing procedure note — aseptic technique, complications",
+    icon: "pi-cog",                  border: "#c4b5fd", color: C.purple, bg: C.purpleL },
+  { id: "careplan",  label: "Care Plan",                  nabh: "COP.8",        description: "Nursing care plan with goals + interventions",
+    icon: "pi-heart-fill",           border: "#6ee7b7", color: "#065f46", bg: "#ecfdf5" },
+  { id: "nutrition", label: "Nutritional Assessment",     nabh: "COP.16",       description: "NRS-2002 nutritional risk screening",
+    icon: "pi-apple",                border: "#86efac", color: "#15803d", bg: "#dcfce7" },
+  { id: "education", label: "Patient Education",          nabh: "PRE.5",        description: "Patient + family education session log",
+    icon: "pi-book",                 border: "#c4b5fd", color: "#6d28d9", bg: "#f5f3ff" },
+  { id: "discharge", label: "Discharge / Handover",       nabh: "AAC.4",        description: "RN-to-RN handover + discharge instructions",
+    icon: "pi-sign-out",             border: "#6ee7b7", color: C.green, bg: C.greenL },
+  { id: "general",   label: "General Observation",        nabh: "COP.1",        description: "Free-text observation note",
+    icon: "pi-file",                 border: "#d1d5db", color: "#374151", bg: C.grayL },
 ];
 
 /* ── R7bs — Caprini 2010 VTE risk factor catalogue (weighted) ──
@@ -1633,43 +1655,84 @@ function NursingNotesContent({ selectedPatient }) {
             </div>
           )}
 
-            {/* ── Module Launcher — compact pill bar, 3 groups ── */}
-            {(() => {
-              const MOD_GROUPS = [
-                { label: "Assessment & Monitoring", ids: ["vitals","neuro","pain","mews","fall","intake"] },
-                { label: "Interventions",            ids: ["iv","blood","wound","skin","procedure"] },
-                { label: "Documentation",            ids: ["initial","daily","careplan","discharge","nutrition","education","general"] },
-              ];
-              return (
-                <div className="dnp-module-bar" role="toolbar" aria-label="Add care note">
-                  {MOD_GROUPS.map((group, gi) => (
-                    <React.Fragment key={group.label}>
-                      {gi > 0 && <span className="dnp-module-bar__divider" aria-hidden />}
-                      <span className="dnp-module-bar__group">{group.label}</span>
-                      {group.ids.map(id => {
-                        const m = MODULES.find(x => x.id === id);
-                        if (!m) return null;
-                        const locked = gateActive && m.id !== "initial";
-                        const isInitial = m.id === "initial";
-                        return (
-                          <button key={m.id} onClick={() => !locked && openModal(m.id)}
-                            title={locked ? "Complete Nursing Initial Assessment first" : m.label}
-                            disabled={locked}
-                            className={`dnp-module-pill ${locked ? "dnp-module-pill--locked" : ""} ${isInitial && gateActive ? "dnp-module-pill--required" : ""}`}
-                            style={{ "--mod-color": m.color, "--mod-tint": m.bg }}>
-                            <i className={`pi ${locked && !isInitial ? "pi-lock" : m.icon}`} style={{ fontSize: 12 }} />
-                            {m.label}
-                            {isInitial && gateActive && <span className="dnp-module-pill__chip dnp-module-pill__chip--required">REQ</span>}
-                            {isInitial && !gateActive && <span className="dnp-module-pill__chip dnp-module-pill__chip--done">✓</span>}
-                            {m.dot && !gateActive && <span className="dnp-module-pill__dot" />}
-                          </button>
-                        );
-                      })}
-                    </React.Fragment>
-                  ))}
+            {/* ── R7bf — Note type picker (card grid) ──
+                Mirrors Doctor Notes' "Select Note Type" layout (R7aw) so
+                nurses get the same visual language: icon square + label +
+                NABH chapter code + one-line description, with locked
+                cards rendered with a lock icon and reduced opacity (gate
+                stays visible so the nurse can see WHAT they'll get once
+                they sign the Initial Assessment). */}
+            <div style={{ background: C.card, borderRadius: 12, padding: "18px", border: `1.5px solid ${C.border}`, marginTop: 14 }}>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 3 }}>Select Note Type</div>
+                <div style={{ fontSize: 12, color: C.muted }}>
+                  Choose the appropriate NABH-compliant clinical note for this patient encounter
+                  {gateActive && (
+                    <span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 6, background: "#fffbeb", color: "#92400e", fontWeight: 700, fontSize: 11 }}>
+                      Initial Assessment required first
+                    </span>
+                  )}
                 </div>
-              );
-            })()}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+                {MODULES.map(m => {
+                  const locked = gateActive && m.id !== "initial";
+                  const showInitialReq  = m.id === "initial" && gateActive;
+                  const showInitialDone = m.id === "initial" && !gateActive;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => !locked && openModal(m.id)}
+                      disabled={locked}
+                      title={locked ? "Complete Nursing Initial Assessment first" : m.label}
+                      style={{
+                        background: "white",
+                        border: `2px solid ${C.border}`,
+                        borderRadius: 12, padding: "14px 12px",
+                        cursor: locked ? "not-allowed" : "pointer",
+                        textAlign: "left", transition: "all .15s",
+                        display: "flex", flexDirection: "column", gap: 6,
+                        opacity: locked ? 0.55 : 1,
+                        position: "relative",
+                      }}
+                      onMouseEnter={e => { if (!locked) e.currentTarget.style.borderColor = m.color + "70"; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{
+                          width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                          background: m.bg,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 14, color: m.color }} />
+                        </span>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{m.label}</span>
+                            {m.dot && !locked && (
+                              <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.color, flexShrink: 0 }} aria-hidden />
+                            )}
+                          </div>
+                          <div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>{m.nabh}</div>
+                        </div>
+                        {showInitialReq && (
+                          <span style={{ padding: "2px 7px", borderRadius: 5, background: "#fef3c7", color: "#92400e", fontWeight: 800, fontSize: 9.5, letterSpacing: ".5px" }}>
+                            REQ
+                          </span>
+                        )}
+                        {showInitialDone && (
+                          <span style={{ padding: "2px 7px", borderRadius: 5, background: "#dcfce7", color: "#166534", fontWeight: 800, fontSize: 9.5, letterSpacing: ".5px" }}>
+                            ✓ DONE
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.4 }}>{m.description}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
           )}
           {/* /dnp-addnote-panel */}
