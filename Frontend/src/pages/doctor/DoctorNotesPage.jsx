@@ -115,9 +115,14 @@ const isHAM_IA = (name = "") => HAM_KW_IA.some(k => (name || "").toLowerCase().i
      COP.5 — Critical / ICU care            COP.19 — Death
      IMS.2 — Information Mgmt (amendments)                          */
 const MODULES = [
+  // R7bk — Inline "Initial Assessment" module removed from this picker.
+  // The AAC.1 doctor Initial Assessment is filed via the top-level
+  // "Emergency Assessment" tile (mounts EmergencyAssessmentPageContent
+  // inline). Keeping a second inline-only entry point was producing
+  // duplicate-shape doctor notes — the Emergency Assessment page is the
+  // single source of truth, and on sign-and-submit it flips
+  // admission.initialAssessment.doctorCompleted = true so the gate lifts.
   // ── Priority top row ──
-  { id: "initial",     label: "Initial Assessment",    nabh: "AAC.1", description: "Comprehensive admission assessment + care plan initiation",
-    icon: "pi-clipboard",           border: "#fbbf24", color: "#92400e", bg: "#fffbeb", priority: true },
   { id: "medication",  label: "Medication Orders",     nabh: "MOM.4", description: "STAT, regular, and PRN drug orders with allergy check",
     icon: "pi-tablet",              border: "#93c5fd", color: C.blue,   bg: C.blueL   },
   { id: "infusion",    label: "Infusion Orders",       nabh: "MOM.4", description: "IV access, infusion rate, and drip monitoring",
@@ -478,17 +483,14 @@ function DoctorNotesContent({ selectedPatient }) {
   };
 
   const openModal = (id) => {
-    // R7az — Initial Assessment no longer pops a fullscreen modal. It
-    // opens the inline activeModal === "initial" form (defined later in
-    // this file) like every other note type. Removes the "2 different
-    // emergency assessment surfaces" UX duplication the user flagged.
-    //
-    // Gate: when the IPD initial assessment isn't yet signed, every
-    // non-initial chip is blocked with a toast. We no longer auto-open
-    // any modal — the user just sees the toast and must click the
-    // "Initial Assessment" card themselves.
-    if (gateActive && id !== "initial") {
-      toast.warn("⚠ Initial Assessment must be completed and signed before adding other notes", { autoClose: 4000 });
+    // R7bk — The inline "Initial Assessment" module was removed; the
+    // doctor's compulsory NABH AAC.1 assessment is now filed exclusively
+    // via the top-level "Emergency Assessment" tile. So this inline
+    // picker only renders once the gate is OFF, which means the gate
+    // block here is unreachable in normal flow — but we keep it as a
+    // belt-and-braces guard against any direct setActiveModal() calls.
+    if (gateActive) {
+      toast.warn("⚠ Open the 'Emergency Assessment' tile and complete the Doctor Initial Assessment first (NABH AAC.1).", { autoClose: 5000 });
       return;
     }
     setActiveModal(id);
@@ -1139,11 +1141,10 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   icon: "pi-plus-circle",
                   color: "#16a34a",
                   tint: "#dcfce7",
-                  badges: [
-                    gateActive
-                      ? { label: "Initial Assessment required", tone: "warn" }
-                      : { label: "Ready", tone: "ok" },
-                  ],
+                  // R7bk — Per-tile "Initial Assessment required" badge
+                  // is now rendered by the shared locked-badge logic in
+                  // the tile loop. Keep a single "Ready" tone here.
+                  badges: [{ label: "Ready", tone: "ok" }],
                 },
                 {
                   id: "timeline",
@@ -1206,14 +1207,19 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   badges: [{ label: "NABH", tone: "ok" }],
                 },
               ].map(t => {
-                // R7bi — Doctor Initial Assessment gate. ALL tiles except
-                // the one whose MODULES grid contains the "initial"
-                // module ("addnote") stay locked until the doctor signs
-                // the Initial Assessment for this admission. Emergency
-                // Assessment (ER intake) also stays unlocked since it
-                // doubles as the initial-assessment surface for ER
-                // admissions per NABH AAC.1.
-                const isAssessmentTile = t.id === "addnote" || t.id === "emergency";
+                // R7bk — Doctor Initial Assessment gate. The ONLY entry
+                // point to the compulsory NABH AAC.1 doctor Initial
+                // Assessment is the "Emergency Assessment" tile (mounts
+                // EmergencyAssessmentPageContent inline; sign-and-submit
+                // flips initialAssessment.doctorCompleted = true).
+                //
+                // All other tiles — Patient Diagnosis, Orders, MAR, Team,
+                // Add a Note, Notes Timeline, Discharge Summary, Consent
+                // Forms, MLC — stay locked until that one tile is signed.
+                // Add a Note used to be in the allowlist (held the inline
+                // COP.1 "Initial Assessment" sub-module) but R7bk
+                // deleted that sub-module too.
+                const isAssessmentTile = t.id === "emergency";
                 const locked = gateActive && !isAssessmentTile;
                 return (
                 <button
@@ -1226,7 +1232,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   // those routes' content components.
                   onClick={() => {
                     if (locked) {
-                      toast.error("⛔ Complete the Doctor Initial Assessment first (NABH COP.1). Open 'Add a Note' → Initial Assessment.", { autoClose: 5000 });
+                      toast.error("⛔ Complete the Doctor Initial Assessment first — open the 'Emergency Assessment' tile (NABH AAC.1).", { autoClose: 5500 });
                       return;
                     }
                     setActiveTile(t.id);
@@ -1450,38 +1456,30 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 3 }}>Select Note Type</div>
                 <div style={{ fontSize: 12, color: C.muted }}>
                   Choose the appropriate NABH-compliant clinical note for this patient encounter
-                  {gateActive && (
-                    <span style={{ marginLeft: 8, padding: "2px 8px", borderRadius: 6, background: "#fffbeb", color: "#92400e", fontWeight: 700, fontSize: 11 }}>
-                      Initial Assessment required first
-                    </span>
-                  )}
                 </div>
               </div>
+              {/* R7bk — Per-module lock logic + REQ/DONE badges removed.
+                  The parent "Add a Note" tile is already locked when the
+                  Doctor Initial Assessment (Emergency Assessment tile)
+                  hasn't been signed, so this picker only renders when the
+                  gate is OFF. Modules are always clickable here. */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
-                {MODULES.map(m => {
-                  // Gate: when Initial Assessment is pending, every card
-                  // EXCEPT initial is locked. Click is a no-op + tooltip.
-                  const locked = gateActive && m.id !== "initial";
-                  const showInitialDone = m.id === "initial" && assessmentDone;
-                  const showInitialReq  = m.id === "initial" && gateActive;
-                  return (
+                {MODULES.map(m => (
                     <button
                       key={m.id}
                       type="button"
-                      onClick={() => !locked && openModal(m.id)}
-                      disabled={locked}
-                      title={locked ? "Locked — complete Initial Assessment first" : m.label}
+                      onClick={() => openModal(m.id)}
+                      title={m.label}
                       style={{
                         background: "white",
-                        border: `2px solid ${locked ? C.border : C.border}`,
+                        border: `2px solid ${C.border}`,
                         borderRadius: 12, padding: "14px 12px",
-                        cursor: locked ? "not-allowed" : "pointer",
+                        cursor: "pointer",
                         textAlign: "left", transition: "all .15s",
                         display: "flex", flexDirection: "column", gap: 6,
-                        opacity: locked ? 0.55 : 1,
                         position: "relative",
                       }}
-                      onMouseEnter={e => { if (!locked) e.currentTarget.style.borderColor = m.color + "70"; }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = m.color + "70"; }}
                       onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; }}
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1490,32 +1488,21 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                           background: m.bg,
                           display: "flex", alignItems: "center", justifyContent: "center",
                         }}>
-                          <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 14, color: m.color }} />
+                          <i className={`pi ${m.icon}`} style={{ fontSize: 14, color: m.color }} />
                         </span>
                         <div style={{ minWidth: 0, flex: 1 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{m.label}</span>
-                            {m.dot && !locked && (
+                            {m.dot && (
                               <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.color, flexShrink: 0 }} aria-hidden />
                             )}
                           </div>
                           <div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>{m.nabh}</div>
                         </div>
-                        {showInitialReq && (
-                          <span style={{ padding: "2px 7px", borderRadius: 5, background: "#fef3c7", color: "#92400e", fontWeight: 800, fontSize: 9.5, letterSpacing: ".5px" }}>
-                            REQ
-                          </span>
-                        )}
-                        {showInitialDone && (
-                          <span style={{ padding: "2px 7px", borderRadius: 5, background: "#dcfce7", color: "#166534", fontWeight: 800, fontSize: 9.5, letterSpacing: ".5px" }}>
-                            ✓ DONE
-                          </span>
-                        )}
                       </div>
                       <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.4 }}>{m.description}</div>
                     </button>
-                  );
-                })}
+                ))}
               </div>
             </div>
           </div>

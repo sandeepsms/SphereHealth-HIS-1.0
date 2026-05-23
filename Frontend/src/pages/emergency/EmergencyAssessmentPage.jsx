@@ -329,6 +329,31 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
         setNoteId(res.data?.data?._id || res.data?._id);
       }
       clearDraft(); // clear auto-saved draft on successful save
+
+      /* R7bk — Emergency Assessment IS the doctor's compulsory Initial
+         Assessment for IPD admissions (NABH AAC.1). On sign-and-submit
+         we flip admission.initialAssessment.doctorCompleted = true so
+         the DoctorNotes tile gate lifts and the other clinical surfaces
+         (Patient Diagnosis, Orders, MAR, etc.) unlock. Lookup is by
+         UHID → active admission; if no active admission exists (pure
+         ER walk-in with no IPD trail) we silently skip — there's
+         nothing to gate. */
+      if (sign) {
+        try {
+          const uhidForLookup = patient.UHID || uhid;
+          if (uhidForLookup) {
+            const adRes = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(uhidForLookup)}`);
+            const adArr = Array.isArray(adRes.data) ? adRes.data : (adRes.data?.data || []);
+            const admId = adArr?.[0]?._id;
+            if (admId) {
+              await axios.put(`${API_ENDPOINTS.ADMISSIONS}/${admId}/initial-assessment`, {
+                role: "doctor",
+                name: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Doctor",
+              });
+            }
+          }
+        } catch (_) { /* non-blocking — the gate is a UX nudge, not hard auth */ }
+      }
       toast.success(sign ? "Emergency assessment signed & submitted" : "Draft saved");
     } catch (err) {
       toast.error(err.response?.data?.message || "Save failed");
