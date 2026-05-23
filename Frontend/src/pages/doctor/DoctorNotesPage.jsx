@@ -1053,40 +1053,19 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
             onChangePatient={() => { setPatient(null); setNotes([]); setSearchUHID(""); }}
           />
 
-          {/* ── Assessment Gate Banner (HARD BLOCK) ── */}
-          {gateActive && (
-            <div style={{ background: "#fef2f2", border: "2px solid #fca5a5", borderRadius: 12, padding: "16px 20px", marginBottom: 14, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 4px 16px rgba(220,38,38,.12)" }}>
-              <div style={{ width: 44, height: 44, borderRadius: 10, background: "#fee2e2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <i className="pi pi-lock" style={{ fontSize: 20, color: "#dc2626" }} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 800, fontSize: 14, color: "#991b1b", display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ background: "#dc2626", color: "white", fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 4, letterSpacing: ".5px" }}>MANDATORY</span>
-                  Initial Assessment not completed — NABH COP.1
-                </div>
-                <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 4 }}>
-                  Doctor's Initial Assessment must be completed and signed before writing daily notes, medication orders, ICU notes, or any other clinical documentation for this patient.
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  // R7az — navigate to the Add Note tile + auto-pick the
-                  // Initial Assessment card. No more modal popup.
-                  setActiveTile("addnote");
-                  setTimeout(() => openModal("initial"), 0);
-                }}
-                style={{ padding: "10px 22px", background: "#dc2626", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", boxShadow: "0 4px 14px rgba(220,38,38,.35)", flexShrink: 0 }}>
-                <i className="pi pi-clipboard" style={{ marginRight: 6, fontSize: 13 }} />
-                Write Initial Assessment
-              </button>
-            </div>
-          )}
-          {!gateActive && assessmentDone && (
-            <div style={{ background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 10, padding: "9px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#15803d", fontWeight: 600 }}>
-              <i className="pi pi-check-circle" style={{ fontSize: 14 }} />
-              Initial Assessment completed &amp; signed — full documentation access unlocked
-            </div>
-          )}
+          {/* R7ba — Removed both the red "Initial Assessment not completed
+              — NABH COP.1" gate banner and the green "Initial Assessment
+              completed & signed" confirmation banner. They were leftovers
+              from the modal era; with the Emergency Assessment inline tile
+              taking over as the doctor's per-patient assessment surface,
+              showing a second top-of-page banner about a separate
+              Initial Assessment workflow was visual noise. NABH compliance
+              capture moves into the Emergency Assessment form itself
+              (which already records triage / ABCDE / vitals / orders /
+              disposition — the same data NABH COP.1 expects from initial
+              assessment). The gate / assessmentDone state is still
+              computed below in case other components want to read it,
+              but no banner is rendered from this page anymore. */}
 
           {/* ══ TILE GRID (when no section is active) ════════════════════════
                 Doctor Notes is split into 6 tiles. Click → that section

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import "../../Components/clinical/clinical-forms.css";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
@@ -128,6 +128,14 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
   const [loadingPt, setLoadingPt] = useState(false);
   const [saving, setSaving]       = useState(false);
   const [noteId, setNoteId]       = useState(null);
+
+  // R7ba — Dedup the "Draft restored" toast. When this component runs
+  // embedded inside DoctorNotes, React StrictMode double-mounts the
+  // useEffect that calls loadPatient, which used to fire two identical
+  // toasts stacked on the right side of the screen. Track which UHIDs
+  // have already shown the toast in this component lifetime so re-mounts
+  // are silent.
+  const restoredToastShownRef = useRef(new Set());
 
   /* ── Triage ── */
   const [triageLevel, setTriageLevel] = useState("");
@@ -269,7 +277,11 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
           if (cv) setCvs(c => ({ ...c, ...cv }));
           if (abd) setAbdomen(a => ({ ...a, ...abd }));
           if (cn) setCns(c => ({ ...c, ...cn }));
-          toast.info(`📝 Draft restored (${_meta?.savedAt ? new Date(_meta.savedAt).toLocaleTimeString() : "last session"})`, { autoClose: 3000 });
+          // R7ba — only fire the toast once per UHID per mount lifecycle.
+          if (!restoredToastShownRef.current.has(resolvedUhid)) {
+            restoredToastShownRef.current.add(resolvedUhid);
+            toast.info(`📝 Draft restored (${_meta?.savedAt ? new Date(_meta.savedAt).toLocaleTimeString() : "last session"})`, { autoClose: 3000 });
+          }
         }
       } catch (_) {}
     } catch { toast.error("Patient not found"); }
