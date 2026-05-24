@@ -177,6 +177,13 @@ export default function OPDAssessmentPage() {
   const navigate    = useNavigate();
   const visitNumber = params.get("visitNumber") || "";
   const uhid        = params.get("uhid") || "";
+  // R7cn: deep-link from Doctor OPD Panel — when the doctor clicks the
+  // per-row "Print" button there, we land on this page with autoPrint=1
+  // and immediately fire handlePrint() after the visit data finishes
+  // loading. The ref guards against re-firing on re-renders (e.g. saving
+  // a note refreshes the audit trail).
+  const autoPrint   = params.get("autoPrint") === "1";
+  const autoPrintFiredRef = useRef(false);
   const { settings: hs } = useHospitalSettings();
 
   const [visit,   setVisit]   = useState(null);
@@ -1365,6 +1372,25 @@ export default function OPDAssessmentPage() {
       },
     });
   };
+
+  // R7cn: when launched from the Doctor OPD Panel with autoPrint=1,
+  // fire handlePrint() once the visit + structured assessment finish
+  // loading. We wait for `visit` and `loading=false` so the printable's
+  // payload builder (handlePrint reads from local state) has fully
+  // hydrated values; otherwise the print would render with empty SOAP /
+  // Rx / Investigations sections. Fires exactly once via the ref guard.
+  useEffect(() => {
+    if (!autoPrint) return;
+    if (loading) return;
+    if (!visit) return;
+    if (autoPrintFiredRef.current) return;
+    autoPrintFiredRef.current = true;
+    // Small delay so the page paints its loaded state before the
+    // browser print dialog steals focus — better UX than a blank flash.
+    const t = setTimeout(() => { try { handlePrint(); } catch (e) { console.warn("[autoPrint] handlePrint failed:", e); } }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPrint, loading, visit]);
 
   const vitals = visit?.vitals || {};
   const vitInfo = [

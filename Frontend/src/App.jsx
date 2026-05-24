@@ -134,10 +134,9 @@ const HousekeepingConsole     = lazy(() => import("./pages/housekeeping/Housekee
 const HousekeepingManagerDashboard = lazy(() => import("./pages/housekeeping/HousekeepingManagerDashboard"));
 // R7bj-F1 — Physiotherapy module greenfield (NABH COP.20)
 const PhysiotherapistConsole  = lazy(() => import("./pages/physiotherapist/PhysiotherapistConsole"));
-// R7bj-F2 — Kitchen indent close-loop (NABH COP.21, FSSAI)
-const KitchenConsole          = lazy(() => import("./pages/kitchen/KitchenConsole"));
+// R7cq: KitchenConsole + ColdChainPage imports removed — modules deprecated.
+// Page files deleted; routes (/kitchen, /cold-chain) also removed below.
 // R7bk — Sidebar coverage stubs for backend-only modules
-const ColdChainPage           = lazy(() => import("./pages/pharmacy/ColdChainPage"));
 const FoodReactionsPage       = lazy(() => import("./pages/quality/FoodReactionsPage"));
 const BmwManifestPage         = lazy(() => import("./pages/compliance/BmwManifestPage"));
 const CodeResponsePage        = lazy(() => import("./pages/compliance/CodeResponsePage"));
@@ -145,12 +144,10 @@ const SharpsInjuryPage        = lazy(() => import("./pages/clinical/SharpsInjury
 const TaxReturnsPage          = lazy(() => import("./pages/accounts/TaxReturnsPage"));
 const TdsCertificatesPage     = lazy(() => import("./pages/accounts/TdsCertificatesPage"));
 const LabResultsEntry         = lazy(() => import("./pages/lab/LabResultsEntry"));
-// R7bd-E-5 / A3-MED-18: Lab Tech multi-tab console (sample queue,
-// result-entry queue, QC log, day worksheet).
-const LabTechConsole          = lazy(() => import("./pages/lab/LabTechConsole"));
-// R7bd-E-6 / A3-HIGH-10: Radiologist console stub (worklist, reported,
-// pending sign-off).
-const RadiologistConsole      = lazy(() => import("./pages/radiology/RadiologistConsole"));
+// R7cq: LabTechConsole + RadiologistConsole imports removed — consoles
+// deprecated. Page files deleted; routes (/lab-console, /radiology-console)
+// also removed below. Manual Lab Entry stays (lab + imaging are outsourced
+// at this hospital so transcription is the only in-system workflow).
 
 // Clinical pages
 const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
@@ -824,15 +821,11 @@ function AppLayout({ collapsed, setCollapsed }) {
               <RoleGuard action="physio.plan.read"><PhysiotherapistConsole /></RoleGuard>
             } />
 
-            {/* ── R7bj-F2 — Kitchen console (diet indent close-loop, NABH COP.21) ── */}
-            <Route path="/kitchen" element={
-              <RoleGuard action="kitchen.indent.read"><KitchenConsole /></RoleGuard>
-            } />
+            {/* ── R7cq: /kitchen and /cold-chain routes removed (modules
+                 deprecated). Backend models survive so historical data
+                 isn't lost if the modules ever return. ── */}
 
             {/* ── R7bk — Sidebar coverage stubs for backend-only modules ── */}
-            <Route path="/cold-chain" element={
-              <RoleGuard action="pharmacy.cold-chain.read"><ColdChainPage /></RoleGuard>
-            } />
             <Route path="/food-reactions" element={
               <RoleGuard action="quality.food-reaction.read"><FoodReactionsPage /></RoleGuard>
             } />
@@ -860,16 +853,9 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/lab-results" element={
               <RoleGuard action="lab.records.read"><LabResultsEntry /></RoleGuard>
             } />
-            {/* R7bd-E-5 / A3-MED-18 — Lab Tech 4-tab console
-                (sample queue, result-entry queue, QC log, day worksheet). */}
-            <Route path="/lab-console" element={
-              <RoleGuard action="lab.read"><LabTechConsole /></RoleGuard>
-            } />
-            {/* R7bd-E-6 / A3-HIGH-10 — Radiologist 3-tab console stub
-                (worklist, reported, pending sign-off). */}
-            <Route path="/radiology-console" element={
-              <RoleGuard action="lab.verify"><RadiologistConsole /></RoleGuard>
-            } />
+            {/* ── R7cq: /lab-console + /radiology-console routes removed.
+                 Manual Lab Entry above is the surviving transcription
+                 path since lab/imaging is outsourced at this hospital. ── */}
 
             {/* ── Universal role dashboard ────────────────────────
                  Every role lands here on login. The page reads

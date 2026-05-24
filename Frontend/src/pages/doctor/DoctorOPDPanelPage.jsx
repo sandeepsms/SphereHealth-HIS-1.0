@@ -181,165 +181,19 @@ export default function DoctorOPDPanelPage() {
   };
 
   /* ── Print ─────────────────────────────────────────────────────── */
-  const handlePrint = () => {
-    const now     = new Date();
-    const dateStr = now.toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
-    const timeStr = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-
-    const address = [hs.addressLine1, hs.addressLine2, hs.city, hs.state, hs.pincode].filter(Boolean).join(", ");
-    const contact = [
-      hs.phone1 && `📞 ${hs.phone1}`,
-      hs.phone2 && hs.phone2,
-      hs.email  && `✉ ${hs.email}`,
-    ].filter(Boolean).join("   |   ");
-
-    const hdrBg  = hs.printHeaderColor  || "#0d9488";
-    const accent = hs.printAccentColor  || "#99f6e4";
-
-    const visitsToShow = activeTab === 0 ? filterVisits(todayVisits)
-                       : activeTab === 1 ? filterVisits(allVisits)
-                       : filterVisits(followups);
-
-    const tabLabel = activeTab === 0 ? "Today's OPD Queue"
-                   : activeTab === 1 ? "All OPD Visits"
-                   : "Follow-ups Due";
-
-    const stats = [
-      { label: "Total",       value: todayVisits.length },
-      { label: "Waiting",     value: todayVisits.filter(v => v.status === "Waiting").length },
-      { label: "In Progress", value: todayVisits.filter(v => v.status === "In Progress").length },
-      { label: "Completed",   value: todayVisits.filter(v => v.status === "Completed").length },
-      { label: "Vitals Pending", value: todayVisits.filter(v => v.vitalsStatus === "Pending").length },
-    ];
-
-    const statusBadge = (status) => {
-      const map = {
-        Waiting:       "background:#fef3c7;color:#92400e",
-        "In Progress": "background:#dbeafe;color:#1e40af",
-        Completed:     "background:#dcfce7;color:#166534",
-        Referred:      "background:#f3e8ff;color:#6b21a8",
-      };
-      return map[status] || "background:#f1f5f9;color:#475569";
-    };
-
-    const rows = visitsToShow.map((v, i) => {
-      const doctorName = v.doctorId?.personalInfo
-        ? `Dr. ${v.doctorId.personalInfo.firstName || ""} ${v.doctorId.personalInfo.lastName || ""}`.trim()
-        : v.consultantName || "—";
-      const deptName = v.departmentId?.departmentName || v.department || "—";
-      return `
-        <tr style="background:${i % 2 === 0 ? "#f8fafc" : "#fff"}">
-          <td style="text-align:center;font-size:20px;font-weight:900;color:${hdrBg}">${String(v.tokenNumber || "—").padStart(2, "0")}</td>
-          <td><strong>${v.UHID || "—"}</strong><br><span style="font-size:11px;color:#64748b">${v.patientName || ""}</span></td>
-          <td style="font-size:11px;color:#475569">${v.visitNumber || "—"}</td>
-          <td>${v.chiefComplaint || "—"}</td>
-          <td style="font-size:11px">${doctorName}<br><span style="color:#64748b">${deptName}</span></td>
-          <td><span style="padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;${statusBadge(v.status)}">${v.status || "Waiting"}</span></td>
-          <td><span style="padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;background:${v.vitalsStatus === "Done" ? "#dcfce7" : "#fef3c7"};color:${v.vitalsStatus === "Done" ? "#166534" : "#92400e"}">${v.vitalsStatus || "Pending"}</span></td>
-        </tr>`;
-    }).join("");
-
-    const statsHtml = stats.map(s => `
-      <div style="background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px;padding:10px 18px;text-align:center;flex:1;min-width:80px">
-        <div style="font-size:22px;font-weight:800;color:${hdrBg}">${s.value}</div>
-        <div style="font-size:11px;color:#475569;margin-top:2px">${s.label}</div>
-      </div>`).join("");
-
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>${tabLabel} — ${dateStr}</title>
-  <style>
-    *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#1e293b;background:#fff}
-    @media print{
-      body{print-color-adjust:exact;-webkit-print-color-adjust:exact}
-      @page{margin:10mm 12mm;size:A4 landscape}
-    }
-    table{width:100%;border-collapse:collapse;font-size:12px}
-    th{background:${hdrBg};color:#fff;padding:9px 12px;text-align:left;font-size:11px;font-weight:700;letter-spacing:.3px}
-    td{padding:8px 12px;border-bottom:1px solid #e2e8f0;vertical-align:middle}
-    .footer{margin-top:20px;padding:12px 24px;border-top:1px solid #e2e8f0;font-size:11px;color:#64748b;text-align:center}
-  </style>
-</head>
-<body>
-
-  <!-- Hospital Header -->
-  <div style="background:${hdrBg};color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center">
-    <div style="display:flex;align-items:center;gap:14px">
-      ${hs.showLogoInPrint && hs.logo
-        ? `<img src="${hs.logo}" alt="Logo" style="height:52px;object-fit:contain;background:#fff;padding:5px;border-radius:6px">`
-        : ""}
-      <div>
-        <div style="font-size:19px;font-weight:800;letter-spacing:-.3px">${hs.hospitalName || "Hospital"}</div>
-        ${hs.showTaglineInPrint && hs.tagline
-          ? `<div style="font-size:11px;opacity:.8;margin-top:2px">${hs.tagline}</div>` : ""}
-        ${address ? `<div style="font-size:11px;opacity:.7;margin-top:2px">${address}</div>` : ""}
-        ${contact  ? `<div style="font-size:11px;opacity:.7;margin-top:1px">${contact}</div>` : ""}
-      </div>
-    </div>
-    <div style="text-align:right">
-      <div style="font-size:16px;font-weight:800;color:${accent}">OPD PATIENT QUEUE</div>
-      <div style="font-size:11px;opacity:.8;margin-top:4px">${dateStr}</div>
-      <div style="font-size:11px;opacity:.7">Printed: ${timeStr}</div>
-      <div style="margin-top:6px;display:flex;gap:6px;justify-content:flex-end">
-        ${hs.nabh ? `<span style="background:rgba(34,197,94,.15);color:#22c55e;border:1px solid rgba(34,197,94,.3);font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px">NABH</span>` : ""}
-        ${hs.nabl ? `<span style="background:rgba(96,165,250,.15);color:#60a5fa;border:1px solid rgba(96,165,250,.3);font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:4px">NABL</span>` : ""}
-      </div>
-    </div>
-  </div>
-
-  <!-- Doctor / Tab Strip -->
-  <div style="background:#f0fdfa;border-bottom:2px solid #99f6e4;padding:10px 24px;display:flex;align-items:center;gap:24px;font-size:12px;color:#0d9488;font-weight:600">
-    <span>📋 ${tabLabel}</span>
-    ${user?.name ? `<span>👨‍⚕️ Dr. ${user.name}</span>` : ""}
-    <span style="margin-left:auto;color:#64748b;font-weight:400">${visitsToShow.length} patient${visitsToShow.length !== 1 ? "s" : ""}</span>
-  </div>
-
-  <!-- Today's Stats (always shown) -->
-  <div style="display:flex;gap:10px;padding:14px 24px">
-    ${statsHtml}
-  </div>
-
-  <!-- Patient Table -->
-  <div style="padding:0 24px">
-    <table>
-      <thead>
-        <tr>
-          <th style="width:58px">Token</th>
-          <th>UHID / Patient</th>
-          <th style="width:130px">Visit #</th>
-          <th>Chief Complaint</th>
-          <th>Consultant / Dept</th>
-          <th style="width:88px">Status</th>
-          <th style="width:88px">Vitals</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows || `<tr><td colspan="7" style="text-align:center;padding:24px;color:#94a3b8">No patients found</td></tr>`}
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Footer -->
-  <div class="footer">
-    <p>${hs.billFooterNote || "Thank you for choosing our hospital."}</p>
-    ${hs.registrationNo ? `<p style="margin-top:4px">Reg. No.: ${hs.registrationNo}${hs.gstin ? ` &nbsp;|&nbsp; GSTIN: ${hs.gstin}` : ""}</p>` : ""}
-    <p style="margin-top:6px;font-size:10px;color:#94a3b8">This is a computer-generated document. &nbsp;·&nbsp; ${hs.termsLine1 || ""}</p>
-  </div>
-
-  <script>window.onload=()=>{window.print();window.onafterprint=()=>window.close();}</script>
-</body>
-</html>`;
-
-    const win = window.open("", "_blank", "width=1200,height=750");
-    if (!win) {
-      toast.current?.show({ severity: "warn", summary: "Popup Blocked", detail: "Allow popups for this site to enable printing", life: 4000 });
-      return;
-    }
-    win.document.write(html);
-    win.document.close();
+  // R7cn: queue-print (printing the entire OPD list) was removed in
+  // favour of per-row "Print" buttons that print THIS PATIENT'S
+  // assessment — the actual clinical record the doctor wants on
+  // paper. Reuses the existing OPDAssessmentPage `handlePrint` flow
+  // (full SOAP + Rx + investigations + diagnosis + signature) via an
+  // `autoPrint=1` query param the assessment page consumes on load.
+  const goPrint = (visit) => {
+    if (!visit?.visitNumber) return;
+    navigate(
+      `/opd-assessment?visitNumber=${encodeURIComponent(visit.visitNumber)}` +
+      `&uhid=${encodeURIComponent(visit.UHID || "")}` +
+      `&autoPrint=1`,
+    );
   };
 
   const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
@@ -370,9 +224,11 @@ export default function DoctorOPDPanelPage() {
             <Button label="Refresh" icon="pi pi-refresh" className="p-button-outlined"
               style={{ color: "#fff", border: "1px solid rgba(255,255,255,.5)" }}
               onClick={() => { setAllVisits([]); setFollowups([]); loadToday(); }} />
-            <Button label="Print" icon="pi pi-print" className="p-button-outlined"
-              style={{ color: "#fff", border: "1px solid rgba(255,255,255,.5)", background: "rgba(255,255,255,.12)" }}
-              onClick={handlePrint} />
+            {/* R7cn: top-right "Print" button removed — printing the whole
+                OPD queue list isn't a real clinical action. The new Print
+                button on each row prints THAT patient's full assessment
+                (SOAP + Rx + investigations) which is what the doctor
+                actually needs to hand to the patient. */}
           </div>
         </div>
 
@@ -402,6 +258,7 @@ export default function DoctorOPDPanelPage() {
             onAssess={goAssess}
             onHistory={openHistory}
             onAddNote={openAddNote}
+            onPrint={goPrint}
             emptyMsg="No patients registered for today yet"
           />
         </TabPanel>
@@ -414,6 +271,7 @@ export default function DoctorOPDPanelPage() {
             onAssess={goAssess}
             onHistory={openHistory}
             onAddNote={openAddNote}
+            onPrint={goPrint}
             emptyMsg="No visits found"
             showDate
           />
@@ -427,6 +285,7 @@ export default function DoctorOPDPanelPage() {
             onAssess={goAssess}
             onHistory={openHistory}
             onAddNote={openAddNote}
+            onPrint={goPrint}
             emptyMsg="No follow-ups due today"
             showDate
           />
@@ -545,7 +404,7 @@ export default function DoctorOPDPanelPage() {
 }
 
 /* ── Visit List ── */
-function VisitList({ visits, loading, onAssess, onHistory, onAddNote, emptyMsg, showDate = false }) {
+function VisitList({ visits, loading, onAssess, onHistory, onAddNote, onPrint, emptyMsg, showDate = false }) {
   if (loading) return (
     <div style={{ textAlign: "center", padding: 60 }}>
       <ProgressSpinner style={{ width: 40, height: 40 }} />
@@ -625,6 +484,16 @@ function VisitList({ visits, loading, onAssess, onHistory, onAddNote, emptyMsg, 
               <Button label="History" icon="pi pi-clock" className="p-button-outlined"
                 style={{ fontSize: 12, padding: "5px 10px", color: "#14b8a6", border: "1px solid #99f6e4", whiteSpace: "nowrap" }}
                 onClick={() => onHistory(visit)} />
+              {/* R7cn — Per-row Print: opens this visit's OPD assessment
+                  page with autoPrint=1 so the full SOAP + Rx + investigations
+                  printable fires automatically once the data loads. */}
+              {onPrint && (
+                <Button label="Print" icon="pi pi-print" className="p-button-outlined"
+                  style={{ fontSize: 12, padding: "5px 10px", color: "#7c3aed", border: "1px solid #ddd6fe", whiteSpace: "nowrap" }}
+                  tooltip="Print this patient's assessment (SOAP + Rx)"
+                  tooltipOptions={{ position: "left" }}
+                  onClick={() => onPrint(visit)} />
+              )}
             </div>
           </div>
         );

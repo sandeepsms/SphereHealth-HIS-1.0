@@ -74,6 +74,24 @@ class OPDController {
     }
   }
 
+  // R7cr — GET /opd/uhid/:UHID/today-rx
+  // Pharmacy-side fast lookup: pharmacist types a UHID, gets today's
+  // OPD visit(s) for that patient with diagnosis + prescribed medicines
+  // so they can dispense without hunting through the doctor's full
+  // assessment screen. Returns [] when the patient has no visit today.
+  async getTodayPrescriptionsByUHID(req, res) {
+    try {
+      const UHID = String(req.params.UHID || "").trim().toUpperCase();
+      if (!UHID) {
+        return res.status(400).json({ success: false, message: "UHID is required" });
+      }
+      const visits = await opdService.getTodayPrescriptionsByUHID(UHID);
+      res.status(200).json({ success: true, data: visits });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async updateOPDVisit(req, res) {
     try {
       const visit = await opdService.updateOPDVisit(req.params.visitNumber, req.body);
@@ -253,6 +271,41 @@ class OPDController {
         message: error.message,
         ...(error.code ? { code: error.code } : {}),
       });
+    }
+  }
+
+  // POST /opd/:visitNumber/additional-note  — R7cj: append an addendum
+  // note to a signed assessment. Append-only — never modifies the
+  // original structured fields. Captures who + when for audit. Returns
+  // the updated visit so the frontend can re-render the timeline.
+  async addAdditionalNote(req, res) {
+    try {
+      const text = String(req.body?.note || "").trim();
+      if (!text) {
+        return res.status(400).json({ success: false, code: "EMPTY_NOTE", message: "Note text is required." });
+      }
+      if (text.length > 4000) {
+        return res.status(400).json({ success: false, code: "NOTE_TOO_LONG", message: "Note exceeds 4000 characters." });
+      }
+      const OPD = require("../../models/Patient/OPDModels");
+      const entry = {
+        note:        text,
+        addedAt:     new Date(),
+        addedBy:     req.user?.fullName || req.user?.name || "Doctor",
+        addedById:   req.user?.id || req.user?._id || null,
+        addedByRole: req.user?.role || "",
+      };
+      const visit = await OPD.findOneAndUpdate(
+        { visitNumber: req.params.visitNumber },
+        { $push: { additionalNotes: entry } },
+        { new: true, runValidators: true },
+      ).lean();
+      if (!visit) {
+        return res.status(404).json({ success: false, code: "NOT_FOUND", message: "OPD visit not found" });
+      }
+      return res.status(200).json({ success: true, message: "Note added", data: visit });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
     }
   }
 

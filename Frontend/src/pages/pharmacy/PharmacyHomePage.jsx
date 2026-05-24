@@ -19,6 +19,7 @@ import TEMPLATES from "../../Components/print/printables/PharmacyBillTemplates";
 import PharmacyBill from "../../Components/print/printables/PharmacyBill";
 import PharmacyRegister, { REGISTER_HEADERS } from "../../Components/print/printables/PharmacyRegister";
 import PharmacyIndentsPage from "./PharmacyIndentsPage";
+import opdService from "../../Services/patient/opdService";
 import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
@@ -107,6 +108,12 @@ const BASE_TABS = [
   { key: "inventory", label: "Inventory",  icon: "pi-box" },
   { key: "grn",       label: "Goods Receipt", icon: "pi-download" },
   { key: "dispense",  label: "Dispense",   icon: "pi-shopping-cart" },
+  // R7cr — OPD Rx Lookup: pharmacist enters a UHID, sees today's
+  // doctor-written prescriptions for that patient (diagnosis +
+  // medicines + dose + frequency + meal status) and dispenses each
+  // line with one click. Avoids re-typing the drug list off a paper
+  // prescription and prevents transcription errors.
+  { key: "opdrx",     label: "OPD Rx",     icon: "pi-file" },
   { key: "indents",   label: "Live Indents", icon: "pi-inbox" }, // badge + tone wired dynamically
   { key: "sales",     label: "Sales Register", icon: "pi-receipt" },
   { key: "registers", label: "Registers",  icon: "pi-book" },
@@ -223,6 +230,7 @@ export default function PharmacyHomePage() {
         {tab === "inventory" && <InventoryTab />}
         {tab === "grn"       && <GRNTab />}
         {tab === "dispense"  && <DispenseTab />}
+        {tab === "opdrx"     && <OPDRxTab />}
         {tab === "indents"   && <PharmacyIndentsPage embedded />}
         {tab === "sales"     && <SalesTab />}
         {tab === "registers" && <RegistersTab />}
@@ -2803,6 +2811,478 @@ function Row({ label, value, valueColor, bold, large }) {
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontWeight: bold ? 800 : 600 }}>
       <span style={{ color: C.muted, fontSize: large ? 13 : 11.5 }}>{label}</span>
       <span style={{ color: valueColor || C.text, fontSize: large ? 16 : 12 }}>{value}</span>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+   R7cr — OPD Rx LOOKUP TAB
+   Pharmacist enters a UHID, gets today's OPD visits for that
+   patient with diagnosis + prescribed medicines, and dispenses
+   each line with one click via the existing /pharmacy/sales POST.
+   Reuses dispense() service so the sale lands in the same
+   register / GST / FEFO pipeline as a walk-in counter sale —
+   no parallel codepath.
+══════════════════════════════════════════════════════════════════ */
+function OPDRxTab() {
+  const [uhidInput, setUhidInput]   = useState("");
+  const [loading, setLoading]       = useState(false);
+  const [visits, setVisits]         = useState([]);    // today's OPD visits for the UHID
+  const [patient, setPatient]       = useState(null);  // first visit's patientId populated doc
+  const [searchedUhid, setSearchedUhid] = useState("");
+  // Quick-dispense modal state. We never push into the regular
+  // DispenseTab cart — each prescription row dispenses as its own
+  // sale so the pharmacist isn't blocked finishing visit-A before
+  // starting visit-B (common when two doctors prescribe the same
+  // morning).
+  const [qdOpen, setQdOpen]         = useState(false);
+  const [qdMed, setQdMed]           = useState(null);   // the prescription row being sold
+  const [qdDrug, setQdDrug]         = useState(null);   // matched inventory drug (id + price)
+  const [qdMatches, setQdMatches]   = useState([]);     // inventory search results
+  const [qdDrugSearch, setQdDrugSearch] = useState(""); // drug autocomplete input
+  const [qdQty, setQdQty]           = useState(1);
+  const [qdUnitPrice, setQdUnitPrice] = useState(0);
+  const [qdPaymentMode, setQdPaymentMode] = useState("Cash");
+  const [qdSaving, setQdSaving]     = useState(false);
+
+  const today = new Date().toLocaleDateString("en-IN", {
+    weekday: "long", day: "2-digit", month: "long", year: "numeric",
+  });
+
+  // Load today's Rx for the typed UHID. Empty array = no visit today
+  // (handled with a friendly empty state, not an error).
+  const load = async (uhidArg) => {
+    const u = (uhidArg ?? uhidInput).trim().toUpperCase();
+    if (!u) { toast.warn("Enter a UHID"); return; }
+    setLoading(true); setSearchedUhid(u);
+    try {
+      const r = await opdService.getTodayRxByUHID(u);
+      const list = Array.isArray(r?.data?.data) ? r.data.data : [];
+      setVisits(list);
+      setPatient(list[0]?.patientId || null);
+      if (list.length === 0) {
+        toast.info(`No OPD visit today for ${u}`);
+      }
+    } catch (e) {
+      const msg = e?.response?.data?.message || e.message || "Lookup failed";
+      toast.error(msg);
+      setVisits([]); setPatient(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearAll = () => {
+    setUhidInput(""); setSearchedUhid(""); setVisits([]); setPatient(null);
+  };
+
+  // R7cr — open the quick-dispense modal pre-filled from a prescription
+  // row. The drug-name autocomplete is seeded with the prescribed name
+  // so the pharmacist's first keystroke is usually unnecessary.
+  const openQuickDispense = async (med, visit) => {
+    setQdMed({ ...med, _visit: visit });
+    setQdDrug(null);
+    setQdQty(1);
+    setQdUnitPrice(0);
+    setQdPaymentMode("Cash");
+    const seed = String(med?.medicineName || "").replace(/^(tab\.?|cap\.?|syp\.?|inj\.?|cream|oint\.?|drop[s]?)\s+/i, "").trim();
+    setQdDrugSearch(seed);
+    setQdMatches([]);
+    setQdOpen(true);
+    // Auto-fire one search so the modal opens with candidates visible.
+    if (seed.length >= 2) {
+      try {
+        const list = await listDrugs({ q: seed, limit: 10 });
+        setQdMatches(Array.isArray(list) ? list : (list?.data || []));
+      } catch (_) { /* non-fatal */ }
+    }
+  };
+
+  // Debounced drug search inside the modal (250ms — same as Dispense tab).
+  const debouncedSearch = useDebounce(qdDrugSearch, 250);
+  useEffect(() => {
+    let cancelled = false;
+    if (!qdOpen) return;
+    const q = (debouncedSearch || "").trim();
+    if (q.length < 2) { setQdMatches([]); return; }
+    (async () => {
+      try {
+        const list = await listDrugs({ q, limit: 10 });
+        if (cancelled) return;
+        setQdMatches(Array.isArray(list) ? list : (list?.data || []));
+      } catch (_) { if (!cancelled) setQdMatches([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [debouncedSearch, qdOpen]);
+
+  const pickDrug = (drug) => {
+    setQdDrug(drug);
+    setQdDrugSearch(drug.brandName || drug.genericName || drug.name || "");
+    setQdMatches([]);
+    // Default unit price from the drug's MRP / sellPrice if available.
+    const mrp = Number(drug.sellPrice || drug.mrp || drug.unitPrice || 0);
+    if (mrp > 0) setQdUnitPrice(mrp);
+  };
+
+  const submitQuickDispense = async () => {
+    if (!qdDrug?._id) { toast.warn("Select a drug from the inventory"); return; }
+    const qty = Number(qdQty);
+    if (!Number.isFinite(qty) || qty <= 0) { toast.warn("Quantity must be > 0"); return; }
+    const price = Number(qdUnitPrice);
+    if (!Number.isFinite(price) || price < 0) { toast.warn("Invalid unit price"); return; }
+    setQdSaving(true);
+    try {
+      const r = await dispense({
+        patientUHID:   searchedUhid,
+        patientName:   patient?.fullName || qdMed?._visit?.patientName || "",
+        age:           patient?.age || "",
+        gender:        patient?.gender || "",
+        contactNumber: patient?.contactNumber || "",
+        doctorName:    qdMed?._visit?.consultantName || (qdMed?._visit?.doctorId?.personalInfo
+          ? `Dr. ${qdMed._visit.doctorId.personalInfo.firstName || ""} ${qdMed._visit.doctorId.personalInfo.lastName || ""}`.trim()
+          : ""),
+        saleType:      "OPD",
+        paymentMode:   qdPaymentMode,
+        items: [{
+          drugId:       qdDrug._id,
+          drugName:     qdDrug.brandName || qdDrug.genericName || qdDrug.name,
+          quantity:     qty,
+          unitPrice:    price,
+          gstRate:      Number(qdDrug.gstRate || qdDrug.taxPercentage || 0),
+          discountPercent: 0,
+        }],
+        // Audit trail — link this sale back to the OPD visit so the
+        // pharmacist's bill can be reconciled to the prescription.
+        sourceContext: {
+          source:      "OPD-Rx",
+          visitNumber: qdMed?._visit?.visitNumber || "",
+          medicineRef: qdMed?.medicineName || "",
+          dosage:      qdMed?.dosage || "",
+          frequency:   qdMed?.frequency || "",
+          duration:    qdMed?.duration || "",
+        },
+      });
+      const billNo = r?.data?.billNumber || r?.data?.data?.billNumber || "";
+      toast.success(`Dispensed — Bill ${billNo}`);
+      setQdOpen(false);
+    } catch (e) {
+      const msg = e?.response?.data?.message || e.message || "Dispense failed";
+      toast.error(msg);
+    } finally {
+      setQdSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+      {/* Header row — UHID input + Load + Clear */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end", marginBottom: 16 }}>
+        <div style={{ flex: "0 0 280px" }}>
+          <label style={{ display: "block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 4 }}>
+            Patient UHID
+          </label>
+          <input
+            className="his-input"
+            value={uhidInput}
+            onChange={(e) => setUhidInput(e.target.value.toUpperCase())}
+            onKeyDown={(e) => { if (e.key === "Enter") load(); }}
+            placeholder="UH00000001"
+            autoFocus
+            style={{ width: "100%", textTransform: "uppercase", fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700 }}
+          />
+        </div>
+        <button onClick={() => load()} disabled={loading || !uhidInput.trim()} style={{
+          padding: "8px 18px", background: C.orange, color: "#fff", border: "none",
+          borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: loading ? "not-allowed" : "pointer",
+        }}>
+          <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-search"}`} style={{ marginRight: 6 }} />
+          {loading ? "Loading…" : "Load Rx"}
+        </button>
+        {(searchedUhid || visits.length > 0) && (
+          <button onClick={clearAll} style={{
+            padding: "8px 14px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
+            borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: "pointer",
+          }}>
+            <i className="pi pi-times" style={{ marginRight: 4 }} />
+            Clear
+          </button>
+        )}
+        <div style={{ marginLeft: "auto", fontSize: 11, color: C.muted, fontWeight: 600 }}>
+          <i className="pi pi-calendar" style={{ marginRight: 4 }} />
+          {today}
+        </div>
+      </div>
+
+      {/* Patient header strip (only after a successful load) */}
+      {patient && (
+        <div style={{
+          background: "#fff7ed", border: `1px solid #fed7aa`, borderRadius: 10,
+          padding: "12px 16px", marginBottom: 16,
+          display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center",
+        }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>
+            {patient.fullName || "—"}
+          </div>
+          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700, color: C.orange }}>
+            {patient.UHID}
+          </span>
+          {patient.age != null && <span style={{ fontSize: 12, color: C.muted }}>{patient.age}y</span>}
+          {patient.gender && <span style={{ fontSize: 12, color: C.muted }}>· {patient.gender}</span>}
+          {patient.contactNumber && (
+            <span style={{ fontSize: 12, color: C.muted }}>
+              <i className="pi pi-phone" style={{ fontSize: 10, marginRight: 3 }} />
+              {patient.contactNumber}
+            </span>
+          )}
+          <span style={{ marginLeft: "auto", background: "#fff", border: `1px solid ${C.border}`, padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, color: C.text }}>
+            {visits.length} visit{visits.length === 1 ? "" : "s"} today
+          </span>
+        </div>
+      )}
+
+      {/* No-data state */}
+      {searchedUhid && !loading && visits.length === 0 && (
+        <div style={{ padding: 36, textAlign: "center", background: "#f8fafc", border: `1px dashed ${C.border}`, borderRadius: 10, color: C.muted, fontSize: 13 }}>
+          <i className="pi pi-info-circle" style={{ fontSize: 22, marginBottom: 8, display: "block" }} />
+          No OPD visit found today for <strong style={{ color: C.text }}>{searchedUhid}</strong>.<br/>
+          <span style={{ fontSize: 11 }}>Patient may have walked in but not been registered — check Reception, or use the Dispense tab for a counter sale.</span>
+        </div>
+      )}
+
+      {/* Per-visit cards */}
+      {visits.map((v) => {
+        const meds = Array.isArray(v.prescribedMedications) ? v.prescribedMedications : [];
+        const doctorName = v.consultantName || (v.doctorId?.personalInfo
+          ? `Dr. ${v.doctorId.personalInfo.firstName || ""} ${v.doctorId.personalInfo.lastName || ""}`.trim()
+          : "—");
+        const deptName = v.departmentId?.departmentName || v.department || "—";
+        const dxParts = [
+          v.provisionalDiagnosis && `Provisional: ${v.provisionalDiagnosis}`,
+          v.workingDiagnosis     && `Working: ${v.workingDiagnosis}`,
+          v.finalDiagnosis       && `Final: ${v.finalDiagnosis}`,
+        ].filter(Boolean);
+        return (
+          <div key={v._id || v.visitNumber} style={{
+            border: `1px solid ${C.border}`, borderRadius: 10, marginBottom: 14, overflow: "hidden",
+          }}>
+            {/* Visit header bar */}
+            <div style={{
+              background: "#fff", padding: "10px 14px", borderBottom: `1px solid ${C.border}`,
+              display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center",
+            }}>
+              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700, color: C.text }}>
+                {v.visitNumber}
+              </span>
+              <span style={{ fontSize: 12, color: C.muted }}>
+                {new Date(v.visitDate).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+              </span>
+              <span style={{ fontSize: 12, color: C.muted }}>· {deptName}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.orange }}>· {doctorName}</span>
+              {v.status && (
+                <span style={{ marginLeft: "auto", padding: "2px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700,
+                  background: v.status === "Completed" ? "#dcfce7" : "#dbeafe",
+                  color:      v.status === "Completed" ? "#15803d" : "#1d4ed8",
+                  textTransform: "uppercase", letterSpacing: ".4px",
+                }}>{v.status}</span>
+              )}
+            </div>
+
+            {/* Complaint + diagnosis */}
+            <div style={{ padding: "10px 14px", background: "#fafafa", borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.text }}>
+              {v.chiefComplaint && (
+                <div style={{ marginBottom: 4 }}>
+                  <span style={{ color: C.muted, fontWeight: 600 }}>Complaint: </span>
+                  {v.chiefComplaint}
+                </div>
+              )}
+              {dxParts.length > 0 && (
+                <div>
+                  <span style={{ color: C.muted, fontWeight: 600 }}>Diagnosis: </span>
+                  {dxParts.join(" · ")}
+                  {v.icd10Code && <span style={{ marginLeft: 8, fontFamily: "'DM Mono', monospace", fontSize: 11, color: C.muted }}>[{v.icd10Code}]</span>}
+                </div>
+              )}
+              {!v.chiefComplaint && dxParts.length === 0 && (
+                <span style={{ color: C.muted, fontStyle: "italic" }}>No diagnosis recorded yet — doctor may still be assessing.</span>
+              )}
+            </div>
+
+            {/* Medicines table */}
+            {meds.length === 0 ? (
+              <div style={{ padding: 18, textAlign: "center", color: C.muted, fontSize: 12, fontStyle: "italic" }}>
+                No medicines prescribed in this visit.
+              </div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: "#f1f5f9" }}>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, fontWeight: 700 }}>Medicine</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, fontWeight: 700, width: 110 }}>Dose</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, fontWeight: 700, width: 110 }}>Frequency</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, fontWeight: 700, width: 100 }}>Duration</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, fontWeight: 700, width: 110 }}>Meal</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, fontWeight: 700, width: 130 }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {meds.map((m, i) => (
+                    <tr key={i} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
+                      <td style={{ padding: "8px 12px", fontWeight: 700, color: C.text }}>
+                        {m.medicineName || "—"}
+                        {m.instructions && (
+                          <div style={{ fontSize: 10, fontWeight: 500, color: C.muted, marginTop: 1, fontStyle: "italic" }}>
+                            {m.instructions}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>{m.dosage || "—"}</td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>{m.frequency || "—"}</td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>{m.duration || "—"}</td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>
+                        {m.mealStatus
+                          ? <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700, background: "#e0f2fe", color: "#0369a1" }}>{m.mealStatus}</span>
+                          : "—"}
+                      </td>
+                      <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                        <button onClick={() => openQuickDispense(m, v)} style={{
+                          padding: "5px 12px", background: C.orange, color: "#fff", border: "none",
+                          borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                        }}>
+                          <i className="pi pi-check" style={{ marginRight: 4, fontSize: 10 }} />
+                          Dispense
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {v.advice && (
+              <div style={{ padding: "10px 14px", background: "#fffbeb", borderTop: `1px solid ${C.border}`, fontSize: 11, color: "#a16207" }}>
+                <strong>Advice: </strong>{v.advice}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Quick-Dispense Modal — small, single-line sale per click. */}
+      {qdOpen && (
+        <div onClick={() => !qdSaving && setQdOpen(false)} style={{
+          position: "fixed", inset: 0, background: "rgba(15,23,42,.55)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10000,
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            width: 520, maxWidth: "90vw", background: "#fff", borderRadius: 14,
+            boxShadow: "0 20px 50px rgba(0,0,0,.3)", padding: 22,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>
+                <i className="pi pi-shopping-cart" style={{ marginRight: 6, color: C.orange }} />
+                Quick Dispense
+              </div>
+              <button onClick={() => !qdSaving && setQdOpen(false)} style={{
+                background: "transparent", border: "none", fontSize: 20, color: C.muted, cursor: "pointer",
+              }}>×</button>
+            </div>
+
+            {/* Doctor's prescription block — reminds the pharmacist what's
+                being sold so they can sanity-check qty (e.g. 5 days × TDS
+                = 15 tabs, not 5). */}
+            <div style={{ background: "#fff7ed", border: `1px solid #fed7aa`, borderRadius: 8, padding: "8px 12px", fontSize: 11.5, color: C.text, marginBottom: 14 }}>
+              <div><strong>{qdMed?.medicineName}</strong></div>
+              <div style={{ color: C.muted, marginTop: 2 }}>
+                {[qdMed?.dosage, qdMed?.frequency, qdMed?.duration, qdMed?.mealStatus].filter(Boolean).join(" · ")}
+              </div>
+              {qdMed?.instructions && <div style={{ color: C.muted, marginTop: 2, fontStyle: "italic" }}>{qdMed.instructions}</div>}
+            </div>
+
+            {/* Inventory drug picker */}
+            <label style={{ display: "block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, marginBottom: 4 }}>
+              Inventory Drug
+            </label>
+            <input
+              className="his-input"
+              value={qdDrugSearch}
+              onChange={(e) => { setQdDrugSearch(e.target.value); setQdDrug(null); }}
+              placeholder="Search brand or generic…"
+              style={{ width: "100%", marginBottom: 6 }}
+            />
+            {qdMatches.length > 0 && !qdDrug && (
+              <div style={{
+                border: `1px solid ${C.border}`, borderRadius: 8, maxHeight: 180, overflowY: "auto",
+                marginBottom: 10, background: "#fff",
+              }}>
+                {qdMatches.map((d) => (
+                  <div key={d._id} onClick={() => pickDrug(d)} style={{
+                    padding: "7px 12px", cursor: "pointer", fontSize: 12, borderBottom: `1px solid ${C.border}`,
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                  }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#fff7ed"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 700, color: C.text }}>{d.brandName || d.genericName || d.name}</div>
+                      {d.genericName && d.brandName && <div style={{ fontSize: 10, color: C.muted }}>{d.genericName}</div>}
+                    </div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.orange }}>
+                      ₹{Number(d.sellPrice || d.mrp || 0).toFixed(2)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {qdDrug && (
+              <div style={{ padding: "6px 10px", background: "#dcfce7", color: "#15803d", borderRadius: 6, fontSize: 11.5, marginBottom: 10, fontWeight: 600 }}>
+                <i className="pi pi-check" style={{ marginRight: 5 }} />
+                {qdDrug.brandName || qdDrug.genericName || qdDrug.name} — selected
+              </div>
+            )}
+
+            {/* Qty + price + payment */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: C.muted, marginBottom: 3 }}>Qty</label>
+                <input type="number" min="1" className="his-input" value={qdQty}
+                  onChange={(e) => setQdQty(e.target.value)} style={{ width: "100%" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: C.muted, marginBottom: 3 }}>Unit ₹</label>
+                <input type="number" min="0" step="0.01" className="his-input" value={qdUnitPrice}
+                  onChange={(e) => setQdUnitPrice(e.target.value)} style={{ width: "100%" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: C.muted, marginBottom: 3 }}>Payment</label>
+                <select className="his-select" value={qdPaymentMode}
+                  onChange={(e) => setQdPaymentMode(e.target.value)} style={{ width: "100%" }}>
+                  {(PAYMENT_MODES || ["Cash", "Card", "UPI"]).map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
+                Total: ₹{(Number(qdQty || 0) * Number(qdUnitPrice || 0)).toFixed(2)}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setQdOpen(false)} disabled={qdSaving} style={{
+                  padding: "8px 16px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
+                  borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: qdSaving ? "not-allowed" : "pointer",
+                }}>Cancel</button>
+                <button onClick={submitQuickDispense} disabled={qdSaving || !qdDrug} style={{
+                  padding: "8px 18px", background: (qdSaving || !qdDrug) ? "#94a3b8" : C.orange,
+                  color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 12,
+                  cursor: (qdSaving || !qdDrug) ? "not-allowed" : "pointer",
+                }}>
+                  <i className={`pi ${qdSaving ? "pi-spin pi-spinner" : "pi-check"}`} style={{ marginRight: 5 }} />
+                  {qdSaving ? "Dispensing…" : "Confirm & Sell"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

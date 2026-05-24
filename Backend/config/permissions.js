@@ -348,6 +348,12 @@ const ACTIONS = {
   // NOT need to enumerate the OPD / ER queue (diagnosis + triage = PHI).
   "opd.read":                  ["Admin", "Doctor", "Nurse", "Receptionist"],
   "er.read":                   ["Admin", "Doctor", "Nurse", "Receptionist"],
+  // R7cr — narrower scope than `opd.read`: lets Pharmacist hit ONE
+  // endpoint (GET /opd/uhid/:UHID/today-rx) to pull today's prescribed
+  // medicines + diagnosis context for a specific UHID, so they can
+  // dispense from the same screen. Does NOT grant the full OPD queue
+  // (which leaks every patient's diagnosis / token / chief complaint).
+  "pharmacy.rx-lookup":        ["Admin", "Doctor", "Nurse", "Receptionist", "Pharmacist"],
   // R7bb-FIX-C-11/D2-HIGH-2: OPD / ER DELETE is a clinical record
   // deletion — only Admin and the assigned Doctor should perform it.
   // Receptionist explicitly removed (pre-R7bb the route accepted

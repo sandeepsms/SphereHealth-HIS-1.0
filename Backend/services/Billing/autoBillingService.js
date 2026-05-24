@@ -761,29 +761,47 @@ async function createTrigger(config) {
       // retry/move-it/cancel-it without it silently disappearing.
       // Most likely cause: closed/frozen bill (PAID/REFUNDED), or a
       // Decimal128 / enum validation error inside save().
+      //
+      // R7cm: DON'T clobber a status the inner addItemToBill flow already
+      // set. When the bill is PAID / CANCELLED / REFUNDED, the inner guard
+      // (≈line 437) cleanly marks the trigger as `status:"skipped"` with a
+      // clear skipReason ("Bill paid — no new charges accepted") — that's
+      // a LEGITIMATE business outcome, not a stuck trigger. Pre-R7cm this
+      // outer block unconditionally overwrote "skipped" with
+      // "pending-review", surfacing every "add-to-closed-bill" attempt as
+      // an alarming red flag in the Stuck Triggers tile (e.g. Admin adds a
+      // manual charge after the bill auto-finalised via advance settlement
+      // — perfectly normal). Use a conditional findOneAndUpdate so the
+      // skipped state is preserved atomically.
       const reason = `addItemToBill returned null for ${trigger.serviceCode} on bill ${bill?._id} (status=${bill?.billStatus})`;
       console.warn(`[AutoBilling] ${reason}`);
-      await BillingTrigger.findByIdAndUpdate(trigger._id, {
-        status:       "pending-review",
-        reviewReason: reason,
-        reviewedAt:   new Date(),
-      }).catch(() => { /* best-effort flag */ });
+      const escalated = await BillingTrigger.findOneAndUpdate(
+        { _id: trigger._id, status: { $ne: "skipped" } },
+        { $set: { status: "pending-review", reviewReason: reason, reviewedAt: new Date() } },
+        { new: true },
+      ).catch(() => null);
       // R7bj-F5 / R7bi-6-TBA-CRIT-1: TRIGGER_PENDING_REVIEW audit.
-      try {
-        const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
-        await emitBillingAudit({
-          event:       "TRIGGER_PENDING_REVIEW",
-          UHID:        trigger.UHID,
-          admissionId: trigger.admissionId,
-          triggerId:   trigger._id,
-          billId:      bill?._id,
-          amount:      trigger.totalAmount,
-          actorName:   "AutoBilling",
-          actorRole:   "System",
-          reason,
-          after:       { status: "pending-review", serviceCode: trigger.serviceCode, billStatus: bill?.billStatus },
-        });
-      } catch (_) { /* non-fatal */ }
+      // R7cm: only emit the audit row when we actually escalated to
+      // pending-review. If the trigger was already "skipped" (PAID/closed
+      // bill), the inner branch's CHARGE_SKIPPED audit covers it — no
+      // need to double-emit a misleading pending-review event.
+      if (escalated) {
+        try {
+          const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+          await emitBillingAudit({
+            event:       "TRIGGER_PENDING_REVIEW",
+            UHID:        trigger.UHID,
+            admissionId: trigger.admissionId,
+            triggerId:   trigger._id,
+            billId:      bill?._id,
+            amount:      trigger.totalAmount,
+            actorName:   "AutoBilling",
+            actorRole:   "System",
+            reason,
+            after:       { status: "pending-review", serviceCode: trigger.serviceCode, billStatus: bill?.billStatus },
+          });
+        } catch (_) { /* non-fatal */ }
+      }
     } else {
       const reason = `getOrCreateBill returned null for admission=${admissionId} patientType=${patientType}`;
       console.warn(`[AutoBilling] ${reason} — trigger ${trigger?._id} (${trigger.serviceCode}) flagged pending-review`);

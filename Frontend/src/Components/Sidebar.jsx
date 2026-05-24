@@ -233,32 +233,25 @@ const NAV = [
     ],
   },
 
-  /* ── Pharmacy / MAR ──────────────────────────────────── */
+  /* ── Pharmacy ──────────────────────────────────────────
+     R7cq: trimmed.
+       • MAR + Diabetic Chart moved out — both now live as tiles inside
+         Nursing Notes so the nurse opens them in patient context. Keeping
+         them in two places duplicated the nav and split the workflow.
+       • Kitchen Indent + Cold Chain Log removed entirely — modules
+         deprecated per launch-scope decision. Routes + page components
+         also deleted (see App.jsx). Backend models stay so existing
+         data survives in case the modules ever return.
+       • Section label dropped "/ MAR" since MAR no longer lives here. */
   {
-    id: "pharmacy", label: "Pharmacy / MAR",
+    id: "pharmacy", label: "Pharmacy",
     icon: "pi-box", color: "#ea580c", light: "#fff7ed",
-    nabh: true, roles: [ADMIN, PH, NR, DR],
+    nabh: true, roles: [ADMIN, PH],
     items: [
-      // MAR is the canonical record — Doctor reads it (gets to "DR" too).
       // Live Indents is NOT a separate sidebar entry — it lives as a
       // tab inside the Pharmacy page (next to Dispense + Sales) so the
       // pharmacist sees it on their primary workspace.
       { label: "Pharmacy",         icon: "pi-box",           path: "/pharmacy",        nabh: true, badge: "NEW", roles: [ADMIN, PH] },
-      // R7bb-E/D5-CRIT-1 — Pharmacist removed: backend mar.read excludes
-      // PH so the page hits a 403/empty state every time. PH still
-      // sees Pharmacy + Indents to fulfil dispensing requests instead.
-      { label: "MAR",              icon: "pi-table",         path: "/mar",             nabh: true, roles: [ADMIN, NR, DR] },
-      { label: "Diabetic Chart",   icon: "pi-chart-bar",     path: "/diabetic-chart",  nabh: true, badge: "NEW", roles: [ADMIN, NR, DR] },
-      // R7bj-F2 — Kitchen indent console (nurse raises meal indent,
-      // kitchen desk prepares, ward boy delivers). Visible to the four
-      // roles that participate in the loop. Lazy route /kitchen owned
-      // by F10 — if KitchenConsole.jsx isn't yet shipped the route
-      // renders the lazy-import-fallback page.
-      { label: "Kitchen Indent",   icon: "pi-shopping-cart", path: "/kitchen",         nabh: true, badge: "NEW", roles: [ADMIN, NR, PH, WB] },
-      // R7bk — Cold-Chain Log (NABH MOM.2, WHO PQS E003). Pharmacist
-      // logs vaccine-fridge / insulin-fridge / freezer temps; auto-flag
-      // out-of-range as breach + nurse acknowledge.
-      { label: "Cold Chain Log",   icon: "pi-bolt",          path: "/cold-chain",      nabh: true, badge: "MOM.2", roles: [ADMIN, PH, NR, DR] },
     ],
   },
 
@@ -274,17 +267,12 @@ const NAV = [
       // section was visible but empty for the role. Manual Lab Entry
       // (write) stays Admin/LabTech-only. Master likewise.
       { label: "Investigation Orders",  icon: "pi-list",   path: "/investigation-orders",  roles: [ADMIN, LB, DR, RL] },
-      // R7bd-E-5 / A3-MED-18 — Lab Tech multi-tab console (sample queue,
-      // result-entry queue, QC log, day worksheet). Sits above the
-      // single-page "Manual Lab Entry" because the console is the
-      // intended landing surface; the entry page is now reached from
-      // the queue rows. Visible to Admin + Lab Tech only.
-      { label: "Lab Console",           icon: "pi-flask",  path: "/lab-console",           badge: "NEW", roles: [ADMIN, LB] },
+      // R7cq: Lab Console + Radiology Console removed per launch-scope
+      // decision. Lab/imaging at this hospital are outsourced — the
+      // multi-tab consoles weren't being used. Lab Tech still has
+      // Manual Lab Entry below to transcribe external reports;
+      // Radiologist still reads Imaging Reports.
       { label: "Imaging Reports",       icon: "pi-table",  path: "/lab-results",           badge: "READ",roles: [RL] },
-      // R7bd-E-6 / A3-HIGH-10 — Radiologist 3-tab console stub
-      // (worklist, reported, pending sign-off). Visible to Admin +
-      // Radiologist only.
-      { label: "Radiology Console",     icon: "pi-eye",    path: "/radiology-console",     badge: "NEW", roles: [ADMIN, RL] },
       { label: "Manual Lab Entry",      icon: "pi-table",  path: "/lab-results",           badge: "NEW", roles: [ADMIN, LB] },
       { label: "Investigation Master",  icon: "pi-cog",    path: "/investigation-master",  roles: [ADMIN, LB] },
     ],

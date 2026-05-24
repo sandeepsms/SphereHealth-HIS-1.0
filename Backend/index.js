@@ -94,15 +94,16 @@ app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 
 // ── Rate limiters ──────────────────────────────────────────────────────────
-// Login bucket: 10 attempts / 15 minutes per IP. Sized so a careless typo or
-// password rotation doesn't lock out a real user but throttles brute-force.
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, message: "Too many login attempts. Try again in a few minutes." },
-});
+// R7cp: the legacy `loginLimiter` defined here was a duplicate of the
+// R7bz `loginRateLimit` mounted directly on the /login route in
+// routes/Auth/authRoutes.js — same 10/15min budget, but WITHOUT
+// `skipSuccessfulRequests:true`. Both fired in chain so a legitimate
+// user who typed their password right on the 11th try still got 429'd
+// by the legacy bucket (because every prior 200 also counted). The
+// vague "Try again in a few minutes" message the user saw was from
+// this legacy limiter — it had no Retry-After in the body either.
+// Removed. The R7bz version (with skipSuccessful + retryAfterSec in
+// the response body) is the sole login throttle.
 
 // OTP / 2FA bucket: 5 sends / 15 minutes per IP to thwart SMS-cost abuse and
 // OTP-enumeration. Verification uses a separate higher bucket.
@@ -133,7 +134,8 @@ const globalLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-app.use("/api/auth/login", loginLimiter);
+// R7cp: /api/auth/login throttle now lives on the route itself (see
+// routes/Auth/authRoutes.js — `loginRateLimit` import). No global mount.
 app.use("/api/auth/2fa", otpLimiter);
 app.use("/api/auth/otp", otpLimiter);
 // R7au-FIX-13/D3-HIGH: the actual 2FA mount in routes/index.js:166 is

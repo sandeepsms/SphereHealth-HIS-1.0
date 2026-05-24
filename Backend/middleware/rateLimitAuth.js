@@ -40,11 +40,34 @@ const loginRateLimit = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: true,
   keyGenerator: (req, res) => ipKeyGenerator(req.ip),
+  // R7cp: ship `retryAfterSec` in the response body so the LoginPage can
+  // render a live mm:ss countdown instead of the vague "few minutes"
+  // copy. express-rate-limit populates `req.rateLimit.resetTime` (a Date)
+  // when the limit trips; we derive seconds-until-reset from it. The
+  // standard `RateLimit-Reset` header is also emitted via
+  // `standardHeaders:true` for non-browser clients that follow RFC 6585.
   handler: (req, res /*, next, options */) => {
+    const resetMs = req.rateLimit?.resetTime
+      ? new Date(req.rateLimit.resetTime).getTime() - Date.now()
+      : 15 * 60 * 1000;
+    const retryAfterSec = Math.max(1, Math.ceil(resetMs / 1000));
+    // Mirror RFC 6585 — Retry-After in seconds when the value is short
+    // enough that an HTTP-date would be silly. express-rate-limit v8
+    // already sets it via standardHeaders, but we set it explicitly so
+    // older proxies/CDNs that strip non-RateLimit-* headers still get it.
+    res.set("Retry-After", String(retryAfterSec));
+    const mins = Math.floor(retryAfterSec / 60);
+    const secs = retryAfterSec % 60;
+    const human = mins > 0
+      ? `${mins} min ${secs.toString().padStart(2, "0")} sec`
+      : `${secs} sec`;
     res.status(429).json({
       ok: false,
+      success: false,                  // some old frontend paths read .success
       code: "TOO_MANY_LOGIN_ATTEMPTS",
-      message: "Too many login attempts from this IP. Try again in 15 minutes.",
+      retryAfterSec,                   // machine-readable countdown driver
+      resetAt: req.rateLimit?.resetTime || new Date(Date.now() + resetMs),
+      message: `Too many login attempts from this IP. Try again in ${human}.`,
     });
   },
 });

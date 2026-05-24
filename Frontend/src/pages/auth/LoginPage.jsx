@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
@@ -46,6 +46,37 @@ export default function LoginPage() {
   const [showPwd, setShowPwd]   = useState(false);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState("");
+  // R7cp: when the backend rate-limiter trips (HTTP 429), it ships a
+  // `retryAfterSec` countdown in the response body. We capture the
+  // absolute reset timestamp here and tick a 1s interval so the error
+  // banner shows a live mm:ss countdown — much clearer than "Try again
+  // in a few minutes" (which left the user staring at a dead form).
+  // Also disables the submit button while the lock is active so a
+  // panicked retry doesn't burn another slot once it unlocks.
+  const [lockUntil, setLockUntil] = useState(0);   // ms epoch; 0 = unlocked
+  const [secondsLeft, setSecondsLeft] = useState(0);
+
+  useEffect(() => {
+    if (!lockUntil) { setSecondsLeft(0); return; }
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((lockUntil - Date.now()) / 1000));
+      setSecondsLeft(remaining);
+      if (remaining === 0) {
+        setLockUntil(0);
+        setError("");           // auto-clear the banner once the lock expires
+      }
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [lockUntil]);
+
+  // mm:ss formatter for the countdown badge.
+  const fmtCountdown = (sec) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
 
   // Role-aware landing page: each role gets its own home
   // Removed local landingPageForRole — its routes were stale (Dietician
@@ -68,7 +99,31 @@ export default function LoginPage() {
       const dest = fromState && !STALE_REDIRECTS.includes(fromState) ? fromState : homePathForRole(user?.role);
       navigate(dest, { replace: true });
     } catch (err) {
-      setError(err?.response?.data?.message || "Login failed. Please check your credentials.");
+      // R7cp: 429 rate-limit handling. Backend ships `retryAfterSec` +
+      // `resetAt` in the body; also sets the standard `Retry-After`
+      // header for non-browser clients. Prefer the body field, fall
+      // back to the header, fall back to a 15-min default. lockUntil
+      // is an absolute timestamp so the useEffect tick stays accurate
+      // even if the tab sleeps and resumes (Date.now ticks regardless).
+      const isRateLimited =
+        err?.response?.status === 429 ||
+        err?.response?.data?.code === "TOO_MANY_LOGIN_ATTEMPTS";
+      if (isRateLimited) {
+        const bodySec   = Number(err?.response?.data?.retryAfterSec);
+        const headerSec = Number(err?.response?.headers?.["retry-after"]);
+        const sec = Number.isFinite(bodySec) && bodySec > 0
+          ? bodySec
+          : Number.isFinite(headerSec) && headerSec > 0
+            ? headerSec
+            : 15 * 60;
+        setLockUntil(Date.now() + sec * 1000);
+        setError(
+          err?.response?.data?.message ||
+          `Too many login attempts. Try again in ${Math.ceil(sec / 60)} minute${sec >= 120 ? "s" : ""}.`,
+        );
+      } else {
+        setError(err?.response?.data?.message || "Login failed. Please check your credentials.");
+      }
     } finally {
       setLoading(false);
     }
@@ -141,7 +196,21 @@ export default function LoginPage() {
               color: "#fca5a5", fontSize: 12, fontWeight: 500,
             }}>
               <i className="pi pi-exclamation-triangle" style={{ fontSize: 13 }} />
-              {error}
+              <span style={{ flex: 1 }}>{error}</span>
+              {/* R7cp: live mm:ss countdown badge — only visible while the
+                  rate-limit lock is active. Auto-clears when the timer hits
+                  zero (the useEffect also wipes the error banner). */}
+              {secondsLeft > 0 && (
+                <span style={{
+                  background: "rgba(220,38,38,.35)", color: "#fee2e2",
+                  padding: "2px 10px", borderRadius: 10, fontSize: 11,
+                  fontFamily: "'DM Mono', monospace", fontWeight: 800,
+                  letterSpacing: ".5px", whiteSpace: "nowrap",
+                }} title="Time until you can try again">
+                  <i className="pi pi-clock" style={{ fontSize: 10, marginRight: 4 }} />
+                  {fmtCountdown(secondsLeft)}
+                </span>
+              )}
             </div>
           )}
 
@@ -211,20 +280,25 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {/* Submit */}
-            <button type="submit" disabled={loading}
+            {/* Submit — R7cp: disabled while the rate-limit countdown is
+                active so an impatient user can't burn another slot the
+                instant the lock expires. Re-enables automatically when
+                secondsLeft hits 0 (via the useEffect that clears lockUntil). */}
+            <button type="submit" disabled={loading || secondsLeft > 0}
               style={{
                 width: "100%", padding: "13px 0",
-                background: loading ? "#374151" : "linear-gradient(135deg, #1e40af, #1d4ed8)",
+                background: (loading || secondsLeft > 0) ? "#374151" : "linear-gradient(135deg, #1e40af, #1d4ed8)",
                 border: "none", borderRadius: 10, color: "white",
                 fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 700,
-                cursor: loading ? "not-allowed" : "pointer",
-                boxShadow: loading ? "none" : "0 4px 20px rgba(30,64,175,.4)",
+                cursor: (loading || secondsLeft > 0) ? "not-allowed" : "pointer",
+                boxShadow: (loading || secondsLeft > 0) ? "none" : "0 4px 20px rgba(30,64,175,.4)",
                 transition: "all .2s", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
               }}>
               {loading
                 ? <><i className="pi pi-spin pi-spinner" />Signing in…</>
-                : <><i className="pi pi-sign-in" />Sign In</>
+                : secondsLeft > 0
+                  ? <><i className="pi pi-lock" />Locked · retry in {fmtCountdown(secondsLeft)}</>
+                  : <><i className="pi pi-sign-in" />Sign In</>
               }
             </button>
           </form>

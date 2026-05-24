@@ -159,6 +159,39 @@ class OPDService {
     return savedOPD;
   }
 
+  /* ── R7cr: Today's prescriptions for a UHID — Pharmacy fast-lookup ──
+     A pharmacist enters a UHID and needs the focused subset:
+       • today's OPD visit(s) for this patient
+       • diagnosis context (so the pharmacist can sanity-check the Rx)
+       • the prescribed medicines list (so they can dispense)
+     We project ONLY the fields the pharmacy needs — no SOAP narrative,
+     no audit blob, no full investigation order trail. Smaller payload
+     keeps the lookup snappy even when the patient has multiple visits
+     today (rare but legitimate: morning OPD + afternoon ER conversion).
+     Sorted oldest-first so dispense order matches visit order.       */
+  async getTodayPrescriptionsByUHID(UHID) {
+    if (!UHID) return [];
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const end   = new Date(start); end.setDate(start.getDate() + 1);
+    const visits = await OPD.find({
+      UHID,
+      visitDate: { $gte: start, $lt: end },
+    })
+      .select(
+        "visitNumber visitDate UHID patientId patientName tokenNumber " +
+        "department departmentId doctorId consultantName " +
+        "chiefComplaint provisionalDiagnosis workingDiagnosis finalDiagnosis " +
+        "icd10Code icd10Description patientStatus " +
+        "prescribedMedications advice status",
+      )
+      .populate("departmentId", "departmentName")
+      .populate("doctorId", "personalInfo doctorId")
+      .populate("patientId", "fullName UHID age gender contactNumber dateOfBirth")
+      .sort({ visitDate: 1, tokenNumber: 1 })
+      .lean();
+    return visits;
+  }
+
   /* ── Get all OPD visits (paginated + filterable) ── */
   async getAllOPDVisits(page = 1, limit = 50, filters = {}) {
     const skip = (page - 1) * limit;

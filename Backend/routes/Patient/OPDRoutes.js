@@ -28,6 +28,19 @@ router.get("/doctor/:doctorId",         requireAction("opd.read"), opdController
 // ── Patient history ───────────────────────────────────────────────
 router.get("/patient/:patientId", requireAction("opd.read"), opdController.getPatientOPDHistory);
 
+// ── R7cr — Pharmacy fast-lookup: today's Rx for a UHID ──────────
+// Gated by `pharmacy.rx-lookup` — a SCOPED action (Admin / Doctor /
+// Nurse / Receptionist / Pharmacist). Wider than `opd.read` only on
+// Pharmacist so the pharmacy counter can pull today's prescribed
+// medicines + diagnosis for a SPECIFIC UHID it already knows, but
+// can't enumerate the full OPD queue (which would leak every
+// patient's diagnosis / token / chief complaint).
+router.get(
+  "/uhid/:UHID/today-rx",
+  requireAction("pharmacy.rx-lookup"),
+  opdController.getTodayPrescriptionsByUHID,
+);
+
 // ── CRUD ─────────────────────────────────────────────────────────
 // R7ab: visit creation/edit/delete now gated. Previously every
 // authenticated role could create OPD visits (Pharmacist, Lab Tech, etc.)

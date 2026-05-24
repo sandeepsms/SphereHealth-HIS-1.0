@@ -14,6 +14,11 @@ const opdService = {
   // ── Patient history ───────────────────────────────────────────
   getPatientOPDHistory: (patientId) => axios.get(`${BASE}/patient/${patientId}`),
 
+  // R7cr — Pharmacy fast-lookup: today's OPD visits for a UHID with
+  // diagnosis + prescribed medicines projected. Used by the Pharmacy
+  // "OPD Rx" tab to display + dispense in one screen.
+  getTodayRxByUHID: (UHID) => axios.get(`${BASE}/uhid/${encodeURIComponent(UHID)}/today-rx`),
+
   // ── Queue & filters ───────────────────────────────────────────
   // params: { departmentId, doctorId, vitalsStatus }
   getTodayVisits:        (params)       => axios.get(`${BASE}/today`, { params }),
