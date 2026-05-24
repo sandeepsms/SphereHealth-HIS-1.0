@@ -954,19 +954,34 @@ const _cancelMissedDoseCron = (() => {
 // nextDueAt has slipped past now. Frontend reads these via the
 // /api/compliance/assessment-status/:admissionId endpoint to render
 // red OVERDUE badges on the Nursing/Doctor Notes header.
+//
+// R7bw — Boot seed + per-tick seed. Pre-R7bw the collection only grew
+// when an assessment was actually saved, so freshly admitted patients
+// (and the hospital on day 1 of running the cron) had zero rows. The
+// seed pass walks every Active admission and upserts the EXPECTED_TUPLES
+// so the OVERDUE flip can fire on the very first sweep.
 const _cancelAssessmentComplianceSweeper = (() => {
-  const { sweepOverdue } = require("./services/Compliance/assessmentComplianceService");
-  const interval = setInterval(() => {
-    sweepOverdue()
-      .then((r) => {
-        if (r?.overdue || r?.dueSoon) {
-          console.log(`[cron:assessment-compliance] overdue+=${r.overdue} dueSoon+=${r.dueSoon}`);
-        }
-      })
-      .catch((e) => console.error("[cron:assessment-compliance] sweep failed:", e?.message));
-  }, 15 * 60 * 1000);
+  const { sweepOverdue, seedAllActiveAdmissions } = require("./services/Compliance/assessmentComplianceService");
+  const tick = async () => {
+    try {
+      const seed = await seedAllActiveAdmissions();
+      if (seed?.inserted) {
+        console.log(`[cron:assessment-compliance] seeded ${seed.inserted} new rows across ${seed.admissions} active admissions`);
+      }
+      const r = await sweepOverdue();
+      if (r?.overdue || r?.dueSoon) {
+        console.log(`[cron:assessment-compliance] overdue+=${r.overdue} dueSoon+=${r.dueSoon}`);
+      }
+    } catch (e) {
+      console.error("[cron:assessment-compliance] tick failed:", e?.message);
+    }
+  };
+  // One-shot boot run (60s after start so mongoose connection is up) +
+  // recurring 15-min cron.
+  setTimeout(() => { tick(); }, 60 * 1000);
+  const interval = setInterval(tick, 15 * 60 * 1000);
   if (typeof interval.unref === "function") interval.unref();
-  console.log("[cron:assessment-compliance] armed — every 15 min");
+  console.log("[cron:assessment-compliance] armed — boot+60s, then every 15 min");
   return () => clearInterval(interval);
 })();
 

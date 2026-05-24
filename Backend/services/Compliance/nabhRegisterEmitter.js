@@ -34,7 +34,40 @@ const PainAssessmentRegister  = require("../../models/Compliance/PainAssessmentR
 const FallRiskRegister        = require("../../models/Compliance/FallRiskRegisterModel");
 const PressureUlcerRegister   = require("../../models/Compliance/PressureUlcerRegisterModel");
 const DVTRegister             = require("../../models/Compliance/DVTRegisterModel");
+// R7bu — six new NABH registers (COP.10/13/16/17/18 + MOM.7)
+const OTRegister               = require("../../models/Compliance/OTRegisterModel");
+const ASARegister              = require("../../models/Compliance/ASARegisterModel");
+const ReadmissionRegister      = require("../../models/Compliance/ReadmissionRegisterModel");
+const MortalityRegister        = require("../../models/Compliance/MortalityRegisterModel");
+const RestraintRegister        = require("../../models/Compliance/RestraintRegisterModel");
+const AntimicrobialUseRegister = require("../../models/Compliance/AntimicrobialUseRegisterModel");
+const Admission               = require("../../models/Patient/admissionModel");
 const { nextSequence } = require("../../utils/counter");
+
+// ─────────────────────────────────────────────────────────────────────────
+// R7bw — Canonical admission resolver
+// ─────────────────────────────────────────────────────────────────────────
+// Pre-R7bw: register emitters trusted the admissionId passed by the caller.
+// But when the dedupe script (R7bq-A) merges duplicate active admissions, the
+// frontend page may still carry the stale loser admissionId in component
+// state. The nurse saves a Fall-Risk / DVT assessment, the route forwards
+// that stale id, and the register row gets linked to a Cancelled admission —
+// so NABH dashboards filtered by "Active admissionId" miss the row.
+//
+// Resolution: always look up the patient's CURRENT canonical active admission
+// by UHID. Fall back to the caller's id only if no active admission exists
+// (e.g. the patient was discharged between form-load and form-submit, in
+// which case the historical id is still meaningful).
+async function _resolveCanonicalAdmissionId(UHID, callerSupplied = null) {
+  if (!UHID) return callerSupplied || null;
+  try {
+    const adm = await Admission.findOne({ UHID, status: "Active" })
+      .select("_id")
+      .lean();
+    if (adm?._id) return adm._id;
+  } catch (_) { /* non-fatal — fall through */ }
+  return callerSupplied || null;
+}
 
 const _CRIT_LOW  = Number(process.env.RBS_CRITICAL_LOW  || 70);
 const _CRIT_HIGH = Number(process.env.RBS_CRITICAL_HIGH || 300);
@@ -92,13 +125,16 @@ async function emitBloodSugar(args = {}) {
     const criticalFlag = valueMgDl < _CRIT_LOW || valueMgDl > _CRIT_HIGH;
 
     const actorMeta = _actor(actor);
+    // R7bw — resolve canonical active admission so the row links to the
+    // KEEPER admission even if the caller is still holding a stale id.
+    const canonicalAdmissionId = await _resolveCanonicalAdmissionId(patient.UHID, admission?._id || null);
     const row = await BloodSugarRegister.create({
       patientId: patient._id,
       UHID: patient.UHID,
       patientName: patient.fullName || patient.name || "",
       age: patient.age || null,
       sex: patient.gender || patient.sex || "",
-      admissionId: admission?._id || null,
+      admissionId: canonicalAdmissionId,
       admissionNumber: admission?.admissionNumber || "",
       readingValue: value,
       readingUnit: unit,
@@ -295,6 +331,8 @@ async function emitBloodTransfusion(args = {}) {
 
     const btNumber = await _generateBtNumber();
     const actorMeta = _actor(actor);
+    // R7bw — resolve canonical active admission for accurate NABH MOM.4 linkage.
+    const canonicalAdmissionId = await _resolveCanonicalAdmissionId(patient.UHID, admission?._id || null);
     const row = await BloodTransfusionRegister.create({
       btNumber,
       patientId: patient._id,
@@ -302,7 +340,7 @@ async function emitBloodTransfusion(args = {}) {
       patientName: patient.fullName || patient.name || "",
       age: patient.age || null,
       sex: patient.gender || patient.sex || "",
-      admissionId: admission?._id || null,
+      admissionId: canonicalAdmissionId,
       admissionNumber: admission?.admissionNumber || "",
       ward: admission?.ward || admission?.wardName || "",
       doctorOrderId: order._id,
@@ -365,12 +403,15 @@ async function emitPain(args = {}) {
     const severity = _painSeverity(score);
     const escalated = score >= 7;
     const actorMeta = _actor(actor);
+    // R7bw — resolve canonical active admission so stale form-state can't
+    // strand the row on a dedupe-cancelled admission (NABH IPSG cohort).
+    const canonicalAdmissionId = await _resolveCanonicalAdmissionId(assessment.UHID, assessment.admissionId || null);
 
     const row = await PainAssessmentRegister.create({
       patientId: assessment.patientId || null,
       UHID: assessment.UHID,
       patientName: assessment.patientName || "",
-      admissionId: assessment.admissionId || null,
+      admissionId: canonicalAdmissionId,
       painScale: score,
       severity,
       scaleUsed: data.scaleUsed || "NRS",
@@ -421,12 +462,15 @@ async function emitFallRisk(args = {}) {
     const riskTier = _morseRiskTier(score);
     const highRisk = riskTier === "High";
     const actorMeta = _actor(actor);
+    // R7bw — resolve canonical active admission so stale form-state can't
+    // strand the row on a dedupe-cancelled admission.
+    const canonicalAdmissionId = await _resolveCanonicalAdmissionId(assessment.UHID, assessment.admissionId || null);
 
     const row = await FallRiskRegister.create({
       patientId: assessment.patientId || null,
       UHID: assessment.UHID,
       patientName: assessment.patientName || "",
-      admissionId: assessment.admissionId || null,
+      admissionId: canonicalAdmissionId,
       morseScore: score,
       riskTier,
       historyOfFalling: !!data.historyOfFalling,
@@ -484,12 +528,15 @@ async function emitPressureUlcer(args = {}) {
     // HAPU stage III or worse = NABH sentinel event
     const sentinel = hospitalAcquired && ["III", "IV", "Unstageable", "DTI"].includes(ulcerStage);
     const actorMeta = _actor(actor);
+    // R7bw — resolve canonical active admission so the sentinel event links
+    // to the live admission, not a stale id orphaned by dedupe.
+    const canonicalAdmissionId = await _resolveCanonicalAdmissionId(assessment.UHID, assessment.admissionId || null);
 
     const row = await PressureUlcerRegister.create({
       patientId: assessment.patientId || null,
       UHID: assessment.UHID,
       patientName: assessment.patientName || "",
-      admissionId: assessment.admissionId || null,
+      admissionId: canonicalAdmissionId,
       bradenScore: score,
       riskTier,
       ulcerPresent,
@@ -593,11 +640,15 @@ async function emitDVT(args = {}) {
     if (escalated) auditTrail.push({ action: "ESCALATED", at: new Date(), ...actorMeta, notes: `auto-escalate Caprini ${capriniTier}` });
     if (contraindications.length) auditTrail.push({ action: "CONTRAINDICATED", at: new Date(), ...actorMeta, notes: contraindications.join(", ") });
 
+    // R7bw — resolve canonical active admission so the row escapes stale
+    // form-state and lands on the keeper admission post-dedupe.
+    const canonicalAdmissionId = await _resolveCanonicalAdmissionId(assessment.UHID, assessment.admissionId || null);
+
     const row = await DVTRegister.create({
       patientId: assessment.patientId || null,
       UHID: assessment.UHID,
       patientName: assessment.patientName || "",
-      admissionId: assessment.admissionId || null,
+      admissionId: canonicalAdmissionId,
       capriniScore,
       capriniTier,
       improveScore,
@@ -700,6 +751,686 @@ async function emitBloodSugarFromVitalSheet(sheet, patient = {}, actor = {}) {
   }
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// R7bu — Six new NABH registers (COP.10/13/16/17/18 + MOM.7)
+// ═════════════════════════════════════════════════════════════════════════
+// Each helper below:
+//   • is non-blocking — wrapped in try/catch, logs to stderr on failure;
+//   • is idempotent — checks for an existing row before insert (by sourceRef
+//     / doctorOrderId / unique compound, depending on the register);
+//   • returns the created/existing row (or null on no-op / failure);
+//   • normalises actor + patient metadata through the shared `_actor()` and
+//     resolves the canonical active admission via `_resolveCanonicalAdmissionId`.
+//
+// Discovery: explicit emit calls from the originating clinical write
+// (DoctorOrder save, Procedure note save, Discharge finalize, Admission create).
+// ═════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────
+// OT Register — NABH COP.10
+// ─────────────────────────────────────────────────────────────────────────
+
+async function _generateOtNumber() {
+  const year = _safeYear();
+  const seq = await nextSequence(`OT-REG:${year}`);
+  return `OT-${year}-${String(seq).padStart(6, "0")}`;
+}
+
+/**
+ * Emit an OT case-log row.
+ * Called from:
+ *   (a) doctorOrderRoutes when a Procedure order with requiresOT=true is
+ *       acknowledged → creates a Scheduled row;
+ *   (b) procedureNote save → updates / creates a Completed row.
+ *
+ * @param {object} args
+ * @param {object} args.order        — DoctorOrder doc (when called from (a))
+ * @param {object} [args.procedureNote] — Procedure note doc (when called from (b))
+ * @param {object} args.patient      — { _id, UHID, fullName/name, age, sex }
+ * @param {object} [args.admission]  — { _id, admissionNumber }
+ * @param {object} [args.actor]      — req.user
+ */
+async function emitOT(args = {}) {
+  try {
+    const { order = null, procedureNote = null, patient = {}, admission = null, actor = {} } = args;
+    if (!patient._id || !patient.UHID) return null;
+
+    const source = order || procedureNote;
+    if (!source?._id) return null;
+
+    // Idempotency: one row per source ref
+    const existing = await OTRegister.findOne({ sourceRef: source._id }).lean();
+    if (existing) return existing;
+
+    const otNumber = await _generateOtNumber();
+    const actorMeta = _actor(actor);
+    const admId = await _resolveCanonicalAdmissionId(patient.UHID, admission?._id);
+
+    const isCompleted = !!procedureNote;
+    const details = source.orderDetails || source.details || source;
+    const startTime = procedureNote?.startTime
+      ? new Date(procedureNote.startTime)
+      : (source.scheduledAt ? new Date(source.scheduledAt) : null);
+    const endTime = procedureNote?.endTime ? new Date(procedureNote.endTime) : null;
+    const durationMinutes = (startTime && endTime) ? _diffMinutes(endTime, startTime) : null;
+
+    const row = await OTRegister.create({
+      patientId: patient._id,
+      UHID: patient.UHID,
+      patientName: patient.fullName || patient.name || "",
+      age: patient.age || null,
+      sex: patient.gender || patient.sex || "",
+      admissionId: admId,
+      admissionNumber: admission?.admissionNumber || "",
+      otNumber,
+      otTheatre: details.otTheatre || details.otNumber || "",
+      surgeryName: details.surgeryName || details.procedureName || details.medicineName || details.displayName || "Procedure",
+      plannedProcedure: source.plannedProcedure || details.plannedProcedure || details.procedureName || "",
+      actualProcedure: procedureNote?.actualProcedure || procedureNote?.procedureDone || "",
+      surgicalSpeciality: details.speciality || details.department || "",
+      surgeonName: details.surgeonName || source.surgeonName || "",
+      surgeonId: details.surgeonId || source.surgeonId || null,
+      assistantNames: Array.isArray(details.assistantNames) ? details.assistantNames : [],
+      anaesthetistName: details.anaesthetistName || procedureNote?.anaesthetistName || "",
+      anaesthetistId: details.anaesthetistId || procedureNote?.anaesthetistId || null,
+      anaesthesiaType: details.anaesthesiaType || procedureNote?.anaesthesiaType || "",
+      asaGrade: details.asaGrade || procedureNote?.asaGrade || "",
+      emergencyCase: !!(details.emergencyCase || source.priority === "STAT"),
+      scheduledAt: source.scheduledAt ? new Date(source.scheduledAt) : null,
+      startTime,
+      endTime,
+      durationMinutes,
+      complications: procedureNote?.complications || "",
+      bloodLossMl: procedureNote?.bloodLossMl || null,
+      specimensSent: Array.isArray(procedureNote?.specimensSent) ? procedureNote.specimensSent : [],
+      status: isCompleted ? "Completed" : "Scheduled",
+      doctorOrderId: order?._id || null,
+      procedureNoteId: procedureNote?._id || null,
+      sourceRef: source._id,
+      sourceType: order ? "DoctorOrder" : "ProcedureNote",
+      occurredAt: startTime || new Date(),
+      locked: isCompleted,
+      lockedAt: isCompleted ? new Date() : null,
+      auditTrail: [{
+        action: isCompleted ? "COMPLETED" : "SCHEDULED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `source=${order ? "DoctorOrder" : "ProcedureNote"}`,
+      }],
+      createdBy: actorMeta.byUserId,
+      createdByName: actorMeta.byName,
+      createdByRole: actorMeta.byRole,
+    });
+    return row;
+  } catch (e) {
+    console.error("[nabhRegisterEmitter] emitOT FAILED:", e.message, "— sourceId:", args?.order?._id || args?.procedureNote?._id);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// ASA Register — NABH COP.13
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Emit an anaesthesia register row.
+ * Called from pre-op note save (creates PreOp row) and procedure note save
+ * (updates / creates Recovered row).
+ *
+ * @param {object} args
+ * @param {object} args.note     — PreOp note or Procedure note doc
+ * @param {object} args.patient  — { _id, UHID, fullName/name, age, sex }
+ * @param {object} [args.admission]
+ * @param {object} [args.actor]
+ * @param {object} [args.otRegister] — linked OTRegister row, if any
+ */
+async function emitASA(args = {}) {
+  try {
+    const { note, patient = {}, admission = null, actor = {}, otRegister = null } = args;
+    if (!note?._id || !patient._id || !patient.UHID) return null;
+
+    // ASA grade is the foundational field. Without it the row is meaningless.
+    const asaGrade = String(note.asaGrade || note.data?.asaGrade || "").toUpperCase();
+    if (!["I", "II", "III", "IV", "V", "VI"].includes(asaGrade)) return null;
+
+    // Idempotency: one row per source note
+    const existing = await ASARegister.findOne({ sourceRef: note._id }).lean();
+    if (existing) return existing;
+
+    const actorMeta = _actor(actor);
+    const admId = await _resolveCanonicalAdmissionId(patient.UHID, admission?._id);
+    const isRecovery = note.noteType === "ProcedureNote" || note.type === "procedure" || !!note.endTime;
+    const data = note.data || note;
+
+    const row = await ASARegister.create({
+      patientId: patient._id,
+      UHID: patient.UHID,
+      patientName: patient.fullName || patient.name || "",
+      age: patient.age || null,
+      sex: patient.gender || patient.sex || "",
+      admissionId: admId,
+      admissionNumber: admission?.admissionNumber || "",
+      asaGrade,
+      emergencyModifier: !!data.emergencyModifier,
+      anaesthesiaType: data.anaesthesiaType || "General",
+      technique: data.technique || "",
+      airwayPlan: data.airwayPlan || "",
+      anaesthetistName: data.anaesthetistName || actorMeta.byName || "",
+      anaesthetistId: data.anaesthetistId || null,
+      assistantName: data.assistantName || "",
+      fastingHours: data.fastingHours != null ? Number(data.fastingHours) : null,
+      allergies: Array.isArray(data.allergies) ? data.allergies : [],
+      comorbidities: Array.isArray(data.comorbidities) ? data.comorbidities : [],
+      preOpVitals: {
+        bp:    data.preOpVitals?.bp    || data.bp    || "",
+        pulse: data.preOpVitals?.pulse || data.pulse || null,
+        temp:  data.preOpVitals?.temp  || data.temp  || null,
+        spo2:  data.preOpVitals?.spo2  || data.spo2  || null,
+      },
+      consentSigned: !!data.consentSigned,
+      consentFormId: data.consentFormId || null,
+      drugs: Array.isArray(data.drugs) ? data.drugs : [],
+      inductionAt: data.inductionAt ? new Date(data.inductionAt) : null,
+      reversalAt: data.reversalAt ? new Date(data.reversalAt) : null,
+      recoveryTimeMinutes: data.recoveryTimeMinutes != null ? Number(data.recoveryTimeMinutes) : null,
+      aldreteScore: data.aldreteScore != null ? Number(data.aldreteScore) : null,
+      postOpVitals: {
+        bp:    data.postOpVitals?.bp    || "",
+        pulse: data.postOpVitals?.pulse || null,
+        temp:  data.postOpVitals?.temp  || null,
+        spo2:  data.postOpVitals?.spo2  || null,
+      },
+      complications: data.complications || "",
+      intraOpAdverseEvents: Array.isArray(data.intraOpAdverseEvents) ? data.intraOpAdverseEvents : [],
+      otRegisterId: otRegister?._id || null,
+      preOpNoteId: !isRecovery ? note._id : (data.preOpNoteId || null),
+      procedureNoteId: isRecovery ? note._id : null,
+      sourceRef: note._id,
+      sourceType: isRecovery ? "ProcedureNote" : "PreOpNote",
+      status: isRecovery ? "Recovered" : "PreOp",
+      occurredAt: note.recordedAt || note.createdAt || new Date(),
+      locked: isRecovery,
+      lockedAt: isRecovery ? new Date() : null,
+      auditTrail: [{
+        action: isRecovery ? "RECOVERED" : "PRE_OP_CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `ASA=${asaGrade} type=${data.anaesthesiaType || "?"}`,
+      }],
+      createdBy: actorMeta.byUserId,
+      createdByName: actorMeta.byName,
+      createdByRole: actorMeta.byRole,
+    });
+    return row;
+  } catch (e) {
+    console.error("[nabhRegisterEmitter] emitASA FAILED:", e.message, "— noteId:", args?.note?._id);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Readmission Register — NABH COP.16
+// ─────────────────────────────────────────────────────────────────────────
+
+const _READMISSION_WINDOW_DAYS = Number(process.env.NABH_READMISSION_WINDOW_DAYS || 30);
+
+/**
+ * Emit a readmission row if the new admission falls within the 30-day
+ * window of the previous discharge for the same UHID. Called from the
+ * admission-create controller AFTER the new admission is persisted.
+ *
+ * @param {object} args
+ * @param {object} args.admission  — newly created Admission doc (the readmission)
+ * @param {object} args.patient    — { _id, UHID, fullName/name, age, sex }
+ * @param {object} [args.actor]
+ */
+async function emitReadmission(args = {}) {
+  try {
+    const { admission, patient = {}, actor = {} } = args;
+    if (!admission?._id || !patient.UHID) return null;
+
+    const currentAdmissionDate = admission.admissionDate || admission.createdAt || new Date();
+
+    // Find the most-recent prior admission for this UHID that has a discharge date
+    const previous = await Admission.findOne({
+      UHID: patient.UHID,
+      _id: { $ne: admission._id },
+      dischargeDate: { $ne: null, $exists: true },
+    })
+      .sort({ dischargeDate: -1 })
+      .select("_id admissionNumber admissionDate dischargeDate primaryDiagnosis department dischargeType")
+      .lean();
+
+    if (!previous?.dischargeDate) return null;
+    const days = Math.floor((new Date(currentAdmissionDate) - new Date(previous.dischargeDate)) / 86400000);
+    if (days < 0 || days > _READMISSION_WINDOW_DAYS) return null;
+
+    // Idempotency: one row per (current, previous) pair (also enforced by unique index)
+    const existing = await ReadmissionRegister.findOne({
+      currentAdmissionId: admission._id,
+      previousAdmissionId: previous._id,
+    }).lean();
+    if (existing) return existing;
+
+    const actorMeta = _actor(actor);
+    const sameDiagnosis = !!(admission.primaryDiagnosis && previous.primaryDiagnosis
+      && String(admission.primaryDiagnosis).trim().toLowerCase()
+        === String(previous.primaryDiagnosis).trim().toLowerCase());
+
+    const row = await ReadmissionRegister.create({
+      patientId: patient._id || null,
+      UHID: patient.UHID,
+      patientName: patient.fullName || patient.name || "",
+      age: patient.age || null,
+      sex: patient.gender || patient.sex || "",
+      currentAdmissionId: admission._id,
+      currentAdmissionNumber: admission.admissionNumber || "",
+      currentAdmissionDate,
+      currentDiagnosis: admission.primaryDiagnosis || "",
+      currentDepartment: admission.department || "",
+      currentAttendingDoctor: admission.attendingDoctor || admission.consultantIncharge || "",
+      previousAdmissionId: previous._id,
+      previousAdmissionNumber: previous.admissionNumber || "",
+      previousDischargeDate: previous.dischargeDate,
+      previousDiagnosis: previous.primaryDiagnosis || "",
+      previousDepartment: previous.department || "",
+      previousDischargeType: previous.dischargeType || "",
+      daysSinceDischarge: days,
+      withinWindowDays: _READMISSION_WINDOW_DAYS,
+      readmissionType: admission.isElective ? "Elective"
+                     : admission.isPlannedReadmission ? "Planned"
+                     : "Unplanned",
+      sameDiagnosis,
+      status: "Open",
+      sourceRef: admission._id,
+      sourceType: "Admission",
+      occurredAt: currentAdmissionDate,
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `days=${days} sameDx=${sameDiagnosis}`,
+      }],
+      createdBy: actorMeta.byUserId,
+      createdByName: actorMeta.byName,
+      createdByRole: actorMeta.byRole,
+    });
+    return row;
+  } catch (e) {
+    // Unique-index collision (E11000) is expected on retries — treat as no-op
+    if (e?.code === 11000) return null;
+    console.error("[nabhRegisterEmitter] emitReadmission FAILED:", e.message, "— admissionId:", args?.admission?._id);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Mortality Register — NABH COP.18
+// ─────────────────────────────────────────────────────────────────────────
+
+async function _generateMortalityNumber() {
+  const year = _safeYear();
+  const seq = await nextSequence(`MORT-REG:${year}`);
+  return `MORT-${year}-${String(seq).padStart(6, "0")}`;
+}
+
+/**
+ * Emit a mortality register row when a death is recorded.
+ * Called from:
+ *   (a) DischargeSummary finalize when conditionOnDischarge="Expired"
+ *       or dischargeType="Death";
+ *   (b) stand-alone Death Note save (where supported).
+ *
+ * @param {object} args
+ * @param {object} args.dischargeSummary — optional DischargeSummary doc
+ * @param {object} [args.deathNote]      — optional Death Note doc
+ * @param {object} args.patient
+ * @param {object} [args.admission]
+ * @param {object} [args.actor]
+ */
+async function emitMortality(args = {}) {
+  try {
+    const { dischargeSummary = null, deathNote = null, patient = {}, admission = null, actor = {} } = args;
+    if (!patient._id || !patient.UHID) return null;
+    const source = dischargeSummary || deathNote;
+    if (!source?._id) return null;
+
+    const admId = admission?._id || dischargeSummary?.admissionId || deathNote?.admissionId || null;
+
+    // Idempotency: one mortality row per admission (also enforced by unique index)
+    if (admId) {
+      const existing = await MortalityRegister.findOne({ admissionId: admId }).lean();
+      if (existing) return existing;
+    } else {
+      const existing = await MortalityRegister.findOne({ sourceRef: source._id }).lean();
+      if (existing) return existing;
+    }
+
+    const dateOfDeath = dischargeSummary?.deathDate
+      || deathNote?.dateOfDeath
+      || dischargeSummary?.dischargeDate
+      || new Date();
+
+    const admittedAt = admission?.admissionDate ? new Date(admission.admissionDate) : null;
+    const admissionToDeathHours = admittedAt
+      ? Math.max(0, Math.round((new Date(dateOfDeath) - admittedAt) / 3600000))
+      : null;
+    const bruceCategory = admissionToDeathHours == null ? ""
+      : admissionToDeathHours < 24 ? "Less24h" : "More24h";
+
+    const mortalityNumber = await _generateMortalityNumber();
+    const actorMeta = _actor(actor);
+
+    const row = await MortalityRegister.create({
+      patientId: patient._id,
+      UHID: patient.UHID,
+      patientName: patient.fullName || patient.name || "",
+      age: patient.age || null,
+      sex: patient.gender || patient.sex || "",
+      admissionId: admId,
+      admissionNumber: admission?.admissionNumber || dischargeSummary?.admissionNumber || "",
+      mortalityNumber,
+      dateOfDeath,
+      timeOfDeath: dischargeSummary?.deathTime || deathNote?.timeOfDeath || "",
+      placeOfDeath: deathNote?.placeOfDeath || dischargeSummary?.placeOfDeath || "Ward",
+      primaryCause: dischargeSummary?.causeOfDeath
+        || deathNote?.primaryCause
+        || dischargeSummary?.primaryDiagnosis
+        || "Not Specified",
+      immediateCauseOfDeath: dischargeSummary?.immediateCauseOfDeath || deathNote?.immediateCauseOfDeath || "",
+      antecedentCauseOfDeath: dischargeSummary?.antecedentCauseOfDeath || deathNote?.antecedentCauseOfDeath || "",
+      underlyingCause: deathNote?.underlyingCause || "",
+      contributoryCauses: Array.isArray(deathNote?.contributoryCauses) ? deathNote.contributoryCauses : [],
+      manner: deathNote?.manner || "Natural",
+      admissionToDeathHours,
+      bruceCategory,
+      isMLC: !!(dischargeSummary?.isMLC || deathNote?.isMLC || admission?.isMLC),
+      mlcNumber: dischargeSummary?.mlrNumberSnapshot || deathNote?.mlcNumber || admission?.mlcNumber || "",
+      policeIntimated: !!(deathNote?.policeIntimated),
+      policeStation: deathNote?.policeStation || "",
+      postMortemDone: !!(deathNote?.postMortemDone),
+      postMortemRequiredFlag: !!(deathNote?.postMortemRequired || dischargeSummary?.isMLC),
+      postMortemFindings: deathNote?.postMortemFindings || "",
+      postMortemHospital: deathNote?.postMortemHospital || "",
+      deathCertificateNumber: deathNote?.deathCertificateNumber || "",
+      deathCertificateIssuedAt: deathNote?.deathCertificateIssuedAt || null,
+      deathCertificateIssuedBy: deathNote?.deathCertificateIssuedBy || "",
+      attendingDoctor: admission?.attendingDoctor || dischargeSummary?.attendingDoctor || "",
+      attendingDoctorId: admission?.attendingDoctorId || null,
+      certifyingDoctor: actorMeta.byName || dischargeSummary?.finalizedByName || "",
+      certifyingDoctorId: actorMeta.byUserId,
+      dischargeSummaryId: dischargeSummary?._id || null,
+      deathNoteId: deathNote?._id || null,
+      sourceRef: source._id,
+      sourceType: dischargeSummary ? "DischargeSummary" : "DeathNote",
+      occurredAt: dateOfDeath,
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `source=${dischargeSummary ? "DischargeSummary" : "DeathNote"} mlc=${!!(dischargeSummary?.isMLC || deathNote?.isMLC)}`,
+      }],
+      createdBy: actorMeta.byUserId,
+      createdByName: actorMeta.byName,
+      createdByRole: actorMeta.byRole,
+    });
+    return row;
+  } catch (e) {
+    if (e?.code === 11000) return null;
+    console.error("[nabhRegisterEmitter] emitMortality FAILED:", e.message, "— sourceId:", args?.dischargeSummary?._id || args?.deathNote?._id);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Restraint Register — NABH COP.17
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Emit a restraint episode row. Called from any caller that records a
+ * restraint event — typically a doctor order with restraintType set, or a
+ * nurse note flagged as a restraint application.
+ *
+ * No restraint UI exists today, so this helper is callable from future
+ * modules. Idempotency keyed on (sourceRef, occurredAt) so the same order
+ * doesn't double-emit on save retries.
+ *
+ * @param {object} args
+ * @param {object} args.restraint  — { type, reason, startTime, endTime,
+ *                                      device[], chemicalAgent, monitoringFreq,
+ *                                      orderingDoctor, sourceRef, sourceType }
+ * @param {object} args.patient
+ * @param {object} [args.admission]
+ * @param {object} [args.actor]
+ */
+async function emitRestraint(args = {}) {
+  try {
+    const { restraint = {}, patient = {}, admission = null, actor = {} } = args;
+    if (!patient._id || !patient.UHID) return null;
+    if (!restraint.type || !restraint.reason || !restraint.startTime) return null;
+
+    const startTime = new Date(restraint.startTime);
+    if (!Number.isFinite(startTime.getTime())) return null;
+
+    // Idempotency: don't double-emit for same source + start time
+    if (restraint.sourceRef) {
+      const existing = await RestraintRegister.findOne({
+        sourceRef: restraint.sourceRef,
+        startTime,
+      }).lean();
+      if (existing) return existing;
+    }
+
+    const actorMeta = _actor(actor);
+    const admId = await _resolveCanonicalAdmissionId(patient.UHID, admission?._id);
+    const endTime = restraint.endTime ? new Date(restraint.endTime) : null;
+    const durationMinutes = endTime ? _diffMinutes(endTime, startTime) : null;
+
+    const row = await RestraintRegister.create({
+      patientId: patient._id,
+      UHID: patient.UHID,
+      patientName: patient.fullName || patient.name || "",
+      age: patient.age || null,
+      sex: patient.gender || patient.sex || "",
+      admissionId: admId,
+      admissionNumber: admission?.admissionNumber || "",
+      restraintType: restraint.type,                       // physical / chemical / both
+      restraintDevice: Array.isArray(restraint.device) ? restraint.device : (restraint.device ? [restraint.device] : []),
+      chemicalAgent: restraint.chemicalAgent || "",
+      reason: restraint.reason,
+      reasonCategory: restraint.reasonCategory || "Safety",
+      startTime,
+      endTime,
+      durationMinutes,
+      monitoringFrequency: restraint.monitoringFrequency
+        || (restraint.type === "chemical" ? "q15min" : "q30min"),
+      monitoringLog: Array.isArray(restraint.monitoringLog) ? restraint.monitoringLog : [],
+      reassessmentDue: restraint.reassessmentDue ? new Date(restraint.reassessmentDue) : null,
+      orderingDoctor: restraint.orderingDoctor || actorMeta.byName || "",
+      orderingDoctorId: restraint.orderingDoctorId || actorMeta.byUserId,
+      orderingDoctorRole: restraint.orderingDoctorRole || actorMeta.byRole,
+      doctorOrderId: restraint.doctorOrderId || null,
+      appliedBy: restraint.appliedBy || actorMeta.byName || "",
+      appliedByUserId: restraint.appliedByUserId || actorMeta.byUserId,
+      removedAt: restraint.removedAt ? new Date(restraint.removedAt) : null,
+      removedBy: restraint.removedBy || "",
+      removedByUserId: restraint.removedByUserId || null,
+      removalReason: restraint.removalReason || "",
+      consentObtained: !!restraint.consentObtained,
+      consentFrom: restraint.consentFrom || "",
+      consentFormId: restraint.consentFormId || null,
+      adverseEvent: !!restraint.adverseEvent,
+      adverseEventNotes: restraint.adverseEventNotes || "",
+      status: endTime ? "Removed" : "Active",
+      sourceRef: restraint.sourceRef || null,
+      sourceType: restraint.sourceType || "DoctorOrder",
+      occurredAt: startTime,
+      auditTrail: [{
+        action: "ORDERED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `type=${restraint.type} reason=${String(restraint.reason).slice(0, 60)}`,
+      }, ...(endTime ? [{ action: "REMOVED", at: endTime, ...actorMeta }] : [])],
+      createdBy: actorMeta.byUserId,
+      createdByName: actorMeta.byName,
+      createdByRole: actorMeta.byRole,
+    });
+    return row;
+  } catch (e) {
+    console.error("[nabhRegisterEmitter] emitRestraint FAILED:", e.message, "— sourceRef:", args?.restraint?.sourceRef);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Antimicrobial Use Register — NABH MOM.7 (AMS)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Curated antibiotic list — used by isAntibiotic() to decide whether a
+ * Medication order should emit an AMU row. Names lowercased, accent-folded
+ * stems so "amoxicillin", "amoxycillin", "Amox" all match. Kept short on
+ * purpose (extend as the formulary grows).
+ */
+const ANTIBIOTIC_STEMS = [
+  // Beta-lactams (penicillins + cephalosporins)
+  "amoxicillin", "amoxycillin", "ampicillin", "penicillin", "piperacillin",
+  "ticarcillin", "cloxacillin", "flucloxacillin", "dicloxacillin",
+  "cefazolin", "cefalexin", "cephalexin", "cefuroxime", "cefixime",
+  "cefoperazone", "cefotaxime", "ceftriaxone", "ceftazidime", "cefepime",
+  // Carbapenems
+  "meropenem", "imipenem", "ertapenem", "doripenem",
+  // Glycopeptides / lipopeptides
+  "vancomycin", "teicoplanin", "daptomycin",
+  // Aminoglycosides
+  "gentamicin", "amikacin", "tobramycin", "netilmicin", "streptomycin",
+  // Fluoroquinolones
+  "ciprofloxacin", "levofloxacin", "moxifloxacin", "norfloxacin", "ofloxacin",
+  // Macrolides
+  "azithromycin", "clarithromycin", "erythromycin", "roxithromycin",
+  // Tetracyclines
+  "doxycycline", "tetracycline", "minocycline", "tigecycline",
+  // Lincosamides / oxazolidinones / others
+  "clindamycin", "linezolid", "metronidazole", "tinidazole",
+  "trimethoprim", "sulfamethoxazole", "cotrimoxazole",
+  "nitrofurantoin", "fosfomycin", "rifampicin", "rifaximin",
+  "colistin", "polymyxin", "fidaxomicin",
+  // Antifungals (also AMS-tracked)
+  "fluconazole", "voriconazole", "itraconazole", "amphotericin", "caspofungin",
+  "anidulafungin", "micafungin",
+  // Antivirals (selectively tracked)
+  "oseltamivir", "acyclovir", "valacyclovir", "ganciclovir",
+];
+
+const _AWARE_MAP = {
+  // WHO AWaRe 2023 classification (selective — Reserve agents flagged)
+  Access:  ["amoxicillin", "amoxycillin", "ampicillin", "cefazolin", "cefalexin", "cephalexin", "cloxacillin", "doxycycline", "gentamicin", "metronidazole", "nitrofurantoin", "trimethoprim", "sulfamethoxazole", "cotrimoxazole"],
+  Watch:   ["ceftriaxone", "ceftazidime", "cefepime", "cefoperazone", "cefotaxime", "cefuroxime", "cefixime", "azithromycin", "clarithromycin", "ciprofloxacin", "levofloxacin", "moxifloxacin", "piperacillin", "vancomycin", "teicoplanin", "clindamycin", "imipenem", "meropenem", "amikacin"],
+  Reserve: ["colistin", "polymyxin", "daptomycin", "linezolid", "tigecycline", "fosfomycin", "ertapenem"],
+};
+
+function _classifyAware(name) {
+  const n = String(name || "").toLowerCase();
+  for (const tier of ["Reserve", "Watch", "Access"]) {
+    if (_AWARE_MAP[tier].some((stem) => n.includes(stem))) return tier;
+  }
+  return "";
+}
+
+function isAntibiotic(name) {
+  if (!name) return false;
+  const n = String(name).toLowerCase();
+  return ANTIBIOTIC_STEMS.some((stem) => n.includes(stem));
+}
+
+/**
+ * Emit an antimicrobial-use register row when a Medication order matches
+ * the antibiotic list. Called from doctorOrderRoutes after the order is
+ * created. Returns null (no-op) if the medicineName isn't an antibiotic.
+ *
+ * @param {object} args
+ * @param {object} args.order    — DoctorOrder doc
+ * @param {object} args.patient
+ * @param {object} [args.admission]
+ * @param {object} [args.actor]
+ */
+async function emitAntimicrobial(args = {}) {
+  try {
+    const { order, patient = {}, admission = null, actor = {} } = args;
+    if (!order?._id || !patient._id || !patient.UHID) return null;
+    if (order.orderType !== "Medication") return null;
+
+    const details = order.orderDetails || {};
+    const medName = details.medicineName || details.displayName || "";
+    if (!isAntibiotic(medName)) return null;
+
+    // Idempotency: one row per DoctorOrder (also enforced by unique sparse index)
+    const existing = await AntimicrobialUseRegister.findOne({ doctorOrderId: order._id }).lean();
+    if (existing) return existing;
+
+    const actorMeta = _actor(actor);
+    const admId = await _resolveCanonicalAdmissionId(patient.UHID, admission?._id);
+    const aware = _classifyAware(medName);
+
+    const indicationType = details.prophylactic
+      ? "Prophylactic"
+      : (details.cultureBased ? "Targeted" : "Empirical");
+
+    const row = await AntimicrobialUseRegister.create({
+      patientId: patient._id,
+      UHID: patient.UHID,
+      patientName: patient.fullName || patient.name || "",
+      age: patient.age || null,
+      sex: patient.gender || patient.sex || "",
+      admissionId: admId,
+      admissionNumber: admission?.admissionNumber || "",
+      ward: admission?.ward || admission?.wardName || "",
+      antibiotic: medName,
+      antibioticClass: details.drugClass || "",
+      watchAccessReserve: aware,
+      dose: details.dose || "",
+      route: details.route || "",
+      frequency: details.frequency || "",
+      duration: details.duration || "",
+      startedAt: order.startedAt ? new Date(order.startedAt) : (order.orderedAt || order.createdAt || new Date()),
+      indication: details.indication || order.indication || order.notes || details.diagnosis || "",
+      indicationType,
+      suspectedSite: details.suspectedSite || "",
+      prophylactic: !!details.prophylactic,
+      prophylaxisType: details.prophylaxisType || "",
+      prophylaxisDurationHours: details.prophylaxisDurationHours || null,
+      cultureSent: !!details.cultureSent,
+      cultureSentAt: details.cultureSentAt ? new Date(details.cultureSentAt) : null,
+      cultureResultPending: details.cultureSent ? true : false,
+      orderingDoctor: order.orderedByName || actorMeta.byName || "",
+      orderingDoctorId: order.orderedBy || actorMeta.byUserId,
+      doctorOrderId: order._id,
+      status: "Active",
+      sourceRef: order._id,
+      sourceType: "DoctorOrder",
+      occurredAt: order.orderedAt || order.createdAt || new Date(),
+      auditTrail: [{
+        action: "ORDERED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `drug=${medName} aware=${aware || "?"} indication=${indicationType}`,
+      }],
+      createdBy: actorMeta.byUserId,
+      createdByName: actorMeta.byName,
+      createdByRole: actorMeta.byRole,
+    });
+    return row;
+  } catch (e) {
+    if (e?.code === 11000) return null;
+    console.error("[nabhRegisterEmitter] emitAntimicrobial FAILED:", e.message, "— orderId:", args?.order?._id);
+    return null;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Exports
+// ═════════════════════════════════════════════════════════════════════════
+
 module.exports = {
   emitBloodSugar,
   emitBloodSugarFromVitalSheet,
@@ -712,4 +1443,13 @@ module.exports = {
   emitPressureUlcer,
   emitDVT,
   emitFromNursingAssessment,
+  // R7bu — six new NABH registers
+  emitOT,
+  emitASA,
+  emitReadmission,
+  emitMortality,
+  emitRestraint,
+  emitAntimicrobial,
+  // Helpers exposed for testing / re-use
+  isAntibiotic,
 };

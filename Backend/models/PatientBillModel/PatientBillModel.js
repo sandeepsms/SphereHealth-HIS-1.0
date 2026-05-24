@@ -248,6 +248,26 @@ const PatientBillSchema = new mongoose.Schema(
       default: null },
     admissionNumber: { type: String, default: null },
 
+    // R7bw — exact-match linkage to the OPDRegistration document (visitNumber)
+    // OR the IPD admission's visit identifier. Pre-R7bw PatientBill had NO
+    // per-visit FK, so the patient-history aggregator (getOPDHistory) was
+    // forced to do a same-day-proximity join (`chargeDate ≈ visit.visitDate`)
+    // to attach bill items to a specific OPD visit. That mis-pooled bill
+    // items across visits whenever a patient had > 1 OPD visit on the same
+    // calendar day (return-visit, multi-department, OPD→IPD-conversion-day).
+    //
+    // For OPD bills `visitId === OPDRegistration.visitNumber` (e.g.
+    // "OPD-2026-000123"). For IPD/DAYCARE/EMERGENCY bills the field MAY be
+    // populated with admission.admissionNumber by future work, but the
+    // primary join key for those bills remains the `admission` ObjectId
+    // ref — visitId is included on those rows only as a denormalised
+    // shortcut for clients that filter by string identifier (mirrors the
+    // DoctorOrder.visitId convention).
+    //
+    // Indexed so the aggregator's `{ UHID, visitType, visitId }` lookup is
+    // covered by an index instead of collscanning all OPD bills per UHID.
+    visitId: { type: String, index: true, default: null },
+
     visitType: {
       type: String,
       required: true,
@@ -690,11 +710,17 @@ PatientBillSchema.index({ billStatus: 1 });
 PatientBillSchema.index({ visitType: 1 });
 PatientBillSchema.index({ billDate: -1 });
 PatientBillSchema.index({ tpa: 1 });
+// R7bw — exact-match patient-history aggregator lookup: `{ UHID, visitType,
+// visitId }`. Single-field `visitId` index above covers cross-UHID admin
+// queries; this compound covers the per-patient OPD-history call which is
+// hot on the OPD History tab. Order matches selectivity (UHID first cuts
+// the document set ~10000x).
 // R7t: Revenue-breakdown reports filter `billStatus != DRAFT` and sort by
 // createdAt — this compound covers that scan. Same for the dashboard
 // "today's bills" feed.
 PatientBillSchema.index({ billStatus: 1, createdAt: -1 });
 PatientBillSchema.index({ UHID: 1, billStatus: 1, createdAt: -1 });
+PatientBillSchema.index({ UHID: 1, visitType: 1, visitId: 1 });
 
 // R7ap-F14/D1-12/D8-01/D8-05: compound indexes for dashboard hot paths.
 //   {paidAt, billStatus}        — todayRevenue (`$unwind payments` aggregate)

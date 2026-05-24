@@ -87,8 +87,16 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
     // UHID + visitId (legacy OPD path), sometimes the full set. Resolve
     // the active admission server-side rather than trusting whatever
     // partial state the caller had to hand.
+    //
+    // R7bw — visitId fallback. Two upstream paths (BloodTransfusion ordering
+    // and an early Medication path) call POST without `visitId`. Persisting
+    // `visitId: undefined` breaks the legacy OPD-style filter
+    // `DoctorOrder.find({ visitId })` on the GET listing route. We now
+    // mirror the admissionNumber → visitId when visitId is missing for IPD
+    // orders, so the listing route returns the order regardless of which
+    // identifier the caller queries with.
     if ((body.visitType === "IPD" || !body.visitType) && body.UHID) {
-      if (!body.admissionId || !body.ipdNo || !body.admissionNumber) {
+      if (!body.admissionId || !body.ipdNo || !body.admissionNumber || !body.visitId) {
         try {
           const Admission = require("../../models/Patient/admissionModel");
           const adm = await Admission.findOne({
@@ -99,6 +107,9 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
             if (!body.admissionId)     body.admissionId     = adm._id;
             if (!body.ipdNo)           body.ipdNo           = adm.admissionNumber || body.visitId || null;
             if (!body.admissionNumber) body.admissionNumber = adm.admissionNumber || null;
+            // R7bw — visitId fallback: prefer caller-supplied, else mirror
+            // admissionNumber so legacy `?visitId=` queries still hit.
+            if (!body.visitId)         body.visitId         = adm.admissionNumber || null;
           }
         } catch (_) { /* non-fatal — the order can still save without linkage */ }
       }
@@ -330,13 +341,16 @@ router.post("/bulk", requireAction("doctor-orders.write"), async (req, res) => {
       // R7bv — stamp admissionId / ipdNo / admissionNumber from the
       // patient's active admission so the aggregator can surface this
       // order under the IPD patient file.
+      // R7bw — also fill visitId fallback for IPD orders so legacy
+      // `?visitId=` listing queries return the order.
       if ((o.visitType === "IPD" || !o.visitType) && o.UHID &&
-          (!o.admissionId || !o.ipdNo || !o.admissionNumber)) {
+          (!o.admissionId || !o.ipdNo || !o.admissionNumber || !o.visitId)) {
         const adm = await resolveAdmission(o.UHID);
         if (adm) {
           if (!o.admissionId)     o.admissionId     = adm._id;
           if (!o.ipdNo)           o.ipdNo           = adm.admissionNumber || o.visitId || null;
           if (!o.admissionNumber) o.admissionNumber = adm.admissionNumber || null;
+          if (!o.visitId)         o.visitId         = adm.admissionNumber || null;
         }
       }
 

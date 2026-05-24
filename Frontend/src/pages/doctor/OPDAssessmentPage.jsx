@@ -428,10 +428,16 @@ export default function OPDAssessmentPage() {
       // name + dose columns, so the meds table looked blank even though
       // the data was on disk. Hydrate both shapes so saved rows survive
       // a page reload + the print payload picks them up cleanly.
+      // R7bu — mealStatus is now persisted on the row (Before food / After
+      // food / With food / Bedtime). Hydrate it back into the form state
+      // so the doctor's previous "AC/PC" selection survives a reload and
+      // the print receipt reads it from the saved visit, not just from
+      // freshly-typed rows.
       const hydratedMeds = (v.prescribedMedications || []).map(m => ({
         ...m,
-        name: m.medicineName || m.name || "",
-        dose: m.dosage     || m.dose || "",
+        name:       m.medicineName || m.name       || "",
+        dose:       m.dosage       || m.dose       || "",
+        mealStatus: m.mealStatus   || "",
       }));
       setMeds(hydratedMeds);
       setInvests(v.investigationsOrdered || []);
@@ -577,6 +583,35 @@ export default function OPDAssessmentPage() {
         obgLastUSG:         obg.lastUSG,
         obgPriorSurgery:    obg.priorSurgery,
         obgNotes:           obg.notes,
+        // ── Digital signature snapshot ─────────────────────────────
+        // R7bu — Pre-fix the signature lived only on the user's session
+        // (useDigitalSignature) and was forwarded into the print popup at
+        // render time. Refresh / logout / cleared cache wiped it, and
+        // historical reprints lost their signature box. Now we stamp the
+        // signature ON the visit so reprints survive the doctor's session.
+        // Only send when actually signed — backend ignores empty strings
+        // so re-saves from autosave / partial flows won't overwrite a
+        // previously stamped signature. doctorSignedAt mirrors `now` on
+        // the client so audit timestamps stay close to the user's clock.
+        // ── Prescription rows (mealStatus persistence) ───────────────
+        // Send the local meds array on the assessment save so the row's
+        // mealStatus reaches disk through the assessment whitelist. The
+        // bulk DoctorOrders POST further down still handles pharmacy
+        // dispatch — this is just the per-visit Rx record.
+        prescribedMedications: (meds || []).map(m => ({
+          medicineName: m.name        || m.medicineName || "",
+          dosage:       m.dose        || m.dosage       || "",
+          frequency:    m.frequency   || "",
+          duration:     m.duration    || "",
+          instructions: m.instructions || "",
+          mealStatus:   m.mealStatus  || "",
+        })),
+        ...(signature
+          ? {
+              doctorSignatureImage: signature,
+              doctorSignedAt:       new Date().toISOString(),
+            }
+          : {}),
       });
       // Push meds + investigations as DoctorOrders (bulk)
       const baseOrder = {
@@ -1300,7 +1335,11 @@ export default function OPDAssessmentPage() {
       // the printable can stamp it under the doctor's name without a
       // round-trip to the signature hook. useDigitalSignature exposes
       // `signature` as a base64 data URL (or null if unset).
-      signatureImage:  signature || "",
+      // R7bu — prefer the signature STORED on the visit when reprinting
+      // an old visit (historical accuracy). Falls back to the current
+      // session signature for first-time prints / pre-R7bu visits that
+      // were never re-saved after the schema landed.
+      signatureImage:  v.doctorSignatureImage || signature || "",
       // R7bh-F1 / META-1: PrintAudit anchor — Prescription maps to
       // OPDPrescription in ENTITY_MODEL. Visit/Prescription _id may
       // not exist on a freshly drafted visit, fall back to visit _id.

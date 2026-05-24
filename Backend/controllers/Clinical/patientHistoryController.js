@@ -119,7 +119,7 @@ exports.getOPDHistory = async (req, res) => {
       .sort({ visitDate: -1, createdAt: -1 })
       .lean();
 
-    // R7bu — DoctorOrder + PatientBill linkage per OPD visit.
+    // R7bu / R7bw — DoctorOrder + PatientBill linkage per OPD visit.
     //
     // Pre-R7bu the OPD aggregator joined DoctorNotes/NurseNotes via a
     // `visitNumber` field that never existed on either model — every
@@ -133,11 +133,20 @@ exports.getOPDHistory = async (req, res) => {
     //   1. DoctorOrders raised during an OPD visit (lab/radiology/Rx) —
     //      DoctorOrderModel carries { UHID, visitType:"OPD", visitId },
     //      where visitId = the OPD visitNumber. Join is exact.
-    //   2. OPD bill items — PatientBill has no per-visit FK (visitNumber
-    //      isn't stored), so we attach all `visitType:"OPD"` bills for
-    //      the patient and filter line-items by chargeDate ON the same
-    //      calendar day as the visit. Imperfect (multi-visit-per-day
-    //      cases pool) but vastly better than the previous zero.
+    //   2. OPD bill items — pre-R7bw PatientBill had NO per-visit FK so
+    //      we matched by same-day proximity (chargeDate ≅ visitDate),
+    //      which mis-pooled bill items whenever a patient had > 1 OPD
+    //      visit on the same calendar day. R7bw added a stable `visitId`
+    //      column on PatientBill that mirrors OPDRegistration.visitNumber;
+    //      the join is now exact for any bill stamped post-R7bw or
+    //      backfilled via Backend/scripts/backfillOpdBillVisitLink.js.
+    //
+    //      Legacy bills that the backfill couldn't resolve (visitId still
+    //      null — typically multi-visit-same-day or pre-OPD bills) still
+    //      fall back to the same-day proximity branch, so no row that
+    //      USED to surface goes missing. The fallback is restricted to
+    //      visitId:null rows so a successfully-backfilled bill never
+    //      double-attaches to a different visit by date.
     const visitNumbers = visits.map((v) => v.visitNumber).filter(Boolean);
     let ordersByVisit = {};
     let opdBills = [];
@@ -159,9 +168,16 @@ exports.getOPDHistory = async (req, res) => {
       opdBills = billsRows || [];
     }
 
-    // Attach per-visit linked orders + bill items. Bill items match by
-    // calendar-day proximity (chargeDate ≅ visitDate) since PatientBill
-    // doesn't carry a visit FK in this schema.
+    // Attach per-visit linked orders + bill items. Two pass approach:
+    //   1. Exact match — every bill with `visitId === visit.visitNumber`
+    //      contributes ALL its line items to that visit. Stamped via
+    //      R7bw `getOrCreateDraftBill` on new bills + backfill script for
+    //      pre-R7bw data.
+    //   2. Same-day fallback — for bills whose `visitId` is still null
+    //      (backfill couldn't resolve), restore the legacy proximity match
+    //      so the row keeps surfacing. We deliberately restrict the
+    //      fallback to visitId:null rows so a successfully-linked bill
+    //      isn't also pulled into a different visit by same-day chance.
     const sameDay = (a, b) => {
       try {
         const da = new Date(a), db = new Date(b);
@@ -173,8 +189,24 @@ exports.getOPDHistory = async (req, res) => {
     for (const v of visits) {
       v.linkedOrders = ordersByVisit[v.visitNumber] || [];
       v.linkedBillItems = [];
-      if (opdBills.length && v.visitDate) {
-        for (const bill of opdBills) {
+      if (!opdBills.length) continue;
+      for (const bill of opdBills) {
+        // Pass 1 — exact visitId match. Take all items.
+        if (bill.visitId && bill.visitId === v.visitNumber) {
+          for (const it of (bill.billItems || [])) {
+            v.linkedBillItems.push({
+              ...it,
+              _billId:     bill._id,
+              _billNumber: bill.billNumber,
+              _billStatus: bill.billStatus,
+              _linkedBy:   "visitId",
+            });
+          }
+          continue;
+        }
+        // Pass 2 — fallback for bills without visitId (legacy / unresolved
+        // by backfill). Same-day proximity on the line item's chargeDate.
+        if (!bill.visitId && v.visitDate) {
           const matched = (bill.billItems || []).filter((it) =>
             sameDay(it.chargeDate || bill.createdAt, v.visitDate));
           for (const it of matched) {
@@ -183,6 +215,7 @@ exports.getOPDHistory = async (req, res) => {
               _billId:     bill._id,
               _billNumber: bill.billNumber,
               _billStatus: bill.billStatus,
+              _linkedBy:   "sameDayFallback",
             });
           }
         }

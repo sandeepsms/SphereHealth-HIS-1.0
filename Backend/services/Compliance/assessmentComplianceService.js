@@ -11,10 +11,38 @@
 //
 // `sweepOverdue` is invoked by the hourly cron — sets status to OVERDUE
 // for any row where nextDueAt has slipped past now.
+//
+// R7bw — `seedAllActiveAdmissions` ensures every Active admission has a
+// row for every expected (assessmentType, role) tuple. Pre-R7bw the
+// collection only grew when an assessment was saved — so a freshly
+// admitted patient who hadn't had any assessment yet showed up as
+// "no rows" instead of "all overdue". Hospital-wide, the collection
+// was 0 because admitting → first assessment was rarely <12 hours.
+// The cron now seeds on boot AND every sweep; idempotent via upsert.
 // ════════════════════════════════════════════════════════════════════
 const AssessmentCompliance = require("../../models/Compliance/AssessmentComplianceModel");
+const Admission            = require("../../models/Patient/admissionModel");
 
 const DUE_SOON_MINUTES = 60;  // status flips to DUE_SOON in the last hour before nextDueAt
+
+// R7bw — Expected (assessmentType, role, cadenceHours) tuples per Active
+// admission. Aligns with the TYPE_MAP in nursingAssessmentsRoutes.js + the
+// NABH cadence requirements ("twice a day" = 12h, "daily" = 24h).
+const EXPECTED_TUPLES = [
+  // Nurse-driven
+  { assessmentType: "vitals",          role: "nurse",  cadenceHours: 4  }, // Q4H baseline
+  { assessmentType: "mews",            role: "nurse",  cadenceHours: 12 },
+  { assessmentType: "morse-fall",      role: "nurse",  cadenceHours: 12 },
+  { assessmentType: "caprini-dvt",     role: "nurse",  cadenceHours: 24 },
+  { assessmentType: "pressure-area",   role: "nurse",  cadenceHours: 12 },
+  { assessmentType: "pain",            role: "nurse",  cadenceHours: 12 },
+  { assessmentType: "intake-output",   role: "nurse",  cadenceHours: 12 },
+  { assessmentType: "daily-nursing",   role: "nurse",  cadenceHours: 12 },
+  { assessmentType: "neuro",           role: "nurse",  cadenceHours: 12 },
+  // Doctor-driven
+  { assessmentType: "doctor-progress", role: "doctor", cadenceHours: 12 },
+  { assessmentType: "pain",            role: "doctor", cadenceHours: 24 },
+];
 
 /**
  * Compute the new status based on nextDueAt vs now.
@@ -126,9 +154,77 @@ async function sweepOverdue() {
   }
 }
 
+/**
+ * R7bw — Seed AssessmentCompliance rows for every Active admission
+ * × EXPECTED_TUPLES. Idempotent: uses upsert keyed on (admissionId,
+ * assessmentType, role) — the unique index on the model. Already-
+ * existing rows (from real assessments) are left untouched.
+ *
+ * Sets `nextDueAt = admissionDate + cadenceHours` on first insert so
+ * status flips to OVERDUE if the admission has been open longer than
+ * the cadence already (the common case for the very first boot).
+ *
+ * Called both:
+ *   - At backend boot (one-shot), to backfill the empty collection.
+ *   - At every cron tick before sweepOverdue, to catch admissions
+ *     created since last sweep.
+ */
+async function seedAllActiveAdmissions() {
+  try {
+    const admissions = await Admission.find({ status: "Active" })
+      .select("_id UHID patientName admissionDate")
+      .lean();
+    const now = new Date();
+    let inserted = 0;
+    let skipped  = 0;
+    let errored  = 0;
+
+    for (const adm of admissions) {
+      const baseAt = adm.admissionDate ? new Date(adm.admissionDate) : now;
+      for (const tuple of EXPECTED_TUPLES) {
+        const nextDueAt = new Date(baseAt.getTime() + tuple.cadenceHours * 60 * 60 * 1000);
+        try {
+          const r = await AssessmentCompliance.updateOne(
+            {
+              admissionId: adm._id,
+              assessmentType: tuple.assessmentType,
+              role: tuple.role,
+            },
+            {
+              $setOnInsert: {
+                admissionId: adm._id,
+                UHID: adm.UHID || "",
+                patientName: adm.patientName || "",
+                assessmentType: tuple.assessmentType,
+                role: tuple.role,
+                cadenceHours: tuple.cadenceHours,
+                lastAssessedAt: null,
+                nextDueAt,
+                status: nextDueAt <= now ? "OVERDUE" : "NOT_DUE_YET",
+              },
+            },
+            { upsert: true },
+          );
+          if (r.upsertedCount) inserted++;
+          else skipped++;
+        } catch (e) {
+          // Duplicate-key race (parallel call) — count as skipped, not errored.
+          if (e?.code === 11000) skipped++; else { errored++; }
+        }
+      }
+    }
+    return { admissions: admissions.length, inserted, skipped, errored };
+  } catch (e) {
+    console.error("[assessmentCompliance] seedAllActiveAdmissions failed:", e?.message);
+    return { admissions: 0, inserted: 0, skipped: 0, errored: 0, error: e?.message };
+  }
+}
+
 module.exports = {
   recordAssessment,
   getStatusByAdmission,
   sweepOverdue,
+  seedAllActiveAdmissions,
+  EXPECTED_TUPLES,
   _statusFor,
 };

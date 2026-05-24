@@ -407,6 +407,40 @@ class OPDService {
       obgNotes:               pick(assessmentData.obgNotes),
     };
 
+    // ── Doctor's digital signature ────────────────────────────────────
+    // R7bu — Only stamp the signature when the caller actually sends one
+    // (the doctor signed this save). An empty / missing field MUST NOT
+    // overwrite a previously stored signature — that keeps reprints of
+    // older visits accurate even if the doctor's cached signature got
+    // dropped between sessions. doctorSignedAt is stamped the first time
+    // a signature lands on this visit (or refreshed when re-signed).
+    if (assessmentData.doctorSignatureImage && typeof assessmentData.doctorSignatureImage === "string") {
+      update.doctorSignatureImage = assessmentData.doctorSignatureImage;
+      update.doctorSignedAt =
+        assessmentData.doctorSignedAt
+          ? new Date(assessmentData.doctorSignedAt)
+          : new Date();
+    }
+
+    // ── Prescription rows (whitelist mealStatus + the rest) ──────────
+    // R7bu — addPrescription / OPDAssessment save BOTH go through this
+    // service. The schema accepts mealStatus now (Before food / After food
+    // / With food / Bedtime) but if a caller sends a `prescribedMedications`
+    // array on the assessment save we need to whitelist the field shape so
+    // mealStatus reaches disk instead of being silently filtered. Empty
+    // array is the no-op fallback (assessment saves usually rely on the
+    // separate /prescription POSTs + the bulk DoctorOrders mirror).
+    if (Array.isArray(assessmentData.prescribedMedications)) {
+      update.prescribedMedications = assessmentData.prescribedMedications.map(m => ({
+        medicineName: m.medicineName || m.name      || "",
+        dosage:       m.dosage       || m.dose      || "",
+        frequency:    m.frequency    || "",
+        duration:     m.duration     || "",
+        instructions: m.instructions || "",
+        mealStatus:   m.mealStatus   || "",
+      }));
+    }
+
     const updatedVisit = await OPD.findOneAndUpdate({ visitNumber }, update, { new: true });
 
     // Fire audit trigger for doctor assessment
@@ -467,9 +501,24 @@ class OPDService {
 
   /* ── Add prescription ── */
   async addPrescription(visitNumber, medication) {
+    // R7bu — Whitelist the row shape so callers that send the frontend's
+    // {name, dose, mealStatus, ...} payload (instead of the schema's
+    // {medicineName, dosage, ...}) still land cleanly. Mongoose strict
+    // mode would otherwise silently drop name/dose on legacy callers.
+    // mealStatus is now an accepted field (Before food / After food / With
+    // food / Bedtime).
+    const m = medication || {};
+    const row = {
+      medicineName: m.medicineName || m.name      || "",
+      dosage:       m.dosage       || m.dose      || "",
+      frequency:    m.frequency    || "",
+      duration:     m.duration     || "",
+      instructions: m.instructions || "",
+      mealStatus:   m.mealStatus   || "",
+    };
     return OPD.findOneAndUpdate(
       { visitNumber },
-      { $push: { prescribedMedications: medication } },
+      { $push: { prescribedMedications: row } },
       { new: true }
     );
   }

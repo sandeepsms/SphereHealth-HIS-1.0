@@ -149,6 +149,14 @@ class BillingService {
     // billNumber is INTENTIONALLY omitted: DRAFT bills carry null per
     // Pattern B (see _ensureBillNumberForNonDraft note above).
     const adm = admissionId ? await Admission.findById(admissionId) : null;
+    // R7bw — visitId linkage. For OPD admissions, OPDService writes the
+    // OPDRegistration.visitNumber onto the Admission doc (admission.visitNumber).
+    // We copy it here so the patient-history aggregator can do an exact-
+    // match join `{ UHID, visitType:"OPD", visitId }` instead of the
+    // same-day proximity fallback that mis-pools items across visits.
+    // For IPD/DAYCARE/EMERGENCY admissions the admission.visitNumber is
+    // usually empty (OPD-specific), so visitId stays null — those bills
+    // are joined by the canonical `admission` ObjectId ref.
     const setOnInsert = {
       patient: patient._id,
       paymentType: patient.tpa ? "TPA" : "CASH",
@@ -156,6 +164,7 @@ class BillingService {
       tpaName: patient.tpa?.tpaName || null,
       billItems: [],
       ...(adm ? { admissionNumber: adm.admissionNumber } : {}),
+      ...(adm?.visitNumber ? { visitId: adm.visitNumber } : {}),
     };
 
     let bill;
@@ -184,6 +193,29 @@ class BillingService {
         if (existing) return existing;
       }
       throw err;
+    }
+
+    // R7bw — backfill visitId on a pre-existing DRAFT bill that pre-dates
+    // the visitId column. The $setOnInsert above only fires on INSERT, so
+    // a DRAFT bill that already exists for an OPD admission still carries
+    // visitId:null until something stamps it. We do that here whenever the
+    // admission carries a visitNumber and the bill is missing it. Single
+    // direct collection update keeps the in-flight document in sync for
+    // the caller (the bill object returned above). The visitId is
+    // append-once (only set when null) so we never overwrite a value
+    // another writer already stamped.
+    if (bill && adm?.visitNumber && !bill.visitId) {
+      try {
+        await PatientBill.collection.updateOne(
+          { _id: bill._id, $or: [{ visitId: null }, { visitId: { $exists: false } }] },
+          { $set: { visitId: adm.visitNumber } },
+        );
+        bill.visitId = adm.visitNumber;
+      } catch (e) {
+        // Non-fatal: bill still returned, aggregator will fall back to
+        // same-day match for this row.
+        console.warn("[Billing] visitId stamp failed:", e.message);
+      }
     }
 
     // Whether the bill is newly-inserted or existing, an IPD/DAYCARE

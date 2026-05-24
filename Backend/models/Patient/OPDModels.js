@@ -196,6 +196,14 @@ const OPDSchema = new mongoose.Schema(
         frequency: String,
         duration: String,
         instructions: String,
+        // R7bu — meal-status capture (Before food / After food / With food /
+        // Bedtime). Pre-fix the form sent this on every Rx row but the
+        // schema had no field, so Mongoose silently dropped it — Pharmacy /
+        // MAR / print receipt never saw "before/after food", an instruction
+        // patients routinely follow incorrectly without prompting. The
+        // hydration mapper in OPDAssessmentPage now round-trips this back
+        // into the form state, and the print payload reads it from here.
+        mealStatus: { type: String, default: "" }, // "Before food" / "After food" / "With food" / "Bedtime"
       },
     ],
     advice: String,
@@ -266,6 +274,18 @@ const OPDSchema = new mongoose.Schema(
     planNote:        String,   // P — Treatment plan
     assessedBy:      String,   // Doctor who completed the assessment
     assessedAt:      Date,     // When it was saved
+
+    // ── Doctor's Digital Signature (per-visit snapshot) ─────────────
+    // R7bu — Pre-fix the doctor's signature data URL was only forwarded to
+    // the print popup. If the doctor logged out / refreshed / cleared cache,
+    // every past visit reprinted with a blank signature box. We now stamp
+    // the signature ON the visit at save time so reprints of historical
+    // visits keep the original signature even if the doctor has since
+    // changed it (or never has it cached again). Saved as a base64 data URL
+    // to mirror what useDigitalSignature exposes. doctorSignedAt is set the
+    // first time a signature is recorded on a visit.
+    doctorSignatureImage: { type: String, default: "" }, // base64 data URL
+    doctorSignedAt:       { type: Date,   default: null },
   },
   { timestamps: true }
 );
