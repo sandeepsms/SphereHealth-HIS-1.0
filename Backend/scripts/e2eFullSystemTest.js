@@ -956,14 +956,22 @@ async function scenario10_NABHRegisters(s) {
   });
   if (abx.status === 201) {
     if (abx.body?.data?._id) created.orderIds.add(abx.body.data._id);
-    // Check AntimicrobialUseRegister
+    // Emit is fire-and-forget (.catch only). Poll briefly to give the
+    // async write a chance to land before declaring "row not found".
+    const abxOrderId = abx.body?.data?._id;
     try {
-      const Reg = mongoose.connection.models.AntimicrobialUseRegister
-        || mongoose.model("AntimicrobialUseRegister",
-            new mongoose.Schema({}, { strict: false, collection: "antimicrobialuseregisters" }));
-      const row = await Reg.findOne({ admissionId: a._id }).sort({ createdAt: -1 }).lean();
-      if (row) passEvent(s, "AntimicrobialUseRegister auto-populated", `_id=${row._id}`);
-      else      infoEvent(s, "Antimicrobial register row not found", "emit may be unwired");
+      // Use the real model so the proper collection name (`antimicrobial_use_registers`)
+      // is used — Mongoose auto-pluralization differs from the schema's explicit collection.
+      const Reg = require("../models/Compliance/AntimicrobialUseRegisterModel");
+      let row = null;
+      for (let i = 0; i < 10 && !row; i++) {
+        await new Promise(r => setTimeout(r, 150));
+        row = await Reg.findOne(abxOrderId ? { doctorOrderId: abxOrderId } : { admissionId: a._id })
+          .sort({ createdAt: -1 }).lean();
+      }
+      if (row) passEvent(s, "AntimicrobialUseRegister auto-populated",
+                        `_id=${row._id} aware=${row.watchAccessReserve || "?"}`);
+      else     infoEvent(s, "Antimicrobial register row not found", "emit may be unwired");
     } catch (e) {
       infoEvent(s, "AntimicrobialUseRegister lookup", e.message);
     }
@@ -972,6 +980,9 @@ async function scenario10_NABHRegisters(s) {
   }
 
   // 2. Place a Procedure order with requiresOT → should emit OTRegister
+  // The route-level trigger is `order.orderDetails?.requiresOT === true`
+  // (the frontend Doctor Orders Panel nests it inside orderDetails). Sending
+  // it at body level was a silent miss in the original test.
   const ot = await api.post("/api/doctor-orders", {
     UHID: a.UHID, patientId: a.patientId, patientName: a.patientName,
     admissionId: a._id, admissionNumber: a.admissionNumber, ipdNo: a.admissionNumber,
@@ -982,17 +993,23 @@ async function scenario10_NABHRegisters(s) {
       procedureName: "Appendicectomy-E2E-" + Date.now(),
       indication: "Acute appendicitis",
       notes: "Standard OT",
+      requiresOT: true,  // ← nested per the wired contract
     },
-    requiresOT: true,
   });
   if (ot.status === 201) {
     if (ot.body?.data?._id) created.orderIds.add(ot.body.data._id);
+    const otOrderId = ot.body?.data?._id;
     try {
-      const Reg = mongoose.connection.models.OTRegister
-        || mongoose.model("OTRegister", new mongoose.Schema({}, { strict: false, collection: "otregisters" }));
-      const row = await Reg.findOne({ admissionId: a._id }).sort({ createdAt: -1 }).lean();
+      // Use the real model so the proper collection name (`ot_registers`) is used.
+      const Reg = require("../models/Compliance/OTRegisterModel");
+      let row = null;
+      for (let i = 0; i < 10 && !row; i++) {
+        await new Promise(r => setTimeout(r, 150));
+        row = await Reg.findOne(otOrderId ? { doctorOrderId: otOrderId } : { admissionId: a._id })
+          .sort({ createdAt: -1 }).lean();
+      }
       if (row) passEvent(s, "OTRegister auto-populated", `_id=${row._id}`);
-      else      infoEvent(s, "OTRegister row not found", "emit may be unwired");
+      else     infoEvent(s, "OTRegister row not found", "emit may be unwired");
     } catch (e) {
       infoEvent(s, "OTRegister lookup", e.message);
     }
