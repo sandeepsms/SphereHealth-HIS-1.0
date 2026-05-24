@@ -114,6 +114,23 @@ const DoctorOrderSchema = new mongoose.Schema({
   visitId:   String,
   visitType: { type: String, enum: ["OPD","IPD","Emergency","DayCare"], default: "IPD" },
 
+  // R7bv — Clinical linkage to the parent admission. Pre-R7bv these three
+  // fields did NOT exist on the schema; strict-mode Mongoose silently
+  // stripped them on every .create() / .insertMany(), even though every
+  // POST /doctor-orders save path in the frontend was sending them. As a
+  // result the patient-history aggregator (which filters DoctorOrder by
+  // `{ $or: [{admissionId}, {ipdNo}] }`) could never see standalone
+  // doctor orders for an active admission — the 16 orders for
+  // ADM26050002 were unreachable until this round.
+  //
+  // We add the fields here, then doctorOrderRoutes.POST normalises them
+  // from UHID + active Admission lookup so existing front-end payloads
+  // (which may carry only UHID + visitId for the legacy OPD path) still
+  // land on a fully-linked document.
+  admissionId:     { type: mongoose.Schema.Types.ObjectId, ref: "Admission", index: true, default: null },
+  ipdNo:           { type: String, index: true, default: null },
+  admissionNumber: { type: String, index: true, default: null }, // mirror of ipdNo for newer admissions
+
   orderType: {
     type: String,
     enum: [

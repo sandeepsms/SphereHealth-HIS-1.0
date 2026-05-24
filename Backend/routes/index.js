@@ -183,6 +183,13 @@ router.use("/vitalsheet", vitalSheetRoutes);
 // ── Patient File — Complete aggregator + activity feed ───────
 router.use("/patient-file",     require("./Clinical/patientFileRoutes"));
 
+// ── Patient History — chronological per-UHID OPD history +
+// per-admission IPD file (ASC, day-grouped). Read-only views the
+// new PatientHistoryViewPage at /patient-history-view/:uhid uses.
+// Does NOT replace /patient-file/* (that surface still backs the
+// existing CompletePatientFilePage).
+router.use("/patient-history",  require("./Clinical/patientHistoryRoutes"));
+
 // ── Roadmap A1–A5 + D14: patient-safety gates ────────────────
 router.use("/safety",           require("./Clinical/safetyRoutes"));
 

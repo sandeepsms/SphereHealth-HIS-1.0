@@ -77,6 +77,32 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
       body.twoNurseRequired = body.hamFlag;
       body.highRisk = body.hamFlag;
     }
+
+    // R7bv — stamp clinical linkage fields so the patient-history aggregator
+    // (which filters DoctorOrder by `{ $or: [{admissionId}, {ipdNo}] }`)
+    // can find this order. Pre-R7bv the DoctorOrder schema didn't even
+    // define admissionId / ipdNo, so Mongoose strict-mode silently stripped
+    // them on every save. With the schema additions (DoctorOrderModel.js)
+    // we now actively normalise: front-end sometimes sends only
+    // UHID + visitId (legacy OPD path), sometimes the full set. Resolve
+    // the active admission server-side rather than trusting whatever
+    // partial state the caller had to hand.
+    if ((body.visitType === "IPD" || !body.visitType) && body.UHID) {
+      if (!body.admissionId || !body.ipdNo || !body.admissionNumber) {
+        try {
+          const Admission = require("../../models/Patient/admissionModel");
+          const adm = await Admission.findOne({
+            UHID: body.UHID,
+            status: "Active",
+          }).select("_id admissionNumber").lean();
+          if (adm) {
+            if (!body.admissionId)     body.admissionId     = adm._id;
+            if (!body.ipdNo)           body.ipdNo           = adm.admissionNumber || body.visitId || null;
+            if (!body.admissionNumber) body.admissionNumber = adm.admissionNumber || null;
+          }
+        } catch (_) { /* non-fatal — the order can still save without linkage */ }
+      }
+    }
     // R7bq-J1 — pre-seed the full course (not just today). Pre-J1 only
     // today's slots were seeded, so a 5-day BD order looked "almost
     // done" after one day and the doctor had to keep re-prescribing.
@@ -280,11 +306,40 @@ router.post("/bulk", requireAction("doctor-orders.write"), async (req, res) => {
     if (!Array.isArray(orders) || !orders.length)
       return res.status(400).json({ ok: false, message: "orders[] required" });
 
-    const enriched = orders.map(o => {
+    // R7bv — same linkage normalisation as POST /. Cache the admission
+    // lookup per-UHID so a bulk insert of 10 orders for the same patient
+    // does ONE Admission query, not 10.
+    const Admission = require("../../models/Patient/admissionModel");
+    const admissionCache = new Map();
+    async function resolveAdmission(uhid) {
+      if (!uhid) return null;
+      if (admissionCache.has(uhid)) return admissionCache.get(uhid);
+      const adm = await Admission.findOne({ UHID: uhid, status: "Active" })
+        .select("_id admissionNumber").lean().catch(() => null);
+      admissionCache.set(uhid, adm || null);
+      return adm;
+    }
+
+    const enriched = [];
+    for (const o of orders) {
       const name = o.orderDetails?.medicineName || o.orderDetails?.displayName || "";
       o.hamFlag = checkHAM(name);
       o.twoNurseRequired = o.hamFlag;
       o.highRisk = o.hamFlag;
+
+      // R7bv — stamp admissionId / ipdNo / admissionNumber from the
+      // patient's active admission so the aggregator can surface this
+      // order under the IPD patient file.
+      if ((o.visitType === "IPD" || !o.visitType) && o.UHID &&
+          (!o.admissionId || !o.ipdNo || !o.admissionNumber)) {
+        const adm = await resolveAdmission(o.UHID);
+        if (adm) {
+          if (!o.admissionId)     o.admissionId     = adm._id;
+          if (!o.ipdNo)           o.ipdNo           = adm.admissionNumber || o.visitId || null;
+          if (!o.admissionNumber) o.admissionNumber = adm.admissionNumber || null;
+        }
+      }
+
       // R7bq-J1 — pre-seed the full course for Medication / IV_Fluid.
       if (o.scheduledTimes?.length && !o.administrationRecord?.length) {
         const today = new Date(); today.setHours(0,0,0,0);
@@ -305,8 +360,8 @@ router.post("/bulk", requireAction("doctor-orders.write"), async (req, res) => {
           o.administrationRecord = o.scheduledTimes.map(t => ({ scheduledTime: t, scheduledDate: today, status: "pending" }));
         }
       }
-      return o;
-    });
+      enriched.push(o);
+    }
 
     // R7bq-J2 — Per-row dedupe (mirrors POST /). For each Medication / IV_Fluid
     // (non-STAT, non-verbal) row, check if an identical order was placed within
@@ -1010,6 +1065,11 @@ router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("or
           newOrder = await DoctorOrder.create({
             UHID: order.UHID, patientName: order.patientName, visitId: order.visitId,
             visitType: order.visitType,
+            // R7bv — carry the parent order's admission linkage onto the
+            // substitution so the aggregator surfaces it under the same
+            // IPD patient file.
+            admissionId: order.admissionId, ipdNo: order.ipdNo, admissionNumber: order.admissionNumber,
+            patientId: order.patientId,
             orderType: order.orderType,
             priority: substituteWith.priority || "Routine",
             hamFlag: hamNew, twoNurseRequired: hamNew, highRisk: hamNew,

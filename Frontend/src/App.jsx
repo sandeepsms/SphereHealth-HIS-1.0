@@ -165,6 +165,11 @@ const DoctorOPDPanelPage = lazy(() => import("./pages/doctor/DoctorOPDPanelPage"
 // hasn't been migrated, but the routes below point at the unified one.
 const PatientLookupPage = lazy(() => import("./pages/patient/PatientLookupPage"));
 const CompletePatientFilePage = lazy(() => import("./pages/patient/CompletePatientFilePage"));
+// PatientHistoryViewPage — two-tab read-only view (OPD History per UHID +
+// chronological IPD File per admission). Sits alongside CompletePatientFile
+// and gives clinicians a quicker, more focused "what happened, in order"
+// lens onto the patient. Powered by /api/patient-history/*.
+const PatientHistoryViewPage = lazy(() => import("./pages/patient/PatientHistoryViewPage"));
 // R7i — Medical Records Department (paperless MRD)
 const MRDRecentDischargesPage = lazy(() => import("./pages/mrd/MRDRecentDischargesPage"));
 const GateLogPage = lazy(() => import("./pages/security/GateLogPage"));
@@ -635,6 +640,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/patient-history" element={<PatientLookupPage initialView="timeline" />} />
             {/* Complete patient file — one page with every clinical record + UI audit feed. */}
             <Route path="/patient-file/:uhid" element={<CompletePatientFilePage />} />
+            {/* New focused two-tab view — OPD History per UHID +
+                chronological IPD File per admission. Accessible without
+                a UHID for the in-page search box. */}
+            <Route path="/patient-history-view"       element={<PatientHistoryViewPage />} />
+            <Route path="/patient-history-view/:uhid" element={<PatientHistoryViewPage />} />
             {/* R7i: Medical Records Department — read-only archive of
                 every discharged patient. Doctor/Admin/MRD only. */}
             <Route path="/medical-records/discharges" element={

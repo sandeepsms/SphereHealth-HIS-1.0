@@ -97,11 +97,42 @@ const createDoctorNote = async (data, doctorUserId) => {
     }
   } catch (_) { /* use data sent from frontend */ }
 
+  // R7bv — Resolve the patient's active admission so we can:
+  //   1) stamp admissionId on the note (the index references it),
+  //   2) derive ipdNo from admission.admissionNumber when the caller
+  //      didn't pass it.
+  // Pre-R7bv the fallback was `ipdNo: ipdNo || patientUHID || "N/A"` — so
+  // 5 of 9 notes for UH00000029 landed with ipdNo:"UH00000029" instead of
+  // "ADM26050002", and the patient-history aggregator's `{ipdNo}` filter
+  // (which expects the admissionNumber) silently dropped them. The
+  // correct fallback chain is admission.admissionNumber → caller's
+  // admissionNumber → visitId → null. NEVER fall back to the UHID.
+  let resolvedAdmissionId     = data.admissionId || null;
+  let resolvedAdmissionNumber = data.admissionNumber || null;
+  let resolvedIpdNo           = ipdNo || null;
+  try {
+    if ((!resolvedAdmissionId || !resolvedIpdNo) && patientUHID) {
+      const Admission = require("../../models/Patient/admissionModel");
+      const adm = await Admission.findOne({
+        UHID: patientUHID, status: "Active",
+      }).select("_id admissionNumber").lean();
+      if (adm) {
+        resolvedAdmissionId     = resolvedAdmissionId     || adm._id;
+        resolvedAdmissionNumber = resolvedAdmissionNumber || adm.admissionNumber || null;
+        resolvedIpdNo           = resolvedIpdNo || adm.admissionNumber || resolvedAdmissionNumber || null;
+      }
+    }
+  } catch (_) { /* non-fatal */ }
+  // Final fallback for ipdNo — NEVER UHID. visitId is acceptable because
+  // for IPD admissions the frontend passes the admissionNumber as visitId.
+  const finalIpdNo = resolvedIpdNo || resolvedAdmissionNumber || data.visitId || "N/A";
+
   const note = await DoctorNotes.create({
     patient: patRef || undefined,
     patientName: pName || "",
     patientUHID: patientUHID || "",
-    ipdNo: ipdNo || patientUHID || "N/A",
+    ipdNo: finalIpdNo,
+    admissionId: resolvedAdmissionId || undefined,
     visitDate: visitDate || Date.now(),
     shift: shift || "morning",
     doctor: doctorObjectId || doctorUserId || undefined,

@@ -13,8 +13,18 @@
 
 const Patient            = require("../../models/Patient/patientModel");
 const Admission          = require("../../models/Patient/admissionModel");
+// OPDRegistration — the canonical store for every saved OPD visit
+// (chief complaint, HOPI, vitals, examination, diagnosis, prescription,
+// SOAP note). Pre-this-fix the complete-file aggregator only loaded
+// Admission rows, so historical OPD visits the doctor saved were
+// invisible on the Complete Patient File page.
+const OPDRegistration    = require("../../models/Patient/OPDModels");
 const DoctorNotes        = require("../../models/Doctor/DoctorNotesModel");
 const DoctorOrder        = require("../../models/Doctor/DoctorOrderModel");
+// IntakeOutputEntry — atomic per-fluid event store (replaces the
+// folded-up nurseNote.intakeOutput aggregate). Loaded for the
+// IPD-file aggregator so the chronological timeline shows every IN/OUT.
+const IntakeOutputEntry  = (() => { try { return require("../../models/Clinical/IntakeOutputEntryModel"); } catch { return null; } })();
 const NurseNotes         = require("../../models/Nurse/NurseNotesModel");
 const NursingAssessment  = require("../../models/Nurse/NursingAssessmentModel");
 const NursingCarePlan    = require("../../models/Nurse/NursingCarePlanModel");
@@ -112,15 +122,19 @@ exports.getCompleteFile = async (req, res) => {
 
     // Parallel fetch — every section is independent, so blast them all at once.
     const [
-      admissions, doctorNotes, nurseNotes, doctorOrders,
+      admissions, opdVisits, doctorNotes, nurseNotes, doctorOrders,
       consents, dischargeSummary,
       nursingAssessments, nursingCarePlans, shiftHandovers, bedTransfers,
       mar, vitals, mlc,
       investigations, bills, billingTriggers, activityLog,
-      dietPlans,
+      dietPlans, intakeOutput,
     ] = await Promise.all([
       // Admissions are small (typically 1–3) and the chronology spine — load all.
       safe("admissions",       () => Admission.find({ UHID }).sort({ admissionDate: -1 }).limit(50).lean()),
+      // OPDRegistration — full historical OPD visit list (not windowed —
+      // an OPD-only patient's record is meant to show every past visit).
+      // Bounded at 100 to protect against pathological histories.
+      safe("opdVisits",        () => OPDRegistration.find({ UHID }).sort({ visitDate: -1, createdAt: -1 }).limit(100).lean()),
       // The 7-day window applies to high-cardinality recorded data.
       safe("doctorNotes",      () => DoctorNotes.find({ patientUHID: UHID, createdAt: win }).sort({ visitDate: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("nurseNotes",       () => NurseNotes.find({ patientUHID: UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
@@ -133,7 +147,13 @@ exports.getCompleteFile = async (req, res) => {
       safe("shiftHandovers",     () => ShiftHandover.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("bedTransfers",       () => BedTransfer ? BedTransfer.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
       safe("mar",                () => MAR ? MAR.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
-      safe("vitals",             () => VitalSheet ? VitalSheet.find({ UHID, recordedAt: win }).sort({ recordedAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
+      // R7bu — VitalSheet schema uses `uhid` (lowercase) NOT `UHID`, and
+      // there is NO top-level `recordedAt` field — entries with their
+      // own time live in tableData[]. The old `{ UHID, recordedAt: win }`
+      // query matched zero rows. Fall back to the canonical `createdAt`
+      // window for the date filter; entry-level time precision is the
+      // dedicated /patient-history/:id/file endpoint's job.
+      safe("vitals",             () => VitalSheet ? VitalSheet.find({ uhid: UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
       // MLC + bills + admissions don't bloat — keep small, no window.
       safe("mlc",                () => MLCReport ? MLCReport.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
       safe("investigations",     () => InvestigationOrder.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
@@ -141,6 +161,10 @@ exports.getCompleteFile = async (req, res) => {
       safe("billingTriggers",    () => BillingTrigger.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("activityLog",        () => PatientActivityLog.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("dietPlans",          () => PatientDietPlan ? PatientDietPlan.find({ UHID }).sort({ assignedAt: -1, createdAt: -1 }).limit(50).lean() : []),
+      // IntakeOutput — every IN/OUT event for this patient inside the
+      // active window. Lets the timeline show per-fluid balance and the
+      // I/O section render an accurate chronological list.
+      safe("intakeOutput",       () => IntakeOutputEntry ? IntakeOutputEntry.find({ UHID, ts: win, voided: { $ne: true } }).sort({ ts: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
     ]);
 
     // Lab-records (manual trend sheets + imaging/micro/histopath reports).
@@ -178,6 +202,21 @@ exports.getCompleteFile = async (req, res) => {
         { id: a._id, model: "Admission" },
         { dischargedAt: a.dischargeDate, admissionType: a.admissionType });
     });
+
+    // OPDRegistration visits — each is a complete saved assessment.
+    // Headline = visitNumber + dept + chief complaint.
+    opdVisits.forEach((v) => push(v.visitDate || v.createdAt, "opd-visit",
+      `OPD ${v.visitNumber || ""} — ${v.department || ""}${v.consultantName ? " — " + v.consultantName : ""}${v.chiefComplaint ? " — " + v.chiefComplaint.slice(0, 60) : ""}`,
+      { id: v._id, model: "OPDRegistration" },
+      { status: v.status, visitNumber: v.visitNumber, finalDiagnosis: v.finalDiagnosis || v.provisionalDiagnosis }));
+
+    // Intake/Output events — small per-event entries in the timeline
+    // (the dedicated I/O sheet section still renders the full grouped
+    // table; this is just the chronological breadcrumb).
+    (intakeOutput || []).forEach((io) => push(io.ts || io.createdAt, "intake-output",
+      `${io.direction === "IN" ? "▼ IN" : "▲ OUT"} ${io.volumeML} mL — ${io.fluidType || io.label || ""}`,
+      { id: io._id, model: "IntakeOutputEntry" },
+      { direction: io.direction, volumeML: io.volumeML, source: io.source }));
 
     doctorNotes.forEach((n) => push(n.visitDate || n.createdAt, "doctor-note",
       `Dr ${n.doctorName || ""} — ${n.noteType || "progress"} note`,
@@ -299,6 +338,10 @@ exports.getCompleteFile = async (req, res) => {
         patient,
         admissions,
         currentAdmission,
+        // New — full OPD visit history (every OPDRegistration row),
+        // surfaced so the Patient File page / new Patient History view
+        // can show every past assessment a doctor saved.
+        opdVisits,
         doctorNotes,
         nurseNotes,
         doctorOrders,
@@ -316,6 +359,8 @@ exports.getCompleteFile = async (req, res) => {
         billingTriggers,
         activityLog,
         dietPlans,
+        // New — atomic intake/output events (per-fluid grain).
+        intakeOutput,
         labTrends,
         labReports,
         timeline,
@@ -349,7 +394,9 @@ exports.getFhirBundle = async (req, res) => {
       safe("doctorNotes",      () => DoctorNotes.find({ patientUHID: UHID }).sort({ visitDate: -1 }).lean()),
       safe("nurseNotes",       () => NurseNotes.find({ patientUHID: UHID }).sort({ createdAt: -1 }).lean()),
       safe("doctorOrders",     () => DoctorOrder.find({ UHID }).sort({ orderedAt: -1 }).lean()),
-      safe("vitals",           () => VitalSheet ? VitalSheet.find({ UHID }).sort({ recordedAt: -1 }).lean() : []),
+      // R7bu — VitalSheet keys on lowercase `uhid`; recordedAt isn't
+      // a top-level field. Sort by createdAt DESC instead.
+      safe("vitals",           () => VitalSheet ? VitalSheet.find({ uhid: UHID }).sort({ createdAt: -1 }).lean() : []),
       safe("consents",         () => ConsentForm.find({ UHID }).sort({ createdAt: -1 }).lean()),
       safe("investigations",   () => InvestigationOrder.find({ UHID }).sort({ createdAt: -1 }).lean()),
       safe("dischargeSummary", () => DischargeSummary.find({ UHID }).sort({ createdAt: -1 }).lean()),

@@ -98,6 +98,11 @@ const NAV = [
       // Directory · ?uhid= deep link → Timeline. See the
       // PatientLookupPage docstring for the consolidation rationale.
       { label: "Patient Lookup",      icon: "pi-id-card",           path: "/patient-search",                  badge: "ALL-IN-ONE",  roles: [ADMIN, RX, DR, NR, AC, TPA] },
+      // OPD history per UHID + chronological IPD file per admission — a
+      // two-tab focused view that complements the giant Complete Patient
+      // File. Reachable without a UHID (the page shows a search box) so
+      // clinicians can land here, search by UHID/IPD number, and read.
+      { label: "Patient File",        icon: "pi-folder",            path: "/patient-history-view",            badge: "NEW",         roles: [ADMIN, RX, DR, NR, AC, TPA] },
       { label: "Appointments",        icon: "pi-calendar-plus",     path: "/appointments",         nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "Discharge Queue",     icon: "pi-sign-out",          path: "/discharge-queue",      nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "TPA / Insurance",     icon: "pi-shield",            path: "/tpa-cases",            nabh: true,  badge: "NEW",   roles: [ADMIN, RX, TPA, AC] },
@@ -202,6 +207,8 @@ const NAV = [
       // Generic UHID search — same target page; convenient when
       // the user knows the UHID but not the discharge date.
       { label: "UHID Search",           icon: "pi-search",            path: "/patient-search",                                            roles: [ADMIN, DR, "MRD"] },
+      // Quick access to the focused OPD/IPD history view for MRD audits.
+      { label: "OPD/IPD History",       icon: "pi-folder",            path: "/patient-history-view",                  badge: "NEW",       roles: [ADMIN, DR, "MRD"] },
     ],
   },
 
