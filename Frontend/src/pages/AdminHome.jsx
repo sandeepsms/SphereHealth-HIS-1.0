@@ -200,7 +200,7 @@ function HospitalHero({ now, hospital, firstName, kpi }) {
             HOSPITAL MISSION CONTROL
           </div>
           <div style={{ fontSize: 24, fontWeight: 900, letterSpacing: "-.4px", lineHeight: 1.15 }}>
-            {hospital.name || "SphereHealth Hospital"}
+            {hospital.name || "Hospital"}
           </div>
           <div style={{ fontSize: 13, opacity: .92, marginTop: 6 }}>
             {greet()}, <strong>{firstName}</strong> · {dateStr}

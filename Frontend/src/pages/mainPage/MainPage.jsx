@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
+import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 
 const C = {
   accent: "#1e40af",
@@ -112,6 +113,7 @@ const isNurse  = (role) => role === "Nurse"  || role === "Admin";
 export default function MainPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { settings } = useHospitalSettings();
   const role = user?.role || "Admin";
   const modules    = getModules(role);
   const quickAccess = QUICK_ACCESS_MAP[role] || QUICK_ACCESS_MAP["Admin"];
@@ -243,7 +245,7 @@ export default function MainPage() {
             Good {clock.getHours() < 12 ? "Morning" : clock.getHours() < 17 ? "Afternoon" : "Evening"}
           </div>
           <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 3 }}>
-            {fmtDate(clock)} · SphereHealth Hospital Information System
+            {fmtDate(clock)} · {`${settings?.hospitalName || "Hospital"} Information System`}
           </div>
         </div>
         <div style={{ textAlign: "right", position: "relative" }}>

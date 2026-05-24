@@ -405,9 +405,15 @@ exports.getFhirBundle = async (req, res) => {
     const currentAdmission = admissions.find((a) => a.status === "Active") || admissions[0] || null;
     let hospital = {};
     try {
-      const HospitalSettings = require("../../models/hospitalSettingsModel");
+      // R7cb-D: was require("../../models/hospitalSettingsModel") which never
+      // resolved — MODULE_NOT_FOUND was caught silently, falling back to the
+      // hardcoded "SphereHealth Hospital" string in every FHIR export. Correct
+      // path is sibling-relative ../../models/HospitalSettings (no extension).
+      const HospitalSettings = require("../../models/HospitalSettings");
       hospital = (await HospitalSettings.findOne({}).lean()) || {};
-    } catch { /* no hospital settings model, leave empty */ }
+    } catch (e) {
+      console.warn("[patientFileController] HospitalSettings not loaded:", e?.message);
+    }
 
     const { buildBundle } = require("../../services/Clinical/fhirExporter");
     const bundle = buildBundle({

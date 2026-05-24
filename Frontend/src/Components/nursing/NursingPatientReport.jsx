@@ -7,6 +7,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+// R7cb-C: settings-driven hospital name in printed nursing record header / footer.
+import useHospitalSettings from "../print/useHospitalSettings";
 
 const API = API_ENDPOINTS.BASE;
 
@@ -158,6 +160,9 @@ export default function NursingPatientReport({ ipdNo, patientName, patientUHID, 
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
   const printRef = useRef();
+  // R7cb-C: use centralized settings; caller-passed `hospitalName` prop
+  // remains a valid override so existing callers don't break.
+  const { settings } = useHospitalSettings();
 
   useEffect(() => {
     if (!ipdNo) return;
@@ -218,7 +223,7 @@ export default function NursingPatientReport({ ipdNo, patientName, patientUHID, 
 </head>
 <body>
   <div class="header">
-    <div class="hospital">${hospitalName || "SphereHealth Hospital"}</div>
+    <div class="hospital">${settings.hospitalName || hospitalName || "Hospital"}</div>
     <div class="doc-title">NURSING CARE RECORD</div>
     <div style="font-size:9px;color:#64748b;margin-top:2px">NABH Compliant — Confidential Medical Document</div>
   </div>
@@ -276,7 +281,7 @@ export default function NursingPatientReport({ ipdNo, patientName, patientUHID, 
   `).join("")}
 
   <div class="footer">
-    This document was generated from SphereHealth HIS on ${new Date().toLocaleString("en-IN")} &nbsp;|&nbsp;
+    This document was generated from ${settings.hospitalName || "Hospital"} on ${new Date().toLocaleString("en-IN")} &nbsp;|&nbsp;
     IPD No: ${ipdNo} &nbsp;|&nbsp; Total Records: ${notes.length} &nbsp;|&nbsp;
     NABH Compliant Nursing Record
   </div>

@@ -6,6 +6,8 @@ import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
+// R7cb-C: hospital settings for the printed note header.
+import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
 import "../../Components/clinical/clinical-forms.css";
 // Roadmap follow-up — new dnp-* design system for the recorded-notes
 // timeline. Form modals + save/sign flow remain untouched.
@@ -928,7 +930,7 @@ function DoctorNotesContent({ selectedPatient }) {
   };
 
   /* ── Proper clinical print for a single note ── */
-  const printNote = (note) => {
+  const printNote = async (note) => {
     const pName  = patient?.patientName || patient?.patientId?.fullName || "—";
     const uhid   = patient?.UHID || patient?.uhid || searchUHID || "—";
     const ipd    = patient?.ipdNo || patient?.admissionNumber || "—";
@@ -936,6 +938,11 @@ function DoctorNotesContent({ selectedPatient }) {
     const modLabel = modDef(note.noteType)?.label || "Daily Progress";
     const noteDate = note.createdAt ? new Date(note.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
     const shift  = (note.shift || "morning");
+    // R7cb-C: settings-driven hospital name + tagline for the print header.
+    // Pre-R7cb hardcoded "SphereHealth HIS" / "NABH Accredited Clinical
+    // Documentation System" — now those come from /hospital-settings.
+    const hs = await fetchHospitalSettings();
+    const escapeHtml = (s) => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 
     const vitalsHtml = (() => {
       const v = note.vitals;
@@ -1014,8 +1021,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
 <!-- Print Header -->
 <div style="background:linear-gradient(135deg,#1e40af,#2563eb);color:white;padding:16px 24px;display:flex;align-items:center;justify-content:space-between">
   <div>
-    <div style="font-size:18px;font-weight:800;letter-spacing:-.3px">SphereHealth HIS</div>
-    <div style="font-size:11px;opacity:.8">NABH Accredited Clinical Documentation System</div>
+    <div style="font-size:18px;font-weight:800;letter-spacing:-.3px">${escapeHtml(hs.hospitalName || "Hospital")}</div>
+    <div style="font-size:11px;opacity:.8">${escapeHtml(hs.tagline || "Clinical Documentation")}</div>
   </div>
   <div style="text-align:right;font-size:11px;opacity:.85">
     <div>Printed: ${new Date().toLocaleString("en-IN")}</div>

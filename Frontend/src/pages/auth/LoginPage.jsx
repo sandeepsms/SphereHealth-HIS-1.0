@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 import { homePathForRole } from "../../config/permissions";
 
 const ROLE_COLORS = {
@@ -27,9 +28,15 @@ const ROLE_ICONS = {
 
 export default function LoginPage() {
   const { login } = useAuth();
+  const { settings } = useHospitalSettings();
   const navigate  = useNavigate();
   const location  = useLocation();
   const fromState = location.state?.from?.pathname;
+  // R7cb-D: /api/hospital-settings doesn't require auth, so the provider
+  // (which wraps the login route in App.jsx) has the name available by
+  // first render in steady state. Fallback "Hospital" guards the cold-boot
+  // window before the fetch resolves.
+  const hospitalName = settings?.hospitalName || "Hospital";
 
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
@@ -89,7 +96,7 @@ export default function LoginPage() {
             <span style={{ fontSize: 28, fontWeight: 900, color: "white" }}>S</span>
           </div>
           <div style={{ fontSize: 24, fontWeight: 800, color: "white", lineHeight: 1.2 }}>
-            SphereHealth <span style={{ color: "#38bdf8" }}>HIS</span>
+            {hospitalName} <span style={{ color: "#38bdf8" }}>HIS</span>
           </div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
             Hospital Information System · NABH Compliant
@@ -238,7 +245,7 @@ export default function LoginPage() {
         </div>
 
         <div style={{ textAlign: "center", marginTop: 20, fontSize: 11, color: "#334155" }}>
-          SphereHealth HIS v2.0 · Secure & NABH Compliant
+          {`${hospitalName} HIS v2.0 · Secure & NABH Compliant`}
         </div>
       </div>
     </div>

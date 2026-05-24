@@ -1,20 +1,26 @@
 import React from "react";
 import "../../styles/BillsPrint.css";
+import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 
 const BillPrint = React.forwardRef((props, ref) => {
   const { bill } = props;
+  const { settings: hs } = useHospitalSettings();
 
   if (!bill) return null;
+
+  const hospitalName = hs?.hospitalName || "Hospital";
+  const addressLine = [hs?.addressLine1, hs?.addressLine2, hs?.city, hs?.state, hs?.pincode].filter(Boolean).join(", ");
+  const contactLine = [hs?.phone1 && `Phone: ${hs.phone1}`, hs?.email && `Email: ${hs.email}`].filter(Boolean).join(" | ");
 
   return (
     <div ref={ref} className="bill-print">
       {/* Hospital Header */}
       <div className="bill-header">
         <div className="hospital-info">
-          <h1>CITY HOSPITAL</h1>
-          <p>123, Medical Road, City - 123456</p>
-          <p>Phone: +91 1234567890 | Email: info@cityhospital.com</p>
-          <p>GSTIN: 12ABCDE3456F7Z8</p>
+          <h1>{hospitalName.toUpperCase()}</h1>
+          {addressLine && <p>{addressLine}</p>}
+          {contactLine && <p>{contactLine}</p>}
+          {hs?.gstin && <p>GSTIN: {hs.gstin}</p>}
         </div>
         <div className="bill-title">
           <h2>MEDICAL BILL</h2>
@@ -328,12 +334,15 @@ const BillPrint = React.forwardRef((props, ref) => {
       <div className="bill-section terms">
         <h4>Terms & Conditions:</h4>
         <ul>
-          <li>
-            This is a computer-generated bill and does not require signature.
-          </li>
-          <li>All payments are non-refundable.</li>
-          <li>Please verify all details before making payment.</li>
-          <li>For any queries, contact the billing department.</li>
+          {hs?.termsLine1 ? <li>{hs.termsLine1}</li> : (
+            <li>This is a computer-generated bill and does not require signature.</li>
+          )}
+          {hs?.termsLine2 ? <li>{hs.termsLine2}</li> : (
+            <li>All payments are non-refundable.</li>
+          )}
+          {hs?.termsLine3 ? <li>{hs.termsLine3}</li> : (
+            <li>For any queries, contact the billing department.</li>
+          )}
         </ul>
       </div>
 
@@ -349,7 +358,7 @@ const BillPrint = React.forwardRef((props, ref) => {
             <p>Authorized Signatory</p>
           </div>
         </div>
-        <p className="thank-you">Thank you for choosing City Hospital!</p>
+        <p className="thank-you">{hs?.billFooterNote || `Thank you for choosing ${hospitalName}!`}</p>
       </div>
     </div>
   );

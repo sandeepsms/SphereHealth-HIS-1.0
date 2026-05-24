@@ -12,12 +12,32 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
+import { clearHospitalSettingsCache } from "../../Components/print/useHospitalSettings";
 import {
   AdminPage, Hero, TabStrip, Card, Field, Check, ImageUpload, SubCard, Badge as ThemeBadge,
   Table, EmptyRow, RowAction, C,
 } from "../../Components/admin-theme";
 
 import { API_BASE_URL as API_URL } from "../../config/api";
+
+/* See HospitalConfigWizard for the rationale — keeping this helper local
+   to each save handler (rather than a shared util) avoids creating a new
+   shared file and matches the sibling agent's no-touch boundary. */
+const broadcastHospitalSettingsInvalidated = () => {
+  try { clearHospitalSettingsCache(); } catch { /* no-op */ }
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel("his-hospital-settings");
+      bc.postMessage({ type: "invalidated", at: Date.now() });
+      bc.close();
+    }
+  } catch { /* older browsers — no-op */ }
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("his-settings-version", String(Date.now()));
+    }
+  } catch { /* private mode / disabled storage — no-op */ }
+};
 
 const TABS = [
   { key: "identity", label: "Identity & Branding", icon: "pi-image" },
@@ -59,6 +79,7 @@ export default function HospitalSettingsPage() {
       });
       const json = await res.json();
       if (json.success) {
+        broadcastHospitalSettingsInvalidated();
         toast.success("Settings saved — every print and document now uses the updated profile");
         setOrig({ ...form });
         reload();
@@ -149,7 +170,7 @@ function IdentityTab({ form, handle, toggle, setField, setNestedE }) {
       <Card title="Hospital Identity" color={C.blue} icon="pi-id-card">
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14 }}>
           <Field label="Hospital name" required>
-            <input className="his-field" name="hospitalName" value={form.hospitalName || ""} onChange={handle} placeholder="SphereHealth Hospital" />
+            <input className="his-field" name="hospitalName" value={form.hospitalName || ""} onChange={handle} placeholder="e.g. Apollo Hospital" />
           </Field>
           <Field label="Hospital type">
             <select className="his-field" name="hospitalType" value={form.hospitalType || "Private"} onChange={handle}>
@@ -889,7 +910,7 @@ function BankTab({ form, handle, setField, setForm }) {
           </Field>
           <Field label="UPI handler name (printed on receipt)">
             <input className="his-field" name="upiHandlerName" value={form.upiHandlerName || ""} onChange={handle}
-              placeholder="SphereHealth Hospital" />
+              placeholder="Hospital name on UPI receipt" />
           </Field>
         </div>
       </Card>

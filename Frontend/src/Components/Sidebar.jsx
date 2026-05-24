@@ -14,6 +14,7 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useHospitalSettings } from "../context/HospitalSettingsContext";
 import "primeicons/primeicons.css";
 
 /* ══════════════════════════════════════════════════════════════
@@ -793,6 +794,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
   const navigate  = useNavigate();
   const location  = useLocation();
   const { user, logout } = useAuth();
+  const { settings } = useHospitalSettings();
 
   const userRole = user?.role || ADMIN;
   const roleMeta = ROLE_META[userRole] || ROLE_META.Admin;
@@ -865,7 +867,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
             }}>S</div>
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", lineHeight: 1 }}>
-                SphereHealth<span style={{ color: "#38bdf8" }}>HIS</span>
+                {settings?.hospitalName || "Hospital"}<span style={{ color: "#38bdf8" }}> HIS</span>
               </div>
               <div style={{ fontSize: 9, color: "#94a3b8", letterSpacing: ".8px", marginTop: 2 }}>
                 NABH ACCREDITED
@@ -1020,7 +1022,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
               <i className={`pi ${roleMeta.icon}`} style={{ fontSize: 10, color: "#fff" }} />
             </div>
             <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#1e293b", lineHeight: 1 }}>SphereHealth HIS</div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#1e293b", lineHeight: 1 }}>{`${settings?.hospitalName || "Hospital"} HIS`}</div>
               <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 1 }}>v2.0 · NABH Ready</div>
             </div>
           </div>

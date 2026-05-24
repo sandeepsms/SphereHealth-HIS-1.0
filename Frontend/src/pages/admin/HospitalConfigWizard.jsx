@@ -25,8 +25,34 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
+import { clearHospitalSettingsCache } from "../../Components/print/useHospitalSettings";
 import { API_BASE_URL as API_URL } from "../../config/api";
 import "./HospitalConfigWizard.css";
+
+/* Cross-tab + cross-cache broadcast helper.
+   - Drops the print module-cache locally so this tab's PrintShell-routed
+     documents re-fetch on next open.
+   - Posts on a BroadcastChannel so OTHER same-origin tabs (e.g. a nurse's
+     screen with a patient loaded) also clear and refetch.
+   - Writes a storage tickler so browsers without BroadcastChannel
+     (iOS Safari) still propagate via the `storage` event.
+   Wrapped in try/catch — if any API is missing we silently no-op rather
+   than blocking the save. */
+const broadcastHospitalSettingsInvalidated = () => {
+  try { clearHospitalSettingsCache(); } catch { /* no-op */ }
+  try {
+    if (typeof BroadcastChannel !== "undefined") {
+      const bc = new BroadcastChannel("his-hospital-settings");
+      bc.postMessage({ type: "invalidated", at: Date.now() });
+      bc.close();
+    }
+  } catch { /* older browsers — no-op */ }
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("his-settings-version", String(Date.now()));
+    }
+  } catch { /* private mode / disabled storage — no-op */ }
+};
 
 const TABS = [
   { key: "details",   label: "Hospital Details",  icon: "pi-id-card"          },
@@ -84,6 +110,10 @@ export default function HospitalConfigWizard() {
       });
       const json = await res.json();
       if (json.success) {
+        // Drop print module-cache + broadcast to other tabs BEFORE the toast,
+        // so the moment the admin sees "saved" every consumer is already
+        // refetching fresh values (logo / name / GSTIN / etc.).
+        broadcastHospitalSettingsInvalidated();
         toast.success("Hospital configuration saved — every print and document now uses these values.");
         setOrig({ ...form });
         reload();
@@ -195,7 +225,7 @@ function DetailsTab({ form, upd }) {
     <>
       <Section title="Identity" icon="pi-id-card" color="blue">
         <Row label="Hospital name" required>
-          <input className="hcw-input" value={form.hospitalName || ""} onChange={upd("hospitalName")} placeholder="SphereHealth Hospital" />
+          <input className="hcw-input" value={form.hospitalName || ""} onChange={upd("hospitalName")} placeholder="e.g. Apollo Hospital" />
         </Row>
         <Row label="Tagline (under name)">
           <input className="hcw-input" value={form.tagline || ""} onChange={upd("tagline")} placeholder="NABH Accredited Multi-Specialty Hospital" />
@@ -396,10 +426,10 @@ function BankTab({ form, upd }) {
 
       <Section title="UPI / Digital" icon="pi-mobile" color="orange">
         <Row label="UPI ID" hint="Shown on receipts & QR codes">
-          <input className="hcw-input hcw-input--mono" value={form.upiId || ""} onChange={upd("upiId")} placeholder="spherehealth@hdfcbank" />
+          <input className="hcw-input hcw-input--mono" value={form.upiId || ""} onChange={upd("upiId")} placeholder="yourhospital@bank" />
         </Row>
         <Row label="Cheque payable to">
-          <input className="hcw-input" value={form.chequePayableTo || ""} onChange={upd("chequePayableTo")} placeholder="SphereHealth Hospital" />
+          <input className="hcw-input" value={form.chequePayableTo || ""} onChange={upd("chequePayableTo")} placeholder="Hospital name" />
         </Row>
       </Section>
     </>

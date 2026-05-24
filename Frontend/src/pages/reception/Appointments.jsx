@@ -9,6 +9,7 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { confirm } from "../../Components/common/ConfirmDialog";
+import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 import "./reception-shared.css";
 import "../../Components/clinical/clinical-forms.css";
 
@@ -28,6 +29,7 @@ const STATUSES = ["Booked", "CheckedIn", "Completed", "Cancelled", "NoShow"];
 
 export default function Appointments() {
   const navigate = useNavigate();
+  const { settings } = useHospitalSettings();
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("Booked");
@@ -92,7 +94,7 @@ export default function Appointments() {
     const phone = (apt.patientPhone || "").replace(/\D/g, "");
     const num = phone.length === 10 ? `91${phone}` : phone;
     const dateStr = fmtDate(apt.appointmentDate);
-    const msg = `Dear ${apt.patientName}, this is a reminder for your appointment with Dr. ${apt.doctorName || ""} on ${dateStr} at ${apt.slotTime}. Appointment #: ${apt.appointmentNumber}. Please arrive 10 minutes early. — SphereHealth Hospital`;
+    const msg = `Dear ${apt.patientName}, this is a reminder for your appointment with Dr. ${apt.doctorName || ""} on ${dateStr} at ${apt.slotTime}. Appointment #: ${apt.appointmentNumber}. Please arrive 10 minutes early. — ${settings?.hospitalName || "your hospital"}`;
     window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, "_blank");
   };
 

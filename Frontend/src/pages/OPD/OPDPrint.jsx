@@ -1,15 +1,16 @@
 import React, { useEffect, useState } from "react";
 import "../../../css/opdbill.css";
-import logo from "../../assets/BIMSLOGO.png";
 import { useParams } from "react-router-dom";
 import { getPatientbyID } from "../../Services/userService";
 import html2pdf from "html2pdf.js";
 import { Fullscreen } from "lucide-react";
 import MLCAutoStamp from "../../Components/mlc/MLCAutoStamp";
+import useHospitalSettings from "../../Components/print/useHospitalSettings";
 
 const OPDPrint = () => {
   const { UHID } = useParams();
   const [patient, setPatient] = useState({});
+  const { settings: hs } = useHospitalSettings();
   const today = new Date().toISOString().split("T")[0];
 
   useEffect(() => {
@@ -84,18 +85,20 @@ const OPDPrint = () => {
         {/* HEADER */}
         <div className="row align-items-center border-bottom pb-3 mb-3">
           <div className="col-2">
-            <img src={logo} alt="logo" className="img-fluid" />
+            {hs?.logo && <img src={hs.logo} alt="logo" className="img-fluid" style={{ maxWidth: hs?.logoWidth || 120 }} />}
           </div>
 
           <div className="col-6 text-center">
-            <h4 className="fw-bold mb-0">BIMS</h4>
-            <small>Bright Institute of Medical Sciences</small>
+            <h4 className="fw-bold mb-0">{hs?.hospitalName || "Hospital"}</h4>
+            {hs?.tagline && <small>{hs.tagline}</small>}
           </div>
 
           <div className="col-4 text-end small">
-            <div>📞+91 - 7988307850</div>
-            <div>✉️ query.bims@gmail.com</div>
-            <div>Gau Shala Road, Jatawara, Sonipat - 131001</div>
+            {(hs?.phone1 || hs?.emergencyPhone) && <div>📞 {hs.phone1 || hs.emergencyPhone}</div>}
+            {hs?.email && <div>✉️ {hs.email}</div>}
+            {(hs?.addressLine1 || hs?.city) && (
+              <div>{[hs?.addressLine1, hs?.addressLine2, hs?.city, hs?.state, hs?.pincode].filter(Boolean).join(", ")}</div>
+            )}
           </div>
         </div>
 
@@ -167,9 +170,11 @@ const OPDPrint = () => {
         {/* FOOTER */}
         <div className="text-center mt-4 border-top pt-2 small">
           <p className="mb-1">
-            Thank you for visiting <strong>BIMS</strong>
+            Thank you for visiting <strong>{hs?.hospitalName || "Hospital"}</strong>
           </p>
-          <p className="mb-0">Emergency Contact: 📞+91 - 7988307850</p>
+          {(hs?.emergencyPhone || hs?.phone1) && (
+            <p className="mb-0">Emergency Contact: 📞 {hs.emergencyPhone || hs.phone1}</p>
+          )}
         </div>
       </div>
       {/* PRINT BUTTON */}

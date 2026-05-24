@@ -238,7 +238,7 @@ function AppLoader() {
         <span style={{ fontSize: 26, fontWeight: 900, color: "#fff" }}>S</span>
       </div>
       <i className="pi pi-spin pi-spinner" style={{ fontSize: 28, color: "#38bdf8", marginBottom: 14 }} />
-      <div style={{ fontSize: 13, color: "#64748b" }}>Loading SphereHealth HIS…</div>
+      <div style={{ fontSize: 13, color: "#64748b" }}>Loading…</div>
     </div>
   );
 }

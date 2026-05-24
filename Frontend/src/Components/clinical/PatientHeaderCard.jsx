@@ -33,6 +33,7 @@ import React, { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import useHospitalSettings from "../print/useHospitalSettings";
 import "./PatientHeaderCard.css";
 
 const fmtDate = (d) =>
@@ -64,6 +65,9 @@ export default function PatientHeaderCard({
   loadPlaceholder = "UHID / Admission No...",
   loadSubtitle = "Enter UHID or Admission No to begin",
 }) {
+  /* R7cb-residual: hospital name for the QR sticker payload — pulled
+     from settings so the QR carries the configured hospital identity. */
+  const { settings: hospitalSettings } = useHospitalSettings();
   /* ───────── Loader ───────── */
   if (!patient) {
     return (
@@ -167,8 +171,12 @@ export default function PatientHeaderCard({
   /* QR payload — plain text so any phone-camera QR reader shows the
      patient's identity + key data on scan. Rendered client-side via
      qrcode.react so no PHI ever leaves the browser. */
+  // R7cb-residual: drop hardcoded "SphereHealth HIS" claim from the QR
+  // payload so the QR sticker carries the configured hospital name.
+  // settings come from the print-side hook to avoid a context dependency
+  // for a component used outside the HospitalSettingsProvider tree.
   const qrPayload = [
-    "SphereHealth HIS",
+    (hospitalSettings && hospitalSettings.hospitalName) || "Hospital",
     `UHID: ${uhidVal}`,
     `IPD: ${ipdNumVal}`,
     `Name: ${patName}`,

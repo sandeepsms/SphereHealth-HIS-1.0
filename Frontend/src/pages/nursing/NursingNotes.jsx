@@ -18,6 +18,8 @@ import FingerprintConsentModal from "../../Components/clinical/FingerprintConsen
 import IntegratedVitalsPanel from "../../Components/clinical/IntegratedVitalsPanel";
 import { saveVitalSheet, getVitalSheet } from "../../Services/vital/vitalService";
 import NursingPatientReport from "../../Components/nursing/NursingPatientReport";
+// R7cb-C: stop passing literal "SphereHealth Hospital" to NursingPatientReport.
+import useHospitalSettings from "../../Components/print/useHospitalSettings";
 // R7bi — shared patient banner (Doctor + Nursing parity). Replaces the
 // inline JSX that lived here pre-R7bi (with R7bg's QR/IPD/age/diagnosis
 // enhancements now promoted into the shared component).
@@ -345,6 +347,9 @@ function Section({ title, icon, color = C.primary, children }) {
 function NursingNotesContent({ selectedPatient }) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  // R7cb-C: settings-driven hospital name passed into NursingPatientReport
+  // (replaces literal "SphereHealth Hospital" near the report mount).
+  const { settings: hospitalSettings } = useHospitalSettings();
 
   const [searchUHID, setSearchUHID] = useState("");
   const [ipdNoForDraft, setIpdNoForDraft] = useState("");
@@ -3906,7 +3911,7 @@ function NursingNotesContent({ selectedPatient }) {
             consultant: patient.doctorName || patient.consultantName,
             bloodGroup: patient.bloodGroup,
           }}
-          hospitalName="SphereHealth Hospital"
+          hospitalName={hospitalSettings?.hospitalName || ""}
           onClose={() => setShowReport(false)}
         />
       )}

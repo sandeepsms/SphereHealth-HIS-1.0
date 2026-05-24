@@ -18,6 +18,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 import "./reception-shared.css";
 
 const TRIAGE_ORDER = ["Critical", "Emergency", "Urgent", "Semi-urgent", "Non-urgent"];
@@ -237,6 +238,7 @@ export default function ReceptionEmergencyCases() {
 /* ───────────────────────────────────────────────────────────── */
 
 function EmergencyRow({ e, navigate }) {
+  const { settings } = useHospitalSettings();
   // Prefer populated patient (latest values), fall back to denormalised
   // fields on the Emergency record itself so the row still renders even
   // when the populate didn't run.
@@ -253,7 +255,8 @@ function EmergencyRow({ e, navigate }) {
     if (!phone) return toast.warning("No family contact on file");
     const num = phone.replace(/\D/g, "");
     const ph = num.length === 10 ? `91${num}` : num;
-    const msg = `Emergency intimation: ${name} (UHID ${uhid || "—"}) is currently being treated at SphereHealth Hospital, ER. Triage: ${e.triageCategory}. ER #: ${e.emergencyNumber}. Please reach the hospital. — Reception`;
+    const hospitalName = settings?.hospitalName || "your hospital";
+    const msg = `Emergency intimation: ${name} (UHID ${uhid || "—"}) is currently being treated at ${hospitalName}, ER. Triage: ${e.triageCategory}. ER #: ${e.emergencyNumber}. Please reach the hospital. — Reception`;
     window.open(`https://wa.me/${ph}?text=${encodeURIComponent(msg)}`, "_blank");
   };
 

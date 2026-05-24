@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useHospitalSettings } from "../context/HospitalSettingsContext";
 import { homePathForRole } from "../config/permissions";
 
 // Paths where the Back button should NOT appear — these are landing
@@ -80,7 +81,10 @@ function getModuleName(pathname) {
   for (const key of Object.keys(MODULE_NAMES)) {
     if (pathname.startsWith(key + "/") || pathname.startsWith(key + ":")) return MODULE_NAMES[key];
   }
-  return "SphereHealth HIS";
+  // R7cb-D: was the literal "SphereHealth HIS" sentinel. The caller already
+  // gates rendering on `module && module !== <sentinel>`; returning null
+  // collapses that to a single truthy check without a brand string.
+  return null;
 }
 
 function useClock() {
@@ -99,8 +103,13 @@ export default function Header() {
   const navigate  = useNavigate();
   const time      = useClock();
   const { user, logout } = useAuth();
+  const { settings } = useHospitalSettings();
   const pathname  = location.pathname;
   const module    = getModuleName(pathname);
+  // R7cb-D: hospital identity is now deployment-driven. Split into name +
+  // suffix ("HIS") so the styled "HIS" accent stays distinct from the
+  // dynamic hospital name. Fallback: generic "Hospital".
+  const hospitalName = settings?.hospitalName || "Hospital";
   const [dropOpen, setDropOpen] = useState(false);
   const dropRef = useRef(null);
 
@@ -186,7 +195,7 @@ export default function Header() {
         <div style={{ width: 28, height: 28, background: "linear-gradient(135deg,#38bdf8,#7c3aed)", borderRadius: 7,
           display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "white", flexShrink: 0 }}>S</div>
         <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: ".3px", color: "white" }}>
-          SphereHealth<span style={{ color: "#38bdf8" }}>HIS</span>
+          {hospitalName}<span style={{ color: "#38bdf8" }}> HIS</span>
         </span>
         <span style={{ background: "rgba(56,189,248,.2)", border: "1px solid rgba(56,189,248,.4)",
           padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, letterSpacing: "1.2px", color: "#7dd3fc" }}>NABH</span>
@@ -219,7 +228,7 @@ export default function Header() {
           </button>
         )}
 
-        {module && module !== "SphereHealth HIS" && (
+        {module && (
           <>
             <span style={{ width: 1, height: 28, background: "#334155", display: "inline-block", marginLeft: 2 }} />
             <span style={{ fontSize: 12, color: "#94a3b8", paddingLeft: 2 }}>{module}</span>
