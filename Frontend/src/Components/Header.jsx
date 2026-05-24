@@ -110,6 +110,18 @@ export default function Header() {
   // suffix ("HIS") so the styled "HIS" accent stays distinct from the
   // dynamic hospital name. Fallback: generic "Hospital".
   const hospitalName = settings?.hospitalName || "Hospital";
+  // R7ce: NABH badge must NOT claim the hospital is accredited unless the
+  // admin has actually entered a NABH certificate number in the wizard.
+  // Until then we display "NABH Compliant" — that's a true claim about
+  // the SOFTWARE (every printable + register meets NABH 5th Ed format),
+  // not the hospital. Once admin fills `nabhCertNumber`, the badge
+  // upgrades to "NABH" + tooltip with the cert#.
+  const _nabhCert = String(settings?.nabhCertNumber || "").trim();
+  const isNabhAccredited = !!_nabhCert;
+  const nabhBadgeLabel   = isNabhAccredited ? "NABH" : "NABH Compliant";
+  const nabhBadgeTitle   = isNabhAccredited
+    ? `NABH Accredited · Cert ${_nabhCert}`
+    : "Software is NABH-format compliant. Hospital accreditation not yet configured.";
   const [dropOpen, setDropOpen] = useState(false);
   const dropRef = useRef(null);
 
@@ -197,8 +209,17 @@ export default function Header() {
         <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: ".3px", color: "white" }}>
           {hospitalName}<span style={{ color: "#38bdf8" }}> HIS</span>
         </span>
-        <span style={{ background: "rgba(56,189,248,.2)", border: "1px solid rgba(56,189,248,.4)",
-          padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, letterSpacing: "1.2px", color: "#7dd3fc" }}>NABH</span>
+        <span
+          title={nabhBadgeTitle}
+          style={{
+            background: isNabhAccredited ? "rgba(34,197,94,.18)" : "rgba(56,189,248,.18)",
+            border: isNabhAccredited ? "1px solid rgba(34,197,94,.4)" : "1px solid rgba(56,189,248,.35)",
+            padding: "3px 10px", borderRadius: 20,
+            fontSize: 10, fontWeight: 700, letterSpacing: "1.0px",
+            color: isNabhAccredited ? "#86efac" : "#7dd3fc",
+            whiteSpace: "nowrap",
+          }}
+        >{nabhBadgeLabel}</span>
 
         {/* Back button — shown on every page EXCEPT the role's own home,
             login, and print windows. Falls back to home if there's no

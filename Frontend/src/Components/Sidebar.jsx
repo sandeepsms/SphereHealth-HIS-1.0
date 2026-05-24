@@ -869,8 +869,14 @@ export default function Sidebar({ collapsed, setCollapsed }) {
               <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", lineHeight: 1 }}>
                 {settings?.hospitalName || "Hospital"}<span style={{ color: "#38bdf8" }}> HIS</span>
               </div>
+              {/* R7ce: only label the HOSPITAL as "NABH ACCREDITED" once admin
+                  has entered a cert # in the wizard. Otherwise show
+                  "NABH COMPLIANT" — a software-level claim that doesn't
+                  misrepresent the hospital's accreditation status. */}
               <div style={{ fontSize: 9, color: "#94a3b8", letterSpacing: ".8px", marginTop: 2 }}>
-                NABH ACCREDITED
+                {String(settings?.nabhCertNumber || "").trim()
+                  ? "NABH ACCREDITED"
+                  : "NABH COMPLIANT"}
               </div>
             </div>
           </div>

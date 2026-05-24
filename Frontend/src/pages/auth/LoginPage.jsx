@@ -105,9 +105,13 @@ export default function LoginPage() {
             Hospital Information System · NABH Compliant
           </div>
           <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            {/* R7ce: login screen is pre-auth so settings aren't loaded yet —
+                always show the safe software-level claim "NABH COMPLIANT".
+                The Header + Sidebar (which DO have settings) handle the
+                accreditation upgrade once admin enters the cert#. */}
             <span style={{ background: "rgba(56,189,248,.15)", border: "1px solid rgba(56,189,248,.3)",
               color: "#38bdf8", padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>
-              NABH ACCREDITED
+              NABH COMPLIANT
             </span>
             <span style={{ background: "rgba(22,163,74,.12)", border: "1px solid rgba(22,163,74,.25)",
               color: "#4ade80", padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>

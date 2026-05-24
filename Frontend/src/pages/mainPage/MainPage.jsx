@@ -232,10 +232,19 @@ export default function MainPage() {
 
         <div style={{ position: "relative" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
-            <span style={{ background: "rgba(56,189,248,.15)", border: "1px solid rgba(56,189,248,.3)",
-              color: "#38bdf8", padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>
-              NABH ACCREDITED
-            </span>
+            {/* R7ce: don't claim the hospital is NABH-accredited until admin
+                files the cert # in Hospital Configuration → NABH tab. */}
+            {String(settings?.nabhCertNumber || "").trim() ? (
+              <span style={{ background: "rgba(34,197,94,.15)", border: "1px solid rgba(34,197,94,.3)",
+                color: "#4ade80", padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>
+                NABH ACCREDITED
+              </span>
+            ) : (
+              <span style={{ background: "rgba(56,189,248,.15)", border: "1px solid rgba(56,189,248,.3)",
+                color: "#38bdf8", padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>
+                NABH COMPLIANT
+              </span>
+            )}
             <span style={{ background: "rgba(22,163,74,.15)", border: "1px solid rgba(22,163,74,.3)",
               color: "#4ade80", padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>
               HIS v2.0
