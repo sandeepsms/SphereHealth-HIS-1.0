@@ -32,10 +32,13 @@ export default function LoginPage() {
   const navigate  = useNavigate();
   const location  = useLocation();
   const fromState = location.state?.from?.pathname;
-  // R7cb-D: /api/hospital-settings doesn't require auth, so the provider
-  // (which wraps the login route in App.jsx) has the name available by
-  // first render in steady state. Fallback "Hospital" guards the cold-boot
-  // window before the fetch resolves.
+  // R7cc: /api/hospital-settings DOES require auth (singleton holds bank +
+  // GSTIN — not safe to expose pre-login). On the login screen the context
+  // fetch returns 401 → settings stays at DEFAULT_SETTINGS → fallback
+  // "Hospital" shows until the user authenticates. Acceptable trade-off:
+  // after login the context refetches with the bearer and every subsequent
+  // surface shows the configured name. If a public hospital-identity
+  // endpoint is added later, this fallback path will start hydrating live.
   const hospitalName = settings?.hospitalName || "Hospital";
 
   const [email, setEmail]       = useState("");

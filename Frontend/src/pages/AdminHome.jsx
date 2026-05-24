@@ -509,7 +509,7 @@ function DeptList({ title, items, color, icon }) {
 function QuickActions() {
   const navigate = useNavigate();
   const items = [
-    { icon: "pi-building",   label: "Hospital Settings",  sub: "Identity · Print · Legal · Bank",  color: C.blue,   to: "/hospital-settings" },
+    { icon: "pi-cog",        label: "Hospital Configuration", sub: "Identity · Branding · Tax · Bank · Print · NABH · Ops", color: C.blue, to: "/admin/hospital-config" },
     { icon: "pi-users",      label: "User Management",    sub: "Onboard staff · reset passwords",  color: C.teal,   to: "/admin/users" },
     { icon: "pi-shield",     label: "Roles & Permissions",sub: "See what every role can access",   color: C.purple, to: "/admin/roles" },
     { icon: "pi-sitemap",    label: "Departments",        sub: "Hospital departments + services",  color: C.orange, to: "/department" },

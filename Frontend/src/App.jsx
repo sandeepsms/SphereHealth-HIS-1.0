@@ -208,10 +208,10 @@ const DoctorNotesPage = lazy(() => import("./pages/doctor/DoctorNotesPage"));
 const MLCPage = lazy(() => import("./pages/mlc/MLCPage"));
 
 const BillPrintPage = lazy(() => import("./pages/billing/BillPrintPage"));
-const HospitalSettingsPage = lazy(() => import("./pages/admin/HospitalSettingsPage"));
-// R7bx item 7 — guided wizard that supersedes the ad-hoc HospitalSettingsPage
-// as the canonical admin entry-point for hospital config. Shares the same
-// /api/hospital-settings backend so the two pages stay in sync.
+// R7cc — HospitalSettingsPage (the ad-hoc form) removed. HospitalConfigWizard
+// is the SOLE admin entry-point for hospital config. Both pages used to share
+// /api/hospital-settings; the wizard's tabs cover everything the legacy page
+// did (identity, address, contact, GSTIN, bank, NABH, print footer, ops).
 const HospitalConfigWizard = lazy(() => import("./pages/admin/HospitalConfigWizard"));
 // R7bz — read-only System Health diagnostics page (DB / crons / errors /
 // activity / integrity / server).  Admin-only.
@@ -769,15 +769,16 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* ── Admin ───────────────────────────────────────────
                  Sensitive routes are wrapped in <RoleGuard> so non-admins
                  get a clean "Access denied" instead of partial UI / 401s. */}
-            <Route path="/hospital-settings" element={
-              <RoleGuard allow={["Admin"]}><HospitalSettingsPage /></RoleGuard>
-            } />
-            {/* R7bx item 7 — Hospital Configuration Wizard, the single tabbed
-                admin page for every hospital-specific value (identity, branding,
-                tax, bank, footer, NABH, ops). */}
+            {/* R7bx item 7 + R7cc — Hospital Configuration Wizard is now the
+                SOLE admin entry-point for hospital config (legacy
+                HospitalSettingsPage removed). Single tabbed page covering
+                identity, branding, tax, bank, footer, NABH, ops. The legacy
+                `/hospital-settings` path redirects here so any deep-linked
+                bookmarks / sidebar caches still land in the right place. */}
             <Route path="/admin/hospital-config" element={
               <RoleGuard allow={["Admin"]}><HospitalConfigWizard /></RoleGuard>
             } />
+            <Route path="/hospital-settings" element={<Navigate to="/admin/hospital-config" replace />} />
             {/* R7bz — read-only System Health diagnostics. Admin-only;
                 backend route also gated by users.read. */}
             <Route path="/admin/system-health" element={

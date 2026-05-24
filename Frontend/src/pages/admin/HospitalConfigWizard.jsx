@@ -17,10 +17,9 @@
  *   6. NABH               — accreditation cert + validity
  *   7. Operations         — OPD hours + 24×7 emergency
  *
- * Shares /api/hospital-settings with the older HospitalSettingsPage (which
- * stays for deep multi-row editing like bank-account arrays, accreditation
- * lists, etc.). This wizard is the canonical entry-point for admins who
- * want a single guided form.
+ * R7cc — Single source of truth. The older HospitalSettingsPage was removed;
+ * this wizard is the sole admin entry-point for hospital config. PUTs the
+ * whole settings object to /api/hospital-settings (singleton).
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";

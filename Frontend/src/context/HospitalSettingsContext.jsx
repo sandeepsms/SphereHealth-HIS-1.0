@@ -49,7 +49,18 @@ export function HospitalSettingsProvider({ children }) {
 
   const fetchSettings = async () => {
     try {
-      const res  = await fetch(`${API_URL}/hospital-settings`);
+      // R7cc: backend GET /api/hospital-settings sits behind the global
+      // `authenticate` middleware (routes/index.js line 87). Without the
+      // bearer token the request returns 401 → json.success is false → we
+      // silently fell through to DEFAULT_SETTINGS, which is why admin's
+      // saved values looked like "they reset" on next page load. Send the
+      // per-tab JWT same as every other authenticated call in the app.
+      const token = (typeof sessionStorage !== "undefined")
+        ? sessionStorage.getItem("his_token")
+        : null;
+      const res  = await fetch(`${API_URL}/hospital-settings`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const json = await res.json();
       if (json.success && json.data) {
         setSettings({ ...DEFAULT_SETTINGS, ...json.data });

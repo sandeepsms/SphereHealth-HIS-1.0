@@ -398,8 +398,8 @@ const NAV = [
     icon: "pi-sliders-h", color: "#374151", light: "#f9fafb",
     roles: [ADMIN],   // Admin only
     items: [
-      { label: "Hospital Settings",  icon: "pi-building",   path: "/hospital-settings", badge: "NEW" },
-      // R7bx item 7 — guided 7-tab wizard, canonical config entry-point.
+      // R7cc — legacy "Hospital Settings" link removed; the wizard below is
+      // now the sole admin entry-point for hospital config.
       { label: "Hospital Configuration", icon: "pi-cog",   path: "/admin/hospital-config", badge: "NEW" },
       { label: "Print Templates",    icon: "pi-print",      path: "/print-gallery",     badge: "NEW" },
       { label: "Department",         icon: "pi-sitemap",    path: "/department" },
