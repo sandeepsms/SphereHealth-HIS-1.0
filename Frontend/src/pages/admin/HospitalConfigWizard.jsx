@@ -317,6 +317,24 @@ function BrandingTab({ form, upd, updRaw }) {
             )}
           </div>
         </Row>
+        <Row label="Logo size on prints" hint="Width in pixels (height auto-scales from aspect ratio)">
+          {/* R7cd: drive logoWidth from a visible slider so admin can match
+              the print sticker to their letterhead. Schema default is 120;
+              60–200 covers everything from a small bill-corner stamp to a
+              banner-grade letterhead. Live preview below mirrors this size. */}
+          <div className="hcw-logosize">
+            <input
+              type="range"
+              min={60}
+              max={200}
+              step={5}
+              value={Number(form.logoWidth) || 120}
+              onChange={(e) => updRaw("logoWidth")(Number(e.target.value))}
+              className="hcw-logosize__range"
+            />
+            <span className="hcw-logosize__val">{Number(form.logoWidth) || 120} px</span>
+          </div>
+        </Row>
         <Row label="Letterhead banner" hint="Wide strip · ~1500×200 px">
           <div className="hcw-uploader">
             {form.letterheadBanner && <img src={form.letterheadBanner} alt="banner" className="hcw-uploader__preview hcw-uploader__preview--wide" />}
@@ -349,7 +367,17 @@ function BrandingTab({ form, upd, updRaw }) {
         <div className="hcw-preview" style={{ "--hcw-pv-bg": form.printHeaderColor || "#1e293b", "--hcw-pv-accent": form.printAccentColor || "#1d4ed8" }}>
           <div className="hcw-preview__head">
             {form.logo
-              ? <img src={form.logo} alt="logo" className="hcw-preview__logo" />
+              ? (
+                /* R7cd: respect logoWidth so the preview shows actual print
+                   size; height auto-scales from the image's intrinsic
+                   aspect ratio. */
+                <img
+                  src={form.logo}
+                  alt="logo"
+                  className="hcw-preview__logo"
+                  style={{ width: `${Math.min(Math.max(Number(form.logoWidth) || 120, 60), 200)}px` }}
+                />
+              )
               : <div className="hcw-preview__logo hcw-preview__logo--placeholder">LOGO</div>}
             <div>
               <div className="hcw-preview__name">{form.hospitalName || "Hospital Name"}</div>
