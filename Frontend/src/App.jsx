@@ -213,6 +213,9 @@ const HospitalSettingsPage = lazy(() => import("./pages/admin/HospitalSettingsPa
 // as the canonical admin entry-point for hospital config. Shares the same
 // /api/hospital-settings backend so the two pages stay in sync.
 const HospitalConfigWizard = lazy(() => import("./pages/admin/HospitalConfigWizard"));
+// R7bz — read-only System Health diagnostics page (DB / crons / errors /
+// activity / integrity / server).  Admin-only.
+const SystemHealthPage = lazy(() => import("./pages/admin/SystemHealthPage"));
 const UserManagementPage = lazy(() => import("./pages/admin/UserManagementPage"));
 const RolesPage          = lazy(() => import("./pages/admin/RolesPage"));
 const RoleDashboardPage  = lazy(() => import("./pages/RoleDashboardPage"));
@@ -774,6 +777,11 @@ function AppLayout({ collapsed, setCollapsed }) {
                 tax, bank, footer, NABH, ops). */}
             <Route path="/admin/hospital-config" element={
               <RoleGuard allow={["Admin"]}><HospitalConfigWizard /></RoleGuard>
+            } />
+            {/* R7bz — read-only System Health diagnostics. Admin-only;
+                backend route also gated by users.read. */}
+            <Route path="/admin/system-health" element={
+              <RoleGuard allow={["Admin"]}><SystemHealthPage /></RoleGuard>
             } />
             <Route path="/admin/users" element={
               <RoleGuard allow={["Admin"]} action="users.read"><UserManagementPage /></RoleGuard>

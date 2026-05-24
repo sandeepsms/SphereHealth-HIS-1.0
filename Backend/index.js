@@ -1090,34 +1090,49 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT} (env=${NODE_ENV})`);
 });
 
-function shutdown(signal) {
-  console.log(`[shutdown] received ${signal} — draining`);
-  clearTimeout(_autoBillingBootTimer);
-  // R7ap-F21: cancel the daily-IST scheduler timer.
-  if (typeof _autoBillingInterval?._cancel === "function") _autoBillingInterval._cancel();
-  server.close((err) => {
-    if (err) {
-      console.error("[shutdown] http close error:", err.message);
-      process.exit(1);
-    }
-    mongoose
-      .disconnect()
-      .then(() => {
-        console.log("[shutdown] clean exit");
-        process.exit(0);
-      })
-      .catch((e) => {
-        console.error("[shutdown] mongoose disconnect error:", e.message);
-        process.exit(1);
-      });
-  });
-  // Hard-kill backstop: if shutdown stalls for 15s, abort.
-  setTimeout(() => {
-    console.error("[shutdown] timed out — force exit");
+// R7bz — graceful shutdown. The handler is idempotent (re-entry guard
+// via `shuttingDown` flag so a SIGINT-then-SIGTERM race doesn't double-
+// run cancel + disconnect). Sequence:
+//   1. cancel cron refs (every scheduled task above wired into
+//      _autoBillingInterval._cancel — node-cron isn't used).
+//   2. server.close() — stops accepting new connections, lets in-flight
+//      requests finish.
+//   3. mongoose.disconnect() once HTTP is drained.
+//   4. Hard-kill backstop at 25s so a stuck long-poll / SSE can't pin
+//      the process forever (Kubernetes SIGKILLs at terminationGracePeriod).
+let shuttingDown = false;
+async function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received — draining...`);
+  const FORCE_AFTER_MS = 25_000;
+  const killer = setTimeout(() => {
+    console.error("[shutdown] hard exit after 25s drain timeout");
     process.exit(1);
-  }, 15_000).unref();
+  }, FORCE_AFTER_MS).unref();
+  try {
+    // Stop background work first so a tick mid-drain doesn't re-open a
+    // Mongo connection we're about to close.
+    clearTimeout(_autoBillingBootTimer);
+    if (typeof _autoBillingInterval?._cancel === "function") {
+      try { _autoBillingInterval._cancel(); } catch (_) { /* best-effort */ }
+    }
+    // Close HTTP — let active responses finish, refuse new sockets.
+    await new Promise((resolve) => server.close(resolve));
+    console.log("[shutdown] HTTP server closed");
+    if (mongoose?.connection?.readyState === 1) {
+      await mongoose.disconnect();
+      console.log("[shutdown] Mongo disconnected");
+    }
+    clearTimeout(killer);
+    process.exit(0);
+  } catch (e) {
+    console.error("[shutdown] error during shutdown:", e?.message);
+    clearTimeout(killer);
+    process.exit(1);
+  }
 }
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT",  () => gracefulShutdown("SIGINT"));
 
 module.exports = app;

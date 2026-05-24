@@ -13,6 +13,10 @@ const { validatePassword, checkPasswordReuse } = require("../../utils/passwordPo
 // hit. Import lifted to module scope so route handlers below can reference
 // `authenticate` at module-load time.
 const { authenticate } = require("../../middleware/auth");
+// R7bz — IP-based brute-force throttle in front of POST /login. Defends
+// against username-rotation attacks that sidestep the per-user 5-strike
+// lockout below by hitting many usernames once each from the same IP.
+const { loginRateLimit } = require("../../middleware/rateLimitAuth");
 
 // R7bb-FIX-A-16: JWT_SECRET rotation procedure needs a SECONDARY_JWT_SECRETS
 // env array for graceful rollover. Today every node verifies against a single
@@ -30,7 +34,12 @@ const TIMING_DUMMY_HASH =
 const INVALID_CREDENTIALS = "Invalid email or password";
 
 /* ── POST /api/auth/login ── */
-router.post("/login", async (req, res) => {
+// R7bz: loginRateLimit (10 req / 15 min / IP, skipSuccessfulRequests)
+// is applied BEFORE the handler so botnet-driven username spraying gets
+// 429'd without ever hitting bcrypt. Other endpoints in this router
+// (logout, /me, signature, change-password, logout-all-devices) are
+// NOT rate-limited here.
+router.post("/login", loginRateLimit, async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password)

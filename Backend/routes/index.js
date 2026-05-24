@@ -83,6 +83,19 @@ const {
 
 router.use("/auth", authRoutes);
 
+// ── R7bz — Client-error reports (anonymous-allowed, rate-limited) ──
+// MUST mount BEFORE the global `authenticate` below, because React
+// ErrorBoundaries often fire BEFORE auth resolves (login page crash,
+// expired-token redirect mid-render, axios interceptor throw). The route
+// uses `attemptAuth` internally to capture user identity when available
+// but never rejects anonymous POSTs. POST is rate-limited per IP via
+// clientErrorRateLimit. The two GET endpoints inside still gate
+// themselves with requireAction("users.read") + attemptAuth chain, so
+// they don't actually leak data to anonymous callers — they just don't
+// hit the global JWT wall.
+const { clientErrorRateLimit } = require("../middleware/rateLimitAuth");
+router.use("/client-errors",    clientErrorRateLimit, require("./Admin/clientErrorRoutes"));
+
 // ── Everything below requires a valid JWT ────────────────────
 router.use(authenticate);
 
@@ -216,6 +229,13 @@ router.use("/admin-ops",        require("./Admin/adminOpsRoutes"));
 
 // Admin "Mission Control" home — aggregate hospital-wide KPIs + feed
 router.use("/admin-dashboard",  require("./Admin/adminDashboardRoutes"));
+
+// R7bz — Admin System Health diagnostics (DB stats, cron lock status,
+// recent client errors, activity, integrity invariants). Read-only
+// endpoint, admin-only. Backs Frontend/src/pages/admin/SystemHealthPage.jsx.
+router.use("/admin",            require("./Admin/systemHealthRoutes"));
+
+// (client-errors is mounted ABOVE the global authenticate — see top of file)
 
 // R7bf-H: reports + dashboards surface (A6-CRIT + A6-HIGH coverage).
 //   /hospital-register, /refunds, /today-revenue, /day-book, /gst-monthly,

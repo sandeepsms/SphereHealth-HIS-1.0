@@ -405,6 +405,10 @@ const NAV = [
       { label: "Doctor Management",  icon: "pi-user-edit",  path: "/doctors" },
       { label: "User Management",    icon: "pi-users",      path: "/admin/users" },
       { label: "Roles & Permissions",icon: "pi-shield",     path: "/admin/roles",       badge: "NEW" },
+      // R7bz — read-only System Health diagnostics (DB / crons / errors /
+      // activity / integrity / server).  Admin-only — the section itself
+      // is already roles:[ADMIN] so no per-item role override is needed.
+      { label: "System Health",      icon: "pi-server",     path: "/admin/system-health", badge: "NEW" },
       { label: "Hospital Charges",   icon: "pi-dollar",     path: "/hospital-charges" },
       // R7bf-G / NABH HRD.3 — staff credentialing register lives under
       // Masters & Admin since Admin owns the HR function today.
