@@ -200,6 +200,21 @@ const DoctorOrderSchema = new mongoose.Schema({
     procedureType: { type: String, enum: ["Minor","Major","Diagnostic","Therapeutic","Bedside"] },
     indication: String, estimatedDuration: String, anaesthesia: String, position: String,
     consentRequired: { type: Boolean, default: false },
+    // R7bx — OT-bound procedure fields. Surface to the schema so the
+    // NABH COP.10 OT-register emitter can read them off the persisted
+    // order. Pre-R7bx Mongoose strict-mode stripped these silently and
+    // the OT register stayed empty for every scheduled case.
+    requiresOT:       { type: Boolean, default: false, index: true },
+    otTheatre:        String,                  // OT-1 / OT-2 / Minor OT
+    surgeryName:      String,                  // explicit surgery title (vs procedureName)
+    surgicalSpeciality: String,
+    surgeonName:      String,
+    surgeonId:        { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    anaesthetistName: String,
+    anaesthetistId:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    anaesthesiaType:  { type: String, enum: ["", "General", "Spinal", "Epidural", "Regional", "Local", "MAC", "Sedation", "Combined"], default: "" },
+    asaGrade:         { type: String, enum: ["", "I", "II", "III", "IV", "V", "VI"], default: "" },
+    emergencyCase:    { type: Boolean, default: false },
     // Diet fields
     dietType: String, calories: String, protein: String, fluidRestriction: String, consistency: String,
     // Oxygen fields

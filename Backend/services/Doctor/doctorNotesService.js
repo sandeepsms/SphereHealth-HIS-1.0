@@ -163,6 +163,45 @@ const createDoctorNote = async (data, doctorUserId) => {
     lateEntryAt:     lateEntry ? lateEntryAt     : undefined,
   });
 
+  // R7bx-3 — Auto-populate NABH COP.13 Anaesthesia (ASA) register when
+  // a procedure / preop / postop / operative note is saved with an ASA
+  // grade. The emitter no-ops if the note doesn't carry asaGrade I-VI
+  // (either at top level or under noteDetails), so it's safe to call on
+  // every note save and only fires when there's something to record.
+  // Procedure notes update the same row (idempotent by sourceRef=noteId);
+  // a separate preop note will create its own row.
+  if (note && ["procedure", "preop", "postop", "operative"].includes(note.noteType)) {
+    try {
+      const { emitASA } = require("../Compliance/nabhRegisterEmitter");
+      const Patient = require("../../models/Patient/patientModel");
+      const Admission = require("../../models/Patient/admissionModel");
+      // Lift ASA grade out of noteDetails for the emitter — the model
+      // stores procedure-specific fields under noteDetails (free-form
+      // Mixed schema), while the emitter looks for `note.asaGrade` or
+      // `note.data.asaGrade`. Pass a shallow shim so we don't have to
+      // touch the underlying note document.
+      const noteForEmit = {
+        ...note.toObject(),
+        asaGrade: noteDetails?.asaGrade || noteDetails?.ASAGrade || "",
+        data: noteDetails || {},
+      };
+      const patient = note.patient
+        ? await Patient.findById(note.patient).select("_id UHID fullName name age gender sex").lean()
+        : null;
+      const admission = note.admissionId
+        ? await Admission.findById(note.admissionId).select("_id admissionNumber").lean()
+        : null;
+      emitASA({
+        note: noteForEmit,
+        patient: patient || { _id: note.patient, UHID: note.patientUHID, fullName: note.patientName },
+        admission,
+        actor: { _id: doctorObjectId || doctorUserId, fullName: doctorName, role: "Doctor" },
+      }).catch((e) => console.error("[doctorNotes] emitASA error:", e?.message));
+    } catch (e) {
+      console.error("[doctorNotes] ASA emit wiring failed:", e?.message);
+    }
+  }
+
   return note;
 };
 
@@ -201,19 +240,42 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
   // note. Previously signedByName / signedByReg / signature were only ever
   // set on the create path; sign-later notes finalised with empty fields
   // and the printed copy looked unsigned in court / audit review.
+  //
+  // R7bx item 8 — MCI Regulation 1.4.2 compliance. We ALWAYS resolve the
+  // signing user (not just when name/reg are blank) and HARD-BLOCK if the
+  // signer is a Doctor whose doctorDetails.registrationNumber is empty.
+  // Pre-fix the system signed anyway and the printed Rx showed "—" where
+  // the reg-no belongs — illegal under MCI 1.4.2.
   let signedByName = signaturePayload.signedByName || noteDraft.signedByName || "";
   let signedByReg  = signaturePayload.signedByReg  || noteDraft.signedByReg  || "";
-  try {
-    if ((!signedByName || !signedByReg) && doctorUserId) {
+  let actorUser = null;
+  if (doctorUserId) {
+    try {
       const User = require("../../models/User/userModel");
-      const userDoc = await User.findById(doctorUserId).lean();
-      if (userDoc) {
-        signedByName = signedByName || userDoc.fullName ||
-          `${userDoc.firstName || ""} ${userDoc.lastName || ""}`.trim();
-        signedByReg  = signedByReg  || userDoc.doctorDetails?.registrationNumber || "";
-      }
+      actorUser = await User.findById(doctorUserId).lean();
+    } catch (_) { /* surface as missing-reg below */ }
+  }
+  if (actorUser?.role === "Doctor") {
+    const regNo = String(actorUser.doctorDetails?.registrationNumber || "").trim();
+    if (!regNo) {
+      const err = new Error(
+        "Doctor's MCI registration number is missing. Add it in Settings → Doctor Profile before signing.",
+      );
+      err.statusCode = 400;
+      err.code = "MCI_REG_NO_MISSING";
+      throw err;
     }
-  } catch (_) { /* fall back to existing values */ }
+    // Server-side overwrite so the print signature row is authoritative
+    // (and not a client-spoofed value coming through signaturePayload).
+    signedByReg  = regNo;
+    signedByName = signedByName || actorUser.fullName ||
+      `${actorUser.firstName || ""} ${actorUser.lastName || ""}`.trim();
+  } else if (actorUser && (!signedByName || !signedByReg)) {
+    // Non-doctor actor or pre-existing missing fields — best-effort fallback.
+    signedByName = signedByName || actorUser.fullName ||
+      `${actorUser.firstName || ""} ${actorUser.lastName || ""}`.trim();
+    signedByReg  = signedByReg  || actorUser.doctorDetails?.registrationNumber || "";
+  }
 
   // R7bn-2 / D10-fix: status-guarded atomic transition. The `status:
   // "draft"` predicate in the query ensures only ONE concurrent signer

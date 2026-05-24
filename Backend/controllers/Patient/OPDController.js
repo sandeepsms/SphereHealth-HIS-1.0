@@ -233,15 +233,26 @@ class OPDController {
   async saveAssessment(req, res) {
     try {
       const { doctorName, ...assessmentData } = req.body;
+      // R7bx item 8 — pass req.user.id so the service can run the MCI
+      // registration-number guard when the doctor is signing (sending a
+      // doctorSignatureImage payload).
       const visit = await opdService.saveOPDAssessment(
         req.params.visitNumber,
         assessmentData,
-        doctorName || req.user?.fullName || "Doctor"
+        doctorName || req.user?.fullName || "Doctor",
+        req.user?.id || req.user?._id || null,
       );
       if (!visit) return res.status(404).json({ success: false, message: "Visit not found" });
       res.status(200).json({ success: true, message: "Assessment saved", data: visit });
     } catch (error) {
-      res.status(400).json({ success: false, message: error.message });
+      // R7bx item 8 — forward typed error code (e.g. MCI_REG_NO_MISSING)
+      // and explicit statusCode so the frontend can branch on stable identifiers.
+      const status = error.statusCode || 400;
+      res.status(status).json({
+        success: false,
+        message: error.message,
+        ...(error.code ? { code: error.code } : {}),
+      });
     }
   }
 

@@ -37,6 +37,23 @@ class AdmissionController {
       billing = { fired: false, error: e?.message || "Auto-billing failed" };
     }
 
+    // R7bx-3 — Auto-populate NABH COP.16 Readmission register. The emitter
+    // looks up the previous admission for this UHID and no-ops if none
+    // exists or the gap exceeds the configured window (30 days by default),
+    // so it's safe to call on every admission create. Non-blocking — never
+    // rolls back the clinical admission on register failure.
+    try {
+      const { emitReadmission } = require("../../services/Compliance/nabhRegisterEmitter");
+      const Patient = require("../../models/Patient/patientModel");
+      const patient = admission.patientId
+        ? await Patient.findById(admission.patientId).select("_id UHID fullName name age gender sex").lean()
+        : { _id: admission.patientId, UHID: admission.UHID, fullName: admission.patientName, age: admission.age, sex: admission.gender };
+      emitReadmission({ admission, patient: patient || {}, actor: req.user || {} })
+        .catch((e) => console.error("[admission] emitReadmission error:", e?.message));
+    } catch (e) {
+      console.error("[admission] Readmission emit wiring failed:", e?.message);
+    }
+
     return res.status(201).json({
       success: true,
       message: billing.fired

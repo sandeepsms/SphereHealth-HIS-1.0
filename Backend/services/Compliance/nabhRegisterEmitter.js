@@ -80,6 +80,21 @@ function _actor(actor = {}) {
   };
 }
 
+// R7bx-3 — Some legacy clinical models (notably DoctorOrder.orderedBy) carry
+// either an ObjectId reference OR a free-form name string in the same field,
+// because two generations of frontend code populated it differently. Register
+// models that ref User on those linkage fields refuse a string value with a
+// BSONError on save. Coerce to ObjectId or null — never let a bad string
+// abort the register write.
+const _mongooseSafe = require("mongoose");
+function _asObjectId(v) {
+  if (!v) return null;
+  if (typeof v === "object" && v._bsontype === "ObjectID") return v;
+  if (typeof v === "object" && v._id) return _mongooseSafe.isValidObjectId(v._id) ? v._id : null;
+  if (typeof v === "string") return _mongooseSafe.isValidObjectId(v) ? v : null;
+  return null;
+}
+
 function _safeYear() {
   try {
     const tz = process.env.HOSPITAL_TZ || "Asia/Kolkata";
@@ -829,10 +844,10 @@ async function emitOT(args = {}) {
       actualProcedure: procedureNote?.actualProcedure || procedureNote?.procedureDone || "",
       surgicalSpeciality: details.speciality || details.department || "",
       surgeonName: details.surgeonName || source.surgeonName || "",
-      surgeonId: details.surgeonId || source.surgeonId || null,
+      surgeonId: _asObjectId(details.surgeonId || source.surgeonId),
       assistantNames: Array.isArray(details.assistantNames) ? details.assistantNames : [],
       anaesthetistName: details.anaesthetistName || procedureNote?.anaesthetistName || "",
-      anaesthetistId: details.anaesthetistId || procedureNote?.anaesthetistId || null,
+      anaesthetistId: _asObjectId(details.anaesthetistId || procedureNote?.anaesthetistId),
       anaesthesiaType: details.anaesthesiaType || procedureNote?.anaesthesiaType || "",
       asaGrade: details.asaGrade || procedureNote?.asaGrade || "",
       emergencyCase: !!(details.emergencyCase || source.priority === "STAT"),
@@ -857,7 +872,7 @@ async function emitOT(args = {}) {
         ...actorMeta,
         notes: `source=${order ? "DoctorOrder" : "ProcedureNote"}`,
       }],
-      createdBy: actorMeta.byUserId,
+      createdBy: _asObjectId(actorMeta.byUserId),
       createdByName: actorMeta.byName,
       createdByRole: actorMeta.byRole,
     });
@@ -916,7 +931,7 @@ async function emitASA(args = {}) {
       technique: data.technique || "",
       airwayPlan: data.airwayPlan || "",
       anaesthetistName: data.anaesthetistName || actorMeta.byName || "",
-      anaesthetistId: data.anaesthetistId || null,
+      anaesthetistId: _asObjectId(data.anaesthetistId),
       assistantName: data.assistantName || "",
       fastingHours: data.fastingHours != null ? Number(data.fastingHours) : null,
       allergies: Array.isArray(data.allergies) ? data.allergies : [],
@@ -957,7 +972,7 @@ async function emitASA(args = {}) {
         ...actorMeta,
         notes: `ASA=${asaGrade} type=${data.anaesthesiaType || "?"}`,
       }],
-      createdBy: actorMeta.byUserId,
+      createdBy: _asObjectId(actorMeta.byUserId),
       createdByName: actorMeta.byName,
       createdByRole: actorMeta.byRole,
     });
@@ -1051,7 +1066,7 @@ async function emitReadmission(args = {}) {
         ...actorMeta,
         notes: `days=${days} sameDx=${sameDiagnosis}`,
       }],
-      createdBy: actorMeta.byUserId,
+      createdBy: _asObjectId(actorMeta.byUserId),
       createdByName: actorMeta.byName,
       createdByRole: actorMeta.byRole,
     });
@@ -1156,9 +1171,9 @@ async function emitMortality(args = {}) {
       deathCertificateIssuedAt: deathNote?.deathCertificateIssuedAt || null,
       deathCertificateIssuedBy: deathNote?.deathCertificateIssuedBy || "",
       attendingDoctor: admission?.attendingDoctor || dischargeSummary?.attendingDoctor || "",
-      attendingDoctorId: admission?.attendingDoctorId || null,
+      attendingDoctorId: _asObjectId(admission?.attendingDoctorId),
       certifyingDoctor: actorMeta.byName || dischargeSummary?.finalizedByName || "",
-      certifyingDoctorId: actorMeta.byUserId,
+      certifyingDoctorId: _asObjectId(actorMeta.byUserId),
       dischargeSummaryId: dischargeSummary?._id || null,
       deathNoteId: deathNote?._id || null,
       sourceRef: source._id,
@@ -1170,7 +1185,7 @@ async function emitMortality(args = {}) {
         ...actorMeta,
         notes: `source=${dischargeSummary ? "DischargeSummary" : "DeathNote"} mlc=${!!(dischargeSummary?.isMLC || deathNote?.isMLC)}`,
       }],
-      createdBy: actorMeta.byUserId,
+      createdBy: _asObjectId(actorMeta.byUserId),
       createdByName: actorMeta.byName,
       createdByRole: actorMeta.byRole,
     });
@@ -1247,14 +1262,14 @@ async function emitRestraint(args = {}) {
       monitoringLog: Array.isArray(restraint.monitoringLog) ? restraint.monitoringLog : [],
       reassessmentDue: restraint.reassessmentDue ? new Date(restraint.reassessmentDue) : null,
       orderingDoctor: restraint.orderingDoctor || actorMeta.byName || "",
-      orderingDoctorId: restraint.orderingDoctorId || actorMeta.byUserId,
+      orderingDoctorId: _asObjectId(restraint.orderingDoctorId) || _asObjectId(actorMeta.byUserId),
       orderingDoctorRole: restraint.orderingDoctorRole || actorMeta.byRole,
-      doctorOrderId: restraint.doctorOrderId || null,
+      doctorOrderId: _asObjectId(restraint.doctorOrderId),
       appliedBy: restraint.appliedBy || actorMeta.byName || "",
-      appliedByUserId: restraint.appliedByUserId || actorMeta.byUserId,
+      appliedByUserId: _asObjectId(restraint.appliedByUserId) || _asObjectId(actorMeta.byUserId),
       removedAt: restraint.removedAt ? new Date(restraint.removedAt) : null,
       removedBy: restraint.removedBy || "",
-      removedByUserId: restraint.removedByUserId || null,
+      removedByUserId: _asObjectId(restraint.removedByUserId),
       removalReason: restraint.removalReason || "",
       consentObtained: !!restraint.consentObtained,
       consentFrom: restraint.consentFrom || "",
@@ -1271,7 +1286,7 @@ async function emitRestraint(args = {}) {
         ...actorMeta,
         notes: `type=${restraint.type} reason=${String(restraint.reason).slice(0, 60)}`,
       }, ...(endTime ? [{ action: "REMOVED", at: endTime, ...actorMeta }] : [])],
-      createdBy: actorMeta.byUserId,
+      createdBy: _asObjectId(actorMeta.byUserId),
       createdByName: actorMeta.byName,
       createdByRole: actorMeta.byRole,
     });
@@ -1402,8 +1417,8 @@ async function emitAntimicrobial(args = {}) {
       cultureSent: !!details.cultureSent,
       cultureSentAt: details.cultureSentAt ? new Date(details.cultureSentAt) : null,
       cultureResultPending: details.cultureSent ? true : false,
-      orderingDoctor: order.orderedByName || actorMeta.byName || "",
-      orderingDoctorId: order.orderedBy || actorMeta.byUserId,
+      orderingDoctor: order.orderedByName || (typeof order.orderedBy === "string" ? order.orderedBy : "") || actorMeta.byName || "",
+      orderingDoctorId: _asObjectId(order.orderedBy) || _asObjectId(actorMeta.byUserId),
       doctorOrderId: order._id,
       status: "Active",
       sourceRef: order._id,
@@ -1415,7 +1430,7 @@ async function emitAntimicrobial(args = {}) {
         ...actorMeta,
         notes: `drug=${medName} aware=${aware || "?"} indication=${indicationType}`,
       }],
-      createdBy: actorMeta.byUserId,
+      createdBy: _asObjectId(actorMeta.byUserId),
       createdByName: actorMeta.byName,
       createdByRole: actorMeta.byRole,
     });

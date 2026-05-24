@@ -121,7 +121,14 @@ exports.updateMLC = async (req, res) => {
     if (!doc) return res.status(404).json({ success: false, message: "MLC not found" });
     res.status(200).json({ success: true, data: doc });
   } catch (e) {
-    res.status(400).json({ success: false, message: e.message });
+    // R7bx item 8 — surface err.code (e.g. MCI_REG_NO_MISSING) + statusCode
+    // so the frontend can branch on a stable identifier.
+    const status = e.statusCode || 400;
+    res.status(status).json({
+      success: false,
+      message: e.message,
+      ...(e.code ? { code: e.code } : {}),
+    });
   }
 };
 
@@ -174,7 +181,7 @@ exports.finalize = async (req, res) => {
     }
     if (req.user?.role === "Doctor") {
       const u = await User.findById(req.user._id || req.user.id)
-        .select("doctorDetails.designation").lean();
+        .select("doctorDetails.designation doctorDetails.registrationNumber").lean();
       const desig = u?.doctorDetails?.designation || "";
       const SENIOR = new Set(["Consultant", "HOD"]);
       if (!SENIOR.has(desig)) {
@@ -182,6 +189,16 @@ exports.finalize = async (req, res) => {
           success: false,
           code: "DESIGNATION_REQUIRED",
           message: `Finalize requires Consultant / HOD designation; your designation is '${desig || "—"}'.`,
+        });
+      }
+      // R7bx item 8 — MCI Regulation 1.4.2 compliance. Finalized MLC must
+      // carry the signing doctor's MCI reg number; block here when empty.
+      const regNo = String(u?.doctorDetails?.registrationNumber || "").trim();
+      if (!regNo) {
+        return res.status(400).json({
+          success: false,
+          code: "MCI_REG_NO_MISSING",
+          message: "Doctor's MCI registration number is missing. Add it in Settings → Doctor Profile before signing.",
         });
       }
     }

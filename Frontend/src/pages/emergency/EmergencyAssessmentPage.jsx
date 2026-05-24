@@ -317,6 +317,16 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
       toast.error("Select a bed before signing — disposition is set to admit.");
       return;
     }
+    // R7bx item 8 — MCI Regulation 1.4.2 pre-flight. The sign path stamps
+    // the doctor's identity onto the assessment for the Rx / advice block;
+    // abort before the API call if registrationNumber is empty.
+    if (sign && user?.role === "Doctor") {
+      const regNo = String(user.doctorDetails?.registrationNumber || "").trim();
+      if (!regNo) {
+        toast.error("Add your MCI registration number in your Profile before signing");
+        return;
+      }
+    }
     setSaving(true);
     try {
       const payload = {

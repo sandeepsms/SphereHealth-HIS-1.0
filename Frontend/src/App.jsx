@@ -181,6 +181,13 @@ const ADRReportsPage = lazy(() => import("./pages/quality/ADRReportsPage"));
 const FireDrillRegisterPage = lazy(() => import("./pages/compliance/FireDrillRegisterPage"));
 // R7bo — NABH Inspection Dashboard (RBS / Emergency / Blood Transfusion).
 const NABHRegistersDashboard = lazy(() => import("./pages/compliance/NABHRegistersDashboard"));
+// R7bx — six new surveyor-facing NABH registers (COP.10/13/16/17/18 + MOM.7).
+const OTRegisterPage                = lazy(() => import("./pages/nabh/OTRegisterPage"));
+const ASARegisterPage               = lazy(() => import("./pages/nabh/ASARegisterPage"));
+const ReadmissionRegisterPage       = lazy(() => import("./pages/nabh/ReadmissionRegisterPage"));
+const MortalityRegisterPage         = lazy(() => import("./pages/nabh/MortalityRegisterPage"));
+const RestraintRegisterPage         = lazy(() => import("./pages/nabh/RestraintRegisterPage"));
+const AntimicrobialUseRegisterPage  = lazy(() => import("./pages/nabh/AntimicrobialUseRegisterPage"));
 // R7bq — DVT/VTE Caprini assessment (auto-pops DVT register).
 const CapriniDVTAssessmentPage = lazy(() => import("./pages/nursing/CapriniDVTAssessmentPage"));
 const CredentialingPage = lazy(() => import("./pages/hr/CredentialingPage"));
@@ -202,6 +209,10 @@ const MLCPage = lazy(() => import("./pages/mlc/MLCPage"));
 
 const BillPrintPage = lazy(() => import("./pages/billing/BillPrintPage"));
 const HospitalSettingsPage = lazy(() => import("./pages/admin/HospitalSettingsPage"));
+// R7bx item 7 — guided wizard that supersedes the ad-hoc HospitalSettingsPage
+// as the canonical admin entry-point for hospital config. Shares the same
+// /api/hospital-settings backend so the two pages stay in sync.
+const HospitalConfigWizard = lazy(() => import("./pages/admin/HospitalConfigWizard"));
 const UserManagementPage = lazy(() => import("./pages/admin/UserManagementPage"));
 const RolesPage          = lazy(() => import("./pages/admin/RolesPage"));
 const RoleDashboardPage  = lazy(() => import("./pages/RoleDashboardPage"));
@@ -585,6 +596,27 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/compliance/nabh-registers" element={
               <RoleGuard action="compliance.read"><NABHRegistersDashboard /></RoleGuard>
             } />
+            {/* R7bx — six surveyor-facing NABH registers, each one a
+                filterable + printable + CSV-exportable chronological log.
+                Auto-populated from existing clinical save paths. */}
+            <Route path="/compliance/nabh/ot-register" element={
+              <RoleGuard action="compliance.read"><OTRegisterPage /></RoleGuard>
+            } />
+            <Route path="/compliance/nabh/asa-register" element={
+              <RoleGuard action="compliance.read"><ASARegisterPage /></RoleGuard>
+            } />
+            <Route path="/compliance/nabh/readmission-register" element={
+              <RoleGuard action="compliance.read"><ReadmissionRegisterPage /></RoleGuard>
+            } />
+            <Route path="/compliance/nabh/mortality-register" element={
+              <RoleGuard action="compliance.read"><MortalityRegisterPage /></RoleGuard>
+            } />
+            <Route path="/compliance/nabh/restraint-register" element={
+              <RoleGuard action="compliance.read"><RestraintRegisterPage /></RoleGuard>
+            } />
+            <Route path="/compliance/nabh/antimicrobial-register" element={
+              <RoleGuard action="compliance.read"><AntimicrobialUseRegisterPage /></RoleGuard>
+            } />
             {/* R7bq — Caprini DVT assessment. POST to /api/nursing-assessments/dvt
                 auto-populates the NABH DVT register (MOM.7 + AAC.4). */}
             <Route path="/nursing/caprini-dvt" element={
@@ -736,6 +768,12 @@ function AppLayout({ collapsed, setCollapsed }) {
                  get a clean "Access denied" instead of partial UI / 401s. */}
             <Route path="/hospital-settings" element={
               <RoleGuard allow={["Admin"]}><HospitalSettingsPage /></RoleGuard>
+            } />
+            {/* R7bx item 7 — Hospital Configuration Wizard, the single tabbed
+                admin page for every hospital-specific value (identity, branding,
+                tax, bank, footer, NABH, ops). */}
+            <Route path="/admin/hospital-config" element={
+              <RoleGuard allow={["Admin"]}><HospitalConfigWizard /></RoleGuard>
             } />
             <Route path="/admin/users" element={
               <RoleGuard allow={["Admin"]} action="users.read"><UserManagementPage /></RoleGuard>

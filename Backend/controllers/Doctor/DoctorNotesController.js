@@ -8,7 +8,14 @@ const handle = (fn) => async (req, res) => {
   } catch (err) {
     const status =
       err.statusCode || (err.message?.includes("not found") ? 404 : 400);
-    return res.status(status).json({ success: false, message: err.message });
+    // R7bx item 8 — surface err.code (e.g. MCI_REG_NO_MISSING) so the
+    // frontend can switch on a stable identifier rather than parsing
+    // the human-readable message.
+    return res.status(status).json({
+      success: false,
+      message: err.message,
+      ...(err.code ? { code: err.code } : {}),
+    });
   }
 };
 

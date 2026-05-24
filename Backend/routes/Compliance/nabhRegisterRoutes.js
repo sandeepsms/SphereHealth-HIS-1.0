@@ -36,4 +36,14 @@ router.get("/fall-risk",       requireAction("compliance.read"), ctrl.listFallRi
 router.get("/pressure-ulcer",  requireAction("compliance.read"), ctrl.listPressureUlcer);
 router.get("/dvt",             requireAction("compliance.read"), ctrl.listDVT);
 
+// R7bx — six new NABH registers (COP.10/13/16/17/18 + MOM.7)
+// All gated on compliance.read (Admin + Doctor + Nurse + MRD) to match
+// the surveyor-access policy used by the other NABH register endpoints.
+router.get("/ot-register",            requireAction("compliance.read"), ctrl.listOT);
+router.get("/asa-register",           requireAction("compliance.read"), ctrl.listASA);
+router.get("/readmission-register",   requireAction("compliance.read"), ctrl.listReadmission);
+router.get("/mortality-register",     requireAction("compliance.read"), ctrl.listMortality);
+router.get("/restraint-register",     requireAction("compliance.read"), ctrl.listRestraint);
+router.get("/antimicrobial-register", requireAction("compliance.read"), ctrl.listAntimicrobial);
+
 module.exports = router;

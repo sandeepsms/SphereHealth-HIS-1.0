@@ -398,6 +398,8 @@ const NAV = [
     roles: [ADMIN],   // Admin only
     items: [
       { label: "Hospital Settings",  icon: "pi-building",   path: "/hospital-settings", badge: "NEW" },
+      // R7bx item 7 — guided 7-tab wizard, canonical config entry-point.
+      { label: "Hospital Configuration", icon: "pi-cog",   path: "/admin/hospital-config", badge: "NEW" },
       { label: "Print Templates",    icon: "pi-print",      path: "/print-gallery",     badge: "NEW" },
       { label: "Department",         icon: "pi-sitemap",    path: "/department" },
       { label: "Doctor Management",  icon: "pi-user-edit",  path: "/doctors" },
@@ -442,6 +444,16 @@ const NAV = [
       // No separate sidebar entry — keeps the chip-page consolidation
       // discipline established by R7e (avoid duplicate nursing entries).
       { label: "NABH Registers",        icon: "pi-th-large",             path: "/compliance/nabh-registers", nabh: true, badge: "R7bo", roles: [ADMIN, DR, NR, "MRD"] },
+      // R7bx — six new surveyor-facing NABH registers. Each is a self-
+      // contained filterable + printable + CSV-exportable chronological
+      // log, auto-populated from existing clinical save paths (doctor
+      // orders, procedure notes, admissions, discharge finalize).
+      { label: "OT Register",           icon: "pi-briefcase",            path: "/compliance/nabh/ot-register",            nabh: true, badge: "COP.10",  roles: [ADMIN, DR, NR, "MRD"] },
+      { label: "Anaesthesia Register",  icon: "pi-shield",               path: "/compliance/nabh/asa-register",           nabh: true, badge: "COP.13",  roles: [ADMIN, DR, NR, "MRD"] },
+      { label: "Readmission Register",  icon: "pi-reply",                path: "/compliance/nabh/readmission-register",   nabh: true, badge: "COP.16",  roles: [ADMIN, DR, NR, "MRD"] },
+      { label: "Mortality Register",    icon: "pi-times-circle",         path: "/compliance/nabh/mortality-register",     nabh: true, badge: "COP.18",  roles: [ADMIN, DR, NR, "MRD"] },
+      { label: "Restraint Register",    icon: "pi-lock",                 path: "/compliance/nabh/restraint-register",     nabh: true, badge: "COP.17",  roles: [ADMIN, DR, NR, "MRD"] },
+      { label: "Antimicrobial Use",     icon: "pi-stop-circle",          path: "/compliance/nabh/antimicrobial-register", nabh: true, badge: "MOM.7",   roles: [ADMIN, DR, NR, "MRD"] },
     ],
   },
 ];

@@ -217,6 +217,58 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
       }
     }
 
+    // R7bx-3 — Auto-populate NABH MOM.7 Antimicrobial-Use register when
+    // a Medication order names an antibiotic. The emitter performs the
+    // antibiotic name match (see ANTIBIOTIC_STEMS) and no-ops if the drug
+    // isn't an antibiotic, so this branch is cheap and safe for every
+    // Medication order. NABH AMS (Antimicrobial Stewardship) expects every
+    // antibiotic prescription to surface in the AMU register from the
+    // moment it is written; we cannot rely on the pharmacy dispense step.
+    if (order.orderType === "Medication") {
+      try {
+        const { emitAntimicrobial, isAntibiotic } = require("../../services/Compliance/nabhRegisterEmitter");
+        const medName = order.orderDetails?.medicineName || order.orderDetails?.displayName || "";
+        if (isAntibiotic(medName)) {
+          const Patient = require("../../models/Patient/patientModel");
+          const Admission = require("../../models/Patient/admissionModel");
+          const patient = order.patientId
+            ? await Patient.findById(order.patientId).select("_id UHID fullName name age gender sex").lean()
+            : null;
+          const admission = order.admissionId
+            ? await Admission.findById(order.admissionId).select("_id admissionNumber wardName ward").lean()
+            : null;
+          emitAntimicrobial({ order, patient: patient || {}, admission, actor: req.user || {} })
+            .catch((e) => console.error("[doctor-orders] emitAntimicrobial error:", e?.message));
+        }
+      } catch (e) {
+        console.error("[doctor-orders] Antimicrobial emit wiring failed:", e?.message);
+      }
+    }
+
+    // R7bx-3 — Auto-populate NABH COP.10 OT register when a Procedure
+    // order is flagged `requiresOT=true`. Mirrors the BloodTransfusion
+    // pattern above: emitter is non-blocking, only fires when the
+    // discriminator is true. Frontend procedure-order form flips
+    // `orderDetails.requiresOT` whenever the doctor selects an OT slot;
+    // also covers any direct API caller that explicitly sets the flag.
+    if (order.orderType === "Procedure" && order.orderDetails?.requiresOT === true) {
+      try {
+        const { emitOT } = require("../../services/Compliance/nabhRegisterEmitter");
+        const Patient = require("../../models/Patient/patientModel");
+        const Admission = require("../../models/Patient/admissionModel");
+        const patient = order.patientId
+          ? await Patient.findById(order.patientId).select("_id UHID fullName name age gender sex").lean()
+          : null;
+        const admission = order.admissionId
+          ? await Admission.findById(order.admissionId).select("_id admissionNumber wardName ward").lean()
+          : null;
+        emitOT({ order, patient: patient || {}, admission, actor: req.user || {} })
+          .catch((e) => console.error("[doctor-orders] emitOT error:", e?.message));
+      } catch (e) {
+        console.error("[doctor-orders] OT emit wiring failed:", e?.message);
+      }
+    }
+
     // R7bn-4 / D7-1-fix: when orderType==="Medication", auto-seed the
     // MAR so the nurse sees the drug on the Treatment Chart without
     // requiring a separate Prescription save. Pre-fix MAR rows came

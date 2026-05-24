@@ -985,6 +985,22 @@ const _cancelAssessmentComplianceSweeper = (() => {
   return () => clearInterval(interval);
 })();
 
+// R7bx-2 — nightly mongodump backup. Runs at 02:30 IST every day with
+// the same distributed lock pattern as every other daily cron so a
+// multi-replica deploy doesn't double-write the same archive name. The
+// child process is spawned by scripts/backupMongoDB.js — backup failures
+// are logged but never crash the server (the script returns a structured
+// error which the cron wrapper logs).
+const _cancelNightlyMongoBackup = scheduleDaily("nightly-mongo-backup", 2, 30, async () => {
+  try {
+    const { runBackup } = require("./scripts/backupMongoDB");
+    return await runBackup();
+  } catch (e) {
+    console.error("[cron:nightly-mongo-backup] error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
 // Keep a reference name for the graceful-shutdown handler below.
 const _autoBillingInterval = {
   _cancel: () => {
@@ -1007,6 +1023,7 @@ const _autoBillingInterval = {
     _cancelAssessmentComplianceSweeper();   // R7bn-5
     _cancelInfusionIntakeCron();            // R7bq-4
     _cancelMissedDoseCron();                // R7bq-J1
+    _cancelNightlyMongoBackup();            // R7bx-2
   },
 };
 
@@ -1043,6 +1060,13 @@ app.use((req, res) => {
     message: "Route not found",
   });
 });
+
+// R7bx-3 — structured error logger. Mounted AFTER all routes but BEFORE
+// the central 500 responder so every err that reaches the chain is
+// captured to logs/errors-YYYY-MM-DD.log + console with PHI redaction.
+// The middleware calls next(err) so the existing 500 responder still
+// owns the response shape.
+app.use(require("./middleware/errorLogger"));
 
 app.use((err, req, res, next) => {
   // Always log the full stack server-side; never echo it to the client. In

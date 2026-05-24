@@ -537,9 +537,22 @@ export default function OPDAssessmentPage() {
 
   const handleSave = async () => {
     if (!soap.provisionalDiagnosis.trim()) return toast.warn("Please enter a provisional diagnosis");
+    // R7bx item 8 — MCI Regulation 1.4.2 pre-flight. If the doctor is
+    // signing this save (signature is present) and the user has no MCI
+    // registrationNumber on file, abort before the API call so the user
+    // sees a clean inline error instead of a 400 from the server.
+    const userPre = (() => { try { return JSON.parse(sessionStorage.getItem("his_user") || "{}"); } catch { return {}; } })();
+    const isSigning = !!signature;
+    if (isSigning && userPre?.role === "Doctor") {
+      const regNo = String(userPre.doctorDetails?.registrationNumber || "").trim();
+      if (!regNo) {
+        toast.error("Add your MCI registration number in your Profile before signing");
+        return;
+      }
+    }
     setSaving(true);
     try {
-      const user = (() => { try { return JSON.parse(sessionStorage.getItem("his_user") || "{}"); } catch { return {}; } })();
+      const user = userPre;
       await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/assessment`, {
         // ...soap already includes the 6 new diagnosis fields
         // (provisionalDiagnosis + ICD, workingDiagnosis + ICD, finalDiagnosis + ICD)

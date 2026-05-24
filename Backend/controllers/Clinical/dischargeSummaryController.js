@@ -156,6 +156,28 @@ class DischargeSummaryController {
   finalize = handle(async (req, res) => {
     const { finalizedByName, allowOverride, overrideReason } = req.body;
 
+    // R7bx item 8 — MCI Regulation 1.4.2 compliance. The discharge summary
+    // is a Rx-signing path (carries Rx, advice, follow-up) — finalizing it
+    // requires the actor's MCI registration number on file. Pre-fix the
+    // system signed regardless and the printed summary showed "—" where
+    // the reg-no belongs.
+    if (req.user?.role === "Doctor") {
+      try {
+        const userId = req.user?._id || req.user?.id;
+        if (userId) {
+          const u = await User.findById(userId).select("doctorDetails.registrationNumber").lean();
+          const regNo = String(u?.doctorDetails?.registrationNumber || "").trim();
+          if (!regNo) {
+            return res.status(400).json({
+              success: false,
+              code: "MCI_REG_NO_MISSING",
+              message: "Doctor's MCI registration number is missing. Add it in Settings → Doctor Profile before signing.",
+            });
+          }
+        }
+      } catch (_) { /* lookup blip — let downstream proceed */ }
+    }
+
     // ── Workflow gate (NABH-CRIT-03 / N-CRIT-02) ──────────────────
     // Discharge cannot be finalized until the nurse handover step is
     // documented. Without this gate the workflow was order-agnostic —
@@ -267,6 +289,33 @@ class DischargeSummaryController {
         reason: summary.nursingHandoverOverrideReason || "",
       });
     } catch (_) { /* silent */ }
+
+    // R7bx-3 — Auto-populate NABH COP.18 Mortality register on a finalized
+    // death discharge. Trigger discriminator (matching the model enum):
+    //   conditionOnDischarge === "Expired"  OR  dischargeType === "Death"
+    // Non-blocking — never rolls back the discharge on register failure.
+    // Idempotent by admissionId (unique index) so a re-finalize won't
+    // double-write.
+    if (summary.conditionOnDischarge === "Expired" || summary.dischargeType === "Death") {
+      try {
+        const { emitMortality } = require("../../services/Compliance/nabhRegisterEmitter");
+        const Patient = require("../../models/Patient/patientModel");
+        const patient = summary.patientId
+          ? await Patient.findById(summary.patientId).select("_id UHID fullName name age gender sex").lean()
+          : { _id: summary.patientId, UHID: summary.UHID, fullName: summary.patientName, age: summary.age, sex: summary.gender };
+        const admission = summary.admissionId
+          ? await Admission.findById(summary.admissionId).select("_id admissionNumber admissionDate attendingDoctor attendingDoctorId isMLC mlcNumber").lean()
+          : null;
+        emitMortality({
+          dischargeSummary: summary,
+          patient: patient || {},
+          admission,
+          actor: req.user || {},
+        }).catch((e) => console.error("[discharge-summary] emitMortality error:", e?.message));
+      } catch (e) {
+        console.error("[discharge-summary] Mortality emit wiring failed:", e?.message);
+      }
+    }
 
     // R7az-D8-CRIT-1..5: Discharge fast-path now flows through the SAME
     // service the receptionist workflow uses. Pre-R7az this controller

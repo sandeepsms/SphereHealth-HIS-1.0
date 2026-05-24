@@ -330,7 +330,38 @@ class OPDService {
   }
 
   /* ── Doctor saves OPD assessment (SOAP note + diagnosis + plan) ── */
-  async saveOPDAssessment(visitNumber, assessmentData, doctorName) {
+  async saveOPDAssessment(visitNumber, assessmentData, doctorName, doctorUserId = null) {
+    // R7bx item 8 — MCI Regulation 1.4.2 compliance. The OPD assessment
+    // is "signed" the first time the doctor stamps doctorSignatureImage
+    // (the schema doesn't have a separate signed/draft enum — signature
+    // presence IS the sign event). On that save, the signing doctor MUST
+    // have a non-empty registrationNumber on file. Pre-fix the system
+    // signed regardless, and the printed Rx showed "—" where the MCI
+    // reg-no belongs.
+    const isSigningSave = !!(assessmentData?.doctorSignatureImage &&
+      typeof assessmentData.doctorSignatureImage === "string");
+    if (isSigningSave && doctorUserId) {
+      try {
+        const User = require("../../models/User/userModel");
+        const actor = await User.findById(doctorUserId).lean();
+        if (actor?.role === "Doctor") {
+          const regNo = String(actor.doctorDetails?.registrationNumber || "").trim();
+          if (!regNo) {
+            const err = new Error(
+              "Doctor's MCI registration number is missing. Add it in Settings → Doctor Profile before signing.",
+            );
+            err.statusCode = 400;
+            err.code = "MCI_REG_NO_MISSING";
+            throw err;
+          }
+        }
+      } catch (e) {
+        // Re-throw the typed MCI error; swallow other lookup failures so
+        // we don't block legitimate saves when the User collection blips.
+        if (e?.code === "MCI_REG_NO_MISSING") throw e;
+      }
+    }
+
     // R7bt-PrintAudit-Phase2: The whitelist below USED to silently drop
     // workingDiagnosis, icd10Code, icd10Description, patientStatus, the
     // structured genExam / sysExam sub-docs, and every obg* field — so the

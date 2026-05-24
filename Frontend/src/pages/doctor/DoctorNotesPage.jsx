@@ -521,6 +521,22 @@ function DoctorNotesContent({ selectedPatient }) {
   /* ── Save Note (draft or signed) ── */
   const saveNote = async (status = "draft") => {
     if (!patient) { toast.warn("No patient loaded"); return; }
+    // R7bx item 8 — MCI Regulation 1.4.2 pre-flight on sign-and-submit.
+    // Abort BEFORE the API call when the doctor has no MCI reg number on
+    // file. Drafts are still allowed — the gate only applies to the
+    // signing flow per MCI 1.4.2.
+    if (status === "signed") {
+      try {
+        const u = JSON.parse(sessionStorage.getItem("his_user") || "{}");
+        if (u?.role === "Doctor") {
+          const regNo = String(u.doctorDetails?.registrationNumber || "").trim();
+          if (!regNo) {
+            toast.error("Add your MCI registration number in your Profile before signing");
+            return;
+          }
+        }
+      } catch (_) { /* fall through — server enforces */ }
+    }
     const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
     const token = (sessionStorage.getItem("his_token"));
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -775,6 +791,18 @@ function DoctorNotesContent({ selectedPatient }) {
   /* ── Sign existing draft note ── */
   const signNote = async (noteId) => {
     if (!patient) return;
+    // R7bx item 8 — MCI Regulation 1.4.2 pre-flight. Block the sign API
+    // call when the doctor has no MCI reg number on file.
+    try {
+      const u = JSON.parse(sessionStorage.getItem("his_user") || "{}");
+      if (u?.role === "Doctor") {
+        const regNo = String(u.doctorDetails?.registrationNumber || "").trim();
+        if (!regNo) {
+          toast.error("Add your MCI registration number in your Profile before signing");
+          return;
+        }
+      }
+    } catch (_) { /* fall through — server enforces */ }
     const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
     const token = (sessionStorage.getItem("his_token"));
     const headers = token ? { Authorization: `Bearer ${token}` } : {};

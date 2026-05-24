@@ -191,6 +191,21 @@ export function AuthProvider({ children }) {
     // is set) so the user can change their password without re-auth.
     if (mcp || u?.mustChangePassword) setMustChangePassword(true);
     else setMustChangePassword(false);
+
+    // R7bx item 8 — MCI Regulation 1.4.2 awareness. Doctors with no MCI
+    // registration number on file cannot sign any clinical document
+    // (server-side hard-block). Surface a sticky warning on login so the
+    // doctor knows to open Settings → Doctor Profile and add the number
+    // BEFORE attempting their first sign-and-submit of the session.
+    if (hydratedUser?.role === "Doctor") {
+      const regNo = String(hydratedUser.doctorDetails?.registrationNumber || "").trim();
+      if (!regNo) {
+        toast.warn(
+          "Your MCI registration number is missing. Add it via 'My Profile' before signing any prescription, OPD note, or discharge summary (MCI Regulation 1.4.2).",
+          { autoClose: 12000, toastId: "mci-reg-missing" },
+        );
+      }
+    }
     // login response may not include doctorProfile (older clients);
     // re-fetch /me right after so the value is hydrated for any role check.
     if (dp) {
