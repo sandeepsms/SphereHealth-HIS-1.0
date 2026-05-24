@@ -34,6 +34,10 @@ const opdService = {
   updateInvestigationStatus: (visitNumber, data) => axios.put(`${BASE}/${visitNumber}/investigation/status`, data),
   addPrescription:         (visitNumber, data) => axios.post(`${BASE}/${visitNumber}/prescription`, data),
   completeVisit:           (visitNumber, data) => axios.put(`${BASE}/${visitNumber}/complete`, data || {}),
+
+  // ── R7cj — Append addendum note + alias for fresh visit fetch ────
+  getOPDVisit:             (visitNumber)       => axios.get(`${BASE}/${visitNumber}`),
+  addAdditionalNote:       (visitNumber, note) => axios.post(`${BASE}/${visitNumber}/additional-note`, { note }),
 };
 
 export default opdService;

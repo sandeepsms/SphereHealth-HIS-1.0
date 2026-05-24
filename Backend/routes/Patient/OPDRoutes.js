@@ -50,6 +50,9 @@ router.patch("/:visitNumber/status",  requireAction("reception.register"), opdCo
 
 // ── Doctor OPD Assessment + Audit Trail ──────────────────────────
 router.post("/:visitNumber/assessment",  requireAction("rx.write"), opdController.saveAssessment);
+// R7cj — Append-only addendum note on a signed assessment.
+// rx.write gate (Doctor/Admin) so only clinicians can write.
+router.post("/:visitNumber/additional-note", requireAction("rx.write"), opdController.addAdditionalNote);
 router.get ("/:visitNumber/audit-trail", requireAction("opd.read"), opdController.getOPDauditTrail);
 
 // ── Investigations & prescriptions ───────────────────────────────

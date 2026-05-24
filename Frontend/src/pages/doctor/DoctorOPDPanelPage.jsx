@@ -124,6 +124,51 @@ export default function DoctorOPDPanelPage() {
     navigate(`/opd-assessment?visitNumber=${visit.visitNumber}&uhid=${visit.UHID}`);
   };
 
+  // R7cj — Inline "Add Note" modal so doctors can append an addendum
+  // without leaving the OPD panel. Mirrors the medico-legal append-only
+  // pattern: the structured assessment stays locked, but follow-up
+  // observations (lab result, family clarification, post-visit symptom
+  // update) get a timestamped, authored entry on the same visit.
+  const [noteModal,      setNoteModal]      = useState(false);
+  const [noteVisit,      setNoteVisit]      = useState(null);   // the visit being annotated
+  const [noteDraft,      setNoteDraft]      = useState("");
+  const [noteSaving,     setNoteSaving]     = useState(false);
+  const [noteHistory,    setNoteHistory]    = useState([]);     // existing addendums for this visit
+
+  const openAddNote = async (visit) => {
+    setNoteVisit(visit);
+    setNoteDraft("");
+    setNoteHistory([]);
+    setNoteModal(true);
+    // Re-fetch the visit so we render the latest additionalNotes[] even
+    // if the panel list is stale by a few seconds.
+    try {
+      const r = await opdService.getOPDVisit(visit.visitNumber);
+      const fresh = r?.data?.data || r?.data || {};
+      setNoteHistory(Array.isArray(fresh.additionalNotes) ? fresh.additionalNotes : []);
+    } catch (_) { /* non-fatal; modal still works for new entry */ }
+  };
+
+  const saveAdditionalNote = async () => {
+    const text = noteDraft.trim();
+    if (!text) { toastRef.current?.show({ severity: "warn", summary: "Empty note", detail: "Type the note before saving.", life: 2500 }); return; }
+    if (text.length > 4000) { toastRef.current?.show({ severity: "warn", summary: "Too long", detail: "Keep under 4000 characters.", life: 2500 }); return; }
+    if (!noteVisit?.visitNumber) return;
+    setNoteSaving(true);
+    try {
+      const r = await opdService.addAdditionalNote(noteVisit.visitNumber, text);
+      const updated = r?.data?.data || r?.data || null;
+      setNoteHistory(Array.isArray(updated?.additionalNotes) ? updated.additionalNotes : noteHistory);
+      setNoteDraft("");
+      toastRef.current?.show({ severity: "success", summary: "Note added", detail: "Addendum saved against this visit.", life: 2500 });
+    } catch (e) {
+      const msg = e?.response?.data?.message || e.message || "Could not save the note";
+      toastRef.current?.show({ severity: "error", summary: "Save failed", detail: msg, life: 4000 });
+    } finally {
+      setNoteSaving(false);
+    }
+  };
+
   const filterVisits = (list) => {
     if (!search.trim()) return list;
     const s = search.toLowerCase();
@@ -356,6 +401,7 @@ export default function DoctorOPDPanelPage() {
             loading={loading}
             onAssess={goAssess}
             onHistory={openHistory}
+            onAddNote={openAddNote}
             emptyMsg="No patients registered for today yet"
           />
         </TabPanel>
@@ -367,6 +413,7 @@ export default function DoctorOPDPanelPage() {
             loading={loading}
             onAssess={goAssess}
             onHistory={openHistory}
+            onAddNote={openAddNote}
             emptyMsg="No visits found"
             showDate
           />
@@ -379,6 +426,7 @@ export default function DoctorOPDPanelPage() {
             loading={loading}
             onAssess={goAssess}
             onHistory={openHistory}
+            onAddNote={openAddNote}
             emptyMsg="No follow-ups due today"
             showDate
           />
@@ -425,12 +473,79 @@ export default function DoctorOPDPanelPage() {
           </div>
         )}
       </Dialog>
+
+      {/* R7cj — Add Additional Note dialog. Shows existing addendums for
+          the visit (newest first) above a single textarea + Save button.
+          Pure addendum flow — the original structured assessment is
+          never touched. */}
+      <Dialog
+        header={noteVisit ? `Additional Note — ${noteVisit.UHID} · ${noteVisit.visitNumber}` : "Additional Note"}
+        visible={noteModal}
+        style={{ width: 600 }}
+        onHide={() => { if (!noteSaving) setNoteModal(false); }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Existing notes timeline */}
+          {noteHistory.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 6 }}>
+                Previous notes ({noteHistory.length})
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 220, overflowY: "auto", paddingRight: 4 }}>
+                {[...noteHistory].reverse().map((n, i) => (
+                  <div key={i} style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 13, color: "#0f172a", whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{n.note}</div>
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <span><strong>By:</strong> {n.addedBy || "—"}</span>
+                      <span>·</span>
+                      <span>{n.addedAt ? new Date(n.addedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* New note textarea */}
+          <div>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 6 }}>
+              Add new note
+            </label>
+            <textarea
+              value={noteDraft}
+              onChange={(e) => setNoteDraft(e.target.value)}
+              placeholder="Follow-up observation, lab result interpretation, family clarification, post-visit symptom update, etc."
+              rows={5}
+              maxLength={4000}
+              disabled={noteSaving}
+              style={{
+                width: "100%", padding: "10px 12px", borderRadius: 8,
+                border: "1px solid #cbd5e1", fontSize: 13, lineHeight: 1.5,
+                resize: "vertical", fontFamily: "inherit",
+              }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+              <span>Append-only · captured with your name + employee ID + timestamp</span>
+              <span>{noteDraft.length}/4000</span>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <Button label="Close" className="p-button-text" disabled={noteSaving} onClick={() => setNoteModal(false)} />
+            <Button label={noteSaving ? "Saving…" : "Save Note"}
+              icon={noteSaving ? "pi pi-spin pi-spinner" : "pi pi-check"}
+              disabled={noteSaving || !noteDraft.trim()}
+              style={{ background: "#14b8a6", border: "none" }}
+              onClick={saveAdditionalNote} />
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }
 
 /* ── Visit List ── */
-function VisitList({ visits, loading, onAssess, onHistory, emptyMsg, showDate = false }) {
+function VisitList({ visits, loading, onAssess, onHistory, onAddNote, emptyMsg, showDate = false }) {
   if (loading) return (
     <div style={{ textAlign: "center", padding: 60 }}>
       <ProgressSpinner style={{ width: 40, height: 40 }} />
@@ -496,6 +611,17 @@ function VisitList({ visits, loading, onAssess, onHistory, emptyMsg, showDate = 
             <div style={{ borderLeft: "1px solid #f1f5f9", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6, justifyContent: "center" }}>
               <Button label="Assess" icon="pi pi-file-check" style={{ background: "#14b8a6", border: "none", fontSize: 12, padding: "7px 12px", whiteSpace: "nowrap" }}
                 onClick={() => onAssess(visit)} />
+              {/* R7cj — Quick "Add Note" so doctor can drop a follow-up
+                  observation against this visit without re-opening the
+                  full assessment screen. Posts to /additional-note
+                  (append-only audit trail). */}
+              {onAddNote && (
+                <Button label="+ Note" icon="pi pi-plus" className="p-button-outlined"
+                  style={{ fontSize: 12, padding: "5px 10px", color: "#0d9488", border: "1px solid #5eead4", whiteSpace: "nowrap" }}
+                  tooltip="Add an addendum note to this visit"
+                  tooltipOptions={{ position: "left" }}
+                  onClick={() => onAddNote(visit)} />
+              )}
               <Button label="History" icon="pi pi-clock" className="p-button-outlined"
                 style={{ fontSize: 12, padding: "5px 10px", color: "#14b8a6", border: "1px solid #99f6e4", whiteSpace: "nowrap" }}
                 onClick={() => onHistory(visit)} />

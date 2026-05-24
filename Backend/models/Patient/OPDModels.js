@@ -286,6 +286,25 @@ const OPDSchema = new mongoose.Schema(
     // first time a signature is recorded on a visit.
     doctorSignatureImage: { type: String, default: "" }, // base64 data URL
     doctorSignedAt:       { type: Date,   default: null },
+
+    // R7cj — Post-signature addendum notes. Once the doctor signs the
+    // assessment, the structured form (Hx, exam, Dx, Rx, etc.) is locked
+    // for medico-legal traceability. But a doctor may need to add a
+    // follow-up observation (lab result came in, patient called back
+    // with new symptom, family clarification). We APPEND to this array
+    // — never overwrite — so the full timeline is preserved per NABH
+    // AAC.4 (re-assessment) + MCI Reg 1.4.2 (signed-by + at).
+    additionalNotes: {
+      type: [{
+        _id:        false,
+        note:       { type: String, required: true, trim: true, maxlength: 4000 },
+        addedAt:    { type: Date,   default: Date.now },
+        addedBy:    { type: String, default: "" },     // user's full name
+        addedById:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        addedByRole:{ type: String, default: "" },     // "Doctor" usually
+      }],
+      default: [],
+    },
   },
   { timestamps: true }
 );
