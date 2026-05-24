@@ -1492,6 +1492,26 @@ function NursingNotesContent({ selectedPatient }) {
                   badges: [{ label: "Open", tone: "info" }],
                   action: () => navigate("/vitalsView"),
                 },
+                /* R7ca — Diabetic Chart tile. Same one-click entry pattern
+                   as Vitals Trend / Care Plan above. Uses location.state for
+                   the UHID handoff (PHI-safe — the useUhidFromLocation hook
+                   on DiabeticChartPage prefers state and scrubs any legacy
+                   URL param). The sliding-scale BG chart is sufficiently
+                   distinct from the GRBS chip in vitals to merit a dedicated
+                   tile — it tracks RBS + insulin dose + nurse signature per
+                   slot per day, which the inline vitals chip cannot do. */
+                {
+                  id: "diabetic-nav",
+                  title: "Diabetic Chart",
+                  subtitle: "RBS + sliding-scale insulin (NABH MOM.4)",
+                  icon: "pi-chart-line",
+                  color: "#dc2626",
+                  tint: "#fee2e2",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                  action: () => navigate("/diabetic-chart", {
+                    state: { uhid: patient?.UHID || patient?.uhid || searchUHID || "" },
+                  }),
+                },
                 {
                   id: "ipdassessment-nav",
                   title: "IPD Initial Assessment",
