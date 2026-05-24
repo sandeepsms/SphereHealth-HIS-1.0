@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const opdController = require("../../controllers/Patient/OPDController");
 const { attachDoctorProfile, requireAction } = require("../../middleware/auth");
+const { requireHospitalMode } = require("../../config/pharmacyMode");
 
 // R7bb-B/D4-CRIT-S1: `attemptAuth` removed — this router sits under the
 // global `authenticate` mount in routes/index.js so req.user is already
@@ -37,6 +38,12 @@ router.get("/patient/:patientId", requireAction("opd.read"), opdController.getPa
 // patient's diagnosis / token / chief complaint).
 router.get(
   "/uhid/:UHID/today-rx",
+  // R7cs: hospital-only feature. In standalone retail pharmacy
+  // deployments the OPD collection doesn't exist (or is empty), so
+  // we 404 the endpoint at the gateway. Defence-in-depth alongside
+  // the frontend OPD-Rx tab being hidden when VITE_PHARMACY_MODE=
+  // standalone.
+  requireHospitalMode,
   requireAction("pharmacy.rx-lookup"),
   opdController.getTodayPrescriptionsByUHID,
 );

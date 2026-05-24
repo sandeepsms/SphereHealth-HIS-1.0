@@ -20,6 +20,7 @@ import PharmacyBill from "../../Components/print/printables/PharmacyBill";
 import PharmacyRegister, { REGISTER_HEADERS } from "../../Components/print/printables/PharmacyRegister";
 import PharmacyIndentsPage from "./PharmacyIndentsPage";
 import opdService from "../../Services/patient/opdService";
+import { IS_PHARMACY_STANDALONE, PHARMACY_MODE_LABEL } from "../../config/pharmacyMode";
 import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
@@ -188,7 +189,17 @@ export default function PharmacyHomePage() {
   const indentStats = useLiveIndentStats();
   const tabs = useMemo(() => {
     const { badge, badgeTone } = indentBadgeFor(indentStats);
-    return BASE_TABS.map(t =>
+    // R7cs — Standalone mode: hide tabs that depend on hospital state.
+    //   • "opdrx" — needs OPD visits + doctor prescriptions
+    //   • "indents" — needs IPD admissions + nurse workflow
+    // These collections don't exist (or are empty) in a retail-pharmacy
+    // deployment. Hiding the tab is the first guard; the second guard is
+    // the backend, which 404s the underlying routes when PHARMACY_MODE
+    // === standalone so a leaked token can't reach them either.
+    const filtered = IS_PHARMACY_STANDALONE
+      ? BASE_TABS.filter(t => t.key !== "opdrx" && t.key !== "indents")
+      : BASE_TABS;
+    return filtered.map(t =>
       t.key === "indents" ? { ...t, badge, badgeTone } : t
     );
   }, [indentStats]);
@@ -212,9 +223,24 @@ export default function PharmacyHomePage() {
             <i className="pi pi-box" style={{ fontSize: 22 }} />
           </div>
           <div style={{ flex: 1, minWidth: 220 }}>
-            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-.2px" }}>Pharmacy</div>
+            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-.2px" }}>
+              Pharmacy
+              {/* R7cs — deployment-shape badge so the user always knows
+                  whether they're in Hospital or Retail Pharmacy mode.
+                  Retail hides indents + OPD-Rx + UHID lookup. */}
+              {IS_PHARMACY_STANDALONE && (
+                <span style={{
+                  marginLeft: 10, padding: "2px 9px", borderRadius: 10,
+                  fontSize: 10, fontWeight: 700, letterSpacing: ".4px",
+                  background: "rgba(255,255,255,.22)", border: "1px solid rgba(255,255,255,.35)",
+                  textTransform: "uppercase", verticalAlign: "middle",
+                }}>{PHARMACY_MODE_LABEL}</span>
+              )}
+            </div>
             <div style={{ fontSize: 12, opacity: .85, marginTop: 2 }}>
-              Drug master · batch inventory · GRN · dispense · sales register
+              {IS_PHARMACY_STANDALONE
+                ? "Drug master · batch inventory · GRN · counter dispense · sales register"
+                : "Drug master · batch inventory · GRN · dispense · sales register"}
             </div>
           </div>
         </div>
@@ -905,27 +931,34 @@ function DispenseTab() {
       <Card title="Patient & Payment" color={C.blue} icon="pi-user">
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
 
-          {/* UHID lookup — pulls HIS patient + active admission */}
-          <Field label="UHID — pull from HIS">
-            <div style={{ display: "flex", gap: 6 }}>
-              <input className="his-field" style={{ flex: 1, fontFamily: "DM Mono, monospace" }}
-                value={patient.patientUHID}
-                placeholder="UH00000001 (or leave empty for walk-in)"
-                onChange={e => setPatient(p => ({ ...p, patientUHID: e.target.value }))}
-                onKeyDown={e => { if (e.key === "Enter") fetchByUHID(); }} />
-              <button onClick={fetchByUHID} disabled={lookupBusy || !patient.patientUHID.trim()}
-                style={{ padding: "8px 14px", borderRadius: 7, border: "none",
-                  background: lookupBusy ? "#94a3b8" : C.blue, color: "#fff",
-                  fontWeight: 700, fontSize: 11.5,
-                  cursor: lookupBusy || !patient.patientUHID.trim() ? "not-allowed" : "pointer",
-                  whiteSpace: "nowrap" }}>
-                {lookupBusy ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 10 }} />
-                            : <><i className="pi pi-search" style={{ fontSize: 10, marginRight: 4 }} />Fetch</>}
-              </button>
-            </div>
-          </Field>
+          {/* R7cs — UHID lookup is HIS-only. In a retail/standalone
+              pharmacy deployment there's no Patient or Admission DB to
+              query, so we hide the field entirely. The dispense flow
+              then takes the walk-in path by default — pharmacist
+              optionally types patient name / contact below if they
+              want to capture it for a Schedule H register entry. */}
+          {!IS_PHARMACY_STANDALONE && (
+            <Field label="UHID — pull from HIS">
+              <div style={{ display: "flex", gap: 6 }}>
+                <input className="his-field" style={{ flex: 1, fontFamily: "DM Mono, monospace" }}
+                  value={patient.patientUHID}
+                  placeholder="UH00000001 (or leave empty for walk-in)"
+                  onChange={e => setPatient(p => ({ ...p, patientUHID: e.target.value }))}
+                  onKeyDown={e => { if (e.key === "Enter") fetchByUHID(); }} />
+                <button onClick={fetchByUHID} disabled={lookupBusy || !patient.patientUHID.trim()}
+                  style={{ padding: "8px 14px", borderRadius: 7, border: "none",
+                    background: lookupBusy ? "#94a3b8" : C.blue, color: "#fff",
+                    fontWeight: 700, fontSize: 11.5,
+                    cursor: lookupBusy || !patient.patientUHID.trim() ? "not-allowed" : "pointer",
+                    whiteSpace: "nowrap" }}>
+                  {lookupBusy ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 10 }} />
+                              : <><i className="pi pi-search" style={{ fontSize: 10, marginRight: 4 }} />Fetch</>}
+                </button>
+              </div>
+            </Field>
+          )}
 
-          {hisLinked && (
+          {hisLinked && !IS_PHARMACY_STANDALONE && (
             <div style={{
               padding: "9px 12px", background: C.greenL, border: `1.5px solid ${C.green}40`,
               borderRadius: 7, display: "flex", alignItems: "center", gap: 8,

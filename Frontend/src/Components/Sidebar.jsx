@@ -15,6 +15,7 @@ import React, { useState, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useHospitalSettings } from "../context/HospitalSettingsContext";
+import { IS_PHARMACY_STANDALONE } from "../config/pharmacyMode";
 import "primeicons/primeicons.css";
 
 /* ══════════════════════════════════════════════════════════════
@@ -607,7 +608,25 @@ const RECEPTION_NAV = [
   },
 ];
 
+// R7cs — pharmacy-standalone mode: collapse the sidebar to just the
+// Pharmacy section regardless of role. Even Admin in a retail
+// deployment shouldn't see Doctor / Nurse / Reception nav (those
+// modules aren't reachable; the underlying DB collections may not
+// exist). IS_PHARMACY_STANDALONE is imported at the top of file.
 function filterNav(nav, userRole) {
+  // Standalone short-circuit — only the "pharmacy" section survives.
+  // Applied BEFORE the role branches so it overrides every other rule.
+  if (IS_PHARMACY_STANDALONE) {
+    return nav
+      .filter(section => section.id === "pharmacy")
+      .map(section => {
+        if (section.single || !section.items) return section;
+        // In standalone, every role with Pharmacy access sees every
+        // pharmacy item (no per-item role pruning) — keeps the chemist
+        // shop's single user able to do GRN + Dispense + Settings.
+        return section;
+      });
+  }
   if (userRole === ADMIN) return nav; // Admin sees everything unfiltered
   if (userRole === "Dietician")       return DIETICIAN_NAV;
   if (userRole === "Ward Boy")        return WARD_BOY_NAV;
