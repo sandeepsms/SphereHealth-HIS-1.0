@@ -449,6 +449,35 @@ export default function ReceptionBilling() {
     } finally { setBillLoading(false); }
   };
 
+  /* R7ci — Hard-delete a DRAFT bill (no payments, no audit footprint).
+     Bills move DRAFT → GENERATED → PARTIAL → PAID; a DRAFT was never
+     issued to the patient, so it can be scrapped cleanly. Backend
+     POST /api/billing/:billId/delete enforces the same guards
+     (DRAFT-only, zero collected) and voids any related triggers. */
+  const deleteDraftBill = async (bill) => {
+    if (!bill || bill._id == null) return;
+    if (bill.billStatus !== "DRAFT") {
+      toast.warning(`Only DRAFT bills can be deleted. Use Cancel on a ${bill.billStatus} bill.`);
+      return;
+    }
+    if (!(await confirm({
+      title: "Delete this DRAFT bill?",
+      body: `${bill.billNumber || "Draft"} — ${(bill.billItems || []).length} item(s) will be removed. This cannot be undone, but no money has been collected yet so it's safe to scrap.`,
+      confirmLabel: "Delete",
+      danger: true,
+    }))) return;
+    try {
+      await axios.post(`${API_ENDPOINTS.BILLING}/${bill._id}/delete`, {});
+      toast.success("Draft bill deleted");
+      // If the deleted bill was the currently selected one, clear the
+      // detail pane so the user doesn't see a stale card.
+      if (activeBill && activeBill._id === bill._id) setActiveBill(null);
+      await load(uhid);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Could not delete bill");
+    }
+  };
+
   const generateBill = async (billId) => {
     // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
     if (!(await confirm({
@@ -1186,11 +1215,11 @@ export default function ReceptionBilling() {
                   <i className="pi pi-file-pdf" /> Generate Final Bill
                 </button>
               )}
-              <button className="rx-action-btn"
-                      onClick={() => navigate(`/visit-history/${patient.UHID}`)}
-                      title="Visit history for this patient">
-                <i className="pi pi-clock" /> History
-              </button>
+              {/* R7ci: History button removed per user request. The complete
+                  per-UHID OPD/IPD chronology lives on the Patient File page
+                  (/patient-file/:uhid) which is reachable from Reception's
+                  sidebar + the patient-lookup page. The visit-history route
+                  itself is preserved — just unlinked from this counter. */}
               <button className="rx-action-btn rx-action-btn--danger"
                       onClick={clearPatient}
                       title="Clear current patient and return to directory (Esc)">
@@ -1419,6 +1448,7 @@ export default function ReceptionBilling() {
                   onRefund={() => setRefundTarget(activeBill)}
                   onCancel={() => setCancelTarget(activeBill)}
                   onAddService={() => setAddSvcTarget(activeBill)}
+                  onDelete={() => deleteDraftBill(activeBill)}
                   onApplyAdvance={async () => {
                     const unspent = advances.filter((a) => (a.remainingAmount || 0) > 0);
                     if (unspent.length === 0) { toast.warning("No unspent advance available"); return; }
@@ -1653,7 +1683,7 @@ export default function ReceptionBilling() {
 
 /* ───────────────────────────────────────────────────────────── */
 
-function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onSettle, onPrint, onRefund, onCancel, onApplyAdvance, onAddService }) {
+function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onSettle, onPrint, onRefund, onCancel, onApplyAdvance, onAddService, onDelete }) {
   const { can } = useAuth();
   const isDraft   = bill.billStatus === "DRAFT";
   const canPay    = ["GENERATED", "PARTIAL"].includes(bill.billStatus);
@@ -1724,6 +1754,16 @@ function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onSettle, onPrint
         {isDraft && (
           <button className="rx-action-btn rx-action-btn--primary" onClick={onGenerate}>
             <i className="pi pi-check" /> Generate Bill
+          </button>
+        )}
+        {/* R7ci — Delete is DRAFT-only and only when nothing has been
+            collected against it. Backend re-validates both invariants
+            before actually removing the row. */}
+        {isDraft && onDelete && paidTotal === 0 && (
+          <button className="rx-action-btn rx-action-btn--danger"
+                  onClick={onDelete}
+                  title="Permanently delete this draft bill — items go with it. Use only when the draft was created by mistake.">
+            <i className="pi pi-trash" /> Delete Draft
           </button>
         )}
         {canApply && (

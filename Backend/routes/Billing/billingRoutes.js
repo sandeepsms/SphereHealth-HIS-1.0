@@ -150,6 +150,14 @@ router.post("/:billId/tpa-claim", vBill, requireAction("tpa.claim"),     ctrl.se
 router.put("/:billId/items/:itemId",    vBill, vItem, requireAction("billing.override"),      ctrl.updateItemQty);
 router.delete("/:billId/items/:itemId", vBill, vItem, requireAction("billing.cancel-charge"), ctrl.removeItem);
 
+// R7ci — Hard-delete a DRAFT bill. Strictly gated: only DRAFT status, zero
+// collected payments. Items go with the bill (subdoc array). Any
+// BillingTriggers that referenced this bill are flipped to status="voided"
+// so the audit trail keeps the trail without an orphan link. Receptionist
+// can do this themselves — a DRAFT was never billed to a patient, so
+// scrapping it doesn't need accountant-level approval.
+router.post("/:billId/delete", vBill, requireAction("billing.write"), ctrl.deleteDraftBill);
+
 // ── Order lifecycle (NABH AAC.5) ──────────────────────────────
 // Order-to-completion flow for lab / imaging / procedure lines added
 // by doctors. The line is "Ordered" on add — NOT billable. The
