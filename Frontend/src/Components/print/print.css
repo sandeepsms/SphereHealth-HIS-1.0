@@ -212,17 +212,30 @@ html[data-paper="a5"] .pr-page {
 /* ════════════════════════════════════════════════════════════════
    Patient + date strip
 ════════════════════════════════════════════════════════════════ */
+/* R7ch: patient strip flips from auto-fit grid (which collapsed to a
+   single column inside narrow receipt bodies — looked like 6 stacked
+   labels on the left with empty whitespace on the right) to a 2-column
+   column-major flow. First half of the items fills the LEFT column
+   top-down, second half fills the RIGHT column. Works automatically
+   for 2 / 4 / 6 / 8 items — no item-count knowledge needed in JSX. */
 .pr-info-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 6px 18px;
+  column-count: 2;
+  column-gap: 24px;
   padding: 10px 14px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   margin-bottom: 14px;
 }
-.pr-info-grid__item { font-size: 11px; }
+.pr-info-grid__item {
+  font-size: 11px;
+  /* Don't split an item across the column boundary. */
+  break-inside: avoid;
+  page-break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+  margin-bottom: 6px;
+}
+.pr-info-grid__item:last-child { margin-bottom: 0; }
 .pr-info-grid__lbl {
   color: #64748b;
   font-weight: 600;

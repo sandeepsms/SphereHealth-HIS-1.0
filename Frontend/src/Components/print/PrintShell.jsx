@@ -153,12 +153,16 @@ const PrintShell = ({
           style={headerExtra ? { display: "flex", alignItems: "center", gap: 14 } : undefined}
         >
           {infoItems.length > 0 && (
+            /* R7ch: 2-column column-major flow keeps the strip balanced
+               regardless of item count (Patient/UHID/Age on left,
+               Doctor/Dept/Visit Date on right). headerExtra case (QR
+               code beside the strip) uses the same column-count
+               approach via inline style. */
             <div
               style={headerExtra ? {
                 flex: 1,
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-                gap: "6px 18px",
+                columnCount: 2,
+                columnGap: "24px",
               } : undefined}
             >
               {infoItems.map((it, i) => (
