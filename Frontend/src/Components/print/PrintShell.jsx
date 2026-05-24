@@ -13,6 +13,7 @@ import React from "react";
 import "./print.css";
 import PrintWatermark from "./PrintWatermark";
 import { absoluteLogoUrl } from "../../utils/printUtils";
+import { buildPrintIssuer } from "./printIssuer";
 
 const fmtAddress = (s) => {
   const bits = [
@@ -30,12 +31,19 @@ const PrintShell = ({
   infoItems = [],     // [{ label, value }] for the strip under title
   showBank = true,
   showSignatures = true,
-  signatureLabels = ["Authorised Signatory", "Patient / Attendant"],
+  // R7cf: empty signature lines replaced with a real digital-signature
+  // stamp. `signatureLabels` is retained as a prop but no longer
+  // rendered — every printable now stamps the issuing user identity
+  // instead of leaving lines for handwritten signatures. Callers that
+  // need a specific issuer (doctor sign-and-submit, original cashier
+  // on reprint) pass `signedBy` to override the stored user.
+  signatureLabels = ["Authorised Signatory", "Patient / Attendant"], // eslint-disable-line no-unused-vars
+  signedBy,
   // OPD-PRINT-AUDIT Item 2 + 12: data URL of doctor's signature stamp.
-  // When present, rendered above the first signature line as <img>.
+  // When present, rendered above the digital-signature name as <img>.
   signatureImage,
-  // OPD-PRINT-AUDIT Item 12: ISO timestamp of e-sign; printed below the
-  // first signature line for medico-legal traceability.
+  // OPD-PRINT-AUDIT Item 12 / R7cf: ISO timestamp of e-sign — used for
+  // the "Signed at" line of the stamp. Falls back to "now" if omitted.
   signedAt,
   showTerms = true,
   // OPD-PRINT-AUDIT Item 20: caller-provided header extra (e.g. QR code).
@@ -166,38 +174,44 @@ const PrintShell = ({
           </div>
         )}
 
-        {showSignatures && (
-          <div className="pr-signatures">
-            {signatureLabels.map((label, i) => (
-              <div key={i} className="pr-sig">
-                {/* OPD-PRINT-AUDIT Item 2 + 12: render doctor's signature
-                    image above the line on the first (doctor) signature
-                    block when the caller has provided one. */}
-                {i === 0 && signatureImage ? (
-                  <div style={{ height: 48, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-                    <img
-                      src={signatureImage}
-                      alt="signature"
-                      style={{ maxWidth: 180, maxHeight: 44, objectFit: "contain" }}
-                    />
-                  </div>
+        {/* R7cf — Empty signature lines replaced with a real digital-
+            signature stamp. Every document now carries proof of WHO
+            issued / signed it (name, employee ID, role / designation,
+            department, timestamp). Reads the per-tab user mirror
+            sessionStorage['his_user'] set by AuthContext on login;
+            print windows opened via window.open() inherit it, so the
+            stamp lands on first paint. Callers may override via the
+            `issuer` prop (e.g. a doctor's sign-and-submit stamps the
+            doctor of record, not the receptionist who reprinted later)
+            and `signedAt` (so reprints preserve the ORIGINAL sign time
+            instead of "now"). */}
+        {showSignatures && (() => {
+          const issuer = buildPrintIssuer({ issuer: signedBy, signedAt });
+          const metaLine = [
+            issuer.designation || issuer.role,
+            issuer.department,
+            issuer.employeeId && `ID: ${issuer.employeeId}`,
+          ].filter(Boolean).join(" · ");
+          return (
+            <div className="pr-digsig-row">
+              <div className="pr-digsig">
+                <div className="pr-digsig__badge">
+                  <span aria-hidden="true">✓</span> DIGITALLY ISSUED
+                </div>
+                {signatureImage ? (
+                  <img
+                    src={signatureImage}
+                    alt="signature"
+                    className="pr-digsig__img"
+                  />
                 ) : null}
-                <div className="pr-sig__line">{label}</div>
-                {/* OPD-PRINT-AUDIT Item 12: signed-at timestamp under the
-                    doctor's signature line. Tiny grey so it doesn't compete
-                    with the label. */}
-                {i === 0 && signedAt ? (
-                  <div style={{ fontSize: 9, color: "#64748b", marginTop: 2, fontWeight: 500 }}>
-                    Signed {new Date(signedAt).toLocaleString("en-IN", {
-                      day: "2-digit", month: "short", year: "numeric",
-                      hour: "2-digit", minute: "2-digit",
-                    })}
-                  </div>
-                ) : null}
+                <div className="pr-digsig__name">{issuer.name}</div>
+                {metaLine ? <div className="pr-digsig__meta">{metaLine}</div> : null}
+                <div className="pr-digsig__time">Signed {issuer.when}</div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          );
+        })()}
 
         {settings.billFooterNote && (
           <div className="pr-footer__note">{settings.billFooterNote}</div>

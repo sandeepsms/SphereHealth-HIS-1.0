@@ -21,6 +21,7 @@ import { toast } from "react-toastify";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
+import { buildPrintIssuerHtml } from "../../Components/print/printIssuer";
 import "../../Components/clinical/clinical-forms.css";
 import "./ReceptionConsole.css";
 
@@ -2031,10 +2032,11 @@ async function printReceipt({ patient, visitType, opd, ipd, dayCare, er, service
           <span class="total-label">Total Payable</span>
           <span class="total-value">₹${(Number(receiptTotal) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
         </div>
-        <div class="footer">
-          <div class="sign"><div class="sign-line"></div><div class="sign-label">Patient / Attendant</div></div>
-          <div class="sign"><div class="sign-line"></div><div class="sign-label">Attending Doctor</div></div>
-          <div class="sign"><div class="sign-line"></div><div class="sign-label">Reception Counter</div></div>
+        ${/* R7cf: empty signature lines replaced with the digital
+            signature stamp of the issuing user (name + emp ID + role
+            + time). */ ""}
+        <div class="footer" style="display:flex;justify-content:flex-end;margin:12px 0 4px">
+          ${buildPrintIssuerHtml({ escapeHtml: esc })}
         </div>
         <div class="note">Computer-generated receipt — ${esc(_hospName)}${hs.billFooterNote ? " · " + esc(hs.billFooterNote) : ""}</div>
       </div>

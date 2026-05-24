@@ -1,10 +1,12 @@
-import React from "react";
+import React, { useMemo } from "react";
 import "../../styles/BillsPrint.css";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
+import { buildPrintIssuer } from "../../Components/print/printIssuer";
 
 const BillPrint = React.forwardRef((props, ref) => {
   const { bill } = props;
   const { settings: hs } = useHospitalSettings();
+  const issuer = useMemo(() => buildPrintIssuer(), []);
 
   if (!bill) return null;
 
@@ -346,16 +348,28 @@ const BillPrint = React.forwardRef((props, ref) => {
         </ul>
       </div>
 
-      {/* Footer */}
+      {/* Footer — digital signature stamp */}
       <div className="bill-footer">
-        <div className="signatures">
-          <div>
-            <p>_______________________</p>
-            <p>Patient / Attendant Signature</p>
-          </div>
-          <div>
-            <p>_______________________</p>
-            <p>Authorized Signatory</p>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
+          <div style={{
+            display: "inline-flex", flexDirection: "column", gap: 3,
+            padding: "10px 16px", border: "1px dashed #94a3b8", borderRadius: 8,
+            background: "#f8fafc", minWidth: 260, maxWidth: 360, lineHeight: 1.4,
+          }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#16a34a", fontWeight: 700, fontSize: 9.5, letterSpacing: ".6px", textTransform: "uppercase" }}>
+              <span style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                width: 14, height: 14, borderRadius: 999, background: "#16a34a", color: "#fff", fontSize: 10,
+              }}>✓</span>
+              <span>DIGITALLY ISSUED</span>
+            </div>
+            <div style={{ fontWeight: 700, fontSize: 12, color: "#0f172a" }}>{issuer.name}</div>
+            {[issuer.designation || issuer.role, issuer.department, issuer.employeeId && `ID: ${issuer.employeeId}`].filter(Boolean).length > 0 && (
+              <div style={{ fontSize: 9.5, color: "#475569" }}>
+                {[issuer.designation || issuer.role, issuer.department, issuer.employeeId && `ID: ${issuer.employeeId}`].filter(Boolean).join(" · ")}
+              </div>
+            )}
+            <div style={{ fontSize: 9.5, color: "#64748b" }}>Signed {issuer.when}</div>
           </div>
         </div>
         <p className="thank-you">{hs?.billFooterNote || `Thank you for choosing ${hospitalName}!`}</p>

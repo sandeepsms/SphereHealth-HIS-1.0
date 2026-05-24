@@ -11,6 +11,28 @@ const AuthContext = createContext(null);
 // six different role sessions side-by-side in one Chrome window.
 // See axiosInterceptor.js for the migration logic.
 const TOKEN_KEY = "his_token";
+// R7cf: also persist a minimal user snapshot so popup print windows
+// (PrintShell + inline window.open() handlers) can render the digital-
+// signature stamp without making a /me round-trip. sessionStorage is
+// shared with new-window children of the same tab, so the stamp lands
+// even on first paint.
+const USER_KEY  = "his_user";
+const setStoredUser = (u) => {
+  try {
+    if (!u) { sessionStorage.removeItem(USER_KEY); return; }
+    // Only the small subset the signature stamp + downstream code reads.
+    const minimal = {
+      id:         u._id || u.id || null,
+      fullName:   u.fullName || u.name || "",
+      employeeId: u.employeeId || "",
+      role:       u.role || "",
+      department: u.department || u.doctorDetails?.department || "",
+      designation: u.designation || u.doctorDetails?.designation || "",
+    };
+    sessionStorage.setItem(USER_KEY, JSON.stringify(minimal));
+  } catch (_) {}
+};
+const clearStoredUser = () => { try { sessionStorage.removeItem(USER_KEY); } catch (_) {} };
 const setStoredToken = (t) => {
   try { sessionStorage.setItem(TOKEN_KEY, t); } catch (_) {}
   // Also clear any stale localStorage copy so the migration path
@@ -97,6 +119,7 @@ export function AuthProvider({ children }) {
         });
         if (cancelled) return; // R7au-2
         setUser(res.data.user);
+        setStoredUser(res.data.user); // R7cf: keep print-window mirror fresh
         setDoctorProfile(res.data.doctorProfile || null);
         // R7bb-E/S2 — /auth/me may also surface mustChangePassword
         // (e.g. admin forced a reset after the user logged in).
@@ -185,6 +208,7 @@ export function AuthProvider({ children }) {
     }
     if (hydratedUser.isActive === undefined) hydratedUser.isActive = true;
     setUser(hydratedUser);
+    setStoredUser(hydratedUser); // R7cf: mirror to sessionStorage for print windows
     // R7bb-E/S2 — Backend can return `mustChangePassword: true` either at
     // top-level or nested on user. The ChangePasswordPrompt below will
     // block the UI until it's cleared. Login flow still completes (token
@@ -252,6 +276,7 @@ export function AuthProvider({ children }) {
     try { localStorage.removeItem("his_logout_signal"); } catch (_) {}
     setToken(null);
     setUser(null);
+    clearStoredUser(); // R7cf: drop the print-window mirror on logout
     setDoctorProfile(null);
     setMustChangePassword(false);
   }, []);

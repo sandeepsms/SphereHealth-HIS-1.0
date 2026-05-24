@@ -22,6 +22,7 @@ import RequestWardBoyButton from "../ward/RequestWardBoyButton";
 import RequestHousekeepingButton from "../ward/RequestHousekeepingButton";
 import BedActionMenu from "./BedActionMenu";
 import { useAuth } from "../../context/AuthContext";
+import { buildPrintIssuerHtml } from "../print/printIssuer";
 import "./bed-mgmt.css";
 
 /* ─── Colors ─────────────────────────────────────────────── */
@@ -1128,10 +1129,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     .Critical { background:#fee2e2; color:#991b1b; }
     .LAMA     { background:#ede9fe; color:#5b21b6; }
     /* Footer */
-    .footer { margin-top:auto; padding-top:16px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:flex-end; }
-    .sign-box { text-align:center; }
-    .sign-line { width:140px; border-bottom:1px solid #374151; margin-bottom:4px; height:36px; }
-    .sign-label { font-size:10px; color:#64748b; }
+    .footer { margin-top:auto; padding-top:16px; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; align-items:flex-end; }
     .footer-note { font-size:10px; color:#94a3b8; text-align:center; margin-top:8px; }
     @media print {
       body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
@@ -1206,11 +1204,9 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     </tbody>
   </table>
 
-  <!-- Signatures -->
+  <!-- Digital signature stamp -->
   <div class="footer">
-    <div class="sign-box"><div class="sign-line"></div><div class="sign-label">Patient / Attendant Signature</div></div>
-    <div class="sign-box"><div class="sign-line"></div><div class="sign-label">Attending Doctor</div></div>
-    <div class="sign-box"><div class="sign-line"></div><div class="sign-label">Authorized Signatory</div></div>
+    ${buildPrintIssuerHtml()}
   </div>
   <div class="footer-note">This is a computer-generated document. For queries contact the billing department.</div>
 

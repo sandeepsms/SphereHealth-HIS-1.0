@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { API_ENDPOINTS } from "../../config/api";
 import { useHospitalSettings, buildAddress, buildContact } from "../../context/HospitalSettingsContext";
+import { buildPrintIssuer } from "../../Components/print/printIssuer";
 
 /* ── number → words ─────────────────────────────────────────────────────── */
 function numWords(num) {
@@ -33,6 +34,7 @@ export default function BillPrintPage() {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
   const printed = useRef(false);
+  const issuer = useMemo(() => buildPrintIssuer(), []);
 
   useEffect(() => {
     if (!billId) return;
@@ -357,19 +359,33 @@ export default function BillPrintPage() {
           {[hs.termsLine1, hs.termsLine2, hs.termsLine3].filter(Boolean).join(" ")}
         </div>
 
-        {/* Signatures */}
+        {/* Digital signature stamp */}
         <table width="100%" style={{ borderCollapse:"collapse", fontSize:12, color:"#475569" }}>
           <tbody><tr>
-            <td style={{ textAlign:"center", width:"33%" }}>
-              <div style={{ borderBottom:"1px solid #94a3b8", width:150, margin:"0 auto 4px" }} />
-              Patient / Attendant Signature
-            </td>
-            <td style={{ textAlign:"center", width:"34%", color: hs.printAccentColor || "#1d4ed8", fontWeight:600, fontSize:12 }}>
+            <td style={{ verticalAlign:"middle", width:"55%", color: hs.printAccentColor || "#1d4ed8", fontWeight:600, fontSize:12 }}>
               {hs.billFooterNote || `Thank you for choosing ${hs.hospitalName}`}
             </td>
-            <td style={{ textAlign:"center", width:"33%" }}>
-              <div style={{ borderBottom:"1px solid #94a3b8", width:150, margin:"0 auto 4px" }} />
-              Authorized Signatory
+            <td style={{ textAlign:"right", verticalAlign:"top", width:"45%" }}>
+              <div style={{
+                display: "inline-flex", flexDirection: "column", gap: 3,
+                padding: "10px 16px", border: "1px dashed #94a3b8", borderRadius: 8,
+                background: "#f8fafc", minWidth: 260, maxWidth: 360, lineHeight: 1.4, textAlign:"left",
+              }}>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#16a34a", fontWeight: 700, fontSize: 9.5, letterSpacing: ".6px", textTransform: "uppercase" }}>
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    width: 14, height: 14, borderRadius: 999, background: "#16a34a", color: "#fff", fontSize: 10,
+                  }}>✓</span>
+                  <span>DIGITALLY ISSUED</span>
+                </div>
+                <div style={{ fontWeight: 700, fontSize: 12, color: "#0f172a" }}>{issuer.name}</div>
+                {[issuer.designation || issuer.role, issuer.department, issuer.employeeId && `ID: ${issuer.employeeId}`].filter(Boolean).length > 0 && (
+                  <div style={{ fontSize: 9.5, color: "#475569" }}>
+                    {[issuer.designation || issuer.role, issuer.department, issuer.employeeId && `ID: ${issuer.employeeId}`].filter(Boolean).join(" · ")}
+                  </div>
+                )}
+                <div style={{ fontSize: 9.5, color: "#64748b" }}>Signed {issuer.when}</div>
+              </div>
             </td>
           </tr></tbody>
         </table>
