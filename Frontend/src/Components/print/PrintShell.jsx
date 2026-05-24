@@ -111,10 +111,29 @@ const PrintShell = ({
           {settings.registrationNo && <div><strong>Reg No:</strong> {settings.registrationNo}</div>}
           {settings.panNumber      && <div><strong>PAN:</strong> {settings.panNumber}</div>}
           {settings.rohiniId       && <div><strong>ROHINI:</strong> {settings.rohiniId}</div>}
-          <div style={{ marginTop: 4 }}>
-            {settings.nabh && <span className="pr-accred pr-accred--nabh">NABH</span>}
-            {settings.nabl && <span className="pr-accred pr-accred--nabl">NABL</span>}
-          </div>
+          {/* R7cg: NABH pill on the print header now gates on
+              `nabhCertNumber` instead of the legacy `nabh` boolean
+              (which defaults true in the schema and was misleading on
+              fresh installs). Once admin enters the cert# in
+              Hospital Configuration → NABH tab, the pill renders and
+              carries the actual cert# in a tooltip for surveyor visits.
+              NABL stays on its boolean — that one defaults false, so
+              it only surfaces when admin explicitly turns it on. */}
+          {(() => {
+            const _cert = String(settings.nabhCertNumber || "").trim();
+            const _showNabh = !!_cert;
+            return (
+              <div style={{ marginTop: 4 }}>
+                {_showNabh && (
+                  <span
+                    className="pr-accred pr-accred--nabh"
+                    title={`NABH Accredited · Cert ${_cert}`}
+                  >NABH</span>
+                )}
+                {settings.nabl && <span className="pr-accred pr-accred--nabl">NABL</span>}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
