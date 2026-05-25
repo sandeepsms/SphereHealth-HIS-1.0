@@ -312,7 +312,7 @@ function TPAServiceManagement() {
 
   /* DataTable styling overrides via pt-prop equivalents. */
   const dtPt = {
-    table: { style: { fontSize: 13 } },
+    table: { style: { fontSize: 13, tableLayout: "fixed", width: "100%" } },
     thead: { style: {
       background: C.subtle,
     }},
@@ -320,6 +320,16 @@ function TPAServiceManagement() {
       background: C.subtle,
     }},
   };
+
+  // Per-column widths so header labels line up with body inputs in the
+  // inner Tests table (PrimeReact's default auto-layout was making TYPE
+  // too wide and shifting AMOUNT/DISCOUNT off their headers).
+  const colNameStyle    = { ...headerCellStyle, width: "auto",  minWidth: 200, padding: "10px 12px" };
+  const colTypeStyle    = { ...headerCellStyle, width: 140,     padding: "10px 12px" };
+  const colAmountStyle  = { ...headerCellStyle, width: 160,     padding: "10px 12px" };
+  const colDiscStyle    = { ...headerCellStyle, width: 130,     padding: "10px 12px" };
+  const colTotalStyle   = { ...headerCellStyle, width: 170,     padding: "10px 12px" };
+  const cellBodyStyle   = { padding: "8px 12px", verticalAlign: "middle" };
   const headerCellStyle = {
     background: C.subtle,
     color: C.muted,
@@ -610,7 +620,8 @@ function TPAServiceManagement() {
                           {/* Test Name */}
                           <Column
                             header="Test Name"
-                            headerStyle={headerCellStyle}
+                            headerStyle={colNameStyle}
+                            bodyStyle={cellBodyStyle}
                             body={(rowData, options) => (
                               <div>
                                 <InputText
@@ -653,7 +664,8 @@ function TPAServiceManagement() {
                           {/* Service Type */}
                           <Column
                             header="Type"
-                            headerStyle={headerCellStyle}
+                            headerStyle={colTypeStyle}
+                            bodyStyle={cellBodyStyle}
                             body={(rowData, options) => (
                               <div>
                                 <Dropdown
@@ -697,7 +709,8 @@ function TPAServiceManagement() {
                           {/* Amount */}
                           <Column
                             header="Amount"
-                            headerStyle={headerCellStyle}
+                            headerStyle={colAmountStyle}
+                            bodyStyle={cellBodyStyle}
                             body={(rowData, options) => (
                               <InputNumber
                                 value={values.services[options.rowIndex].Amount}
@@ -743,7 +756,8 @@ function TPAServiceManagement() {
                           {/* Discount */}
                           <Column
                             header="Discount"
-                            headerStyle={headerCellStyle}
+                            headerStyle={colDiscStyle}
+                            bodyStyle={cellBodyStyle}
                             body={(rowData, options) => (
                               <InputNumber
                                 value={values.services[options.rowIndex].Discount}
@@ -783,7 +797,8 @@ function TPAServiceManagement() {
                           {/* Total */}
                           <Column
                             header="Total Amount"
-                            headerStyle={headerCellStyle}
+                            headerStyle={colTotalStyle}
+                            bodyStyle={cellBodyStyle}
                             body={(rowData, options) => (
                               <InputNumber
                                 value={

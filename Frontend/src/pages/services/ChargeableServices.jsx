@@ -589,16 +589,18 @@ export default function ChargeableServices() {
         }}
       >
         <span
-          className="p-input-icon-left"
-          style={{ flex: "1 1 280px", minWidth: 240 }}
+          style={{ flex: "1 1 280px", minWidth: 240, position: "relative", display: "inline-flex", alignItems: "center" }}
         >
-          <i className="pi pi-search" />
+          <i
+            className="pi pi-search"
+            style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: C.muted, fontSize: 13, pointerEvents: "none", zIndex: 1 }}
+          />
           <InputText
             value={filters.search}
             onChange={(e) => setFilters({ ...filters, search: e.target.value })}
             placeholder="Search by name or code..."
             className="p-inputtext-sm"
-            style={{ width: "100%" }}
+            style={{ width: "100%", paddingLeft: 34 }}
           />
         </span>
         <Dropdown
