@@ -2867,9 +2867,14 @@ function Row({ label, value, valueColor, bold, large }) {
 function OPDRxTab() {
   const [uhidInput, setUhidInput]   = useState("");
   const [loading, setLoading]       = useState(false);
-  const [visits, setVisits]         = useState([]);    // today's OPD visits for the UHID
+  const [visits, setVisits]         = useState([]);    // recent OPD visits for the UHID
   const [patient, setPatient]       = useState(null);  // first visit's patientId populated doc
   const [searchedUhid, setSearchedUhid] = useState("");
+  // R7cx — day-window selector. Default 7 because today-only was too
+  // narrow (patient walks in 1-2 days after the visit and the panel
+  // showed empty). Pharmacist can widen to 15/30 if hunting for an
+  // older prescription, or narrow to 1 (today only) if there's noise.
+  const [windowDays, setWindowDays] = useState(7);
   // R7cw — track API failure separately from "successfully returned
   // empty list". Pre-R7cw a 404 on the new R7cr endpoint left the
   // empty-state ("No OPD visit today") rendering — misleading because
@@ -2896,19 +2901,21 @@ function OPDRxTab() {
     weekday: "long", day: "2-digit", month: "long", year: "numeric",
   });
 
-  // Load today's Rx for the typed UHID. Empty array = no visit today
-  // (handled with a friendly empty state, not an error).
-  const load = async (uhidArg) => {
+  // Load recent Rx (default 7 days) for the typed UHID. Empty array =
+  // no visits in the window (handled with a friendly empty state,
+  // not an error).
+  const load = async (uhidArg, daysArg) => {
     const u = (uhidArg ?? uhidInput).trim().toUpperCase();
+    const d = Number(daysArg ?? windowDays) || 7;
     if (!u) { toast.warn("Enter a UHID"); return; }
     setLoading(true); setSearchedUhid(u); setLoadError(null);
     try {
-      const r = await opdService.getTodayRxByUHID(u);
+      const r = await opdService.getTodayRxByUHID(u, d);
       const list = Array.isArray(r?.data?.data) ? r.data.data : [];
       setVisits(list);
       setPatient(list[0]?.patientId || null);
       if (list.length === 0) {
-        toast.info(`No OPD visit today for ${u}`);
+        toast.info(`No OPD visit in last ${d} day${d === 1 ? "" : "s"} for ${u}`);
       }
     } catch (e) {
       // R7cw: distinguish missing-route (backend restart needed) from
@@ -3055,6 +3062,30 @@ function OPDRxTab() {
           <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-search"}`} style={{ marginRight: 6 }} />
           {loading ? "Loading…" : "Load Rx"}
         </button>
+        {/* R7cx — day-window selector. Default 7d; reload immediately
+            when changed (only if we already have a searched UHID,
+            otherwise the new value just becomes the next-search default). */}
+        <div>
+          <label style={{ display: "block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 4 }}>
+            Window
+          </label>
+          <select
+            className="his-select"
+            value={windowDays}
+            onChange={(e) => {
+              const d = Number(e.target.value);
+              setWindowDays(d);
+              if (searchedUhid) load(searchedUhid, d);
+            }}
+            style={{ fontSize: 12, padding: "8px 10px", minWidth: 120 }}
+          >
+            <option value={1}>Today only</option>
+            <option value={3}>Last 3 days</option>
+            <option value={7}>Last 7 days</option>
+            <option value={15}>Last 15 days</option>
+            <option value={30}>Last 30 days</option>
+          </select>
+        </div>
         {(searchedUhid || visits.length > 0) && (
           <button onClick={clearAll} style={{
             padding: "8px 14px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
@@ -3110,12 +3141,34 @@ function OPDRxTab() {
         </div>
       )}
 
-      {/* No-data state — only when the API succeeded with an empty result. */}
+      {/* No-data state — only when the API succeeded with an empty result.
+          R7cx: message reflects the active window, with a quick widen
+          shortcut so the pharmacist can extend to 30 days in one click
+          if the patient's prescription is older than the default 7. */}
       {searchedUhid && !loading && !loadError && visits.length === 0 && (
         <div style={{ padding: 36, textAlign: "center", background: "#f8fafc", border: `1px dashed ${C.border}`, borderRadius: 10, color: C.muted, fontSize: 13 }}>
           <i className="pi pi-info-circle" style={{ fontSize: 22, marginBottom: 8, display: "block" }} />
-          No OPD visit found today for <strong style={{ color: C.text }}>{searchedUhid}</strong>.<br/>
-          <span style={{ fontSize: 11 }}>Patient may have walked in but not been registered — check Reception, or use the Dispense tab for a counter sale.</span>
+          No OPD visit found in the last {windowDays} day{windowDays === 1 ? "" : "s"} for <strong style={{ color: C.text }}>{searchedUhid}</strong>.<br/>
+          <span style={{ fontSize: 11 }}>
+            {windowDays < 30 ? (
+              <>Try a wider window:
+                {[15, 30].filter(d => d > windowDays).map(d => (
+                  <button
+                    key={d}
+                    onClick={() => { setWindowDays(d); load(searchedUhid, d); }}
+                    style={{
+                      marginLeft: 8, padding: "2px 9px", border: `1px solid ${C.orange}`,
+                      background: "#fff", color: C.orange, borderRadius: 12,
+                      fontSize: 10, fontWeight: 700, cursor: "pointer",
+                    }}
+                  >Last {d} days</button>
+                ))}
+                {" "}or use the Dispense tab for a counter sale.
+              </>
+            ) : (
+              <>Patient may not have visited OPD in the last 30 days — use the Dispense tab for a counter sale.</>
+            )}
+          </span>
         </div>
       )}
 

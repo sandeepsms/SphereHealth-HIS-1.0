@@ -159,23 +159,30 @@ class OPDService {
     return savedOPD;
   }
 
-  /* ── R7cr: Today's prescriptions for a UHID — Pharmacy fast-lookup ──
+  /* ── R7cr: Recent OPD prescriptions for a UHID — Pharmacy fast-lookup ──
      A pharmacist enters a UHID and needs the focused subset:
-       • today's OPD visit(s) for this patient
+       • recent OPD visit(s) for this patient (default window: 7 days)
        • diagnosis context (so the pharmacist can sanity-check the Rx)
        • the prescribed medicines list (so they can dispense)
      We project ONLY the fields the pharmacy needs — no SOAP narrative,
      no audit blob, no full investigation order trail. Smaller payload
      keeps the lookup snappy even when the patient has multiple visits
-     today (rare but legitimate: morning OPD + afternoon ER conversion).
-     Sorted oldest-first so dispense order matches visit order.       */
-  async getTodayPrescriptionsByUHID(UHID) {
+     across the window (return visits, multi-department days).
+     Sorted newest-first so the most recent prescription shows on top —
+     pharmacist usually dispenses the latest one.
+     R7cx — window widened from today-only to 7-day default + caller
+     can override via `days` arg (capped at 30 to keep payload bounded).
+     Today-only was too narrow: patients often walk in 1-2 days after
+     the visit ("kal Dr ne yeh likha tha"), and the old impl returned
+     empty making the pharmacist think the system was broken. */
+  async getTodayPrescriptionsByUHID(UHID, days = 7) {
     if (!UHID) return [];
-    const start = new Date(); start.setHours(0, 0, 0, 0);
-    const end   = new Date(start); end.setDate(start.getDate() + 1);
+    const window = Math.max(1, Math.min(30, Number(days) || 7));
+    const end   = new Date(); end.setHours(23, 59, 59, 999);
+    const start = new Date(); start.setDate(start.getDate() - (window - 1)); start.setHours(0, 0, 0, 0);
     const visits = await OPD.find({
       UHID,
-      visitDate: { $gte: start, $lt: end },
+      visitDate: { $gte: start, $lte: end },
     })
       .select(
         "visitNumber visitDate UHID patientId patientName tokenNumber " +
@@ -187,7 +194,11 @@ class OPDService {
       .populate("departmentId", "departmentName")
       .populate("doctorId", "personalInfo doctorId")
       .populate("patientId", "fullName UHID age gender contactNumber dateOfBirth")
-      .sort({ visitDate: 1, tokenNumber: 1 })
+      // R7cx — newest-first so the most recent prescription surfaces at
+      // the top of the pharmacy panel. The window can include multiple
+      // visits across multiple days; the pharmacist usually dispenses
+      // against the latest one.
+      .sort({ visitDate: -1, tokenNumber: 1 })
       .lean();
     return visits;
   }
