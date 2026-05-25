@@ -24,6 +24,14 @@ const Drug        = require("../../models/Pharmacy/DrugModel");
 const DrugBatch   = require("../../models/Pharmacy/DrugBatchModel");
 const Supplier    = require("../../models/Pharmacy/SupplierModel");
 const Sale        = require("../../models/Pharmacy/PharmacySaleModel");
+// R7db-2 — IPD Credit ledger must surface BOTH PharmacySale-based credit
+// (counter dispense booked as Credit / partial-pay) AND PatientBill-based
+// pharmacy line items written by autoBillingService.onIndentReleased
+// (PHARM-* synthetic codes added when a ward indent is released → these
+// land on the admission's IPD PatientBill, NOT on a separate PharmacySale
+// doc). Without PatientBill in the credit ledger, the IPD Credit tab is
+// blind to the entire indent-released drug-charge category.
+const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
 const Settings    = require("../../models/Pharmacy/PharmacySettingsModel");
 const PharmacyDayClose = require("../../models/Pharmacy/PharmacyDayCloseModel");
 const Counter     = require("../../models/CounterModel");
@@ -910,10 +918,20 @@ exports.getSale = async (req, res) => {
 // Internal helper — exported so admissionController can call it
 // during the BillCleared transition. Returns { total, count, sales }
 // where sales is the lean array of unpaid PharmacySale docs.
+//
+// R7db-2 — Also rolls up pharmacy line items written to the IPD
+// PatientBill by autoBillingService.onIndentReleased (PHARM-* synthetic
+// codes). These items don't have their own PharmacySale row — they're
+// embedded in the admission-wide PatientBill.billItems[] and their
+// outstanding amount is the bill's balanceAmount * (pharmacy share).
+// We use a simple proration: pharmacy_share = sum(PHARM-* netAmount) /
+// totalNetAmount, applied to balanceAmount. Receptionist-collected
+// payments naturally reduce balanceAmount → pharmacy share shrinks too.
 exports.getOutstandingForAdmission = async function (admissionId) {
   if (!admissionId || !isOid(admissionId)) {
-    return { total: 0, count: 0, sales: [] };
+    return { total: 0, count: 0, sales: [], bills: [] };
   }
+  // ── A. PharmacySale-based credit (counter dispense + IPD homecare) ──
   const sales = await Sale.find({
     admissionId,
     // status:"Completed" excludes Cancelled/Refunded sales — they
@@ -930,14 +948,84 @@ exports.getOutstandingForAdmission = async function (admissionId) {
       open.push({ ...s, balanceDue: bal });
     }
   }
-  return { total: round2(total), count: open.length, sales: open };
+  // ── B. PatientBill-embedded pharmacy line items (indent releases) ──
+  // Find the admission's IPD bill(s) — usually 1 per admission but
+  // historical data may have more. PARTIAL/GENERATED carry outstanding;
+  // DRAFT means the patient is still being charged and indent items
+  // haven't been moved to a final bill yet — we include DRAFT too because
+  // ward-released drugs on a DRAFT bill are still real credit that
+  // pharmacy needs visibility on.
+  const bills = await PatientBill.find({
+    admissionId,
+    visitType:  "IPD",
+    billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] },
+  }).select("billNumber billStatus billItems grandTotal netAmount patientPayableAmount balanceAmount payments createdAt").lean();
+  const billRows = [];
+  for (const b of bills) {
+    const bal = Number(b.balanceAmount?.toString?.() ?? b.balanceAmount ?? 0);
+    if (bal <= 0) continue;
+    // Sum pharmacy items — match by category=PHARMACY OR serviceCode
+    // starting with "PHARM-" (handles both ServiceMaster-matched +
+    // synthetic line items). Use netAmount (after discount, before tax).
+    let pharmNet = 0, allNet = 0;
+    const pharmItems = [];
+    for (const it of (b.billItems || [])) {
+      const net = Number(it.netAmount?.toString?.() ?? it.netAmount ?? 0);
+      allNet += net;
+      const isPharm = (it.category || "").toUpperCase() === "PHARMACY"
+                   || /^PHARM-/i.test(it.serviceCode || "");
+      if (isPharm) {
+        pharmNet += net;
+        pharmItems.push({
+          serviceCode: it.serviceCode,
+          serviceName: it.serviceName,
+          quantity:    Number(it.quantity || 0),
+          netAmount:   net,
+          chargeDate:  it.chargeDate,
+          addedBy:     it.addedBy,
+        });
+      }
+    }
+    if (pharmNet <= 0) continue;
+    // Pro-rated pharmacy share of the outstanding balance.
+    const pharmShare = allNet > 0 ? round2(bal * (pharmNet / allNet)) : 0;
+    if (pharmShare <= 0) continue;
+    total += pharmShare;
+    billRows.push({
+      _id:           b._id,
+      billNumber:    b.billNumber || "(DRAFT)",
+      billStatus:    b.billStatus,
+      pharmNet:      round2(pharmNet),
+      allNet:        round2(allNet),
+      billBalance:   round2(bal),
+      pharmBalance:  pharmShare,
+      itemCount:     pharmItems.length,
+      items:         pharmItems,
+      createdAt:     b.createdAt,
+    });
+  }
+  return {
+    total: round2(total),
+    count: open.length + billRows.length,
+    sales: open,
+    bills: billRows,
+  };
 };
 
 // GET /api/pharmacy/credit/ipd-admissions
 // One row per active IPD admission with pharmacy outstanding > 0.
+//
+// R7db-2 — Aggregates TWO sources:
+//   (a) PharmacySale.balanceDue   — counter dispense booked as Credit
+//   (b) PatientBill.billItems[]   — PHARM-* items added via indent release
+//                                   (autoBillingService.onIndentReleased)
+// Without (b) the page was blind to ward-dispensed drugs because they
+// never become a PharmacySale doc — they're embedded in the admission's
+// IPD PatientBill.
 exports.listIpdCreditAdmissions = async (req, res) => {
   try {
     const Admission = require("../../models/Patient/admissionModel");
+    // ── A. PharmacySale-based credit ─────────────────────────────
     // Aggregate PharmacySale → group by admissionId where balanceDue > 0.
     // We do the grouping in JS rather than via $group + $lookup because
     // the typical active-IPD set is small (< 200) and the JS path keeps
@@ -960,12 +1048,61 @@ exports.listIpdCreditAdmissions = async (req, res) => {
         patientName:     s.patientName || "",
         outstanding:     0,
         billCount:       0,
+        billSources:     { sale: 0, indent: 0 },
         oldestDueAt:     null,
       };
       cur.outstanding += bal;
       cur.billCount   += 1;
+      cur.billSources.sale += 1;
       if (!cur.oldestDueAt || (s.createdAt && s.createdAt < cur.oldestDueAt)) {
         cur.oldestDueAt = s.createdAt;
+      }
+      byAdm.set(key, cur);
+    }
+    // ── B. PatientBill-embedded indent items ─────────────────────
+    // Scan all open IPD bills with at least one PHARM-* line item.
+    // We can't use a simple $match on category because billItems is an
+    // array — use $elemMatch + lean. Pre-filter on a Mongo regex on
+    // billItems.serviceCode for fast index-less scan (small set).
+    const openBills = await PatientBill.find({
+      visitType:  "IPD",
+      billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] },
+      admissionId: { $ne: null },
+      $or: [
+        { "billItems.category":    { $regex: /^pharmacy$/i } },
+        { "billItems.serviceCode": { $regex: /^PHARM-/i }   },
+      ],
+    }).select("admissionId UHID patientName billItems balanceAmount billStatus billNumber createdAt").lean();
+    for (const b of openBills) {
+      const bal = Number(b.balanceAmount?.toString?.() ?? b.balanceAmount ?? 0);
+      if (bal <= 0) continue;
+      let pharmNet = 0, allNet = 0;
+      for (const it of (b.billItems || [])) {
+        const net = Number(it.netAmount?.toString?.() ?? it.netAmount ?? 0);
+        allNet += net;
+        const isPharm = (it.category || "").toUpperCase() === "PHARMACY"
+                     || /^PHARM-/i.test(it.serviceCode || "");
+        if (isPharm) pharmNet += net;
+      }
+      if (pharmNet <= 0 || allNet <= 0) continue;
+      const pharmShare = round2(bal * (pharmNet / allNet));
+      if (pharmShare <= 0) continue;
+      const key = String(b.admissionId);
+      const cur = byAdm.get(key) || {
+        admissionId:     b.admissionId,
+        admissionNumber: "",
+        UHID:            b.UHID || "",
+        patientName:     b.patientName || "",
+        outstanding:     0,
+        billCount:       0,
+        billSources:     { sale: 0, indent: 0 },
+        oldestDueAt:     null,
+      };
+      cur.outstanding += pharmShare;
+      cur.billCount   += 1;
+      cur.billSources.indent += 1;
+      if (!cur.oldestDueAt || (b.createdAt && b.createdAt < cur.oldestDueAt)) {
+        cur.oldestDueAt = b.createdAt;
       }
       byAdm.set(key, cur);
     }
@@ -1016,6 +1153,12 @@ exports.listIpdCreditAdmissions = async (req, res) => {
 // Itemised credit sales for one admission — drill-down for the
 // pharmacist. Mirrors getOutstandingForAdmission but enriched with
 // per-bill item lines so the family can review what they're paying for.
+//
+// R7db-2 — Returns BOTH PharmacySale rows AND PatientBill PHARM-* line
+// items (from indent releases). The drill-down panel now shows the full
+// ward-released drug list alongside any counter dispenses booked on
+// credit. openSales = PharmacySale outstanding; openBills =
+// PatientBill rows with pharmacy items + outstanding share.
 exports.getCreditByAdmission = async (req, res) => {
   try {
     const { admissionId } = req.params;
@@ -1038,9 +1181,15 @@ exports.getCreditByAdmission = async (req, res) => {
       const b = Number(s.balanceDue?.toString?.() ?? s.balanceDue ?? 0);
       return b > 0;
     });
-    const totalOutstanding = openSales.reduce(
+    let totalOutstanding = openSales.reduce(
       (s, x) => s + Number(x.balanceDue?.toString?.() ?? x.balanceDue ?? 0), 0,
     );
+    // R7db-2 — fold in PatientBill PHARM-* items
+    const ph = await exports.getOutstandingForAdmission(admissionId);
+    // ph.bills was added in R7db-2; tolerate older callers by defaulting
+    const openBills = Array.isArray(ph.bills) ? ph.bills : [];
+    const billOutstanding = openBills.reduce((s, b) => s + Number(b.pharmBalance || 0), 0);
+    totalOutstanding += billOutstanding;
     res.json({
       success: true,
       data: {
@@ -1049,7 +1198,16 @@ exports.getCreditByAdmission = async (req, res) => {
         // also include closed sales so the family sees "what you've
         // already paid" + "what's outstanding" in one panel
         closedSales: allSales.filter(s => !openSales.includes(s)),
+        // R7db-2 — PatientBill-embedded indent items
+        openBills,
         totalOutstanding: round2(totalOutstanding),
+        // Split-out so the UI can label sources differently (counter
+        // dispense vs. ward indent — both block discharge but are
+        // collected via different counters in some hospitals).
+        breakdown: {
+          counterDispense: round2(openSales.reduce((s, x) => s + Number(x.balanceDue?.toString?.() ?? x.balanceDue ?? 0), 0)),
+          wardIndent:      round2(billOutstanding),
+        },
       },
     });
   } catch (e) { sendErr(res, e); }
@@ -1065,10 +1223,19 @@ exports.getCreditByAdmission = async (req, res) => {
 // 22-May ₹2000 went out on credit across 3 admissions, all paid
 // by 24-May" or "today ₹4500 went out, ₹500 still pending".
 //
+// R7db-2 — Also includes ward-dispensed drugs from indent releases.
+// Those land on PatientBill.billItems[] as PHARM-* lines (not as
+// separate PharmacySale docs), so the pharmacist was previously
+// blind to them in the history view. We scan billItems with
+// category=PHARMACY OR serviceCode=/^PHARM-/ within the same window
+// and bucket by chargeDate, treating each line item as a
+// pharmacy-credit "row" with source=INDENT.
+//
 // Returns: array of { dateKey, totalDispensed, totalOutstanding,
 //   totalCollected, bills: [{billNumber, admissionNumber, UHID,
-//   patientName, grandTotal, amountPaid, balanceDue, items[], createdAt}] }
-// sorted newest-first.
+//   patientName, grandTotal, amountPaid, balanceDue, items[], createdAt, source}] }
+// sorted newest-first. source ∈ {SALE, INDENT} distinguishes counter
+// dispense vs ward indent on the UI.
 exports.getIpdCreditHistory = async (req, res) => {
   try {
     const days = Math.min(180, Math.max(1, Number(req.query.days) || 30));
@@ -1141,8 +1308,123 @@ exports.getIpdCreditHistory = async (req, res) => {
         createdAt:      s.createdAt,
         // R7cv — convenience flag for the frontend pill colour
         cleared:        bal === 0,
+        // R7db-2 — distinguishes counter dispense (SALE) from ward
+        // indent (INDENT). Frontend renders different pills + actions.
+        source:         "SALE",
       });
     }
+
+    // R7db-2 ── Ward-released drugs (PatientBill PHARM-* line items) ──
+    // Indent releases live on the IPD PatientBill as billItems[], not on
+    // separate PharmacySale docs. Scan within the same window using
+    // chargeDate (the per-item date stamped by autoBillingService) since
+    // a long IPD admission's bill.createdAt may predate the window.
+    // Each unique (admission, chargeDate) becomes one row in the history
+    // (collapses multiple PHARM-* items dispensed on the same day onto
+    // one "ward indent" entry to keep the audit log readable).
+    const indentBills = await PatientBill.find({
+      visitType:   "IPD",
+      admissionId: { $ne: null },
+      // Anything but DRAFT — DRAFT means the bill hasn't been generated
+      // yet, but indent items can still be on a DRAFT (the auto-billing
+      // flow writes there). Include DRAFT so the history shows in-progress
+      // ward dispenses too.
+      billStatus:  { $in: ["DRAFT", "GENERATED", "PARTIAL", "PAID"] },
+      $or: [
+        { "billItems.category":    { $regex: /^pharmacy$/i } },
+        { "billItems.serviceCode": { $regex: /^PHARM-/i }   },
+      ],
+    })
+      .select("billNumber admissionId UHID patientName billItems balanceAmount netAmount patientPayableAmount payments createdAt billStatus")
+      .lean();
+
+    for (const b of indentBills) {
+      // Filter pharm items and bucket by chargeDate (fall back to bill
+      // createdAt if a line item is missing chargeDate — shouldn't
+      // happen with new code but legacy rows might).
+      const pharmItems = (b.billItems || []).filter(it =>
+        (it.category || "").toUpperCase() === "PHARMACY"
+        || /^PHARM-/i.test(it.serviceCode || ""),
+      );
+      if (!pharmItems.length) continue;
+
+      // Group pharm items on this bill by dateKey
+      const byDateOnBill = new Map();
+      for (const it of pharmItems) {
+        const when  = it.chargeDate ? new Date(it.chargeDate) : (b.createdAt ? new Date(b.createdAt) : null);
+        if (!when || when < since) continue;
+        const dKey = when.toISOString().slice(0, 10);
+        if (!byDateOnBill.has(dKey)) {
+          byDateOnBill.set(dKey, { dKey, items: [], itemsNet: 0, when });
+        }
+        const grp = byDateOnBill.get(dKey);
+        grp.items.push({
+          drugName:  it.serviceName || it.serviceCode,
+          quantity:  Number(it.quantity || 0),
+          netAmount: Number(it.netAmount?.toString?.() ?? it.netAmount ?? 0),
+        });
+        grp.itemsNet += Number(it.netAmount?.toString?.() ?? it.netAmount ?? 0);
+        // Track the latest "when" on the day so display picks the most
+        // recent dispense time for that day.
+        if (when > grp.when) grp.when = when;
+      }
+      if (!byDateOnBill.size) continue;
+
+      // Bill-level balance is shared across ALL line items on the bill —
+      // we attribute a proportional share to ward-indent items only.
+      const billBal      = Number(b.balanceAmount?.toString?.() ?? b.balanceAmount ?? 0);
+      const billNetTotal = Number(b.netAmount?.toString?.() ?? b.netAmount ?? 0)
+                        || Number(b.patientPayableAmount?.toString?.() ?? b.patientPayableAmount ?? 0);
+      const totalPharmNet = pharmItems.reduce(
+        (s, it) => s + Number(it.netAmount?.toString?.() ?? it.netAmount ?? 0), 0,
+      );
+      const pharmShareRatio = totalPharmNet > 0 && billNetTotal > 0
+        ? Math.min(1, totalPharmNet / billNetTotal)
+        : 0;
+      const pharmOutstanding = round2(billBal * pharmShareRatio);
+      // "Already paid" share of pharmacy = totalPharmNet − outstanding.
+      const pharmPaid = round2(Math.max(0, totalPharmNet - pharmOutstanding));
+
+      for (const [dKey, grp] of byDateOnBill) {
+        // Per-day shares scale by itemsNet/totalPharmNet so the day-level
+        // numbers stay consistent with the bill-level rollup.
+        const dayRatio = totalPharmNet > 0 ? (grp.itemsNet / totalPharmNet) : 0;
+        const dayBal   = round2(pharmOutstanding * dayRatio);
+        const dayPaid  = round2(pharmPaid        * dayRatio);
+        if (!byDay.has(dKey)) {
+          byDay.set(dKey, {
+            dateKey: dKey,
+            totalDispensed:   0,
+            totalCollected:   0,
+            totalOutstanding: 0,
+            billCount:        0,
+            bills:            [],
+          });
+        }
+        const day = byDay.get(dKey);
+        day.totalDispensed   += grp.itemsNet;
+        day.totalCollected   += dayPaid;
+        day.totalOutstanding += dayBal;
+        day.billCount        += 1;
+        day.bills.push({
+          _id:            b._id,                          // PatientBill id
+          billNumber:     b.billNumber || "(DRAFT)",
+          admissionId:    b.admissionId,
+          admissionNumber: "",                            // hydrated client-side if needed
+          UHID:           b.UHID || "",
+          patientName:    b.patientName || "",
+          grandTotal:     round2(grp.itemsNet),
+          amountPaid:     dayPaid,
+          balanceDue:     dayBal,
+          paymentMode:    null,                           // mixed at bill level
+          items:          grp.items,
+          createdAt:      grp.when,
+          cleared:        dayBal === 0,
+          source:         "INDENT",                       // ward indent (R7db-2)
+        });
+      }
+    }
+
     const days_arr = Array.from(byDay.values())
       .map(d => ({
         ...d,

@@ -162,7 +162,13 @@ export default function PharmacyIndentsPage({ embedded = false } = {}) {
 
     try {
       const enriched = await Promise.all(rawItems.map(async (it) => {
-        if (!it.drugId) return it;
+        // R7db-1: items without a drugId (manual / typed-in entries) can
+        // never resolve a FEFO batch — clear the loading flag immediately
+        // so the spinner doesn't spin forever. _availableQty:0 puts the
+        // row in "manual entry" mode (red "Out of stock" hint) but the
+        // batch + price inputs stay editable so the pharmacist can type
+        // them in by hand and release.
+        if (!it.drugId) return { ...it, _availableQty: 0 };
         try {
           const { data } = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/batches?drugId=${encodeURIComponent(it.drugId)}`);
           const list = Array.isArray(data?.data) ? data.data : [];
@@ -181,7 +187,12 @@ export default function PharmacyIndentsPage({ embedded = false } = {}) {
             _batches:      usable,
           };
         } catch (_) {
-          return it; // silent fallback — pharmacist can still type manually
+          // R7db-1: batch endpoint failed (network / 401 / 500) — still
+          // unstick the spinner. _availableQty:0 + _fetchFailed flag tells
+          // the UI to swap the hint from "Out of stock" to "Stock check
+          // failed — type batch + price manually". Release still proceeds
+          // — the pharmacist owns the override.
+          return { ...it, _availableQty: 0, _fetchFailed: true };
         }
       }));
       // Re-open with enriched items. Guard against the modal having
@@ -474,11 +485,16 @@ export default function PharmacyIndentsPage({ embedded = false } = {}) {
                   // empty (red), and a positive number when ready (slate).
                   const stockLoading = it._availableQty === null;
                   const stockOut     = it._availableQty === 0;
+                  // R7db-1: distinguish "really out of stock" vs "couldn't
+                  // check stock" (no drugId / API error). Both still need
+                  // manual entry but the message differs so the pharmacist
+                  // knows whether to expect a real stock-out or a fetch issue.
+                  const fetchFailed  = stockOut && (it._fetchFailed || !it.drugId);
                   const wantMore     = !stockLoading && !stockOut && Number(it._issuedNow) > Number(it._availableQty || 0);
                   const expirySoon   = it._expiryDate && (new Date(it._expiryDate).getTime() - Date.now()) < 60 * 86400000;
                   const stockColor =
                     stockLoading ? C.muted :
-                    stockOut     ? C.danger :
+                    stockOut     ? (fetchFailed ? C.warn : C.danger) :
                     wantMore     ? C.warn :
                                    C.muted;
                   return (
@@ -491,7 +507,8 @@ export default function PharmacyIndentsPage({ embedded = false } = {}) {
                           clicking Release (would otherwise fail server-side). */}
                       <div style={{ fontSize: 10, color: stockColor, marginTop: 3, fontFamily: "'DM Mono', monospace" }}>
                         {stockLoading && <><i className="pi pi-spin pi-spinner" style={{ fontSize: 9, marginRight: 3 }} /> fetching FEFO batch…</>}
-                        {stockOut     && <><i className="pi pi-exclamation-triangle" style={{ fontSize: 9, marginRight: 3 }} /> Out of stock</>}
+                        {stockOut && !fetchFailed && <><i className="pi pi-exclamation-triangle" style={{ fontSize: 9, marginRight: 3 }} /> Out of stock</>}
+                        {fetchFailed && <><i className="pi pi-pencil" style={{ fontSize: 9, marginRight: 3 }} /> Stock check unavailable — enter batch + price manually</>}
                         {!stockLoading && !stockOut && (
                           <>
                             <i className="pi pi-box" style={{ fontSize: 9, marginRight: 3 }} />

@@ -126,7 +126,27 @@ const BASE_TABS = [
   { key: "settings",  label: "Settings",   icon: "pi-cog" },
 ];
 
-const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+// R7da — Decimal128-aware. listSales / listDrugs / batches etc. all use
+// `.lean()` server-side, which bypasses the model's toJSON transform —
+// so Decimal128 money fields arrive as either `{$numberDecimal:"320"}`
+// (extended JSON) or raw Decimal128 BSON objects. Number(d128) → NaN
+// in either case, which surfaced as "₹NaN" in the Sales Register row.
+// This helper unwraps both shapes before formatting.
+const _toNumDec = (v) => {
+  if (v == null) return 0;
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v === "object") {
+    if (v.$numberDecimal != null) {
+      const n = Number(v.$numberDecimal); return Number.isFinite(n) ? n : 0;
+    }
+    if (typeof v.toString === "function") {
+      const n = Number(v.toString()); return Number.isFinite(n) ? n : 0;
+    }
+    return 0;
+  }
+  const n = Number(v); return Number.isFinite(n) ? n : 0;
+};
+const fmtINR = (n) => `₹${_toNumDec(n).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const daysUntil = (d) => d ? Math.floor((new Date(d).getTime() - Date.now()) / 86400000) : null;
 
@@ -3802,8 +3822,19 @@ function IPDCreditTab() {
                       </thead>
                       <tbody>
                         {day.bills.map(b => (
-                          <tr key={b._id} style={{ borderTop: `1px solid ${C.border}` }}>
-                            <td style={{ padding: "6px 12px", fontFamily: "'DM Mono', monospace", color: C.text, fontWeight: 700 }}>{b.billNumber}</td>
+                          // R7db-2 — Use a composite key. INDENT rows reuse the
+                          // PatientBill _id across multiple days, so a plain
+                          // b._id collides. Suffix with dateKey + source.
+                          <tr key={`${b._id}-${day.dateKey}-${b.source || "SALE"}`} style={{ borderTop: `1px solid ${C.border}` }}>
+                            <td style={{ padding: "6px 12px", fontFamily: "'DM Mono', monospace", color: C.text, fontWeight: 700 }}>
+                              {b.billNumber}
+                              {/* R7db-2 — source pill: INDENT (ward) vs SALE (counter) */}
+                              {b.source === "INDENT" && (
+                                <span style={{ marginLeft: 6, fontSize: 8, fontWeight: 800, color: "#fff", background: "#b45309", padding: "1px 5px", borderRadius: 3 }}>
+                                  INDENT
+                                </span>
+                              )}
+                            </td>
                             <td style={{ padding: "6px 12px", fontFamily: "'DM Mono', monospace", color: C.muted, fontSize: 10.5 }}>{b.admissionNumber || "—"}</td>
                             <td style={{ padding: "6px 12px", color: C.text }}>
                               <div style={{ fontWeight: 600 }}>{b.patientName || "—"}</div>
@@ -3927,6 +3958,54 @@ function IPDCreditTab() {
                       );
                     })}
                   </div>
+                )}
+
+                {/* R7db-2 — Ward-dispensed indent items (PatientBill PHARM-* lines).
+                    These never become PharmacySale rows — they live on the
+                    admission's IPD PatientBill via autoBillingService.onIndentReleased.
+                    Collection happens through the receptionist's bill-payment flow,
+                    not the pharmacy collect-credit endpoint, so we surface them
+                    as read-only here with a deep-link to the patient billing page. */}
+                {Array.isArray(openAdm.openBills) && openAdm.openBills.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: "#b45309", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 6, marginTop: 4 }}>
+                      Ward-Dispensed (Indent) · {fmtINR(openAdm.breakdown?.wardIndent || 0)}
+                    </div>
+                    <div style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 12px", fontSize: 10.5, color: "#92400e", marginBottom: 8, lineHeight: 1.5 }}>
+                      <i className="pi pi-info-circle" style={{ marginRight: 5 }} />
+                      Drugs released to the ward against nurse-raised indents.
+                      Charged on the IPD bill and collected at the reception
+                      billing counter (not at the pharmacy counter).
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                      {openAdm.openBills.map((b) => (
+                        <div key={b._id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 8, background: "#fffbeb" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, fontSize: 12, color: C.text }}>
+                              {b.billNumber}
+                              <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: "#fff", background: "#b45309", padding: "1px 6px", borderRadius: 4 }}>
+                                INDENT
+                              </span>
+                            </span>
+                            <span style={{ fontSize: 10, color: C.muted }}>
+                              {b.createdAt && new Date(b.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}
+                              {" · "}{b.billStatus}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.muted, marginBottom: 6 }}>
+                            <span>Pharmacy items {fmtINR(b.pharmNet)} · Bill bal {fmtINR(b.billBalance)}</span>
+                            <strong style={{ color: "#b45309" }}>Pharmacy share {fmtINR(b.pharmBalance)}</strong>
+                          </div>
+                          {Array.isArray(b.items) && b.items.length > 0 && (
+                            <div style={{ fontSize: 10.5, color: C.muted, fontStyle: "italic" }}>
+                              {b.items.slice(0, 4).map(i => `${i.serviceName || i.serviceCode} ×${i.quantity}`).join(", ")}
+                              {b.items.length > 4 && ` +${b.items.length - 4} more`}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
 
                 {/* Already-paid bills (history) */}

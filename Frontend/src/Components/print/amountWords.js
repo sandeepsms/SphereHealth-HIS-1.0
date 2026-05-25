@@ -12,8 +12,31 @@ function under1000(n) {
   return ONES[Math.floor(n / 100)] + " Hundred" + (n % 100 ? " " + under1000(n % 100) : "");
 }
 
+// R7da — Decimal128-aware number coercion. PatientBill / PharmacySale
+// money fields are stored as Mongoose Decimal128. When the backend
+// returns those docs via `.lean()` the toJSON transform is bypassed and
+// the field surfaces as the raw wire format: { $numberDecimal: "320" }.
+// Number({ $numberDecimal: "320" }) === NaN — that's the "₹NaN" the
+// pharmacist saw in receipts + the sales register. Unwrap before
+// numeric coercion so every consumer of fmtINR / amountInWords stays safe.
+function _toNumDec(v) {
+  if (v == null) return 0;
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v === "string") { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; }
+  if (typeof v === "object") {
+    // Mongo wire format
+    if (typeof v.$numberDecimal === "string") return parseFloat(v.$numberDecimal) || 0;
+    // Mongoose Decimal128 instance — .toString() works on both server + client
+    if (typeof v.toString === "function") {
+      const n = parseFloat(v.toString());
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return 0;
+}
+
 export function amountInWords(amount) {
-  const num = Math.max(0, Math.floor(Number(amount) || 0));
+  const num = Math.max(0, Math.floor(_toNumDec(amount)));
   if (num === 0) return "Zero Rupees Only";
   let n = num;
   const parts = [];
@@ -24,4 +47,7 @@ export function amountInWords(amount) {
   return parts.join(" ") + " Rupees Only";
 }
 
-export const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+// R7da — _toNumDec ensures Decimal128 wire format ({$numberDecimal:"320"})
+// is unwrapped before toLocaleString, preventing "₹NaN" on bill prints
+// and the sales register.
+export const fmtINR = (n) => `₹${_toNumDec(n).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;

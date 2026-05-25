@@ -74,19 +74,28 @@ class OPDController {
     }
   }
 
-  // R7cr — GET /opd/uhid/:UHID/today-rx
-  // Pharmacy-side fast lookup: pharmacist types a UHID, gets today's
-  // OPD visit(s) for that patient with diagnosis + prescribed medicines
-  // so they can dispense without hunting through the doctor's full
-  // assessment screen. Returns [] when the patient has no visit today.
+  // R7cr / R7cx — GET /opd/uhid/:UHID/today-rx?days=N
+  // Pharmacy-side fast lookup: pharmacist types a UHID, gets the
+  // recent OPD visit(s) for that patient with diagnosis + prescribed
+  // medicines so they can dispense without hunting through the
+  // doctor's full assessment screen. Default window: last 7 days
+  // (was "today only" pre-R7cx; that was too narrow — patients often
+  // walk in 1-2 days after the visit). Caller can override via
+  // ?days=N (1..30). Empty array means no qualifying visits in the
+  // window — handled as a friendly empty state by the UI.
   async getTodayPrescriptionsByUHID(req, res) {
     try {
       const UHID = String(req.params.UHID || "").trim().toUpperCase();
       if (!UHID) {
         return res.status(400).json({ success: false, message: "UHID is required" });
       }
-      const visits = await opdService.getTodayPrescriptionsByUHID(UHID);
-      res.status(200).json({ success: true, data: visits });
+      const days = req.query?.days ? Number(req.query.days) : 7;
+      const visits = await opdService.getTodayPrescriptionsByUHID(UHID, days);
+      res.status(200).json({
+        success: true,
+        data: visits,
+        meta: { windowDays: Math.max(1, Math.min(30, Number(days) || 7)) },
+      });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }
