@@ -533,16 +533,26 @@ function TPAServiceManagement() {
                         border: `1.5px solid ${C.border}`,
                         borderRadius: 9,
                         padding: 0,
-                        minHeight: 44,
+                        height: 44,
                         display: "flex",
                         alignItems: "center",
                         background: editingService ? "#f1f5f9" : "#fff",
                       }},
+                      // R7di — the visible placeholder/value lives in pt.input
+                      // (single-select Dropdown's label IS its <input>), so set
+                      // the height + line-height to the parent so the text
+                      // sits dead in the middle. Margin:0 kills PrimeReact's
+                      // default top/bottom margin that was pushing it upward.
                       input: { style: {
                         fontSize: 13.5,
                         color: C.text,
-                        padding: "11px 14px",
-                        lineHeight: 1.4,
+                        padding: "0 14px",
+                        margin: 0,
+                        height: "100%",
+                        lineHeight: "42px",
+                        boxSizing: "border-box",
+                        background: "transparent",
+                        border: "none",
                       }},
                     }}
                   />
