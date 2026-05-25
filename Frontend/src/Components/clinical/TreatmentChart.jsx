@@ -37,6 +37,85 @@ const HAM_KW = [
 ];
 const isHAM = (name = "") => HAM_KW.some(k => name.toLowerCase().includes(k));
 
+/* R7bq-J3 — Same predicate as NurseOrdersPanel.todayActionable: a course
+   order is "actionable today" only if it has a non-STAT pending/delayed
+   slot scheduled for today. When false but order.status === "InProgress",
+   we want the row to read "Today Done · course continues" instead of
+   the plain "InProgress" amber/blue pill. Local time, matches the rest
+   of the codebase's setHours(0,0,0,0) convention. */
+const todayActionable = (o) => {
+  if (!Array.isArray(o?.administrationRecord) || !o.administrationRecord.length) return true;
+  const start = new Date(); start.setHours(0,0,0,0);
+  const end   = new Date(start); end.setDate(end.getDate() + 1);
+  return o.administrationRecord.some(a => {
+    if (a.isStatDose) return false;
+    const d = a.scheduledDate ? new Date(a.scheduledDate) : null;
+    if (!d || d < start || d >= end) return false;
+    return ["pending","delayed"].includes(a.status);
+  });
+};
+
+/* R7bq-L — Live infusion volume calculation. Walks the rate-change
+   timeline to compute "how much has been infused right now". Each
+   segment runs at its own rate; total = sum of (hours × rate). Caps
+   at totalVolume. Returns { ml, percent, etaMinutes, exhausted }.
+
+   This is the source of truth for the volume progress bar in the
+   nurse Infusion tab and drives the auto-stop when the bag is empty. */
+function computeInfusionProgress(order, atTime = new Date()) {
+  if (!order || !order.infusionStarted) {
+    return { ml: 0, percent: 0, etaMinutes: null, exhausted: false, totalVol: 0 };
+  }
+  const totalVol = parseFloat(order.orderDetails?.totalVolume) || 0;
+  const start = new Date(order.infusionStarted);
+  const stop  = order.infusionStopped ? new Date(order.infusionStopped) : null;
+  // If already stopped, freeze the calc at stop time. If running, use
+  // current time clamped to "now" so we never project into the future
+  // even if the client clock drifts.
+  const evalEnd = stop ? stop : (atTime || new Date());
+  if (evalEnd <= start) {
+    return { ml: 0, percent: 0, etaMinutes: null, exhausted: false, totalVol };
+  }
+
+  // Initial rate = orderDetails.rate (doctor's prescription); subsequent
+  // rateChanges segments override from their `changedAt` timestamp.
+  const parseR = (v) => {
+    const n = parseFloat(String(v ?? "").replace(/[^\d.\-]/g, ""));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+  let rate = parseR(order.orderDetails?.rate);
+  let segStart = start;
+  let totalMl = 0;
+
+  const changes = (order.rateChanges || [])
+    .map(rc => ({ t: new Date(rc.changedAt), rate: parseR(rc.newRate) }))
+    .filter(c => c.t > start && c.t < evalEnd && c.rate > 0)
+    .sort((a, b) => a.t - b.t);
+
+  for (const c of changes) {
+    const hrs = (c.t - segStart) / 3_600_000;
+    totalMl += hrs * rate;
+    segStart = c.t;
+    rate = c.rate;
+  }
+  // Final segment to evalEnd
+  const finalHrs = (evalEnd - segStart) / 3_600_000;
+  totalMl += finalHrs * rate;
+
+  // Cap at totalVol
+  const exhausted = totalVol > 0 && totalMl >= totalVol;
+  const ml = totalVol > 0 ? Math.min(totalMl, totalVol) : totalMl;
+  const percent = totalVol > 0 ? Math.min(100, Math.round((ml / totalVol) * 100 * 10) / 10) : 0;
+
+  // ETA — how many minutes until totalVol reached, at current rate
+  let etaMinutes = null;
+  if (totalVol > 0 && !exhausted && !stop && rate > 0) {
+    const remaining = totalVol - ml;
+    etaMinutes = Math.max(0, Math.round((remaining / rate) * 60));
+  }
+  return { ml: Math.round(ml * 10) / 10, percent, etaMinutes, exhausted, totalVol, currentRate: rate };
+}
+
 /* ── Frequency → scheduled times ── */
 const FREQ_TIMES = {
   "OD":         ["08:00"],
@@ -226,6 +305,16 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     autoTimer.current = setInterval(() => fetchOrders(true), 30000);
     return () => clearInterval(autoTimer.current);
   }, [fetchOrders]);
+
+  /* R7bq-L — Live infusion tick. We re-render every 30s so the Volume
+     Progress bar walks forward in real time without waiting for the
+     parent fetch to land. `now` is a Date stamped at each tick and
+     read by computeInfusionProgress to compute the current ml infused. */
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(t);
+  }, []);
 
   /* Escape key closes any open modal */
   useEffect(() => {
@@ -436,13 +525,45 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     } finally { setInfSaving(false); }
   };
 
-  /* ── Restart infusion ── */
+  /* ── Restart infusion (resume held) ── */
   const restartInfusion = async (order) => {
     try {
       await axios.patch(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}`, { status: "InProgress" });
       toast.success("Infusion restarted");
       await fetchOrders(true);
     } catch { toast.error("Failed"); }
+  };
+
+  /* R7bq-L — Start a FRESH BAG of the same regimen. Clones the
+     completed/stopped order as a new DoctorOrder (same drug, same
+     diluent, same rate, same totalVolume) with status=Active and a
+     new infusionStarted=now. Used when the patient finishes a 500 ml
+     bag and needs another to continue treatment. The server endpoint
+     POST /:id/restart bypasses the 30-second dedup guard. */
+  const restartBag = async (order) => {
+    if (!window.confirm(`Start a FRESH BAG of ${order.orderDetails?.medicineName || "this infusion"} at ${order.currentRate || order.orderDetails?.rate || "—"} ml/hr?`)) return;
+    try {
+      const { data } = await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}/restart`, {});
+      toast.success(`New bag started — ${data?.data?.orderDetails?.medicineName || "infusion"}`);
+      await fetchOrders(true);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Failed to restart bag");
+    }
+  };
+
+  /* R7bq-L — Auto-stop a running infusion when computed volume reaches
+     totalVolume. Called by the volume-bar render path the first time
+     `exhausted` flips true. Idempotent — re-firing is harmless because
+     the route only flips Active→Completed and stamps infusionStopped. */
+  const autoStopExhausted = async (order, mlInfused) => {
+    try {
+      await axios.patch(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}`, {
+        status: "Completed",
+        infusionStopped: new Date().toISOString(),
+        stopReason: `Total volume infused (${Math.round(mlInfused)} ml) — auto-stopped by Treatment Chart`,
+      });
+      await fetchOrders(true);
+    } catch (_) { /* non-fatal — the cron will catch up on next tick */ }
   };
 
   /* ═══════════════════════════════════════
@@ -901,6 +1022,14 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                               </div>
                             )}
                             <div style={{ color: isStopped ? C.muted : C.text }}>{order.orderDetails?.medicineName || "—"}</div>
+                            {/* R7bq-1 — IV dilution + infuse-over chip so nurse sees the drip rate
+                                inline on the MAR row. On dose given, this drives the auto I/O entry. */}
+                            {order.orderDetails?.dilutionVolume > 0 && (
+                              <div style={{ fontSize: 9.5, fontWeight: 600, color: "#0369a1", background: "#e0f2fe", border: "1px solid #bae6fd", padding: "2px 6px", borderRadius: 4, marginTop: 3, display: "inline-block" }}>
+                                💧 {order.orderDetails.dilutionVolume} ml {order.orderDetails.dilutionFluid || "NS 0.9%"}
+                                {order.orderDetails.infuseOverMinutes > 0 && <> · {order.orderDetails.infuseOverMinutes} min</>}
+                              </div>
+                            )}
                             <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{order.orderDetails?.notes}</div>
                             {/* R7m: Prescribing doctor — surfaced inline so
                                 the nurse can see who ordered each med
@@ -964,9 +1093,18 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
 
                           {/* Order status */}
                           <td style={{ ...TD }}>
-                            <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: isStopped ? C.redL : order.status === "Completed" ? C.greenL : order.status === "InProgress" ? C.blueL : C.amberL, color: isStopped ? C.red : order.status === "Completed" ? C.green : order.status === "InProgress" ? C.blue : C.amber }}>
-                              {order.status}
-                            </span>
+                            {/* R7bq-J3 — Swap the plain "InProgress" pill for a
+                                "Today Done · course continues" badge when the
+                                course is still running but today's slot is done. */}
+                            {order.status === "InProgress" && !isStopped && !todayActionable(order) ? (
+                              <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: C.greenL, color: C.green, border: `1px solid ${C.green}33` }}>
+                                Today Done · course continues
+                              </span>
+                            ) : (
+                              <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: isStopped ? C.redL : order.status === "Completed" ? C.greenL : order.status === "InProgress" ? C.blueL : C.amberL, color: isStopped ? C.red : order.status === "Completed" ? C.green : order.status === "InProgress" ? C.blue : C.amber }}>
+                                {order.status}
+                              </span>
+                            )}
                             {order.priority === "STAT" && (
                               <div style={{ marginTop: 3, background: C.redL, color: C.red, borderRadius: 3, padding: "1px 5px", fontSize: 9, fontWeight: 800, display: "inline-block" }}>STAT</div>
                             )}
@@ -1240,27 +1378,47 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                         </div>
                       </div>
 
-                      {/* Volume progress bar — shown when totalVolume is prescribed */}
+                      {/* R7bq-L — Live Volume Progress bar.
+                          Computed from infusionStarted + rateChanges timeline ×
+                          elapsed time (capped at totalVolume). Ticks every 30s
+                          via the `now` state set above. Auto-stops the order
+                          when the bag is exhausted. The legacy "last monitoring
+                          entry" reading was static at 0 because nurses rarely
+                          back-fill volumeInfused on the per-hour monitoring
+                          form — this read computes the same number the cron
+                          would write. */}
                       {(() => {
-                        const totalVol   = parseFloat(order.orderDetails?.totalVolume);
-                        const lastEntry  = order.infusionMonitoring?.slice(-1)[0];
-                        const infusedVol = parseFloat(lastEntry?.volumeInfused || 0);
-                        if (!totalVol || isStopped) return null;
-                        const pct = Math.min(100, Math.round((infusedVol / totalVol) * 100));
-                        const almostDone = pct >= 80;
-                        const barColor   = pct >= 100 ? C.green : almostDone ? C.amber : C.teal;
+                        const totalVol = parseFloat(order.orderDetails?.totalVolume);
+                        if (!totalVol) return null;
+                        const prog = computeInfusionProgress(order, now);
+                        const pct = prog.percent;
+                        const almostDone = pct >= 80 && pct < 100;
+                        const barColor   = prog.exhausted ? C.green : almostDone ? C.amber : C.teal;
+                        // Auto-stop on first tick where exhausted is true and
+                        // the order is still considered live. Defer to avoid
+                        // setState-during-render — fire on next tick.
+                        if (prog.exhausted && !isStopped && order.status !== "Completed") {
+                          setTimeout(() => autoStopExhausted(order, prog.ml), 0);
+                        }
                         return (
-                          <div style={{ padding: "6px 16px", background: "#f8fafc", borderBottom: `1px solid ${C.border}` }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                              <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>Volume Progress</span>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: barColor }}>
-                                {infusedVol}ml / {totalVol}ml ({pct}%)
-                                {almostDone && pct < 100 && <span style={{ marginLeft: 6, color: C.amber }}> ⚠ Almost complete</span>}
-                                {pct >= 100 && <span style={{ marginLeft: 6, color: C.green }}> ✓ Course complete</span>}
+                          <div style={{ padding: "8px 16px", background: "#f8fafc", borderBottom: `1px solid ${C.border}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5, flexWrap: "wrap", gap: 8 }}>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>
+                                Volume Progress {!isStopped && <span style={{ color: C.teal, marginLeft: 4 }}>● LIVE</span>}
+                              </span>
+                              <span style={{ fontSize: 11.5, fontWeight: 700, color: barColor, fontFamily: "'DM Mono', monospace" }}>
+                                {prog.ml.toFixed(1)} ml / {totalVol} ml ({pct}%)
+                                {prog.etaMinutes != null && !prog.exhausted && (
+                                  <span style={{ marginLeft: 8, color: C.muted, fontWeight: 600, fontFamily: "inherit" }}>
+                                    · ETA {prog.etaMinutes >= 60 ? `${Math.floor(prog.etaMinutes/60)}h ${prog.etaMinutes%60}m` : `${prog.etaMinutes}m`}
+                                  </span>
+                                )}
+                                {almostDone && <span style={{ marginLeft: 6, color: C.amber }}> ⚠ Almost complete</span>}
+                                {prog.exhausted && <span style={{ marginLeft: 6, color: C.green }}> ✓ Bag complete</span>}
                               </span>
                             </div>
-                            <div style={{ height: 6, background: "#e2e8f0", borderRadius: 4, overflow: "hidden" }}>
-                              <div style={{ height: "100%", width: `${pct}%`, background: barColor, borderRadius: 4, transition: "width .4s ease" }} />
+                            <div style={{ height: 8, background: "#e2e8f0", borderRadius: 4, overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: `${pct}%`, background: barColor, borderRadius: 4, transition: "width .8s ease" }} />
                             </div>
                           </div>
                         );
@@ -1344,11 +1502,17 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                         </div>
                       )}
 
-                      {/* Nurse action buttons */}
-                      {nurseMode && (
+                      {/* Nurse action buttons.
+                          R7bq-L — `isFinished` = stopped OR auto-completed
+                          (bag empty). When the bag is finished we hide the
+                          live action buttons (Rate Change / Hold / Stop) and
+                          surface the Restart Fresh Bag button instead. */}
+                      {nurseMode && (() => {
+                        const isFinished = isStopped || order.status === "Completed";
+                        return (
                         <div style={{ padding: "10px 16px", background: "#f8fafc", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                           <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginRight: 4 }}>Nursing Actions:</span>
-                          {!isStopped && (
+                          {!isFinished && (
                             <>
                               <button onClick={() => openAction(order, "rate-change")}
                                 style={{ ...ACTBTN, background: C.blueL, color: C.blue, border: `1.5px solid ${C.blueB}` }}>
@@ -1361,7 +1525,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                               {isHeld ? (
                                 <button onClick={() => restartInfusion(order)}
                                   style={{ ...ACTBTN, background: C.greenL, color: C.green, border: `1.5px solid ${C.greenB}` }}>
-                                  <i className="pi pi-play" style={{ fontSize: 10 }} /> Restart
+                                  <i className="pi pi-play" style={{ fontSize: 10 }} /> Resume
                                 </button>
                               ) : (
                                 <button onClick={() => holdInfusion(order)}
@@ -1375,13 +1539,21 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                               </button>
                             </>
                           )}
-                          {isStopped && (
-                            <span style={{ fontSize: 12, fontWeight: 700, color: C.red }}>
-                              ⏹ Infusion stopped: {order.stopReason || "—"}
-                            </span>
+                          {isFinished && (
+                            <>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: isStopped ? C.red : C.green, flex: "1 1 auto" }}>
+                                {isStopped ? "⏹" : "✓"} {isStopped ? "Stopped" : "Bag complete"}: {order.stopReason || (order.status === "Completed" ? "Total volume infused" : "—")}
+                              </span>
+                              {/* R7bq-L — Restart Bag button: continue same regimen with a fresh bag */}
+                              <button onClick={() => restartBag(order)}
+                                style={{ ...ACTBTN, background: C.tealL, color: C.teal, border: `1.5px solid ${C.tealB}`, marginLeft: "auto" }}>
+                                <i className="pi pi-replay" style={{ fontSize: 10 }} /> Restart Fresh Bag
+                              </button>
+                            </>
                           )}
                         </div>
-                      )}
+                        );
+                      })()}
 
                       {/* Doctor action buttons for infusions */}
                       {!nurseMode && (

@@ -37,6 +37,23 @@ class AdmissionController {
       billing = { fired: false, error: e?.message || "Auto-billing failed" };
     }
 
+    // R7bx-3 — Auto-populate NABH COP.16 Readmission register. The emitter
+    // looks up the previous admission for this UHID and no-ops if none
+    // exists or the gap exceeds the configured window (30 days by default),
+    // so it's safe to call on every admission create. Non-blocking — never
+    // rolls back the clinical admission on register failure.
+    try {
+      const { emitReadmission } = require("../../services/Compliance/nabhRegisterEmitter");
+      const Patient = require("../../models/Patient/patientModel");
+      const patient = admission.patientId
+        ? await Patient.findById(admission.patientId).select("_id UHID fullName name age gender sex").lean()
+        : { _id: admission.patientId, UHID: admission.UHID, fullName: admission.patientName, age: admission.age, sex: admission.gender };
+      emitReadmission({ admission, patient: patient || {}, actor: req.user || {} })
+        .catch((e) => console.error("[admission] emitReadmission error:", e?.message));
+    } catch (e) {
+      console.error("[admission] Readmission emit wiring failed:", e?.message);
+    }
+
     return res.status(201).json({
       success: true,
       message: billing.fired
@@ -582,27 +599,45 @@ class AdmissionController {
    */
   saveNurseInitialAssessment = handle(async (req, res) => {
     const Admission = require("../../models/Patient/admissionModel");
-    const admission = await Admission.findById(req.params.id);
-    if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
+    const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
 
-    // Persist the full payload on a sub-doc so the assessment is traceable.
-    if (!admission.nurseInitialAssessment || typeof admission.nurseInitialAssessment !== "object") {
-      admission.nurseInitialAssessment = {};
-    }
-    Object.assign(admission.nurseInitialAssessment, req.body || {}, { savedAt: new Date() });
-    admission.markModified("nurseInitialAssessment");
+    // R7bn-2 / D10-fix: atomic $set instead of findById → mutate → save.
+    // Pre-fix, two clients (nurse + doctor) saving their own initial
+    // assessments at the same instant would both load the same stale
+    // admission doc and the last .save() would clobber the other's
+    // changes. With $set on dotted paths we only touch the keys we own.
+    const nurseAssessment = { ...(req.body || {}), savedAt: new Date() };
+    const now = new Date();
+    const nurseName = req.body?.signoff?.name || req.body?.nurseName || "";
 
-    // Flip the gate flag too.
-    if (!admission.initialAssessment || typeof admission.initialAssessment !== "object") {
-      admission.initialAssessment = {};
-    }
-    admission.initialAssessment.nurseCompleted   = true;
-    admission.initialAssessment.nurseCompletedAt = new Date();
-    admission.initialAssessment.nurseName        = req.body?.signoff?.name || req.body?.nurseName || "";
-    admission.markModified("initialAssessment");
+    const updated = await Admission.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: {
+          nurseInitialAssessment: nurseAssessment,
+          "initialAssessment.nurseCompleted":   true,
+          "initialAssessment.nurseCompletedAt": now,
+          "initialAssessment.nurseName":        nurseName,
+        },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!updated) return res.status(404).json({ success: false, message: "Admission not found" });
 
-    await admission.save();
-    return res.json({ success: true, data: admission.nurseInitialAssessment });
+    // R7bn-1 / D9-fix: emit ClinicalAudit row for the NABH AAC.7 trail.
+    emitClinicalAudit({
+      req,
+      event: "INITIAL_ASSESSMENT_NURSE_SIGNED",
+      UHID: updated.UHID,
+      admissionId: updated._id,
+      patientId: updated.patientId,
+      patientName: updated.patientName,
+      targetType: "Admission.nurseInitialAssessment",
+      targetId: updated._id,
+      after: { nurseName, savedAt: now },
+    });
+
+    return res.json({ success: true, data: updated.nurseInitialAssessment });
   });
 
   /**
@@ -642,6 +677,27 @@ class AdmissionController {
       { new: true, runValidators: true },
     );
     if (!admission) return res.status(404).json({ success: false, message: "Admission not found" });
+
+    // R7bn-1 / D9-fix: ClinicalAudit emit on Initial Assessment sign-off.
+    // Both doctor + nurse signings cleared the NABH COP.1/COP.2 gate, so
+    // surveyors need a chronological trail showing who signed when.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: role === "doctor"
+          ? "INITIAL_ASSESSMENT_DOCTOR_SIGNED"
+          : "INITIAL_ASSESSMENT_NURSE_SIGNED",
+        UHID: admission.UHID,
+        admissionId: admission._id,
+        patientId: admission.patientId,
+        patientName: admission.patientName,
+        targetType: "Admission.initialAssessment",
+        targetId: admission._id,
+        after: { role, name, signedAt: now },
+      });
+    } catch (_) { /* silent — audit emit is non-blocking */ }
+
     return res.json({ success: true, message: `${role} initial assessment marked complete`, data: admission.initialAssessment });
   });
 
@@ -782,6 +838,31 @@ class AdmissionController {
     // never runs for them.
     const Admission   = require("../../models/Patient/admissionModel");
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+
+    // R7cu — HARD pharmacy-credit gate. Before flipping the stage to
+    // BillCleared, confirm there is NO outstanding pharmacy bill for
+    // this admission. Without this gate, a discharged patient walks
+    // out and the pharmacy chases family for ₹X that should have been
+    // collected at the counter — the user explicitly flagged this as
+    // unacceptable ("pharmacy IPD credit ledger fully paid hone tak
+    // discharge possible nhi hai"). Pharmacist clears the credit via
+    // Pharmacy → IPD Credit tab; only THEN the bill clearance can
+    // proceed.
+    const pharmacyCtrl = require("../Pharmacy/pharmacyController");
+    const phOutstanding = await pharmacyCtrl.getOutstandingForAdmission(req.params.id);
+    if (phOutstanding.total > 0) {
+      return res.status(409).json({
+        success: false,
+        code:    "PHARMACY_OUTSTANDING",
+        message: `Pharmacy outstanding ₹${phOutstanding.total.toFixed(2)} on ${phOutstanding.count} bill(s). ` +
+                 `Collect via Pharmacy → IPD Credit before clearing the final bill.`,
+        pharmacyOutstanding: phOutstanding.total,
+        pharmacyBillCount:   phOutstanding.count,
+        // Bill numbers so the frontend can deep-link the pharmacist.
+        pharmacyBillNumbers: phOutstanding.sales.map(s => s.billNumber).filter(Boolean),
+      });
+    }
+
     const set = {
       "dischargeWorkflow.stage":         "BillCleared",
       "dischargeWorkflow.billClearedAt": new Date(),
@@ -867,6 +948,23 @@ class AdmissionController {
           const patientShare = toNum(bill.patientPayableAmount) || toNum(bill.netAmount) || 0;
           bill.billStatus    = paid + 0.5 >= patientShare ? "PAID" : "PARTIAL";
           if (bill.billStatus === "PAID") bill.paidAt = new Date();
+          // R7bp-FIX (audit P0 — billNumber dup-null E11000): the bill we
+          // resolved above may still be DRAFT (the cashier never finalised
+          // it on the OPD desk — discharge is closing it directly). The
+          // PatientBill model now enforces `billStatus !== "DRAFT" ⇒
+          // billNumber present` via a path validator, so flipping a DRAFT
+          // bill to PAID/PARTIAL without stamping a billNumber first
+          // ValidationErrors on save. Use the centralised service-layer
+          // helper to stamp one atomically (idempotent — no-op if the
+          // bill already carries a number from an earlier finalise).
+          try {
+            const billingSvc = require("../../services/Billing/billingService");
+            if (typeof billingSvc.ensureBillNumberForNonDraft === "function") {
+              await billingSvc.ensureBillNumberForNonDraft(bill);
+            }
+          } catch (e) {
+            console.warn("[admissionController] ensureBillNumberForNonDraft failed (proceeding — model validator will catch):", e?.message || e);
+          }
           await bill.save();
         }
       }

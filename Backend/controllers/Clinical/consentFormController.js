@@ -118,6 +118,25 @@ class ConsentFormController {
         message: `Consent is no longer PENDING (now ${exists.status}) — cannot sign`,
       });
     }
+
+    // R7bn-1 / D9-fix + D1-fix: cross-patient ClinicalAudit emit on
+    // consent sign. Pre-fix the embedded auditTrail[] held the record
+    // but was invisible to cross-admission audit queries.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "CONSENT_SIGNED",
+        UHID: form.UHID,
+        admissionId: form.admissionId,
+        patientId: form.patientId,
+        patientName: form.patientName,
+        targetType: "ConsentForm",
+        targetId: form._id,
+        after: { consentType: form.consentType, signedAt: form.signedAt, signedByName: form.signedByName },
+      });
+    } catch (_) { /* silent */ }
+
     return res.json({ success: true, data: form, message: "Consent form signed" });
   });
 

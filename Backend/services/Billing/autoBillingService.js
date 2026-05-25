@@ -761,29 +761,47 @@ async function createTrigger(config) {
       // retry/move-it/cancel-it without it silently disappearing.
       // Most likely cause: closed/frozen bill (PAID/REFUNDED), or a
       // Decimal128 / enum validation error inside save().
+      //
+      // R7cm: DON'T clobber a status the inner addItemToBill flow already
+      // set. When the bill is PAID / CANCELLED / REFUNDED, the inner guard
+      // (≈line 437) cleanly marks the trigger as `status:"skipped"` with a
+      // clear skipReason ("Bill paid — no new charges accepted") — that's
+      // a LEGITIMATE business outcome, not a stuck trigger. Pre-R7cm this
+      // outer block unconditionally overwrote "skipped" with
+      // "pending-review", surfacing every "add-to-closed-bill" attempt as
+      // an alarming red flag in the Stuck Triggers tile (e.g. Admin adds a
+      // manual charge after the bill auto-finalised via advance settlement
+      // — perfectly normal). Use a conditional findOneAndUpdate so the
+      // skipped state is preserved atomically.
       const reason = `addItemToBill returned null for ${trigger.serviceCode} on bill ${bill?._id} (status=${bill?.billStatus})`;
       console.warn(`[AutoBilling] ${reason}`);
-      await BillingTrigger.findByIdAndUpdate(trigger._id, {
-        status:       "pending-review",
-        reviewReason: reason,
-        reviewedAt:   new Date(),
-      }).catch(() => { /* best-effort flag */ });
+      const escalated = await BillingTrigger.findOneAndUpdate(
+        { _id: trigger._id, status: { $ne: "skipped" } },
+        { $set: { status: "pending-review", reviewReason: reason, reviewedAt: new Date() } },
+        { new: true },
+      ).catch(() => null);
       // R7bj-F5 / R7bi-6-TBA-CRIT-1: TRIGGER_PENDING_REVIEW audit.
-      try {
-        const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
-        await emitBillingAudit({
-          event:       "TRIGGER_PENDING_REVIEW",
-          UHID:        trigger.UHID,
-          admissionId: trigger.admissionId,
-          triggerId:   trigger._id,
-          billId:      bill?._id,
-          amount:      trigger.totalAmount,
-          actorName:   "AutoBilling",
-          actorRole:   "System",
-          reason,
-          after:       { status: "pending-review", serviceCode: trigger.serviceCode, billStatus: bill?.billStatus },
-        });
-      } catch (_) { /* non-fatal */ }
+      // R7cm: only emit the audit row when we actually escalated to
+      // pending-review. If the trigger was already "skipped" (PAID/closed
+      // bill), the inner branch's CHARGE_SKIPPED audit covers it — no
+      // need to double-emit a misleading pending-review event.
+      if (escalated) {
+        try {
+          const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+          await emitBillingAudit({
+            event:       "TRIGGER_PENDING_REVIEW",
+            UHID:        trigger.UHID,
+            admissionId: trigger.admissionId,
+            triggerId:   trigger._id,
+            billId:      bill?._id,
+            amount:      trigger.totalAmount,
+            actorName:   "AutoBilling",
+            actorRole:   "System",
+            reason,
+            after:       { status: "pending-review", serviceCode: trigger.serviceCode, billStatus: bill?.billStatus },
+          });
+        } catch (_) { /* non-fatal */ }
+      }
     } else {
       const reason = `getOrCreateBill returned null for admission=${admissionId} patientType=${patientType}`;
       console.warn(`[AutoBilling] ${reason} — trigger ${trigger?._id} (${trigger.serviceCode}) flagged pending-review`);
@@ -1019,18 +1037,19 @@ async function onMARAdministration(marDoc, medication, administrationEntry) {
   // sourceType filter never matches them — but new rows are guaranteed
   // to dedup correctly going forward.
   //
-  // R7az-HIGH-2 (D6-HIGH-2): tighten the dedup window to 6 hours. The
-  // R7au 24h window was too wide for BD-frequency drugs (8h apart): a
-  // second legitimate dose at 16:00 was being mistakenly treated as a
-  // duplicate of the 08:00 dose's pharmacy reservation. 6h is short
-  // enough that BD doses (every 12h) each get billed, but wide enough
-  // that the typical "MAR-given immediately after pharmacy-release"
-  // pattern still dedups. Hospitals running QID frequency (every 6h)
-  // may want to revisit — current behaviour: first dose dedups against
-  // the dispense, subsequent doses bill as PHARM-* MAR rows.
+  // R7bn-4 / D7-4-fix: tighten dedup window from 6h → 2h. The R7az
+  // 6h window dedups BD (q12h) doses correctly but breaks QID (q6h):
+  // the second QID dose at +6h is treated as a duplicate of the
+  // first dose's pharmacy reservation. With a 2h window, only the
+  // "MAR-given immediately after pharmacy-release" case dedups —
+  // every subsequent dose (BD/TDS/QID/q4h) bills as a separate
+  // PHARM-* MAR row. Risk: if pharmacy releases > 2h before the
+  // nurse administers (rare — typically minutes), the first dose
+  // will bill twice. That risk is preferable to under-billing
+  // entire QID schedules.
   try {
     const BillingTrigger = require("../../models/Billing/BillingTrigger");
-    const since = new Date(Date.now() - 6 * 60 * 60 * 1000); // 6h
+    const since = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2h (R7bn)
     const reservation = await BillingTrigger.findOne({
       admissionId,
       serviceCode: service.serviceCode,

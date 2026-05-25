@@ -2,12 +2,13 @@
  * NurseOrdersPanel.jsx
  * Step-based doctor order workflow for nurses — mirrors the NABH audit-ready order prototype.
  * Each order type has sequential steps; each step records nurse name + timestamp.
- * Props: { UHID, visitId, onConsentRequest }
+ * Props: { UHID, visitId (accepted but ignored — see R7bo-LIVE-fix-3), onConsentRequest, refreshTrigger }
  */
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
 
 const C = {
   purple: "#7c3aed", nurse: "#db2777", teal: "#0f766e",
@@ -85,7 +86,7 @@ function fmtTime(dateStr) {
 }
 
 // ── Single order card with step buttons + inline audit trail ──────────────────
-function OrderCard({ order, nurseName, onStepDone, onConsentRequest }) {
+function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = false }) {
   const [expanded, setExpanded] = useState(false);
   const typeColor = TYPE_COLOR[order.orderType] || C.muted;
   const priorityS = PRIORITY_STYLE[order.priority] || PRIORITY_STYLE.Routine;
@@ -183,7 +184,7 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest }) {
         </div>
 
         {/* ── Step buttons ── */}
-        {!allDone && (
+        {!allDone && !readOnly && (
           <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             {steps.map((step, i) => {
               const done = i < doneCount;
@@ -209,6 +210,39 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest }) {
               );
             })}
           </div>
+        )}
+
+        {/* ── Read-only step pills (R7bq-J3) ──
+            Same step names + ✓ for done, but no click handler and a flat
+            gray look so the nurse sees the workflow at a glance without
+            being prompted to act on a course-day that's already complete. */}
+        {!allDone && readOnly && (
+          <>
+            <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              {steps.map((step, i) => {
+                const done = i < doneCount;
+                return (
+                  <span
+                    key={step}
+                    style={{
+                      padding: "5px 12px", fontSize: 11, fontWeight: 600,
+                      borderRadius: 6, background: done ? "#d1fae5" : "#f1f5f9",
+                      color: done ? C.success : "#94a3b8",
+                      opacity: done ? 1 : 0.6,
+                      display: "flex", alignItems: "center", gap: 4,
+                      cursor: "default",
+                    }}>
+                    {done ? <span>✓</span> : null}
+                    {step}
+                  </span>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 10.5, fontWeight: 700, color: C.success, display: "flex", alignItems: "center", gap: 5 }}>
+              <i className="pi pi-check-circle" style={{ fontSize: 11 }} />
+              Today's actions complete
+            </div>
+          </>
         )}
 
         {/* ── Take Consent button — always visible when consent is pending (even after steps done) ── */}
@@ -278,6 +312,13 @@ function MedOrderCard({ order, inProgress }) {
           {details.route && <span> · {details.route}</span>}
           {details.duration && <span> · {details.duration}</span>}
         </div>
+        {/* R7bq-1 — show IV dilution + infuse-over so nurse knows the drip rate at the MAR card */}
+        {details.dilutionVolume > 0 && (
+          <div style={{ fontSize: 10.5, fontWeight: 600, color: "#0369a1", background: "#e0f2fe", border: "1px solid #bae6fd", padding: "3px 8px", borderRadius: 5, alignSelf: "flex-start", marginTop: 2 }}>
+            💧 Dilute in <strong>{details.dilutionVolume} ml {details.dilutionFluid || "NS 0.9%"}</strong>
+            {details.infuseOverMinutes > 0 && <> · infuse over <strong>{details.infuseOverMinutes} min</strong></>}
+          </div>
+        )}
         <div style={{ fontSize: 10, color: "#94a3b8" }}>
           Ordered by {order.orderedBy || "Doctor"} · {timeAgo(order.createdAt)}
         </div>
@@ -297,17 +338,41 @@ function fmtNavDate(d) {
 }
 
 // ── Main panel ────────────────────────────────────────────────────────────────
-export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refreshTrigger }) {
+// R7bo-LIVE-fix-3 — `visitId` is intentionally dropped from the
+// destructure (callers still pass it; React silently ignores unknown
+// props). The server-side `visitId` filter caused "No orders yet" when
+// the parent's `patient.ipdNo || patient.admissionNumber || patient._id`
+// resolved to a different identifier than the doctor stamped on the
+// order. UHID + the in-component date filter are sufficient scoping
+// (Bug A guarantees one active admission per UHID).
+export default function NurseOrdersPanel({ UHID, onConsentRequest, refreshTrigger }) {
+  // R7bq-I — Auto-resolve the acting user from AuthContext so Admin / Nurse
+  // don't have to type their name into a textbox before acting on an order.
+  // The system already knows who's logged in; the JWT-decoded user gives us
+  // fullName + role. Keep the field editable so a senior who's logging on
+  // behalf of a junior can override, but DON'T block actions when the name
+  // resolves from auth (it always will, since this panel mounts behind
+  // attemptAuth on the parent page).
+  const { user } = useAuth();
+  const resolvedActorName =
+    user?.fullName
+    || [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim()
+    || user?.name
+    || user?.email
+    || "";
+  const actorRole = user?.role || "User";
+
   const [orders,      setOrders]      = useState([]);
   const [loading,     setLoading]     = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [ordersDate,  setOrdersDate]  = useState(new Date());   // date navigator
-  const [nurseName,   setNurseName]   = useState(() => {
-    try {
-      const u = JSON.parse(sessionStorage.getItem("his_user") || "{}");
-      return u.fullName || u.firstName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.name || "";
-    } catch { return ""; }
-  });
+  const [nurseName,   setNurseName]   = useState(resolvedActorName);
+  // Keep nurseName in sync when AuthContext finishes restoring (initial render
+  // can see user=null while the /auth/me round-trip completes).
+  useEffect(() => {
+    if (resolvedActorName && !nurseName) setNurseName(resolvedActorName);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedActorName]);
   const intervalRef = useRef(null);
   // R7az-D5-MED-3 / D4-HIGH-6 — Abort cleanup for both the initial fetch
   // and the 30s polling timer. Pre-fix, leaving the page mid-fetch could
@@ -331,16 +396,32 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
     fetchAbortRef.current = ctrl;
     setLoading(true);
     try {
-      // Fetch ALL statuses so historical date views also see Cancelled/Stopped
+      // R7bo-LIVE-fix-3 — Drop the visitId server-side filter. A single
+      // UHID can legitimately have both a legacy `ipdNo` (ADM26050002)
+      // AND a new `admissionNumber` (IPD-2026-000001) on the same active
+      // admission, OR (worse) two co-existing "Active" admission docs
+      // from a pre-uniqueness-index era. Whichever value the parent
+      // happens to pass via `visitId={patient.ipdNo || patient.admissionNumber || patient._id}`
+      // would silently mismatch orders the doctor saved against the other
+      // identifier, and the nurse panel would render "No orders yet"
+      // despite the orders existing. Scoping by UHID + today's date is
+      // sufficient (Bug A guarantees one active admission per UHID), and
+      // the displayOrders date filter below already narrows to the
+      // selected day. `visitId` is still accepted as a prop for backward
+      // compatibility but is no longer load-bearing.
       const params = new URLSearchParams({ UHID });
-      if (visitId) params.append("visitId", visitId);
       const { data } = await axios.get(`${API_ENDPOINTS.DOCTOR_ORDERS}?${params}`, { signal: ctrl.signal });
       if (ctrl.signal.aborted) return;
-      setOrders(data.data || []);
+      // Tolerate both the standard {ok,data,count} shape and (defensively)
+      // a bare array — single source of truth is `data.data`, but if a
+      // middleware ever swaps to returning the array directly we still
+      // render instead of showing a phantom "No orders yet".
+      const next = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+      setOrders(next);
       setLastUpdated(new Date());
     } catch (_) { /* silent — abort or transient */ }
     finally { if (!ctrl.signal.aborted) setLoading(false); }
-  }, [UHID, visitId]);
+  }, [UHID]);
 
   useEffect(() => {
     fetchOrders();
@@ -377,14 +458,20 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
   // truth. On error we toast the failure and DO NOT mutate local state.
   // We also dedup concurrent step taps via stepInFlightRef.
   const handleStepDone = async (orderId, step, totalSteps) => {
-    if (!nurseName.trim()) return;
+    // R7bq-I — fall back to AuthContext if the field is blank, so logged-in
+    // users (Admin / Nurse) can act without typing their name first.
+    const doneBy = (nurseName || resolvedActorName || "").trim();
+    if (!doneBy) {
+      toast.error("Cannot identify who's acting — please log in.");
+      return;
+    }
     const inFlightKey = `${orderId}:${step}`;
     if (stepInFlightRef.current.has(inFlightKey)) return;  // double-tap guard
     stepInFlightRef.current.add(inFlightKey);
     try {
       const { data } = await axios.post(
         `${API_ENDPOINTS.DOCTOR_ORDERS}/${orderId}/step`,
-        { step, doneBy: nurseName.trim(), totalSteps }
+        { step, doneBy, totalSteps }
       );
       setOrders(prev => prev.map(o => o._id === orderId ? data.data : o));
     } catch (err) {
@@ -409,12 +496,38 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
     return d.toDateString() === ordersDateStr;
   });
 
+  // R7bq-J3 — distinguish "course still running but today's work is done" from
+  // "actively waiting for nurse to do something". Lab/Radiology/Procedure orders
+  // without an administrationRecord stay actionable by status alone; only
+  // Medication/IV_Fluid use the per-day slot check.
+  const todayActionable = (o) => {
+    if (!Array.isArray(o.administrationRecord) || !o.administrationRecord.length) return true;
+    const start = new Date(); start.setHours(0,0,0,0);
+    const end   = new Date(start); end.setDate(end.getDate() + 1);
+    return o.administrationRecord.some(a => {
+      if (a.isStatDose) return false;
+      const d = a.scheduledDate ? new Date(a.scheduledDate) : null;
+      if (!d || d < start || d >= end) return false;
+      return ["pending","delayed"].includes(a.status);
+    });
+  };
+
+  // R7bq-J3 — days remaining on the prescribed course, for the "TODAY DONE" chip.
+  const daysLeft = (o) => {
+    if (!o.endDate) return null;
+    const end = new Date(o.endDate); end.setHours(0,0,0,0);
+    const today = new Date(); today.setHours(0,0,0,0);
+    return Math.max(0, Math.round((end - today) / 86400000));
+  };
+
   // Group orders into buckets
-  const newOrders  = displayOrders.filter(o => o.status === "Pending").sort((a,b) => a.priority === "STAT" ? -1 : b.priority === "STAT" ? 1 : 0);
-  const inProgress = displayOrders.filter(o => ["InProgress","OnHold","Acknowledged"].includes(o.status));
-  const completed  = displayOrders.filter(o => o.status === "Completed");
-  const cancelled  = displayOrders.filter(o => ["Cancelled","Stopped"].includes(o.status));
-  const pending    = newOrders.length;
+  const newOrders     = displayOrders.filter(o => o.status === "Pending").sort((a,b) => a.priority === "STAT" ? -1 : b.priority === "STAT" ? 1 : 0);
+  const inProgressAll = displayOrders.filter(o => ["InProgress","OnHold","Acknowledged"].includes(o.status));
+  const inProgress    = inProgressAll.filter(todayActionable);
+  const todayDone     = inProgressAll.filter(o => !todayActionable(o));
+  const completed     = displayOrders.filter(o => o.status === "Completed");
+  const cancelled     = displayOrders.filter(o => ["Cancelled","Stopped"].includes(o.status));
+  const pending       = newOrders.length;
 
   return (
     <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 8px rgba(0,0,0,.06)", fontFamily: "'DM Sans',sans-serif" }}>
@@ -471,17 +584,26 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
         </button>
       </div>
 
-      {/* ── Nurse name bar ── */}
-      <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.border}`, background: "#fffbf0", display: "flex", alignItems: "center", gap: 10 }}>
-        <i className="pi pi-user-edit" style={{ fontSize: 13, color: C.amber }} />
-        <label style={{ fontSize: 11, fontWeight: 600, color: C.muted, whiteSpace: "nowrap" }}>Nurse Name:</label>
+      {/* ── Acting-as bar (R7bq-I) ──
+            The signed-in user's name + role is pulled from AuthContext and
+            stamped on every step click + administer call. Field is still
+            editable (e.g. a senior signing on behalf of a junior), but no
+            longer blocks actions when blank — we fall back to the auth
+            identity inside the click handlers. */}
+      <div style={{ padding: "10px 18px", borderBottom: `1px solid ${C.border}`, background: resolvedActorName ? "#f0fdf4" : "#fffbf0", display: "flex", alignItems: "center", gap: 10 }}>
+        <i className={`pi ${resolvedActorName ? "pi-user-check" : "pi-user-edit"}`} style={{ fontSize: 13, color: resolvedActorName ? "#16a34a" : C.amber }} />
+        <label style={{ fontSize: 11, fontWeight: 600, color: C.muted, whiteSpace: "nowrap" }}>Acting as:</label>
         <input
           value={nurseName}
           onChange={e => setNurseName(e.target.value)}
-          placeholder="Enter your name before taking action"
+          placeholder={resolvedActorName ? "" : "Enter your name before taking action"}
           style={{ flex: 1, border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, background: "#fff" }}
         />
-        {!nurseName.trim() && (
+        {resolvedActorName ? (
+          <span style={{ fontSize: 10, color: "#16a34a", fontWeight: 700, whiteSpace: "nowrap", background: "#dcfce7", border: "1px solid #86efac", padding: "2px 8px", borderRadius: 4 }}>
+            ✓ {actorRole}
+          </span>
+        ) : !nurseName.trim() && (
           <span style={{ fontSize: 10, color: C.amber, fontWeight: 600, whiteSpace: "nowrap" }}>Required to act on orders</span>
         )}
       </div>
@@ -532,7 +654,7 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
                     {order.orderType === "Medication" ? (
                       <MedOrderCard order={order} />
                     ) : (
-                      <OrderCard order={order} nurseName={nurseName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
+                      <OrderCard order={order} nurseName={nurseName || resolvedActorName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
                     )}
                   </div>
                 ))}
@@ -550,10 +672,40 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
                     {order.orderType === "Medication" ? (
                       <MedOrderCard order={order} inProgress />
                     ) : (
-                      <OrderCard order={order} nurseName={nurseName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
+                      <OrderCard order={order} nurseName={nurseName || resolvedActorName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* ── TODAY COMPLETE (R7bq-J3) ──
+                Orders whose course is still running but today's scheduled work
+                is done. Renders denser + green so the nurse can scan past them
+                without thinking they need action. */}
+            {todayDone.length > 0 && (
+              <div style={{ marginBottom: 16, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.success, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>
+                  ✓ Today Complete — {todayDone.length} order{todayDone.length !== 1 ? "s" : ""} · course continues
+                </div>
+                {todayDone.map(order => {
+                  const left = daysLeft(order);
+                  const chipText = left == null
+                    ? "TODAY DONE — course continues"
+                    : `TODAY DONE · ${left} day${left !== 1 ? "s" : ""} left`;
+                  return (
+                    <div key={order._id} style={{ position: "relative" }}>
+                      {order.orderType === "Medication" ? (
+                        <MedOrderCard order={order} inProgress />
+                      ) : (
+                        <OrderCard order={order} nurseName={nurseName || resolvedActorName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} readOnly />
+                      )}
+                      <div style={{ position: "absolute", top: 8, right: 12, background: "#dcfce7", color: "#166534", border: "1px solid #86efac", borderRadius: 20, padding: "2px 9px", fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", pointerEvents: "none" }}>
+                        {chipText}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
 
@@ -564,7 +716,7 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
                   ✅ Completed ({completed.length})
                 </div>
                 {completed.map(order => (
-                  <OrderCard key={order._id} order={order} nurseName={nurseName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
+                  <OrderCard key={order._id} order={order} nurseName={nurseName || resolvedActorName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
                 ))}
               </div>
             )}
@@ -576,7 +728,7 @@ export default function NurseOrdersPanel({ UHID, visitId, onConsentRequest, refr
                   🚫 Cancelled / Stopped ({cancelled.length})
                 </div>
                 {cancelled.map(order => (
-                  <OrderCard key={order._id} order={order} nurseName={nurseName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
+                  <OrderCard key={order._id} order={order} nurseName={nurseName || resolvedActorName} onStepDone={handleStepDone} onConsentRequest={onConsentRequest} />
                 ))}
               </div>
             )}

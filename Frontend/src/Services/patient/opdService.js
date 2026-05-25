@@ -14,6 +14,13 @@ const opdService = {
   // ── Patient history ───────────────────────────────────────────
   getPatientOPDHistory: (patientId) => axios.get(`${BASE}/patient/${patientId}`),
 
+  // R7cr / R7cx — Pharmacy fast-lookup: RECENT OPD visits for a UHID
+  // (default last 7 days, override via days arg 1..30) with diagnosis
+  // + prescribed medicines projected. Used by the Pharmacy "OPD Rx"
+  // tab to display + dispense in one screen.
+  getTodayRxByUHID: (UHID, days = 7) =>
+    axios.get(`${BASE}/uhid/${encodeURIComponent(UHID)}/today-rx`, { params: { days } }),
+
   // ── Queue & filters ───────────────────────────────────────────
   // params: { departmentId, doctorId, vitalsStatus }
   getTodayVisits:        (params)       => axios.get(`${BASE}/today`, { params }),
@@ -34,6 +41,10 @@ const opdService = {
   updateInvestigationStatus: (visitNumber, data) => axios.put(`${BASE}/${visitNumber}/investigation/status`, data),
   addPrescription:         (visitNumber, data) => axios.post(`${BASE}/${visitNumber}/prescription`, data),
   completeVisit:           (visitNumber, data) => axios.put(`${BASE}/${visitNumber}/complete`, data || {}),
+
+  // ── R7cj — Append addendum note + alias for fresh visit fetch ────
+  getOPDVisit:             (visitNumber)       => axios.get(`${BASE}/${visitNumber}`),
+  addAdditionalNote:       (visitNumber, note) => axios.post(`${BASE}/${visitNumber}/additional-note`, { note }),
 };
 
 export default opdService;

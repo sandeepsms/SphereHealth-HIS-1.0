@@ -10,6 +10,24 @@ const { seedServices } = require("../../seeders/serviceMasterSeeder");
 
 class ServiceMasterService {
   // ── 1. List services with filters + pagination ────────────────
+  //
+  // R7bp-OPD-FILTER: non-IPD contexts (OPD / EMERGENCY / DAYCARE) must
+  // never see IPD-only ward charges in the autocomplete:
+  //   • category ∈ {ROOM, ICU, DISCHARGE}        — inherently IPD/ICU
+  //   • category=DOCTOR AND domain=IPD            — Ward-round / daily-visit
+  //                                                  doctor charges (consultation
+  //                                                  fees in OPD live under
+  //                                                  category=CONSULTATION instead)
+  //   • category=NURSING AND domain=IPD           — ward nursing accrual
+  //                                                  (true OPD/ER nursing items
+  //                                                  sit under domain=COMMON /
+  //                                                  OPD / EMERGENCY and stay
+  //                                                  visible)
+  // The exclusion only fires when the row's applicableTo array does NOT
+  // explicitly include the requested context, so legitimate cross-context
+  // rows (e.g. NRS-INJ: ["IPD","DAYCARE","EMERGENCY","OPD"]) still surface.
+  // This is a defence-in-depth layer on top of the existing applicableTo
+  // $in filter — protects against seed rows that were mis-tagged "ALL".
   async getAllServices({
     category,
     domain,
@@ -26,6 +44,18 @@ class ServiceMasterService {
     if (domain) q.domain = domain;
     if (applicableTo) q.applicableTo = { $in: [applicableTo, "ALL"] };
     if (search) q.$text = { $search: search };
+
+    // R7bp-OPD-FILTER: hide IPD-only ward charges from non-IPD contexts.
+    // Skips when an explicit `category` filter is already in play (the
+    // caller wants exactly that category) and when the request is IPD-side.
+    const NON_IPD_CONTEXTS = new Set(["OPD", "EMERGENCY", "DAYCARE"]);
+    if (!category && applicableTo && NON_IPD_CONTEXTS.has(applicableTo)) {
+      q.$nor = [
+        { category: { $in: ["ROOM", "ICU", "DISCHARGE"] }, applicableTo: { $nin: [applicableTo] } },
+        { category: "DOCTOR",  domain: "IPD", applicableTo: { $nin: [applicableTo] } },
+        { category: "NURSING", domain: "IPD", applicableTo: { $nin: [applicableTo] } },
+      ];
+    }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
+import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 
 const C = {
   accent: "#1e40af",
@@ -112,6 +113,7 @@ const isNurse  = (role) => role === "Nurse"  || role === "Admin";
 export default function MainPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { settings } = useHospitalSettings();
   const role = user?.role || "Admin";
   const modules    = getModules(role);
   const quickAccess = QUICK_ACCESS_MAP[role] || QUICK_ACCESS_MAP["Admin"];
@@ -230,10 +232,19 @@ export default function MainPage() {
 
         <div style={{ position: "relative" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
-            <span style={{ background: "rgba(56,189,248,.15)", border: "1px solid rgba(56,189,248,.3)",
-              color: "#38bdf8", padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>
-              NABH ACCREDITED
-            </span>
+            {/* R7ce: don't claim the hospital is NABH-accredited until admin
+                files the cert # in Hospital Configuration → NABH tab. */}
+            {String(settings?.nabhCertNumber || "").trim() ? (
+              <span style={{ background: "rgba(34,197,94,.15)", border: "1px solid rgba(34,197,94,.3)",
+                color: "#4ade80", padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>
+                NABH ACCREDITED
+              </span>
+            ) : (
+              <span style={{ background: "rgba(56,189,248,.15)", border: "1px solid rgba(56,189,248,.3)",
+                color: "#38bdf8", padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>
+                NABH COMPLIANT
+              </span>
+            )}
             <span style={{ background: "rgba(22,163,74,.15)", border: "1px solid rgba(22,163,74,.3)",
               color: "#4ade80", padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>
               HIS v2.0
@@ -243,7 +254,7 @@ export default function MainPage() {
             Good {clock.getHours() < 12 ? "Morning" : clock.getHours() < 17 ? "Afternoon" : "Evening"}
           </div>
           <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 3 }}>
-            {fmtDate(clock)} · SphereHealth Hospital Information System
+            {fmtDate(clock)} · {`${settings?.hospitalName || "Hospital"} Information System`}
           </div>
         </div>
         <div style={{ textAlign: "right", position: "relative" }}>

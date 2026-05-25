@@ -9,6 +9,7 @@ import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
+import useHospitalSettings from "../../Components/print/useHospitalSettings";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import { useAutoSave } from "../../hooks/useAutoSave";
@@ -641,6 +642,13 @@ function ProcRow({ proc, idx, onChange, onRemove }) {
 
 /* ── Print Modal ── */
 function PrintModal({ data, dept, onClose }) {
+  // R7cb-B: live hospital identity for the preview letterhead + footer claim.
+  // Cached in module — first open hits API, reprints are free.
+  const { settings: hs } = useHospitalSettings();
+  const _hospName   = hs.hospitalName || "Hospital";
+  const _hospTagline = hs.tagline || "";
+  const _addrLine   = [hs.addressLine1, hs.addressLine2, [hs.city, hs.state, hs.pincode].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+  const _phoneLine  = [hs.phone1, hs.phone2, hs.emergencyPhone].filter(Boolean).join(" · ");
   /* Wired to the unified print system — picks up the hospital
    * header/footer + paper-size selector automatically. */
   const handlePrint = () => {
@@ -714,8 +722,12 @@ function PrintModal({ data, dept, onClose }) {
             <MLCAutoStamp uhid={data.UHID} />
             {/* Hospital header */}
             <div className="hosp" style={{ textAlign: "center", marginBottom: 6 }}>
-              <div style={{ fontWeight: 800, fontSize: 16, textTransform: "uppercase" }}>SphereHealth Hospital</div>
-              <div style={{ fontSize: 11, color: C.muted }}>NABH Accredited · Department of {dept?.label}</div>
+              {hs.logo && <img src={hs.logo} alt="" style={{ maxHeight: 48, marginBottom: 4 }} />}
+              <div style={{ fontWeight: 800, fontSize: 16, textTransform: "uppercase", color: hs.printHeaderColor || undefined }}>{_hospName}</div>
+              <div style={{ fontSize: 11, color: C.muted }}>{_hospTagline ? `${_hospTagline} · ` : ""}Department of {dept?.label}</div>
+              {_addrLine && <div style={{ fontSize: 10, color: C.muted }}>{_addrLine}</div>}
+              {_phoneLine && <div style={{ fontSize: 10, color: C.muted }}>{_phoneLine}</div>}
+              {hs.gstin && <div style={{ fontSize: 10, color: C.muted }}>GSTIN: {hs.gstin}</div>}
             </div>
             <hr style={{ border: "none", borderTop: `2px solid ${dept?.color}`, marginBottom: 10 }} />
             <div style={{ textAlign: "center", fontWeight: 800, fontSize: 17, marginBottom: 4, fontFamily: "serif" }}>DISCHARGE SUMMARY</div>
@@ -850,7 +862,7 @@ function PrintModal({ data, dept, onClose }) {
               ))}
             </div>
             <div style={{ marginTop: 10, fontSize: 10, color: C.muted, textAlign: "center" }}>
-              NABH Standard COP.7 | SphereHealth HIS | {new Date().toLocaleDateString("en-IN")}
+              NABH Standard COP.7 | {_hospName} | {new Date().toLocaleDateString("en-IN")}
             </div>
           </div>
         </div>
@@ -862,7 +874,7 @@ function PrintModal({ data, dept, onClose }) {
 /* ══════════════════════════════════════
    MAIN PAGE
 ══════════════════════════════════════ */
-function DischargeSummaryPageContent({ selectedPatient }) {
+export function DischargeSummaryPageContent({ selectedPatient }) {
   const { user } = useAuth();
   const [view, setView] = useState("catalogue"); // catalogue | form
   const [selectedDept, setSelectedDept] = useState(null);

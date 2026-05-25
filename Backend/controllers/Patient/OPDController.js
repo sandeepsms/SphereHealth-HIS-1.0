@@ -74,6 +74,33 @@ class OPDController {
     }
   }
 
+  // R7cr / R7cx — GET /opd/uhid/:UHID/today-rx?days=N
+  // Pharmacy-side fast lookup: pharmacist types a UHID, gets the
+  // recent OPD visit(s) for that patient with diagnosis + prescribed
+  // medicines so they can dispense without hunting through the
+  // doctor's full assessment screen. Default window: last 7 days
+  // (was "today only" pre-R7cx; that was too narrow — patients often
+  // walk in 1-2 days after the visit). Caller can override via
+  // ?days=N (1..30). Empty array means no qualifying visits in the
+  // window — handled as a friendly empty state by the UI.
+  async getTodayPrescriptionsByUHID(req, res) {
+    try {
+      const UHID = String(req.params.UHID || "").trim().toUpperCase();
+      if (!UHID) {
+        return res.status(400).json({ success: false, message: "UHID is required" });
+      }
+      const days = req.query?.days ? Number(req.query.days) : 7;
+      const visits = await opdService.getTodayPrescriptionsByUHID(UHID, days);
+      res.status(200).json({
+        success: true,
+        data: visits,
+        meta: { windowDays: Math.max(1, Math.min(30, Number(days) || 7)) },
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   async updateOPDVisit(req, res) {
     try {
       const visit = await opdService.updateOPDVisit(req.params.visitNumber, req.body);
@@ -233,15 +260,61 @@ class OPDController {
   async saveAssessment(req, res) {
     try {
       const { doctorName, ...assessmentData } = req.body;
+      // R7bx item 8 — pass req.user.id so the service can run the MCI
+      // registration-number guard when the doctor is signing (sending a
+      // doctorSignatureImage payload).
       const visit = await opdService.saveOPDAssessment(
         req.params.visitNumber,
         assessmentData,
-        doctorName || req.user?.fullName || "Doctor"
+        doctorName || req.user?.fullName || "Doctor",
+        req.user?.id || req.user?._id || null,
       );
       if (!visit) return res.status(404).json({ success: false, message: "Visit not found" });
       res.status(200).json({ success: true, message: "Assessment saved", data: visit });
     } catch (error) {
-      res.status(400).json({ success: false, message: error.message });
+      // R7bx item 8 — forward typed error code (e.g. MCI_REG_NO_MISSING)
+      // and explicit statusCode so the frontend can branch on stable identifiers.
+      const status = error.statusCode || 400;
+      res.status(status).json({
+        success: false,
+        message: error.message,
+        ...(error.code ? { code: error.code } : {}),
+      });
+    }
+  }
+
+  // POST /opd/:visitNumber/additional-note  — R7cj: append an addendum
+  // note to a signed assessment. Append-only — never modifies the
+  // original structured fields. Captures who + when for audit. Returns
+  // the updated visit so the frontend can re-render the timeline.
+  async addAdditionalNote(req, res) {
+    try {
+      const text = String(req.body?.note || "").trim();
+      if (!text) {
+        return res.status(400).json({ success: false, code: "EMPTY_NOTE", message: "Note text is required." });
+      }
+      if (text.length > 4000) {
+        return res.status(400).json({ success: false, code: "NOTE_TOO_LONG", message: "Note exceeds 4000 characters." });
+      }
+      const OPD = require("../../models/Patient/OPDModels");
+      const entry = {
+        note:        text,
+        addedAt:     new Date(),
+        addedBy:     req.user?.fullName || req.user?.name || "Doctor",
+        addedById:   req.user?.id || req.user?._id || null,
+        addedByRole: req.user?.role || "",
+      };
+      const visit = await OPD.findOneAndUpdate(
+        { visitNumber: req.params.visitNumber },
+        { $push: { additionalNotes: entry } },
+        { new: true, runValidators: true },
+      ).lean();
+      if (!visit) {
+        return res.status(404).json({ success: false, code: "NOT_FOUND", message: "OPD visit not found" });
+      }
+      return res.status(200).json({ success: true, message: "Note added", data: visit });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
     }
   }
 

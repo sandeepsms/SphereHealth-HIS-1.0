@@ -32,6 +32,7 @@ import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
+import useHospitalSettings from "../../Components/print/useHospitalSettings";
 import "./patient-file.css";
 
 const BASE = API_ENDPOINTS.BASE;
@@ -2129,18 +2130,25 @@ function ActivityFeed({ activityLog }) {
 }
 
 /* ── Print template ─────────────────────────────────────────── */
-function PrintLetterhead({ patient, currentAdmission, role }) {
+function PrintLetterhead({ patient, currentAdmission, role, hs = {} }) {
   const initials = (patient?.fullName || "P").split(/\s+/).map((s) => s[0]).slice(0, 2).join("").toUpperCase();
   const ageDisp = patient?.age || (patient?.dateOfBirth
     ? Math.floor((Date.now() - new Date(patient.dateOfBirth)) / (365.25 * 24 * 3600 * 1000)) + "y"
     : "—");
+  // R7cb-B: hospital identity from live Settings — hospitalName replaces the
+  // legacy hardcoded brand and tagline becomes admin-configurable.
+  const hospName    = hs.hospitalName || "Hospital";
+  const hospTagline = hs.tagline || "";
+  const logoLetter  = (hospName.trim() || "H").charAt(0).toUpperCase();
   return (
     <header className="pf-print-letterhead">
       <div className="pf-print-letterhead__brand">
-        <div className="pf-print-letterhead__logo">S</div>
+        {hs.logo
+          ? <img src={hs.logo} alt="" className="pf-print-letterhead__logo" style={{ maxHeight: 48, objectFit: "contain" }} />
+          : <div className="pf-print-letterhead__logo">{logoLetter}</div>}
         <div>
-          <div className="pf-print-letterhead__hospital">SphereHealth Hospital</div>
-          <div className="pf-print-letterhead__sub">NABH Accredited · Hospital Information System</div>
+          <div className="pf-print-letterhead__hospital">{hospName}</div>
+          {hospTagline && <div className="pf-print-letterhead__sub">{hospTagline}</div>}
         </div>
       </div>
       <div className="pf-print-letterhead__doc">
@@ -2986,7 +2994,7 @@ function ProcedureNotesSection({ doctorNotes = [], nurseNotes = [] }) {
   );
 }
 
-function PrintFooter({ uhid, role }) {
+function PrintFooter({ uhid, role, hs = {} }) {
   // Roadmap F23 — per-page QR back-link. The browser repeats this footer
   // via @page running-element on every printed page, so any single page
   // photographed in isolation still links back to the live source.
@@ -2995,11 +3003,14 @@ function PrintFooter({ uhid, role }) {
         `${typeof window !== "undefined" ? window.location.origin : ""}/patient-file/${uhid}?role=${role}`
       )}`
     : null;
+  // R7cb-B: institution claim pulled from Settings.hospitalName so admin's
+  // rebrand reaches the patient file footer.
+  const hospName = hs.hospitalName || "Hospital";
   return (
     <footer className="pf-print-footer">
       {qrUrl && <img src={qrUrl} alt={`Verify online — UHID ${uhid}`} className="pf-print-footer__qr" />}
       <div style={{ flex: 1 }}>
-        <div>© SphereHealth Hospital · Computer-generated medical record · NABH AAC.7</div>
+        <div>© {hospName} · Computer-generated medical record · NABH AAC.7</div>
         <div style={{ fontSize: 9, opacity: .7, marginTop: 2 }}>
           PDF/A-2b archival — embed fonts via printer. Verify printed copy by scanning QR or visiting
           /patient-file/{uhid}
@@ -3414,6 +3425,9 @@ export default function CompletePatientFilePage() {
   const [search] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  // R7cb-B: live hospital identity for the print letterhead + footer. Cached
+  // after first call (see useHospitalSettings) so no extra API hit on reprint.
+  const { settings: hospitalSettings } = useHospitalSettings();
   const role = (search.get("role") || "doctor").toLowerCase();
   // Real RBAC role from the authenticated user — used to gate role-specific
   // CTAs (e.g. Dietician's "Edit in console" button on the diet section).
@@ -3548,9 +3562,9 @@ export default function CompletePatientFilePage() {
   if (printMode) {
     return (
       <div className={`pf-page pf-print-mode pf-tint--${role === "nurse" ? "nurse" : "doctor"}`}>
-        <PrintLetterhead patient={patient} currentAdmission={currentAdmission} role={role} />
+        <PrintLetterhead patient={patient} currentAdmission={currentAdmission} role={role} hs={hospitalSettings} />
         <PrintBody data={data} docInitial={docInitial} nurseInitial={nurseInitial} docOther={docOther} nurseOther={nurseOther} />
-        <PrintFooter uhid={uhid} role={role} />
+        <PrintFooter uhid={uhid} role={role} hs={hospitalSettings} />
       </div>
     );
   }

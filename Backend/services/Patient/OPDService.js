@@ -159,6 +159,50 @@ class OPDService {
     return savedOPD;
   }
 
+  /* ── R7cr: Recent OPD prescriptions for a UHID — Pharmacy fast-lookup ──
+     A pharmacist enters a UHID and needs the focused subset:
+       • recent OPD visit(s) for this patient (default window: 7 days)
+       • diagnosis context (so the pharmacist can sanity-check the Rx)
+       • the prescribed medicines list (so they can dispense)
+     We project ONLY the fields the pharmacy needs — no SOAP narrative,
+     no audit blob, no full investigation order trail. Smaller payload
+     keeps the lookup snappy even when the patient has multiple visits
+     across the window (return visits, multi-department days).
+     Sorted newest-first so the most recent prescription shows on top —
+     pharmacist usually dispenses the latest one.
+     R7cx — window widened from today-only to 7-day default + caller
+     can override via `days` arg (capped at 30 to keep payload bounded).
+     Today-only was too narrow: patients often walk in 1-2 days after
+     the visit ("kal Dr ne yeh likha tha"), and the old impl returned
+     empty making the pharmacist think the system was broken. */
+  async getTodayPrescriptionsByUHID(UHID, days = 7) {
+    if (!UHID) return [];
+    const window = Math.max(1, Math.min(30, Number(days) || 7));
+    const end   = new Date(); end.setHours(23, 59, 59, 999);
+    const start = new Date(); start.setDate(start.getDate() - (window - 1)); start.setHours(0, 0, 0, 0);
+    const visits = await OPD.find({
+      UHID,
+      visitDate: { $gte: start, $lte: end },
+    })
+      .select(
+        "visitNumber visitDate UHID patientId patientName tokenNumber " +
+        "department departmentId doctorId consultantName " +
+        "chiefComplaint provisionalDiagnosis workingDiagnosis finalDiagnosis " +
+        "icd10Code icd10Description patientStatus " +
+        "prescribedMedications advice status",
+      )
+      .populate("departmentId", "departmentName")
+      .populate("doctorId", "personalInfo doctorId")
+      .populate("patientId", "fullName UHID age gender contactNumber dateOfBirth")
+      // R7cx — newest-first so the most recent prescription surfaces at
+      // the top of the pharmacy panel. The window can include multiple
+      // visits across multiple days; the pharmacist usually dispenses
+      // against the latest one.
+      .sort({ visitDate: -1, tokenNumber: 1 })
+      .lean();
+    return visits;
+  }
+
   /* ── Get all OPD visits (paginated + filterable) ── */
   async getAllOPDVisits(page = 1, limit = 50, filters = {}) {
     const skip = (page - 1) * limit;
@@ -330,36 +374,147 @@ class OPDService {
   }
 
   /* ── Doctor saves OPD assessment (SOAP note + diagnosis + plan) ── */
-  async saveOPDAssessment(visitNumber, assessmentData, doctorName) {
+  async saveOPDAssessment(visitNumber, assessmentData, doctorName, doctorUserId = null) {
+    // R7bx item 8 — MCI Regulation 1.4.2 compliance. The OPD assessment
+    // is "signed" the first time the doctor stamps doctorSignatureImage
+    // (the schema doesn't have a separate signed/draft enum — signature
+    // presence IS the sign event). On that save, the signing doctor MUST
+    // have a non-empty registrationNumber on file. Pre-fix the system
+    // signed regardless, and the printed Rx showed "—" where the MCI
+    // reg-no belongs.
+    const isSigningSave = !!(assessmentData?.doctorSignatureImage &&
+      typeof assessmentData.doctorSignatureImage === "string");
+    if (isSigningSave && doctorUserId) {
+      try {
+        const User = require("../../models/User/userModel");
+        const actor = await User.findById(doctorUserId).lean();
+        if (actor?.role === "Doctor") {
+          const regNo = String(actor.doctorDetails?.registrationNumber || "").trim();
+          if (!regNo) {
+            const err = new Error(
+              "Doctor's MCI registration number is missing. Add it in Settings → Doctor Profile before signing.",
+            );
+            err.statusCode = 400;
+            err.code = "MCI_REG_NO_MISSING";
+            throw err;
+          }
+        }
+      } catch (e) {
+        // Re-throw the typed MCI error; swallow other lookup failures so
+        // we don't block legitimate saves when the User collection blips.
+        if (e?.code === "MCI_REG_NO_MISSING") throw e;
+      }
+    }
+
+    // R7bt-PrintAudit-Phase2: The whitelist below USED to silently drop
+    // workingDiagnosis, icd10Code, icd10Description, patientStatus, the
+    // structured genExam / sysExam sub-docs, and every obg* field — so the
+    // doctor saw the values on screen, hit Save, the field was filtered out
+    // here, the API returned 200, and on reload the values were gone. The
+    // schema has been extended in OPDModels.js and the whitelist mirrors it
+    // exactly. Helper below avoids `undefined` overwriting an existing value
+    // (so a partial save from the autosave path doesn't blow away a field
+    // the doctor entered in a previous save).
+    const pick = (val, fallback = "") => (val !== undefined ? val : fallback);
+
     const update = {
-      generalExamination:    assessmentData.generalExamination || "",
-      systemicExamination:   assessmentData.systemicExamination || "",
-      provisionalDiagnosis:  assessmentData.provisionalDiagnosis || "",
-      finalDiagnosis:        assessmentData.finalDiagnosis || "",
-      advice:                assessmentData.advice || "",
+      // ── Free-text examination (string narrative) ──
+      generalExamination:    pick(assessmentData.generalExamination),
+      systemicExamination:   pick(assessmentData.systemicExamination),
+      // ── Structured Gen-Ex / Sys-Ex ──
+      // Mongoose accepts the whole nested object on findOneAndUpdate when
+      // the schema declares sub-docs; we pass it through verbatim. Empty
+      // object fallback keeps the schema's nested defaults intact.
+      genExam:               assessmentData.genExam || {},
+      sysExam:               assessmentData.sysExam || {},
+      // ── Diagnosis (three-tier + ICD-10 + clinical status) ──
+      provisionalDiagnosis:  pick(assessmentData.provisionalDiagnosis),
+      workingDiagnosis:      pick(assessmentData.workingDiagnosis),
+      finalDiagnosis:        pick(assessmentData.finalDiagnosis),
+      icd10Code:             pick(assessmentData.icd10Code),
+      icd10Description:      pick(assessmentData.icd10Description),
+      patientStatus:         pick(assessmentData.patientStatus),
+      advice:                pick(assessmentData.advice),
       followUpDate:          assessmentData.followUpDate || null,
-      doctorNotes:           assessmentData.doctorNotes || "",
+      doctorNotes:           pick(assessmentData.doctorNotes),
       // SOAP fields
-      subjectiveNote:        assessmentData.subjectiveNote || "",
-      objectiveNote:         assessmentData.objectiveNote || "",
-      assessmentNote:        assessmentData.assessmentNote || "",
-      planNote:              assessmentData.planNote || "",
+      subjectiveNote:        pick(assessmentData.subjectiveNote),
+      objectiveNote:         pick(assessmentData.objectiveNote),
+      assessmentNote:        pick(assessmentData.assessmentNote),
+      planNote:              pick(assessmentData.planNote),
       assessedBy:            doctorName || "Doctor",
       assessedAt:            new Date(),
       status:                "Completed",
       // HOPI — structured history
-      hopiOnset:              assessmentData.hopiOnset              || "",
-      hopiDurationValue:      assessmentData.hopiDurationValue      || "",
-      hopiDurationUnit:       assessmentData.hopiDurationUnit       || "",
-      hopiProgression:        assessmentData.hopiProgression        || "",
-      hopiCharacter:          assessmentData.hopiCharacter          || "",
+      hopiOnset:              pick(assessmentData.hopiOnset),
+      hopiDurationValue:      pick(assessmentData.hopiDurationValue),
+      hopiDurationUnit:       pick(assessmentData.hopiDurationUnit),
+      hopiProgression:        pick(assessmentData.hopiProgression),
+      hopiCharacter:          pick(assessmentData.hopiCharacter),
       hopiAssociatedSymptoms: assessmentData.hopiAssociatedSymptoms || [],
-      hopiAggravating:        assessmentData.hopiAggravating        || "",
-      hopiRelieving:          assessmentData.hopiRelieving          || "",
+      hopiAggravating:        pick(assessmentData.hopiAggravating),
+      hopiRelieving:          pick(assessmentData.hopiRelieving),
       // Chronic illnesses
       chronicConditions:      assessmentData.chronicConditions      || [],
-      chronicOthers:          assessmentData.chronicOthers          || "",
+      chronicOthers:          pick(assessmentData.chronicOthers),
+      // ── OBG history (flat obg*-prefixed, female / Gynae OPD) ──
+      obgLmp:                 pick(assessmentData.obgLmp),
+      obgEdd:                 pick(assessmentData.obgEdd),
+      obgMenarche:            pick(assessmentData.obgMenarche),
+      obgCycleLength:         pick(assessmentData.obgCycleLength),
+      obgFlowDays:            pick(assessmentData.obgFlowDays),
+      obgRegularity:          pick(assessmentData.obgRegularity),
+      obgDysmenorrhea:        pick(assessmentData.obgDysmenorrhea),
+      obgMenopause:           pick(assessmentData.obgMenopause),
+      obgGravida:             pick(assessmentData.obgGravida),
+      obgPara:                pick(assessmentData.obgPara),
+      obgAbortion:            pick(assessmentData.obgAbortion),
+      obgLiving:              pick(assessmentData.obgLiving),
+      obgLastChildBirth:      pick(assessmentData.obgLastChildBirth),
+      obgDeliveryMode:        pick(assessmentData.obgDeliveryMode),
+      obgObComplications:     pick(assessmentData.obgObComplications),
+      obgMarried:             pick(assessmentData.obgMarried),
+      obgYearsMarried:        pick(assessmentData.obgYearsMarried),
+      obgContraception:       pick(assessmentData.obgContraception),
+      obgLastPapSmear:        pick(assessmentData.obgLastPapSmear),
+      obgLastUSG:             pick(assessmentData.obgLastUSG),
+      obgPriorSurgery:        pick(assessmentData.obgPriorSurgery),
+      obgNotes:               pick(assessmentData.obgNotes),
     };
+
+    // ── Doctor's digital signature ────────────────────────────────────
+    // R7bu — Only stamp the signature when the caller actually sends one
+    // (the doctor signed this save). An empty / missing field MUST NOT
+    // overwrite a previously stored signature — that keeps reprints of
+    // older visits accurate even if the doctor's cached signature got
+    // dropped between sessions. doctorSignedAt is stamped the first time
+    // a signature lands on this visit (or refreshed when re-signed).
+    if (assessmentData.doctorSignatureImage && typeof assessmentData.doctorSignatureImage === "string") {
+      update.doctorSignatureImage = assessmentData.doctorSignatureImage;
+      update.doctorSignedAt =
+        assessmentData.doctorSignedAt
+          ? new Date(assessmentData.doctorSignedAt)
+          : new Date();
+    }
+
+    // ── Prescription rows (whitelist mealStatus + the rest) ──────────
+    // R7bu — addPrescription / OPDAssessment save BOTH go through this
+    // service. The schema accepts mealStatus now (Before food / After food
+    // / With food / Bedtime) but if a caller sends a `prescribedMedications`
+    // array on the assessment save we need to whitelist the field shape so
+    // mealStatus reaches disk instead of being silently filtered. Empty
+    // array is the no-op fallback (assessment saves usually rely on the
+    // separate /prescription POSTs + the bulk DoctorOrders mirror).
+    if (Array.isArray(assessmentData.prescribedMedications)) {
+      update.prescribedMedications = assessmentData.prescribedMedications.map(m => ({
+        medicineName: m.medicineName || m.name      || "",
+        dosage:       m.dosage       || m.dose      || "",
+        frequency:    m.frequency    || "",
+        duration:     m.duration     || "",
+        instructions: m.instructions || "",
+        mealStatus:   m.mealStatus   || "",
+      }));
+    }
 
     const updatedVisit = await OPD.findOneAndUpdate({ visitNumber }, update, { new: true });
 
@@ -421,9 +576,24 @@ class OPDService {
 
   /* ── Add prescription ── */
   async addPrescription(visitNumber, medication) {
+    // R7bu — Whitelist the row shape so callers that send the frontend's
+    // {name, dose, mealStatus, ...} payload (instead of the schema's
+    // {medicineName, dosage, ...}) still land cleanly. Mongoose strict
+    // mode would otherwise silently drop name/dose on legacy callers.
+    // mealStatus is now an accepted field (Before food / After food / With
+    // food / Bedtime).
+    const m = medication || {};
+    const row = {
+      medicineName: m.medicineName || m.name      || "",
+      dosage:       m.dosage       || m.dose      || "",
+      frequency:    m.frequency    || "",
+      duration:     m.duration     || "",
+      instructions: m.instructions || "",
+      mealStatus:   m.mealStatus   || "",
+    };
     return OPD.findOneAndUpdate(
       { visitNumber },
-      { $push: { prescribedMedications: medication } },
+      { $push: { prescribedMedications: row } },
       { new: true }
     );
   }

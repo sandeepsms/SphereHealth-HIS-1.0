@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import "../../Components/clinical/clinical-forms.css";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
@@ -11,6 +11,17 @@ import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import SignatureStamp from "../../Components/signature/SignatureStamp";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+// R7ay — Shared clinical-form panels that used to be inline in OPD.
+// Emergency's Step 3 now mounts the same three modules (Prescription,
+// IV Infusion, Services & Orders → DRAFT bill) so the ER doctor has
+// the same authoring experience as OPD.
+import PrescriptionPanel from "../../Components/clinical/PrescriptionPanel";
+import InfusionPanel from "../../Components/clinical/InfusionPanel";
+import ServicesOrdersPanel from "../../Components/clinical/ServicesOrdersPanel";
+// R7bs — Bed selection inline in Disposition. When the ER doctor decides
+// to admit, the bed is allotted right here (status flipped to Reserved on
+// sign-and-submit) instead of handing off to Reception as a free-text note.
+import BedSelectionPanel from "../../Components/bed/BedSelectionPanel";
 
 /* ── Design tokens ── */
 const C = {
@@ -111,7 +122,7 @@ function VitalBox({ label, value, unit, onChange, critical }) {
 }
 
 /* ══════════════════════════════════════════════════════════ */
-function EmergencyAssessmentPageContent({ selectedPatient }) {
+export function EmergencyAssessmentPageContent({ selectedPatient }) {
   const { uhid: uhidParam } = useParams();
   const navigate  = useNavigate();
   const { user }  = useAuth();
@@ -121,6 +132,14 @@ function EmergencyAssessmentPageContent({ selectedPatient }) {
   const [loadingPt, setLoadingPt] = useState(false);
   const [saving, setSaving]       = useState(false);
   const [noteId, setNoteId]       = useState(null);
+
+  // R7ba — Dedup the "Draft restored" toast. When this component runs
+  // embedded inside DoctorNotes, React StrictMode double-mounts the
+  // useEffect that calls loadPatient, which used to fire two identical
+  // toasts stacked on the right side of the screen. Track which UHIDs
+  // have already shown the toast in this component lifetime so re-mounts
+  // are silent.
+  const restoredToastShownRef = useRef(new Set());
 
   /* ── Triage ── */
   const [triageLevel, setTriageLevel] = useState("");
@@ -154,12 +173,27 @@ function EmergencyAssessmentPageContent({ selectedPatient }) {
   const [exam, setExam]       = useState("");
   const [provDx, setProvDx]   = useState("");
 
-  /* ── Orders ── */
-  const [orders, setOrders] = useState([blankRx()]);
+  /* ── Orders — R7ay ──
+     Replaced the legacy flat `orders` table with three richer modules:
+       • meds      → PrescriptionPanel  (DrugAutocomplete + 7 fields/row)
+       • infusions → InfusionPanel       (fluid + rate + duration)
+       • Services & Orders → ServicesOrdersPanel (auto-creates DRAFT bill)
+     The Services & Orders panel manages its own bill state internally —
+     no need to plumb it through formData. */
+  const [meds, setMeds]           = useState([]);
+  const [infusions, setInfusions] = useState([]);
 
   /* ── Disposition ── */
   const [disposition, setDisposition] = useState("");
   const [dispNotes, setDispNotes]     = useState("");
+  // R7bs — Bed allotted by ER doctor when admitting. Same shape as
+  // ReceptionConsole.bedData so the downstream admission service can
+  // consume either source interchangeably.
+  const [bedData, setBedData] = useState({
+    buildingId: null, floorId: null, wardId: null, roomId: null, bedId: null, bedNumber: null,
+  });
+  // Convenience: any "Admit to ..." decision needs a bed allotted.
+  const isAdmitDisposition = (disposition || "").startsWith("Admit to");
 
   /* ── General Examination ── */
   const [consciousness,    setConsciousness]    = useState("");
@@ -183,12 +217,13 @@ function EmergencyAssessmentPageContent({ selectedPatient }) {
   const sabd = (k, v) => setAbdomen(p => ({ ...p, [k]: v }));
   const scns = (k, v) => setCns(p => ({ ...p, [k]: v }));
 
-  /* ── Auto-save draft ── */
+  /* ── Auto-save draft — R7ay: orders→meds/infusions ── */
   const draftKey = uhid ? `sphere_draft_er_${uhid}` : null;
   const { savedAt, hasDraft, clearDraft } = useAutoSave(
     draftKey,
     { triageLevel, triageTime, arrivalMode, isMLC, mlcNumber, chiefComplaint, complaintDuration,
-      vitals, abcde, pmh, allergy, exam, provDx, orders, disposition, dispNotes,
+      vitals, abcde, pmh, allergy, exam, provDx, meds, infusions, disposition, dispNotes,
+      dispositionBed: bedData, // R7bs — survive a reload before sign-and-submit
       consciousness, nutritionalStatus, physicalSigns, painScoreVAS, rs, cvs, abdomen, cns },
     2000
   );
@@ -221,9 +256,14 @@ function EmergencyAssessmentPageContent({ selectedPatient }) {
       try {
         const raw = localStorage.getItem(dKey);
         if (raw) {
+          // R7ay: orders → meds + infusions (legacy `orders` ignored on
+          // restore since the data shape no longer matches the Step 3 UI;
+          // services / labs / radiology now go through ServicesOrdersPanel
+          // which loads its own DRAFT bill from the backend on mount).
           const { _meta, triageLevel: tl, triageTime: tt, arrivalMode: am, isMLC: ml, mlcNumber: mn,
             chiefComplaint: cc, complaintDuration: cd, vitals: vt, abcde: ab, pmh: ph, allergy: al,
-            exam: ex, provDx: pd, orders: or, disposition: dp, dispNotes: dn,
+            exam: ex, provDx: pd, meds: md, infusions: inf, disposition: dp, dispNotes: dn,
+            dispositionBed: db, // R7bs — restored if the doctor was mid-allot before refresh
             consciousness: co, nutritionalStatus: ns, physicalSigns: ps, painScoreVAS: pv,
             rs: rss, cvs: cv, abdomen: abd, cns: cn } = JSON.parse(raw);
           if (tl) setTriageLevel(tl);
@@ -239,9 +279,11 @@ function EmergencyAssessmentPageContent({ selectedPatient }) {
           if (al) setAllergy(al);
           if (ex) setExam(ex);
           if (pd) setProvDx(pd);
-          if (or) setOrders(or);
+          if (Array.isArray(md)) setMeds(md);
+          if (Array.isArray(inf)) setInfusions(inf);
           if (dp) setDisposition(dp);
           if (dn) setDispNotes(dn);
+          if (db && typeof db === "object" && db.bedId) setBedData(db);
           if (co) setConsciousness(co);
           if (ns) setNutritionalStatus(ns);
           if (ps) setPhysicalSigns(p => ({ ...p, ...ps }));
@@ -250,20 +292,41 @@ function EmergencyAssessmentPageContent({ selectedPatient }) {
           if (cv) setCvs(c => ({ ...c, ...cv }));
           if (abd) setAbdomen(a => ({ ...a, ...abd }));
           if (cn) setCns(c => ({ ...c, ...cn }));
-          toast.info(`📝 Draft restored (${_meta?.savedAt ? new Date(_meta.savedAt).toLocaleTimeString() : "last session"})`, { autoClose: 3000 });
+          // R7ba — only fire the toast once per UHID per mount lifecycle.
+          if (!restoredToastShownRef.current.has(resolvedUhid)) {
+            restoredToastShownRef.current.add(resolvedUhid);
+            toast.info(`📝 Draft restored (${_meta?.savedAt ? new Date(_meta.savedAt).toLocaleTimeString() : "last session"})`, { autoClose: 3000 });
+          }
         }
       } catch (_) {}
     } catch { toast.error("Patient not found"); }
     finally { setLoadingPt(false); }
   };
 
-  const addOrder = () => setOrders(o => [...o, blankRx()]);
-  const removeOrder = id => setOrders(o => o.filter(x => x.id !== id));
-  const updateOrder = (id, key, val) => setOrders(o => o.map(x => x.id === id ? { ...x, [key]: val } : x));
+  // R7ay — legacy addOrder/removeOrder/updateOrder removed. Step 3 now
+  // delegates row management to the PrescriptionPanel / InfusionPanel /
+  // ServicesOrdersPanel components below; each owns its own + Add / × Remove.
 
   const handleSave = async (sign = false) => {
     if (!patient) { toast.warn("Load a patient first"); return; }
     if (!triageLevel) { toast.warn("Select a triage level before saving"); return; }
+    // R7bs — when signing an admit decision, doctor MUST have picked a bed.
+    // We don't block plain drafts so the assessment can still autosave
+    // while the doctor is hunting for an available bed.
+    if (sign && isAdmitDisposition && !bedData.bedId) {
+      toast.error("Select a bed before signing — disposition is set to admit.");
+      return;
+    }
+    // R7bx item 8 — MCI Regulation 1.4.2 pre-flight. The sign path stamps
+    // the doctor's identity onto the assessment for the Rx / advice block;
+    // abort before the API call if registrationNumber is empty.
+    if (sign && user?.role === "Doctor") {
+      const regNo = String(user.doctorDetails?.registrationNumber || "").trim();
+      if (!regNo) {
+        toast.error("Add your MCI registration number in your Profile before signing");
+        return;
+      }
+    }
     setSaving(true);
     try {
       const payload = {
@@ -281,8 +344,24 @@ function EmergencyAssessmentPageContent({ selectedPatient }) {
           vitals, abcde, pmh, allergy, exam, provDx,
           generalExamination: { consciousness, nutritionalStatus, ...physicalSigns, painScoreVAS },
           systemicExamination: { rs, cvs, abdomen, cns },
-          orders: orders.filter(o => o.detail.trim()),
+          // R7ay — meds + infusions replace the legacy flat `orders` array.
+          // Services / lab / radiology orders go through the in-Panel DRAFT
+          // bill flow (ServicesOrdersPanel) so they don't ride this payload.
+          medications: meds.filter(m => (m.name || "").trim()),
+          infusions: infusions.filter(f => (f.name || "").trim()),
           disposition, dispNotes,
+          // R7bs — doctor-allotted bed travels with the assessment so the
+          // downstream admission flow (Reception → register IPD) can pre-fill
+          // the bed picker with what the ER doctor already chose.
+          dispositionBed: isAdmitDisposition && bedData.bedId ? {
+            buildingId: bedData.buildingId,
+            floorId:    bedData.floorId,
+            wardId:     bedData.wardId,
+            roomId:     bedData.roomId,
+            bedId:      bedData.bedId,
+            bedNumber:  bedData.bedNumber,
+            reservedAt: new Date().toISOString(),
+          } : null,
         },
       };
       let res;
@@ -294,6 +373,54 @@ function EmergencyAssessmentPageContent({ selectedPatient }) {
         setNoteId(res.data?.data?._id || res.data?._id);
       }
       clearDraft(); // clear auto-saved draft on successful save
+
+      // R7bs — On sign-and-submit with an Admit disposition + bed chosen,
+      // reserve the bed in the bed-management system so it disappears from
+      // Available + can't be double-allotted by Reception. Notes the link
+      // back to the assessment + patient for audit traceability. Non-fatal:
+      // if the PATCH fails (network blip or 409 someone-else-took-it) we
+      // toast the issue and let the doctor pick another bed; the assessment
+      // itself is already saved.
+      if (sign && isAdmitDisposition && bedData.bedId) {
+        try {
+          await axios.patch(`${API_ENDPOINTS.BEDS}/${bedData.bedId}/status`, {
+            status: "Reserved",
+            reservedFor: patient.UHID || uhid,
+            reservedForName: patient.fullName || "",
+            reservedBy: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
+            reservedAt: new Date().toISOString(),
+            note: `Reserved by ER doctor — ${disposition}. Assessment #${res.data?.data?._id || res.data?._id || ""}`.trim(),
+          });
+          toast.success(`Bed ${bedData.bedNumber || ""} reserved for patient ✓`);
+        } catch (bedErr) {
+          toast.error(`Bed ${bedData.bedNumber || ""} could not be reserved — ${bedErr?.response?.data?.message || "please re-select"}`);
+        }
+      }
+
+      /* R7bk — Emergency Assessment IS the doctor's compulsory Initial
+         Assessment for IPD admissions (NABH AAC.1). On sign-and-submit
+         we flip admission.initialAssessment.doctorCompleted = true so
+         the DoctorNotes tile gate lifts and the other clinical surfaces
+         (Patient Diagnosis, Orders, MAR, etc.) unlock. Lookup is by
+         UHID → active admission; if no active admission exists (pure
+         ER walk-in with no IPD trail) we silently skip — there's
+         nothing to gate. */
+      if (sign) {
+        try {
+          const uhidForLookup = patient.UHID || uhid;
+          if (uhidForLookup) {
+            const adRes = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(uhidForLookup)}`);
+            const adArr = Array.isArray(adRes.data) ? adRes.data : (adRes.data?.data || []);
+            const admId = adArr?.[0]?._id;
+            if (admId) {
+              await axios.put(`${API_ENDPOINTS.ADMISSIONS}/${admId}/initial-assessment`, {
+                role: "doctor",
+                name: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Doctor",
+              });
+            }
+          }
+        } catch (_) { /* non-blocking — the gate is a UX nudge, not hard auth */ }
+      }
       toast.success(sign ? "Emergency assessment signed & submitted" : "Draft saved");
     } catch (err) {
       toast.error(err.response?.data?.message || "Save failed");
@@ -857,73 +984,78 @@ function EmergencyAssessmentPageContent({ selectedPatient }) {
           </div>
         </Section>
 
-        {/* ══ STEP 3: ORDERS ══ */}
-        <Section title="Step 3 — Emergency Orders" icon="pi-list" color={C.purple}
-          badge={`${orders.filter(o => o.detail).length} order(s)`}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ background: "#f8fafc" }}>
-                  {["#", "Type", "Drug / Detail", "Dose / Rate", "Route", "Frequency", "Priority", ""].map(h => (
-                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700,
-                      color: C.muted, textTransform: "uppercase", letterSpacing: ".6px",
-                      borderBottom: `1.5px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {orders.map((ord, idx) => (
-                  <tr key={ord.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                    <td style={{ padding: "8px 10px", fontSize: 12, fontWeight: 700, color: C.muted }}>{idx + 1}</td>
-                    <td style={{ padding: "6px 6px", minWidth: 110 }}>
-                      <select value={ord.type} onChange={e => updateOrder(ord.id, "type", e.target.value)}
-                        className="his-field" style={{ padding: "6px 8px" }}>
-                        {ORDER_TYPES.map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1).replace("_", " ")}</option>)}
-                      </select>
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 180 }}>
-                      <input value={ord.detail} onChange={e => updateOrder(ord.id, "detail", e.target.value)}
-                        placeholder="Drug / test / procedure name…" className="his-field" style={{ padding: "6px 8px" }} />
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 100 }}>
-                      <input value={ord.dose} onChange={e => updateOrder(ord.id, "dose", e.target.value)}
-                        placeholder="500mg / 1L" className="his-field" style={{ padding: "6px 8px" }} />
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 80 }}>
-                      <select value={ord.route} onChange={e => updateOrder(ord.id, "route", e.target.value)}
-                        className="his-field" style={{ padding: "6px 8px" }}>
-                        {ROUTES.map(r => <option key={r}>{r}</option>)}
-                      </select>
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 90 }}>
-                      <input value={ord.freq} onChange={e => updateOrder(ord.id, "freq", e.target.value)}
-                        placeholder="STAT / 8hrly" className="his-field" style={{ padding: "6px 8px" }} />
-                    </td>
-                    <td style={{ padding: "6px 6px", minWidth: 90 }}>
-                      <select value={ord.priority} onChange={e => updateOrder(ord.id, "priority", e.target.value)}
-                        className="his-field" style={{ padding: "6px 8px",
-                          color: ord.priority === "STAT" ? "#9f1239" : ord.priority === "URGENT" ? C.red : C.muted,
-                          fontWeight: 700 }}>
-                        {PRIORITIES.map(p => <option key={p}>{p}</option>)}
-                      </select>
-                    </td>
-                    <td style={{ padding: "6px 6px" }}>
-                      <button onClick={() => removeOrder(ord.id)}
-                        style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", padding: 4 }}>
-                        <i className="pi pi-trash" style={{ fontSize: 13 }} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {/* ══ STEP 3: ORDERS & PRESCRIPTIONS — R7ay ══
+            Replaces the legacy single-table emergency-orders block with
+            three richer modules mirroring the OPD doctor experience:
+              1. Prescription      — DrugAutocomplete + dose/freq/meal/duration/route
+              2. Infusions         — fluid datalist + rate/volume/duration/additives
+              3. Services & Orders — ServiceMaster picker that spins a
+                                     DRAFT ER bill, lab/imaging/consumable rows
+                                     billed on completion. */}
+        <Section title="Step 3 — Orders & Prescriptions" icon="pi-list" color={C.purple}
+          badge={`${meds.length} med · ${infusions.length} inf`}>
+
+          {/* ─── Prescription ─────────────────────────────────────── */}
+          <div style={{ marginBottom: 22 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
+              paddingBottom: 8, borderBottom: `1px solid ${C.border}` }}>
+              <span style={{ width: 26, height: 26, borderRadius: 6, background: C.amberL,
+                display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <i className="pi pi-pencil" style={{ fontSize: 12, color: C.amber }} />
+              </span>
+              <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>Prescription</span>
+              <span style={{ background: C.amberL, color: C.amber, border: `1px solid ${C.amber}30`,
+                fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 4 }}>
+                {meds.length} medication{meds.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <PrescriptionPanel
+              value={meds}
+              onChange={setMeds}
+              theme={{ warn: C.amber, border: C.border, dark: C.text, muted: C.muted, bg: C.bg }}
+            />
           </div>
-          <button onClick={addOrder}
-            style={{ marginTop: 12, padding: "7px 16px", border: `1.5px dashed ${C.red}60`,
-              borderRadius: 8, background: C.redL, cursor: "pointer",
-              fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: C.red }}>
-            <i className="pi pi-plus" style={{ marginRight: 6, fontSize: 11 }} /> Add Order
-          </button>
+
+          {/* ─── Infusions / IV Fluids ────────────────────────────── */}
+          <div style={{ marginBottom: 22 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
+              paddingBottom: 8, borderBottom: `1px solid ${C.border}` }}>
+              <span style={{ width: 26, height: 26, borderRadius: 6, background: C.tealL,
+                display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <i className="pi pi-tint" style={{ fontSize: 12, color: C.teal }} />
+              </span>
+              <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>Infusions / IV Fluids</span>
+              <span style={{ background: C.tealL, color: C.teal, border: `1px solid ${C.teal}30`,
+                fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 4 }}>
+                {infusions.length} infusion{infusions.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <InfusionPanel
+              value={infusions}
+              onChange={setInfusions}
+              theme={{ border: C.border, dark: C.text, muted: C.muted, bg: C.bg, accent: C.teal }}
+            />
+          </div>
+
+          {/* ─── Services & Orders → DRAFT ER bill ────────────────── */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
+              paddingBottom: 8, borderBottom: `1px solid ${C.border}` }}>
+              <span style={{ width: 26, height: 26, borderRadius: 6, background: C.accentL,
+                display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <i className="pi pi-list" style={{ fontSize: 12, color: C.accent }} />
+              </span>
+              <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>
+                Services & Orders — bills on completion
+              </span>
+            </div>
+            <ServicesOrdersPanel
+              uhid={patient?.UHID || uhid}
+              visitType="ER"
+              addedBy={user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "ER Doctor"}
+              theme={{ border: C.border, dark: C.text, muted: C.muted, bg: C.bg, accent: C.accent }}
+            />
+          </div>
         </Section>
 
         {/* ── Disposition ── */}
@@ -943,6 +1075,38 @@ function EmergencyAssessmentPageContent({ selectedPatient }) {
                 placeholder="Ward, bed, special instructions…" className="his-field" />
             </Field>
           </Grid2>
+
+          {/* R7bs — Inline bed selection when the doctor decides to admit.
+              The same BedSelectionPanel used by Reception lives here so the
+              doctor can allot the bed at decision time. On sign-and-submit
+              the bed status is flipped to "Reserved" with a link back to
+              this patient — Reception's admission registration sees the
+              reservation already in place. */}
+          {isAdmitDisposition && (
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px dashed ${C.border}` }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ width: 26, height: 26, borderRadius: 6, background: "#dcfce7", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <i className="pi pi-bed" style={{ fontSize: 12, color: "#16a34a" }} />
+                  </span>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>
+                      Bed Allotment <span style={{ color: C.red, fontWeight: 800 }}>*</span>
+                    </div>
+                    <div style={{ fontSize: 10.5, color: C.muted }}>
+                      Pick a bed now — it will be reserved for the patient on sign-and-submit.
+                    </div>
+                  </div>
+                </div>
+                {bedData.bedId && (
+                  <span style={{ background: "#dcfce7", color: "#166534", border: "1px solid #86efac", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700 }}>
+                    ✓ Bed selected: {bedData.bedNumber || "—"}
+                  </span>
+                )}
+              </div>
+              <BedSelectionPanel value={bedData} onChange={setBedData} />
+            </div>
+          )}
         </Section>
 
         {/* ── Sign-off + Signature ── */}

@@ -251,7 +251,7 @@ function PatientEducationContent({ patient }) {
 
   useEffect(() => {
     if (!patient) return;
-    const stored = localStorage.getItem(`nabh_patient_education_${patient._id}`);
+    const stored = sessionStorage.getItem(`nabh_patient_education_${patient._id}`);
     if (stored) {
       try {
         const data = JSON.parse(stored);
@@ -288,7 +288,7 @@ function PatientEducationContent({ patient }) {
         nurseEmployeeId: user?.employeeId || "",
         nurseSignature: signature || undefined,
       });
-      localStorage.setItem(`nabh_patient_education_${patient._id}`, JSON.stringify({ sessions: newSessions }));
+      sessionStorage.setItem(`nabh_patient_education_${patient._id}`, JSON.stringify({ sessions: newSessions }));
       setSavedSessions(newSessions);
       setSessions([]);
       clearDraft();

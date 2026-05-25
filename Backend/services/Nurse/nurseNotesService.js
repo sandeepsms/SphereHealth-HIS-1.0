@@ -95,13 +95,36 @@ const createNurseNote = async (data, nurseUserId) => {
     nurse = await NurseStaff.findOne({ staffId: data.nurseEmployeeId }).catch(() => null);
   }
 
+  // R7bv — Resolve the patient's active admission and stamp the
+  // admission-derived ipdNo (admissionNumber) when the caller didn't pass
+  // one. Pre-R7bv the fallback chain fell THROUGH to data.patientUHID /
+  // data.UHID, which poisoned the nurse_notes collection with rows
+  // carrying ipdNo:"UH00000029" — the aggregator's `{ipdNo}` filter
+  // (which expects the admissionNumber) then silently dropped them.
+  // NEVER fall back to the UHID for ipdNo.
+  let admForLinkage = null;
+  const uhidForLookup = data.patientUHID || data.UHID || patient?.UHID || null;
+  if (uhidForLookup && (!ipdNo || !data.admissionNumber)) {
+    try {
+      const Admission = require("../../models/Patient/admissionModel");
+      admForLinkage = await Admission.findOne({
+        UHID: uhidForLookup, status: "Active",
+      }).select("_id admissionNumber").lean();
+    } catch (_) { /* non-fatal */ }
+  }
+  const resolvedIpdNo =
+    ipdNo ||
+    data.admissionNumber ||
+    admForLinkage?.admissionNumber ||
+    "";
+
   const noteStatus = status || "submitted";
 
   const note = await NurseNotes.create({
     patient: patient?._id || resolvedPatientId || undefined,
     patientName: data.patientName || patient?.fullName || "",
     patientUHID: data.patientUHID || data.UHID || patient?.UHID || "",
-    ipdNo: ipdNo || data.admissionNumber || data.patientUHID || data.UHID || "",
+    ipdNo: resolvedIpdNo,
     noteDate: noteDate || new Date(),
     shift: shift || "general",
     nurse: nurse?._id || undefined,

@@ -6,12 +6,32 @@ import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
+// R7cb-C: hospital settings for the printed note header.
+import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
 import "../../Components/clinical/clinical-forms.css";
 // Roadmap follow-up — new dnp-* design system for the recorded-notes
 // timeline. Form modals + save/sign flow remain untouched.
 import "../../pages/patient/patient-file.css";
 import "./note-page-redesign.css";
-import { DoctorAssessmentContent } from "./DoctorAssessmentPage";
+// R7az — DoctorAssessmentContent import removed. The fullscreen Initial
+// Assessment modal that mounted this component is gone (user wanted a
+// single per-patient assessment surface). The "Initial Assessment" chip
+// in the Add Note card grid now opens the existing inline activeModal
+// === "initial" form (further down in this file) instead of popping a
+// modal. The standalone /doctor-opd-panel route still imports
+// DoctorAssessmentContent directly when needed.
+// R7ax — Inline-embed the 4 surfaces that used to live as standalone
+// sidebar entries (Emergency / Discharge / Consent / MLC). Importing
+// the named *Content components lets DoctorNotes render them as panels
+// alongside Diagnosis / Orders / MAR / Team / Add Note / Timeline so
+// the "Back to All Sections" button returns to the tile grid without
+// a hard route change. Default-exported page versions still exist on
+// the standalone /emergency-assessment, /discharge-summary,
+// /consent-forms, /mlc routes for direct deep-links.
+import { EmergencyAssessmentPageContent } from "../emergency/EmergencyAssessmentPage";
+import { DischargeSummaryPageContent } from "../clinical/DischargeSummaryPage";
+import { ConsentFormPageContent } from "../clinical/ConsentFormPage";
+import { MLCPageContent } from "../mlc/MLCPage";
 import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import TreatmentTeamPanel from "../../Components/clinical/TreatmentTeamPanel";
@@ -86,21 +106,47 @@ const HAM_KW_IA = [
 ];
 const isHAM_IA = (name = "") => HAM_KW_IA.some(k => (name || "").toLowerCase().includes(k));
 
-/* ── NABH Note Modules ── */
+/* ── NABH Note Modules ──
+   R7aw — `nabh` (chapter code) + `description` (one-line summary) added to
+   every entry so the picker grid renders the same card layout used by the
+   Consent Form picker (PRE.3 / PRE.4 cards on /consent-forms). NABH codes
+   map to the most specific chapter that governs the note type:
+     AAC.1 — Initial Assessment             COP.10 — Procedures
+     MOM.4 — Medication & Infusion orders   COP.13 — Pre-operative
+     COP.1 — Daily progress / consultation  COP.14 — Post-operative
+     COP.5 — Critical / ICU care            COP.19 — Death
+     IMS.2 — Information Mgmt (amendments)                          */
 const MODULES = [
-  // ── Priority top row ──
-  { id: "initial",     label: "Initial Assessment",    icon: "pi-clipboard",           border: "#fbbf24", color: "#92400e", bg: "#fffbeb", priority: true },
-  { id: "medication",  label: "Medication Orders",     icon: "pi-tablet",              border: "#93c5fd", color: C.blue,   bg: C.blueL   },
-  { id: "infusion",    label: "Infusion Orders",       icon: "pi-plus-circle",         border: "#99f6e4", color: C.teal,   bg: C.tealL   },
+  // R7bk — Inline "Initial Assessment" module removed from this picker.
+  // The AAC.1 doctor Initial Assessment is filed via the top-level
+  // "Emergency Assessment" tile (mounts EmergencyAssessmentPageContent
+  // inline). Keeping a second inline-only entry point was producing
+  // duplicate-shape doctor notes — the Emergency Assessment page is the
+  // single source of truth, and on sign-and-submit it flips
+  // admission.initialAssessment.doctorCompleted = true so the gate lifts.
+  // R7bp — "Medication Orders" + "Infusion Orders" tiles removed from this
+  // picker. Both are now exclusively handled by the dedicated Doctor Orders
+  // module (orderType: "Medication" / "IV_Fluid"), which feeds MAR, indents,
+  // pharmacy, and billing through a single source of truth. Keeping them as
+  // duplicate "note types" let the same drug be ordered in two places, with
+  // only one of them flowing into MAR / pharmacy.
   // ── Notes ──
-  { id: "daily",       label: "Daily Progress",       icon: "pi-file-edit",           border: C.blueB,   color: C.blue,   bg: C.blueL   },
-  { id: "icu",         label: "ICU / Critical Care",   icon: "pi-heart",               border: C.redB,    color: C.red,    bg: C.redL,    dot: true },
-  { id: "procedure",   label: "Procedure Note",        icon: "pi-cog",                 border: C.orangeB, color: C.orange, bg: C.orangeL },
-  { id: "consultation",label: "Consultation",          icon: "pi-users",               border: C.purpleB, color: C.purple, bg: C.purpleL },
-  { id: "preop",       label: "Pre-operative",         icon: "pi-clock",               border: C.tealB,   color: C.teal,   bg: C.tealL   },
-  { id: "postop",      label: "Post-operative",        icon: "pi-check-circle",        border: C.greenB,  color: C.green,  bg: C.greenL  },
-  { id: "death",       label: "Death Note",            icon: "pi-exclamation-triangle",border: "#94a3b8", color: C.slate,  bg: "#f1f5f9", dot: true },
-  { id: "amendment",   label: "Amendment",             icon: "pi-pencil",              border: C.amberB,  color: C.amber,  bg: C.amberL  },
+  { id: "daily",       label: "Daily Progress",        nabh: "COP.1", description: "Shift-wise SOAP progress — stable / improving / deteriorating",
+    icon: "pi-file-edit",           border: C.blueB,   color: C.blue,   bg: C.blueL   },
+  { id: "icu",         label: "ICU / Critical Care",   nabh: "COP.5", description: "Ventilator, vasopressors, goals of care, family counselling",
+    icon: "pi-heart",               border: C.redB,    color: C.red,    bg: C.redL,    dot: true },
+  { id: "procedure",   label: "Procedure Note",        nabh: "COP.10", description: "Procedural note — consent, aseptic technique, complications",
+    icon: "pi-cog",                 border: C.orangeB, color: C.orange, bg: C.orangeL },
+  { id: "consultation",label: "Consultation",          nabh: "COP.1", description: "Specialty consult — referral, recommendations, follow-up",
+    icon: "pi-users",               border: C.purpleB, color: C.purple, bg: C.purpleL },
+  { id: "preop",       label: "Pre-operative",         nabh: "COP.13", description: "Pre-op checklist — consent, NBM, bloods, anaesthetist review",
+    icon: "pi-clock",               border: C.tealB,   color: C.teal,   bg: C.tealL   },
+  { id: "postop",      label: "Post-operative",        nabh: "COP.14", description: "Post-op recovery — haemostasis, drains, ward transfer",
+    icon: "pi-check-circle",        border: C.greenB,  color: C.green,  bg: C.greenL  },
+  { id: "death",       label: "Death Note",            nabh: "COP.19", description: "Death summary — family informed, MLC notified, certificate",
+    icon: "pi-exclamation-triangle",border: "#94a3b8", color: C.slate,  bg: "#f1f5f9", dot: true },
+  { id: "amendment",   label: "Amendment",             nabh: "IMS.2", description: "Late entry / correction with witness + original retained",
+    icon: "pi-pencil",              border: C.amberB,  color: C.amber,  bg: C.amberL  },
 ];
 
 const NOTE_STYLE = {
@@ -174,7 +220,8 @@ function SBARBox({ letter, title, color, value, onChange, placeholder }) {
 function DoctorNotesContent({ selectedPatient }) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [showAssessmentModal, setShowAssessmentModal] = useState(false);
+  // R7az — showAssessmentModal state retired. Initial Assessment now uses
+  // the same inline activeModal flow as every other note type.
 
   const [searchUHID,   setSearchUHID]   = useState("");
   const [patient,      setPatient]      = useState(null);
@@ -244,10 +291,18 @@ function DoctorNotesContent({ selectedPatient }) {
   const doctorRegNo = user?.doctorDetails?.registrationNumber || user?.registrationNumber || "";
   const doctorId = user?.id || user?._id || "000000000000000000000001";
 
-  /* Auto-populate UHID from sidebar patient selection */
+  /* Auto-populate UHID from sidebar patient selection + auto-load.
+     R7bd — Pre-R7bd this only set the UHID in the search input and the
+     user had to click "Load Patient" themselves. Now we also fire
+     loadPatient(UHID) so the patient is fetched + form renders on a
+     single click in the side panel. */
   useEffect(() => {
-    if (selectedPatient?.UHID) setSearchUHID(selectedPatient.UHID);
-  }, [selectedPatient]);
+    if (selectedPatient?.UHID) {
+      setSearchUHID(selectedPatient.UHID);
+      loadPatient(selectedPatient.UHID);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPatient?._id, selectedPatient?.UHID]);
 
   /* Auto-load when /doctor-notes?uhid=… is opened from /bed-visual */
   useEffect(() => {
@@ -349,19 +404,26 @@ function DoctorNotesContent({ selectedPatient }) {
   );
   const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
 
-  /* ── Load Patient ── */
-  const loadPatient = async (e) => {
-    e?.preventDefault();
-    if (!searchUHID.trim()) return;
+  /* ── Load Patient ──
+     R7bd — accepts either a click/submit event OR a UHID string. The
+     admitted-patient side-panel auto-loads via `loadPatient(uhid)`
+     without an event; the inline "Load Patient" button keeps passing
+     its click event. When a UHID is passed directly we skip the
+     searchUHID lookup (which would be stale right after a setState). */
+  const loadPatient = async (eventOrUhid) => {
+    const directUhid = typeof eventOrUhid === "string" ? eventOrUhid : null;
+    if (!directUhid) eventOrUhid?.preventDefault?.();
+    const uhidVal = (directUhid || searchUHID).trim();
+    if (!uhidVal) return;
     setLoading(true);
     try {
-      const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(searchUHID.trim())}`);
+      const { data } = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(uhidVal)}`);
       const arr = Array.isArray(data) ? data : data.data || [];
       const active = arr[0];
       if (active) {
         setPatient(active);
         await fetchNotes(active.ipdNo || active.admissionNumber || active._id);
-        toast.success(`Loaded: ${active.patientName || active.patientId?.fullName || searchUHID}`);
+        toast.success(`Loaded: ${active.patientName || active.patientId?.fullName || uhidVal}`);
         // Restore auto-save draft if available for this patient
         const dKey = `sphere_draft_docnotes_${active._id}`;
         const raw = localStorage.getItem(dKey);
@@ -424,15 +486,14 @@ function DoctorNotesContent({ selectedPatient }) {
   };
 
   const openModal = (id) => {
-    // Initial assessment always opens the new DoctorAssessmentContent modal
-    if (id === "initial") {
-      setShowAssessmentModal(true);
-      return;
-    }
-    // Workflow gate: if new admission and initial not done, block other notes
+    // R7bk — The inline "Initial Assessment" module was removed; the
+    // doctor's compulsory NABH AAC.1 assessment is now filed exclusively
+    // via the top-level "Emergency Assessment" tile. So this inline
+    // picker only renders once the gate is OFF, which means the gate
+    // block here is unreachable in normal flow — but we keep it as a
+    // belt-and-braces guard against any direct setActiveModal() calls.
     if (gateActive) {
-      toast.warn("⚠ Initial Assessment must be completed and signed before adding other notes", { autoClose: 4000 });
-      setShowAssessmentModal(true);
+      toast.warn("⚠ Open the 'Emergency Assessment' tile and complete the Doctor Initial Assessment first (NABH AAC.1).", { autoClose: 5000 });
       return;
     }
     setActiveModal(id);
@@ -462,6 +523,22 @@ function DoctorNotesContent({ selectedPatient }) {
   /* ── Save Note (draft or signed) ── */
   const saveNote = async (status = "draft") => {
     if (!patient) { toast.warn("No patient loaded"); return; }
+    // R7bx item 8 — MCI Regulation 1.4.2 pre-flight on sign-and-submit.
+    // Abort BEFORE the API call when the doctor has no MCI reg number on
+    // file. Drafts are still allowed — the gate only applies to the
+    // signing flow per MCI 1.4.2.
+    if (status === "signed") {
+      try {
+        const u = JSON.parse(sessionStorage.getItem("his_user") || "{}");
+        if (u?.role === "Doctor") {
+          const regNo = String(u.doctorDetails?.registrationNumber || "").trim();
+          if (!regNo) {
+            toast.error("Add your MCI registration number in your Profile before signing");
+            return;
+          }
+        }
+      } catch (_) { /* fall through — server enforces */ }
+    }
     const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
     const token = (sessionStorage.getItem("his_token"));
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -716,6 +793,18 @@ function DoctorNotesContent({ selectedPatient }) {
   /* ── Sign existing draft note ── */
   const signNote = async (noteId) => {
     if (!patient) return;
+    // R7bx item 8 — MCI Regulation 1.4.2 pre-flight. Block the sign API
+    // call when the doctor has no MCI reg number on file.
+    try {
+      const u = JSON.parse(sessionStorage.getItem("his_user") || "{}");
+      if (u?.role === "Doctor") {
+        const regNo = String(u.doctorDetails?.registrationNumber || "").trim();
+        if (!regNo) {
+          toast.error("Add your MCI registration number in your Profile before signing");
+          return;
+        }
+      }
+    } catch (_) { /* fall through — server enforces */ }
     const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
     const token = (sessionStorage.getItem("his_token"));
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -841,7 +930,7 @@ function DoctorNotesContent({ selectedPatient }) {
   };
 
   /* ── Proper clinical print for a single note ── */
-  const printNote = (note) => {
+  const printNote = async (note) => {
     const pName  = patient?.patientName || patient?.patientId?.fullName || "—";
     const uhid   = patient?.UHID || patient?.uhid || searchUHID || "—";
     const ipd    = patient?.ipdNo || patient?.admissionNumber || "—";
@@ -849,6 +938,11 @@ function DoctorNotesContent({ selectedPatient }) {
     const modLabel = modDef(note.noteType)?.label || "Daily Progress";
     const noteDate = note.createdAt ? new Date(note.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
     const shift  = (note.shift || "morning");
+    // R7cb-C: settings-driven hospital name + tagline for the print header.
+    // Pre-R7cb hardcoded "SphereHealth HIS" / "NABH Accredited Clinical
+    // Documentation System" — now those come from /hospital-settings.
+    const hs = await fetchHospitalSettings();
+    const escapeHtml = (s) => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 
     const vitalsHtml = (() => {
       const v = note.vitals;
@@ -927,8 +1021,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
 <!-- Print Header -->
 <div style="background:linear-gradient(135deg,#1e40af,#2563eb);color:white;padding:16px 24px;display:flex;align-items:center;justify-content:space-between">
   <div>
-    <div style="font-size:18px;font-weight:800;letter-spacing:-.3px">SphereHealth HIS</div>
-    <div style="font-size:11px;opacity:.8">NABH Accredited Clinical Documentation System</div>
+    <div style="font-size:18px;font-weight:800;letter-spacing:-.3px">${escapeHtml(hs.hospitalName || "Hospital")}</div>
+    <div style="font-size:11px;opacity:.8">${escapeHtml(hs.tagline || "Clinical Documentation")}</div>
   </div>
   <div style="text-align:right;font-size:11px;opacity:.85">
     <div>Printed: ${new Date().toLocaleString("en-IN")}</div>
@@ -1012,35 +1106,19 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
             onChangePatient={() => { setPatient(null); setNotes([]); setSearchUHID(""); }}
           />
 
-          {/* ── Assessment Gate Banner (HARD BLOCK) ── */}
-          {gateActive && (
-            <div style={{ background: "#fef2f2", border: "2px solid #fca5a5", borderRadius: 12, padding: "16px 20px", marginBottom: 14, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 4px 16px rgba(220,38,38,.12)" }}>
-              <div style={{ width: 44, height: 44, borderRadius: 10, background: "#fee2e2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <i className="pi pi-lock" style={{ fontSize: 20, color: "#dc2626" }} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 800, fontSize: 14, color: "#991b1b", display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ background: "#dc2626", color: "white", fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 4, letterSpacing: ".5px" }}>MANDATORY</span>
-                  Initial Assessment not completed — NABH COP.1
-                </div>
-                <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 4 }}>
-                  Doctor's Initial Assessment must be completed and signed before writing daily notes, medication orders, ICU notes, or any other clinical documentation for this patient.
-                </div>
-              </div>
-              <button
-                onClick={() => setShowAssessmentModal(true)}
-                style={{ padding: "10px 22px", background: "#dc2626", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", boxShadow: "0 4px 14px rgba(220,38,38,.35)", flexShrink: 0 }}>
-                <i className="pi pi-clipboard" style={{ marginRight: 6, fontSize: 13 }} />
-                Write Initial Assessment
-              </button>
-            </div>
-          )}
-          {!gateActive && assessmentDone && (
-            <div style={{ background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 10, padding: "9px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#15803d", fontWeight: 600 }}>
-              <i className="pi pi-check-circle" style={{ fontSize: 14 }} />
-              Initial Assessment completed &amp; signed — full documentation access unlocked
-            </div>
-          )}
+          {/* R7ba — Removed both the red "Initial Assessment not completed
+              — NABH COP.1" gate banner and the green "Initial Assessment
+              completed & signed" confirmation banner. They were leftovers
+              from the modal era; with the Emergency Assessment inline tile
+              taking over as the doctor's per-patient assessment surface,
+              showing a second top-of-page banner about a separate
+              Initial Assessment workflow was visual noise. NABH compliance
+              capture moves into the Emergency Assessment form itself
+              (which already records triage / ABCDE / vitals / orders /
+              disposition — the same data NABH COP.1 expects from initial
+              assessment). The gate / assessmentDone state is still
+              computed below in case other components want to read it,
+              but no banner is rendered from this page anymore. */}
 
           {/* ══ TILE GRID (when no section is active) ════════════════════════
                 Doctor Notes is split into 6 tiles. Click → that section
@@ -1099,11 +1177,10 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   icon: "pi-plus-circle",
                   color: "#16a34a",
                   tint: "#dcfce7",
-                  badges: [
-                    gateActive
-                      ? { label: "Initial Assessment required", tone: "warn" }
-                      : { label: "Ready", tone: "ok" },
-                  ],
+                  // R7bk — Per-tile "Initial Assessment required" badge
+                  // is now rendered by the shared locked-badge logic in
+                  // the tile loop. Keep a single "Ready" tone here.
+                  badges: [{ label: "Ready", tone: "ok" }],
                 },
                 {
                   id: "timeline",
@@ -1119,24 +1196,97 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     todayNotes > 0 && { label: `${todayNotes} today`, tone: "accent" },
                   ].filter(Boolean),
                 },
-              ].map(t => (
+                /* ── R7av + R7ax — relocated from Doctor sidebar ──
+                   Four full-page clinical surfaces (Emergency Assessment,
+                   Discharge Summary, Consent Forms, MLC) used to be
+                   top-level sidebar items. They now open INLINE as panels
+                   inside DoctorNotes (same pattern as Add a Note) so the
+                   "Back to All Sections" button returns straight to this
+                   tile grid — no hard route change, the doctor stays on
+                   the per-patient hub. Standalone routes are still
+                   registered in App.jsx so deep-links from email / print
+                   headers keep working. */
+                {
+                  id: "emergency",
+                  title: "Emergency Assessment",
+                  subtitle: "ER triage + initial doctor assessment (NABH AAC.1)",
+                  icon: "pi-exclamation-circle",
+                  color: "#dc2626",
+                  tint: "#fee2e2",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                },
+                {
+                  id: "discharge",
+                  title: "Discharge Summary",
+                  subtitle: "Final summary + follow-up + meds-on-discharge (AAC.4)",
+                  icon: "pi-sign-out",
+                  color: "#0891b2",
+                  tint: "#cffafe",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                },
+                {
+                  id: "consent",
+                  title: "Consent Forms",
+                  subtitle: "Surgical / anaesthesia / blood-tx / HIV consents (PRE.4)",
+                  icon: "pi-shield",
+                  color: "#9333ea",
+                  tint: "#f3e8ff",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                },
+                {
+                  id: "mlc",
+                  title: "Medico-Legal (MLC)",
+                  subtitle: "MLC register — police info, alleged history, exhibits",
+                  icon: "pi-flag",
+                  color: "#a16207",
+                  tint: "#fef3c7",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                },
+              ].map(t => {
+                // R7bk — Doctor Initial Assessment gate. The ONLY entry
+                // point to the compulsory NABH AAC.1 doctor Initial
+                // Assessment is the "Emergency Assessment" tile (mounts
+                // EmergencyAssessmentPageContent inline; sign-and-submit
+                // flips initialAssessment.doctorCompleted = true).
+                //
+                // All other tiles — Patient Diagnosis, Orders, MAR, Team,
+                // Add a Note, Notes Timeline, Discharge Summary, Consent
+                // Forms, MLC — stay locked until that one tile is signed.
+                // Add a Note used to be in the allowlist (held the inline
+                // COP.1 "Initial Assessment" sub-module) but R7bk
+                // deleted that sub-module too.
+                const isAssessmentTile = t.id === "emergency";
+                const locked = gateActive && !isAssessmentTile;
+                return (
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setActiveTile(t.id)}
-                  className="dnp-tile"
+                  // R7ax — every tile (legacy + the 4 R7av relocations)
+                  // now opens inline via setActiveTile. The standalone
+                  // routes still exist for direct deep-links from email
+                  // / print headers; the 4 inline panels below match
+                  // those routes' content components.
+                  onClick={() => {
+                    if (locked) {
+                      toast.error("⛔ Complete the Doctor Initial Assessment first — open the 'Emergency Assessment' tile (NABH AAC.1).", { autoClose: 5500 });
+                      return;
+                    }
+                    setActiveTile(t.id);
+                  }}
+                  className={`dnp-tile ${locked ? "dnp-tile--locked" : ""}`}
                   style={{ "--tile-color": t.color, "--tile-tint": t.tint }}
-                  aria-label={`Open ${t.title}`}
+                  aria-label={`Open ${t.title}${locked ? " (locked)" : ""}`}
+                  aria-disabled={locked}
                 >
                   <div className="dnp-tile__icon">
-                    <i className={`pi ${t.icon}`} />
+                    <i className={`pi ${locked ? "pi-lock" : t.icon}`} />
                   </div>
                   <div className="dnp-tile__body">
                     <div className="dnp-tile__title">{t.title}</div>
                     <div className="dnp-tile__subtitle">{t.subtitle}</div>
-                    {t.badges.length > 0 && (
+                    {(locked ? [{ label: "🔒 Initial Assessment required", tone: "warn" }] : t.badges).length > 0 && (
                       <div className="dnp-tile__badges">
-                        {t.badges.map((b, i) => (
+                        {(locked ? [{ label: "🔒 Initial Assessment required", tone: "warn" }] : t.badges).map((b, i) => (
                           <span key={i} className={`dnp-tile__badge dnp-tile__badge--${b.tone}`}>
                             {b.label}
                           </span>
@@ -1146,7 +1296,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   </div>
                   <i className="pi pi-chevron-right dnp-tile__chevron" aria-hidden />
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -1328,40 +1479,98 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               </button>
             </div>
 
-            {/* Module launcher — single compact pill bar, 2 groups, multi-row wrap */}
-            <div className="dnp-module-bar">
-              <span className="dnp-module-bar__group">Required / Treatment</span>
-              {MODULES.filter(m => m.id === "medication" || m.id === "infusion").map(m => {
-                const locked = gateActive && m.id !== "initial";
-                return (
-                  <button key={m.id} onClick={() => !locked && openModal(m.id)}
-                    className={`dnp-module-pill ${locked ? "dnp-module-pill--locked" : ""}`}
-                    style={{ "--mod-color": m.color, "--mod-tint": m.bg }}
-                    title={locked ? "Locked — complete Initial Assessment first" : m.label}>
-                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 12 }} />
-                    {m.label}
-                    {m.id === "initial" && gateActive && <span className="dnp-module-pill__chip dnp-module-pill__chip--required">REQ</span>}
-                    {m.id === "initial" && assessmentDone && <span className="dnp-module-pill__chip dnp-module-pill__chip--done">✓</span>}
-                  </button>
-                );
-              })}
-              <span className="dnp-module-bar__divider" aria-hidden />
-              <span className="dnp-module-bar__group">Notes</span>
-              {MODULES.filter(m => !m.priority && m.id !== "medication" && m.id !== "infusion").map(m => {
-                const locked = gateActive;
-                return (
-                  <button key={m.id} onClick={() => !locked && openModal(m.id)}
-                    className={`dnp-module-pill ${locked ? "dnp-module-pill--locked" : ""}`}
-                    style={{ "--mod-color": m.color, "--mod-tint": m.bg }}
-                    title={locked ? "Locked — complete Initial Assessment first" : m.label}>
-                    <i className={`pi ${locked ? "pi-lock" : m.icon}`} style={{ fontSize: 12 }} />
-                    {m.label}
-                    {m.dot && !locked && <span className="dnp-module-pill__dot" />}
-                  </button>
-                );
-              })}
+            {/* ── R7aw — Note type picker (card grid) ──
+                Mirrors the /consent-forms "Select Consent Type" layout so
+                doctors get the same visual language across consent + notes.
+                Each card carries icon + label + NABH chapter code +
+                one-line description; locked cards (Initial-Assessment
+                gate active) show a lock icon + reduced opacity but stay
+                visible so the doctor can see WHAT they'll get once they
+                clear the gate. */}
+            <div style={{ background: C.card, borderRadius: 12, padding: "18px", border: `1.5px solid ${C.border}`, marginTop: 14 }}>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 3 }}>Select Note Type</div>
+                <div style={{ fontSize: 12, color: C.muted }}>
+                  Choose the appropriate NABH-compliant clinical note for this patient encounter
+                </div>
+              </div>
+              {/* R7bk — Per-module lock logic + REQ/DONE badges removed.
+                  The parent "Add a Note" tile is already locked when the
+                  Doctor Initial Assessment (Emergency Assessment tile)
+                  hasn't been signed, so this picker only renders when the
+                  gate is OFF. Modules are always clickable here. */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+                {MODULES.map(m => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => openModal(m.id)}
+                      title={m.label}
+                      style={{
+                        background: "white",
+                        border: `2px solid ${C.border}`,
+                        borderRadius: 12, padding: "14px 12px",
+                        cursor: "pointer",
+                        textAlign: "left", transition: "all .15s",
+                        display: "flex", flexDirection: "column", gap: 6,
+                        position: "relative",
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = m.color + "70"; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{
+                          width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                          background: m.bg,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          <i className={`pi ${m.icon}`} style={{ fontSize: 14, color: m.color }} />
+                        </span>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{m.label}</span>
+                            {m.dot && (
+                              <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.color, flexShrink: 0 }} aria-hidden />
+                            )}
+                          </div>
+                          <div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>{m.nabh}</div>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.4 }}>{m.description}</div>
+                    </button>
+                ))}
+              </div>
             </div>
           </div>
+          )}
+
+          {/* ══ R7ax — Embedded panels for the 4 relocated surfaces ══
+              Each block mounts the named *Content component exported by
+              the corresponding page. The component handles its own data
+              loading off the selectedPatient prop, so Doctor Notes just
+              passes through `patient` (its current selection state).
+              "Back to All Sections" (rendered above when activeTile !=
+              null) flips activeTile back to null and the tile grid
+              reappears. */}
+          {patient && activeTile === "emergency" && (
+            <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
+              <EmergencyAssessmentPageContent selectedPatient={patient} />
+            </div>
+          )}
+          {patient && activeTile === "discharge" && (
+            <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
+              <DischargeSummaryPageContent selectedPatient={patient} />
+            </div>
+          )}
+          {patient && activeTile === "consent" && (
+            <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
+              <ConsentFormPageContent selectedPatient={patient} />
+            </div>
+          )}
+          {patient && activeTile === "mlc" && (
+            <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
+              <MLCPageContent selectedPatient={patient} />
+            </div>
           )}
 
           {/* ── Notes Stats Bar ── */}
@@ -2351,7 +2560,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     {k:"subjective", l:"S — Subjective", c:C.blue, ph:"Patient's complaints today: pain, nausea, fever, functional status, how they feel…"},
                     {k:"objective",  l:"O — Objective",  c:C.teal, ph:"Examination findings: general appearance, chest, CVS, abdomen, neuro, wound…"},
                     {k:"assessment", l:"A — Assessment",  c:C.amber,ph:"Clinical impression, response to treatment, disease progression…"},
-                    {k:"plan",       l:"P — Plan",        c:C.green,ph:"Investigations ordered, medication changes (add/modify/stop), procedures, nursing orders, diet, activity…"},
+                    {k:"plan",       l:"P — Plan",        c:C.green,ph:"Narrative summary of today's plan: monitoring goals, expected response, nursing instructions, diet, activity, escalation triggers. (Diagnosis updates → Patient Diagnosis tile · Investigations / medications / procedures → Doctor Orders tile.)"},
                   ].map(s => (
                     <div key={s.k}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
@@ -2361,73 +2570,20 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                       <textarea className="his-textarea" style={{ minHeight: 72, borderColor: s.c + "40" }} value={soap[s.k]} placeholder={s.ph} onChange={e => setSoap(p => ({ ...p, [s.k]: e.target.value }))} />
                     </div>
                   ))}
-                  {/* Diagnosis */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Provisional Diagnosis"><input className="his-field" value={diag.provisional} placeholder="Working diagnosis" onChange={e => setDiag(p => ({ ...p, provisional: e.target.value }))} /></FL>
-                    <FL label="Working Diagnosis"><input className="his-field" value={diag.working} placeholder="Current working diagnosis" onChange={e => setDiag(p => ({ ...p, working: e.target.value }))} /></FL>
-                    <FL label="Final Diagnosis"><input className="his-field" value={diag.final} placeholder="Confirmed diagnosis" onChange={e => setDiag(p => ({ ...p, final: e.target.value }))} /></FL>
-                    <FL label="ICD-10 Code"><input className="his-field" value={diag.icd10Code} placeholder="e.g. J18.9" onChange={e => setDiag(p => ({ ...p, icd10Code: e.target.value }))} /></FL>
-                    <FL label="ICD-10 Description"><input className="his-field" value={diag.icd10Description} placeholder="e.g. Unspecified pneumonia" onChange={e => setDiag(p => ({ ...p, icd10Description: e.target.value }))} /></FL>
-                    <FL label="Patient Status">
-                      <select className="his-select" value={diag.status} onChange={e => setDiag(p => ({ ...p, status: e.target.value }))}>
-                        {["Stable","Improving","Unchanged","Deteriorating","Critical","Ready for Discharge"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                  </div>
-                  {/* Investigations ordered */}
-                  <FL label="Investigations Ordered (comma-separated)">
-                    <input className="his-field" value={invx} placeholder="CBC, LFT, Chest X-Ray, USG Abdomen, ECG…" onChange={e => setInvx(e.target.value)} />
-                  </FL>
-                  {/* Inline Orders */}
-                  <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px" }}>Doctor Orders ({orders.length})</div>
-                      <button onClick={() => setShowOrderRow(true)} style={{ padding: "5px 14px", background: C.primaryL, color: C.primary, border: `1.5px solid ${C.blueB}`, borderRadius: 7, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
-                        <i className="pi pi-plus" style={{ fontSize: 10 }} /> Add Order
-                      </button>
-                    </div>
-                    {showOrderRow && (
-                      <div style={{ background: "white", border: `1px solid ${C.blueB}`, borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr 1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
-                          <FL label="Type">
-                            <select className="his-select" style={{ fontSize: 12 }} value={orderRow.type} onChange={e => setOrderRow(p => ({ ...p, type: e.target.value }))}>
-                              {["medication","iv_fluid","procedure","investigation","diet","nursing","other"].map(o=><option key={o} value={o}>{o}</option>)}
-                            </select>
-                          </FL>
-                          <FL label="Instruction *"><input className="his-field" style={{ fontSize: 12 }} value={orderRow.instruction} placeholder="Drug name & dose / order detail" onChange={e => setOrderRow(p => ({ ...p, instruction: e.target.value }))} /></FL>
-                          <FL label="Route">
-                            <select className="his-select" style={{ fontSize: 12 }} value={orderRow.route} onChange={e => setOrderRow(p => ({ ...p, route: e.target.value }))}>
-                              {["IV","IM","Oral","SC","SL","Topical","Inhalation",""].map(o=><option key={o}>{o||"—"}</option>)}
-                            </select>
-                          </FL>
-                          <FL label="Frequency"><input className="his-field" style={{ fontSize: 12 }} value={orderRow.frequency} placeholder="OD/BD/TDS" onChange={e => setOrderRow(p => ({ ...p, frequency: e.target.value }))} /></FL>
-                          <FL label="Duration"><input className="his-field" style={{ fontSize: 12 }} value={orderRow.duration} placeholder="3 days" onChange={e => setOrderRow(p => ({ ...p, duration: e.target.value }))} /></FL>
-                          <FL label="Priority">
-                            <select className="his-select" style={{ fontSize: 12, borderColor: orderRow.priority==="STAT"?C.red:orderRow.priority==="URGENT"?C.amber:"#e2e8f0" }} value={orderRow.priority} onChange={e => setOrderRow(p => ({ ...p, priority: e.target.value }))}>
-                              {["ROUTINE","URGENT","STAT"].map(o=><option key={o}>{o}</option>)}
-                            </select>
-                          </FL>
-                        </div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button onClick={addOrder} style={{ padding: "6px 18px", background: C.green, color: "white", border: "none", borderRadius: 7, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Add Order</button>
-                          <button onClick={() => setShowOrderRow(false)} style={{ padding: "6px 14px", background: "white", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 7, fontFamily: "'DM Sans',sans-serif", fontSize: 12, cursor: "pointer" }}>Cancel</button>
-                        </div>
-                      </div>
-                    )}
-                    {orders.length > 0 && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {orders.map((o, i) => (
-                          <div key={o._id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", background: "white", borderRadius: 6, border: `1px solid ${C.border}` }}>
-                            <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4, background: C.blueL, color: C.blue }}>{o.type}</span>
-                            <span style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>{o.instruction}</span>
-                            {o.route && <span style={{ fontSize: 10, color: C.muted }}>{o.route}</span>}
-                            {o.frequency && <span style={{ fontSize: 10, color: C.muted }}>{o.frequency}</span>}
-                            {o.priority !== "ROUTINE" && <span style={{ fontSize: 10, fontWeight: 700, color: o.priority==="STAT"?C.red:C.amber }}>{o.priority}</span>}
-                            <button onClick={() => setOrders(p => p.filter((_, ii) => ii !== i))} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontSize: 12, padding: 2 }}>×</button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                  {/* R7bp — Diagnosis / Investigations / Doctor Orders were removed
+                       from the Daily Progress note. Diagnosis lives on the dedicated
+                       "Patient Diagnosis" tile (PATCH /diagnosis), and all
+                       investigations + medication + IV / procedure orders live in
+                       the "Doctor Orders" module. Keeping them here duplicated the
+                       data entry and let the same diagnosis/order be entered in two
+                       places — confusing for the nurse, MAR, and ledger. SOAP narrative
+                       in the P (Plan) section above is still the place to describe
+                       intent; the actual orderable rows go through Doctor Orders. */}
+                  <div style={{ background: "#f0fdfa", border: `1px dashed ${C.teal}`, borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: C.muted }}>
+                    <i className="pi pi-info-circle" style={{ color: C.teal, fontSize: 13 }} />
+                    <span>
+                      <b style={{ color: C.teal }}>Diagnosis</b>, <b style={{ color: C.teal }}>investigations</b> &amp; <b style={{ color: C.teal }}>orders</b> are now entered from the dedicated <b>Patient Diagnosis</b> and <b>Doctor Orders</b> tiles. Use the P — Plan field above for narrative documentation only.
+                    </span>
                   </div>
                 </div>
               )}
@@ -2485,14 +2641,9 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   <FL label="Daily Goals / Targets">
                     <textarea className="his-textarea" style={{ minHeight: 60, borderColor: `${C.green}40` }} value={icu.dailyGoals} placeholder="Target SpO₂ >95%, MAP >65, urine >0.5ml/kg/hr, pain BPS <6, sedation RASS 0 to -2…" onChange={e=>setIcu(p=>({...p,dailyGoals:e.target.value}))} />
                   </FL>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <FL label="Provisional Diagnosis"><input className="his-field" value={diag.provisional} placeholder="e.g. Septic shock — ARDS" onChange={e=>setDiag(p=>({...p,provisional:e.target.value}))} /></FL>
-                    <FL label="Patient Status">
-                      <select className="his-select" value={diag.status} onChange={e=>setDiag(p=>({...p,status:e.target.value}))}>
-                        {["Stable","Improving","Unchanged","Deteriorating","Critical","Moribund"].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </FL>
-                  </div>
+                  {/* R7bp — Diagnosis/Status fields removed from ICU note. The active
+                       diagnosis lives on the Patient Diagnosis tile and is the single
+                       source of truth across all note types. */}
                 </div>
               )}
 
@@ -2798,60 +2949,10 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
         />
       )}
 
-      {/* ══ INITIAL ASSESSMENT MODAL ══ */}
-      {showAssessmentModal && (
-        <div
-          style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(15,23,42,.65)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-          onClick={() => setShowAssessmentModal(false)}
-        >
-          <div
-            style={{ background: "white", borderRadius: 16, width: "min(1100px, 96vw)", maxHeight: "92vh", display: "flex", flexDirection: "column", boxShadow: "0 24px 60px rgba(0,0,0,.35)", overflow: "hidden" }}
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Modal header */}
-            <div style={{ padding: "14px 22px", background: `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ width: 32, height: 32, borderRadius: 8, background: "rgba(255,255,255,.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <i className="pi pi-clipboard" style={{ fontSize: 15, color: "white" }} />
-                </span>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>Initial Assessment — NABH COP.1</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,.75)" }}>
-                    {patient?.patientName || patient?.patientId?.fullName || "—"} · IPD: {patient?.ipdNo || patient?.admissionNumber || "—"}
-                  </div>
-                </div>
-              </div>
-              <button onClick={() => setShowAssessmentModal(false)}
-                style={{ background: "rgba(255,255,255,.2)", border: "none", color: "white", fontSize: 20, cursor: "pointer", width: 32, height: 32, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>×</button>
-            </div>
-            {/* Scrollable content */}
-            <div style={{ flex: 1, overflowY: "auto", background: "#f0f2f5", padding: "20px 24px" }}>
-              <DoctorAssessmentContent
-                selectedPatient={patient}
-                onSaved={async () => {
-                  // Close the modal and reload patient so the gate drops immediately
-                  setShowAssessmentModal(false);
-                  if (patient) {
-                    const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
-                    // Re-fetch fresh admission to get doctorCompleted=true
-                    const token = (sessionStorage.getItem("his_token"));
-                    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-                    try {
-                      const { data } = await (await import("axios")).default.get(
-                        `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(patient.UHID || patient.uhid || "")}`,
-                        { headers }
-                      );
-                      const arr = Array.isArray(data) ? data : data.data || [];
-                      if (arr[0]) setPatient(arr[0]);
-                    } catch { /* fallback: patch local state */ }
-                    await fetchNotes(ipdNo);
-                  }
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* R7az — Initial Assessment modal removed. Doctors now do the
+          initial assessment inline via the Add Note → Initial Assessment
+          card; the gate banner above auto-navigates them there when the
+          IPD admission requires it. */}
     </div>
   );
 }

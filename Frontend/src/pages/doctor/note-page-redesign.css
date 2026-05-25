@@ -721,6 +721,24 @@
 .dnp-tile__badge--info   { background: #e0e7ff; color: #4338ca; border-color: #c7d2fe; }
 .dnp-tile__badge--accent { background: var(--tile-tint); color: var(--tile-color); border-color: color-mix(in srgb, var(--tile-color) 30%, transparent); }
 
+/* R7bi — Locked tile state. Used when the role's Initial Assessment
+   has not been filed yet (NABH COP.2 gate). Faded look + lock cursor
+   so it's visually obvious without disabling the click handler (which
+   still fires to show the explanatory toast). */
+.dnp-tile--locked {
+  opacity: .55;
+  cursor: not-allowed;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--his-card, #ffffff),
+    var(--his-card, #ffffff) 6px,
+    #f8fafc 6px,
+    #f8fafc 12px
+  );
+}
+.dnp-tile--locked:hover { transform: none; box-shadow: none; }
+.dnp-tile--locked .dnp-tile__icon i { color: #94a3b8; }
+
 .dnp-tile__chevron {
   align-self: center;
   font-size: 14px;

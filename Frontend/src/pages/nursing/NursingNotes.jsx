@@ -18,6 +18,14 @@ import FingerprintConsentModal from "../../Components/clinical/FingerprintConsen
 import IntegratedVitalsPanel from "../../Components/clinical/IntegratedVitalsPanel";
 import { saveVitalSheet, getVitalSheet } from "../../Services/vital/vitalService";
 import NursingPatientReport from "../../Components/nursing/NursingPatientReport";
+// R7cb-C: stop passing literal "SphereHealth Hospital" to NursingPatientReport.
+import useHospitalSettings from "../../Components/print/useHospitalSettings";
+// R7bi — shared patient banner (Doctor + Nursing parity). Replaces the
+// inline JSX that lived here pre-R7bi (with R7bg's QR/IPD/age/diagnosis
+// enhancements now promoted into the shared component).
+import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
+// R7bi — QRCodeSVG import removed; the QR now lives inside the shared
+// PatientHeaderCard component, so this file no longer references it.
 
 /* ── Design tokens ── */
 const C = {
@@ -50,31 +58,58 @@ const lbl = {
   textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 5,
 };
 
-/* ── Module definitions ── */
+/* ── Module definitions ──
+   R7bf — `nabh` (chapter code) + `description` (one-line summary) added to
+   each entry so the picker grid renders the same card layout used by
+   Doctor Notes' "Select Note Type" (R7aw) and the /consent-forms picker.
+   Each card shows icon + label + NABH code + description. */
 const MODULES = [
-  { id: "vitals",    label: "Vital Signs",               icon: "pi-heart",                   border: "#bfdbfe", color: "#1d4ed8", bg: "#dbeafe" },
-  { id: "neuro",     label: "Neuro / GCS",               icon: "pi-eye",                     border: "#d8b4fe", color: C.purple, bg: C.purpleL },
-  { id: "pain",      label: "Pain Assessment",            icon: "pi-exclamation-circle",      border: "#fcd34d", color: "#b45309", bg: C.amberL },
-  { id: "intake",    label: "Intake / Output",            icon: "pi-sort-alt",                border: "#93c5fd", color: C.accent, bg: C.accentL },
-  { id: "iv",        label: "IV Infusion",                icon: "pi-plus-circle",             border: "#6ee7b7", color: C.teal, bg: C.tealL },
-  { id: "blood",     label: "Blood Transfusion",          icon: "pi-heart-fill",              border: "#fca5a5", color: "#9f1239", bg: "#fecaca", dot: true },
-  { id: "wound",     label: "Wound / Dressing",           icon: "pi-pencil",                  border: "#fca5a5", color: C.red, bg: C.redL },
-  { id: "skin",      label: "Skin / Pressure Assessment", icon: "pi-th-large",                border: "#86efac", color: "#166534", bg: C.greenL },
-  { id: "fall",      label: "Fall Risk (Morse)",          icon: "pi-exclamation-triangle",    border: "#fdba74", color: C.orange, bg: C.orangeL },
+  // R7bj — "Initial Assessment" module removed from this inline picker.
+  // The COP.2 nurse Initial Assessment is filled on the dedicated full-
+  // page form at /nursing-initial-assessment (reached via the top-level
+  // "IPD Initial Assessment" tile, NABH AAC.1). Keeping a second
+  // inline-only entry point was redundant and produced two saves of
+  // the same assessment in two different shapes — the standalone page
+  // is the source of truth.
+  { id: "daily",     label: "Daily Assessment",           nabh: "NS.4",         description: "Shift-wise nursing assessment — head-to-toe review",
+    icon: "pi-calendar-plus",        border: "#bae6fd", color: "#0369a1", bg: "#e0f2fe" },
+  { id: "vitals",    label: "Vital Signs",                nabh: "NS.4",         description: "BP / HR / RR / SpO₂ / Temp / Pain / GCS / Urine",
+    icon: "pi-heart",                border: "#bfdbfe", color: "#1d4ed8", bg: "#dbeafe" },
+  { id: "neuro",     label: "Neuro / GCS",                nabh: "AAC.4",        description: "GCS, pupils, motor, posture (NIHSS for stroke)",
+    icon: "pi-eye",                  border: "#d8b4fe", color: C.purple, bg: C.purpleL },
+  { id: "pain",      label: "Pain Assessment",            nabh: "AAC.4",        description: "VAS / FLACC / numeric — onset, character, relief",
+    icon: "pi-exclamation-circle",   border: "#fcd34d", color: "#b45309", bg: C.amberL },
+  { id: "mews",      label: "MEWS Score",                 nabh: "COP.17",       description: "Modified Early Warning Score — escalation trigger",
+    icon: "pi-chart-bar",            border: "#fbbf24", color: "#92400e", bg: "#fffbeb", dot: true },
+  { id: "fall",      label: "Fall Risk (Morse)",          nabh: "AAC.4",        description: "Morse Fall Scale — risk score + precautions",
+    icon: "pi-exclamation-triangle", border: "#fdba74", color: C.orange, bg: C.orangeL },
   // R7bs — DVT (Caprini) chip. Lives alongside Fall Risk because both are
   // structured-risk scoring scales. Auto-pops the NABH DVT register via
   // POST /api/nursing-assessments/dvt → nabhRegisterEmitter.emitDVT.
-  { id: "dvt",       label: "DVT (Caprini)",              icon: "pi-shield",                  border: "#a5b4fc", color: "#4338ca", bg: "#eef2ff" },
-  { id: "procedure", label: "Procedure / Intervention",   icon: "pi-cog",                     border: "#c4b5fd", color: C.purple, bg: C.purpleL },
-  { id: "discharge", label: "Discharge / Handover",       icon: "pi-sign-out",                border: "#6ee7b7", color: C.green, bg: C.greenL },
-  { id: "mews",      label: "MEWS Score",                 icon: "pi-chart-bar",               border: "#fbbf24", color: "#92400e", bg: "#fffbeb", dot: true },
-  { id: "general",   label: "General Observation",        icon: "pi-file",                    border: "#d1d5db", color: "#374151", bg: C.grayL },
-  // ── Consolidated from sidebar ──
-  { id: "daily",     label: "Daily Assessment",           icon: "pi-calendar-plus",           border: "#bae6fd", color: "#0369a1", bg: "#e0f2fe" },
-  { id: "initial",   label: "Initial Assessment",         icon: "pi-clipboard",               border: "#f9a8d4", color: "#be185d", bg: "#fdf2f8" },
-  { id: "careplan",  label: "Care Plan",                  icon: "pi-heart-fill",              border: "#6ee7b7", color: "#065f46", bg: "#ecfdf5" },
-  { id: "nutrition", label: "Nutritional Assessment",     icon: "pi-apple",                   border: "#86efac", color: "#15803d", bg: "#dcfce7" },
-  { id: "education", label: "Patient Education",          icon: "pi-book",                    border: "#c4b5fd", color: "#6d28d9", bg: "#f5f3ff" },
+  { id: "dvt",       label: "DVT (Caprini)",              nabh: "MOM.7",        description: "Caprini VTE risk + IMPROVE bleeding score + prophylaxis",
+    icon: "pi-shield",               border: "#a5b4fc", color: "#4338ca", bg: "#eef2ff" },
+  { id: "skin",      label: "Skin / Pressure Assessment", nabh: "AAC.4",        description: "Braden / pressure ulcer staging, integrity check",
+    icon: "pi-th-large",             border: "#86efac", color: "#166534", bg: C.greenL },
+  { id: "intake",    label: "Intake / Output",            nabh: "COP.16",       description: "Oral / IV / NG intake vs urine / drains / NG-loss",
+    icon: "pi-sort-alt",             border: "#93c5fd", color: C.accent, bg: C.accentL },
+  { id: "iv",        label: "IV Infusion",                nabh: "MOM.4",        description: "IV access, infusion rate, drip monitoring",
+    icon: "pi-plus-circle",          border: "#6ee7b7", color: C.teal, bg: C.tealL },
+  { id: "blood",     label: "Blood Transfusion",          nabh: "COP.16",       description: "Whole blood / PRBC / FFP / Platelet — 2-nurse check",
+    icon: "pi-heart-fill",           border: "#fca5a5", color: "#9f1239", bg: "#fecaca", dot: true },
+  { id: "wound",     label: "Wound / Dressing",           nabh: "COP.15",       description: "Wound assessment, dressing change, drains",
+    icon: "pi-pencil",               border: "#fca5a5", color: C.red, bg: C.redL },
+  { id: "procedure", label: "Procedure / Intervention",   nabh: "COP.10",       description: "Nursing procedure note — aseptic technique, complications",
+    icon: "pi-cog",                  border: "#c4b5fd", color: C.purple, bg: C.purpleL },
+  { id: "careplan",  label: "Care Plan",                  nabh: "COP.8",        description: "Nursing care plan with goals + interventions",
+    icon: "pi-heart-fill",           border: "#6ee7b7", color: "#065f46", bg: "#ecfdf5" },
+  { id: "nutrition", label: "Nutritional Assessment",     nabh: "COP.16",       description: "NRS-2002 nutritional risk screening",
+    icon: "pi-apple",                border: "#86efac", color: "#15803d", bg: "#dcfce7" },
+  { id: "education", label: "Patient Education",          nabh: "PRE.5",        description: "Patient + family education session log",
+    icon: "pi-book",                 border: "#c4b5fd", color: "#6d28d9", bg: "#f5f3ff" },
+  { id: "discharge", label: "Discharge / Handover",       nabh: "AAC.4",        description: "RN-to-RN handover + discharge instructions",
+    icon: "pi-sign-out",             border: "#6ee7b7", color: C.green, bg: C.greenL },
+  { id: "general",   label: "General Observation",        nabh: "COP.1",        description: "Free-text observation note",
+    icon: "pi-file",                 border: "#d1d5db", color: "#374151", bg: C.grayL },
 ];
 
 /* ── R7bs — Caprini 2010 VTE risk factor catalogue (weighted) ──
@@ -312,13 +347,33 @@ function Section({ title, icon, color = C.primary, children }) {
 function NursingNotesContent({ selectedPatient }) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  // R7cb-C: settings-driven hospital name passed into NursingPatientReport
+  // (replaces literal "SphereHealth Hospital" near the report mount).
+  const { settings: hospitalSettings } = useHospitalSettings();
 
   const [searchUHID, setSearchUHID] = useState("");
   const [ipdNoForDraft, setIpdNoForDraft] = useState("");
+  // R7bg — Latest diagnosis fetched from /api/doctor-notes/ipd/{ipdNo}.
+  // Refreshes on patient load + on tab focus so when the doctor saves a
+  // new diagnosis via Doctor Notes → Patient Diagnosis tile, the nursing
+  // patient header reflects it within seconds.
+  const [latestDiagnosis, setLatestDiagnosis] = useState(null);
 
+  // R7bd — Auto-load on side-panel click. Pre-R7bd only set the input
+  // field; user had to click "Load Patient" themselves. Now we fire
+  // loadPatient(uhid) directly so a single click in the side panel
+  // fetches + renders the patient.
   useEffect(() => {
-    if (selectedPatient?.UHID) setSearchUHID(selectedPatient.UHID);
-  }, [selectedPatient]);
+    if (selectedPatient?.UHID) {
+      setSearchUHID(selectedPatient.UHID);
+      loadPatient(selectedPatient.UHID);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPatient?._id, selectedPatient?.UHID]);
+
+  // R7bg — Focus refresh useEffect MOVED below the `patient` useState
+  // declaration to avoid TDZ ReferenceError. See the relocated block
+  // after `const [patient, setPatient] = useState(null);`.
 
   /* Auto-load when /nursing-notes?uhid=… is opened from /bed-visual or
      /discharge-summary (mode=discharge). When ?mode=discharge is set the
@@ -372,6 +427,22 @@ function NursingNotesContent({ selectedPatient }) {
   }, []);
 
   const [patient,    setPatient]    = useState(null);
+
+  /* R7bg — Refresh latest diagnosis when the tab regains focus.
+     If the doctor updated diagnosis in their notes while the nurse was
+     on another tab, this brings the new value back without forcing a
+     full reload. Placed AFTER the `patient` useState declaration —
+     pre-fix this lived earlier and crashed because the deps array
+     `[patient?._id]` read `patient` while it was still in the temporal
+     dead zone (const declared later in the function body). */
+  useEffect(() => {
+    if (!patient) return;
+    const ipd = patient.ipdNo || patient.admissionNumber || patient._id;
+    const onFocus = () => fetchLatestDiagnosis(ipd);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient?._id]);
   const [notes,      setNotes]      = useState([]);
   const [loading,    setLoading]    = useState(false);
   const [activeModal,setActiveModal]= useState(null);
@@ -387,14 +458,21 @@ function NursingNotesContent({ selectedPatient }) {
   const [lateEntryReason, setLateEntryReason] = useState("");
 
   /* ── Initial Assessment Gate (NABH COP.2) ──
-     Gate lifts when:
-       1. Admission document has initialAssessment.nurseCompleted === true, OR
-       2. Patient already has nurse notes (they've been documenting → assessment was done)
-     Condition 2 handles legacy data where nurseCompleted was never persisted due to
-     the Mongoose strict-mode bug that has now been fixed.
+     R7bi re-enables the gate per the requirement that other notes
+     stay locked until the nurse files the Initial Assessment for THIS
+     admission. Lifts when:
+       1. Admission has initialAssessment.nurseCompleted === true, OR
+       2. Patient already has at least one nurse note saved (legacy
+          admissions where nurseCompleted was never persisted due to
+          the Mongoose strict-mode bug that has since been fixed).
+     R7bj — Only the "IPD Initial Assessment" top-level tile (NABH
+     AAC.1, full /nursing-initial-assessment page) stays unlocked
+     while the gate is active. The inline COP.2 module that used to
+     live inside "Add a Care Note" was deleted in R7bj.
   ── */
-  const nurseAssessmentDone = true;   // gate removed — all modules always accessible
-  const gateActive = false;           // NABH COP.2 gate disabled
+  const nurseAssessmentDone =
+    !!patient?.initialAssessment?.nurseCompleted || (notes?.length || 0) > 0;
+  const gateActive = !!patient && !nurseAssessmentDone;
   const [filterType, setFilterType] = useState("All");
   const [filterShift,setFilterShift]= useState("");
   const [shift,      setShift]      = useState(getShift());
@@ -440,6 +518,11 @@ function NursingNotesContent({ selectedPatient }) {
   const [ivMedOrders,    setIvMedOrders]    = useState([]); // IV dilution volumes from Treatment Chart
   const [ivMedLoading,   setIvMedLoading]   = useState(false);
   const [includedMedIds, setIncludedMedIds] = useState(new Set());
+  // R7bq-5 — Auto-fed I/O ledger rows (source of truth). Populated from
+  // /api/intake-output. Drives the "Auto-recorded today" strip in the
+  // I/O modal — read-only, can be voided but never edited.
+  const [ioLedger,       setIoLedger]       = useState({ rows: [], totals: { in: 0, out: 0, net: 0 } });
+  const [ioLedgerLoading,setIoLedgerLoading]= useState(false);
   const [neuro,     setNeuro]     = useState({ gcse: "", gcsv: "", gcsm: "", pupils: "Equal & Reactive", pupilSizeL: "", pupilSizeR: "", lightReflex: "Present", seizure: false, orientation: "Alert & Oriented ×3", limbUL: "Normal", limbUR: "Normal", limbLL: "Normal", limbLR: "Normal" });
   const [pain,      setPain]      = useState({ scale: "NRS", score: "", location: "", type: "Acute", character: "Dull", onset: "Sudden", duration: "", frequency: "Constant", radiation: false, radiationSite: "", aggravating: "", relieving: "", painOnMovement: false, nonPharm: "", analgesicGiven: false, analgesic: "", analgesicRoute: "IV", analgesicTime: "", reassessScore: "", reassessTime: "" });
   const [wound,     setWound]     = useState({ type: "Surgical", site: "", length: "", width: "", depth: "", exudateAmt: "None", exudateType: "Serous", healingStage: "Granulating", surroundingSkin: "Intact", tunneling: false, undermining: false, odour: false, dressing: "", painDuring: "", nextDressingDate: "", swabSent: false });
@@ -519,6 +602,34 @@ function NursingNotesContent({ selectedPatient }) {
       })
       .catch(() => {})
       .finally(() => setIvMedLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeModal, patient]);
+
+  /* ── R7bq-5 — Fetch the I/O ledger (auto + manual rows from DB) when
+     the Intake/Output chip opens. This is the source of truth that the
+     MAR auto-hook and the hourly infusion cron write into. The old
+     ivMedOrders preview above stays as a checkbox helper for legacy
+     notes, but new rows render straight from the ledger below. ─── */
+  useEffect(() => {
+    if (activeModal !== "intake" || !patient) return;
+    const admissionId = patient?._id || patient?.admissionId;
+    const UHID = patient?.uhid || patient?.UHID || patient?.patientId?.uhid || patient?.patientId?.UHID;
+    if (!admissionId && !UHID) return;
+    const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay   = new Date(); endOfDay.setHours(23, 59, 59, 999);
+    setIoLedgerLoading(true);
+    const qs = new URLSearchParams();
+    if (admissionId) qs.append("admissionId", admissionId);
+    else if (UHID)   qs.append("UHID", UHID);
+    qs.append("from", startOfDay.toISOString());
+    qs.append("to",   endOfDay.toISOString());
+    axios.get(`${API_ENDPOINTS.INTAKE_OUTPUT}?${qs}`)
+      .then(({ data }) => {
+        const d = data?.data || { rows: [], totals: { in: 0, out: 0, net: 0 } };
+        setIoLedger(d);
+      })
+      .catch(() => setIoLedger({ rows: [], totals: { in: 0, out: 0, net: 0 } }))
+      .finally(() => setIoLedgerLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeModal, patient]);
 
@@ -663,16 +774,23 @@ function NursingNotesContent({ selectedPatient }) {
     } finally { setEquipSaving(false); }
   };
 
-  /* ── Load patient ── */
-  const loadPatient = async (e) => {
-    e?.preventDefault();
-    if (!searchUHID.trim()) return;
+  /* ── Load patient ──
+     R7bd — accepts either a click/submit event OR a UHID string. The
+     admitted-patient side-panel auto-loads via `loadPatient(uhid)`
+     without an event; the inline "Load Patient" button keeps passing
+     its click event. When a UHID is passed directly we skip the
+     searchUHID lookup (which would be stale right after a setState). */
+  const loadPatient = async (eventOrUhid) => {
+    const directUhid = typeof eventOrUhid === "string" ? eventOrUhid : null;
+    if (!directUhid) eventOrUhid?.preventDefault?.();
+    const uhidVal = (directUhid || searchUHID).trim();
+    if (!uhidVal) return;
     setLoading(true);
     try {
       // Use /active endpoint — it returns { data: [...] } and already filters status:"Active"
       // Also supports ?UHID= filter (both cases handled in service)
       const { data } = await axios.get(
-        `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(searchUHID.trim())}`
+        `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(uhidVal)}`
       );
       const arr = Array.isArray(data) ? data : data.data || [];
       let active = arr[0]; // all results are already Active; take latest
@@ -685,7 +803,7 @@ function NursingNotesContent({ selectedPatient }) {
       if (!active) {
         try {
           const r = await axios.get(
-            `${API_ENDPOINTS.ADMISSIONS}?UHID=${encodeURIComponent(searchUHID.trim())}&status=Discharged`
+            `${API_ENDPOINTS.ADMISSIONS}?UHID=${encodeURIComponent(uhidVal)}&status=Discharged`
           );
           const dis = Array.isArray(r.data) ? r.data : r.data?.data || [];
           active = dis.sort((a, b) =>
@@ -741,6 +859,7 @@ function NursingNotesContent({ selectedPatient }) {
         }
         setIvMedOrders([]); setIncludedMedIds(new Set());
         await fetchNotes(ipd, active);   // pass active so retroactive flag can run
+        await fetchLatestDiagnosis(ipd); // R7bg — pull latest doctor diagnosis
         await loadTodayCharges(active._id);
         if (isLateEntry) {
           toast.warn(`Late-entry mode: ${active.patientName || searchUHID} is already DISCHARGED. Every note saved here will be flagged retroactive — provide a reason in the banner above.`, { autoClose: 8000 });
@@ -762,6 +881,47 @@ function NursingNotesContent({ selectedPatient }) {
       toast.error(err?.response?.data?.message || "Patient not found");
     }
     finally { setLoading(false); }
+  };
+
+  /* ── R7bg — Pull latest doctor diagnosis ──
+     The Doctor's "Patient Diagnosis" tile in DoctorNotes (provisional /
+     working / final + ICD-10) is saved as a doctor-notes record keyed
+     by ipdNo. This helper fetches the most recent one whose diagnosis
+     fields are populated so the nursing patient header always reflects
+     the latest doctor decision. Falls back gracefully to admission's
+     admittingDiagnosis if no doctor note exists. */
+  const fetchLatestDiagnosis = async (ipdNo) => {
+    if (!ipdNo) return;
+    try {
+      const { data } = await axios.get(`${API_ENDPOINTS.DOCTOR_NOTES}/ipd/${encodeURIComponent(ipdNo)}`);
+      const arr = Array.isArray(data) ? data : data.data || [];
+      // Find most recent note with any diagnosis populated. Sort by
+      // createdAt desc; pick first non-empty.
+      const sorted = arr
+        .filter(n => n.finalDiagnosis || n.workingDiagnosis || n.provisionalDiagnosis)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      const top = sorted[0];
+      if (top) {
+        setLatestDiagnosis({
+          text:
+            top.finalDiagnosis ||
+            top.workingDiagnosis ||
+            top.provisionalDiagnosis ||
+            "",
+          tier: top.finalDiagnosis ? "Final"
+              : top.workingDiagnosis ? "Working"
+              : "Provisional",
+          icd10Code: top.icd10Code || "",
+          icd10Description: top.icd10Description || "",
+          updatedAt: top.createdAt,
+        });
+      } else {
+        setLatestDiagnosis(null);
+      }
+    } catch {
+      // silent — keep whatever was previously fetched (or null) so a
+      // transient backend blip doesn't blank the header.
+    }
   };
 
   const fetchNotes = async (ipdNo, admissionDoc) => {
@@ -799,9 +959,12 @@ function NursingNotesContent({ selectedPatient }) {
   };
 
   const openModal = (id) => {
-    /* Gate: block non-initial modules until nursing initial assessment is done */
-    if (gateActive && id !== "initial") {
-      toast.error("⛔ Nursing Initial Assessment must be completed first (NABH COP.2). Click 'Write Initial Assessment' to proceed.", { autoClose: 5000 });
+    /* R7bj — Gate: block ALL modules until the standalone Nursing
+       Initial Assessment is filed. The "initial" inline module is gone;
+       the only entry point now is the top-level "IPD Initial
+       Assessment" tile (NABH AAC.1 → /nursing-initial-assessment). */
+    if (gateActive) {
+      toast.error("⛔ Open the 'IPD Initial Assessment' tile and complete the Nursing Initial Assessment first (NABH AAC.1 / COP.2).", { autoClose: 5500 });
       return;
     }
     setActiveModal(id);
@@ -1232,135 +1395,16 @@ function NursingNotesContent({ selectedPatient }) {
             </div>
           )}
 
-          {/* ── Patient Banner ── */}
-          {(() => {
-            const patName    = patient.patientName || patient.patient?.name || '—';
-            const initials   = patName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-            const age        = patient.age || patient.patient?.age || '?';
-            const gender     = (patient.gender || patient.patient?.gender || '?')[0]?.toUpperCase();
-            const uhidVal    = patient.uhid || patient.UHID || searchUHID;
-            const bedVal     = patient.bedNumber ? `Bed ${patient.bedNumber}` : '—';
-            const wardVal    = patient.wardName || '—';
-            const admDate    = patient.admissionDate
-              ? new Date(patient.admissionDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-              : '—';
-            const diagnosis  = patient.diagnosis || patient.admittingDiagnosis || '—';
-            const consultant = patient.doctorName || patient.consultantName || '—';
-            const admType    = patient.admissionType?.toUpperCase() || 'IPD';
-            const allergies  = (patient.allergies || patient.knownAllergies || []).filter(Boolean);
-            const dayStay    = patient.admissionDate
-              ? Math.floor((Date.now() - new Date(patient.admissionDate)) / (1000 * 60 * 60 * 24))
-              : null;
-            const admTypeColor = admType === 'EMERGENCY'
-              ? { bg: '#fef2f2', color: '#dc2626', border: '#fca5a5' }
-              : admType === 'DAY CARE'
-              ? { bg: '#eff6ff', color: '#1d4ed8', border: '#93c5fd' }
-              : { bg: '#f5f3ff', color: '#7c3aed', border: '#c4b5fd' };
-            return (
-              <div style={{ background: C.card, borderRadius: 16, marginBottom: 14, overflow: 'hidden', boxShadow: '0 2px 12px rgba(15,118,110,.08)', border: `1px solid ${C.border}` }}>
-                {/* Top gradient accent bar */}
-                <div style={{ height: 4, background: `linear-gradient(90deg, ${C.primary}, ${C.primaryMid}, #34d399)` }} />
-                <div style={{ padding: '18px 22px' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-
-                    {/* Left: avatar + core info */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1, minWidth: 0 }}>
-                      {/* Avatar circle */}
-                      <div style={{ flexShrink: 0, width: 56, height: 56, borderRadius: 14, background: `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 4px 12px ${C.primary}35` }}>
-                        <span style={{ fontSize: 20, fontWeight: 900, color: 'white', letterSpacing: '-1px' }}>{initials}</span>
-                      </div>
-                      {/* Name + tags */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 5 }}>
-                          <span style={{ fontSize: 17, fontWeight: 800, color: C.text }}>{patName}</span>
-                          <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: admTypeColor.bg, color: admTypeColor.color, border: `1px solid ${admTypeColor.border}` }}>
-                            {admType}
-                          </span>
-                          {patient.bloodGroup && (
-                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: C.redL, color: C.red, border: '1px solid #fca5a5', fontFamily: "'DM Mono',monospace" }}>
-                              🦸 {patient.bloodGroup}
-                            </span>
-                          )}
-                          {dayStay !== null && (
-                            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700, background: '#f0fdf4', color: '#15803d', border: '1px solid #86efac' }}>
-                              Day {dayStay + 1}
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ display: 'flex', gap: '6px 20px', flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            <span style={{ fontWeight: 700, color: C.text }}>{age}Y / {gender}</span>
-                          </span>
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            ID: <span style={{ fontWeight: 700, color: C.primary, fontFamily: "'DM Mono',monospace" }}>{uhidVal}</span>
-                          </span>
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            🏥 <span style={{ fontWeight: 600, color: C.text }}>{wardVal}</span>
-                            {' · '}
-                            <span style={{ fontWeight: 600, color: C.text }}>{bedVal}</span>
-                          </span>
-                          <span style={{ fontSize: 12, color: C.muted }}>
-                            📅 <span style={{ fontWeight: 600, color: C.text }}>{admDate}</span>
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Right: action buttons */}
-                    <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                      {[
-                        { label: 'Care Plan',       icon: 'pi-clipboard',  action: () => navigate('/nursing-care-plan') },
-                        { label: 'Vitals Trend',    icon: 'pi-chart-bar',  action: () => navigate('/vitalsView') },
-                        { label: 'Print / PDF',     icon: 'pi-print',      action: () => setShowReport(true), accent: true },
-                        { label: 'IPD Assessment',  icon: 'pi-file-check', action: () => navigate(`/ipd-assessment/${uhidVal}`), accent: true },
-                        { label: 'Change Patient',  icon: 'pi-arrows-h',   action: () => { setPatient(null); setNotes([]); setSearchUHID(''); }, danger: true },
-                      ].map(b => (
-                        <button key={b.label} onClick={b.action} style={{
-                          padding: '7px 13px',
-                          border: `1.5px solid ${b.danger ? '#fca5a5' : b.accent ? `${C.primary}35` : C.border}`,
-                          borderRadius: 9,
-                          background: b.danger ? C.redL : b.accent ? C.primaryL : 'white',
-                          fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                          color: b.danger ? C.red : b.accent ? C.primary : C.text,
-                          display: 'flex', alignItems: 'center', gap: 5,
-                          transition: 'all .15s',
-                          boxShadow: b.accent ? `0 2px 8px ${C.primary}20` : 'none',
-                        }}
-                          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 4px 14px ${b.danger ? C.red : C.primary}25`; }}
-                          onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = b.accent ? `0 2px 8px ${C.primary}20` : 'none'; }}>
-                          <i className={`pi ${b.icon}`} style={{ fontSize: 11 }} /> {b.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Bottom: diagnosis + consultant + allergies */}
-                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${C.border}`, display: 'flex', gap: '8px 24px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <i className="pi pi-stethoscope" style={{ fontSize: 11, color: C.muted }} />
-                      <span style={{ fontSize: 12, color: C.muted }}>Consultant:</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{consultant}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <i className="pi pi-tag" style={{ fontSize: 11, color: C.muted }} />
-                      <span style={{ fontSize: 12, color: C.muted }}>Diagnosis:</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{diagnosis}</span>
-                    </div>
-                    {allergies.length > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: C.red, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <i className="pi pi-exclamation-triangle" style={{ fontSize: 11 }} /> ALLERGY:
-                        </span>
-                        {allergies.map(a => (
-                          <span key={a} style={{ background: C.redL, color: C.red, border: '1px solid #fca5a5', padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{a}</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
+          {/* R7bi — Shared PatientHeaderCard (Doctor + Nursing parity).
+              All visuals + QR/IPD/age/diagnosis-tier/ward logic now
+              live in Components/clinical/PatientHeaderCard.jsx.
+              Pre-R7bi this was 220 lines of inline JSX. */}
+          <PatientHeaderCard
+            patient={patient}
+            searchUHID={searchUHID}
+            latestDiagnosis={latestDiagnosis}
+            onChangePatient={() => { setPatient(null); setNotes([]); setSearchUHID(""); setLatestDiagnosis(null); }}
+          />
 
           {/* ══ TILE GRID (when no section is active) ════════════════════════
                 Nursing Notes is split into 5 tiles. Mirrors the Doctor
@@ -1396,11 +1440,10 @@ function NursingNotesContent({ selectedPatient }) {
                   icon: "pi-plus-circle",
                   color: "#0d9488",
                   tint: "#ccfbf1",
-                  badges: [
-                    gateActive
-                      ? { label: "Initial Assessment required", tone: "warn" }
-                      : { label: "Ready", tone: "ok" },
-                  ],
+                  // R7bj — Per-tile "Initial Assessment required" badge
+                  // collapsed into the global locked badge (rendered by
+                  // the tile loop below when `locked` is true).
+                  badges: [{ label: "Ready", tone: "ok" }],
                 },
                 {
                   id: "equipment",
@@ -1427,24 +1470,120 @@ function NursingNotesContent({ selectedPatient }) {
                       : null,
                   ].filter(Boolean),
                 },
-              ].map(t => (
+                /* ── R7be — relocated from patient-header action buttons ──
+                   Care Plan / Vitals Trend / IPD Assessment / Print&PDF used
+                   to be inline pills above the tile grid; moving them into
+                   the grid as full tiles matches Doctor Notes' clean
+                   single-hub UX. `action` field fires a custom handler
+                   (navigate, openReport, etc.); the onClick below falls
+                   through to setActiveTile(id) for legacy inline tiles. */
+                {
+                  id: "careplan-nav",
+                  title: "Care Plan",
+                  subtitle: "Nursing care plan (NABH COP.8)",
+                  icon: "pi-heart-fill",
+                  color: "#16a34a",
+                  tint: "#dcfce7",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                  action: () => navigate("/nursing-care-plan"),
+                },
+                {
+                  id: "vitalstrend-nav",
+                  title: "Vitals Trend",
+                  subtitle: "BP / HR / RR / SpO₂ / Temp graphs over time",
+                  icon: "pi-chart-bar",
+                  color: "#0891b2",
+                  tint: "#cffafe",
+                  badges: [{ label: "Open", tone: "info" }],
+                  action: () => navigate("/vitalsView"),
+                },
+                /* R7ca — Diabetic Chart tile. Same one-click entry pattern
+                   as Vitals Trend / Care Plan above. Uses location.state for
+                   the UHID handoff (PHI-safe — the useUhidFromLocation hook
+                   on DiabeticChartPage prefers state and scrubs any legacy
+                   URL param). The sliding-scale BG chart is sufficiently
+                   distinct from the GRBS chip in vitals to merit a dedicated
+                   tile — it tracks RBS + insulin dose + nurse signature per
+                   slot per day, which the inline vitals chip cannot do. */
+                {
+                  id: "diabetic-nav",
+                  title: "Diabetic Chart",
+                  subtitle: "RBS + sliding-scale insulin (NABH MOM.4)",
+                  icon: "pi-chart-line",
+                  color: "#dc2626",
+                  tint: "#fee2e2",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                  action: () => navigate("/diabetic-chart", {
+                    state: { uhid: patient?.UHID || patient?.uhid || searchUHID || "" },
+                  }),
+                },
+                {
+                  id: "ipdassessment-nav",
+                  title: "IPD Initial Assessment",
+                  subtitle: "Nursing admission assessment (NABH AAC.1)",
+                  icon: "pi-file-check",
+                  color: "#d97706",
+                  tint: "#fef3c7",
+                  badges: [{ label: "NABH", tone: "ok" }],
+                  // R7bl — Bug fix: `uhidVal` used to be referenced here
+                  // but it's a local variable inside loadPatient() (line
+                  // 748), out-of-scope for this JSX closure. Clicks
+                  // threw a silent ReferenceError and the page never
+                  // navigated. Resolve from the loaded admission's UHID
+                  // (or the search box as a last resort).
+                  action: () => navigate(`/ipd-assessment/${encodeURIComponent(patient?.UHID || patient?.uhid || searchUHID || "")}`),
+                },
+                {
+                  id: "print-nav",
+                  title: "Print / PDF Report",
+                  subtitle: "Nursing patient report for insurance / file",
+                  icon: "pi-print",
+                  color: "#9333ea",
+                  tint: "#f3e8ff",
+                  badges: [{ label: "Print", tone: "info" }],
+                  action: () => setShowReport(true),
+                },
+              ].map(t => {
+                // R7bj — Initial Assessment gate. The ONLY entry point
+                // to the nurse Initial Assessment is now the standalone
+                // "IPD Initial Assessment" tile (NABH AAC.1 → the full
+                // /nursing-initial-assessment form). The previous inline
+                // COP.2 "Initial Assessment" module inside Add a Care
+                // Note was removed in R7bj — having two entry points was
+                // confusing and produced duplicate-shape saves.
+                //
+                // Until the nurse files that assessment, ALL other tiles
+                // (including Add a Care Note) stay locked.
+                const isAssessmentTile = t.id === "ipdassessment-nav";
+                const locked = gateActive && !isAssessmentTile;
+                return (
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setActiveTile(t.id)}
-                  className="dnp-tile"
+                  // R7be — tiles with an `action` fire a custom handler
+                  // (navigate / openReport); legacy tiles fall through to
+                  // setActiveTile(id) to expand inline below the header.
+                  onClick={() => {
+                    if (locked) {
+                      toast.error("⛔ Complete the Nursing Initial Assessment first — open the 'IPD Initial Assessment' tile (NABH AAC.1).", { autoClose: 5500 });
+                      return;
+                    }
+                    return t.action ? t.action() : setActiveTile(t.id);
+                  }}
+                  className={`dnp-tile ${locked ? "dnp-tile--locked" : ""}`}
                   style={{ "--tile-color": t.color, "--tile-tint": t.tint }}
-                  aria-label={`Open ${t.title}`}
+                  aria-label={`Open ${t.title}${locked ? " (locked)" : ""}`}
+                  aria-disabled={locked}
                 >
                   <div className="dnp-tile__icon">
-                    <i className={`pi ${t.icon}`} />
+                    <i className={`pi ${locked ? "pi-lock" : t.icon}`} />
                   </div>
                   <div className="dnp-tile__body">
                     <div className="dnp-tile__title">{t.title}</div>
                     <div className="dnp-tile__subtitle">{t.subtitle}</div>
-                    {t.badges.length > 0 && (
+                    {(locked ? [{ label: "🔒 Initial Assessment required", tone: "warn" }] : t.badges).length > 0 && (
                       <div className="dnp-tile__badges">
-                        {t.badges.map((b, i) => (
+                        {(locked ? [{ label: "🔒 Initial Assessment required", tone: "warn" }] : t.badges).map((b, i) => (
                           <span key={i} className={`dnp-tile__badge dnp-tile__badge--${b.tone}`}>
                             {b.label}
                           </span>
@@ -1454,7 +1593,8 @@ function NursingNotesContent({ selectedPatient }) {
                   </div>
                   <i className="pi pi-chevron-right dnp-tile__chevron" aria-hidden />
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -1526,30 +1666,12 @@ function NursingNotesContent({ selectedPatient }) {
               </button>
             </div>
 
-          {/* ── Initial Assessment Gate Banner ── */}
-          {gateActive && (
-            <div style={{ background: "#fef2f2", border: "2px solid #fca5a5", borderRadius: 12, padding: "16px 20px", marginBottom: 14, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 4px 16px rgba(220,38,38,.12)" }}>
-              <div style={{ width: 44, height: 44, borderRadius: 10, background: "#fee2e2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <i className="pi pi-lock" style={{ fontSize: 20, color: "#dc2626" }} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 800, fontSize: 14, color: "#991b1b", display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ background: "#dc2626", color: "white", fontSize: 9, fontWeight: 900, padding: "2px 7px", borderRadius: 4, letterSpacing: ".5px" }}>MANDATORY</span>
-                  Nursing Initial Assessment not completed — NABH COP.2
-                </div>
-                <div style={{ fontSize: 12, color: "#b91c1c", marginTop: 4 }}>
-                  Nursing Initial Assessment must be completed before writing any other care notes (vitals, wound, MEWS, daily assessment, etc.) for this patient.
-                </div>
-              </div>
-              <button
-                onClick={() => openModal("initial")}
-                style={{ padding: "10px 22px", background: "#dc2626", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", boxShadow: "0 4px 14px rgba(220,38,38,.35)", flexShrink: 0 }}>
-                <i className="pi pi-clipboard" style={{ marginRight: 6, fontSize: 13 }} />
-                Write Initial Assessment
-              </button>
-            </div>
-          )}
-          {/* gate banners removed */}
+          {/* R7bj — Inline gate banner removed.
+              The "Add a Care Note" top-level tile is now itself locked
+              when gateActive is true, so this panel never renders while
+              the gate is on. Gating is enforced at the tile-grid level
+              with a 🔒 badge + redirect toast pointing at "IPD Initial
+              Assessment" (NABH AAC.1). */}
 
           {/* ── Nursing Notes Quick-View Banner (click → jump to timeline) ── */}
           {patient && (
@@ -1575,43 +1697,66 @@ function NursingNotesContent({ selectedPatient }) {
             </div>
           )}
 
-            {/* ── Module Launcher — compact pill bar, 3 groups ── */}
-            {(() => {
-              const MOD_GROUPS = [
-                { label: "Assessment & Monitoring", ids: ["vitals","neuro","pain","mews","fall","intake"] },
-                { label: "Interventions",            ids: ["iv","blood","wound","skin","procedure"] },
-                { label: "Documentation",            ids: ["initial","daily","careplan","discharge","nutrition","education","general"] },
-              ];
-              return (
-                <div className="dnp-module-bar" role="toolbar" aria-label="Add care note">
-                  {MOD_GROUPS.map((group, gi) => (
-                    <React.Fragment key={group.label}>
-                      {gi > 0 && <span className="dnp-module-bar__divider" aria-hidden />}
-                      <span className="dnp-module-bar__group">{group.label}</span>
-                      {group.ids.map(id => {
-                        const m = MODULES.find(x => x.id === id);
-                        if (!m) return null;
-                        const locked = gateActive && m.id !== "initial";
-                        const isInitial = m.id === "initial";
-                        return (
-                          <button key={m.id} onClick={() => !locked && openModal(m.id)}
-                            title={locked ? "Complete Nursing Initial Assessment first" : m.label}
-                            disabled={locked}
-                            className={`dnp-module-pill ${locked ? "dnp-module-pill--locked" : ""} ${isInitial && gateActive ? "dnp-module-pill--required" : ""}`}
-                            style={{ "--mod-color": m.color, "--mod-tint": m.bg }}>
-                            <i className={`pi ${locked && !isInitial ? "pi-lock" : m.icon}`} style={{ fontSize: 12 }} />
-                            {m.label}
-                            {isInitial && gateActive && <span className="dnp-module-pill__chip dnp-module-pill__chip--required">REQ</span>}
-                            {isInitial && !gateActive && <span className="dnp-module-pill__chip dnp-module-pill__chip--done">✓</span>}
-                            {m.dot && !gateActive && <span className="dnp-module-pill__dot" />}
-                          </button>
-                        );
-                      })}
-                    </React.Fragment>
-                  ))}
+            {/* ── R7bf — Note type picker (card grid) ──
+                Mirrors Doctor Notes' "Select Note Type" layout (R7aw) so
+                nurses get the same visual language: icon square + label +
+                NABH chapter code + one-line description, with locked
+                cards rendered with a lock icon and reduced opacity (gate
+                stays visible so the nurse can see WHAT they'll get once
+                they sign the Initial Assessment). */}
+            <div style={{ background: C.card, borderRadius: 12, padding: "18px", border: `1.5px solid ${C.border}`, marginTop: 14 }}>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 3 }}>Select Note Type</div>
+                <div style={{ fontSize: 12, color: C.muted }}>
+                  Choose the appropriate NABH-compliant clinical note for this patient encounter
                 </div>
-              );
-            })()}
+              </div>
+              {/* R7bj — Per-module lock logic removed. The parent "Add a
+                  Care Note" tile is already lockedwhen the Nursing Initial
+                  Assessment is not yet filed, so this picker only renders
+                  when the gate is OFF. Modules are always clickable here. */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+                {MODULES.map(m => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => openModal(m.id)}
+                      title={m.label}
+                      style={{
+                        background: "white",
+                        border: `2px solid ${C.border}`,
+                        borderRadius: 12, padding: "14px 12px",
+                        cursor: "pointer",
+                        textAlign: "left", transition: "all .15s",
+                        display: "flex", flexDirection: "column", gap: 6,
+                        position: "relative",
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = m.color + "70"; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{
+                          width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                          background: m.bg,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          <i className={`pi ${m.icon}`} style={{ fontSize: 14, color: m.color }} />
+                        </span>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{m.label}</span>
+                            {m.dot && (
+                              <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.color, flexShrink: 0 }} aria-hidden />
+                            )}
+                          </div>
+                          <div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>{m.nabh}</div>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.4 }}>{m.description}</div>
+                    </button>
+                ))}
+              </div>
+            </div>
           </div>
           )}
           {/* /dnp-addnote-panel */}
@@ -2517,6 +2662,74 @@ function NursingNotesContent({ selectedPatient }) {
                 });
                 return (
                   <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+
+                    {/* ── R7bq-5 — Auto-recorded I/O Ledger (real DB rows)
+                         Populated by: MAR-given hook (R7bq-3) +
+                         hourly infusion cron (R7bq-4). Manual rows the
+                         nurse adds via the form below also land here
+                         on save. Read-only display; void via the × button. */}
+                    <div style={{ background:"#fafafa", border:"1.5px solid #d4d4d8", borderRadius:10, overflow:"hidden" }}>
+                      <div style={{ padding:"9px 14px", background:"#f4f4f5", borderBottom:"1px solid #d4d4d8", display:"flex", alignItems:"center", gap:8 }}>
+                        <i className="pi pi-clock" style={{ fontSize:13, color:"#52525b" }} />
+                        <span style={{ fontSize:12, fontWeight:700, color:"#27272a", textTransform:"uppercase", letterSpacing:".5px" }}>
+                          Today's Auto-Recorded I/O Ledger
+                        </span>
+                        {ioLedgerLoading && <i className="pi pi-spin pi-spinner" style={{ fontSize:11, marginLeft:"auto" }} />}
+                        {!ioLedgerLoading && (
+                          <span style={{ marginLeft:"auto", fontSize:11, color:"#52525b", fontWeight:600 }}>
+                            {ioLedger.rows.length} row{ioLedger.rows.length !== 1 ? "s" : ""}
+                            {ioLedger.rows.length > 0 && (
+                              <span style={{ marginLeft:8, fontFamily:"'DM Mono',monospace" }}>
+                                IN: <b style={{color:"#16a34a"}}>{ioLedger.totals.in}</b>
+                                {" · "}OUT: <b style={{color:"#dc2626"}}>{ioLedger.totals.out}</b>
+                                {" · "}NET: <b style={{color: ioLedger.totals.net >= 0 ? "#16a34a" : "#dc2626"}}>
+                                  {ioLedger.totals.net >= 0 ? "+" : ""}{ioLedger.totals.net} mL
+                                </b>
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                      {ioLedger.rows.length > 0 ? (
+                        <div style={{ maxHeight:260, overflowY:"auto" }}>
+                          {ioLedger.rows.map(r => {
+                            const isIn = r.direction === "IN";
+                            const srcBadge = {
+                              MAR: { label: "MAR", bg: "#fce7f3", color: "#be185d" },
+                              INFUSION_CRON: { label: "Infusion (auto)", bg: "#dbeafe", color: "#1d4ed8" },
+                              MANUAL: { label: "Manual", bg: "#f1f5f9", color: "#475569" },
+                              BLOOD_TRANSFUSION: { label: "Blood", bg: "#fef2f2", color: "#dc2626" },
+                              ORAL_INTAKE: { label: "Oral", bg: "#fef3c7", color: "#a16207" },
+                              CATHETER: { label: "Catheter", bg: "#fef3c7", color: "#a16207" },
+                              DRAIN: { label: "Drain", bg: "#fef3c7", color: "#a16207" },
+                            }[r.source] || { label: r.source, bg: "#f1f5f9", color: "#475569" };
+                            return (
+                              <div key={r._id} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 14px", borderBottom:"1px solid #e4e4e7", fontSize:12 }}>
+                                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10.5, color:"#71717a", minWidth:46 }}>
+                                  {new Date(r.ts).toLocaleTimeString("en-IN", { hour:"2-digit", minute:"2-digit", hour12:false })}
+                                </span>
+                                <span style={{ fontSize:9, fontWeight:800, padding:"1px 6px", borderRadius:3, background:srcBadge.bg, color:srcBadge.color, minWidth:80, textAlign:"center" }}>
+                                  {srcBadge.label}
+                                </span>
+                                <span style={{ fontSize:9, fontWeight:700, padding:"1px 6px", borderRadius:3, background:isIn?"#dcfce7":"#fee2e2", color:isIn?"#166534":"#991b1b" }}>
+                                  {r.direction}
+                                </span>
+                                <span style={{ flex:1, minWidth:0, color:"#27272a", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                                  {r.label || r.fluidType || "—"}
+                                </span>
+                                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:800, color: isIn ? "#16a34a" : "#dc2626", minWidth:62, textAlign:"right" }}>
+                                  {isIn ? "+" : "−"}{r.volumeML} mL
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : !ioLedgerLoading && (
+                        <div style={{ padding:"14px 18px", color:"#71717a", fontSize:11.5, fontStyle:"italic" }}>
+                          No auto-recorded entries today yet. They'll appear as the nurse marks doses given (Treatment Chart) and as the hourly infusion cron ticks for running drips.
+                        </div>
+                      )}
+                    </div>
 
                     {/* ── IV Medication Volumes from Treatment Chart ── */}
                     <div style={{ background:"#f0f9ff", border:"1.5px solid #bae6fd", borderRadius:10, overflow:"hidden" }}>
@@ -3698,7 +3911,7 @@ function NursingNotesContent({ selectedPatient }) {
             consultant: patient.doctorName || patient.consultantName,
             bloodGroup: patient.bloodGroup,
           }}
-          hospitalName="SphereHealth Hospital"
+          hospitalName={hospitalSettings?.hospitalName || ""}
           onClose={() => setShowReport(false)}
         />
       )}

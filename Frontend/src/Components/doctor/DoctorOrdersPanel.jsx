@@ -219,13 +219,16 @@ function OrderForm({ typeId, form, set }) {
           unitOptions={["days","hrs","weeks"]} unitName="durationUnit"/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
-      {/* IV Dilution — shown for IV / IM routes; auto-logs to patient Input chart on each dose given */}
+      {/* IV Dilution — shown for IV / IM routes; auto-logs to patient Input chart on each dose given.
+          R7bq-1 — added `infuseOverMinutes` (give over N min) so the nurse knows the drip rate at which
+          to push/infuse the diluted dose. Stored on orderDetails so MAR + Treatment Chart can render
+          it and the auto-I/O hook (R7bq-3) can stamp the same duration on the intake row. */}
       {(form.route === "IV" || form.route === "IM") && (
         <div style={{ padding: "10px 12px", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, marginBottom: 6 }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: "#0369a1", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>
             💧 IV Dilution — optional · auto-logged to Input chart when nurse administers
           </div>
-          <div style={g("140px 1fr")}>
+          <div style={g("120px 1fr 140px")}>
             <div>
               <label className="his-label">Volume (ml)</label>
               <input type="number" min="0" className="his-field" placeholder="e.g. 100"
@@ -244,10 +247,18 @@ function OrderForm({ typeId, form, set }) {
                 <option value="Other">Other</option>
               </select>
             </div>
+            <div>
+              <label className="his-label">Infuse Over (min)</label>
+              <input type="number" min="0" className="his-field" placeholder="e.g. 30"
+                value={form.infuseOverMinutes || ""} onChange={e => set("infuseOverMinutes", e.target.value ? Number(e.target.value) : "")} />
+            </div>
           </div>
           {form.dilutionVolume > 0 && (
             <div style={{ marginTop: 6, fontSize: 11, color: "#0369a1" }}>
-              📋 <strong>{form.medicineName || "Drug"}</strong> ko <strong>{form.dilutionVolume} ml {form.dilutionFluid || "NS 0.9%"}</strong> mein dilute karke dena — har dose administration par Input chart mein auto-entry hogi.
+              📋 <strong>{form.medicineName || "Drug"}</strong> ko <strong>{form.dilutionVolume} ml {form.dilutionFluid || "NS 0.9%"}</strong> mein dilute karke
+              {form.infuseOverMinutes > 0
+                ? <> <strong>{form.infuseOverMinutes} min</strong> mein dena</>
+                : " dena"} — har dose administration par Input chart mein auto-entry hogi.
             </div>
           )}
         </div>
@@ -796,6 +807,11 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
   };
 
   const saveOrder = async () => {
+    // R7bq-J2 — re-entrancy guard. The `disabled={saving}` on the button
+    // prevents most double-clicks, but React's async state update lets a
+    // second invocation slip through before the disabled flag applies.
+    // Bail out synchronously if a save is already in flight.
+    if (saving) return;
     if (!selType) return toast.error("Select an order type");
     const required = {
       Medication: "medicineName", IV_Fluid: "medicineName", Lab: "testName",
@@ -818,7 +834,20 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
       resetForm();
       fetchOrders();
     } catch (e) {
-      toast.error(e.response?.data?.message || "Failed to place order");
+      // R7bq-J2 — server-side 30s dedupe surfaces a 409 with code=DUPLICATE_ORDER
+      // when an identical Medication / IV_Fluid was just placed. Treat it as
+      // an info toast (not an error) and refresh the list so the user sees
+      // the existing row instead of error-spamming the screen.
+      const data = e.response?.data;
+      if (e.response?.status === 409 && data?.code === "DUPLICATE_ORDER") {
+        const msg = data.message
+          || "This order was already placed a few seconds ago. Refreshing list…";
+        toast.info ? toast.info(msg) : toast.success(msg);
+        resetForm();
+        fetchOrders();
+      } else {
+        toast.error(data?.message || "Failed to place order");
+      }
     } finally { setSaving(false); }
   };
 

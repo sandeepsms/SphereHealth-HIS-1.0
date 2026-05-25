@@ -203,7 +203,24 @@ const ACTIONS = {
 
   // Billing
   "billing.read":          ["Admin", "Accountant", "Receptionist", "TPA Coordinator"],
-  "billing.write":         ["Admin", "Accountant", "Receptionist"],
+  // R7bp-FIX-PERMS / D8-CRIT — Doctor + Nurse added so the OPD / Emergency
+  // "Services & Orders" panel (ServicesOrdersPanel.jsx) can POST /billing/create
+  // + /billing/:billId/add-service. Pre-R7bp these were gated to
+  // Admin/Accountant/Receptionist only, so every Doctor click → silent 403.
+  // The 403 then masqueraded as the underlying billNumber-dup-key bug
+  // (toast read "Could not add to bill" / "duplicate key") because the
+  // user-facing UI couldn't distinguish 403 from 500-E11000.
+  //
+  // SAFE: this only grants the create-draft + add-service paths. The
+  // defense-in-depth `blockNonClinicalForDoctorNurse` middleware in
+  // middleware/auth.js (mounted in routes/index.js) still blocks every
+  // money-touching POST (/payment, /refund, /cancel, /settlement-adjust,
+  // /credit-notes, /advance/*, /cashier-sessions/*, /uhid/*/collect-all,
+  // /uhid/*/bulk-settle) for Doctor/Nurse — so the financial controls
+  // stay intact. Doctor/Nurse can attach a clinical order to a bill
+  // (orderStatus="Ordered", not billable until lab/radiology completes
+  // it), they CANNOT take payments or move money.
+  "billing.write":         ["Admin", "Accountant", "Receptionist", "Doctor", "Nurse"],
   "billing.refund":        ["Admin", "Accountant"],
   "billing.discount":      ["Admin", "Accountant"],
   // IPD Live Ledger — strict tiered actions per design memo
@@ -331,6 +348,12 @@ const ACTIONS = {
   // NOT need to enumerate the OPD / ER queue (diagnosis + triage = PHI).
   "opd.read":                  ["Admin", "Doctor", "Nurse", "Receptionist"],
   "er.read":                   ["Admin", "Doctor", "Nurse", "Receptionist"],
+  // R7cr — narrower scope than `opd.read`: lets Pharmacist hit ONE
+  // endpoint (GET /opd/uhid/:UHID/today-rx) to pull today's prescribed
+  // medicines + diagnosis context for a specific UHID, so they can
+  // dispense from the same screen. Does NOT grant the full OPD queue
+  // (which leaks every patient's diagnosis / token / chief complaint).
+  "pharmacy.rx-lookup":        ["Admin", "Doctor", "Nurse", "Receptionist", "Pharmacist"],
   // R7bb-FIX-C-11/D2-HIGH-2: OPD / ER DELETE is a clinical record
   // deletion — only Admin and the assigned Doctor should perform it.
   // Receptionist explicitly removed (pre-R7bb the route accepted

@@ -212,7 +212,11 @@ export const ACTIONS = {
 
   // Billing
   "billing.read":          ["Admin", "Accountant", "Receptionist", "TPA Coordinator"],
-  "billing.write":         ["Admin", "Accountant", "Receptionist"],
+  // R7bp-FIX-PERMS / D8-CRIT — Doctor + Nurse added so the OPD / Emergency
+  // "Services & Orders" panel can POST /billing/create + /billing/:id/add-service.
+  // Mirrors Backend/config/permissions.js. Money-write paths stay blocked by
+  // the blockNonClinicalForDoctorNurse middleware on the server.
+  "billing.write":         ["Admin", "Accountant", "Receptionist", "Doctor", "Nurse"],
   "billing.refund":        ["Admin", "Accountant"],
   "billing.discount":      ["Admin", "Accountant"],
   // IPD Live Ledger — mirror of backend permissions for the same actions.

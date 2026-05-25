@@ -56,12 +56,14 @@ const dischargeSummaryRoutes = require("./Clinical/dischargeSummaryRoutes");
 const consentFormRoutes = require("./Clinical/consentFormRoutes");
 const nursingCarePlanRoutes = require("./Nurse/nursingCarePlanRoutes");
 const nursingAssessmentsRoutes = require("./Nurse/nursingAssessmentsRoutes");
+const assessmentComplianceRoutes = require("./Compliance/assessmentComplianceRoutes");
 // Path is lowercase 'ai' — uppercase 'AI' folder was a Windows
 // case-insensitive duplicate that shadowed this on case-sensitive
 // Linux deploys, shipping the old stub instead of the real Groq impl.
 const aiRoutes = require("./ai/aiRoutes");
 const marRoutes = require("./Clinical/marRoutes");
 const vitalSheetRoutes = require("./Vitals/vitalSheetRoutes");
+const intakeOutputRoutes = require("./Clinical/intakeOutputRoutes"); // R7bq-3 — I/O ledger
 
 // ═════════════════════════════════════════════════════════════
 // ROUTE REGISTRATION
@@ -80,6 +82,19 @@ const {
 } = require("../middleware/auth");
 
 router.use("/auth", authRoutes);
+
+// ── R7bz — Client-error reports (anonymous-allowed, rate-limited) ──
+// MUST mount BEFORE the global `authenticate` below, because React
+// ErrorBoundaries often fire BEFORE auth resolves (login page crash,
+// expired-token redirect mid-render, axios interceptor throw). The route
+// uses `attemptAuth` internally to capture user identity when available
+// but never rejects anonymous POSTs. POST is rate-limited per IP via
+// clientErrorRateLimit. The two GET endpoints inside still gate
+// themselves with requireAction("users.read") + attemptAuth chain, so
+// they don't actually leak data to anonymous callers — they just don't
+// hit the global JWT wall.
+const { clientErrorRateLimit } = require("../middleware/rateLimitAuth");
+router.use("/client-errors",    clientErrorRateLimit, require("./Admin/clientErrorRoutes"));
 
 // ── Everything below requires a valid JWT ────────────────────
 router.use(authenticate);
@@ -168,14 +183,25 @@ router.use("/discharge-summary", dischargeSummaryRoutes);
 router.use("/consent-forms", consentFormRoutes);
 router.use("/nursing-care-plans", nursingCarePlanRoutes);
 router.use("/nursing-assessments", nursingAssessmentsRoutes);
+// R7bn-5 / D6-fix: twice-daily compliance read API (used by the
+// Nursing/Doctor Notes header to render OVERDUE / DUE_SOON badges).
+router.use("/compliance", assessmentComplianceRoutes);
 router.use("/ai", aiRoutes);
 router.use("/mar", marRoutes);
+router.use("/intake-output", intakeOutputRoutes); // R7bq-3 — fluid I/O ledger
 router.use("/nursing-charges", nursingChargesRoutes);
 router.use("/hospital-settings", hospitalSettingsRoutes);
 router.use("/vitalsheet", vitalSheetRoutes);
 
 // ── Patient File — Complete aggregator + activity feed ───────
 router.use("/patient-file",     require("./Clinical/patientFileRoutes"));
+
+// ── Patient History — chronological per-UHID OPD history +
+// per-admission IPD file (ASC, day-grouped). Read-only views the
+// new PatientHistoryViewPage at /patient-history-view/:uhid uses.
+// Does NOT replace /patient-file/* (that surface still backs the
+// existing CompletePatientFilePage).
+router.use("/patient-history",  require("./Clinical/patientHistoryRoutes"));
 
 // ── Roadmap A1–A5 + D14: patient-safety gates ────────────────
 router.use("/safety",           require("./Clinical/safetyRoutes"));
@@ -203,6 +229,13 @@ router.use("/admin-ops",        require("./Admin/adminOpsRoutes"));
 
 // Admin "Mission Control" home — aggregate hospital-wide KPIs + feed
 router.use("/admin-dashboard",  require("./Admin/adminDashboardRoutes"));
+
+// R7bz — Admin System Health diagnostics (DB stats, cron lock status,
+// recent client errors, activity, integrity invariants). Read-only
+// endpoint, admin-only. Backs Frontend/src/pages/admin/SystemHealthPage.jsx.
+router.use("/admin",            require("./Admin/systemHealthRoutes"));
+
+// (client-errors is mounted ABOVE the global authenticate — see top of file)
 
 // R7bf-H: reports + dashboards surface (A6-CRIT + A6-HIGH coverage).
 //   /hospital-register, /refunds, /today-revenue, /day-book, /gst-monthly,

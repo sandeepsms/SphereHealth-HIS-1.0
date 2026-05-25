@@ -3,9 +3,11 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import { API_BASE_URL as API_URL } from "../config/api";
 
 /* ── Defaults (used while loading or if API fails) ─────────────────────── */
+/* R7cb-residual: neutral defaults so a settings-API outage doesn't expose
+   the dev brand on a deployed instance. */
 export const DEFAULT_SETTINGS = {
-  hospitalName:       "SphereHealth Hospital",
-  tagline:            "NABH Accredited Multi-Specialty Hospital",
+  hospitalName:       "Hospital",
+  tagline:            "",
   logo:               "",
   logoWidth:          120,
   addressLine1:       "",
@@ -47,9 +49,33 @@ export function HospitalSettingsProvider({ children }) {
 
   const fetchSettings = async () => {
     try {
-      const res  = await fetch(`${API_URL}/hospital-settings`);
+      // R7cc: backend GET /api/hospital-settings sits behind the global
+      // `authenticate` middleware (routes/index.js line 87). Without the
+      // bearer token the request returns 401 → json.success is false → we
+      // silently fell through to DEFAULT_SETTINGS, which is why admin's
+      // saved values looked like "they reset" on next page load. Send the
+      // per-tab JWT same as every other authenticated call in the app.
+      const token = (typeof sessionStorage !== "undefined")
+        ? sessionStorage.getItem("his_token")
+        : null;
+      const res  = await fetch(`${API_URL}/hospital-settings`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const json = await res.json();
-      if (json.success && json.data) setSettings({ ...DEFAULT_SETTINGS, ...json.data });
+      if (json.success && json.data) {
+        setSettings({ ...DEFAULT_SETTINGS, ...json.data });
+        // Keep the print module-cache in lockstep with the context — when
+        // reload() lands fresh settings (e.g. right after an admin save),
+        // any PrintShell-routed printable that opens next must NOT serve
+        // a stale logo / GSTIN from the singleton _cache.
+        // Imported inside the callback to dodge the circular-import risk
+        // (the print hook itself does not depend on this context, but
+        //  keeping the import lazy is safer if either side grows later).
+        try {
+          const mod = await import("../Components/print/useHospitalSettings");
+          mod.clearHospitalSettingsCache?.();
+        } catch { /* import failures are non-fatal — context still has fresh data */ }
+      }
     } catch {
       /* silently keep defaults */
     } finally {

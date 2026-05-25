@@ -43,6 +43,12 @@ const SALE_ITEM = new mongoose.Schema(
 
     quantity:   { type: Number, required: true, min: 1 },
     unitPrice:  { type: Dec, required: true },
+    // R7ct — HSN/SAC code snapshot. Captured from DrugMaster.hsnCode at
+    // dispense time so a historical sale still shows the HSN that was in
+    // force when it was billed, even if the drug master HSN is later
+    // changed (e.g. CBIC reclassifies a product). GSTR-1 line 12
+    // HSN-summary block reads this column.
+    hsnCode:    { type: String, default: "" },
     // R7bg-1-HIGH-1: constrain gstRate to the legal Indian slabs. The
     // previous `default: 12, type: Number` would silently accept a
     // decimal typo (180 instead of 18) and over-tax the patient by 10x.
@@ -129,6 +135,28 @@ const PharmacySaleSchema = new mongoose.Schema(
     paymentMode: { type: String, enum: ["Cash","Card","UPI","Mixed","Credit"], default: "Cash" },
     amountPaid:  { type: Dec, default: () => toDec(0) },
     balanceDue:  { type: Dec, default: () => toDec(0) },
+    // R7cu — Credit-collection log. Every payment received AFTER the
+    // original dispense (i.e. against an IPD/Credit sale that was
+    // booked with balanceDue > 0) appends a row here so the pharmacy
+    // has an auditable per-payment trail rather than just an
+    // incremented amountPaid. Mirrors the patientCreditLog pattern but
+    // tracks money coming IN (credit collections) instead of OUT
+    // (over-payment refunds). Discharge gate reads balanceDue, not
+    // this array — array is for receipts + audit only.
+    collectionLog: {
+      type: [{
+        _id: false,
+        amount:        { type: Dec, required: true },
+        mode:          { type: String, enum: ["Cash","Card","UPI","Mixed","Credit"], default: "Cash" },
+        txnRef:        { type: String, default: "" },
+        receiptNumber: { type: String, default: "" }, // PHM-COLL-... if generated
+        collectedAt:   { type: Date, default: Date.now },
+        collectedBy:   { type: String, default: "" },
+        collectedById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        notes:         { type: String, default: "" },
+      }],
+      default: [],
+    },
 
     // ── Patient credit ledger (signed amount the pharmacy OWES the patient).
     //   Positive value = pharmacy is holding patient's money:

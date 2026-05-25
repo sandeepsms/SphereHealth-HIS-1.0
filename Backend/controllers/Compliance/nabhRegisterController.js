@@ -20,6 +20,13 @@ const PainAssessmentRegister = require("../../models/Compliance/PainAssessmentRe
 const FallRiskRegister = require("../../models/Compliance/FallRiskRegisterModel");
 const PressureUlcerRegister = require("../../models/Compliance/PressureUlcerRegisterModel");
 const DVTRegister = require("../../models/Compliance/DVTRegisterModel");
+// R7bx — six new NABH registers (COP.10/13/16/17/18 + MOM.7)
+const OTRegister = require("../../models/Compliance/OTRegisterModel");
+const ASARegister = require("../../models/Compliance/ASARegisterModel");
+const ReadmissionRegister = require("../../models/Compliance/ReadmissionRegisterModel");
+const MortalityRegister = require("../../models/Compliance/MortalityRegisterModel");
+const RestraintRegister = require("../../models/Compliance/RestraintRegisterModel");
+const AntimicrobialUseRegister = require("../../models/Compliance/AntimicrobialUseRegisterModel");
 const emitter = require("../../services/Compliance/nabhRegisterEmitter");
 
 function _dateRange(query) {
@@ -231,6 +238,162 @@ exports.listDVT = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────
+// R7bx — Six new NABH registers (COP.10/13/16/17/18 + MOM.7)
+// ─────────────────────────────────────────────────────────────────────────
+// Each list endpoint takes the same shape: from/to date range on the
+// canonical date field for the register, plus a free-text `search` that
+// matches UHID / patient name / a register-specific identifier.
+
+function _searchOr(search, fields) {
+  if (!search) return null;
+  const safe = String(search).trim();
+  if (!safe) return null;
+  const rx = new RegExp(safe.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+  return { $or: fields.map((f) => ({ [f]: rx })) };
+}
+
+// OT Register — NABH COP.10
+exports.listOT = async (req, res) => {
+  try {
+    const q = {};
+    if (req.query.UHID) q.UHID = String(req.query.UHID).toUpperCase();
+    if (req.query.status) q.status = req.query.status;
+    if (req.query.emergencyOnly === "true") q.emergencyCase = true;
+    const dr = _dateRange({ startDate: req.query.from || req.query.startDate, endDate: req.query.to || req.query.endDate });
+    if (dr) q.occurredAt = dr;
+    const or = _searchOr(req.query.search, ["UHID", "patientName", "otNumber", "surgeryName", "surgeonName"]);
+    if (or) Object.assign(q, or);
+
+    const { page, limit, skip } = _pageLimit(req.query);
+    const [rows, total] = await Promise.all([
+      OTRegister.find(q).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      OTRegister.countDocuments(q),
+    ]);
+    res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// ASA Register — NABH COP.13
+exports.listASA = async (req, res) => {
+  try {
+    const q = {};
+    if (req.query.UHID) q.UHID = String(req.query.UHID).toUpperCase();
+    if (req.query.asaGrade) q.asaGrade = req.query.asaGrade;
+    if (req.query.status) q.status = req.query.status;
+    const dr = _dateRange({ startDate: req.query.from || req.query.startDate, endDate: req.query.to || req.query.endDate });
+    if (dr) q.occurredAt = dr;
+    const or = _searchOr(req.query.search, ["UHID", "patientName", "anaesthetistName"]);
+    if (or) Object.assign(q, or);
+
+    const { page, limit, skip } = _pageLimit(req.query);
+    const [rows, total] = await Promise.all([
+      ASARegister.find(q).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      ASARegister.countDocuments(q),
+    ]);
+    res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// Readmission Register — NABH COP.16
+exports.listReadmission = async (req, res) => {
+  try {
+    const q = {};
+    if (req.query.UHID) q.UHID = String(req.query.UHID).toUpperCase();
+    if (req.query.readmissionType) q.readmissionType = req.query.readmissionType;
+    if (req.query.sameDiagnosis === "true") q.sameDiagnosis = true;
+    const dr = _dateRange({ startDate: req.query.from || req.query.startDate, endDate: req.query.to || req.query.endDate });
+    if (dr) q.occurredAt = dr;
+    const or = _searchOr(req.query.search, ["UHID", "patientName", "currentAdmissionNumber", "previousAdmissionNumber", "currentDiagnosis"]);
+    if (or) Object.assign(q, or);
+
+    const { page, limit, skip } = _pageLimit(req.query);
+    const [rows, total] = await Promise.all([
+      ReadmissionRegister.find(q).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      ReadmissionRegister.countDocuments(q),
+    ]);
+    res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// Mortality Register — NABH COP.18
+exports.listMortality = async (req, res) => {
+  try {
+    const q = {};
+    if (req.query.UHID) q.UHID = String(req.query.UHID).toUpperCase();
+    if (req.query.manner) q.manner = req.query.manner;
+    if (req.query.mlc === "true") q.isMLC = true;
+    if (req.query.bruceCategory) q.bruceCategory = req.query.bruceCategory;
+    const dr = _dateRange({ startDate: req.query.from || req.query.startDate, endDate: req.query.to || req.query.endDate });
+    if (dr) q.dateOfDeath = dr;
+    const or = _searchOr(req.query.search, ["UHID", "patientName", "mortalityNumber", "primaryCause", "underlyingCause"]);
+    if (or) Object.assign(q, or);
+
+    const { page, limit, skip } = _pageLimit(req.query);
+    const [rows, total] = await Promise.all([
+      MortalityRegister.find(q).sort({ dateOfDeath: -1 }).skip(skip).limit(limit).lean(),
+      MortalityRegister.countDocuments(q),
+    ]);
+    res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// Restraint Register — NABH COP.17
+exports.listRestraint = async (req, res) => {
+  try {
+    const q = {};
+    if (req.query.UHID) q.UHID = String(req.query.UHID).toUpperCase();
+    if (req.query.status) q.status = req.query.status;
+    if (req.query.restraintType) q.restraintType = req.query.restraintType;
+    const dr = _dateRange({ startDate: req.query.from || req.query.startDate, endDate: req.query.to || req.query.endDate });
+    if (dr) q.occurredAt = dr;
+    const or = _searchOr(req.query.search, ["UHID", "patientName", "orderingDoctor", "reason"]);
+    if (or) Object.assign(q, or);
+
+    const { page, limit, skip } = _pageLimit(req.query);
+    const [rows, total] = await Promise.all([
+      RestraintRegister.find(q).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      RestraintRegister.countDocuments(q),
+    ]);
+    res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// Antimicrobial-Use Register — NABH MOM.7 (AMS)
+exports.listAntimicrobial = async (req, res) => {
+  try {
+    const q = {};
+    if (req.query.UHID) q.UHID = String(req.query.UHID).toUpperCase();
+    if (req.query.aware) q.watchAccessReserve = req.query.aware;
+    if (req.query.indicationType) q.indicationType = req.query.indicationType;
+    if (req.query.prophylactic === "true") q.prophylactic = true;
+    if (req.query.status) q.status = req.query.status;
+    const dr = _dateRange({ startDate: req.query.from || req.query.startDate, endDate: req.query.to || req.query.endDate });
+    if (dr) q.startedAt = dr;
+    const or = _searchOr(req.query.search, ["UHID", "patientName", "antibiotic", "indication", "orderingDoctor"]);
+    if (or) Object.assign(q, or);
+
+    const { page, limit, skip } = _pageLimit(req.query);
+    const [rows, total] = await Promise.all([
+      AntimicrobialUseRegister.find(q).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      AntimicrobialUseRegister.countDocuments(q),
+    ]);
+    res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────
 // Dashboard summary
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -249,7 +412,7 @@ exports.dashboardSummary = async (req, res) => {
       return { todayCount, sevenDayCount, lastEntryAt: last ? (last[dateField] || last.createdAt) : null };
     }
 
-    const [bs, er, bt, pn, fr, pu, dv] = await Promise.all([
+    const [bs, er, bt, pn, fr, pu, dv, ot, asa, rea, mort, res2, amu] = await Promise.all([
       summary(BloodSugarRegister, "takenAt"),
       summary(EmergencyRegister, "arrivalAt"),
       summary(BloodTransfusionRegister, "createdAt"),
@@ -257,6 +420,13 @@ exports.dashboardSummary = async (req, res) => {
       summary(FallRiskRegister, "assessedAt"),
       summary(PressureUlcerRegister, "assessedAt"),
       summary(DVTRegister, "assessedAt"),
+      // R7bx — six new registers
+      summary(OTRegister, "createdAt"),
+      summary(ASARegister, "createdAt"),
+      summary(ReadmissionRegister, "createdAt"),
+      summary(MortalityRegister, "dateOfDeath"),
+      summary(RestraintRegister, "createdAt"),
+      summary(AntimicrobialUseRegister, "createdAt"),
     ]);
 
     res.json({
@@ -269,6 +439,13 @@ exports.dashboardSummary = async (req, res) => {
         { id: "fall-risk", name: "Fall Risk Register", route: "/compliance/nabh/fall-risk", nabhRef: "PSQ + IPSG.6", ...fr },
         { id: "pressure-ulcer", name: "Pressure Ulcer Register", route: "/compliance/nabh/pressure-ulcer", nabhRef: "HIC.4 + COP.8", ...pu },
         { id: "dvt", name: "DVT / VTE Caprini Register", route: "/compliance/nabh/dvt", nabhRef: "MOM.7 + AAC.4 + COP.12", ...dv },
+        // R7bx — six new registers
+        { id: "ot", name: "OT Register", route: "/compliance/nabh/ot-register", nabhRef: "COP.10", ...ot },
+        { id: "asa", name: "Anaesthesia (ASA) Register", route: "/compliance/nabh/asa-register", nabhRef: "COP.13", ...asa },
+        { id: "readmission", name: "Readmission Register", route: "/compliance/nabh/readmission-register", nabhRef: "COP.16", ...rea },
+        { id: "mortality", name: "Mortality Register", route: "/compliance/nabh/mortality-register", nabhRef: "COP.18", ...mort },
+        { id: "restraint", name: "Restraint Register", route: "/compliance/nabh/restraint-register", nabhRef: "COP.17", ...res2 },
+        { id: "antimicrobial", name: "Antimicrobial Use Register", route: "/compliance/nabh/antimicrobial-register", nabhRef: "MOM.7 (AMS)", ...amu },
       ],
     });
   } catch (e) {

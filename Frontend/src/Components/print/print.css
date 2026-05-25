@@ -212,17 +212,30 @@ html[data-paper="a5"] .pr-page {
 /* ════════════════════════════════════════════════════════════════
    Patient + date strip
 ════════════════════════════════════════════════════════════════ */
+/* R7ch: patient strip flips from auto-fit grid (which collapsed to a
+   single column inside narrow receipt bodies — looked like 6 stacked
+   labels on the left with empty whitespace on the right) to a 2-column
+   column-major flow. First half of the items fills the LEFT column
+   top-down, second half fills the RIGHT column. Works automatically
+   for 2 / 4 / 6 / 8 items — no item-count knowledge needed in JSX. */
 .pr-info-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 6px 18px;
+  column-count: 2;
+  column-gap: 24px;
   padding: 10px 14px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   margin-bottom: 14px;
 }
-.pr-info-grid__item { font-size: 11px; }
+.pr-info-grid__item {
+  font-size: 11px;
+  /* Don't split an item across the column boundary. */
+  break-inside: avoid;
+  page-break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+  margin-bottom: 6px;
+}
+.pr-info-grid__item:last-child { margin-bottom: 0; }
 .pr-info-grid__lbl {
   color: #64748b;
   font-weight: 600;
@@ -371,6 +384,70 @@ html[data-paper="a5"] .pr-page {
   color: #334155;
 }
 .pr-bank strong { color: #0f172a; }
+/* R7cf — Empty signature lines retired; every print now carries a
+   digital-signature stamp with the issuer's name, ID, role, and time.
+   The legacy .pr-signatures / .pr-sig classes stay defined so any
+   third-party printable that still renders them doesn't blow up the
+   layout — but PrintShell itself uses .pr-digsig-row + .pr-digsig. */
+.pr-digsig-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 18px 0 10px;
+  page-break-inside: avoid;
+}
+.pr-digsig {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 16px;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  background: #f8fafc;
+  min-width: 260px;
+  max-width: 360px;
+  line-height: 1.4;
+}
+.pr-digsig__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #16a34a;
+  font-weight: 700;
+  font-size: 9.5px;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+}
+.pr-digsig__badge > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #16a34a;
+  color: #fff;
+  font-size: 10px;
+}
+.pr-digsig__img {
+  max-width: 200px;
+  max-height: 44px;
+  object-fit: contain;
+  margin: 2px 0;
+}
+.pr-digsig__name {
+  font-weight: 700;
+  font-size: 12px;
+  color: #0f172a;
+}
+.pr-digsig__meta {
+  font-size: 9.5px;
+  color: #475569;
+}
+.pr-digsig__time {
+  font-size: 9.5px;
+  color: #64748b;
+}
+/* Legacy classes — kept for any external printable still using them. */
 .pr-signatures {
   display: flex;
   justify-content: space-between;
@@ -592,6 +669,38 @@ html[data-paper="a5"] .pr-page {
        the page (not the .pr-page element), which paged-media interprets
        per printed sheet. Browsers vary — fall back gracefully. */
     position: fixed;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   OPD-PRINT-AUDIT Item 25 — pagination polish.
+
+   For multi-page Rx / lab / bill prints we need:
+     - Table column headers to repeat on every new page
+     - Drug / bill rows to never split across a page break
+     - Signatures + footer to stay together at the document end
+     - A "Page X of Y" stamp at the bottom centre of every sheet
+
+   The `.pr-section--allow-break` opt-in is for tall sections (20+ drug
+   prescriptions) where keeping the whole section together would force
+   a half-empty first page.
+═══════════════════════════════════════════════════════════════ */
+@media print {
+  .pr-table thead       { display: table-header-group; }
+  .pr-table tbody tr    { break-inside: avoid; page-break-inside: avoid; }
+  .pr-signatures,
+  .pr-footer            { break-inside: avoid; page-break-inside: avoid; }
+  .pr-section--allow-break {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+  @page {
+    margin: 14mm 10mm 16mm 10mm;
+    @bottom-center {
+      content: "Page " counter(page) " of " counter(pages);
+      font-size: 9px;
+      color: #6b7280;
+    }
   }
 }
 

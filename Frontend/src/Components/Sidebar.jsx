@@ -14,6 +14,8 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useHospitalSettings } from "../context/HospitalSettingsContext";
+import { IS_PHARMACY_STANDALONE } from "../config/pharmacyMode";
 import "primeicons/primeicons.css";
 
 /* ══════════════════════════════════════════════════════════════
@@ -98,6 +100,11 @@ const NAV = [
       // Directory · ?uhid= deep link → Timeline. See the
       // PatientLookupPage docstring for the consolidation rationale.
       { label: "Patient Lookup",      icon: "pi-id-card",           path: "/patient-search",                  badge: "ALL-IN-ONE",  roles: [ADMIN, RX, DR, NR, AC, TPA] },
+      // OPD history per UHID + chronological IPD file per admission — a
+      // two-tab focused view that complements the giant Complete Patient
+      // File. Reachable without a UHID (the page shows a search box) so
+      // clinicians can land here, search by UHID/IPD number, and read.
+      { label: "Patient File",        icon: "pi-folder",            path: "/patient-history-view",            badge: "NEW",         roles: [ADMIN, RX, DR, NR, AC, TPA] },
       { label: "Appointments",        icon: "pi-calendar-plus",     path: "/appointments",         nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "Discharge Queue",     icon: "pi-sign-out",          path: "/discharge-queue",      nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "TPA / Insurance",     icon: "pi-shield",            path: "/tpa-cases",            nabh: true,  badge: "NEW",   roles: [ADMIN, RX, TPA, AC] },
@@ -155,23 +162,29 @@ const NAV = [
      dashboards can be reinstated as admin-only tiles inside Bed Management
      when there's real backend support behind them. */
 
-  /* ── Clinical — Doctor ──────────────────────────────── */
+  /* ── Clinical — Doctor ────────────────────────────────
+     R7av — slim sidebar to 3 core entries. Emergency Assessment,
+     Discharge Summary, Consent Forms, and MLC now live as tiles INSIDE
+     the Doctor Notes page (same surface as Diagnosis / Orders / MAR /
+     Team) so a doctor lands on a single hub for everything they author
+     about a patient. The standalone routes still exist — the tiles
+     navigate to them — so deep-links from print headers and email
+     reminders keep working.
+
+     Physiotherapy Console removed from the Doctor sidebar too: it now
+     lives only under the Physiotherapist role's hard-forked nav
+     (see PHYSIO_NAV below). Doctors who need to peek at a physio plan
+     can deep-link to /physiotherapist?tab=plans from inside the patient
+     file or a doctor-order chip — keeping it on every doctor's sidebar
+     made the sidebar feel like a settings menu. */
   {
     id: "doctor", label: "Clinical — Doctor",
     icon: "pi-user-edit", color: "#7c3aed", light: "#f5f3ff",
     nabh: true, roles: [ADMIN, DR],
     items: [
-      { label: "Patient Panel",         icon: "pi-id-card",           path: "/doctor-patient-panel",  roles: [ADMIN, DR] },
-      { label: "OPD Assessment",        icon: "pi-file-edit",         path: "/doctor-opd-panel",       roles: [ADMIN, DR], nabh: true },
-      { label: "Doctor Notes",          icon: "pi-book",              path: "/doctor-notes",           roles: [ADMIN, DR], nabh: true },
-      { label: "Emergency Assessment",  icon: "pi-exclamation-circle",path: "/emergency-assessment",   roles: [ADMIN, DR], nabh: true },
-      { label: "Discharge Summary",     icon: "pi-sign-out",          path: "/discharge-summary",      roles: [ADMIN, DR], nabh: true },
-      { label: "Consent Forms",         icon: "pi-shield",            path: "/consent-forms",          roles: [ADMIN, DR], nabh: true },
-      { label: "Medico-Legal (MLC)",    icon: "pi-shield",            path: "/mlc",                    roles: [ADMIN, DR], nabh: true },
-      // R7bj-F1 — Physiotherapy console (NABH COP.20 rehab services).
-      // Visible to ADMIN + DR + PT (Physiotherapist) so doctor can
-      // raise + monitor; Physio actions sessions.
-      { label: "Physiotherapy Console", icon: "pi-bolt",              path: "/physiotherapist",        roles: [ADMIN, DR, PT], nabh: true, badge: "COP.20" },
+      { label: "Patient Panel",  icon: "pi-id-card",   path: "/doctor-patient-panel", roles: [ADMIN, DR] },
+      { label: "OPD Assessment", icon: "pi-file-edit", path: "/doctor-opd-panel",     roles: [ADMIN, DR], nabh: true },
+      { label: "Doctor Notes",   icon: "pi-book",      path: "/doctor-notes",         roles: [ADMIN, DR], nabh: true },
     ],
   },
 
@@ -196,6 +209,8 @@ const NAV = [
       // Generic UHID search — same target page; convenient when
       // the user knows the UHID but not the discharge date.
       { label: "UHID Search",           icon: "pi-search",            path: "/patient-search",                                            roles: [ADMIN, DR, "MRD"] },
+      // Quick access to the focused OPD/IPD history view for MRD audits.
+      { label: "OPD/IPD History",       icon: "pi-folder",            path: "/patient-history-view",                  badge: "NEW",       roles: [ADMIN, DR, "MRD"] },
     ],
   },
 
@@ -219,32 +234,25 @@ const NAV = [
     ],
   },
 
-  /* ── Pharmacy / MAR ──────────────────────────────────── */
+  /* ── Pharmacy ──────────────────────────────────────────
+     R7cq: trimmed.
+       • MAR + Diabetic Chart moved out — both now live as tiles inside
+         Nursing Notes so the nurse opens them in patient context. Keeping
+         them in two places duplicated the nav and split the workflow.
+       • Kitchen Indent + Cold Chain Log removed entirely — modules
+         deprecated per launch-scope decision. Routes + page components
+         also deleted (see App.jsx). Backend models stay so existing
+         data survives in case the modules ever return.
+       • Section label dropped "/ MAR" since MAR no longer lives here. */
   {
-    id: "pharmacy", label: "Pharmacy / MAR",
+    id: "pharmacy", label: "Pharmacy",
     icon: "pi-box", color: "#ea580c", light: "#fff7ed",
-    nabh: true, roles: [ADMIN, PH, NR, DR],
+    nabh: true, roles: [ADMIN, PH],
     items: [
-      // MAR is the canonical record — Doctor reads it (gets to "DR" too).
       // Live Indents is NOT a separate sidebar entry — it lives as a
       // tab inside the Pharmacy page (next to Dispense + Sales) so the
       // pharmacist sees it on their primary workspace.
       { label: "Pharmacy",         icon: "pi-box",           path: "/pharmacy",        nabh: true, badge: "NEW", roles: [ADMIN, PH] },
-      // R7bb-E/D5-CRIT-1 — Pharmacist removed: backend mar.read excludes
-      // PH so the page hits a 403/empty state every time. PH still
-      // sees Pharmacy + Indents to fulfil dispensing requests instead.
-      { label: "MAR",              icon: "pi-table",         path: "/mar",             nabh: true, roles: [ADMIN, NR, DR] },
-      { label: "Diabetic Chart",   icon: "pi-chart-bar",     path: "/diabetic-chart",  nabh: true, badge: "NEW", roles: [ADMIN, NR, DR] },
-      // R7bj-F2 — Kitchen indent console (nurse raises meal indent,
-      // kitchen desk prepares, ward boy delivers). Visible to the four
-      // roles that participate in the loop. Lazy route /kitchen owned
-      // by F10 — if KitchenConsole.jsx isn't yet shipped the route
-      // renders the lazy-import-fallback page.
-      { label: "Kitchen Indent",   icon: "pi-shopping-cart", path: "/kitchen",         nabh: true, badge: "NEW", roles: [ADMIN, NR, PH, WB] },
-      // R7bk — Cold-Chain Log (NABH MOM.2, WHO PQS E003). Pharmacist
-      // logs vaccine-fridge / insulin-fridge / freezer temps; auto-flag
-      // out-of-range as breach + nurse acknowledge.
-      { label: "Cold Chain Log",   icon: "pi-bolt",          path: "/cold-chain",      nabh: true, badge: "MOM.2", roles: [ADMIN, PH, NR, DR] },
     ],
   },
 
@@ -260,17 +268,12 @@ const NAV = [
       // section was visible but empty for the role. Manual Lab Entry
       // (write) stays Admin/LabTech-only. Master likewise.
       { label: "Investigation Orders",  icon: "pi-list",   path: "/investigation-orders",  roles: [ADMIN, LB, DR, RL] },
-      // R7bd-E-5 / A3-MED-18 — Lab Tech multi-tab console (sample queue,
-      // result-entry queue, QC log, day worksheet). Sits above the
-      // single-page "Manual Lab Entry" because the console is the
-      // intended landing surface; the entry page is now reached from
-      // the queue rows. Visible to Admin + Lab Tech only.
-      { label: "Lab Console",           icon: "pi-flask",  path: "/lab-console",           badge: "NEW", roles: [ADMIN, LB] },
+      // R7cq: Lab Console + Radiology Console removed per launch-scope
+      // decision. Lab/imaging at this hospital are outsourced — the
+      // multi-tab consoles weren't being used. Lab Tech still has
+      // Manual Lab Entry below to transcribe external reports;
+      // Radiologist still reads Imaging Reports.
       { label: "Imaging Reports",       icon: "pi-table",  path: "/lab-results",           badge: "READ",roles: [RL] },
-      // R7bd-E-6 / A3-HIGH-10 — Radiologist 3-tab console stub
-      // (worklist, reported, pending sign-off). Visible to Admin +
-      // Radiologist only.
-      { label: "Radiology Console",     icon: "pi-eye",    path: "/radiology-console",     badge: "NEW", roles: [ADMIN, RL] },
       { label: "Manual Lab Entry",      icon: "pi-table",  path: "/lab-results",           badge: "NEW", roles: [ADMIN, LB] },
       { label: "Investigation Master",  icon: "pi-cog",    path: "/investigation-master",  roles: [ADMIN, LB] },
     ],
@@ -384,12 +387,18 @@ const NAV = [
     icon: "pi-sliders-h", color: "#374151", light: "#f9fafb",
     roles: [ADMIN],   // Admin only
     items: [
-      { label: "Hospital Settings",  icon: "pi-building",   path: "/hospital-settings", badge: "NEW" },
+      // R7cc — legacy "Hospital Settings" link removed; the wizard below is
+      // now the sole admin entry-point for hospital config.
+      { label: "Hospital Configuration", icon: "pi-cog",   path: "/admin/hospital-config", badge: "NEW" },
       { label: "Print Templates",    icon: "pi-print",      path: "/print-gallery",     badge: "NEW" },
       { label: "Department",         icon: "pi-sitemap",    path: "/department" },
       { label: "Doctor Management",  icon: "pi-user-edit",  path: "/doctors" },
       { label: "User Management",    icon: "pi-users",      path: "/admin/users" },
       { label: "Roles & Permissions",icon: "pi-shield",     path: "/admin/roles",       badge: "NEW" },
+      // R7bz — read-only System Health diagnostics (DB / crons / errors /
+      // activity / integrity / server).  Admin-only — the section itself
+      // is already roles:[ADMIN] so no per-item role override is needed.
+      { label: "System Health",      icon: "pi-server",     path: "/admin/system-health", badge: "NEW" },
       { label: "Hospital Charges",   icon: "pi-dollar",     path: "/hospital-charges" },
       // R7bf-G / NABH HRD.3 — staff credentialing register lives under
       // Masters & Admin since Admin owns the HR function today.
@@ -429,6 +438,16 @@ const NAV = [
       // No separate sidebar entry — keeps the chip-page consolidation
       // discipline established by R7e (avoid duplicate nursing entries).
       { label: "NABH Registers",        icon: "pi-th-large",             path: "/compliance/nabh-registers", nabh: true, badge: "R7bo", roles: [ADMIN, DR, NR, "MRD"] },
+      // R7bx — six new surveyor-facing NABH registers. Each is a self-
+      // contained filterable + printable + CSV-exportable chronological
+      // log, auto-populated from existing clinical save paths (doctor
+      // orders, procedure notes, admissions, discharge finalize).
+      { label: "OT Register",           icon: "pi-briefcase",            path: "/compliance/nabh/ot-register",            nabh: true, badge: "COP.10",  roles: [ADMIN, DR, NR, "MRD"] },
+      { label: "Anaesthesia Register",  icon: "pi-shield",               path: "/compliance/nabh/asa-register",           nabh: true, badge: "COP.13",  roles: [ADMIN, DR, NR, "MRD"] },
+      { label: "Readmission Register",  icon: "pi-reply",                path: "/compliance/nabh/readmission-register",   nabh: true, badge: "COP.16",  roles: [ADMIN, DR, NR, "MRD"] },
+      { label: "Mortality Register",    icon: "pi-times-circle",         path: "/compliance/nabh/mortality-register",     nabh: true, badge: "COP.18",  roles: [ADMIN, DR, NR, "MRD"] },
+      { label: "Restraint Register",    icon: "pi-lock",                 path: "/compliance/nabh/restraint-register",     nabh: true, badge: "COP.17",  roles: [ADMIN, DR, NR, "MRD"] },
+      { label: "Antimicrobial Use",     icon: "pi-stop-circle",          path: "/compliance/nabh/antimicrobial-register", nabh: true, badge: "MOM.7",   roles: [ADMIN, DR, NR, "MRD"] },
     ],
   },
 ];
@@ -589,7 +608,25 @@ const RECEPTION_NAV = [
   },
 ];
 
+// R7cs — pharmacy-standalone mode: collapse the sidebar to just the
+// Pharmacy section regardless of role. Even Admin in a retail
+// deployment shouldn't see Doctor / Nurse / Reception nav (those
+// modules aren't reachable; the underlying DB collections may not
+// exist). IS_PHARMACY_STANDALONE is imported at the top of file.
 function filterNav(nav, userRole) {
+  // Standalone short-circuit — only the "pharmacy" section survives.
+  // Applied BEFORE the role branches so it overrides every other rule.
+  if (IS_PHARMACY_STANDALONE) {
+    return nav
+      .filter(section => section.id === "pharmacy")
+      .map(section => {
+        if (section.single || !section.items) return section;
+        // In standalone, every role with Pharmacy access sees every
+        // pharmacy item (no per-item role pruning) — keeps the chemist
+        // shop's single user able to do GRN + Dispense + Settings.
+        return section;
+      });
+  }
   if (userRole === ADMIN) return nav; // Admin sees everything unfiltered
   if (userRole === "Dietician")       return DIETICIAN_NAV;
   if (userRole === "Ward Boy")        return WARD_BOY_NAV;
@@ -764,6 +801,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
   const navigate  = useNavigate();
   const location  = useLocation();
   const { user, logout } = useAuth();
+  const { settings } = useHospitalSettings();
 
   const userRole = user?.role || ADMIN;
   const roleMeta = ROLE_META[userRole] || ROLE_META.Admin;
@@ -836,10 +874,16 @@ export default function Sidebar({ collapsed, setCollapsed }) {
             }}>S</div>
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", lineHeight: 1 }}>
-                SphereHealth<span style={{ color: "#38bdf8" }}>HIS</span>
+                {settings?.hospitalName || "Hospital"}<span style={{ color: "#38bdf8" }}> HIS</span>
               </div>
+              {/* R7ce: only label the HOSPITAL as "NABH ACCREDITED" once admin
+                  has entered a cert # in the wizard. Otherwise show
+                  "NABH COMPLIANT" — a software-level claim that doesn't
+                  misrepresent the hospital's accreditation status. */}
               <div style={{ fontSize: 9, color: "#94a3b8", letterSpacing: ".8px", marginTop: 2 }}>
-                NABH ACCREDITED
+                {String(settings?.nabhCertNumber || "").trim()
+                  ? "NABH ACCREDITED"
+                  : "NABH COMPLIANT"}
               </div>
             </div>
           </div>
@@ -991,7 +1035,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
               <i className={`pi ${roleMeta.icon}`} style={{ fontSize: 10, color: "#fff" }} />
             </div>
             <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#1e293b", lineHeight: 1 }}>SphereHealth HIS</div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#1e293b", lineHeight: 1 }}>{`${settings?.hospitalName || "Hospital"} HIS`}</div>
               <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 1 }}>v2.0 · NABH Ready</div>
             </div>
           </div>

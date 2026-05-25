@@ -20,6 +20,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "react-toastify";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
+import { buildPrintIssuerHtml } from "../../Components/print/printIssuer";
 import "../../Components/clinical/clinical-forms.css";
 import "./ReceptionConsole.css";
 
@@ -1912,7 +1914,15 @@ export default function ReceptionConsole() {
 
 
 /* ═══════════════════════ PRINT RECEIPT ═══════════════════════ */
-function printReceipt({ patient, visitType, opd, ipd, dayCare, er, services, bedData, deptLabel, docLabel, receiptTotal, tokenNumber }) {
+async function printReceipt({ patient, visitType, opd, ipd, dayCare, er, services, bedData, deptLabel, docLabel, receiptTotal, tokenNumber }) {
+  // R7cb-B: live hospital identity from Settings — admin's edits to name /
+  // address / GSTIN flow into every slip without a page reload.
+  const hs = await fetchHospitalSettings();
+  const esc = (s = "") => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+  const _hospName    = hs.hospitalName || "Hospital";
+  const _hospTagline = hs.tagline || "";
+  const _addrLine    = [hs.addressLine1, hs.addressLine2, [hs.city, hs.state, hs.pincode].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+  const _phoneLine   = [hs.phone1, hs.phone2, hs.emergencyPhone].filter(Boolean).join(" · ");
   const now = new Date();
   const fmt = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
   const color = ({ OPD: "#0891b2", IPD: "#7c3aed", Daycare: "#d97706", Emergency: "#dc2626", Services: "#059669" })[visitType] || "#0891b2";
@@ -1978,9 +1988,15 @@ function printReceipt({ patient, visitType, opd, ipd, dayCare, er, services, bed
       @media print{body{padding:0} .wrap{border:0}}
     </style></head><body><div class="wrap">
       <div class="hd">
-        <div>
-          <div class="hd-title">Registration Receipt</div>
-          <div class="hd-sub">${fmt(now)}</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          ${hs.logo ? `<img src="${hs.logo}" alt="" style="max-height:46px;background:#fff;border-radius:6px;padding:4px"/>` : ""}
+          <div>
+            <div class="hd-title">${esc(_hospName)}</div>
+            <div class="hd-sub">${_hospTagline ? esc(_hospTagline) + " · " : ""}Registration Receipt · ${fmt(now)}</div>
+            ${_addrLine ? `<div class="hd-sub">${esc(_addrLine)}</div>` : ""}
+            ${_phoneLine ? `<div class="hd-sub">${esc(_phoneLine)}</div>` : ""}
+            ${hs.gstin ? `<div class="hd-sub">GSTIN: ${esc(hs.gstin)}</div>` : ""}
+          </div>
         </div>
         <div class="badge">${visitType.toUpperCase()}</div>
       </div>
@@ -2016,12 +2032,13 @@ function printReceipt({ patient, visitType, opd, ipd, dayCare, er, services, bed
           <span class="total-label">Total Payable</span>
           <span class="total-value">₹${(Number(receiptTotal) || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
         </div>
-        <div class="footer">
-          <div class="sign"><div class="sign-line"></div><div class="sign-label">Patient / Attendant</div></div>
-          <div class="sign"><div class="sign-line"></div><div class="sign-label">Attending Doctor</div></div>
-          <div class="sign"><div class="sign-line"></div><div class="sign-label">Reception Counter</div></div>
+        ${/* R7cf: empty signature lines replaced with the digital
+            signature stamp of the issuing user (name + emp ID + role
+            + time). */ ""}
+        <div class="footer" style="display:flex;justify-content:flex-end;margin:12px 0 4px">
+          ${buildPrintIssuerHtml({ escapeHtml: esc })}
         </div>
-        <div class="note">Computer-generated receipt. SphereHealth HIS.</div>
+        <div class="note">Computer-generated receipt — ${esc(_hospName)}${hs.billFooterNote ? " · " + esc(hs.billFooterNote) : ""}</div>
       </div>
     </div></body></html>`;
 

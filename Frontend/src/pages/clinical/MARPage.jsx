@@ -13,6 +13,8 @@ import { confirm } from "../../Components/common/ConfirmDialog";
 // R7az-D5-HIGH-5 — themed reason input replaces window.prompt for
 // medication discontinuation.
 import { promptInput } from "../../Components/common/InputDialog";
+// R7cb-C: hospital settings for the printed indent header.
+import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
 
 const API = API_ENDPOINTS.MAR;
 
@@ -307,7 +309,7 @@ function PharmacyIndentModal({ mar, scheduleData, admDate, onClose }) {
     flash();
   }
 
-  function printIndent() {
+  async function printIndent() {
     const day = indentDay;
     const cur = indentState[day];
     if(!cur) return;
@@ -318,6 +320,9 @@ function PharmacyIndentModal({ mar, scheduleData, admDate, onClose }) {
     const patientName = mar?.patientName || "—";
     const uhid = mar?.UHID || "—";
     const ipdNo = mar?.ipdNo || "—";
+    // R7cb-C: pull hospital name from settings so the indent header is no
+    // longer hardcoded to "SphereHealth Hospital".
+    const hs = await fetchHospitalSettings();
 
     let html = `<!DOCTYPE html><html><head><title>Pharmacy Indent</title>
     <style>
@@ -344,7 +349,7 @@ function PharmacyIndentModal({ mar, scheduleData, admDate, onClose }) {
     .footer{margin-top:12px;font-size:8px;color:#9ca3af;text-align:center;border-top:1px solid #e2e6ea;padding-top:8px}
     </style></head><body>
     <div class="hdr">
-      <div><div class="hosp">${escHtml(mar?.patientName ? "SphereHealth Hospital" : "SphereHealth Hospital")}</div>
+      <div><div class="hosp">${escHtml(hs.hospitalName || "Hospital")}</div>
       <div class="hosp-sub">Nursing Station — Pharmacy Requisition</div></div>
       <div class="title-block"><div class="main-title">Pharmacy Indent</div>
       <div class="sub-title">Daily Drug Requisition Slip — NABH MMU 4.0</div>

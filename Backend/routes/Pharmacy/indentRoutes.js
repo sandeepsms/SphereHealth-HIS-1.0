@@ -11,8 +11,16 @@ const router  = express.Router();
 const ctrl    = require("../../controllers/Pharmacy/indentController");
 const { attemptAuth, requireAction } = require("../../middleware/auth");
 const { validateObjectIdParam } = require("../../utils/queryGuards");
+const { requireHospitalMode } = require("../../config/pharmacyMode");
 
 router.use(attemptAuth);
+// R7cs — Indents are an admission-coupled feature (nurse raises against
+// an active IPD admission, pharmacist fulfils against the patient's
+// auto-bill). In a standalone retail pharmacy deployment there are no
+// admissions, so the entire indents surface returns 404 (defence-in-
+// depth alongside the frontend tab being hidden when VITE_PHARMACY_MODE
+// === standalone).
+router.use(requireHospitalMode);
 
 // Nurse / Doctor raise an indent for an admitted patient
 router.post("/",                  requireAction("indent.raise"),    ctrl.create);

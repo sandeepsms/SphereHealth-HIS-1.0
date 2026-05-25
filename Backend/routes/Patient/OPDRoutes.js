@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const opdController = require("../../controllers/Patient/OPDController");
 const { attachDoctorProfile, requireAction } = require("../../middleware/auth");
+const { requireHospitalMode } = require("../../config/pharmacyMode");
 
 // R7bb-B/D4-CRIT-S1: `attemptAuth` removed — this router sits under the
 // global `authenticate` mount in routes/index.js so req.user is already
@@ -28,6 +29,25 @@ router.get("/doctor/:doctorId",         requireAction("opd.read"), opdController
 // ── Patient history ───────────────────────────────────────────────
 router.get("/patient/:patientId", requireAction("opd.read"), opdController.getPatientOPDHistory);
 
+// ── R7cr — Pharmacy fast-lookup: today's Rx for a UHID ──────────
+// Gated by `pharmacy.rx-lookup` — a SCOPED action (Admin / Doctor /
+// Nurse / Receptionist / Pharmacist). Wider than `opd.read` only on
+// Pharmacist so the pharmacy counter can pull today's prescribed
+// medicines + diagnosis for a SPECIFIC UHID it already knows, but
+// can't enumerate the full OPD queue (which would leak every
+// patient's diagnosis / token / chief complaint).
+router.get(
+  "/uhid/:UHID/today-rx",
+  // R7cs: hospital-only feature. In standalone retail pharmacy
+  // deployments the OPD collection doesn't exist (or is empty), so
+  // we 404 the endpoint at the gateway. Defence-in-depth alongside
+  // the frontend OPD-Rx tab being hidden when VITE_PHARMACY_MODE=
+  // standalone.
+  requireHospitalMode,
+  requireAction("pharmacy.rx-lookup"),
+  opdController.getTodayPrescriptionsByUHID,
+);
+
 // ── CRUD ─────────────────────────────────────────────────────────
 // R7ab: visit creation/edit/delete now gated. Previously every
 // authenticated role could create OPD visits (Pharmacist, Lab Tech, etc.)
@@ -50,6 +70,9 @@ router.patch("/:visitNumber/status",  requireAction("reception.register"), opdCo
 
 // ── Doctor OPD Assessment + Audit Trail ──────────────────────────
 router.post("/:visitNumber/assessment",  requireAction("rx.write"), opdController.saveAssessment);
+// R7cj — Append-only addendum note on a signed assessment.
+// rx.write gate (Doctor/Admin) so only clinicians can write.
+router.post("/:visitNumber/additional-note", requireAction("rx.write"), opdController.addAdditionalNote);
 router.get ("/:visitNumber/audit-trail", requireAction("opd.read"), opdController.getOPDauditTrail);
 
 // ── Investigations & prescriptions ───────────────────────────────

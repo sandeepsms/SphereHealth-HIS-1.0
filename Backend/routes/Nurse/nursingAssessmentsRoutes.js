@@ -50,6 +50,48 @@ router.post("/:type", requireAction("vitals.write"), async (req, res) => {
       );
     } catch (_) { /* swallow */ }
 
+    // R7bn-5 / D6-fix: update AssessmentCompliance so the twice-daily
+    // schedule tracker knows this assessment just happened. Frontend
+    // dashboards / Nursing-Notes header reads this to render OVERDUE
+    // badges. Mapping: assessment "type" → compliance assessmentType.
+    try {
+      const { recordAssessment } = require("../../services/Compliance/assessmentComplianceService");
+      const TYPE_MAP = {
+        "daily":          "daily-nursing",
+        "fall-risk":      "morse-fall",
+        "pressure-area":  "pressure-area",
+        "pain":           "pain",
+        "nutrition":      "daily-nursing",
+        "education":      "daily-nursing",
+        "dvt":            "caprini-dvt",
+      };
+      if (admissionId && TYPE_MAP[type]) {
+        recordAssessment({
+          admissionId,
+          UHID,
+          patientName,
+          assessmentType: TYPE_MAP[type],
+          role: "nurse",
+          actor: req.user,
+        }).catch(() => {});
+      }
+    } catch (_) { /* silent */ }
+
+    // R7bn-1 / D9-fix: ClinicalAudit row on every nursing assessment.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "NURSING_ASSESSMENT_RECORDED",
+        UHID,
+        admissionId,
+        patientName,
+        targetType: `NursingAssessment.${type}`,
+        targetId: doc._id,
+        after: { type, recordedBy: doc.recordedBy },
+      });
+    } catch (_) { /* silent */ }
+
     return res.status(201).json({ success: true, data: doc });
   } catch (e) {
     return res.status(500).json({ success: false, message: e.message });

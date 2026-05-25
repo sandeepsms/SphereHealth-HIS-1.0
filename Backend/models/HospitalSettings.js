@@ -71,6 +71,31 @@ const HospitalSettingsSchema = new mongoose.Schema(
     missionStatement:{ type: String, default: "" },
     aboutBlurb:      { type: String, default: "" },
     operatingHours:  { type: String, default: "24×7 emergency · OPD 9 AM – 9 PM" },
+
+    /* ───────────────────────────────────────────────────────────
+       1b. OPERATIONS — structured operating hours (R7bx item 7)
+       The free-text `operatingHours` above still drives print
+       headers; these structured fields back the OPS tab in the
+       Hospital Config Wizard. Print code reads `operatingHours`
+       first and falls back to opdStartTime/opdEndTime when blank.
+       ─────────────────────────────────────────────────────────── */
+    opdStartTime:    { type: String, default: "09:00" },  // 24h "HH:MM"
+    opdEndTime:      { type: String, default: "21:00" },
+    emergency24x7:   { type: Boolean, default: true },
+
+    /* Admin / Owner contact — surfaced in the Wizard so the HIS
+       knows who to escalate to. Not printed by default. */
+    adminName:       { type: String, default: "" },
+    adminPhone:      { type: String, default: "" },
+    adminEmail:      { type: String, default: "" },
+
+    /* NABH accreditation — explicit top-level mirrors of the
+       `accreditations[]` array entry so the Wizard's NABH tab can
+       round-trip a single value without resorting to array index
+       management. The `accreditations[]` array remains the source
+       of truth for multi-cert displays (NABL/JCI/ISO alongside). */
+    nabhCertNumber:  { type: String, default: "" },
+    nabhValidUntil:  { type: Date,   default: null },
     socials: {
       facebook:  { type: String, default: "" },
       instagram: { type: String, default: "" },
@@ -118,6 +143,13 @@ const HospitalSettingsSchema = new mongoose.Schema(
     panNumber:    { type: String, default: "" },
     tanNumber:    { type: String, default: "" },               // TDS account
     cinNumber:    { type: String, default: "" },               // for Pvt Ltd hospitals
+    // R7bx item 7 — GST registration STATE (separate from the address.state)
+    // is what GSTR-1 / GSTR-3B filings key off. Default to "" so admin
+    // populates it via the Wizard's Tax tab.
+    gstRegState:  { type: String, default: "" },
+    // R7bx item 7 — Default HSN/SAC code applied to bill rows where the
+    // charge master row didn't specify one. SAC=services, HSN=goods.
+    defaultHsnSac:{ type: String, default: "9993" },           // 9993 = healthcare services
 
     // Hospital registrations
     registrationNo: { type: String, default: "" },             // state health-dept registration
@@ -192,6 +224,7 @@ const HospitalSettingsSchema = new mongoose.Schema(
     // Back-compat single bank (still read by some print code)
     bankName:      { type: String, default: "" },
     accountNo:     { type: String, default: "" },
+    accountHolderName: { type: String, default: "" },          // R7bx item 7
     ifscCode:      { type: String, default: "" },
     bankBranch:    { type: String, default: "" },
 

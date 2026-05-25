@@ -28,6 +28,7 @@ import { toast } from "react-toastify";
 import API_ENDPOINTS from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { openPrint } from "../../Components/print/openPrint";
+import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
 import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
 // R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap to avoid 7-page drift.
 import { toMoney } from "../../utils/money";
@@ -537,6 +538,367 @@ export default function IPDBillingLedger() {
     });
   };
 
+  /* ── R7co: Print COMPLETE IPD Bill ──────────────────────────────
+     Single comprehensive document covering EVERY angle the patient /
+     TPA / accountant could ask for:
+        • Section A — Category-wise summary (Bed / Nursing / Doctor /
+                      Pharmacy / Investigations / Procedures / Misc)
+                      with per-category subtotal + % of total.
+        • Section B — Day-wise detailed breakdown (Day 1 → Day N with
+                      every line item, date-grouped).
+        • Section C — Payment ledger + advance adjustments (deposits
+                      taken, applied, refunded).
+        • Section D — Grand totals (Gross · Discount · Tax · Net · Paid
+                      · Balance) with PATIENT ACCOUNT SETTLED / BALANCE
+                      DUE banner.
+     Pre-R7co the user had to pick the Category / Daily / Audit tab and
+     print 3× to give the patient everything. Now one click prints the
+     master bill. Existing Print Interim Bill (tab-scoped) stays for
+     the day-to-day reception flow that wants a single view. */
+  const handlePrintComplete = async () => {
+    if (!data) return toast.warn("Ledger not loaded yet");
+    let hs = {};
+    try { hs = await fetchHospitalSettings(); } catch (_) { hs = {}; }
+
+    // Pull the full advance ledger for this UHID so Section C can show
+    // each deposit, status, applied amount, and remaining balance —
+    // mirrors the OPD consolidated bill's ADVANCE DEPOSITS table.
+    let advances = [];
+    try {
+      const r = await axios.get(`${API_ENDPOINTS.BILLING}/advance/uhid/${encodeURIComponent(data.admission.UHID)}`);
+      advances = r?.data?.data?.advances || r?.data?.advances || [];
+    } catch (_) { /* non-fatal — Section C still renders payments-only */ }
+
+    const esc = (s = "") => String(s ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+    const _num = (v) => {
+      if (v == null) return 0;
+      if (typeof v === "object" && v.toString) v = v.toString();
+      const n = Number(v); return Number.isFinite(n) ? n : 0;
+    };
+    const _money = (n) => `₹${_num(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const _dt    = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+    const _date  = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+
+    // Filter out voided / cancelled / skipped — those don't appear on a
+    // settlement bill (audit trail mode includes them, but this is a
+    // patient-facing document).
+    const liveTriggers = (data.triggers || []).filter(t => !["voided", "cancelled", "skipped"].includes(t.status));
+
+    // ── Section A: Category-wise aggregation ──────────────────────
+    const catMap = {};
+    let catTotal = 0;
+    for (const t of liveTriggers) {
+      const cat = printCategoryFor(t);
+      const amt = _num(t.totalAmount) || (_num(t.unitPrice) * _num(t.quantity || 1));
+      if (!catMap[cat]) catMap[cat] = { name: cat, lines: 0, qty: 0, total: 0 };
+      catMap[cat].lines += 1;
+      catMap[cat].qty   += _num(t.quantity || 1);
+      catMap[cat].total += amt;
+      catTotal          += amt;
+    }
+    const catRows = Object.values(catMap).sort((a, b) => b.total - a.total);
+
+    // ── Section B: Day-wise aggregation ───────────────────────────
+    const admitStart = new Date(data.admission.admissionDate);
+    admitStart.setHours(0, 0, 0, 0);
+    const dayMap = {};
+    for (const t of liveTriggers) {
+      const dKey = t.dateKey
+        || (t.createdAt ? new Date(t.createdAt).toISOString().slice(0, 10) : "unknown");
+      if (!dayMap[dKey]) {
+        const dayDate = new Date(dKey);
+        dayDate.setHours(0, 0, 0, 0);
+        const dayN = Math.max(1, Math.floor((dayDate - admitStart) / 86400000) + 1);
+        dayMap[dKey] = {
+          dateKey: dKey,
+          dayN,
+          label: dKey === "unknown" ? "Undated" : `Day ${dayN} · ${_date(dayDate)}`,
+          items: [],
+          total: 0,
+        };
+      }
+      const amt = _num(t.totalAmount) || (_num(t.unitPrice) * _num(t.quantity || 1));
+      dayMap[dKey].items.push({
+        category: printCategoryFor(t),
+        name:     t.serviceName || t.serviceCode,
+        code:     t.serviceCode,
+        remarks:  t.orderDetails || "",
+        qty:      _num(t.quantity || 1),
+        rate:     _num(t.unitPrice),
+        amount:   amt,
+        when:     t.createdAt,
+      });
+      dayMap[dKey].total += amt;
+    }
+    const dayRows = Object.values(dayMap).sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+
+    // ── Totals from canonical billSummary (so the page KPI strip and
+    //    the printout never disagree). Fall back to the trigger sum if
+    //    bills haven't materialised yet.
+    const sumGross  = _num(data.billSummary?.grossAmount)   || catTotal;
+    const sumDisc   = _num(data.billSummary?.totalDiscount);
+    const sumTax    = _num(data.billSummary?.taxAmount);
+    const sumNet    = _num(data.billSummary?.netAmount)     || sumGross;
+    const sumPaid   = _num(data.billSummary?.advancePaid);
+    const sumDue    = Math.max(0, _num(data.billSummary?.balanceAmount) || (sumNet - sumPaid));
+
+    // ── Section C: Payments split by mode + advance ledger ────────
+    const payments = (data.bill?.payments || []);
+    const advApplied = payments
+      .filter(p => p.paymentMode === "ADVANCE_ADJUSTMENT")
+      .reduce((s, p) => s + _num(p.amount), 0);
+
+    const stayDays = Math.max(1, Math.ceil(
+      ((data.admission.actualDischargeDate ? new Date(data.admission.actualDischargeDate) : new Date()) -
+       new Date(data.admission.admissionDate)) / 86400000,
+    ));
+    const patientName = (data.admission.patientId?.fullName) || data.admission.UHID || "Patient";
+    const consultant  = data.admission.consultantDoctor?.fullName || data.admission.primaryConsultant || "—";
+    const dx          = data.admission.provisionalDiagnosis || data.admission.workingDiagnosis || data.admission.diagnosis || "—";
+    const bedNo       = data.admission.bedId?.bedNumber || "—";
+    const wardName    = data.admission.bedId?.wardName || data.admission.wardName || data.admission.department || "—";
+
+    // R7ce / R7cg: NABH badge only when the admin has stamped a real
+    // certificate number on Hospital Settings — never claim NABH
+    // compliance just because a default flag is true.
+    const nabhOk = !!(hs.nabhCertNumber && String(hs.nabhCertNumber).trim());
+
+    const _addrLine  = [hs.addressLine1, hs.addressLine2, [hs.city, hs.state, hs.pincode].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+    const _phoneLine = [hs.phone1, hs.phone2, hs.emergencyPhone].filter(Boolean).join(" · ");
+
+    // Build per-section HTML fragments separately so the template
+    // string stays scannable. esc() everywhere — never trust patient
+    // text / diagnosis / remarks (they may contain stray < or &).
+    const headerHtml = `
+      <div class="hdr">
+        <div class="hdr-left">
+          ${hs.logo ? `<img src="${esc(hs.logo)}" alt="" style="max-height:64px;display:block;margin-bottom:6px"/>` : ""}
+          <div class="h-name" style="color:${esc(hs.printHeaderColor || "#0f172a")}">${esc(hs.hospitalName || "Hospital")}</div>
+          ${hs.tagline ? `<div class="h-tag">${esc(hs.tagline)}</div>` : ""}
+          ${_addrLine  ? `<div class="h-meta">${esc(_addrLine)}</div>` : ""}
+          ${_phoneLine ? `<div class="h-meta">${esc(_phoneLine)}</div>` : ""}
+          ${hs.gstin ? `<div class="h-meta">GSTIN: ${esc(hs.gstin)}</div>` : ""}
+          ${nabhOk ? `<div class="h-meta nabh">NABH Certified · ${esc(hs.nabhCertNumber)}</div>` : ""}
+        </div>
+        <div class="hdr-right">
+          <div class="doc-title">COMPLETE IPD BILL</div>
+          <div class="h-meta"><strong>${esc(patientName)}</strong></div>
+          <div class="h-meta">UHID: ${esc(data.admission.UHID)} · ${data.admission.patientId?.age ? data.admission.patientId.age + "y" : ""} · ${esc(data.admission.patientId?.gender || "")}</div>
+          <div class="h-meta">IPD #: ${esc(data.admission.admissionNumber)}</div>
+          <div class="h-meta">Bill #: ${esc(data.bill?.billNumber || "DRAFT")}</div>
+          <div class="h-meta">Printed: ${_dt(new Date())}</div>
+        </div>
+      </div>
+      <div class="adm-strip">
+        <div><span class="lbl">Admitted</span> ${_dt(data.admission.admissionDate)}</div>
+        <div><span class="lbl">Discharged</span> ${data.admission.actualDischargeDate ? _dt(data.admission.actualDischargeDate) : "<em>(still admitted)</em>"}</div>
+        <div><span class="lbl">Stay</span> ${stayDays} day${stayDays === 1 ? "" : "s"}</div>
+        <div><span class="lbl">Bed / Ward</span> ${esc(bedNo)} · ${esc(wardName)}</div>
+        <div><span class="lbl">Consultant</span> ${esc(consultant)}</div>
+        <div><span class="lbl">Diagnosis</span> ${esc(dx)}</div>
+      </div>`;
+
+    // ── Section A: category-wise table ────────────────────────────
+    const catTableRows = catRows.map(r => `
+      <tr>
+        <td><strong>${esc(r.name)}</strong></td>
+        <td style="text-align:right">${r.lines}</td>
+        <td style="text-align:right">${r.qty.toFixed(0)}</td>
+        <td style="text-align:right">${catTotal > 0 ? ((r.total / catTotal) * 100).toFixed(1) + "%" : "—"}</td>
+        <td style="text-align:right"><strong>${_money(r.total)}</strong></td>
+      </tr>`).join("");
+
+    const categoryHtml = `
+      <div class="section">
+        <div class="section-title">SECTION A · Category-wise Summary</div>
+        ${catRows.length === 0
+          ? `<div class="empty">No billable charges accrued yet.</div>`
+          : `<table>
+              <thead><tr>
+                <th>Category</th>
+                <th style="text-align:right;width:90px">Lines</th>
+                <th style="text-align:right;width:90px">Qty</th>
+                <th style="text-align:right;width:90px">Share</th>
+                <th style="text-align:right;width:130px">Subtotal</th>
+              </tr></thead>
+              <tbody>${catTableRows}</tbody>
+              <tfoot><tr>
+                <td colspan="4" style="text-align:right">Category Sub-Total</td>
+                <td style="text-align:right"><strong>${_money(catTotal)}</strong></td>
+              </tr></tfoot>
+            </table>`}
+      </div>`;
+
+    // ── Section B: day-wise table (items grouped by day) ──────────
+    const dayBlocks = dayRows.map(d => {
+      const itemsHtml = d.items.map(it => `
+        <tr>
+          <td>${esc(it.category)}</td>
+          <td>${esc(it.name)}${it.remarks ? `<div class="rmk">${esc(it.remarks)}</div>` : ""}</td>
+          <td style="text-align:right">${it.qty}</td>
+          <td style="text-align:right">${_money(it.rate)}</td>
+          <td style="text-align:right"><strong>${_money(it.amount)}</strong></td>
+        </tr>`).join("");
+      return `
+        <div class="day-block">
+          <div class="day-head">
+            <strong>${esc(d.label)}</strong>
+            <span class="day-total">${_money(d.total)}</span>
+          </div>
+          <table>
+            <thead><tr>
+              <th style="width:130px">Category</th>
+              <th>Service</th>
+              <th style="text-align:right;width:60px">Qty</th>
+              <th style="text-align:right;width:100px">Rate</th>
+              <th style="text-align:right;width:120px">Amount</th>
+            </tr></thead>
+            <tbody>${itemsHtml}</tbody>
+          </table>
+        </div>`;
+    }).join("");
+
+    const dailyHtml = `
+      <div class="section">
+        <div class="section-title">SECTION B · Day-wise Detailed Breakdown</div>
+        ${dayRows.length === 0
+          ? `<div class="empty">No itemised charges recorded yet.</div>`
+          : dayBlocks}
+      </div>`;
+
+    // ── Section C: payments + advances ────────────────────────────
+    const payRows = payments.map(p => `
+      <tr>
+        <td>${_dt(p.paidAt || p.createdAt)}</td>
+        <td>${esc(p.paymentMode || "—")}${p.paymentMode === "ADVANCE_ADJUSTMENT" ? " <span class='pill pill-adv'>ADV</span>" : ""}</td>
+        <td>${esc(p.transactionId || "—")}</td>
+        <td>${esc(p.receivedBy || "—")}</td>
+        <td style="text-align:right"><strong>${_money(p.amount)}</strong></td>
+      </tr>`).join("");
+
+    const advRows = advances.map(a => `
+      <tr>
+        <td>${esc(a.receiptNumber || "ADV")}</td>
+        <td>${_dt(a.paidAt || a.createdAt)}</td>
+        <td>${esc(a.paymentMode || "—")}</td>
+        <td><span class="pill pill-${esc((a.status || "").toLowerCase())}">${esc(a.status || "")}</span></td>
+        <td style="text-align:right">${_money(a.amount)}</td>
+        <td style="text-align:right">${_money(a.appliedAmount)}</td>
+        <td style="text-align:right">${_money(a.remainingAmount)}</td>
+      </tr>`).join("");
+
+    const paymentsHtml = `
+      <div class="section">
+        <div class="section-title">SECTION C · Payment Ledger &amp; Advance Adjustments</div>
+        ${payments.length === 0
+          ? `<div class="empty">No payments recorded against this bill yet.</div>`
+          : `<table>
+              <thead><tr>
+                <th>Date</th><th>Mode</th><th>Reference</th><th>Received by</th>
+                <th style="text-align:right;width:130px">Amount</th>
+              </tr></thead>
+              <tbody>${payRows}</tbody>
+              <tfoot><tr>
+                <td colspan="4" style="text-align:right">Total Payments Received</td>
+                <td style="text-align:right"><strong>${_money(sumPaid)}</strong></td>
+              </tr></tfoot>
+            </table>`}
+        ${advances.length === 0 ? "" : `
+          <div class="sub-title">Patient Advance Deposits (UHID-wide)</div>
+          <table>
+            <thead><tr>
+              <th>Receipt #</th><th>Date</th><th>Mode</th><th>Status</th>
+              <th style="text-align:right">Amount</th>
+              <th style="text-align:right">Applied</th>
+              <th style="text-align:right">Remaining</th>
+            </tr></thead>
+            <tbody>${advRows}</tbody>
+          </table>`}
+      </div>`;
+
+    // ── Section D: grand totals ───────────────────────────────────
+    const settled = sumDue <= 0;
+    const totalsHtml = `
+      <div class="grand">
+        <div class="grand-row"><span>Total Gross</span><strong>${_money(sumGross)}</strong></div>
+        <div class="grand-row"><span>Total Discount</span><strong>− ${_money(sumDisc)}</strong></div>
+        <div class="grand-row"><span>Total Tax</span><strong>${_money(sumTax)}</strong></div>
+        <div class="grand-row"><span>Total Net Payable</span><strong>${_money(sumNet)}</strong></div>
+        <div class="grand-row paid"><span>Paid (cash + advance)</span><strong>${_money(sumPaid)}</strong></div>
+        ${advApplied > 0 ? `<div class="grand-row sub"><span>&nbsp;&nbsp;↳ via Advance Adjustment</span><strong>${_money(advApplied)}</strong></div>` : ""}
+        <div class="grand-row major ${settled ? "ok" : "due"}">
+          <span>${settled ? "PATIENT ACCOUNT SETTLED" : "BALANCE DUE"}</span>
+          <strong>${_money(sumDue)}</strong>
+        </div>
+      </div>`;
+
+    const html = `<!doctype html><html><head>
+      <meta charset="utf-8">
+      <title>Complete IPD Bill — ${esc(patientName)} · ${esc(data.admission.admissionNumber)}</title>
+      <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Segoe UI',Arial,sans-serif;padding:18px 22px 40px;color:#0f172a;font-size:12px;line-height:1.45}
+        @media print{
+          body{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+          @page{margin:8mm 10mm;size:A4}
+          .section{page-break-inside:avoid}
+          .day-block{page-break-inside:avoid}
+        }
+        .hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:10px;border-bottom:2px solid #0f172a;margin-bottom:12px}
+        .hdr-right{text-align:right}
+        .h-name{font-size:20px;font-weight:800;letter-spacing:-.3px}
+        .h-tag{font-size:11px;color:#64748b;margin-top:2px}
+        .h-meta{font-size:11px;color:#475569;margin-top:2px}
+        .h-meta.nabh{color:#15803d;font-weight:700}
+        .doc-title{font-size:15px;font-weight:900;color:#7c3aed;letter-spacing:.6px;margin-bottom:6px}
+        .adm-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 18px;font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:14px}
+        .adm-strip .lbl{color:#94a3b8;text-transform:uppercase;font-size:9.5px;letter-spacing:.4px;display:block;margin-bottom:1px}
+        .section{margin:18px 0}
+        .section-title{font-size:12.5px;font-weight:900;color:#0f172a;background:#e0e7ff;padding:7px 12px;border-left:4px solid #7c3aed;letter-spacing:.4px;margin-bottom:8px}
+        .sub-title{font-size:11px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.4px;margin:14px 0 4px}
+        table{width:100%;border-collapse:collapse;margin:4px 0 6px;font-size:11.5px}
+        th,td{padding:5px 9px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}
+        th{background:#f1f5f9;font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.3px;color:#475569}
+        tfoot td{background:#f8fafc;font-weight:700;border-top:1.5px solid #cbd5e1;border-bottom:none}
+        .rmk{font-size:10px;color:#94a3b8;margin-top:1px;font-style:italic}
+        .empty{padding:18px;text-align:center;color:#94a3b8;font-style:italic;background:#f8fafc;border-radius:6px}
+        .day-block{margin:10px 0 14px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
+        .day-head{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#fef3c7;font-size:12px;color:#a16207}
+        .day-head .day-total{font-weight:900;color:#0f172a}
+        .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:9.5px;font-weight:700;background:#f1f5f9;color:#475569}
+        .pill-adv{background:#f3e8ff;color:#7c3aed}
+        .pill-active{background:#dbeafe;color:#1d4ed8}
+        .pill-refunded{background:#fee2e2;color:#b91c1c}
+        .pill-exhausted{background:#dcfce7;color:#15803d}
+        .grand{margin-top:18px;padding-top:10px;border-top:2px solid #0f172a}
+        .grand-row{display:flex;justify-content:space-between;padding:4px 0;font-size:12px}
+        .grand-row.sub{font-size:11px;color:#7c3aed;padding:2px 0}
+        .grand-row.paid{color:#15803d}
+        .grand-row.major{font-size:16px;font-weight:900;padding-top:10px;margin-top:6px;border-top:1px dashed #cbd5e1}
+        .grand-row.major.ok{color:#15803d}
+        .grand-row.major.due{color:#b91c1c}
+        .footer{margin-top:22px;padding-top:10px;border-top:1px dashed #cbd5e1;font-size:10px;color:#94a3b8;text-align:center;line-height:1.6}
+      </style></head><body>
+      ${headerHtml}
+      ${categoryHtml}
+      ${dailyHtml}
+      ${paymentsHtml}
+      ${totalsHtml}
+      <div class="footer">
+        Complete IPD bill generated ${_dt(new Date())} · Sections A (category-wise) + B (day-wise) + C (payments &amp; advances) + D (grand totals).<br>
+        ${esc(hs.billFooterNote || "Thank you for choosing our hospital.")}<br>
+        This is a computer-generated document — every line maps to the live billing trigger ledger.
+      </div>
+      <script>window.onload = () => { setTimeout(() => window.print(), 250); };</script>
+      </body></html>`;
+
+    const win = window.open("", "_blank", "width=1100,height=1400");
+    if (!win) return toast.warn("Pop-up blocked — allow pop-ups to print the complete bill");
+    win.document.write(html);
+    win.document.close();
+  };
+
   /* ── Print Interim Bill ────────────────────────────────────
      Mirrors whichever tab is currently active so the printout the user
      sees on screen lands on paper in the same shape. Three modes:
@@ -1030,6 +1392,19 @@ export default function IPDBillingLedger() {
         }}>
           <i className="pi pi-print" style={{ marginRight: 6 }} />
           Print Interim Bill
+        </button>
+        {/* R7co: COMPLETE IPD bill — single document with category-wise
+            summary + day-wise breakdown + payment ledger + advance
+            adjustments + grand totals. Use when patient / TPA / insurer
+            asks for the full picture in one printout. */}
+        <button onClick={handlePrintComplete} style={{
+          padding: "7px 14px", background: "#fff", color: C.accent,
+          border: `1px solid ${C.accent}`,
+          borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
+        }}
+          title="Print one master bill with category summary + day-wise detail + payments + advances">
+          <i className="pi pi-file" style={{ marginRight: 6 }} />
+          Complete Bill
         </button>
         {/* Final Bill — only enabled when doctor has approved discharge.
             Pre-discharge clicks show a toast explaining the gate. Once

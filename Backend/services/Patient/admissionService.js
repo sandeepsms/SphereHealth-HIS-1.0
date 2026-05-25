@@ -128,6 +128,10 @@ class AdmissionService {
           roomNumber: bed.room?.roomNumber || "",
           roomId: bed.room?._id || null,
           wardId: bed.ward?._id || null,
+          // R7bi — denormalised wardName so the patient header on
+          // Doctor/Nursing Notes can show ward without an extra Ward
+          // lookup. `bed.ward` is populated above.
+          wardName: bed.ward?.wardName || "",
           floorId: bed.floor?._id || null,
           buildingId: bed.building?._id || null,
           hasBed: true,
@@ -865,6 +869,15 @@ class AdmissionService {
       admission.bedNumber = newBed.bedNumber;
       admission.roomId = newBed.room || null;
       admission.wardId = newBed.ward || null;
+      // R7bi — refresh denormalised wardName on bed transfer.
+      // newBed from findOneAndUpdate is not populated, so look it up.
+      try {
+        const Ward = require("../../models/bedMgmt/wardModel");
+        const w = newBed.ward
+          ? await Ward.findById(newBed.ward).select("wardName").lean()
+          : null;
+        admission.wardName = w?.wardName || "";
+      } catch (_) { /* leave wardName as-is on lookup failure */ }
       admission.floorId = newBed.floor || null;
       await admission.save({ session: s || undefined });
     };
@@ -910,6 +923,14 @@ class AdmissionService {
           admission.bedNumber = newBed.bedNumber;
           admission.roomId = newBed.room || null;
           admission.wardId = newBed.ward || null;
+          // R7bi — same wardName refresh as the txn path above.
+          try {
+            const Ward = require("../../models/bedMgmt/wardModel");
+            const w = newBed.ward
+              ? await Ward.findById(newBed.ward).select("wardName").lean()
+              : null;
+            admission.wardName = w?.wardName || "";
+          } catch (_) { /* leave wardName as-is on lookup failure */ }
           admission.floorId = newBed.floor || null;
           await admission.save();
         } catch (err) {
@@ -1161,6 +1182,12 @@ class AdmissionService {
         "fullName firstName lastName UHID age dateOfBirth gender bloodGroup contactNumber phone",
       )
       .populate("bedId", "bedNumber status")
+      // R7bi — populate wardId.wardName so the patient header on
+      // Doctor/Nursing Notes can display ward even for legacy admissions
+      // that pre-date the denormalised wardName field. The frontend
+      // reads patient.wardName first and falls back to
+      // patient.wardId?.wardName.
+      .populate("wardId", "wardName")
       .sort({ admissionDate: -1 })
       .lean();
   }

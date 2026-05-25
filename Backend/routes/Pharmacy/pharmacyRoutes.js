@@ -36,6 +36,21 @@ router.post  ("/sales/:id/cancel",      requireAction("pharmacy.cancel"),    ctr
 router.post  ("/sales/:id/return",      requireAction("pharmacy.return"),    ctrl.returnItems);
 router.post  ("/sales/:id/add-items",   requireAction("pharmacy.add-items"), ctrl.addItems);
 
+// R7cu — IPD pharmacy credit ledger.
+// • GET  /credit/ipd-admissions          → admissions with outstanding > 0
+// • GET  /credit/admission/:admissionId  → drill-down per admission
+// • POST /sales/:id/collect-credit       → record a credit collection
+// pharmacy.dispense covers Pharmacist + Admin (the two roles that run a
+// pharmacy counter); both list endpoints use rx.read so Receptionist
+// can also see outstanding totals before billing-counter discharge.
+router.get   ("/credit/ipd-admissions",         requireAction("rx.read"),            ctrl.listIpdCreditAdmissions);
+router.get   ("/credit/admission/:admissionId", validateObjectIdParam("admissionId"), requireAction("rx.read"),            ctrl.getCreditByAdmission);
+router.post  ("/sales/:id/collect-credit",      validateObjectIdParam("id"),          requireAction("pharmacy.dispense"),  ctrl.collectCredit);
+// R7cv — Day-wise audit log of every IPD credit sale (outstanding +
+// already-cleared) — pharmacist needs to see "what went out on
+// credit historically" not just "what's currently blocking".
+router.get   ("/credit/ipd-history",            requireAction("rx.read"),            ctrl.getIpdCreditHistory);
+
 // Settings (in-house vs outsourced print identity)
 router.get   ("/settings",       requireAction("rx.read"),            ctrl.getSettings);
 router.put   ("/settings",       requireAction("pharmacy.settings"),  ctrl.updateSettings);

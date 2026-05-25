@@ -94,15 +94,16 @@ app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 
 // ── Rate limiters ──────────────────────────────────────────────────────────
-// Login bucket: 10 attempts / 15 minutes per IP. Sized so a careless typo or
-// password rotation doesn't lock out a real user but throttles brute-force.
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, message: "Too many login attempts. Try again in a few minutes." },
-});
+// R7cp: the legacy `loginLimiter` defined here was a duplicate of the
+// R7bz `loginRateLimit` mounted directly on the /login route in
+// routes/Auth/authRoutes.js — same 10/15min budget, but WITHOUT
+// `skipSuccessfulRequests:true`. Both fired in chain so a legitimate
+// user who typed their password right on the 11th try still got 429'd
+// by the legacy bucket (because every prior 200 also counted). The
+// vague "Try again in a few minutes" message the user saw was from
+// this legacy limiter — it had no Retry-After in the body either.
+// Removed. The R7bz version (with skipSuccessful + retryAfterSec in
+// the response body) is the sole login throttle.
 
 // OTP / 2FA bucket: 5 sends / 15 minutes per IP to thwart SMS-cost abuse and
 // OTP-enumeration. Verification uses a separate higher bucket.
@@ -133,7 +134,8 @@ const globalLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-app.use("/api/auth/login", loginLimiter);
+// R7cp: /api/auth/login throttle now lives on the route itself (see
+// routes/Auth/authRoutes.js — `loginRateLimit` import). No global mount.
 app.use("/api/auth/2fa", otpLimiter);
 app.use("/api/auth/otp", otpLimiter);
 // R7au-FIX-13/D3-HIGH: the actual 2FA mount in routes/index.js:166 is
@@ -927,6 +929,80 @@ const _cancelVisitorPassExpiry = (() => {
   return () => clearInterval(interval);
 })();
 
+// R7bq-4 — hourly intake sweep for running IV infusions. Walks every
+// active IV_Fluid order with infusionStarted set + infusionStopped
+// unset, and writes one IntakeOutputEntry row per (orderId, hourBucket)
+// using the doctor-ordered ml/hr rate. Idempotent via partial unique
+// index on intake_output_entries, so a restart mid-hour can't duplicate
+// rows. Stops automatically when totalVolume is reached.
+const _cancelInfusionIntakeCron = (() => {
+  const { arm } = require("./services/Clinical/infusionIntakeCron");
+  return arm({ intervalMs: 60 * 60 * 1000 });
+})();
+
+// R7bq-J1 — daily missed-dose sweep. Every 15 min, finds AR slots
+// with status="pending" whose scheduledDate is before today-midnight
+// and flips them to "missed" so the order-completion check can flip
+// the parent DoctorOrder InProgress → Completed once the course window
+// closes. Pre-J1, a past-day pending slot blocked the lifecycle forever
+// (NABH MOM.4 violation — "every dose must be accounted for").
+const _cancelMissedDoseCron = (() => {
+  const { arm } = require("./services/Clinical/missedDoseCron");
+  return arm({ intervalMs: 15 * 60 * 1000 });
+})();
+
+// R7bn-5 / D6-fix — twice-daily assessment compliance sweeper. Every 15 min
+// the sweeper flips status to OVERDUE / DUE_SOON for any assessment whose
+// nextDueAt has slipped past now. Frontend reads these via the
+// /api/compliance/assessment-status/:admissionId endpoint to render
+// red OVERDUE badges on the Nursing/Doctor Notes header.
+//
+// R7bw — Boot seed + per-tick seed. Pre-R7bw the collection only grew
+// when an assessment was actually saved, so freshly admitted patients
+// (and the hospital on day 1 of running the cron) had zero rows. The
+// seed pass walks every Active admission and upserts the EXPECTED_TUPLES
+// so the OVERDUE flip can fire on the very first sweep.
+const _cancelAssessmentComplianceSweeper = (() => {
+  const { sweepOverdue, seedAllActiveAdmissions } = require("./services/Compliance/assessmentComplianceService");
+  const tick = async () => {
+    try {
+      const seed = await seedAllActiveAdmissions();
+      if (seed?.inserted) {
+        console.log(`[cron:assessment-compliance] seeded ${seed.inserted} new rows across ${seed.admissions} active admissions`);
+      }
+      const r = await sweepOverdue();
+      if (r?.overdue || r?.dueSoon) {
+        console.log(`[cron:assessment-compliance] overdue+=${r.overdue} dueSoon+=${r.dueSoon}`);
+      }
+    } catch (e) {
+      console.error("[cron:assessment-compliance] tick failed:", e?.message);
+    }
+  };
+  // One-shot boot run (60s after start so mongoose connection is up) +
+  // recurring 15-min cron.
+  setTimeout(() => { tick(); }, 60 * 1000);
+  const interval = setInterval(tick, 15 * 60 * 1000);
+  if (typeof interval.unref === "function") interval.unref();
+  console.log("[cron:assessment-compliance] armed — boot+60s, then every 15 min");
+  return () => clearInterval(interval);
+})();
+
+// R7bx-2 — nightly mongodump backup. Runs at 02:30 IST every day with
+// the same distributed lock pattern as every other daily cron so a
+// multi-replica deploy doesn't double-write the same archive name. The
+// child process is spawned by scripts/backupMongoDB.js — backup failures
+// are logged but never crash the server (the script returns a structured
+// error which the cron wrapper logs).
+const _cancelNightlyMongoBackup = scheduleDaily("nightly-mongo-backup", 2, 30, async () => {
+  try {
+    const { runBackup } = require("./scripts/backupMongoDB");
+    return await runBackup();
+  } catch (e) {
+    console.error("[cron:nightly-mongo-backup] error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
 // Keep a reference name for the graceful-shutdown handler below.
 const _autoBillingInterval = {
   _cancel: () => {
@@ -945,6 +1021,11 @@ const _autoBillingInterval = {
     if (_grievanceSlaInterval) clearInterval(_grievanceSlaInterval);
     _cancelFireDrillOverdue();
     _cancelRetentionReview();
+    _cancelVisitorPassExpiry();
+    _cancelAssessmentComplianceSweeper();   // R7bn-5
+    _cancelInfusionIntakeCron();            // R7bq-4
+    _cancelMissedDoseCron();                // R7bq-J1
+    _cancelNightlyMongoBackup();            // R7bx-2
   },
 };
 
@@ -982,6 +1063,13 @@ app.use((req, res) => {
   });
 });
 
+// R7bx-3 — structured error logger. Mounted AFTER all routes but BEFORE
+// the central 500 responder so every err that reaches the chain is
+// captured to logs/errors-YYYY-MM-DD.log + console with PHI redaction.
+// The middleware calls next(err) so the existing 500 responder still
+// owns the response shape.
+app.use(require("./middleware/errorLogger"));
+
 app.use((err, req, res, next) => {
   // Always log the full stack server-side; never echo it to the client. In
   // production, the response message is also genericized so an attacker can't
@@ -1004,34 +1092,49 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT} (env=${NODE_ENV})`);
 });
 
-function shutdown(signal) {
-  console.log(`[shutdown] received ${signal} — draining`);
-  clearTimeout(_autoBillingBootTimer);
-  // R7ap-F21: cancel the daily-IST scheduler timer.
-  if (typeof _autoBillingInterval?._cancel === "function") _autoBillingInterval._cancel();
-  server.close((err) => {
-    if (err) {
-      console.error("[shutdown] http close error:", err.message);
-      process.exit(1);
-    }
-    mongoose
-      .disconnect()
-      .then(() => {
-        console.log("[shutdown] clean exit");
-        process.exit(0);
-      })
-      .catch((e) => {
-        console.error("[shutdown] mongoose disconnect error:", e.message);
-        process.exit(1);
-      });
-  });
-  // Hard-kill backstop: if shutdown stalls for 15s, abort.
-  setTimeout(() => {
-    console.error("[shutdown] timed out — force exit");
+// R7bz — graceful shutdown. The handler is idempotent (re-entry guard
+// via `shuttingDown` flag so a SIGINT-then-SIGTERM race doesn't double-
+// run cancel + disconnect). Sequence:
+//   1. cancel cron refs (every scheduled task above wired into
+//      _autoBillingInterval._cancel — node-cron isn't used).
+//   2. server.close() — stops accepting new connections, lets in-flight
+//      requests finish.
+//   3. mongoose.disconnect() once HTTP is drained.
+//   4. Hard-kill backstop at 25s so a stuck long-poll / SSE can't pin
+//      the process forever (Kubernetes SIGKILLs at terminationGracePeriod).
+let shuttingDown = false;
+async function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received — draining...`);
+  const FORCE_AFTER_MS = 25_000;
+  const killer = setTimeout(() => {
+    console.error("[shutdown] hard exit after 25s drain timeout");
     process.exit(1);
-  }, 15_000).unref();
+  }, FORCE_AFTER_MS).unref();
+  try {
+    // Stop background work first so a tick mid-drain doesn't re-open a
+    // Mongo connection we're about to close.
+    clearTimeout(_autoBillingBootTimer);
+    if (typeof _autoBillingInterval?._cancel === "function") {
+      try { _autoBillingInterval._cancel(); } catch (_) { /* best-effort */ }
+    }
+    // Close HTTP — let active responses finish, refuse new sockets.
+    await new Promise((resolve) => server.close(resolve));
+    console.log("[shutdown] HTTP server closed");
+    if (mongoose?.connection?.readyState === 1) {
+      await mongoose.disconnect();
+      console.log("[shutdown] Mongo disconnected");
+    }
+    clearTimeout(killer);
+    process.exit(0);
+  } catch (e) {
+    console.error("[shutdown] error during shutdown:", e?.message);
+    clearTimeout(killer);
+    process.exit(1);
+  }
 }
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT",  () => gracefulShutdown("SIGINT"));
 
 module.exports = app;

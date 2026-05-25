@@ -104,6 +104,36 @@ exports.saveVitalSheet = async (data) => {
       "personalInfo.fullName staffId professional.designation",
     );
 
+  // R7bn-5 / D6-fix: update AssessmentCompliance for vitals + (when MEWS
+  // is included in the sheet) MEWS too. Twice-daily cadence per the
+  // user requirement.
+  if (admissionId) {
+    try {
+      const { recordAssessment } = require("../Compliance/assessmentComplianceService");
+      const lastRowActor = data?.actor || data?.nurse || null;
+      recordAssessment({
+        admissionId,
+        UHID: uhid,
+        patientName: patient.fullName,
+        assessmentType: "vitals",
+        role: "nurse",
+        actor: lastRowActor,
+      }).catch(() => {});
+      // If the row carries a mews score, also count it as a MEWS assessment.
+      const hasMews = (tableData || []).some(r => r && (r.mews != null || r.mewsScore != null));
+      if (hasMews) {
+        recordAssessment({
+          admissionId,
+          UHID: uhid,
+          patientName: patient.fullName,
+          assessmentType: "mews",
+          role: "nurse",
+          actor: lastRowActor,
+        }).catch(() => {});
+      }
+    } catch (_) { /* silent — compliance is non-blocking */ }
+  }
+
   return record;
 };
 

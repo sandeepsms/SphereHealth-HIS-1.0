@@ -91,6 +91,7 @@ export const API_ENDPOINTS = {
   CONSENT_FORMS: `${API_BASE_URL}/consent-forms`,
   NURSING_CARE_PLANS: `${API_BASE_URL}/nursing-care-plans`,
   MAR: `${API_BASE_URL}/mar`,
+  INTAKE_OUTPUT: `${API_BASE_URL}/intake-output`, // R7bq-3 — fluid I/O ledger
   NURSE_NOTES: `${API_BASE_URL}/nurse-notes`,
   NURSING_NOTES: `${API_BASE_URL}/nursing-notes`,
   // R7bs — chip-page POSTs to /api/nursing-assessments/<type>. Dispatcher

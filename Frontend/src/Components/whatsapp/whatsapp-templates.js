@@ -19,7 +19,7 @@ export const TEMPLATES = [
     icon: "pi-calendar-plus",
     description: "Confirm OPD slot with token + doctor + time",
     contextHint: "patientName · doctorName · date · time · tokenNumber",
-    build: ({ patientName = "Sir/Madam", doctorName = "your doctor", date, time, tokenNumber, hospitalName = "SphereHealth Hospital" }) =>
+    build: ({ patientName = "Sir/Madam", doctorName = "your doctor", date, time, tokenNumber, hospitalName = "your hospital" }) =>
       `Namaste ${patientName} 🙏\n\n` +
       `Aapka appointment confirm hai:\n` +
       `👨‍⚕️ Dr. ${doctorName}\n` +
@@ -36,7 +36,7 @@ export const TEMPLATES = [
     icon: "pi-clock",
     description: "Inform patient about delay; suggest new time",
     contextHint: "patientName · doctorName · originalTime · newTime",
-    build: ({ patientName = "Sir/Madam", doctorName = "Doctor", originalTime, newTime, hospitalName = "SphereHealth Hospital" }) =>
+    build: ({ patientName = "Sir/Madam", doctorName = "Doctor", originalTime, newTime, hospitalName = "your hospital" }) =>
       `Dear ${patientName},\n\n` +
       `Dr. ${doctorName} is running late today. 🙏\n` +
       (originalTime ? `Your appointment was at ${originalTime}.\n` : "") +
@@ -51,7 +51,7 @@ export const TEMPLATES = [
     icon: "pi-receipt",
     description: "Acknowledge payment with amount + mode",
     contextHint: "patientName · amount · mode · billNumber",
-    build: ({ patientName = "Sir/Madam", amount = 0, mode = "Cash", billNumber, hospitalName = "SphereHealth Hospital" }) =>
+    build: ({ patientName = "Sir/Madam", amount = 0, mode = "Cash", billNumber, hospitalName = "your hospital" }) =>
       `Dear ${patientName},\n\n` +
       `We have received your payment ✅\n` +
       `💰 Amount: ₹${Number(amount).toLocaleString("en-IN")}\n` +
@@ -67,7 +67,7 @@ export const TEMPLATES = [
     icon: "pi-file",
     description: "Notify patient their reports are ready to collect",
     contextHint: "patientName · testName?",
-    build: ({ patientName = "Sir/Madam", testName, hospitalName = "SphereHealth Hospital" }) =>
+    build: ({ patientName = "Sir/Madam", testName, hospitalName = "your hospital" }) =>
       `Dear ${patientName},\n\n` +
       `Your ${testName ? `${testName} ` : ""}lab report is ready 📋\n\n` +
       `Please collect from the reception, or share this number for digital copy on WhatsApp.\n` +
@@ -81,7 +81,7 @@ export const TEMPLATES = [
     icon: "pi-sign-out",
     description: "Inform attendant about discharge readiness",
     contextHint: "patientName · attendantRelation · expectedTime",
-    build: ({ patientName = "patient", attendantRelation = "family", expectedTime, hospitalName = "SphereHealth Hospital" }) =>
+    build: ({ patientName = "patient", attendantRelation = "family", expectedTime, hospitalName = "your hospital" }) =>
       `Dear ${attendantRelation} of ${patientName},\n\n` +
       `${patientName} is being prepared for discharge.\n` +
       (expectedTime ? `Expected time: ${expectedTime}\n\n` : "\n") +
@@ -96,7 +96,7 @@ export const TEMPLATES = [
     icon: "pi-bell",
     description: "Remind patient about scheduled follow-up",
     contextHint: "patientName · doctorName · followupDate · time?",
-    build: ({ patientName = "Sir/Madam", doctorName = "your doctor", followupDate, time, hospitalName = "SphereHealth Hospital" }) =>
+    build: ({ patientName = "Sir/Madam", doctorName = "your doctor", followupDate, time, hospitalName = "your hospital" }) =>
       `Dear ${patientName},\n\n` +
       `Reminder for your follow-up visit:\n` +
       `👨‍⚕️ Dr. ${doctorName}\n` +
@@ -112,7 +112,7 @@ export const TEMPLATES = [
     icon: "pi-plus-circle",
     description: "Confirm bed assignment + visiting hours",
     contextHint: "patientName · bedNumber · wardName · admittingDoctor",
-    build: ({ patientName = "patient", bedNumber, wardName, admittingDoctor, hospitalName = "SphereHealth Hospital" }) =>
+    build: ({ patientName = "patient", bedNumber, wardName, admittingDoctor, hospitalName = "your hospital" }) =>
       `Admission confirmed for ${patientName} ✅\n\n` +
       (bedNumber ? `🛏 Bed: ${bedNumber}\n` : "") +
       (wardName  ? `🏥 Ward: ${wardName}\n` : "") +
@@ -128,7 +128,7 @@ export const TEMPLATES = [
     icon: "pi-pencil",
     description: "Write your own message",
     contextHint: "free-form",
-    build: ({ patientName = "Sir/Madam", hospitalName = "SphereHealth Hospital", customText = "" }) =>
+    build: ({ patientName = "Sir/Madam", hospitalName = "your hospital", customText = "" }) =>
       customText || `Dear ${patientName},\n\n\n\n— ${hospitalName}`,
   },
 ];

@@ -174,6 +174,41 @@
   color: var(--his-accent, #1e40af);
   font-family: 'DM Mono', monospace;
 }
+/* R7bi — IPD admission number is a separate identifier from UHID
+   (UHID is the patient's lifelong hospital ID; IPD-YY-NN is THIS
+   admission's number). Different colour so the two don't blur. */
+.phc-meta-ipd {
+  font-weight: 700;
+  color: #7c3aed;
+  font-family: 'DM Mono', monospace;
+}
+
+/* R7bi — Right side: stacked QR + actions */
+.phc-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.phc-qr-wrap {
+  padding: 8px;
+  background: #fff;
+  border: 1.5px solid var(--his-border, #e2e6ea);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .06);
+}
+.phc-qr-label {
+  font-size: 8.5px;
+  font-weight: 700;
+  color: var(--his-muted, #6b7280);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
 
 /* Right side action buttons */
 .phc-actions {
@@ -248,6 +283,48 @@
 .phc-footer-icon {
   font-size: 11px;
   color: var(--his-muted, #6b7280);
+}
+
+/* R7bi — diagnosis tier pill (Provisional / Working / Final).
+   Colour codes certainty — Final = green, Working = blue,
+   Provisional = amber. Falls back silently if no tier passed. */
+.phc-tier-pill {
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  margin-left: 4px;
+}
+.phc-tier-final       { background: #dcfce7; color: #166534; }
+.phc-tier-working     { background: #dbeafe; color: #1d4ed8; }
+.phc-tier-provisional { background: #fef3c7; color: #92400e; }
+
+/* R7bn-5 — twice-daily compliance badge. Sits under the footer row,
+   only renders when worst-status is OVERDUE or DUE_SOON. */
+.phc-compliance {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 11px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+  margin-left: 8px;
+}
+.phc-compliance i { font-size: 12px; }
+.phc-compliance-label { letter-spacing: .4px; }
+.phc-compliance-count { font-weight: 600; font-size: 11px; opacity: .85; }
+.phc-compliance--overdue {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+.phc-compliance--due_soon {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
 }
 
 /* Allergies */

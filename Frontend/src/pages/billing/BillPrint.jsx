@@ -1,20 +1,28 @@
-import React from "react";
+import React, { useMemo } from "react";
 import "../../styles/BillsPrint.css";
+import { useHospitalSettings } from "../../context/HospitalSettingsContext";
+import { buildPrintIssuer } from "../../Components/print/printIssuer";
 
 const BillPrint = React.forwardRef((props, ref) => {
   const { bill } = props;
+  const { settings: hs } = useHospitalSettings();
+  const issuer = useMemo(() => buildPrintIssuer(), []);
 
   if (!bill) return null;
+
+  const hospitalName = hs?.hospitalName || "Hospital";
+  const addressLine = [hs?.addressLine1, hs?.addressLine2, hs?.city, hs?.state, hs?.pincode].filter(Boolean).join(", ");
+  const contactLine = [hs?.phone1 && `Phone: ${hs.phone1}`, hs?.email && `Email: ${hs.email}`].filter(Boolean).join(" | ");
 
   return (
     <div ref={ref} className="bill-print">
       {/* Hospital Header */}
       <div className="bill-header">
         <div className="hospital-info">
-          <h1>CITY HOSPITAL</h1>
-          <p>123, Medical Road, City - 123456</p>
-          <p>Phone: +91 1234567890 | Email: info@cityhospital.com</p>
-          <p>GSTIN: 12ABCDE3456F7Z8</p>
+          <h1>{hospitalName.toUpperCase()}</h1>
+          {addressLine && <p>{addressLine}</p>}
+          {contactLine && <p>{contactLine}</p>}
+          {hs?.gstin && <p>GSTIN: {hs.gstin}</p>}
         </div>
         <div className="bill-title">
           <h2>MEDICAL BILL</h2>
@@ -328,28 +336,43 @@ const BillPrint = React.forwardRef((props, ref) => {
       <div className="bill-section terms">
         <h4>Terms & Conditions:</h4>
         <ul>
-          <li>
-            This is a computer-generated bill and does not require signature.
-          </li>
-          <li>All payments are non-refundable.</li>
-          <li>Please verify all details before making payment.</li>
-          <li>For any queries, contact the billing department.</li>
+          {hs?.termsLine1 ? <li>{hs.termsLine1}</li> : (
+            <li>This is a computer-generated bill and does not require signature.</li>
+          )}
+          {hs?.termsLine2 ? <li>{hs.termsLine2}</li> : (
+            <li>All payments are non-refundable.</li>
+          )}
+          {hs?.termsLine3 ? <li>{hs.termsLine3}</li> : (
+            <li>For any queries, contact the billing department.</li>
+          )}
         </ul>
       </div>
 
-      {/* Footer */}
+      {/* Footer — digital signature stamp */}
       <div className="bill-footer">
-        <div className="signatures">
-          <div>
-            <p>_______________________</p>
-            <p>Patient / Attendant Signature</p>
-          </div>
-          <div>
-            <p>_______________________</p>
-            <p>Authorized Signatory</p>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
+          <div style={{
+            display: "inline-flex", flexDirection: "column", gap: 3,
+            padding: "10px 16px", border: "1px dashed #94a3b8", borderRadius: 8,
+            background: "#f8fafc", minWidth: 260, maxWidth: 360, lineHeight: 1.4,
+          }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#16a34a", fontWeight: 700, fontSize: 9.5, letterSpacing: ".6px", textTransform: "uppercase" }}>
+              <span style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                width: 14, height: 14, borderRadius: 999, background: "#16a34a", color: "#fff", fontSize: 10,
+              }}>✓</span>
+              <span>DIGITALLY ISSUED</span>
+            </div>
+            <div style={{ fontWeight: 700, fontSize: 12, color: "#0f172a" }}>{issuer.name}</div>
+            {[issuer.designation || issuer.role, issuer.department, issuer.employeeId && `ID: ${issuer.employeeId}`].filter(Boolean).length > 0 && (
+              <div style={{ fontSize: 9.5, color: "#475569" }}>
+                {[issuer.designation || issuer.role, issuer.department, issuer.employeeId && `ID: ${issuer.employeeId}`].filter(Boolean).join(" · ")}
+              </div>
+            )}
+            <div style={{ fontSize: 9.5, color: "#64748b" }}>Signed {issuer.when}</div>
           </div>
         </div>
-        <p className="thank-you">Thank you for choosing City Hospital!</p>
+        <p className="thank-you">{hs?.billFooterNote || `Thank you for choosing ${hospitalName}!`}</p>
       </div>
     </div>
   );

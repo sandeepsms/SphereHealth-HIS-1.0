@@ -154,6 +154,54 @@ exports.cancelItemOrder = async (req, res) => {
   }
 };
 
+// ── POST /api/billing/:billId/delete ──────────────────────────
+// R7ci — Hard-delete a DRAFT bill. Strict guards:
+//   - bill must exist and be billStatus === "DRAFT"
+//   - payments[] must be empty (no money collected yet)
+//   - any BillingTrigger row pointing at this bill gets `status:voided`
+//     so the audit ledger keeps the trail without an orphan link.
+// Receptionist-level gate (billing.write) because a DRAFT was never
+// billed to the patient — cancelling a generated bill still needs the
+// accountant flow (`/:billId/cancel` + billing.refund).
+exports.deleteDraftBill = async (req, res) => {
+  try {
+    const PatientBill     = require("../../models/PatientBillModel/PatientBillModel");
+    const BillingTrigger  = require("../../models/Billing/BillingTrigger");
+    const bill = await PatientBill.findById(req.params.billId).lean();
+    if (!bill) {
+      return res.status(404).json({ success: false, code: "NOT_FOUND", message: "Bill not found" });
+    }
+    if (bill.billStatus !== "DRAFT") {
+      return res.status(409).json({
+        success: false, code: "NOT_DRAFT",
+        message: `Cannot delete a ${bill.billStatus} bill. Use cancel + refund flow instead.`,
+      });
+    }
+    const paidTotal = (bill.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+    if (paidTotal > 0) {
+      return res.status(409).json({
+        success: false, code: "PAYMENTS_PRESENT",
+        message: `Cannot delete — ₹${paidTotal} already collected. Use refund + cancel.`,
+      });
+    }
+    // Best-effort void any related triggers so they don't dangle.
+    try {
+      await BillingTrigger.updateMany(
+        { $or: [{ billId: bill._id }, { triggerSourceId: bill._id }] },
+        { $set: { status: "voided", voidedAt: new Date(), voidReason: `Bill ${bill.billNumber || bill._id} deleted (was DRAFT)` } },
+      );
+    } catch (e) { console.error("[deleteDraftBill] void triggers failed:", e?.message); }
+    await PatientBill.deleteOne({ _id: bill._id });
+    res.json({
+      success: true,
+      data: { _id: bill._id, billNumber: bill.billNumber, deletedAt: new Date().toISOString() },
+      message: "Draft bill deleted",
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 // ── DELETE /api/billing/:billId/items/:itemId ─────────────────
 exports.removeItem = async (req, res) => {
   try {

@@ -61,6 +61,15 @@ const DoctorNotesSchema = new mongoose.Schema(
     patientUHID: { type: String },
     ipdNo: { type: String, required: true },
 
+    // R7bv — admissionId is referenced by the
+    // `{ admissionId: 1, visitDate: -1 }` compound index below but was
+    // never declared as a schema field, so strict-mode Mongoose silently
+    // stripped it on every save and the patient-history aggregator's
+    // `$or: [{admissionId}, {ipdNo}]` clause never matched a doctor note
+    // on the admissionId branch. Adding the field here makes the index
+    // useful and gives the aggregator a second join key.
+    admissionId: { type: mongoose.Schema.Types.ObjectId, ref: "Admission", index: true, default: null },
+
     visitDate: { type: Date, required: true, default: Date.now },
     shift: {
       type: String,

@@ -297,6 +297,36 @@ class MLCService {
     delete patch.UHID;
     if (patch.status === "Finalized" && !patch.finalizedAt) patch.finalizedAt = new Date();
     if (patch.status === "Closed"    && !patch.closedAt)    patch.closedAt    = new Date();
+
+    // R7bx item 8 — MCI Regulation 1.4.2: a finalised MLR must carry the
+    // signing doctor's MCI registration number. Block the Draft→Finalized
+    // transition when the actor is a Doctor whose registrationNumber is
+    // empty. Status change to Closed is allowed without the guard (closure
+    // is an administrative archival action, not a sign event).
+    if (patch.status === "Finalized" && (actor?.role === "Doctor" || actor?.id || actor?._id)) {
+      try {
+        const User = require("../../models/User/userModel");
+        const userId = actor?.id || actor?._id;
+        if (userId) {
+          const u = await User.findById(userId).lean();
+          if (u?.role === "Doctor") {
+            const regNo = String(u.doctorDetails?.registrationNumber || "").trim();
+            if (!regNo) {
+              const err = new Error(
+                "Doctor's MCI registration number is missing. Add it in Settings → Doctor Profile before signing.",
+              );
+              err.statusCode = 400;
+              err.code = "MCI_REG_NO_MISSING";
+              throw err;
+            }
+          }
+        }
+      } catch (e) {
+        if (e?.code === "MCI_REG_NO_MISSING") throw e;
+        // swallow lookup failures so a Mongo blip doesn't block legitimate finalize
+      }
+    }
+
     return MLC.findOneAndUpdate(filter, { $set: patch }, { new: true, runValidators: true });
   }
 

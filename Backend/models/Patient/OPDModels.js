@@ -95,27 +95,89 @@ const OPDSchema = new mongoose.Schema(
     vitalsEnteredAt: Date,
 
     // ── Examination ──
-    generalExamination: {
-      consciousness: String,
-      nutritionalStatus: String,
-      pallor: { type: String, enum: ["Present", "Absent"] },
-      icterus: { type: String, enum: ["Present", "Absent"] },
-      cyanosis: { type: String, enum: ["Present", "Absent"] },
-      clubbing: { type: String, enum: ["Present", "Absent"] },
-      lymphadenopathy: { type: String, enum: ["Present", "Absent"] },
-      edema: { type: String, enum: ["Present", "Absent"] },
+    // R7bt-PrintAudit-Phase2: generalExamination + systemicExamination were
+    // declared as Object sub-schemas BUT the OPDAssessmentPage form sends
+    // them as plain concatenated narrative strings ("Conscious, well-built,
+    // afebrile..."). Mongoose silently cast string→Object to null on every
+    // save, so the doctor's free-text exam disappeared from the print +
+    // discharge summary. Schema-as-String matches what the form sends
+    // today; structured findings live in the new `genExam` / `sysExam`
+    // sub-docs below.
+    generalExamination:  { type: String, default: "" },
+    systemicExamination: { type: String, default: "" },
+
+    // ── Structured Gen-Ex / Sys-Ex (checkbox + dropdown shape) ──
+    // R7bt-PrintAudit-Phase2: the doctor's form lets them tick standard
+    // findings instead of free-typing — these are stored alongside the
+    // narrative above. Mixed type kept loose because the form is still
+    // evolving (new tick-boxes added per department). Each visit's payload
+    // mirrors the JSX `soap.genExam` / `soap.sysExam` shape.
+    genExam: {
+      built:           { type: String, default: "" },
+      nourishment:     { type: String, default: "" },
+      consciousness:   { type: String, default: "" },
+      orientation:     { type: String, default: "" },
+      hydration:       { type: String, default: "" },
+      pallor:          { type: String, default: "" },
+      pedalEdema:      { type: String, default: "" },
+      icterus:         { type: Boolean, default: false },
+      cyanosis:        { type: Boolean, default: false },
+      clubbing:        { type: Boolean, default: false },
+      lymphadenopathy: { type: Boolean, default: false },
+      lymphLocation:   { type: String, default: "" },
+      jvp:             { type: String, default: "" },
+      febrile:         { type: Boolean, default: false },
     },
-    systemicExamination: {
-      cardiovascular: String,
-      respiratory: String,
-      abdomen: String,
-      centralNervousSystem: String,
-      musculoskeletal: String,
+    sysExam: {
+      cvs: {
+        s1s2:           { type: String, default: "" },
+        murmur:         { type: Boolean, default: false },
+        murmurDetails:  { type: String, default: "" },
+        rhythm:         { type: String, default: "" },
+        other:          { type: String, default: "" },
+      },
+      rs: {
+        airEntry:       { type: String, default: "" },
+        breathSounds:   { type: String, default: "" },
+        crepts:         { type: Boolean, default: false },
+        wheeze:         { type: Boolean, default: false },
+        rhonchi:        { type: Boolean, default: false },
+        other:          { type: String, default: "" },
+      },
+      cns: {
+        gcs:            { type: String, default: "" },
+        speech:         { type: String, default: "" },
+        tone:           { type: String, default: "" },
+        power:          { type: String, default: "" },
+        reflexes:       { type: String, default: "" },
+        plantar:        { type: String, default: "" },
+        other:          { type: String, default: "" },
+      },
+      pa: {
+        soft:                 { type: Boolean, default: false },
+        tender:               { type: Boolean, default: false },
+        tenderLocation:       { type: String, default: "" },
+        distended:            { type: Boolean, default: false },
+        bowelSounds:          { type: String, default: "" },
+        organomegaly:         { type: Boolean, default: false },
+        organomegalyDetails:  { type: String, default: "" },
+        mass:                 { type: Boolean, default: false },
+        other:                { type: String, default: "" },
+      },
     },
 
     // ── Diagnosis & Treatment ──
-    provisionalDiagnosis: String,
-    finalDiagnosis: String,
+    // R7bt-PrintAudit-Phase2: Three-tier diagnosis (Provisional → Working →
+    // Final) + shared ICD-10 code + patientStatus trajectory chip. Form
+    // sends them on assessment save; before this fix the whitelist + schema
+    // silently dropped working/icd10/patientStatus/etc. so the doctor saw
+    // them on screen but they vanished on reload.
+    provisionalDiagnosis: { type: String, default: "" },
+    workingDiagnosis:     { type: String, default: "" },
+    finalDiagnosis:       { type: String, default: "" },
+    icd10Code:            { type: String, default: "" },
+    icd10Description:     { type: String, default: "" },
+    patientStatus:        { type: String, default: "" },
     investigationsOrdered: [
       {
         testName: String,
@@ -134,6 +196,14 @@ const OPDSchema = new mongoose.Schema(
         frequency: String,
         duration: String,
         instructions: String,
+        // R7bu — meal-status capture (Before food / After food / With food /
+        // Bedtime). Pre-fix the form sent this on every Rx row but the
+        // schema had no field, so Mongoose silently dropped it — Pharmacy /
+        // MAR / print receipt never saw "before/after food", an instruction
+        // patients routinely follow incorrectly without prompting. The
+        // hydration mapper in OPDAssessmentPage now round-trips this back
+        // into the form state, and the print payload reads it from here.
+        mealStatus: { type: String, default: "" }, // "Before food" / "After food" / "With food" / "Bedtime"
       },
     ],
     advice: String,
@@ -167,6 +237,36 @@ const OPDSchema = new mongoose.Schema(
     chronicConditions: [{ condition: String, duration: String }],
     chronicOthers:     String,
 
+    // ── OBG History (female patients / Gynae OPD) ────────────────
+    // R7bt-PrintAudit-Phase2: Frontend sends these as FLAT obg*-prefixed
+    // fields so prints and discharge summaries can read them without
+    // nested traversal. Pre-fix these were silently dropped by the save
+    // service whitelist — the doctor's full menstrual / obstetric history
+    // never made it to disk. Stored as strings (form sends raw values,
+    // dates included, no Mongoose date casting on partially-filled forms).
+    obgLmp:             { type: String, default: "" },
+    obgEdd:             { type: String, default: "" },
+    obgMenarche:        { type: String, default: "" },
+    obgCycleLength:     { type: String, default: "" },
+    obgFlowDays:        { type: String, default: "" },
+    obgRegularity:      { type: String, default: "" },
+    obgDysmenorrhea:    { type: String, default: "" },
+    obgMenopause:       { type: String, default: "" },
+    obgGravida:         { type: String, default: "" },
+    obgPara:            { type: String, default: "" },
+    obgAbortion:        { type: String, default: "" },
+    obgLiving:          { type: String, default: "" },
+    obgLastChildBirth:  { type: String, default: "" },
+    obgDeliveryMode:    { type: String, default: "" },
+    obgObComplications: { type: String, default: "" },
+    obgMarried:         { type: String, default: "" },
+    obgYearsMarried:    { type: String, default: "" },
+    obgContraception:   { type: String, default: "" },
+    obgLastPapSmear:    { type: String, default: "" },
+    obgLastUSG:         { type: String, default: "" },
+    obgPriorSurgery:    { type: String, default: "" },
+    obgNotes:           { type: String, default: "" },
+
     // ── SOAP Assessment (Doctor) ──────────────────────────────
     subjectiveNote:  String,   // S — Chief complaint / history
     objectiveNote:   String,   // O — Examination findings
@@ -174,6 +274,37 @@ const OPDSchema = new mongoose.Schema(
     planNote:        String,   // P — Treatment plan
     assessedBy:      String,   // Doctor who completed the assessment
     assessedAt:      Date,     // When it was saved
+
+    // ── Doctor's Digital Signature (per-visit snapshot) ─────────────
+    // R7bu — Pre-fix the doctor's signature data URL was only forwarded to
+    // the print popup. If the doctor logged out / refreshed / cleared cache,
+    // every past visit reprinted with a blank signature box. We now stamp
+    // the signature ON the visit at save time so reprints of historical
+    // visits keep the original signature even if the doctor has since
+    // changed it (or never has it cached again). Saved as a base64 data URL
+    // to mirror what useDigitalSignature exposes. doctorSignedAt is set the
+    // first time a signature is recorded on a visit.
+    doctorSignatureImage: { type: String, default: "" }, // base64 data URL
+    doctorSignedAt:       { type: Date,   default: null },
+
+    // R7cj — Post-signature addendum notes. Once the doctor signs the
+    // assessment, the structured form (Hx, exam, Dx, Rx, etc.) is locked
+    // for medico-legal traceability. But a doctor may need to add a
+    // follow-up observation (lab result came in, patient called back
+    // with new symptom, family clarification). We APPEND to this array
+    // — never overwrite — so the full timeline is preserved per NABH
+    // AAC.4 (re-assessment) + MCI Reg 1.4.2 (signed-by + at).
+    additionalNotes: {
+      type: [{
+        _id:        false,
+        note:       { type: String, required: true, trim: true, maxlength: 4000 },
+        addedAt:    { type: Date,   default: Date.now },
+        addedBy:    { type: String, default: "" },     // user's full name
+        addedById:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        addedByRole:{ type: String, default: "" },     // "Doctor" usually
+      }],
+      default: [],
+    },
   },
   { timestamps: true }
 );

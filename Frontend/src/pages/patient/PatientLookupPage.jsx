@@ -825,9 +825,17 @@ function PatientDetailPanel({
                                                   || a.admissionType === "Day Care"
                                                   || a.admissionType === "Daycare"),
             );
+            // R7cl: navigate via path param `/reception-billing/:uhid` instead of
+            // `?uhid=` query string. ReceptionBilling auto-loads from `useParams()`
+            // only — when the caller passes UHID as a query param, paramUhid stays
+            // undefined and the page lands empty (just the search box). Every other
+            // caller in the codebase (AccountsConsole, PatientCreditLedger,
+            // Sidebar, etc.) uses the path-param form, so this aligns Patient
+            // Lookup's "Billing Counter" button with the convention and makes it
+            // land on the loaded billing state for the picked patient.
             const target = activeIpd
               ? `/billing/ipd/${activeIpd._id}`
-              : `/reception-billing?uhid=${encodeURIComponent(patient.UHID || "")}`;
+              : `/reception-billing/${encodeURIComponent(patient.UHID || "")}`;
             const label = activeIpd
               ? `Open ${activeIpd.admissionType === "Emergency" ? "ER" : "IPD"} Ledger`
               : "Billing Counter";
@@ -1136,6 +1144,13 @@ function BillingBody({ bills, advancesList = [], unspentAdv = 0 }) {
         billNumber:  b.billNumber || "DRAFT",
         billStatus:  b.billStatus,
         visitType:   b.visitType,
+        // R7ck: surface the specific encounter this line item belongs to.
+        // PatientLookup is a 360° UHID view (every bill across every visit),
+        // but without a per-visit identifier the receptionist couldn't tell
+        // "is this charge from the Jan 12 OPD visit or the Jan 14 OPD visit?"
+        // visitId carries OPDRegistration.visitNumber (OPD-2026-000123) for
+        // OPD bills; admissionNumber carries the IPD admission ref.
+        visitRef:    b.visitId || b.admissionNumber || "",
       });
     }
   }
@@ -1183,6 +1198,8 @@ function BillingBody({ bills, advancesList = [], unspentAdv = 0 }) {
               <div className="pl-advance-line">
                 <span className="rx-mono-tag">{it.billNumber}</span>
                 {it.visitType && <span className={`rx-pill rx-pill--${(it.visitType || "").toLowerCase()}`}>{it.visitType}</span>}
+                {/* R7ck: per-encounter trace — which OPD visit / IPD admission this charge belongs to. */}
+                {it.visitRef && <span className="rx-mono-tag rx-mono-tag--subtle" title="Visit / Admission reference">{it.visitRef}</span>}
                 {it.category && <span className="rx-mono-tag rx-mono-tag--subtle">{it.category}</span>}
                 {it.isAutoCharged && <span className="rx-mono-tag rx-mono-tag--subtle" title="Auto-billed by the system">AUTO</span>}
                 <span className="pl-pay-by" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -1220,6 +1237,12 @@ function BillingBody({ bills, advancesList = [], unspentAdv = 0 }) {
                   <div className="pl-bill-num">
                     <i className="pi pi-receipt" /> {b.billNumber}
                     <span className={`rx-pill rx-pill--${(b.visitType || "").toLowerCase()}`}>{b.visitType}</span>
+                    {/* R7ck: per-encounter trace on each bill card — visitId (OPD) or admissionNumber (IPD). */}
+                    {(b.visitId || b.admissionNumber) && (
+                      <span className="rx-mono-tag rx-mono-tag--subtle" title="Visit / Admission reference">
+                        {b.visitId || b.admissionNumber}
+                      </span>
+                    )}
                   </div>
                   <div className="pl-bill-sub">{fmtDateTime(b.billDate || b.createdAt)}</div>
                 </div>

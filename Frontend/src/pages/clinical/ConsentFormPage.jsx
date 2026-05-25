@@ -8,6 +8,7 @@ import React, { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
+import useHospitalSettings from "../../Components/print/useHospitalSettings";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import { useAutoSave } from "../../hooks/useAutoSave";
@@ -513,6 +514,9 @@ function EditableList({ items, setItems, placeholder, color }) {
 /* ── Print view ── */
 function ConsentPrintView({ data, type, onClose }) {
   const printRef = useRef();
+  // R7cb-C: settings-driven hospital name + tagline in the preview header.
+  // Pre-R7cb hardcoded "SphereHealth Hospital" + accreditation tagline.
+  const { settings } = useHospitalSettings();
   /* Rewired to the unified print system. The form-type key maps the
    * UI tab to one of the 7 templates inside our ConsentForm printable
    * (admission / surgical / anesthesia / hiv / dnr / procedure / autopsy). */
@@ -600,8 +604,10 @@ function ConsentPrintView({ data, type, onClose }) {
         {/* Consent document */}
         <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }} ref={printRef}>
           <div style={{ textAlign: "center", marginBottom: 6 }}>
-            <div style={{ fontWeight: 800, fontSize: 15, textTransform: "uppercase", letterSpacing: ".5px" }}>SphereHealth Hospital</div>
-            <div style={{ fontSize: 11, color: C.muted }}>NABH Accredited Healthcare Institution</div>
+            <div style={{ fontWeight: 800, fontSize: 15, textTransform: "uppercase", letterSpacing: ".5px" }}>{settings.hospitalName || "Hospital"}</div>
+            {settings.tagline ? (
+              <div style={{ fontSize: 11, color: C.muted }}>{settings.tagline}</div>
+            ) : null}
           </div>
           <hr style={{ border: "none", borderTop: `2px solid ${type?.color}`, marginBottom: 12 }} />
 
@@ -718,7 +724,7 @@ function ConsentPrintView({ data, type, onClose }) {
           </div>
 
           <div style={{ marginTop: 10, fontSize: 10, color: C.muted, textAlign: "center" }}>
-            This consent form is valid as per NABH Standards ({type?.nabh}) | SphereHealth HIS | {new Date().toLocaleDateString("en-IN")}
+            This consent form is valid as per NABH Standards ({type?.nabh}) | Generated · {settings.hospitalName || "Hospital"} | {new Date().toLocaleDateString("en-IN")}
           </div>
         </div>
       </div>
@@ -729,7 +735,7 @@ function ConsentPrintView({ data, type, onClose }) {
 /* ══════════════════════════════════════
    MAIN PAGE
 ══════════════════════════════════════ */
-function ConsentFormPageContent({ selectedPatient }) {
+export function ConsentFormPageContent({ selectedPatient }) {
   const { user } = useAuth();
 
   // Views: "catalogue" | "form" | "list"

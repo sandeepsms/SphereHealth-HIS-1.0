@@ -12,6 +12,7 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
+import { buildPrintIssuerHtml } from "../../Components/print/printIssuer";
 import { useAuth } from "../../context/AuthContext";
 import WhatsAppButton from "../../Components/whatsapp/WhatsAppButton";
 import "./reception-shared.css";
@@ -575,10 +576,7 @@ function printGatePass(admission) {
       td{padding:6px 0}
       td.lbl{color:#64748b;width:40%}
       td.val{font-weight:700}
-      .footer{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-top:24px}
-      .sign{text-align:center}
-      .sign-line{border-top:1px solid #94a3b8;margin-top:40px}
-      .sign-label{font-size:10px;color:#64748b;font-weight:700;margin-top:4px}
+      .footer{display:flex;justify-content:flex-end;margin:24px 0 4px}
       .note{margin-top:12px;text-align:center;font-size:10px;color:#94a3b8}
       @media print{body{padding:0} .wrap{border:0}}
     </style></head><body><div class="wrap">
@@ -600,8 +598,7 @@ function printGatePass(admission) {
           <tr><td class="lbl">Pass Issued by</td><td class="val">${w.gatePassIssuedBy || "Reception"}</td></tr>
         </table>
         <div class="footer">
-          <div class="sign"><div class="sign-line"></div><div class="sign-label">Patient / Attendant</div></div>
-          <div class="sign"><div class="sign-line"></div><div class="sign-label">Reception</div></div>
+          ${buildPrintIssuerHtml()}
         </div>
         <div class="note">Present this pass at the security gate. Hospital is not responsible after exit.</div>
       </div>

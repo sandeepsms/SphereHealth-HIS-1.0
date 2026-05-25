@@ -251,8 +251,31 @@ class MARController {
       } : {}),
     };
 
-    med.administrations.push(entry);
-    await mar.save();
+    // R7bn-2 / D10-fix: atomic $push to avoid lost-administration race.
+    // Pre-fix: two nurses charting the same dose at the same instant both
+    // loaded the MAR (no entry yet), both .push()'d locally, then both
+    // .save()'d — Mongo's last-write-wins on the medications.administrations
+    // array would drop the loser's entry entirely. The dose appeared given
+    // once instead of twice (or charted once with the wrong nurse).
+    //
+    // Switching to findOneAndUpdate with positional $push makes the array
+    // append atomic at the DB layer. The idempotency check above still
+    // protects against same-nurse double-tap (±10 min window) via the
+    // pre-loaded scan; for cross-client races where both pass the check,
+    // both entries land and the dedup index on the daily billing trigger
+    // (F10) protects against double-bill.
+    const pushResult = await MAR.findOneAndUpdate(
+      { _id: req.params.id, "medications._id": req.params.medId },
+      { $push: { "medications.$.administrations": entry } },
+      { new: true, runValidators: true },
+    );
+    if (!pushResult) {
+      return res.status(404).json({ success: false, message: "MAR or medication disappeared during write" });
+    }
+    // Refresh references so the post-write hooks (billing + audit) see
+    // the freshly-appended entry.
+    const refreshedMed = pushResult.medications.id(req.params.medId);
+    const refreshedEntry = refreshedMed?.administrations?.[refreshedMed.administrations.length - 1] || entry;
 
     // ── Auto-billing hook ──────────────────────────────────────
     // Bill on every GIVEN dose; HELD/REFUSED/MISSED/NOT_AVAILABLE do NOT bill.
@@ -260,13 +283,43 @@ class MARController {
       const { logErr } = require("../../utils/logErr");
       const autoBilling = require("../../services/Billing/autoBillingService");
       if (finalStatus === "GIVEN") {
-        autoBilling.onMARAdministration(mar, med, entry).catch(logErr("autoBilling", `onMARAdministration ${mar?._id} med ${med?._id}`));
+        autoBilling.onMARAdministration(pushResult, refreshedMed, refreshedEntry).catch(logErr("autoBilling", `onMARAdministration ${pushResult?._id} med ${refreshedMed?._id}`));
       }
     } catch (e) {
       const { logErr } = require("../../utils/logErr");
       logErr("autoBilling", "load failure on MAR.administer")(e);
     }
-    return res.json({ success: true, data: mar, message: "Administration recorded" });
+
+    // R7bn-1 / D9-fix: ClinicalAudit emit on every MAR administration.
+    // HAM drugs (insulin, opioids, heparin) need this trail for NABH IPSG.3.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event:
+          finalStatus === "GIVEN"   ? "MAR_DOSE_ADMINISTERED" :
+          finalStatus === "HELD"    ? "MAR_DOSE_HELD" :
+          finalStatus === "REFUSED" ? "MAR_DOSE_REFUSED" :
+          finalStatus === "MISSED"  ? "MAR_DOSE_MISSED" :
+                                     "MAR_DOSE_ADMINISTERED",
+        UHID: pushResult.UHID,
+        admissionId: pushResult.admissionId,
+        targetType: "MAR.administration",
+        targetId: pushResult._id,
+        after: {
+          drug: refreshedMed?.drugName,
+          dose: refreshedMed?.dose,
+          status: finalStatus,
+          scheduledTime,
+          actualTime: refreshedEntry.actualTime,
+          nurseName: resolvedNurseName,
+          isHamDose: !!refreshedEntry.isHamDose,
+        },
+        reason,
+      });
+    } catch (_) { /* silent — audit emit is non-blocking */ }
+
+    return res.json({ success: true, data: pushResult, message: "Administration recorded" });
   });
 
   // PATCH /api/mar/:id/medication/:medId/discontinue

@@ -23,6 +23,10 @@ import { useAuth } from "../../context/AuthContext";
 // R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap + INR formatters.
 // Replaces the local toMoney/fmtCur shim that used to live near line 46.
 import { toMoney, fmtINR0 as fmtCur, fmtINR2 as fmtCurExact } from "../../utils/money";
+// R7bp: shared "bills with balance due" card — same component AccountsConsole
+// uses, but with checkboxes enabled so the cashier can multi-select bills
+// for one patient and run a single Collect-All transaction.
+import PatientCreditLedger from "../../Components/billing/PatientCreditLedger";
 import "./ReceptionDashboard.css";
 
 const STATUS_LABEL = {
@@ -68,6 +72,12 @@ export default function ReceptionDashboard() {
   const [queues,     setQueues]     = useState([]);
   const [presence,   setPresence]   = useState([]);
   const [loading,    setLoading]    = useState(true);
+  // R7bp: Patient credit ledger — non-TPA outstanding bills.  Fetched from
+  // /api/billing/aging on mount and on manual refresh.  Receptionists
+  // already hold billing.read so the endpoint is in-scope without a
+  // permission change.
+  const [creditRows, setCreditRows] = useState([]);
+  const [creditLoading, setCreditLoading] = useState(false);
 
   // ── Tab state ──────────────────────────────────────────────
   // Two views on this page:
@@ -107,11 +117,17 @@ export default function ReceptionDashboard() {
       // tpaPending which the new service doesn't expose; day-book
       // overrides totalCollected + txnCount so the KPI tiles show
       // the corrected figure.
-      const [colRes, dayBookRes, qRes, pRes] = await Promise.allSettled([
+      // R7bp: pull /billing/aging alongside the other four endpoints so the
+      // credit ledger card renders in the same paint as the KPI strip — no
+      // extra blank frame while the receptionist waits for receivables to
+      // load.  Failure here doesn't blank the dashboard: the credit card
+      // just shows the empty state.
+      const [colRes, dayBookRes, qRes, pRes, agingRes] = await Promise.allSettled([
         axios.get(`${API_ENDPOINTS.BASE}/billing/collection-summary`, { ...cfg, params: { date } }),
         axios.get(`${API_ENDPOINTS.BASE}/reports/day-book`,           { ...cfg, params: { date } }),
         axios.get(`${API_ENDPOINTS.BASE}/doctors/dashboard/queues`, cfg),
         axios.get(`${API_ENDPOINTS.BASE}/presence/active`, cfg),
+        axios.get(`${API_ENDPOINTS.BASE}/billing/aging`, cfg),
       ]);
       if (signal?.aborted) return;
       if (colRes.status === "fulfilled") {
@@ -132,6 +148,14 @@ export default function ReceptionDashboard() {
       }
       if (qRes.status === "fulfilled")   setQueues(qRes.value.data?.data || []);
       if (pRes.status === "fulfilled")   setPresence(pRes.value.data?.data || []);
+      // R7bp: aging endpoint returns the full envelope at top-level —
+      // {success, buckets, patientCredit, tpaCredit, totalOutstanding}.
+      // We only want the patient-credit list for this card.
+      if (agingRes.status === "fulfilled") {
+        setCreditRows(agingRes.value.data?.patientCredit || []);
+      } else if (!axios.isCancel(agingRes.reason)) {
+        console.error("[ReceptionDashboard] aging:", agingRes.reason?.message);
+      }
       // Surface individual failures (audit E-06). Individual rejections
       // don't blow up the page (Promise.allSettled) but the operator
       // deserves to know if doctor queue / presence didn't load.
@@ -434,6 +458,26 @@ export default function ReceptionDashboard() {
               <span className="rd-stat-sub">{byVisitMap[t]?.count || 0} visits</span>
             </div>
           ))}
+      </div>
+
+      {/* ── Patient credit ledger ──
+          R7bp: bills with balance due, surfaced on the receptionist
+          landing so payment collection can start without a detour
+          through Accounts. Selectable=true unlocks the multi-select
+          checkboxes — the cashier picks bills for one UHID and clicks
+          Collect All to deep-link into the BulkCollectModal on the
+          Reception Billing Counter (which posts to
+          /billing/uhid/:uhid/collect-all, FIFO across every open bill).
+          Reuses /api/billing/aging — receptionists already have
+          billing.read, no permission change. */}
+      <div style={{ marginBottom: 16 }}>
+        <PatientCreditLedger
+          rows={creditRows}
+          selectable={true}
+          maxRows={10}
+          onOpenBill={(b) => navigate(`/reception-billing/${b.UHID}`)}
+          onCollectAll={({ UHID }) => navigate(`/reception-billing/${UHID}?action=collect-all`)}
+        />
       </div>
 
       {/* ── Two-column grid ── */}

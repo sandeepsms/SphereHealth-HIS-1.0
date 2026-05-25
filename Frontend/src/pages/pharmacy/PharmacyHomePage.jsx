@@ -19,6 +19,8 @@ import TEMPLATES from "../../Components/print/printables/PharmacyBillTemplates";
 import PharmacyBill from "../../Components/print/printables/PharmacyBill";
 import PharmacyRegister, { REGISTER_HEADERS } from "../../Components/print/printables/PharmacyRegister";
 import PharmacyIndentsPage from "./PharmacyIndentsPage";
+import opdService from "../../Services/patient/opdService";
+import { IS_PHARMACY_STANDALONE, PHARMACY_MODE_LABEL } from "../../config/pharmacyMode";
 import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
@@ -107,6 +109,16 @@ const BASE_TABS = [
   { key: "inventory", label: "Inventory",  icon: "pi-box" },
   { key: "grn",       label: "Goods Receipt", icon: "pi-download" },
   { key: "dispense",  label: "Dispense",   icon: "pi-shopping-cart" },
+  // R7cr — OPD Rx Lookup: pharmacist enters a UHID, sees today's
+  // doctor-written prescriptions for that patient (diagnosis +
+  // medicines + dose + frequency + meal status) and dispenses each
+  // line with one click. Avoids re-typing the drug list off a paper
+  // prescription and prevents transcription errors.
+  { key: "opdrx",     label: "OPD Rx",     icon: "pi-file" },
+  // R7cu — IPD Credit Ledger: pharmacist sees every active IPD admission
+  // with pharmacy outstanding > 0, drills in to collect payment. The
+  // discharge flow is HARD-blocked at the backend until this clears.
+  { key: "ipdcredit", label: "IPD Credit", icon: "pi-credit-card" },
   { key: "indents",   label: "Live Indents", icon: "pi-inbox" }, // badge + tone wired dynamically
   { key: "sales",     label: "Sales Register", icon: "pi-receipt" },
   { key: "registers", label: "Registers",  icon: "pi-book" },
@@ -114,7 +126,27 @@ const BASE_TABS = [
   { key: "settings",  label: "Settings",   icon: "pi-cog" },
 ];
 
-const fmtINR = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+// R7da — Decimal128-aware. listSales / listDrugs / batches etc. all use
+// `.lean()` server-side, which bypasses the model's toJSON transform —
+// so Decimal128 money fields arrive as either `{$numberDecimal:"320"}`
+// (extended JSON) or raw Decimal128 BSON objects. Number(d128) → NaN
+// in either case, which surfaced as "₹NaN" in the Sales Register row.
+// This helper unwraps both shapes before formatting.
+const _toNumDec = (v) => {
+  if (v == null) return 0;
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v === "object") {
+    if (v.$numberDecimal != null) {
+      const n = Number(v.$numberDecimal); return Number.isFinite(n) ? n : 0;
+    }
+    if (typeof v.toString === "function") {
+      const n = Number(v.toString()); return Number.isFinite(n) ? n : 0;
+    }
+    return 0;
+  }
+  const n = Number(v); return Number.isFinite(n) ? n : 0;
+};
+const fmtINR = (n) => `₹${_toNumDec(n).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const daysUntil = (d) => d ? Math.floor((new Date(d).getTime() - Date.now()) / 86400000) : null;
 
@@ -181,7 +213,19 @@ export default function PharmacyHomePage() {
   const indentStats = useLiveIndentStats();
   const tabs = useMemo(() => {
     const { badge, badgeTone } = indentBadgeFor(indentStats);
-    return BASE_TABS.map(t =>
+    // R7cs — Standalone mode: hide tabs that depend on hospital state.
+    //   • "opdrx" — needs OPD visits + doctor prescriptions
+    //   • "indents" — needs IPD admissions + nurse workflow
+    // These collections don't exist (or are empty) in a retail-pharmacy
+    // deployment. Hiding the tab is the first guard; the second guard is
+    // the backend, which 404s the underlying routes when PHARMACY_MODE
+    // === standalone so a leaked token can't reach them either.
+    // R7cu — IPD Credit also depends on hospital admission collections,
+    // so it's hidden in standalone retail mode alongside opdrx/indents.
+    const filtered = IS_PHARMACY_STANDALONE
+      ? BASE_TABS.filter(t => t.key !== "opdrx" && t.key !== "indents" && t.key !== "ipdcredit")
+      : BASE_TABS;
+    return filtered.map(t =>
       t.key === "indents" ? { ...t, badge, badgeTone } : t
     );
   }, [indentStats]);
@@ -205,9 +249,24 @@ export default function PharmacyHomePage() {
             <i className="pi pi-box" style={{ fontSize: 22 }} />
           </div>
           <div style={{ flex: 1, minWidth: 220 }}>
-            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-.2px" }}>Pharmacy</div>
+            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-.2px" }}>
+              Pharmacy
+              {/* R7cs — deployment-shape badge so the user always knows
+                  whether they're in Hospital or Retail Pharmacy mode.
+                  Retail hides indents + OPD-Rx + UHID lookup. */}
+              {IS_PHARMACY_STANDALONE && (
+                <span style={{
+                  marginLeft: 10, padding: "2px 9px", borderRadius: 10,
+                  fontSize: 10, fontWeight: 700, letterSpacing: ".4px",
+                  background: "rgba(255,255,255,.22)", border: "1px solid rgba(255,255,255,.35)",
+                  textTransform: "uppercase", verticalAlign: "middle",
+                }}>{PHARMACY_MODE_LABEL}</span>
+              )}
+            </div>
             <div style={{ fontSize: 12, opacity: .85, marginTop: 2 }}>
-              Drug master · batch inventory · GRN · dispense · sales register
+              {IS_PHARMACY_STANDALONE
+                ? "Drug master · batch inventory · GRN · counter dispense · sales register"
+                : "Drug master · batch inventory · GRN · dispense · sales register"}
             </div>
           </div>
         </div>
@@ -223,6 +282,8 @@ export default function PharmacyHomePage() {
         {tab === "inventory" && <InventoryTab />}
         {tab === "grn"       && <GRNTab />}
         {tab === "dispense"  && <DispenseTab />}
+        {tab === "opdrx"     && <OPDRxTab />}
+        {tab === "ipdcredit" && <IPDCreditTab />}
         {tab === "indents"   && <PharmacyIndentsPage embedded />}
         {tab === "sales"     && <SalesTab />}
         {tab === "registers" && <RegistersTab />}
@@ -897,27 +958,34 @@ function DispenseTab() {
       <Card title="Patient & Payment" color={C.blue} icon="pi-user">
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
 
-          {/* UHID lookup — pulls HIS patient + active admission */}
-          <Field label="UHID — pull from HIS">
-            <div style={{ display: "flex", gap: 6 }}>
-              <input className="his-field" style={{ flex: 1, fontFamily: "DM Mono, monospace" }}
-                value={patient.patientUHID}
-                placeholder="UH00000001 (or leave empty for walk-in)"
-                onChange={e => setPatient(p => ({ ...p, patientUHID: e.target.value }))}
-                onKeyDown={e => { if (e.key === "Enter") fetchByUHID(); }} />
-              <button onClick={fetchByUHID} disabled={lookupBusy || !patient.patientUHID.trim()}
-                style={{ padding: "8px 14px", borderRadius: 7, border: "none",
-                  background: lookupBusy ? "#94a3b8" : C.blue, color: "#fff",
-                  fontWeight: 700, fontSize: 11.5,
-                  cursor: lookupBusy || !patient.patientUHID.trim() ? "not-allowed" : "pointer",
-                  whiteSpace: "nowrap" }}>
-                {lookupBusy ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 10 }} />
-                            : <><i className="pi pi-search" style={{ fontSize: 10, marginRight: 4 }} />Fetch</>}
-              </button>
-            </div>
-          </Field>
+          {/* R7cs — UHID lookup is HIS-only. In a retail/standalone
+              pharmacy deployment there's no Patient or Admission DB to
+              query, so we hide the field entirely. The dispense flow
+              then takes the walk-in path by default — pharmacist
+              optionally types patient name / contact below if they
+              want to capture it for a Schedule H register entry. */}
+          {!IS_PHARMACY_STANDALONE && (
+            <Field label="UHID — pull from HIS">
+              <div style={{ display: "flex", gap: 6 }}>
+                <input className="his-field" style={{ flex: 1, fontFamily: "DM Mono, monospace" }}
+                  value={patient.patientUHID}
+                  placeholder="UH00000001 (or leave empty for walk-in)"
+                  onChange={e => setPatient(p => ({ ...p, patientUHID: e.target.value }))}
+                  onKeyDown={e => { if (e.key === "Enter") fetchByUHID(); }} />
+                <button onClick={fetchByUHID} disabled={lookupBusy || !patient.patientUHID.trim()}
+                  style={{ padding: "8px 14px", borderRadius: 7, border: "none",
+                    background: lookupBusy ? "#94a3b8" : C.blue, color: "#fff",
+                    fontWeight: 700, fontSize: 11.5,
+                    cursor: lookupBusy || !patient.patientUHID.trim() ? "not-allowed" : "pointer",
+                    whiteSpace: "nowrap" }}>
+                  {lookupBusy ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 10 }} />
+                              : <><i className="pi pi-search" style={{ fontSize: 10, marginRight: 4 }} />Fetch</>}
+                </button>
+              </div>
+            </Field>
+          )}
 
-          {hisLinked && (
+          {hisLinked && !IS_PHARMACY_STANDALONE && (
             <div style={{
               padding: "9px 12px", background: C.greenL, border: `1.5px solid ${C.green}40`,
               borderRadius: 7, display: "flex", alignItems: "center", gap: 8,
@@ -2803,6 +2871,1235 @@ function Row({ label, value, valueColor, bold, large }) {
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontWeight: bold ? 800 : 600 }}>
       <span style={{ color: C.muted, fontSize: large ? 13 : 11.5 }}>{label}</span>
       <span style={{ color: valueColor || C.text, fontSize: large ? 16 : 12 }}>{value}</span>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+   R7cr — OPD Rx LOOKUP TAB
+   Pharmacist enters a UHID, gets today's OPD visits for that
+   patient with diagnosis + prescribed medicines, and dispenses
+   each line with one click via the existing /pharmacy/sales POST.
+   Reuses dispense() service so the sale lands in the same
+   register / GST / FEFO pipeline as a walk-in counter sale —
+   no parallel codepath.
+══════════════════════════════════════════════════════════════════ */
+function OPDRxTab() {
+  const [uhidInput, setUhidInput]   = useState("");
+  const [loading, setLoading]       = useState(false);
+  const [visits, setVisits]         = useState([]);    // recent OPD visits for the UHID
+  const [patient, setPatient]       = useState(null);  // first visit's patientId populated doc
+  const [searchedUhid, setSearchedUhid] = useState("");
+  // R7cx — day-window selector. Default 7 because today-only was too
+  // narrow (patient walks in 1-2 days after the visit and the panel
+  // showed empty). Pharmacist can widen to 15/30 if hunting for an
+  // older prescription, or narrow to 1 (today only) if there's noise.
+  const [windowDays, setWindowDays] = useState(7);
+  // R7cw — track API failure separately from "successfully returned
+  // empty list". Pre-R7cw a 404 on the new R7cr endpoint left the
+  // empty-state ("No OPD visit today") rendering — misleading because
+  // the patient might actually have a visit but the route 404'd
+  // because backend hadn't been restarted. Now we render distinct
+  // states for {idle, loading, ok-empty, ok-data, api-failed}.
+  const [loadError, setLoadError]   = useState(null);   // string or null
+  // Quick-dispense modal state. We never push into the regular
+  // DispenseTab cart — each prescription row dispenses as its own
+  // sale so the pharmacist isn't blocked finishing visit-A before
+  // starting visit-B (common when two doctors prescribe the same
+  // morning).
+  const [qdOpen, setQdOpen]         = useState(false);
+  const [qdMed, setQdMed]           = useState(null);   // the prescription row being sold
+  const [qdDrug, setQdDrug]         = useState(null);   // matched inventory drug (id + price)
+  const [qdMatches, setQdMatches]   = useState([]);     // inventory search results
+  const [qdDrugSearch, setQdDrugSearch] = useState(""); // drug autocomplete input
+  const [qdQty, setQdQty]           = useState(1);
+  const [qdUnitPrice, setQdUnitPrice] = useState(0);
+  const [qdPaymentMode, setQdPaymentMode] = useState("Cash");
+  const [qdSaving, setQdSaving]     = useState(false);
+  // R7cy — FEFO batch info for the selected drug. The drug master does
+  // NOT carry a reliable sellPrice — the real price lives on each
+  // PharmacyDrugBatch row (set at GRN time, varies by purchase lot).
+  // Backend dispense() also reads price from batch.salePrice and
+  // IGNORES any client-supplied unitPrice (R7bh-F4 hardening). So we
+  // mirror that here for the UI preview — pull the FEFO batch on
+  // drug-pick and use its salePrice / batchNo / expiryDate.
+  const [qdFefoBatch, setQdFefoBatch] = useState(null);
+  const [qdBatchLoading, setQdBatchLoading] = useState(false);
+
+  const today = new Date().toLocaleDateString("en-IN", {
+    weekday: "long", day: "2-digit", month: "long", year: "numeric",
+  });
+
+  // Load recent Rx (default 7 days) for the typed UHID. Empty array =
+  // no visits in the window (handled with a friendly empty state,
+  // not an error).
+  const load = async (uhidArg, daysArg) => {
+    const u = (uhidArg ?? uhidInput).trim().toUpperCase();
+    const d = Number(daysArg ?? windowDays) || 7;
+    if (!u) { toast.warn("Enter a UHID"); return; }
+    setLoading(true); setSearchedUhid(u); setLoadError(null);
+    try {
+      const r = await opdService.getTodayRxByUHID(u, d);
+      const list = Array.isArray(r?.data?.data) ? r.data.data : [];
+      setVisits(list);
+      setPatient(list[0]?.patientId || null);
+      if (list.length === 0) {
+        toast.info(`No OPD visit in last ${d} day${d === 1 ? "" : "s"} for ${u}`);
+      }
+    } catch (e) {
+      // R7cw: distinguish missing-route (backend restart needed) from
+      // a real lookup error so the operator sees an actionable message
+      // and the empty-state below doesn't lie about there being no
+      // visit when really the API never executed.
+      const status = e?.response?.status;
+      const serverMsg = e?.response?.data?.message;
+      const isMissingRoute = status === 404 || serverMsg === "Route not found";
+      const friendly = isMissingRoute
+        ? "OPD Rx endpoint unavailable — backend may need restart to pick up R7cr routes."
+        : (serverMsg || e.message || "Lookup failed");
+      toast.error(friendly);
+      setLoadError(friendly);
+      setVisits([]); setPatient(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearAll = () => {
+    setUhidInput(""); setSearchedUhid(""); setVisits([]); setPatient(null); setLoadError(null);
+  };
+
+  // R7cr — open the quick-dispense modal pre-filled from a prescription
+  // row. The drug-name autocomplete is seeded with the prescribed name
+  // so the pharmacist's first keystroke is usually unnecessary.
+  const openQuickDispense = async (med, visit) => {
+    setQdMed({ ...med, _visit: visit });
+    setQdDrug(null);
+    setQdQty(1);
+    setQdUnitPrice(0);
+    setQdPaymentMode("Cash");
+    const seed = String(med?.medicineName || "").replace(/^(tab\.?|cap\.?|syp\.?|inj\.?|cream|oint\.?|drop[s]?)\s+/i, "").trim();
+    setQdDrugSearch(seed);
+    setQdMatches([]);
+    setQdOpen(true);
+    // Auto-fire one search so the modal opens with candidates visible.
+    if (seed.length >= 2) {
+      try {
+        const list = await listDrugs({ q: seed, limit: 10 });
+        setQdMatches(Array.isArray(list) ? list : (list?.data || []));
+      } catch (_) { /* non-fatal */ }
+    }
+  };
+
+  // Debounced drug search inside the modal (250ms — same as Dispense tab).
+  const debouncedSearch = useDebounce(qdDrugSearch, 250);
+  useEffect(() => {
+    let cancelled = false;
+    if (!qdOpen) return;
+    const q = (debouncedSearch || "").trim();
+    if (q.length < 2) { setQdMatches([]); return; }
+    (async () => {
+      try {
+        const list = await listDrugs({ q, limit: 10 });
+        if (cancelled) return;
+        setQdMatches(Array.isArray(list) ? list : (list?.data || []));
+      } catch (_) { if (!cancelled) setQdMatches([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [debouncedSearch, qdOpen]);
+
+  const pickDrug = async (drug) => {
+    setQdDrug(drug);
+    setQdDrugSearch(drug.brandName || drug.genericName || drug.name || "");
+    setQdMatches([]);
+    setQdFefoBatch(null);
+    setQdUnitPrice(0);
+    // R7cy — drug master almost never carries a usable sellPrice
+    // (price is set per-batch at GRN time). Fetch in-stock batches,
+    // pick the FEFO winner (earliest expiry, not yet expired, with
+    // qty remaining), and use its salePrice. Falls back to any
+    // master-level price field if the batch fetch fails or returns
+    // nothing — the user can still override the field manually.
+    setQdBatchLoading(true);
+    try {
+      const r = await listBatches({ drugId: drug._id });
+      const list = Array.isArray(r) ? r : (r?.data || []);
+      const now = Date.now();
+      const fefo = list
+        .filter(b => {
+          const rem = Number(b.remaining ?? b.qtyRemaining ?? b.qty ?? 0);
+          const exp = b.expiryDate ? new Date(b.expiryDate).getTime() : Infinity;
+          return rem > 0 && exp > now;
+        })
+        .sort((a, b) => {
+          const ea = a.expiryDate ? new Date(a.expiryDate).getTime() : Infinity;
+          const eb = b.expiryDate ? new Date(b.expiryDate).getTime() : Infinity;
+          return ea - eb;
+        })[0];
+      if (fefo) {
+        setQdFefoBatch(fefo);
+        const price = Number(fefo.salePrice ?? fefo.sellPrice ?? fefo.mrp ?? 0);
+        if (price > 0) setQdUnitPrice(price);
+      } else {
+        const mrp = Number(drug.sellPrice || drug.mrp || drug.unitPrice || 0);
+        if (mrp > 0) setQdUnitPrice(mrp);
+      }
+    } catch (_) {
+      const mrp = Number(drug.sellPrice || drug.mrp || drug.unitPrice || 0);
+      if (mrp > 0) setQdUnitPrice(mrp);
+    } finally {
+      setQdBatchLoading(false);
+    }
+  };
+
+  const submitQuickDispense = async () => {
+    if (!qdDrug?._id) { toast.warn("Select a drug from the inventory"); return; }
+    const qty = Number(qdQty);
+    if (!Number.isFinite(qty) || qty <= 0) { toast.warn("Quantity must be > 0"); return; }
+    const price = Number(qdUnitPrice);
+    if (!Number.isFinite(price) || price < 0) { toast.warn("Invalid unit price"); return; }
+    setQdSaving(true);
+    // R7cz — Resolve doctor name + prescription ref ONCE so the same
+    // values flow both to the top-level sale and to the per-item Rx
+    // payload below. The backend dispense() Schedule H/H1/X gate
+    // (D&C Rule 65) rejects with 400 RX_REF_REQUIRED unless BOTH
+    // prescriptionRef AND prescriberName are present on the item OR
+    // the sale. The OPD visitNumber IS the prescription identifier
+    // for an in-hospital OPD-Rx dispense, so we pass it through.
+    const visit = qdMed?._visit || {};
+    const docName = visit.consultantName ||
+      (visit.doctorId?.personalInfo
+        ? `Dr. ${visit.doctorId.personalInfo.firstName || ""} ${visit.doctorId.personalInfo.lastName || ""}`.trim()
+        : "");
+    const rxRef = visit.visitNumber || "";
+    try {
+      const r = await dispense({
+        patientUHID:     searchedUhid,
+        patientName:     patient?.fullName || visit.patientName || "",
+        age:             patient?.age || "",
+        gender:          patient?.gender || "",
+        contactNumber:   patient?.contactNumber || "",
+        doctorName:      docName,
+        // R7cz — sale-level fallback the backend reads when item-level
+        // fields are absent (we set both, belt-and-braces). For Schedule
+        // H drugs this satisfies the prescriber + Rx-ref requirement.
+        prescriptionRef: rxRef,
+        saleType:        "OPD",
+        paymentMode:     qdPaymentMode,
+        items: [{
+          drugId:          qdDrug._id,
+          drugName:        qdDrug.brandName || qdDrug.genericName || qdDrug.name,
+          quantity:        qty,
+          unitPrice:       price,
+          gstRate:         Number(qdDrug.gstRate || qdDrug.taxPercentage || 0),
+          discountPercent: 0,
+          // R7cz — per-item Rx fields, same values as sale-level.
+          // Item-level wins in the backend check; passing both lets the
+          // gate succeed even if a future change picks one path or the
+          // other.
+          prescriptionRef: rxRef,
+          prescriberName:  docName,
+        }],
+        // Audit trail — link this sale back to the OPD visit so the
+        // pharmacist's bill can be reconciled to the prescription.
+        sourceContext: {
+          source:      "OPD-Rx",
+          visitNumber: rxRef,
+          medicineRef: qdMed?.medicineName || "",
+          dosage:      qdMed?.dosage || "",
+          frequency:   qdMed?.frequency || "",
+          duration:    qdMed?.duration || "",
+        },
+      });
+      const billNo = r?.data?.billNumber || r?.data?.data?.billNumber || "";
+      toast.success(`Dispensed — Bill ${billNo}`);
+      setQdOpen(false);
+    } catch (e) {
+      const msg = e?.response?.data?.message || e.message || "Dispense failed";
+      toast.error(msg);
+    } finally {
+      setQdSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+      {/* Header row — UHID input + Load + Clear */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end", marginBottom: 16 }}>
+        <div style={{ flex: "0 0 280px" }}>
+          <label style={{ display: "block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 4 }}>
+            Patient UHID
+          </label>
+          <input
+            className="his-input"
+            value={uhidInput}
+            onChange={(e) => setUhidInput(e.target.value.toUpperCase())}
+            onKeyDown={(e) => { if (e.key === "Enter") load(); }}
+            placeholder="UH00000001"
+            autoFocus
+            style={{ width: "100%", textTransform: "uppercase", fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700 }}
+          />
+        </div>
+        <button onClick={() => load()} disabled={loading || !uhidInput.trim()} style={{
+          padding: "8px 18px", background: C.orange, color: "#fff", border: "none",
+          borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: loading ? "not-allowed" : "pointer",
+        }}>
+          <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-search"}`} style={{ marginRight: 6 }} />
+          {loading ? "Loading…" : "Load Rx"}
+        </button>
+        {/* R7cx — day-window selector. Default 7d; reload immediately
+            when changed (only if we already have a searched UHID,
+            otherwise the new value just becomes the next-search default). */}
+        <div>
+          <label style={{ display: "block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: C.muted, marginBottom: 4 }}>
+            Window
+          </label>
+          <select
+            className="his-select"
+            value={windowDays}
+            onChange={(e) => {
+              const d = Number(e.target.value);
+              setWindowDays(d);
+              if (searchedUhid) load(searchedUhid, d);
+            }}
+            style={{ fontSize: 12, padding: "8px 10px", minWidth: 120 }}
+          >
+            <option value={1}>Today only</option>
+            <option value={3}>Last 3 days</option>
+            <option value={7}>Last 7 days</option>
+            <option value={15}>Last 15 days</option>
+            <option value={30}>Last 30 days</option>
+          </select>
+        </div>
+        {(searchedUhid || visits.length > 0) && (
+          <button onClick={clearAll} style={{
+            padding: "8px 14px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
+            borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: "pointer",
+          }}>
+            <i className="pi pi-times" style={{ marginRight: 4 }} />
+            Clear
+          </button>
+        )}
+        <div style={{ marginLeft: "auto", fontSize: 11, color: C.muted, fontWeight: 600 }}>
+          <i className="pi pi-calendar" style={{ marginRight: 4 }} />
+          {today}
+        </div>
+      </div>
+
+      {/* Patient header strip (only after a successful load) */}
+      {patient && (
+        <div style={{
+          background: "#fff7ed", border: `1px solid #fed7aa`, borderRadius: 10,
+          padding: "12px 16px", marginBottom: 16,
+          display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center",
+        }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>
+            {patient.fullName || "—"}
+          </div>
+          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700, color: C.orange }}>
+            {patient.UHID}
+          </span>
+          {patient.age != null && <span style={{ fontSize: 12, color: C.muted }}>{patient.age}y</span>}
+          {patient.gender && <span style={{ fontSize: 12, color: C.muted }}>· {patient.gender}</span>}
+          {patient.contactNumber && (
+            <span style={{ fontSize: 12, color: C.muted }}>
+              <i className="pi pi-phone" style={{ fontSize: 10, marginRight: 3 }} />
+              {patient.contactNumber}
+            </span>
+          )}
+          <span style={{ marginLeft: "auto", background: "#fff", border: `1px solid ${C.border}`, padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, color: C.text }}>
+            {visits.length} visit{visits.length === 1 ? "" : "s"} today
+          </span>
+        </div>
+      )}
+
+      {/* R7cw — API failure state (e.g. 404 because backend didn't pick
+          up the R7cr OPD-Rx route). Surface the actionable error rather
+          than the misleading "no visit today" empty state. */}
+      {searchedUhid && !loading && loadError && (
+        <div style={{ padding: 24, background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 10, color: "#b91c1c", fontSize: 13 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <i className="pi pi-exclamation-triangle" style={{ fontSize: 18 }} />
+            <strong>Could not load OPD prescriptions for {searchedUhid}</strong>
+          </div>
+          <div style={{ fontSize: 11.5, color: "#991b1b" }}>{loadError}</div>
+        </div>
+      )}
+
+      {/* No-data state — only when the API succeeded with an empty result.
+          R7cx: message reflects the active window, with a quick widen
+          shortcut so the pharmacist can extend to 30 days in one click
+          if the patient's prescription is older than the default 7. */}
+      {searchedUhid && !loading && !loadError && visits.length === 0 && (
+        <div style={{ padding: 36, textAlign: "center", background: "#f8fafc", border: `1px dashed ${C.border}`, borderRadius: 10, color: C.muted, fontSize: 13 }}>
+          <i className="pi pi-info-circle" style={{ fontSize: 22, marginBottom: 8, display: "block" }} />
+          No OPD visit found in the last {windowDays} day{windowDays === 1 ? "" : "s"} for <strong style={{ color: C.text }}>{searchedUhid}</strong>.<br/>
+          <span style={{ fontSize: 11 }}>
+            {windowDays < 30 ? (
+              <>Try a wider window:
+                {[15, 30].filter(d => d > windowDays).map(d => (
+                  <button
+                    key={d}
+                    onClick={() => { setWindowDays(d); load(searchedUhid, d); }}
+                    style={{
+                      marginLeft: 8, padding: "2px 9px", border: `1px solid ${C.orange}`,
+                      background: "#fff", color: C.orange, borderRadius: 12,
+                      fontSize: 10, fontWeight: 700, cursor: "pointer",
+                    }}
+                  >Last {d} days</button>
+                ))}
+                {" "}or use the Dispense tab for a counter sale.
+              </>
+            ) : (
+              <>Patient may not have visited OPD in the last 30 days — use the Dispense tab for a counter sale.</>
+            )}
+          </span>
+        </div>
+      )}
+
+      {/* Per-visit cards */}
+      {visits.map((v) => {
+        const meds = Array.isArray(v.prescribedMedications) ? v.prescribedMedications : [];
+        const doctorName = v.consultantName || (v.doctorId?.personalInfo
+          ? `Dr. ${v.doctorId.personalInfo.firstName || ""} ${v.doctorId.personalInfo.lastName || ""}`.trim()
+          : "—");
+        const deptName = v.departmentId?.departmentName || v.department || "—";
+        const dxParts = [
+          v.provisionalDiagnosis && `Provisional: ${v.provisionalDiagnosis}`,
+          v.workingDiagnosis     && `Working: ${v.workingDiagnosis}`,
+          v.finalDiagnosis       && `Final: ${v.finalDiagnosis}`,
+        ].filter(Boolean);
+        return (
+          <div key={v._id || v.visitNumber} style={{
+            border: `1px solid ${C.border}`, borderRadius: 10, marginBottom: 14, overflow: "hidden",
+          }}>
+            {/* Visit header bar */}
+            <div style={{
+              background: "#fff", padding: "10px 14px", borderBottom: `1px solid ${C.border}`,
+              display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center",
+            }}>
+              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700, color: C.text }}>
+                {v.visitNumber}
+              </span>
+              <span style={{ fontSize: 12, color: C.muted }}>
+                {new Date(v.visitDate).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+              </span>
+              <span style={{ fontSize: 12, color: C.muted }}>· {deptName}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.orange }}>· {doctorName}</span>
+              {v.status && (
+                <span style={{ marginLeft: "auto", padding: "2px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700,
+                  background: v.status === "Completed" ? "#dcfce7" : "#dbeafe",
+                  color:      v.status === "Completed" ? "#15803d" : "#1d4ed8",
+                  textTransform: "uppercase", letterSpacing: ".4px",
+                }}>{v.status}</span>
+              )}
+            </div>
+
+            {/* Complaint + diagnosis */}
+            <div style={{ padding: "10px 14px", background: "#fafafa", borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.text }}>
+              {v.chiefComplaint && (
+                <div style={{ marginBottom: 4 }}>
+                  <span style={{ color: C.muted, fontWeight: 600 }}>Complaint: </span>
+                  {v.chiefComplaint}
+                </div>
+              )}
+              {dxParts.length > 0 && (
+                <div>
+                  <span style={{ color: C.muted, fontWeight: 600 }}>Diagnosis: </span>
+                  {dxParts.join(" · ")}
+                  {v.icd10Code && <span style={{ marginLeft: 8, fontFamily: "'DM Mono', monospace", fontSize: 11, color: C.muted }}>[{v.icd10Code}]</span>}
+                </div>
+              )}
+              {!v.chiefComplaint && dxParts.length === 0 && (
+                <span style={{ color: C.muted, fontStyle: "italic" }}>No diagnosis recorded yet — doctor may still be assessing.</span>
+              )}
+            </div>
+
+            {/* Medicines table */}
+            {meds.length === 0 ? (
+              <div style={{ padding: 18, textAlign: "center", color: C.muted, fontSize: 12, fontStyle: "italic" }}>
+                No medicines prescribed in this visit.
+              </div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: "#f1f5f9" }}>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, fontWeight: 700 }}>Medicine</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, fontWeight: 700, width: 110 }}>Dose</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, fontWeight: 700, width: 110 }}>Frequency</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, fontWeight: 700, width: 100 }}>Duration</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, fontWeight: 700, width: 110 }}>Meal</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, fontWeight: 700, width: 130 }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {meds.map((m, i) => (
+                    <tr key={i} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.border}` }}>
+                      <td style={{ padding: "8px 12px", fontWeight: 700, color: C.text }}>
+                        {m.medicineName || "—"}
+                        {m.instructions && (
+                          <div style={{ fontSize: 10, fontWeight: 500, color: C.muted, marginTop: 1, fontStyle: "italic" }}>
+                            {m.instructions}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>{m.dosage || "—"}</td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>{m.frequency || "—"}</td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>{m.duration || "—"}</td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>
+                        {m.mealStatus
+                          ? <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700, background: "#e0f2fe", color: "#0369a1" }}>{m.mealStatus}</span>
+                          : "—"}
+                      </td>
+                      <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                        <button onClick={() => openQuickDispense(m, v)} style={{
+                          padding: "5px 12px", background: C.orange, color: "#fff", border: "none",
+                          borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                        }}>
+                          <i className="pi pi-check" style={{ marginRight: 4, fontSize: 10 }} />
+                          Dispense
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {v.advice && (
+              <div style={{ padding: "10px 14px", background: "#fffbeb", borderTop: `1px solid ${C.border}`, fontSize: 11, color: "#a16207" }}>
+                <strong>Advice: </strong>{v.advice}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Quick-Dispense Modal — small, single-line sale per click. */}
+      {qdOpen && (
+        <div onClick={() => !qdSaving && setQdOpen(false)} style={{
+          position: "fixed", inset: 0, background: "rgba(15,23,42,.55)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10000,
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            width: 520, maxWidth: "90vw", background: "#fff", borderRadius: 14,
+            boxShadow: "0 20px 50px rgba(0,0,0,.3)", padding: 22,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>
+                <i className="pi pi-shopping-cart" style={{ marginRight: 6, color: C.orange }} />
+                Quick Dispense
+              </div>
+              <button onClick={() => !qdSaving && setQdOpen(false)} style={{
+                background: "transparent", border: "none", fontSize: 20, color: C.muted, cursor: "pointer",
+              }}>×</button>
+            </div>
+
+            {/* Doctor's prescription block — reminds the pharmacist what's
+                being sold so they can sanity-check qty (e.g. 5 days × TDS
+                = 15 tabs, not 5). */}
+            <div style={{ background: "#fff7ed", border: `1px solid #fed7aa`, borderRadius: 8, padding: "8px 12px", fontSize: 11.5, color: C.text, marginBottom: 14 }}>
+              <div><strong>{qdMed?.medicineName}</strong></div>
+              <div style={{ color: C.muted, marginTop: 2 }}>
+                {[qdMed?.dosage, qdMed?.frequency, qdMed?.duration, qdMed?.mealStatus].filter(Boolean).join(" · ")}
+              </div>
+              {qdMed?.instructions && <div style={{ color: C.muted, marginTop: 2, fontStyle: "italic" }}>{qdMed.instructions}</div>}
+            </div>
+
+            {/* Inventory drug picker */}
+            <label style={{ display: "block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted, marginBottom: 4 }}>
+              Inventory Drug
+            </label>
+            <input
+              className="his-input"
+              value={qdDrugSearch}
+              onChange={(e) => { setQdDrugSearch(e.target.value); setQdDrug(null); }}
+              placeholder="Search brand or generic…"
+              style={{ width: "100%", marginBottom: 6 }}
+            />
+            {qdMatches.length > 0 && !qdDrug && (
+              <div style={{
+                border: `1px solid ${C.border}`, borderRadius: 8, maxHeight: 180, overflowY: "auto",
+                marginBottom: 10, background: "#fff",
+              }}>
+                {qdMatches.map((d) => (
+                  <div key={d._id} onClick={() => pickDrug(d)} style={{
+                    padding: "7px 12px", cursor: "pointer", fontSize: 12, borderBottom: `1px solid ${C.border}`,
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                  }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#fff7ed"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 700, color: C.text }}>{d.brandName || d.genericName || d.name}</div>
+                      {d.genericName && d.brandName && <div style={{ fontSize: 10, color: C.muted }}>{d.genericName}</div>}
+                    </div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.orange }}>
+                      ₹{Number(d.sellPrice || d.mrp || 0).toFixed(2)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {qdDrug && (
+              <div style={{ padding: "8px 12px", background: "#dcfce7", color: "#15803d", borderRadius: 6, fontSize: 11.5, marginBottom: 10 }}>
+                <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                  <i className="pi pi-check" />
+                  {qdDrug.brandName || qdDrug.genericName || qdDrug.name} — selected
+                </div>
+                {/* R7cy — surface FEFO batch info so the pharmacist sees
+                    WHERE the price came from and which physical stock will
+                    be consumed. Empty-stock warning if no in-stock batch
+                    was found — backend will reject the sale, so flag it
+                    early instead of letting submit fail. */}
+                {qdBatchLoading ? (
+                  <div style={{ fontSize: 10.5, color: "#166534", marginTop: 3, fontStyle: "italic" }}>
+                    <i className="pi pi-spin pi-spinner" style={{ marginRight: 4, fontSize: 10 }} />
+                    Looking up FEFO batch…
+                  </div>
+                ) : qdFefoBatch ? (
+                  <div style={{ fontSize: 10.5, color: "#166534", marginTop: 3 }}>
+                    Batch <strong style={{ fontFamily: "'DM Mono', monospace" }}>{qdFefoBatch.batchNo}</strong>
+                    {qdFefoBatch.expiryDate && (
+                      <> · exp {new Date(qdFefoBatch.expiryDate).toLocaleDateString("en-IN", { month: "short", year: "numeric" })}</>
+                    )}
+                    {" · "}stock {Number(qdFefoBatch.remaining ?? qdFefoBatch.qtyRemaining ?? 0)}
+                    {" · "}price ₹{Number(qdFefoBatch.salePrice ?? qdFefoBatch.sellPrice ?? 0).toFixed(2)}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 10.5, color: "#b91c1c", marginTop: 3, fontWeight: 600 }}>
+                    <i className="pi pi-exclamation-triangle" style={{ marginRight: 4, fontSize: 10 }} />
+                    No in-stock batch — GRN this drug first or pick a different brand.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Qty + price + payment */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: C.muted, marginBottom: 3 }}>Qty</label>
+                <input type="number" min="1" className="his-input" value={qdQty}
+                  onChange={(e) => setQdQty(e.target.value)} style={{ width: "100%" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: C.muted, marginBottom: 3 }}>Unit ₹</label>
+                <input type="number" min="0" step="0.01" className="his-input" value={qdUnitPrice}
+                  onChange={(e) => setQdUnitPrice(e.target.value)} style={{ width: "100%" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: C.muted, marginBottom: 3 }}>Payment</label>
+                <select className="his-select" value={qdPaymentMode}
+                  onChange={(e) => setQdPaymentMode(e.target.value)} style={{ width: "100%" }}>
+                  {(PAYMENT_MODES || ["Cash", "Card", "UPI"]).map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${C.border}`, paddingTop: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
+                Total: ₹{(Number(qdQty || 0) * Number(qdUnitPrice || 0)).toFixed(2)}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setQdOpen(false)} disabled={qdSaving} style={{
+                  padding: "8px 16px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
+                  borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: qdSaving ? "not-allowed" : "pointer",
+                }}>Cancel</button>
+                <button onClick={submitQuickDispense} disabled={qdSaving || !qdDrug} style={{
+                  padding: "8px 18px", background: (qdSaving || !qdDrug) ? "#94a3b8" : C.orange,
+                  color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 12,
+                  cursor: (qdSaving || !qdDrug) ? "not-allowed" : "pointer",
+                }}>
+                  <i className={`pi ${qdSaving ? "pi-spin pi-spinner" : "pi-check"}`} style={{ marginRight: 5 }} />
+                  {qdSaving ? "Dispensing…" : "Confirm & Sell"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+   R7cu — IPD CREDIT LEDGER TAB
+   Pharmacist sees every active IPD admission with pharmacy
+   outstanding > 0, drills in to collect payment. The discharge
+   flow at admissionController.clearFinalBill is HARD-blocked
+   on the same outstanding > 0 condition, so this tab is the
+   only place that credit can be cleared before discharge.
+══════════════════════════════════════════════════════════════════ */
+function IPDCreditTab() {
+  const [loading, setLoading]   = useState(false);
+  const [rows, setRows]         = useState([]);
+  const [summary, setSummary]   = useState({ admissions: 0, totalOutstanding: 0 });
+  const [openAdm, setOpenAdm]   = useState(null);  // selected admission detail blob
+  const [openLoading, setOpenLoading] = useState(false);
+
+  // R7cv — Per-day history of all IPD credit sales (both outstanding +
+  // already-paid). Pharmacist asked for "every IPD jisme pharmacy se
+  // credit pr kuch gya hai" — not just current outstanding.
+  const [histLoading, setHistLoading] = useState(false);
+  const [hist, setHist]               = useState([]);                // [{dateKey, totalDispensed, ..., bills:[]}]
+  const [histSummary, setHistSummary] = useState({ days: 0, bills: 0, totalDispensed: 0, totalCollected: 0, totalOutstanding: 0 });
+  const [histDays, setHistDays]       = useState(30);                // window selector
+  const [expandedDay, setExpandedDay] = useState(null);              // dateKey of the open day-card
+
+  // Per-bill collection modal — open with `setCollect({sale, max})`.
+  const [collect, setCollect] = useState(null);
+  const [colAmt, setColAmt]   = useState("");
+  const [colMode, setColMode] = useState("Cash");
+  const [colTxn, setColTxn]   = useState("");
+  const [colNotes, setColNotes] = useState("");
+  const [colSaving, setColSaving] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/credit/ipd-admissions`);
+      setRows(r?.data?.data || []);
+      setSummary(r?.data?.summary || { admissions: 0, totalOutstanding: 0 });
+    } catch (e) {
+      // R7cv: if the new credit route 404s, the backend likely needs
+      // restart — make the message actionable instead of just relaying
+      // a generic "Route not found".
+      const status = e?.response?.status;
+      const isMissingRoute = status === 404 || e?.response?.data?.message === "Route not found";
+      toast.error(isMissingRoute
+        ? "Pharmacy credit endpoint unavailable — backend may need restart to pick up R7cu routes."
+        : (e?.response?.data?.message || "Failed to load IPD credit ledger"));
+    } finally { setLoading(false); }
+  };
+  const loadHistory = async (days = histDays) => {
+    setHistLoading(true);
+    try {
+      const r = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/credit/ipd-history?days=${days}`);
+      setHist(r?.data?.data || []);
+      setHistSummary(r?.data?.summary || { days: 0, bills: 0, totalDispensed: 0, totalCollected: 0, totalOutstanding: 0 });
+    } catch (e) {
+      // Quietly fail — the outstanding view above is the primary, the
+      // history is the audit overlay. A backend-restart-pending toast
+      // already fires from load() so we don't double-notify.
+      console.warn("[IPDCreditTab] history fetch failed:", e?.message);
+      setHist([]);
+    } finally { setHistLoading(false); }
+  };
+  useEffect(() => { load(); loadHistory(); }, []);
+
+  const openAdmission = async (adm) => {
+    setOpenLoading(true);
+    setOpenAdm({ admission: null, openSales: [], closedSales: [], totalOutstanding: 0, _meta: adm });
+    try {
+      const r = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/credit/admission/${adm.admissionId}`);
+      setOpenAdm({ ...(r?.data?.data || {}), _meta: adm });
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Failed to load credit detail");
+    } finally { setOpenLoading(false); }
+  };
+
+  const startCollect = (sale) => {
+    const bal = Number(sale.balanceDue?.toString?.() ?? sale.balanceDue ?? 0);
+    setCollect({ sale, max: bal });
+    setColAmt(String(bal.toFixed(2)));   // default = clear in full
+    setColMode("Cash");
+    setColTxn("");
+    setColNotes("");
+  };
+
+  const submitCollect = async () => {
+    if (!collect?.sale?._id) return;
+    const amt = Number(colAmt);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      toast.warn("Enter a positive collection amount"); return;
+    }
+    if (amt > collect.max + 0.01) {
+      toast.warn(`Amount cannot exceed outstanding ₹${collect.max.toFixed(2)}`); return;
+    }
+    setColSaving(true);
+    try {
+      const r = await axios.post(
+        `${API_ENDPOINTS.BASE}/pharmacy/sales/${collect.sale._id}/collect-credit`,
+        { amount: amt, mode: colMode, txnRef: colTxn, notes: colNotes },
+      );
+      toast.success(r?.data?.message || "Collection recorded");
+      setCollect(null);
+      // Refresh both the list AND the open admission drawer so the
+      // outstanding numbers move immediately. Also reload the per-day
+      // history (R7cv) so today's collected total bumps + outstanding
+      // drops in real-time.
+      await load();
+      await loadHistory();
+      if (openAdm?._meta) await openAdmission(openAdm._meta);
+    } catch (e) {
+      const msg = e?.response?.data?.message || e.message || "Collect failed";
+      toast.error(msg);
+    } finally { setColSaving(false); }
+  };
+
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+      {/* Hero strip */}
+      <div style={{ display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 220px", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 10, padding: "12px 16px" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "#92400e" }}>
+            Admissions with Outstanding
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#92400e", marginTop: 4, fontFamily: "'DM Mono', monospace" }}>
+            {summary.admissions}
+          </div>
+        </div>
+        <div style={{ flex: "1 1 220px", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 10, padding: "12px 16px" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "#b91c1c" }}>
+            Total Pharmacy Outstanding
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#b91c1c", marginTop: 4, fontFamily: "'DM Mono', monospace" }}>
+            {fmtINR(summary.totalOutstanding)}
+          </div>
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
+          <button onClick={load} disabled={loading} style={{
+            padding: "8px 14px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
+            borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12,
+          }}>
+            <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} style={{ marginRight: 5 }} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Hard-block notice */}
+      <div style={{
+        background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af",
+        borderRadius: 8, padding: "8px 14px", fontSize: 11.5, marginBottom: 14,
+        display: "flex", alignItems: "center", gap: 8,
+      }}>
+        <i className="pi pi-lock" style={{ fontSize: 12 }} />
+        <span><strong>Discharge gate active.</strong> Until every row below shows ₹0 outstanding, the receptionist cannot clear the patient's final bill — they'll see a 409 with a deep-link to this tab.</span>
+      </div>
+
+      {loading && rows.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", color: C.muted }}>
+          <i className="pi pi-spin pi-spinner" style={{ fontSize: 24 }} />
+        </div>
+      ) : rows.length === 0 ? (
+        <div style={{ padding: 36, textAlign: "center", background: "#f0fdf4", border: "1px dashed #86efac", borderRadius: 10, color: "#15803d", fontSize: 13 }}>
+          <i className="pi pi-check-circle" style={{ fontSize: 22, marginBottom: 8, display: "block" }} />
+          All IPD pharmacy bills are fully paid. No admissions blocking discharge.
+        </div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: "#f1f5f9" }}>
+              <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px" }}>Admission</th>
+              <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px" }}>Patient</th>
+              <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px" }}>Bed / Ward</th>
+              <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", width: 80 }}>Bills</th>
+              <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", width: 130 }}>Outstanding</th>
+              <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", width: 110 }}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={String(r.admissionId)} style={{ borderTop: `1px solid ${C.border}` }}>
+                <td style={{ padding: "8px 12px", fontFamily: "'DM Mono', monospace", fontWeight: 700, color: C.text }}>
+                  {r.admissionNumber}
+                  {r.admissionStatus !== "Active" && (
+                    <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", borderRadius: 8, background: "#f1f5f9", color: C.muted, fontWeight: 700 }}>
+                      {r.admissionStatus}
+                    </span>
+                  )}
+                </td>
+                <td style={{ padding: "8px 12px", color: C.text }}>
+                  <div style={{ fontWeight: 700 }}>{r.patientFullName || "—"}</div>
+                  <div style={{ fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace" }}>{r.UHID}</div>
+                </td>
+                <td style={{ padding: "8px 12px", color: C.text, fontSize: 11 }}>
+                  {r.bedNumber} · {r.wardName}
+                </td>
+                <td style={{ padding: "8px 12px", textAlign: "right", color: C.text, fontFamily: "'DM Mono', monospace" }}>
+                  {r.billCount}
+                </td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: "#b91c1c", fontFamily: "'DM Mono', monospace" }}>
+                  {fmtINR(r.outstanding)}
+                </td>
+                <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                  <button onClick={() => openAdmission(r)} style={{
+                    padding: "5px 12px", background: C.orange, color: "#fff", border: "none",
+                    borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                  }}>
+                    <i className="pi pi-arrow-right" style={{ marginRight: 4, fontSize: 10 }} />
+                    Collect
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {/* ── R7cv: Per-Day History ─────────────────────────────────
+          The outstanding table above is "what blocks discharge RIGHT
+          NOW". This section is "what went out on credit, every day,
+          regardless of whether it's been paid since" — pharmacist
+          audit view + cross-check against ward registers. */}
+      <div style={{ marginTop: 22 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.text, letterSpacing: ".2px" }}>
+            <i className="pi pi-calendar" style={{ marginRight: 6, color: C.orange }} />
+            Day-wise IPD Credit Ledger
+          </div>
+          <select
+            value={histDays}
+            onChange={(e) => { const d = Number(e.target.value); setHistDays(d); loadHistory(d); }}
+            className="his-select"
+            style={{ fontSize: 11, padding: "4px 10px" }}
+          >
+            <option value={7}>Last 7 days</option>
+            <option value={15}>Last 15 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={60}>Last 60 days</option>
+            <option value={90}>Last 90 days</option>
+            <option value={180}>Last 180 days</option>
+          </select>
+          <div style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>
+            {histSummary.bills} bill{histSummary.bills === 1 ? "" : "s"} · Dispensed <strong style={{ color: C.text }}>{fmtINR(histSummary.totalDispensed)}</strong>
+            {" · "}Collected <strong style={{ color: C.green }}>{fmtINR(histSummary.totalCollected)}</strong>
+            {histSummary.totalOutstanding > 0 && <> · Outstanding <strong style={{ color: "#b91c1c" }}>{fmtINR(histSummary.totalOutstanding)}</strong></>}
+          </div>
+        </div>
+
+        {histLoading && hist.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", color: C.muted }}>
+            <i className="pi pi-spin pi-spinner" style={{ fontSize: 20 }} />
+          </div>
+        ) : hist.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", background: "#f8fafc", border: `1px dashed ${C.border}`, borderRadius: 8, color: C.muted, fontSize: 12 }}>
+            No IPD credit dispensed in the last {histDays} days.
+          </div>
+        ) : (
+          <div>
+            {hist.map((day) => {
+              const open  = expandedDay === day.dateKey;
+              const date  = new Date(day.dateKey);
+              const label = date.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+              return (
+                <div key={day.dateKey} style={{ border: `1px solid ${C.border}`, borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
+                  <div onClick={() => setExpandedDay(open ? null : day.dateKey)} style={{
+                    cursor: "pointer", display: "flex", alignItems: "center", gap: 12,
+                    padding: "10px 14px", background: open ? "#fff7ed" : "#fff",
+                  }}>
+                    <i className={`pi ${open ? "pi-chevron-down" : "pi-chevron-right"}`} style={{ fontSize: 11, color: C.muted }} />
+                    <span style={{ fontWeight: 800, fontSize: 12.5, color: C.text }}>{label}</span>
+                    <span style={{ fontSize: 11, color: C.muted, padding: "1px 8px", background: "#f1f5f9", borderRadius: 10, fontWeight: 700 }}>
+                      {day.billCount} bill{day.billCount === 1 ? "" : "s"}
+                    </span>
+                    <div style={{ marginLeft: "auto", display: "flex", gap: 16, fontSize: 11.5 }}>
+                      <span><span style={{ color: C.muted }}>Dispensed </span><strong style={{ color: C.text, fontFamily: "'DM Mono', monospace" }}>{fmtINR(day.totalDispensed)}</strong></span>
+                      <span><span style={{ color: C.muted }}>Collected </span><strong style={{ color: C.green, fontFamily: "'DM Mono', monospace" }}>{fmtINR(day.totalCollected)}</strong></span>
+                      <span>
+                        <span style={{ color: C.muted }}>Outstanding </span>
+                        <strong style={{
+                          color: day.totalOutstanding > 0 ? "#b91c1c" : "#15803d",
+                          fontFamily: "'DM Mono', monospace",
+                        }}>{fmtINR(day.totalOutstanding)}</strong>
+                      </span>
+                    </div>
+                  </div>
+                  {open && (
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, borderTop: `1px solid ${C.border}` }}>
+                      <thead>
+                        <tr style={{ background: "#fafafa" }}>
+                          <th style={{ padding: "6px 12px", textAlign: "left", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Bill #</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Admission</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Patient</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Items</th>
+                          <th style={{ padding: "6px 12px", textAlign: "right", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", width: 100 }}>Total</th>
+                          <th style={{ padding: "6px 12px", textAlign: "right", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", width: 100 }}>Paid</th>
+                          <th style={{ padding: "6px 12px", textAlign: "right", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", width: 110 }}>Outstanding</th>
+                          <th style={{ padding: "6px 12px", textAlign: "center", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", width: 90 }}>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {day.bills.map(b => (
+                          // R7db-2 — Use a composite key. INDENT rows reuse the
+                          // PatientBill _id across multiple days, so a plain
+                          // b._id collides. Suffix with dateKey + source.
+                          <tr key={`${b._id}-${day.dateKey}-${b.source || "SALE"}`} style={{ borderTop: `1px solid ${C.border}` }}>
+                            <td style={{ padding: "6px 12px", fontFamily: "'DM Mono', monospace", color: C.text, fontWeight: 700 }}>
+                              {b.billNumber}
+                              {/* R7db-2 — source pill: INDENT (ward) vs SALE (counter) */}
+                              {b.source === "INDENT" && (
+                                <span style={{ marginLeft: 6, fontSize: 8, fontWeight: 800, color: "#fff", background: "#b45309", padding: "1px 5px", borderRadius: 3 }}>
+                                  INDENT
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ padding: "6px 12px", fontFamily: "'DM Mono', monospace", color: C.muted, fontSize: 10.5 }}>{b.admissionNumber || "—"}</td>
+                            <td style={{ padding: "6px 12px", color: C.text }}>
+                              <div style={{ fontWeight: 600 }}>{b.patientName || "—"}</div>
+                              <div style={{ fontSize: 9.5, color: C.muted, fontFamily: "'DM Mono', monospace" }}>{b.UHID}</div>
+                            </td>
+                            <td style={{ padding: "6px 12px", color: C.muted, fontSize: 10.5, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                              title={(b.items || []).map(i => `${i.drugName} × ${i.quantity}`).join(", ")}>
+                              {(b.items || []).slice(0, 2).map(i => `${i.drugName} × ${i.quantity}`).join(", ")}
+                              {(b.items || []).length > 2 && ` +${b.items.length - 2}`}
+                            </td>
+                            <td style={{ padding: "6px 12px", textAlign: "right", fontFamily: "'DM Mono', monospace", color: C.text }}>{fmtINR(b.grandTotal)}</td>
+                            <td style={{ padding: "6px 12px", textAlign: "right", fontFamily: "'DM Mono', monospace", color: C.green }}>{fmtINR(b.amountPaid)}</td>
+                            <td style={{ padding: "6px 12px", textAlign: "right", fontFamily: "'DM Mono', monospace", color: b.balanceDue > 0 ? "#b91c1c" : "#15803d", fontWeight: 700 }}>
+                              {fmtINR(b.balanceDue)}
+                            </td>
+                            <td style={{ padding: "6px 12px", textAlign: "center" }}>
+                              <span style={{
+                                padding: "2px 8px", borderRadius: 10, fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px",
+                                background: b.cleared ? "#dcfce7" : "#fef3c7",
+                                color:      b.cleared ? "#15803d" : "#a16207",
+                              }}>
+                                {b.cleared ? "Paid" : "Credit"}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Drill-down drawer */}
+      {openAdm && (
+        <div onClick={() => setOpenAdm(null)} style={{
+          position: "fixed", inset: 0, background: "rgba(15,23,42,.55)",
+          display: "flex", alignItems: "stretch", justifyContent: "flex-end", zIndex: 9999,
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            width: 720, maxWidth: "95vw", background: "#fff",
+            boxShadow: "-12px 0 40px rgba(0,0,0,.3)", padding: 22, overflowY: "auto",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>
+                Pharmacy Credit — {openAdm._meta?.admissionNumber}
+              </div>
+              <button onClick={() => setOpenAdm(null)} style={{
+                background: "transparent", border: "none", fontSize: 22, color: C.muted, cursor: "pointer",
+              }}>×</button>
+            </div>
+
+            {openLoading || !openAdm.admission ? (
+              <div style={{ padding: 60, textAlign: "center", color: C.muted }}>
+                <i className="pi pi-spin pi-spinner" style={{ fontSize: 24 }} />
+              </div>
+            ) : (
+              <>
+                <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 11.5 }}>
+                  <div style={{ fontWeight: 800, color: C.text, fontSize: 13, marginBottom: 4 }}>
+                    {openAdm.admission.patientId?.fullName || openAdm._meta?.patientName}
+                  </div>
+                  <div style={{ color: C.muted }}>
+                    <span style={{ fontFamily: "'DM Mono', monospace" }}>{openAdm.admission.UHID}</span>
+                    {openAdm.admission.patientId?.age != null && <> · {openAdm.admission.patientId.age}y</>}
+                    {openAdm.admission.patientId?.gender && <> · {openAdm.admission.patientId.gender}</>}
+                    {openAdm.admission.patientId?.contactNumber && <> · <i className="pi pi-phone" style={{ fontSize: 9 }} /> {openAdm.admission.patientId.contactNumber}</>}
+                  </div>
+                  <div style={{ color: C.muted, marginTop: 2 }}>
+                    Bed {openAdm.admission.bedId?.bedNumber || "—"} · {openAdm.admission.bedId?.wardName || openAdm.admission.wardName || openAdm.admission.department || "—"}
+                    {openAdm.admission.primaryConsultant && <> · {openAdm.admission.primaryConsultant}</>}
+                  </div>
+                </div>
+
+                {/* Open (outstanding) bills */}
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#b91c1c", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 6 }}>
+                  Outstanding Bills · {fmtINR(openAdm.totalOutstanding)}
+                </div>
+                {openAdm.openSales.length === 0 ? (
+                  <div style={{ padding: 18, textAlign: "center", color: "#15803d", background: "#f0fdf4", borderRadius: 8, fontSize: 12, marginBottom: 14 }}>
+                    <i className="pi pi-check-circle" style={{ marginRight: 6 }} />
+                    Fully cleared — discharge is unblocked.
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: 14 }}>
+                    {openAdm.openSales.map((s) => {
+                      const bal   = Number(s.balanceDue?.toString?.() ?? s.balanceDue ?? 0);
+                      const total = Number(s.grandTotal?.toString?.() ?? s.grandTotal ?? 0);
+                      const paid  = Number(s.amountPaid?.toString?.() ?? s.amountPaid ?? 0);
+                      return (
+                        <div key={s._id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 8 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, fontSize: 12, color: C.text }}>
+                              {s.billNumber}
+                            </span>
+                            <span style={{ fontSize: 10, color: C.muted }}>
+                              {new Date(s.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.muted, marginBottom: 6 }}>
+                            <span>Total {fmtINR(total)} · Paid {fmtINR(paid)}</span>
+                            <strong style={{ color: "#b91c1c" }}>Due {fmtINR(bal)}</strong>
+                          </div>
+                          {Array.isArray(s.items) && s.items.length > 0 && (
+                            <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8, fontStyle: "italic" }}>
+                              {s.items.slice(0, 3).map(i => i.drugName).join(", ")}
+                              {s.items.length > 3 && ` +${s.items.length - 3} more`}
+                            </div>
+                          )}
+                          <button onClick={() => startCollect(s)} style={{
+                            padding: "6px 14px", background: C.green, color: "#fff", border: "none",
+                            borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                          }}>
+                            <i className="pi pi-wallet" style={{ marginRight: 5, fontSize: 10 }} />
+                            Collect ₹{bal.toFixed(2)}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* R7db-2 — Ward-dispensed indent items (PatientBill PHARM-* lines).
+                    These never become PharmacySale rows — they live on the
+                    admission's IPD PatientBill via autoBillingService.onIndentReleased.
+                    Collection happens through the receptionist's bill-payment flow,
+                    not the pharmacy collect-credit endpoint, so we surface them
+                    as read-only here with a deep-link to the patient billing page. */}
+                {Array.isArray(openAdm.openBills) && openAdm.openBills.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: "#b45309", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 6, marginTop: 4 }}>
+                      Ward-Dispensed (Indent) · {fmtINR(openAdm.breakdown?.wardIndent || 0)}
+                    </div>
+                    <div style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 12px", fontSize: 10.5, color: "#92400e", marginBottom: 8, lineHeight: 1.5 }}>
+                      <i className="pi pi-info-circle" style={{ marginRight: 5 }} />
+                      Drugs released to the ward against nurse-raised indents.
+                      Charged on the IPD bill and collected at the reception
+                      billing counter (not at the pharmacy counter).
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                      {openAdm.openBills.map((b) => (
+                        <div key={b._id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 8, background: "#fffbeb" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, fontSize: 12, color: C.text }}>
+                              {b.billNumber}
+                              <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: "#fff", background: "#b45309", padding: "1px 6px", borderRadius: 4 }}>
+                                INDENT
+                              </span>
+                            </span>
+                            <span style={{ fontSize: 10, color: C.muted }}>
+                              {b.createdAt && new Date(b.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}
+                              {" · "}{b.billStatus}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.muted, marginBottom: 6 }}>
+                            <span>Pharmacy items {fmtINR(b.pharmNet)} · Bill bal {fmtINR(b.billBalance)}</span>
+                            <strong style={{ color: "#b45309" }}>Pharmacy share {fmtINR(b.pharmBalance)}</strong>
+                          </div>
+                          {Array.isArray(b.items) && b.items.length > 0 && (
+                            <div style={{ fontSize: 10.5, color: C.muted, fontStyle: "italic" }}>
+                              {b.items.slice(0, 4).map(i => `${i.serviceName || i.serviceCode} ×${i.quantity}`).join(", ")}
+                              {b.items.length > 4 && ` +${b.items.length - 4} more`}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {/* Already-paid bills (history) */}
+                {openAdm.closedSales.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: "#15803d", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 6 }}>
+                      Already Cleared
+                    </div>
+                    <div style={{ fontSize: 11 }}>
+                      {openAdm.closedSales.map((s) => {
+                        const total = Number(s.grandTotal?.toString?.() ?? s.grandTotal ?? 0);
+                        return (
+                          <div key={s._id} style={{ padding: "6px 12px", border: `1px solid ${C.border}`, borderRadius: 6, marginBottom: 4, display: "flex", justifyContent: "space-between", color: C.muted }}>
+                            <span style={{ fontFamily: "'DM Mono', monospace" }}>{s.billNumber}</span>
+                            <span>{fmtINR(total)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Collection modal */}
+      {collect && (
+        <div onClick={() => !colSaving && setCollect(null)} style={{
+          position: "fixed", inset: 0, background: "rgba(15,23,42,.55)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10001,
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            width: 460, maxWidth: "90vw", background: "#fff", borderRadius: 14, padding: 22,
+            boxShadow: "0 20px 50px rgba(0,0,0,.3)",
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.text, marginBottom: 12 }}>
+              <i className="pi pi-wallet" style={{ marginRight: 6, color: C.green }} />
+              Collect Pharmacy Credit
+            </div>
+            <div style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 12px", fontSize: 11.5, color: "#92400e", marginBottom: 12 }}>
+              <strong>{collect.sale.billNumber}</strong> · Outstanding <strong>₹{collect.max.toFixed(2)}</strong>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Amount</label>
+                <input type="number" min="0" step="0.01" className="his-input"
+                  value={colAmt} onChange={(e) => setColAmt(e.target.value)}
+                  style={{ width: "100%", fontFamily: "'DM Mono', monospace", fontWeight: 700 }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Mode</label>
+                <select className="his-select" value={colMode}
+                  onChange={(e) => setColMode(e.target.value)} style={{ width: "100%" }}>
+                  {["Cash", "Card", "UPI", "Mixed"].map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Txn Ref (optional)</label>
+              <input className="his-input" value={colTxn}
+                onChange={(e) => setColTxn(e.target.value)}
+                placeholder="UPI ref / card last-4 / cheque #"
+                style={{ width: "100%" }} />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Notes (optional)</label>
+              <input className="his-input" value={colNotes}
+                onChange={(e) => setColNotes(e.target.value)}
+                placeholder="e.g. paid by family member at counter"
+                style={{ width: "100%" }} />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={() => setCollect(null)} disabled={colSaving} style={{
+                padding: "8px 16px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
+                borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: colSaving ? "not-allowed" : "pointer",
+              }}>Cancel</button>
+              <button onClick={submitCollect} disabled={colSaving} style={{
+                padding: "8px 18px", background: colSaving ? "#94a3b8" : C.green,
+                color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 12,
+                cursor: colSaving ? "not-allowed" : "pointer",
+              }}>
+                <i className={`pi ${colSaving ? "pi-spin pi-spinner" : "pi-check"}`} style={{ marginRight: 5 }} />
+                {colSaving ? "Recording…" : "Confirm Collection"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

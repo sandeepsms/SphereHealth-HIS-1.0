@@ -134,10 +134,9 @@ const HousekeepingConsole     = lazy(() => import("./pages/housekeeping/Housekee
 const HousekeepingManagerDashboard = lazy(() => import("./pages/housekeeping/HousekeepingManagerDashboard"));
 // R7bj-F1 — Physiotherapy module greenfield (NABH COP.20)
 const PhysiotherapistConsole  = lazy(() => import("./pages/physiotherapist/PhysiotherapistConsole"));
-// R7bj-F2 — Kitchen indent close-loop (NABH COP.21, FSSAI)
-const KitchenConsole          = lazy(() => import("./pages/kitchen/KitchenConsole"));
+// R7cq: KitchenConsole + ColdChainPage imports removed — modules deprecated.
+// Page files deleted; routes (/kitchen, /cold-chain) also removed below.
 // R7bk — Sidebar coverage stubs for backend-only modules
-const ColdChainPage           = lazy(() => import("./pages/pharmacy/ColdChainPage"));
 const FoodReactionsPage       = lazy(() => import("./pages/quality/FoodReactionsPage"));
 const BmwManifestPage         = lazy(() => import("./pages/compliance/BmwManifestPage"));
 const CodeResponsePage        = lazy(() => import("./pages/compliance/CodeResponsePage"));
@@ -145,12 +144,10 @@ const SharpsInjuryPage        = lazy(() => import("./pages/clinical/SharpsInjury
 const TaxReturnsPage          = lazy(() => import("./pages/accounts/TaxReturnsPage"));
 const TdsCertificatesPage     = lazy(() => import("./pages/accounts/TdsCertificatesPage"));
 const LabResultsEntry         = lazy(() => import("./pages/lab/LabResultsEntry"));
-// R7bd-E-5 / A3-MED-18: Lab Tech multi-tab console (sample queue,
-// result-entry queue, QC log, day worksheet).
-const LabTechConsole          = lazy(() => import("./pages/lab/LabTechConsole"));
-// R7bd-E-6 / A3-HIGH-10: Radiologist console stub (worklist, reported,
-// pending sign-off).
-const RadiologistConsole      = lazy(() => import("./pages/radiology/RadiologistConsole"));
+// R7cq: LabTechConsole + RadiologistConsole imports removed — consoles
+// deprecated. Page files deleted; routes (/lab-console, /radiology-console)
+// also removed below. Manual Lab Entry stays (lab + imaging are outsourced
+// at this hospital so transcription is the only in-system workflow).
 
 // Clinical pages
 const NurseOPDQueuePage = lazy(() => import("./pages/nurse/NurseOPDQueuePage"));
@@ -165,6 +162,11 @@ const DoctorOPDPanelPage = lazy(() => import("./pages/doctor/DoctorOPDPanelPage"
 // hasn't been migrated, but the routes below point at the unified one.
 const PatientLookupPage = lazy(() => import("./pages/patient/PatientLookupPage"));
 const CompletePatientFilePage = lazy(() => import("./pages/patient/CompletePatientFilePage"));
+// PatientHistoryViewPage — two-tab read-only view (OPD History per UHID +
+// chronological IPD File per admission). Sits alongside CompletePatientFile
+// and gives clinicians a quicker, more focused "what happened, in order"
+// lens onto the patient. Powered by /api/patient-history/*.
+const PatientHistoryViewPage = lazy(() => import("./pages/patient/PatientHistoryViewPage"));
 // R7i — Medical Records Department (paperless MRD)
 const MRDRecentDischargesPage = lazy(() => import("./pages/mrd/MRDRecentDischargesPage"));
 const GateLogPage = lazy(() => import("./pages/security/GateLogPage"));
@@ -176,6 +178,13 @@ const ADRReportsPage = lazy(() => import("./pages/quality/ADRReportsPage"));
 const FireDrillRegisterPage = lazy(() => import("./pages/compliance/FireDrillRegisterPage"));
 // R7bo — NABH Inspection Dashboard (RBS / Emergency / Blood Transfusion).
 const NABHRegistersDashboard = lazy(() => import("./pages/compliance/NABHRegistersDashboard"));
+// R7bx — six new surveyor-facing NABH registers (COP.10/13/16/17/18 + MOM.7).
+const OTRegisterPage                = lazy(() => import("./pages/nabh/OTRegisterPage"));
+const ASARegisterPage               = lazy(() => import("./pages/nabh/ASARegisterPage"));
+const ReadmissionRegisterPage       = lazy(() => import("./pages/nabh/ReadmissionRegisterPage"));
+const MortalityRegisterPage         = lazy(() => import("./pages/nabh/MortalityRegisterPage"));
+const RestraintRegisterPage         = lazy(() => import("./pages/nabh/RestraintRegisterPage"));
+const AntimicrobialUseRegisterPage  = lazy(() => import("./pages/nabh/AntimicrobialUseRegisterPage"));
 // R7bq — DVT/VTE Caprini assessment (auto-pops DVT register).
 const CapriniDVTAssessmentPage = lazy(() => import("./pages/nursing/CapriniDVTAssessmentPage"));
 const CredentialingPage = lazy(() => import("./pages/hr/CredentialingPage"));
@@ -196,7 +205,14 @@ const DoctorNotesPage = lazy(() => import("./pages/doctor/DoctorNotesPage"));
 const MLCPage = lazy(() => import("./pages/mlc/MLCPage"));
 
 const BillPrintPage = lazy(() => import("./pages/billing/BillPrintPage"));
-const HospitalSettingsPage = lazy(() => import("./pages/admin/HospitalSettingsPage"));
+// R7cc — HospitalSettingsPage (the ad-hoc form) removed. HospitalConfigWizard
+// is the SOLE admin entry-point for hospital config. Both pages used to share
+// /api/hospital-settings; the wizard's tabs cover everything the legacy page
+// did (identity, address, contact, GSTIN, bank, NABH, print footer, ops).
+const HospitalConfigWizard = lazy(() => import("./pages/admin/HospitalConfigWizard"));
+// R7bz — read-only System Health diagnostics page (DB / crons / errors /
+// activity / integrity / server).  Admin-only.
+const SystemHealthPage = lazy(() => import("./pages/admin/SystemHealthPage"));
 const UserManagementPage = lazy(() => import("./pages/admin/UserManagementPage"));
 const RolesPage          = lazy(() => import("./pages/admin/RolesPage"));
 const RoleDashboardPage  = lazy(() => import("./pages/RoleDashboardPage"));
@@ -219,7 +235,7 @@ function AppLoader() {
         <span style={{ fontSize: 26, fontWeight: 900, color: "#fff" }}>S</span>
       </div>
       <i className="pi pi-spin pi-spinner" style={{ fontSize: 28, color: "#38bdf8", marginBottom: 14 }} />
-      <div style={{ fontSize: 13, color: "#64748b" }}>Loading SphereHealth HIS…</div>
+      <div style={{ fontSize: 13, color: "#64748b" }}>Loading…</div>
     </div>
   );
 }
@@ -580,6 +596,27 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/compliance/nabh-registers" element={
               <RoleGuard action="compliance.read"><NABHRegistersDashboard /></RoleGuard>
             } />
+            {/* R7bx — six surveyor-facing NABH registers, each one a
+                filterable + printable + CSV-exportable chronological log.
+                Auto-populated from existing clinical save paths. */}
+            <Route path="/compliance/nabh/ot-register" element={
+              <RoleGuard action="compliance.read"><OTRegisterPage /></RoleGuard>
+            } />
+            <Route path="/compliance/nabh/asa-register" element={
+              <RoleGuard action="compliance.read"><ASARegisterPage /></RoleGuard>
+            } />
+            <Route path="/compliance/nabh/readmission-register" element={
+              <RoleGuard action="compliance.read"><ReadmissionRegisterPage /></RoleGuard>
+            } />
+            <Route path="/compliance/nabh/mortality-register" element={
+              <RoleGuard action="compliance.read"><MortalityRegisterPage /></RoleGuard>
+            } />
+            <Route path="/compliance/nabh/restraint-register" element={
+              <RoleGuard action="compliance.read"><RestraintRegisterPage /></RoleGuard>
+            } />
+            <Route path="/compliance/nabh/antimicrobial-register" element={
+              <RoleGuard action="compliance.read"><AntimicrobialUseRegisterPage /></RoleGuard>
+            } />
             {/* R7bq — Caprini DVT assessment. POST to /api/nursing-assessments/dvt
                 auto-populates the NABH DVT register (MOM.7 + AAC.4). */}
             <Route path="/nursing/caprini-dvt" element={
@@ -635,6 +672,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/patient-history" element={<PatientLookupPage initialView="timeline" />} />
             {/* Complete patient file — one page with every clinical record + UI audit feed. */}
             <Route path="/patient-file/:uhid" element={<CompletePatientFilePage />} />
+            {/* New focused two-tab view — OPD History per UHID +
+                chronological IPD File per admission. Accessible without
+                a UHID for the in-page search box. */}
+            <Route path="/patient-history-view"       element={<PatientHistoryViewPage />} />
+            <Route path="/patient-history-view/:uhid" element={<PatientHistoryViewPage />} />
             {/* R7i: Medical Records Department — read-only archive of
                 every discharged patient. Doctor/Admin/MRD only. */}
             <Route path="/medical-records/discharges" element={
@@ -724,8 +766,20 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* ── Admin ───────────────────────────────────────────
                  Sensitive routes are wrapped in <RoleGuard> so non-admins
                  get a clean "Access denied" instead of partial UI / 401s. */}
-            <Route path="/hospital-settings" element={
-              <RoleGuard allow={["Admin"]}><HospitalSettingsPage /></RoleGuard>
+            {/* R7bx item 7 + R7cc — Hospital Configuration Wizard is now the
+                SOLE admin entry-point for hospital config (legacy
+                HospitalSettingsPage removed). Single tabbed page covering
+                identity, branding, tax, bank, footer, NABH, ops. The legacy
+                `/hospital-settings` path redirects here so any deep-linked
+                bookmarks / sidebar caches still land in the right place. */}
+            <Route path="/admin/hospital-config" element={
+              <RoleGuard allow={["Admin"]}><HospitalConfigWizard /></RoleGuard>
+            } />
+            <Route path="/hospital-settings" element={<Navigate to="/admin/hospital-config" replace />} />
+            {/* R7bz — read-only System Health diagnostics. Admin-only;
+                backend route also gated by users.read. */}
+            <Route path="/admin/system-health" element={
+              <RoleGuard allow={["Admin"]}><SystemHealthPage /></RoleGuard>
             } />
             <Route path="/admin/users" element={
               <RoleGuard allow={["Admin"]} action="users.read"><UserManagementPage /></RoleGuard>
@@ -767,15 +821,11 @@ function AppLayout({ collapsed, setCollapsed }) {
               <RoleGuard action="physio.plan.read"><PhysiotherapistConsole /></RoleGuard>
             } />
 
-            {/* ── R7bj-F2 — Kitchen console (diet indent close-loop, NABH COP.21) ── */}
-            <Route path="/kitchen" element={
-              <RoleGuard action="kitchen.indent.read"><KitchenConsole /></RoleGuard>
-            } />
+            {/* ── R7cq: /kitchen and /cold-chain routes removed (modules
+                 deprecated). Backend models survive so historical data
+                 isn't lost if the modules ever return. ── */}
 
             {/* ── R7bk — Sidebar coverage stubs for backend-only modules ── */}
-            <Route path="/cold-chain" element={
-              <RoleGuard action="pharmacy.cold-chain.read"><ColdChainPage /></RoleGuard>
-            } />
             <Route path="/food-reactions" element={
               <RoleGuard action="quality.food-reaction.read"><FoodReactionsPage /></RoleGuard>
             } />
@@ -803,16 +853,9 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/lab-results" element={
               <RoleGuard action="lab.records.read"><LabResultsEntry /></RoleGuard>
             } />
-            {/* R7bd-E-5 / A3-MED-18 — Lab Tech 4-tab console
-                (sample queue, result-entry queue, QC log, day worksheet). */}
-            <Route path="/lab-console" element={
-              <RoleGuard action="lab.read"><LabTechConsole /></RoleGuard>
-            } />
-            {/* R7bd-E-6 / A3-HIGH-10 — Radiologist 3-tab console stub
-                (worklist, reported, pending sign-off). */}
-            <Route path="/radiology-console" element={
-              <RoleGuard action="lab.verify"><RadiologistConsole /></RoleGuard>
-            } />
+            {/* ── R7cq: /lab-console + /radiology-console routes removed.
+                 Manual Lab Entry above is the surviving transcription
+                 path since lab/imaging is outsourced at this hospital. ── */}
 
             {/* ── Universal role dashboard ────────────────────────
                  Every role lands here on login. The page reads

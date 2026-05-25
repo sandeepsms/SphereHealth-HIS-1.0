@@ -200,7 +200,7 @@ function HospitalHero({ now, hospital, firstName, kpi }) {
             HOSPITAL MISSION CONTROL
           </div>
           <div style={{ fontSize: 24, fontWeight: 900, letterSpacing: "-.4px", lineHeight: 1.15 }}>
-            {hospital.name || "SphereHealth Hospital"}
+            {hospital.name || "Hospital"}
           </div>
           <div style={{ fontSize: 13, opacity: .92, marginTop: 6 }}>
             {greet()}, <strong>{firstName}</strong> · {dateStr}
@@ -215,7 +215,10 @@ function HospitalHero({ now, hospital, firstName, kpi }) {
             background: "rgba(0,0,0,.18)", padding: "4px 14px", borderRadius: 10,
           }}>{timeStr}</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <Pill icon="pi-shield"        text={hospital.nabh ? "NABH READY" : "NABH PENDING"} on={!!hospital.nabh} />
+            {/* R7ce: word it as accreditation only when an accreditation
+                entry actually exists in settings. Otherwise it's a software-
+                level capability claim, not a status claim about the hospital. */}
+            <Pill icon="pi-shield"        text={hospital.nabh ? "NABH ACCREDITED" : "NABH COMPLIANT"} on={!!hospital.nabh} />
             <Pill icon="pi-check-circle"  text="AUDIT OK" on />
             <Pill icon="pi-database"      text={`${kpi.patientsTotal || 0} PATIENTS`} on />
             <Pill icon="pi-bolt"          text="LIVE" on glow />
@@ -509,7 +512,7 @@ function DeptList({ title, items, color, icon }) {
 function QuickActions() {
   const navigate = useNavigate();
   const items = [
-    { icon: "pi-building",   label: "Hospital Settings",  sub: "Identity · Print · Legal · Bank",  color: C.blue,   to: "/hospital-settings" },
+    { icon: "pi-cog",        label: "Hospital Configuration", sub: "Identity · Branding · Tax · Bank · Print · NABH · Ops", color: C.blue, to: "/admin/hospital-config" },
     { icon: "pi-users",      label: "User Management",    sub: "Onboard staff · reset passwords",  color: C.teal,   to: "/admin/users" },
     { icon: "pi-shield",     label: "Roles & Permissions",sub: "See what every role can access",   color: C.purple, to: "/admin/roles" },
     { icon: "pi-sitemap",    label: "Departments",        sub: "Hospital departments + services",  color: C.orange, to: "/department" },

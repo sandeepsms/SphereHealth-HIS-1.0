@@ -11,6 +11,28 @@ const AuthContext = createContext(null);
 // six different role sessions side-by-side in one Chrome window.
 // See axiosInterceptor.js for the migration logic.
 const TOKEN_KEY = "his_token";
+// R7cf: also persist a minimal user snapshot so popup print windows
+// (PrintShell + inline window.open() handlers) can render the digital-
+// signature stamp without making a /me round-trip. sessionStorage is
+// shared with new-window children of the same tab, so the stamp lands
+// even on first paint.
+const USER_KEY  = "his_user";
+const setStoredUser = (u) => {
+  try {
+    if (!u) { sessionStorage.removeItem(USER_KEY); return; }
+    // Only the small subset the signature stamp + downstream code reads.
+    const minimal = {
+      id:         u._id || u.id || null,
+      fullName:   u.fullName || u.name || "",
+      employeeId: u.employeeId || "",
+      role:       u.role || "",
+      department: u.department || u.doctorDetails?.department || "",
+      designation: u.designation || u.doctorDetails?.designation || "",
+    };
+    sessionStorage.setItem(USER_KEY, JSON.stringify(minimal));
+  } catch (_) {}
+};
+const clearStoredUser = () => { try { sessionStorage.removeItem(USER_KEY); } catch (_) {} };
 const setStoredToken = (t) => {
   try { sessionStorage.setItem(TOKEN_KEY, t); } catch (_) {}
   // Also clear any stale localStorage copy so the migration path
@@ -97,6 +119,7 @@ export function AuthProvider({ children }) {
         });
         if (cancelled) return; // R7au-2
         setUser(res.data.user);
+        setStoredUser(res.data.user); // R7cf: keep print-window mirror fresh
         setDoctorProfile(res.data.doctorProfile || null);
         // R7bb-E/S2 — /auth/me may also surface mustChangePassword
         // (e.g. admin forced a reset after the user logged in).
@@ -167,13 +190,46 @@ export function AuthProvider({ children }) {
     const { token: t, user: u, doctorProfile: dp, mustChangePassword: mcp } = res.data;
     setStoredToken(t); // R7y: writes to sessionStorage (per-tab)
     setToken(t);
-    setUser(u);
+    // R7bc — defensive backfill for tokenVersion (and isActive) on the
+    // login user object. The backend was already fixed to include both
+    // fields, but older deployments or in-flight cached client builds
+    // may still hit a backend that doesn't send them. Decode the JWT we
+    // just received and pull tokenVersion from its payload as a fallback
+    // — same value the backend's authenticate middleware will compare
+    // against on subsequent requests, so the frontend's refreshIfStale
+    // focus-poll won't compare undefined → 0 against fresh.tokenVersion
+    // and force-logout the user on a tab switch / screenshot.
+    const hydratedUser = { ...u };
+    if (hydratedUser.tokenVersion === undefined) {
+      const payload = _decodeJwtPayloadUnsafe(t);
+      if (payload && payload.tokenVersion !== undefined) {
+        hydratedUser.tokenVersion = payload.tokenVersion;
+      }
+    }
+    if (hydratedUser.isActive === undefined) hydratedUser.isActive = true;
+    setUser(hydratedUser);
+    setStoredUser(hydratedUser); // R7cf: mirror to sessionStorage for print windows
     // R7bb-E/S2 — Backend can return `mustChangePassword: true` either at
     // top-level or nested on user. The ChangePasswordPrompt below will
     // block the UI until it's cleared. Login flow still completes (token
     // is set) so the user can change their password without re-auth.
     if (mcp || u?.mustChangePassword) setMustChangePassword(true);
     else setMustChangePassword(false);
+
+    // R7bx item 8 — MCI Regulation 1.4.2 awareness. Doctors with no MCI
+    // registration number on file cannot sign any clinical document
+    // (server-side hard-block). Surface a sticky warning on login so the
+    // doctor knows to open Settings → Doctor Profile and add the number
+    // BEFORE attempting their first sign-and-submit of the session.
+    if (hydratedUser?.role === "Doctor") {
+      const regNo = String(hydratedUser.doctorDetails?.registrationNumber || "").trim();
+      if (!regNo) {
+        toast.warn(
+          "Your MCI registration number is missing. Add it via 'My Profile' before signing any prescription, OPD note, or discharge summary (MCI Regulation 1.4.2).",
+          { autoClose: 12000, toastId: "mci-reg-missing" },
+        );
+      }
+    }
     // login response may not include doctorProfile (older clients);
     // re-fetch /me right after so the value is hydrated for any role check.
     if (dp) {
@@ -220,6 +276,7 @@ export function AuthProvider({ children }) {
     try { localStorage.removeItem("his_logout_signal"); } catch (_) {}
     setToken(null);
     setUser(null);
+    clearStoredUser(); // R7cf: drop the print-window mirror on logout
     setDoctorProfile(null);
     setMustChangePassword(false);
   }, []);
@@ -232,7 +289,19 @@ export function AuthProvider({ children }) {
      interceptor here so the user gets a meaningful "Session terminated"
      toast on TOKEN_STALE / ACCOUNT_INACTIVE / ROLE_CHANGED before the
      hard redirect. We attach exactly once via a ref so React StrictMode
-     doesn't double-bind. */
+     doesn't double-bind.
+
+     R7bb — Honor the `_isBackgroundPoll: true` request flag here, mirroring
+     the global axiosInterceptor in /config. Pre-R7bb this interceptor fired
+     logout() on EVERY hard-logout 401 — including background polls fired
+     by the focus / visibilitychange listeners on tab switch. Symptom:
+     when a user Alt-Tabbed away and came back, the focus listener kicked
+     off /auth/me as a background poll; if the backend's 60s LRU cache lag
+     (or any other transient race) made that one /auth/me return TOKEN_STALE,
+     this interceptor ripped the session away even though the global
+     interceptor would have correctly swallowed it. Now both interceptors
+     agree: background polls NEVER trigger an automatic logout. The
+     user's next foreground action will surface the real auth state. */
   const interceptorRef = useRef(null);
   useEffect(() => {
     if (interceptorRef.current != null) return;
@@ -241,6 +310,12 @@ export function AuthProvider({ children }) {
       (error) => {
         const status = error?.response?.status;
         const code   = error?.response?.data?.code;
+        const isBackgroundPoll = error?.config?._isBackgroundPoll === true;
+        // R7bb — bail before the toast + logout so background polls
+        // (focus refresh, idle ping, etc.) never punt the user.
+        if (isBackgroundPoll) {
+          return Promise.reject(error);
+        }
         if (status === 401 && (code === "TOKEN_STALE" || code === "ACCOUNT_INACTIVE" || code === "ROLE_CHANGED")) {
           // logout() scrubs PHI caches, the generic axios interceptor in
           // /config then hard-redirects to /login. Show the toast first so
@@ -338,7 +413,23 @@ export function AuthProvider({ children }) {
       return inFlight;
     };
 
-    const onFocus = () => { refreshIfStale(); };
+    // R7bc — Debounce focus refresh to 5 minutes. Pre-R7bc every focus
+    // event (tab switch, Alt+Tab, screenshot-tool dismissal, OS popup
+    // dismissal, etc.) fired /auth/me. Even after R7bb cleaned up the
+    // interceptor side and R7bc gave login a tokenVersion, polling on
+    // every focus is still wasteful and any backend hiccup during the
+    // poll could surface as a disruption. We genuinely only need the
+    // staleness check when the user has been away long enough that an
+    // admin could realistically have changed their role / deactivated
+    // them — 5 minutes is more than enough.
+    let lastFocusRefreshAt = 0;
+    const FOCUS_REFRESH_DEBOUNCE_MS = 5 * 60 * 1000;
+    const onFocus = () => {
+      const now = Date.now();
+      if (now - lastFocusRefreshAt < FOCUS_REFRESH_DEBOUNCE_MS) return;
+      lastFocusRefreshAt = now;
+      refreshIfStale();
+    };
     const onStorage = (e) => {
       // R7bb-FIX-D-22 / D8-HIGH-7 — cross-tab logout signal. When ANY
       // tab logs out it writes `his_logout_signal`; every other tab

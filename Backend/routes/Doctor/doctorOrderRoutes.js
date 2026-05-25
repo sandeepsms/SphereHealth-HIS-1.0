@@ -24,6 +24,44 @@ const HAM_KW = [
 ];
 const checkHAM = (name = "") => HAM_KW.some(k => (name || "").toLowerCase().includes(k));
 
+/* ─────────────────────────────────────────────────────
+   R7bq-J1 — Duration parser for course pre-seeding.
+   Accepts: "5 days", "5d", "1 week", "2 weeks", "1 month",
+   "Continue" / "Continuous" / "Daily" (returns null → no
+   pre-seed, treated as open-ended). Caps at 30 days so a
+   typo can't seed thousands of AR rows.
+───────────────────────────────────────────────────── */
+function parseDurationToDays(str) {
+  if (!str || typeof str !== "string") return 1;
+  const s = str.toLowerCase().trim();
+  if (!s) return 1;
+  // Open-ended courses — no pre-seed.
+  if (s.includes("continu") || s === "daily" || s === "stat" || s === "sos") return null;
+  // "5 days", "5d", "5  day"
+  const dayMatch  = s.match(/(\d+(?:\.\d+)?)\s*d(?:ay)?s?/);
+  if (dayMatch)  return Math.min(30, Math.max(1, Math.round(parseFloat(dayMatch[1]))));
+  // "1 week", "2 weeks", "1w"
+  const weekMatch = s.match(/(\d+(?:\.\d+)?)\s*w(?:eek)?s?/);
+  if (weekMatch) return Math.min(30, Math.max(1, Math.round(parseFloat(weekMatch[1]) * 7)));
+  // "1 month"
+  const monthMatch = s.match(/(\d+(?:\.\d+)?)\s*m(?:onth)?s?/);
+  if (monthMatch) return 30; // cap at the schema max
+  // Bare integer ("5") — assume days.
+  const bareNum = s.match(/^\d+$/);
+  if (bareNum) return Math.min(30, Math.max(1, parseInt(s, 10)));
+  return 1;
+}
+
+/* Build a midnight-IST date at offset `+nDays` from baseMidnight. Pre-seeded
+   AR rows store scheduledDate at midnight so the cron + completion check
+   compare cleanly. */
+function dateAtMidnightOffset(base, nDays) {
+  const d = new Date(base);
+  d.setDate(d.getDate() + nDays);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 /* ═══════════════════════════════════════════════════
    DOCTOR ROUTES
 ═══════════════════════════════════════════════════ */
@@ -39,17 +77,279 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
       body.twoNurseRequired = body.hamFlag;
       body.highRisk = body.hamFlag;
     }
-    // Pre-populate today's pending doses from frequency/times
+
+    // R7bv — stamp clinical linkage fields so the patient-history aggregator
+    // (which filters DoctorOrder by `{ $or: [{admissionId}, {ipdNo}] }`)
+    // can find this order. Pre-R7bv the DoctorOrder schema didn't even
+    // define admissionId / ipdNo, so Mongoose strict-mode silently stripped
+    // them on every save. With the schema additions (DoctorOrderModel.js)
+    // we now actively normalise: front-end sometimes sends only
+    // UHID + visitId (legacy OPD path), sometimes the full set. Resolve
+    // the active admission server-side rather than trusting whatever
+    // partial state the caller had to hand.
+    //
+    // R7bw — visitId fallback. Two upstream paths (BloodTransfusion ordering
+    // and an early Medication path) call POST without `visitId`. Persisting
+    // `visitId: undefined` breaks the legacy OPD-style filter
+    // `DoctorOrder.find({ visitId })` on the GET listing route. We now
+    // mirror the admissionNumber → visitId when visitId is missing for IPD
+    // orders, so the listing route returns the order regardless of which
+    // identifier the caller queries with.
+    if ((body.visitType === "IPD" || !body.visitType) && body.UHID) {
+      if (!body.admissionId || !body.ipdNo || !body.admissionNumber || !body.visitId) {
+        try {
+          const Admission = require("../../models/Patient/admissionModel");
+          const adm = await Admission.findOne({
+            UHID: body.UHID,
+            status: "Active",
+          }).select("_id admissionNumber").lean();
+          if (adm) {
+            if (!body.admissionId)     body.admissionId     = adm._id;
+            if (!body.ipdNo)           body.ipdNo           = adm.admissionNumber || body.visitId || null;
+            if (!body.admissionNumber) body.admissionNumber = adm.admissionNumber || null;
+            // R7bw — visitId fallback: prefer caller-supplied, else mirror
+            // admissionNumber so legacy `?visitId=` queries still hit.
+            if (!body.visitId)         body.visitId         = adm.admissionNumber || null;
+          }
+        } catch (_) { /* non-fatal — the order can still save without linkage */ }
+      }
+    }
+    // R7bq-J1 — pre-seed the full course (not just today). Pre-J1 only
+    // today's slots were seeded, so a 5-day BD order looked "almost
+    // done" after one day and the doctor had to keep re-prescribing.
+    // Worse, past-day pending slots blocked the completion check
+    // forever. Now we seed every day from today → today + courseDays.
     if (body.scheduledTimes && Array.isArray(body.scheduledTimes) && !body.administrationRecord?.length) {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      body.administrationRecord = body.scheduledTimes.map(t => ({
-        scheduledTime: t,
-        scheduledDate: today,
-        status: "pending",
-      }));
+
+      const wantsCourseSeed =
+        body.orderType === "Medication" || body.orderType === "IV_Fluid";
+      const days = wantsCourseSeed
+        ? parseDurationToDays(body.orderDetails?.duration)
+        : 1;
+
+      if (wantsCourseSeed && days != null && days > 0) {
+        // Multi-day full-course seed.
+        const rows = [];
+        for (let i = 0; i < days; i++) {
+          const dayDate = dateAtMidnightOffset(today, i);
+          for (const t of body.scheduledTimes) {
+            rows.push({
+              scheduledTime: t,
+              scheduledDate: dayDate,
+              status: "pending",
+            });
+          }
+        }
+        body.administrationRecord = rows;
+        body.courseDays = days;
+        // endDate = last seeded day at end-of-day so the completion check
+        // (endDate <= startOfToday) flips on the day AFTER the last dose.
+        const lastDay = dateAtMidnightOffset(today, days - 1);
+        body.endDate = lastDay;
+      } else {
+        // Open-ended / non-medication — today only, no endDate.
+        body.administrationRecord = body.scheduledTimes.map(t => ({
+          scheduledTime: t,
+          scheduledDate: today,
+          status: "pending",
+        }));
+        if (wantsCourseSeed && days == null) {
+          // Continuous / Daily / STAT / SOS — explicitly leave open-ended.
+          body.courseDays = null;
+          body.endDate = null;
+        }
+      }
     }
+
+    // R7bq-J2 — Defense against double-clicks / network retries. If an identical
+    // Medication or IV_Fluid order was placed within the last 30 seconds, surface
+    // a 409 with the existing _id so the caller can recover idempotently. STAT
+    // priority bypasses dedupe because code-blue scenarios genuinely repeat the
+    // same dose in quick succession.
+    if (
+      (body.orderType === "Medication" || body.orderType === "IV_Fluid") &&
+      body.priority !== "STAT" &&
+      !body.isVerbal              // verbal orders are pre-validated by a co-sign step elsewhere
+    ) {
+      const since = new Date(Date.now() - 30_000);
+      const dup = await DoctorOrder.findOne({
+        UHID: body.UHID,
+        orderType: body.orderType,
+        "orderDetails.medicineName": body.orderDetails?.medicineName,
+        "orderDetails.dose":         body.orderDetails?.dose,
+        "orderDetails.frequency":    body.orderDetails?.frequency,
+        status: { $nin: ["Cancelled","Stopped"] },
+        orderedAt: { $gte: since },
+      }).select("_id orderedAt orderDetails.medicineName").lean();
+      if (dup) {
+        return res.status(409).json({
+          ok: false,
+          code: "DUPLICATE_ORDER",
+          duplicateId: String(dup._id),
+          message: `Identical ${dup.orderDetails?.medicineName || body.orderType} order was placed ${Math.round((Date.now() - new Date(dup.orderedAt).getTime())/1000)}s ago — refusing the duplicate. Modify priority to STAT for genuine repeat doses.`,
+        });
+      }
+    }
+
     const order = await DoctorOrder.create(body);
+
+    // R7bn-3 / D1-fix: when the doctor orders a blood transfusion, auto-
+    // populate the NABH BloodTransfusionRegister. Pre-fix the emitter
+    // existed but was never called from any controller — orders piled up
+    // but the NABH register stayed empty.
+    if (order.orderType === "BloodTransfusion") {
+      try {
+        const { emitBloodTransfusion } = require("../../services/Compliance/nabhRegisterEmitter");
+        const Patient = require("../../models/Patient/patientModel");
+        const Admission = require("../../models/Patient/admissionModel");
+        const patient = order.patientId
+          ? await Patient.findById(order.patientId).select("_id UHID fullName name age gender sex bloodGroup").lean()
+          : null;
+        const admission = order.admissionId
+          ? await Admission.findById(order.admissionId).select("_id admissionNumber wardName ward").lean()
+          : null;
+        emitBloodTransfusion({ order, patient: patient || {}, admission, actor: req.user || {} })
+          .catch((e) => console.error("[doctor-orders] emitBloodTransfusion error:", e?.message));
+      } catch (e) {
+        console.error("[doctor-orders] BloodTransfusion emit wiring failed:", e?.message);
+      }
+    }
+
+    // R7bx-3 — Auto-populate NABH MOM.7 Antimicrobial-Use register when
+    // a Medication order names an antibiotic. The emitter performs the
+    // antibiotic name match (see ANTIBIOTIC_STEMS) and no-ops if the drug
+    // isn't an antibiotic, so this branch is cheap and safe for every
+    // Medication order. NABH AMS (Antimicrobial Stewardship) expects every
+    // antibiotic prescription to surface in the AMU register from the
+    // moment it is written; we cannot rely on the pharmacy dispense step.
+    if (order.orderType === "Medication") {
+      try {
+        const { emitAntimicrobial, isAntibiotic } = require("../../services/Compliance/nabhRegisterEmitter");
+        const medName = order.orderDetails?.medicineName || order.orderDetails?.displayName || "";
+        if (isAntibiotic(medName)) {
+          const Patient = require("../../models/Patient/patientModel");
+          const Admission = require("../../models/Patient/admissionModel");
+          const patient = order.patientId
+            ? await Patient.findById(order.patientId).select("_id UHID fullName name age gender sex").lean()
+            : null;
+          const admission = order.admissionId
+            ? await Admission.findById(order.admissionId).select("_id admissionNumber wardName ward").lean()
+            : null;
+          emitAntimicrobial({ order, patient: patient || {}, admission, actor: req.user || {} })
+            .catch((e) => console.error("[doctor-orders] emitAntimicrobial error:", e?.message));
+        }
+      } catch (e) {
+        console.error("[doctor-orders] Antimicrobial emit wiring failed:", e?.message);
+      }
+    }
+
+    // R7bx-3 — Auto-populate NABH COP.10 OT register when a Procedure
+    // order is flagged `requiresOT=true`. Mirrors the BloodTransfusion
+    // pattern above: emitter is non-blocking, only fires when the
+    // discriminator is true. Frontend procedure-order form flips
+    // `orderDetails.requiresOT` whenever the doctor selects an OT slot;
+    // also covers any direct API caller that explicitly sets the flag.
+    if (order.orderType === "Procedure" && order.orderDetails?.requiresOT === true) {
+      try {
+        const { emitOT } = require("../../services/Compliance/nabhRegisterEmitter");
+        const Patient = require("../../models/Patient/patientModel");
+        const Admission = require("../../models/Patient/admissionModel");
+        const patient = order.patientId
+          ? await Patient.findById(order.patientId).select("_id UHID fullName name age gender sex").lean()
+          : null;
+        const admission = order.admissionId
+          ? await Admission.findById(order.admissionId).select("_id admissionNumber wardName ward").lean()
+          : null;
+        emitOT({ order, patient: patient || {}, admission, actor: req.user || {} })
+          .catch((e) => console.error("[doctor-orders] emitOT error:", e?.message));
+      } catch (e) {
+        console.error("[doctor-orders] OT emit wiring failed:", e?.message);
+      }
+    }
+
+    // R7bn-4 / D7-1-fix: when orderType==="Medication", auto-seed the
+    // MAR so the nurse sees the drug on the Treatment Chart without
+    // requiring a separate Prescription save. Pre-fix MAR rows came
+    // exclusively from Prescription model — standalone DoctorOrder
+    // medications were never charted, so nurses didn't see them on
+    // MAR and couldn't administer/sign them.
+    if (order.orderType === "Medication" && order.admissionId) {
+      try {
+        const MAR = require("../../models/Clinical/MARModel");
+        const Patient = require("../../models/Patient/patientModel");
+        const today = new Date();
+        const marDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        const nextDay = new Date(marDate); nextDay.setDate(nextDay.getDate() + 1);
+
+        // Find or create the MAR for today + this ipdNo.
+        let mar = await MAR.findOne({
+          ipdNo: order.ipdNo || String(order.admissionId),
+          date: { $gte: marDate, $lt: nextDay },
+        });
+        if (!mar) {
+          const pat = order.patientId
+            ? await Patient.findById(order.patientId).select("_id UHID fullName").lean()
+            : null;
+          if (pat?._id) {
+            mar = await MAR.create({
+              patient: pat._id,
+              UHID: order.UHID || pat.UHID || "",
+              ipdNo: order.ipdNo || String(order.admissionId),
+              admissionId: order.admissionId,
+              patientName: order.patientName || pat.fullName || "",
+              date: marDate,
+              medications: [],
+            });
+          }
+        }
+        // Atomic $push of this med onto today's MAR.
+        if (mar) {
+          const medRow = {
+            drugName:   order.orderDetails?.medicineName || order.orderDetails?.displayName || "",
+            dose:       order.orderDetails?.dose || order.orderDetails?.dosage || "",
+            route:      order.orderDetails?.route || "",
+            frequency:  order.orderDetails?.frequency || "",
+            startDate:  order.startDate || new Date(),
+            endDate:    order.endDate || null,
+            isHighAlert:    !!order.hamFlag,
+            twoNurseRequired: !!order.twoNurseRequired,
+            prescribedBy:   order.doctorId || order.attendingDoctorId || null,
+            doctorOrderId:  order._id,
+            scheduledTimes: order.scheduledTimes || [],
+            administrations: [],
+          };
+          await MAR.updateOne(
+            { _id: mar._id },
+            { $push: { medications: medRow } },
+          );
+        }
+      } catch (e) {
+        console.error("[doctor-orders] MAR seed failed:", e?.message);
+      }
+    }
+
+    // R7bn-1 / D9-fix: ClinicalAudit emit on every doctor-order create.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: order.orderType === "BloodTransfusion"
+          ? "TRANSFUSION_ORDERED"
+          : order.orderType === "IV_Fluid"
+            ? "INFUSION_STARTED"
+            : "ORDER_CREATED",
+        UHID: order.UHID,
+        admissionId: order.admissionId,
+        patientId: order.patientId,
+        patientName: order.patientName,
+        targetType: "DoctorOrder",
+        targetId: order._id,
+        after: { orderType: order.orderType, summary: (order.orderDetails?.medicineName || order.description || "").slice(0, 200) },
+      });
+    } catch (_) { /* silent */ }
+
     res.status(201).json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
@@ -69,23 +369,111 @@ router.post("/bulk", requireAction("doctor-orders.write"), async (req, res) => {
     if (!Array.isArray(orders) || !orders.length)
       return res.status(400).json({ ok: false, message: "orders[] required" });
 
-    const enriched = orders.map(o => {
+    // R7bv — same linkage normalisation as POST /. Cache the admission
+    // lookup per-UHID so a bulk insert of 10 orders for the same patient
+    // does ONE Admission query, not 10.
+    const Admission = require("../../models/Patient/admissionModel");
+    const admissionCache = new Map();
+    async function resolveAdmission(uhid) {
+      if (!uhid) return null;
+      if (admissionCache.has(uhid)) return admissionCache.get(uhid);
+      const adm = await Admission.findOne({ UHID: uhid, status: "Active" })
+        .select("_id admissionNumber").lean().catch(() => null);
+      admissionCache.set(uhid, adm || null);
+      return adm;
+    }
+
+    const enriched = [];
+    for (const o of orders) {
       const name = o.orderDetails?.medicineName || o.orderDetails?.displayName || "";
       o.hamFlag = checkHAM(name);
       o.twoNurseRequired = o.hamFlag;
       o.highRisk = o.hamFlag;
-      // Pre-populate admin record
+
+      // R7bv — stamp admissionId / ipdNo / admissionNumber from the
+      // patient's active admission so the aggregator can surface this
+      // order under the IPD patient file.
+      // R7bw — also fill visitId fallback for IPD orders so legacy
+      // `?visitId=` listing queries return the order.
+      if ((o.visitType === "IPD" || !o.visitType) && o.UHID &&
+          (!o.admissionId || !o.ipdNo || !o.admissionNumber || !o.visitId)) {
+        const adm = await resolveAdmission(o.UHID);
+        if (adm) {
+          if (!o.admissionId)     o.admissionId     = adm._id;
+          if (!o.ipdNo)           o.ipdNo           = adm.admissionNumber || o.visitId || null;
+          if (!o.admissionNumber) o.admissionNumber = adm.admissionNumber || null;
+          if (!o.visitId)         o.visitId         = adm.admissionNumber || null;
+        }
+      }
+
+      // R7bq-J1 — pre-seed the full course for Medication / IV_Fluid.
       if (o.scheduledTimes?.length && !o.administrationRecord?.length) {
         const today = new Date(); today.setHours(0,0,0,0);
-        o.administrationRecord = o.scheduledTimes.map(t => ({ scheduledTime: t, scheduledDate: today, status: "pending" }));
+        const wantsCourseSeed = o.orderType === "Medication" || o.orderType === "IV_Fluid";
+        const days = wantsCourseSeed ? parseDurationToDays(o.orderDetails?.duration) : 1;
+        if (wantsCourseSeed && days != null && days > 0) {
+          const rows = [];
+          for (let i = 0; i < days; i++) {
+            const dayDate = dateAtMidnightOffset(today, i);
+            for (const t of o.scheduledTimes) {
+              rows.push({ scheduledTime: t, scheduledDate: dayDate, status: "pending" });
+            }
+          }
+          o.administrationRecord = rows;
+          o.courseDays = days;
+          o.endDate = dateAtMidnightOffset(today, days - 1);
+        } else {
+          o.administrationRecord = o.scheduledTimes.map(t => ({ scheduledTime: t, scheduledDate: today, status: "pending" }));
+        }
       }
-      return o;
-    });
+      enriched.push(o);
+    }
+
+    // R7bq-J2 — Per-row dedupe (mirrors POST /). For each Medication / IV_Fluid
+    // (non-STAT, non-verbal) row, check if an identical order was placed within
+    // the last 30s. Skip duplicates and surface them in the failed list so the
+    // caller can recover idempotently; non-duplicate rows still flow into
+    // insertMany below.
+    const failed = [];
+    const toInsert = [];
+    {
+      const sinceTs = Date.now() - 30_000;
+      const since = new Date(sinceTs);
+      for (let i = 0; i < enriched.length; i++) {
+        const o = enriched[i];
+        const shouldDedupe =
+          (o.orderType === "Medication" || o.orderType === "IV_Fluid") &&
+          o.priority !== "STAT" &&
+          !o.isVerbal;
+        if (!shouldDedupe) { toInsert.push(o); continue; }
+        const dup = await DoctorOrder.findOne({
+          UHID: o.UHID,
+          orderType: o.orderType,
+          "orderDetails.medicineName": o.orderDetails?.medicineName,
+          "orderDetails.dose":         o.orderDetails?.dose,
+          "orderDetails.frequency":    o.orderDetails?.frequency,
+          status: { $nin: ["Cancelled","Stopped"] },
+          orderedAt: { $gte: since },
+        }).select("_id orderedAt orderDetails.medicineName").lean();
+        if (dup) {
+          failed.push({
+            index: i,
+            code: "DUPLICATE_ORDER",
+            duplicateId: String(dup._id),
+            message: `Identical ${dup.orderDetails?.medicineName || o.orderType} order was placed ${Math.round((Date.now() - new Date(dup.orderedAt).getTime())/1000)}s ago — skipped.`,
+            row: o,
+          });
+        } else {
+          toInsert.push(o);
+        }
+      }
+    }
 
     let created = [];
-    const failed = [];
     try {
-      created = await DoctorOrder.insertMany(enriched, { ordered: false, rawResult: false });
+      if (toInsert.length) {
+        created = await DoctorOrder.insertMany(toInsert, { ordered: false, rawResult: false });
+      }
     } catch (bulkErr) {
       // Mongoose 8 throws BulkWriteError with .insertedDocs + .writeErrors.
       created = bulkErr.insertedDocs || [];
@@ -94,13 +482,13 @@ router.post("/bulk", requireAction("doctor-orders.write"), async (req, res) => {
         failed.push({
           index: we.index ?? we.err?.index,
           message: we.errmsg || we.err?.errmsg || we.message,
-          row: enriched[we.index ?? we.err?.index],
+          row: toInsert[we.index ?? we.err?.index],
         });
       }
       // If insertMany threw but produced no clear writeErrors, fall back to
       // diff-by-length so we don't drop the failure on the floor.
-      if (!writeErrors.length && enriched.length > created.length) {
-        failed.push({ index: -1, message: bulkErr.message, count: enriched.length - created.length });
+      if (!writeErrors.length && toInsert.length > created.length) {
+        failed.push({ index: -1, message: bulkErr.message, count: toInsert.length - created.length });
       }
     }
 
@@ -158,7 +546,15 @@ router.get("/:id", validateObjectIdParam("id"), requireAction("doctor-notes.read
 const PATCH_ALLOWED = new Set([
   "status", "stopReason", "stoppedAt", "stoppedBy",
   "nurseNotes", "consentObtained", "consentNotes",
-  "currentRate", "rateUnit", "infusionStartedAt", "infusionEndedAt",
+  // R7bq-H — field names corrected to match the schema (`infusionStarted` /
+  // `infusionStopped`, not `*At` / `*EndedAt`). Pre-fix, PATCH accepted the
+  // wrong keys, mongoose silently stripped them, and the hourly infusion
+  // cron (which queries `infusionStarted` IS NOT NULL) never picked the
+  // order up. The legacy keys are still accepted as aliases for any
+  // frontend code that hasn't migrated yet.
+  "currentRate", "rateUnit",
+  "infusionStarted",   "infusionStopped",
+  "infusionStartedAt", "infusionEndedAt",
   "holdUntil", "holdReason", "delayReason",
   "remarks", "priority",
 ]);
@@ -168,13 +564,46 @@ router.patch("/:id", validateObjectIdParam("id"), requireAction("doctor-orders.w
     for (const [k, v] of Object.entries(req.body || {})) {
       if (PATCH_ALLOWED.has(k)) safe[k] = v;
     }
+    // R7bq-H — alias the legacy keys onto the canonical schema fields.
+    if (safe.infusionStartedAt && !safe.infusionStarted) safe.infusionStarted = safe.infusionStartedAt;
+    if (safe.infusionEndedAt   && !safe.infusionStopped) safe.infusionStopped = safe.infusionEndedAt;
+    delete safe.infusionStartedAt;
+    delete safe.infusionEndedAt;
+
     if (Object.keys(safe).length === 0) {
       return res.status(400).json({ ok: false, message: "No allowed fields to update — use the dedicated /administer or /rate-change endpoints" });
     }
+
+    // R7bq-H — auto-stamp infusionStarted when the order flips to "Active"
+    // or "InProgress" for IV_Fluid. Without this the hourly infusion cron
+    // never sees the order as "running" and skips it.
+    let preStamp = null;
+    if ((safe.status === "Active" || safe.status === "InProgress") && !safe.infusionStarted) {
+      const existing = await DoctorOrder.findById(req.params.id).select("orderType infusionStarted").lean();
+      if (existing?.orderType === "IV_Fluid" && !existing?.infusionStarted) {
+        safe.infusionStarted = new Date();
+        preStamp = safe.infusionStarted;
+      }
+    }
+
     const order = await DoctorOrder.findByIdAndUpdate(
       req.params.id, { $set: safe }, { new: true, runValidators: true }
     );
     if (!order) return res.status(404).json({ ok: false, message: "Not found" });
+
+    if (preStamp) {
+      // Audit-trail the auto-start so it's clear who flipped it (NABH MOM.4).
+      try {
+        order.auditLog.push({
+          step: "Infusion started (auto on status=Active)",
+          doneBy: req.user?.fullName || req.user?.email || "System",
+          doneAt: preStamp,
+          notes: `currentRate=${safe.currentRate || order.currentRate || "?"}`,
+        });
+        await order.save();
+      } catch (_) { /* non-fatal */ }
+    }
+
     res.json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
@@ -196,14 +625,33 @@ router.post("/:id/step", validateObjectIdParam("id"), requireAction("order.ackno
     const nextIndex  = (current.currentStepIndex ?? -1) + 1;
     const isLastStep = totalSteps && nextIndex >= totalSteps - 1;
 
+    // R7bq-K2 — Respect the "first dose given = Completed" rule for
+    // Medication orders. Pre-K2, /step blindly set status to InProgress
+    // for intermediate steps and Completed for the last step — but if
+    // the nurse had already administered a dose via /administer (which
+    // K sets to Completed), clicking a step button like "Prepared"
+    // afterward would silently down-grade the status back to InProgress
+    // and the order would reappear in the active queue forever.
+    //
+    // Rule: never DOWNGRADE a Completed order via /step. And for
+    // Medication where any non-STAT regular dose has already been
+    // recorded as given, lock the status at Completed regardless of
+    // how many step buttons remain.
+    const medAlreadyGiven =
+      current.orderType === "Medication" &&
+      (current.administrationRecord || []).some(
+        a => !a.isStatDose && a.status === "given",
+      );
+    const dontDowngrade = current.status === "Completed" || medAlreadyGiven;
+
     const update = {
       $push: { auditLog: { step, doneBy, doneAt: new Date(), notes: notes || "" } },
       $set: {
         currentStepIndex: nextIndex,
-        status: isLastStep ? "Completed" : "InProgress",
+        status: (isLastStep || dontDowngrade) ? "Completed" : "InProgress",
       },
     };
-    if (isLastStep) {
+    if (isLastStep || dontDowngrade) {
       update.$set.completedBy = doneBy;
       update.$set.completedAt = new Date();
     }
@@ -211,6 +659,76 @@ router.post("/:id/step", validateObjectIdParam("id"), requireAction("order.ackno
     res.json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+/* ═══════════════════════════════════════════════════
+   R7bq-L — RESTART A COMPLETED/STOPPED INFUSION
+═══════════════════════════════════════════════════
+   Clones a finished infusion order as a fresh bag — same drug,
+   diluent, rate, totalVolume — but a brand-new DoctorOrder with
+   reset state. Used when the patient needs another bag of the same
+   regimen (e.g. continue NS @ 50 ml/hr for another 500 ml). Bypasses
+   the 30-second dedup guard because this is a deliberate, audited
+   restart, not an accidental double-click.
+
+   Body: { restartedBy?: string }
+   Returns: { ok: true, data: <new order>, parentId: <original> }
+═══════════════════════════════════════════════════ */
+router.post("/:id/restart", validateObjectIdParam("id"), requireAction("doctor-orders.write"), async (req, res) => {
+  try {
+    const original = await DoctorOrder.findById(req.params.id);
+    if (!original) return res.status(404).json({ ok: false, message: "Original order not found" });
+    if (original.orderType !== "IV_Fluid") {
+      return res.status(400).json({ ok: false, message: "Restart is only supported for IV_Fluid orders" });
+    }
+    // Build a clone payload from the original. Drop server-managed
+    // fields so Mongoose generates fresh _id/createdAt/updatedAt and
+    // we don't accidentally carry forward stale audit/state from the
+    // previous bag.
+    const o = original.toObject();
+    delete o._id; delete o.__v;
+    delete o.createdAt; delete o.updatedAt;
+    delete o.administrationRecord;
+    delete o.rateChanges;
+    delete o.infusionMonitoring;
+    delete o.auditLog;
+    delete o.currentStepIndex;
+    delete o.acknowledgedBy; delete o.acknowledgedAt;
+    delete o.completedBy;    delete o.completedAt;
+    delete o.stoppedAt;      delete o.stoppedBy;     delete o.stopReason;
+    delete o.infusionStarted;
+    delete o.infusionStopped;
+    delete o.currentRate;
+    delete o.mergedInto;
+    o.status     = "Active";          // ready to run immediately
+    o.orderedAt  = new Date();
+    o.priority   = original.priority || "Routine";
+    o.parentOrderId = original._id;   // audit link back to bag #1
+    o.restartedFrom = original._id;
+    o.auditLog   = [{
+      step: "Bag restarted from previous order",
+      doneBy: req.body?.restartedBy || req.user?.fullName || req.user?.email || "Nurse",
+      doneAt: new Date(),
+      notes: `Restarted from order ${original._id} (${original.orderDetails?.medicineName || "infusion"})`,
+    }];
+    o.infusionStarted = new Date();   // start the new bag immediately
+    o.currentRate     = original.currentRate || original.orderDetails?.rate || "";
+
+    const clone = await DoctorOrder.create(o);
+
+    // Log on the original too so the timeline shows the handoff.
+    original.auditLog.push({
+      step: "Bag continued — new order created",
+      doneBy: req.body?.restartedBy || req.user?.fullName || req.user?.email || "Nurse",
+      doneAt: new Date(),
+      notes: `Continued as order ${clone._id}`,
+    });
+    await original.save();
+
+    return res.status(201).json({ ok: true, data: clone, parentId: String(original._id) });
+  } catch (err) {
+    return res.status(400).json({ ok: false, message: err.message });
   }
 });
 
@@ -319,18 +837,42 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
     // Update order-level status
     if (status === "hold") order.status = "OnHold";
     if (status === "given") {
-      // For status: count only non-STAT regular records (STAT doses are extras, not part of the course)
-      const regularRecords = order.administrationRecord.filter(r => !r.isStatDose);
-      // FIX (audit P14-B2): if administrationRecord has zero non-STAT entries
-      // (e.g. SOS/PRN order with no scheduled course, or an order created
-      // before scheduledTimes was set), .every() returns TRUE on an empty
-      // array, which would flip the whole order to "Completed" the moment
-      // the first STAT or PRN dose was given. Require at least one regular
-      // slot before considering the course done.
-      const regularDone = regularRecords.length > 0
-        && regularRecords.every(r => ["given","skipped","refused"].includes(r.status));
-      if (regularDone && order.orderDetails?.frequency !== "Continuous") order.status = "Completed";
-      else order.status = "InProgress";
+      // R7bq-K — Per workflow spec from user: a Medication order is
+      // considered "system-complete" as soon as the FIRST non-STAT dose
+      // is given. The remaining doses of the course continue to be
+      // administered through the Treatment Chart (MAR), but the order
+      // itself stops blocking the nurse's "active orders" queue once
+      // it's been started. Rationale: the order is just the doctor's
+      // instruction; the MAR is the running record. Subsequent doses
+      // don't re-toggle the status — once Completed, stays Completed.
+      //
+      // IV_Fluid + other types keep the older "all doses terminal +
+      // course window closed" logic because:
+      //   - IV_Fluid is continuous; no "one dose" notion. Stops when
+      //     the nurse explicitly stops or totalVolume is hit.
+      //   - BloodTransfusion has its own pre/per/post protocol.
+      //   - Lab / Procedure use the /step endpoint, not /administer.
+      const isMedFirstDoseRule = order.orderType === "Medication" && !isStatDose;
+      if (isMedFirstDoseRule) {
+        order.status = "Completed";
+      } else {
+        const regularRecords = order.administrationRecord.filter(r => !r.isStatDose);
+        // R7bq-J1 — include "missed" in the terminal set.
+        const regularDone = regularRecords.length > 0
+          && regularRecords.every(r => ["given","skipped","refused","missed"].includes(r.status));
+        const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+        const courseWindowClosed = order.endDate
+          ? new Date(order.endDate) <= startOfToday
+          : true;
+        if (regularDone && order.orderDetails?.frequency !== "Continuous" && courseWindowClosed) {
+          order.status = "Completed";
+        } else if (order.status !== "Completed") {
+          // Don't downgrade from Completed (covers Medication path where a
+          // later STAT or held-then-given dose comes through after the
+          // first-dose-complete flip).
+          order.status = "InProgress";
+        }
+      }
     }
 
     // STAT audit log
@@ -349,6 +891,49 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
     }
 
     await order.save();
+
+    // ─── R7bq-3 — Auto I/O ledger: write an intake row when a dose is
+    // GIVEN and the order carries a diluent volume. The service is
+    // idempotent (upsert keyed on orderId + doseId), so re-runs of the
+    // same scheduled slot won't double-count. Non-throwing — never
+    // fails the administer call. NABH MOM.4 expects every infused
+    // volume to be traceable to the order that drove it.
+    if (status === "given" && order.orderDetails?.dilutionVolume > 0) {
+      try {
+        const ioService = require("../../services/Clinical/intakeOutputService");
+        // Find the admin record we just pushed (last regular entry for
+        // this scheduledTime + today, or the very last for STAT).
+        const todayKey = new Date(); todayKey.setHours(0, 0, 0, 0);
+        const adminRow = isStatDose
+          ? order.administrationRecord[order.administrationRecord.length - 1]
+          : order.administrationRecord
+              .filter(r => !r.isStatDose
+                && r.scheduledTime === scheduledTime
+                && r.scheduledDate
+                && new Date(r.scheduledDate).getTime() === todayKey.getTime())
+              .pop();
+        if (adminRow) {
+          // doseId fallback — Mongoose subdoc _id should be present after
+          // save, but in some edge cases (pre-existing rows updated in
+          // place) the _id may not surface on the in-memory copy. Compose
+          // a deterministic fallback key from (orderId, scheduledTime,
+          // YYYY-MM-DD) so the partial unique index on the I/O ledger
+          // doesn't collide across multiple doses of the same order.
+          const doseIdFallback = `${order._id}_${scheduledTime}_${todayKey.toISOString().slice(0,10)}`;
+          const doseIdStr = adminRow._id ? String(adminRow._id) : doseIdFallback;
+          ioService.recordIntakeFromMAR({
+            order,
+            adminRow,
+            doseId: doseIdStr,
+          }).catch(e => { /* logged inside the service */ });
+        }
+      } catch (e) {
+        // Service file failed to load — non-fatal.
+        const { logErr } = require("../../utils/logErr");
+        logErr("intakeOutput", "load failure on order.administer")(e);
+      }
+    }
+
     res.json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
@@ -388,12 +973,38 @@ router.post("/:id/infusion-rate", validateObjectIdParam("id"), requireAction("ma
     if (order.twoNurseRequired && !verifiedBy)
       return res.status(422).json({ ok: false, message: "HAM infusion rate change requires second nurse verification" });
 
-    const entry = { changedAt: new Date(), changedBy, oldRate: oldRate || order.currentRate, newRate, reason, reasonDetail, verifiedBy, doctorInformed: !!doctorInformed, doctorName };
+    // R7bn-4 / D7-2-fix: doctorInformed defaults to true whenever a
+    // doctorName is supplied AND the change is non-emergency. The audit
+    // surfaced this flag as "exists but never set" — nurses adjusted
+    // rates and the field stayed false forever. New behaviour: explicit
+    // false is preserved; null/undefined + doctorName → assume informed.
+    const informed = doctorInformed === undefined || doctorInformed === null
+      ? !!doctorName
+      : !!doctorInformed;
+    const entry = { changedAt: new Date(), changedBy, oldRate: oldRate || order.currentRate, newRate, reason, reasonDetail, verifiedBy, doctorInformed: informed, doctorName };
     order.rateChanges.push(entry);
     order.currentRate = newRate;
-    order.auditLog.push({ step: `Rate changed: ${oldRate || "—"} → ${newRate} ml/hr`, doneBy: changedBy, doneAt: new Date(), notes: `Reason: ${reason}${reasonDetail ? ` — ${reasonDetail}` : ""}` });
+    order.auditLog.push({ step: `Rate changed: ${oldRate || "—"} → ${newRate} ml/hr`, doneBy: changedBy, doneAt: new Date(), notes: `Reason: ${reason}${reasonDetail ? ` — ${reasonDetail}` : ""}${informed ? ` (doctor informed)` : " (DOCTOR NOT INFORMED — flag for follow-up)"}` });
 
     await order.save();
+
+    // R7bn-1 / D9-fix: ClinicalAudit emit on infusion rate change.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "INFUSION_RATE_CHANGED",
+        UHID: order.UHID,
+        admissionId: order.admissionId,
+        patientId: order.patientId,
+        targetType: "DoctorOrder.infusion",
+        targetId: order._id,
+        before: { rate: oldRate || null },
+        after: { rate: newRate, changedBy, reason, doctorInformed: informed, doctorName },
+        reason: reasonDetail || reason,
+      });
+    } catch (_) { /* silent */ }
+
     res.json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
@@ -520,6 +1131,11 @@ router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("or
           newOrder = await DoctorOrder.create({
             UHID: order.UHID, patientName: order.patientName, visitId: order.visitId,
             visitType: order.visitType,
+            // R7bv — carry the parent order's admission linkage onto the
+            // substitution so the aggregator surfaces it under the same
+            // IPD patient file.
+            admissionId: order.admissionId, ipdNo: order.ipdNo, admissionNumber: order.admissionNumber,
+            patientId: order.patientId,
             orderType: order.orderType,
             priority: substituteWith.priority || "Routine",
             hamFlag: hamNew, twoNurseRequired: hamNew, highRisk: hamNew,

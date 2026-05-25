@@ -8,7 +8,14 @@ const handle = (fn) => async (req, res) => {
   } catch (err) {
     const status =
       err.statusCode || (err.message?.includes("not found") ? 404 : 400);
-    return res.status(status).json({ success: false, message: err.message });
+    // R7bx item 8 — surface err.code (e.g. MCI_REG_NO_MISSING) so the
+    // frontend can switch on a stable identifier rather than parsing
+    // the human-readable message.
+    return res.status(status).json({
+      success: false,
+      message: err.message,
+      ...(err.code ? { code: err.code } : {}),
+    });
   }
 };
 
@@ -44,6 +51,25 @@ class DoctorNotesController {
       const { logErr } = require("../../utils/logErr");
       logErr("autoBilling", "load failure on doctor-note save")(e);
     }
+
+    // R7bn-1 / D9-fix: ClinicalAudit emit on doctor-note create (NABH
+    // AAC.7). 3y retention for drafts; the SIGNED event later in the
+    // lifecycle upgrades to 7y.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: note.status === "signed" ? "DOCTOR_NOTE_SIGNED" : "DOCTOR_NOTE_CREATED",
+        UHID: note.patientUHID || note.UHID,
+        admissionId: note.admissionId,
+        patientId: note.patientId,
+        patientName: note.patientName,
+        targetType: "DoctorNote",
+        targetId: note._id,
+        after: { noteType: note.noteType, status: note.status },
+      });
+    } catch (_) { /* silent */ }
+
     return res.status(201).json({ success: true, data: note });
   });
 
@@ -107,13 +133,23 @@ class DoctorNotesController {
       req.params.id,
       doctorUserId,
       { signature, signedByName, signedByReg },
+      req, // R7bn — pass req so signDoctorNote can emit ClinicalAudit with actor/ip/ua
     );
     return res.json({ success: true, message: "Note signed", data: note });
   });
 
   // PATCH /api/doctor-notes/:id/diagnosis
   updateDiagnosis = handle(async (req, res) => {
-    const note = await doctorNotesService.updateDiagnosis(req.params.id, req.body);
+    // R7bo-LIVE-fix: pass a properly-shaped actor object so the service
+    // can populate updatedBy without casting an empty literal to ObjectId.
+    const actor = {
+      id: req.user?.id || req.user?._id || null,
+      name: req.user?.fullName
+        || [req.user?.firstName, req.user?.lastName].filter(Boolean).join(" ").trim()
+        || "",
+      role: req.user?.role || "",
+    };
+    const note = await doctorNotesService.updateDiagnosis(req.params.id, req.body, actor);
     return res.json({ success: true, message: "Diagnosis updated", data: note });
   });
 

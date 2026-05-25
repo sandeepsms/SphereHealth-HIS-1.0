@@ -177,6 +177,13 @@ export default function OPDAssessmentPage() {
   const navigate    = useNavigate();
   const visitNumber = params.get("visitNumber") || "";
   const uhid        = params.get("uhid") || "";
+  // R7cn: deep-link from Doctor OPD Panel — when the doctor clicks the
+  // per-row "Print" button there, we land on this page with autoPrint=1
+  // and immediately fire handlePrint() after the visit data finishes
+  // loading. The ref guards against re-firing on re-renders (e.g. saving
+  // a note refreshes the audit trail).
+  const autoPrint   = params.get("autoPrint") === "1";
+  const autoPrintFiredRef = useRef(false);
   const { settings: hs } = useHospitalSettings();
 
   const [visit,   setVisit]   = useState(null);
@@ -349,6 +356,10 @@ export default function OPDAssessmentPage() {
   const [orderBillId,   setOrderBillId]   = useState(null);   // /api/billing DRAFT id
   const [orderBillNum,  setOrderBillNum]  = useState("");     // human-readable bill number
   const [orderSaving,   setOrderSaving]   = useState(false);
+  // R7bp-OPD-DUP — Synchronous re-entrancy lock; see ServicesOrdersPanel for
+  // the why. State alone leaks two POSTs through on rapid clicks because
+  // React batches the setOrderSaving call.
+  const orderSavingRef = useRef(false);
 
   // R7az-D4-HIGH-2 — Per-button double-tap guards. Pre-fix, fast double
   // clicks on "Add Medication" / "Add Investigation" / "Add Infusion"
@@ -418,7 +429,24 @@ export default function OPDAssessmentPage() {
         followUpDate:         v.followUpDate ? v.followUpDate.slice(0, 10) : "",
         doctorNotes:          v.doctorNotes || "",
       }));
-      setMeds(v.prescribedMedications || []);
+      // R7bt-OPD-PRINT-5: DB schema uses medicineName/dosage on the
+      // prescribedMedications sub-doc, but the form state was authored
+      // expecting name/dose. Pre-fix: a saved visit reloaded with empty
+      // name + dose columns, so the meds table looked blank even though
+      // the data was on disk. Hydrate both shapes so saved rows survive
+      // a page reload + the print payload picks them up cleanly.
+      // R7bu — mealStatus is now persisted on the row (Before food / After
+      // food / With food / Bedtime). Hydrate it back into the form state
+      // so the doctor's previous "AC/PC" selection survives a reload and
+      // the print receipt reads it from the saved visit, not just from
+      // freshly-typed rows.
+      const hydratedMeds = (v.prescribedMedications || []).map(m => ({
+        ...m,
+        name:       m.medicineName || m.name       || "",
+        dose:       m.dosage       || m.dose       || "",
+        mealStatus: m.mealStatus   || "",
+      }));
+      setMeds(hydratedMeds);
       setInvests(v.investigationsOrdered || []);
       setHopi({
         onset:              v.hopiOnset              || "",
@@ -516,9 +544,22 @@ export default function OPDAssessmentPage() {
 
   const handleSave = async () => {
     if (!soap.provisionalDiagnosis.trim()) return toast.warn("Please enter a provisional diagnosis");
+    // R7bx item 8 — MCI Regulation 1.4.2 pre-flight. If the doctor is
+    // signing this save (signature is present) and the user has no MCI
+    // registrationNumber on file, abort before the API call so the user
+    // sees a clean inline error instead of a 400 from the server.
+    const userPre = (() => { try { return JSON.parse(sessionStorage.getItem("his_user") || "{}"); } catch { return {}; } })();
+    const isSigning = !!signature;
+    if (isSigning && userPre?.role === "Doctor") {
+      const regNo = String(userPre.doctorDetails?.registrationNumber || "").trim();
+      if (!regNo) {
+        toast.error("Add your MCI registration number in your Profile before signing");
+        return;
+      }
+    }
     setSaving(true);
     try {
-      const user = (() => { try { return JSON.parse(sessionStorage.getItem("his_user") || "{}"); } catch { return {}; } })();
+      const user = userPre;
       await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/assessment`, {
         // ...soap already includes the 6 new diagnosis fields
         // (provisionalDiagnosis + ICD, workingDiagnosis + ICD, finalDiagnosis + ICD)
@@ -562,6 +603,35 @@ export default function OPDAssessmentPage() {
         obgLastUSG:         obg.lastUSG,
         obgPriorSurgery:    obg.priorSurgery,
         obgNotes:           obg.notes,
+        // ── Digital signature snapshot ─────────────────────────────
+        // R7bu — Pre-fix the signature lived only on the user's session
+        // (useDigitalSignature) and was forwarded into the print popup at
+        // render time. Refresh / logout / cleared cache wiped it, and
+        // historical reprints lost their signature box. Now we stamp the
+        // signature ON the visit so reprints survive the doctor's session.
+        // Only send when actually signed — backend ignores empty strings
+        // so re-saves from autosave / partial flows won't overwrite a
+        // previously stamped signature. doctorSignedAt mirrors `now` on
+        // the client so audit timestamps stay close to the user's clock.
+        // ── Prescription rows (mealStatus persistence) ───────────────
+        // Send the local meds array on the assessment save so the row's
+        // mealStatus reaches disk through the assessment whitelist. The
+        // bulk DoctorOrders POST further down still handles pharmacy
+        // dispatch — this is just the per-visit Rx record.
+        prescribedMedications: (meds || []).map(m => ({
+          medicineName: m.name        || m.medicineName || "",
+          dosage:       m.dose        || m.dosage       || "",
+          frequency:    m.frequency   || "",
+          duration:     m.duration    || "",
+          instructions: m.instructions || "",
+          mealStatus:   m.mealStatus  || "",
+        })),
+        ...(signature
+          ? {
+              doctorSignatureImage: signature,
+              doctorSignedAt:       new Date().toISOString(),
+            }
+          : {}),
       });
       // Push meds + investigations as DoctorOrders (bulk)
       const baseOrder = {
@@ -775,9 +845,43 @@ export default function OPDAssessmentPage() {
     return bill._id;
   };
 
+  // R7bp-OPD-DUP — Pull the draft-bill lookup out of the useEffect so it
+  // can be re-fired from addOrderToBill's E11000 recovery path (and any
+  // future "refresh bill" action). Returns silently when there's no draft
+  // yet — that's the cold-start case.
+  const refreshOrderDraftBill = useCallback(async (signal) => {
+    const u = visit?.UHID || uhid;
+    if (!u) return;
+    try {
+      const { data } = await axios.get(
+        `${API_ENDPOINTS.BASE}/billing/uhid/${encodeURIComponent(u)}`,
+        signal ? { signal } : undefined,
+      );
+      const bills = data?.bills || data?.data?.bills || [];
+      const draft = bills.find(b => b.visitType === "OPD" && b.billStatus === "DRAFT");
+      if (draft) {
+        setOrderBillId(draft._id);
+        setOrderBillNum(draft.billNumber || "(DRAFT)");
+        setOrderItems(Array.isArray(draft.billItems) ? draft.billItems : []);
+      }
+    } catch (e) {
+      if (!axios.isCancel?.(e)) console.debug("[OPDAssessment] draft bill refresh skipped:", e?.message);
+    }
+  }, [visit?.UHID, uhid]);
+
   const addOrderToBill = async () => {
+    // R7bp-OPD-DUP — Synchronous re-entrancy guard. The button is also
+    // `disabled` while orderSaving is true, but React batches the state
+    // update so a hardware double-click (or an axios retry) can still fire
+    // two onClicks before the disabled paint lands. The ref flips
+    // immediately so the second call short-circuits before its POST.
+    if (orderSavingRef.current) return;
+    orderSavingRef.current = true;
     const svc = newOrder.service;
-    if (!svc?._id) return toast.warn("Pick a service from the list first");
+    if (!svc?._id) {
+      orderSavingRef.current = false;
+      return toast.warn("Pick a service from the list first");
+    }
     const qty = Math.max(1, Number(newOrder.qty) || 1);
 
     setOrderSaving(true);
@@ -804,9 +908,30 @@ export default function OPDAssessmentPage() {
       setNewOrder({ service: null, name: "", qty: 1, urgency: "Routine", instructions: "" });
       toast.success(`${svc.serviceName} ordered — will bill once completed`);
     } catch (e) {
-      toast.error(e?.response?.data?.message || e?.message || "Could not add to bill");
+      // R7bp-OPD-DUP — Surface the real backend error so the user isn't
+      // staring at a silent UI. Special-case E11000 (Mongo duplicate-key)
+      // because the bill-number generator briefly trips it when two writes
+      // race; the row almost always lands on the next render, so we
+      // auto-refresh after 1s and tell the user to retry.
+      const status = e?.response?.status;
+      const serverMsg =
+        e?.response?.data?.message ||
+        e?.response?.data?.error ||
+        e?.message ||
+        "Could not add to bill";
+      const isDupKey =
+        /E11000/i.test(serverMsg) ||
+        /duplicate key/i.test(serverMsg) ||
+        e?.response?.data?.code === 11000;
+      if (isDupKey) {
+        toast.error("Looks like the bill is still being created — please retry in a second.");
+        setTimeout(() => { refreshOrderDraftBill().catch(() => {}); }, 1000);
+      } else {
+        toast.error(`Failed to add service: ${serverMsg}${status ? ` (${status})` : ""}`);
+      }
     } finally {
       setOrderSaving(false);
+      orderSavingRef.current = false;
     }
   };
 
@@ -894,25 +1019,9 @@ export default function OPDAssessmentPage() {
     const u = visit?.UHID || uhid;
     if (!u) return;
     const ac = new AbortController();
-    (async () => {
-      try {
-        const { data } = await axios.get(
-          `${API_ENDPOINTS.BASE}/billing/uhid/${encodeURIComponent(u)}`,
-          { signal: ac.signal },
-        );
-        const bills = data?.bills || data?.data?.bills || [];
-        const draft = bills.find(b => b.visitType === "OPD" && b.billStatus === "DRAFT");
-        if (draft) {
-          setOrderBillId(draft._id);
-          setOrderBillNum(draft.billNumber || "(DRAFT)");
-          setOrderItems(Array.isArray(draft.billItems) ? draft.billItems : []);
-        }
-      } catch (e) {
-        if (!axios.isCancel(e)) console.warn("[OPDAssessment] draft bill lookup:", e?.message);
-      }
-    })();
+    refreshOrderDraftBill(ac.signal);
     return () => ac.abort();
-  }, [visit?.UHID, uhid]);
+  }, [visit?.UHID, uhid, refreshOrderDraftBill]);
 
   const addProcedure = async () => {
     if (!newProc.procedureName.trim()) return toast.warn("Procedure name required");
@@ -1035,8 +1144,25 @@ export default function OPDAssessmentPage() {
 
     // Chronic comorbidities — merges the picklist + any "others" free
     // text into a single comma-separated string for the printable.
+    // R7bt-OPD-PRINT-7: each chronic condition is a {condition, duration}
+    // object, not a plain string. Pre-fix: join(", ") rendered
+    // "[object Object]" on every printed slip. Now: serialize each row
+    // as "Condition (duration)" or just "Condition" when no duration.
+    const chronicConditionStrings = (Array.isArray(chronic?.conditions) ? chronic.conditions : [])
+      .map(c => {
+        if (!c) return "";
+        if (typeof c === "string") return c.trim();
+        if (typeof c === "object") {
+          const name = (c.condition || c.name || "").trim();
+          if (!name) return "";
+          const dur = (c.duration || "").trim();
+          return dur ? `${name} (${dur})` : name;
+        }
+        return String(c).trim();
+      })
+      .filter(Boolean);
     const chronicAll = [
-      ...(Array.isArray(chronic?.conditions) ? chronic.conditions : []),
+      ...chronicConditionStrings,
       chronic?.others,
     ].filter(s => s && String(s).trim()).join(", ");
 
@@ -1061,75 +1187,156 @@ export default function OPDAssessmentPage() {
       })),
     ];
 
-    // Procedures advised — combines the standalone procedures card
-    // (with consent state) and any PROCEDURE/SURGERY/PHYSIOTHERAPY rows
-    // booked from the unified Services & Orders panel.
-    const proceduresForPrint = [
-      ...(procedures || []).map(p => ({
-        name:     p.procedureName,
-        type:     p.procedureType,
-        duration: p.estimatedDuration,
-        consent:  p.consentStatus,
-        notes:    p.notes,
-      })),
-      ...(orderItems || []).filter(it => /PROCEDURE|SURGERY|PHYSIOTHERAPY/i.test(it.category || "")).map(it => ({
+    // Procedures advised — only the PROCEDURE/SURGERY/PHYSIOTHERAPY
+    // rows from the unified Services & Orders panel. The standalone
+    // `procedures` state used to feed in here too, but this page has
+    // no UI to populate it (R7bt-OPD-PRINT-24), so the bill-side rows
+    // below now carry all real procedures and we no longer source from
+    // the dead state.
+    const proceduresForPrint = (orderItems || [])
+      .filter(it => /PROCEDURE|SURGERY|PHYSIOTHERAPY/i.test(it.category || ""))
+      .map(it => ({
         name: it.serviceName, type: it.category, notes: it.remarks,
-      })),
-    ];
+      }));
 
     // Consumables / packages / room from the bill — anything that's
     // not a lab/imaging/procedure goes into a "Services Billed" section
     // so the patient sees on the slip exactly what's been raised on
     // the receptionist's draft bill.
-    const otherServicesForPrint = (orderItems || [])
+    // R7bt-OPD-PRINT-11: dedup by (serviceCode || name) + qty so the
+    // print slip doesn't repeat a single bill line nine times when the
+    // bill carries stale auto-charge duplicates (a known pre-R7bt
+    // billing bug that's already fixed at the bill layer but the
+    // current bill may still hold). First occurrence wins.
+    const rawOtherServices = (orderItems || [])
       .filter(it => !/LAB|RADIOLOGY|IMAGING|SUPPORT|PROCEDURE|SURGERY|PHYSIOTHERAPY/i.test(it.category || ""))
       .map(it => ({
-        name:     it.serviceName,
-        category: it.category,
-        qty:      it.quantity,
-        price:    it.unitPrice,
-        total:    it.totalAmount,
-        notes:    it.remarks,
+        name:        it.serviceName,
+        serviceCode: it.serviceCode,
+        category:    it.category,
+        qty:         it.quantity,
+        price:       it.unitPrice,
+        total:       it.totalAmount,
+        notes:       it.remarks,
       }));
+    const seenOtherSvc = new Map();
+    rawOtherServices.forEach(r => {
+      const k = `${r.serviceCode || r.name}|${r.qty || 1}`;
+      if (!seenOtherSvc.has(k)) seenOtherSvc.set(k, r);
+    });
+    const otherServicesForPrint = Array.from(seenOtherSvc.values());
+
+    // R7bt-OPD-PRINT-9: vitals.bloodPressure may be a string ("120/80")
+    // OR a sub-doc {systolic, diastolic} depending on which entry path
+    // wrote it (Nurse Vitals form vs. OPD registration). Pre-fix the
+    // print receipt got "[object Object]" for the BP row. Normalize to
+    // a single "<sys>/<dia>" string before forwarding.
+    const bpToString = (bp) => {
+      if (!bp) return "";
+      if (typeof bp === "string") return bp.trim();
+      if (typeof bp === "object") {
+        const sys = bp.systolic ?? bp.sys ?? "";
+        const dia = bp.diastolic ?? bp.dia ?? "";
+        const out = `${sys}/${dia}`;
+        return out === "/" ? "" : out;
+      }
+      return String(bp);
+    };
+    const bpString = bpToString(vit.bloodPressure) || bpToString(vit.bp);
+
+    // R7bt-OPD-PRINT-1: allergies were missing from the print payload
+    // entirely — the template's "Known Allergies" row always rendered
+    // empty. Pull from the nurse-entered allergyHistory first (the
+    // canonical capture point), with a doctor's SOAP-side override as
+    // a last resort. The NKDA flag lets the template distinguish
+    // "no known allergies" from "doctor never asked".
+    // (A separate patient prefetch is a future enhancement — the page
+    // only carries the visit object today.)
+    const allergiesRaw = visit?.allergyHistory || visit?.allergies || soap?.allergies || "";
+    const allergiesString = typeof allergiesRaw === "string"
+      ? allergiesRaw
+      : Array.isArray(allergiesRaw)
+        ? allergiesRaw.filter(Boolean).join(", ")
+        : String(allergiesRaw || "");
+    const allergiesIsNKDA = !allergiesString.trim() || /\b(nkda|none|nil)\b/i.test(allergiesString);
+
+    // R7bt-OPD-PRINT-21: DOB / blood group / address from the visit
+    // payload (if the backend populated them). Empty string fallback
+    // so the template gets a predictable shape — no undefined.
+    const patientDob = v.dateOfBirth || v.dob || "";
+    const patientBloodGroup = v.bloodGroup || "";
+    const rawAddr = v.address || "";
+    const patientAddress = typeof rawAddr === "string"
+      ? rawAddr
+      : Array.isArray(rawAddr)
+        ? rawAddr.filter(Boolean).join(", ")
+        : (rawAddr && typeof rawAddr === "object")
+          ? [rawAddr.line1, rawAddr.line2, rawAddr.city, rawAddr.state, rawAddr.pincode]
+              .filter(Boolean).join(", ")
+          : "";
+
+    // R7bt-OPD-PRINT-24: procedures state has no UI to populate it on
+    // this page, so always print an empty array rather than reading
+    // from the (effectively dead) procedures state. Bill-side procedures
+    // still get printed via the orderItems filter above.
+    const proceduresForPrintFinal = (proceduresForPrint || []).filter(
+      p => p && (p.name || p.procedureName)
+    );
 
     openPrint("opd-prescription", {
-      rxNo:         v.visitNumber,
-      patientName:  v.patientName || v.UHID,
-      uhid:         v.UHID,
-      age:          v.age,
-      gender:       v.gender,
-      mobile:       v.contactNumber || v.mobile,
+      rxNo:         v.visitNumber || "",
+      patientName:  v.patientName || v.UHID || "",
+      uhid:         v.UHID || "",
+      age:          v.age || "",
+      gender:       v.gender || "",
+      mobile:       v.contactNumber || v.mobile || "",
+      // R7bt-OPD-PRINT-21: surface DOB / blood group / address so the
+      // printable can render a full patient header (template already
+      // has slots; payload was empty pre-fix).
+      dob:          patientDob,
+      bloodGroup:   patientBloodGroup,
+      address:      patientAddress,
       doctorName:   drName,
       doctorReg:    docUser?.registrationNo || "",
       department:   v.department || docUser?.department || "",
       visitDate:    v.visitDate || new Date().toISOString(),
       vitals: {
-        bp:     vit.bloodPressure,
-        pulse:  vit.pulse,
-        temp:   vit.temperature,
-        spo2:   vit.oxygenSaturation,
-        rr:     vit.respiratoryRate,
-        weight: vit.weight,
-        height: vit.height,
-        bmi:    vit.bmi,
+        // R7bt-OPD-PRINT-9: BP is normalized to "<sys>/<dia>" string
+        // before forwarding so the printable doesn't render an object.
+        bp:     bpString,
+        pulse:  vit.pulse || "",
+        temp:   vit.temperature || "",
+        spo2:   vit.oxygenSaturation || "",
+        rr:     vit.respiratoryRate || "",
+        weight: vit.weight || "",
+        height: vit.height || "",
+        bmi:    vit.bmi || "",
       },
-      chiefComplaints: v.chiefComplaint || soap.subjectiveNote,
+      // R7bt-OPD-PRINT-10: priority reversed — doctor's SOAP S note
+      // is authoritative because the receptionist's chief-complaint
+      // capture is often stale by the time the doctor finishes the
+      // consult. The registration-side field is the fallback only.
+      chiefComplaints: soap.subjectiveNote || v.chiefComplaint || "",
       // HOPI compacted one-line + chronic comorbidities for the history block
       hopi:            hopiLine,
       chronic:         chronicAll,
-      history:         soap.objectiveNote,
+      // R7bt-OPD-PRINT-1: allergies finally on the payload — template's
+      // "Known Allergies" row + NKDA short-circuit can light up.
+      allergies:       allergiesString,
+      allergiesIsNKDA,
+      history:         soap.objectiveNote || "",
       // Three-tier diagnosis + ICD coding — matches the on-screen card
-      provisionalDx:   soap.provisionalDiagnosis,
-      workingDx:       soap.workingDiagnosis,
-      diagnosis:       soap.finalDiagnosis,
-      icd10:           soap.icd10Code,
-      icd10Desc:       soap.icd10Description,
-      patientStatus:   soap.patientStatus,
+      provisionalDx:   soap.provisionalDiagnosis || "",
+      workingDx:       soap.workingDiagnosis || "",
+      diagnosis:       soap.finalDiagnosis || "",
+      icd10:           soap.icd10Code || "",
+      icd10Desc:       soap.icd10Description || "",
+      patientStatus:   soap.patientStatus || "",
       // SOAP narrative — Assessment & Plan notes (separate from the
       // structured diagnosis & advice; doctors use these for the
       // clinical reasoning that doesn't fit elsewhere)
-      assessmentNote:  soap.assessmentNote,
-      planNote:        soap.planNote,
+      assessmentNote:  soap.assessmentNote || "",
+      planNote:        soap.planNote || "",
       // Structured + free-text examination findings, compacted
       generalExam:     generalExamLine,
       systemicExam:    systemicExamLine,
@@ -1138,12 +1345,21 @@ export default function OPDAssessmentPage() {
       drugs,
       investigations:  investigationsForPrint,
       // Procedures advised + non-lab/non-procedure services billed
-      procedures:      proceduresForPrint,
+      procedures:      proceduresForPrintFinal,
       otherServices:   otherServicesForPrint,
       // Plan-side fields still live on soap (Advice / Follow-up / Notes)
       advice:          soap.advice ? String(soap.advice).split("\n").filter(Boolean) : [],
-      followUpDate:    soap.followUpDate,
-      followUpNotes:   soap.doctorNotes,
+      followUpDate:    soap.followUpDate || "",
+      followUpNotes:   soap.doctorNotes || "",
+      // R7bt-OPD-PRINT-12: forward the digital signature data URL so
+      // the printable can stamp it under the doctor's name without a
+      // round-trip to the signature hook. useDigitalSignature exposes
+      // `signature` as a base64 data URL (or null if unset).
+      // R7bu — prefer the signature STORED on the visit when reprinting
+      // an old visit (historical accuracy). Falls back to the current
+      // session signature for first-time prints / pre-R7bu visits that
+      // were never re-saved after the schema landed.
+      signatureImage:  v.doctorSignatureImage || signature || "",
       // R7bh-F1 / META-1: PrintAudit anchor — Prescription maps to
       // OPDPrescription in ENTITY_MODEL. Visit/Prescription _id may
       // not exist on a freshly drafted visit, fall back to visit _id.
@@ -1156,6 +1372,25 @@ export default function OPDAssessmentPage() {
       },
     });
   };
+
+  // R7cn: when launched from the Doctor OPD Panel with autoPrint=1,
+  // fire handlePrint() once the visit + structured assessment finish
+  // loading. We wait for `visit` and `loading=false` so the printable's
+  // payload builder (handlePrint reads from local state) has fully
+  // hydrated values; otherwise the print would render with empty SOAP /
+  // Rx / Investigations sections. Fires exactly once via the ref guard.
+  useEffect(() => {
+    if (!autoPrint) return;
+    if (loading) return;
+    if (!visit) return;
+    if (autoPrintFiredRef.current) return;
+    autoPrintFiredRef.current = true;
+    // Small delay so the page paints its loaded state before the
+    // browser print dialog steals focus — better UX than a blank flash.
+    const t = setTimeout(() => { try { handlePrint(); } catch (e) { console.warn("[autoPrint] handlePrint failed:", e); } }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPrint, loading, visit]);
 
   const vitals = visit?.vitals || {};
   const vitInfo = [
@@ -1618,6 +1853,30 @@ export default function OPDAssessmentPage() {
               <Field label="P — Plan">
                 <Textarea value={soap.planNote} onChange={v => setSoap(p => ({ ...p, planNote: v }))}
                   placeholder="Treatment plan, medications, follow-up…" rows={4} />
+              </Field>
+            </div>
+            {/* R7bt-OPD-PRINT-23: Advice / Follow-up / Doctor Notes — the
+                OPD prescription printable already had slots for these but
+                no UI existed to author them, so they printed blank every
+                time. Inputs bind to the same soap.* keys the print payload
+                forwards. Layout matches the SOAP grid above (2-col on top,
+                full-width Doctor Notes underneath) so the card height stays
+                manageable on a typical 13" laptop screen. */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 14 }}>
+              <Field label="General Advice">
+                <Textarea value={soap.advice} onChange={v => setSoap(p => ({ ...p, advice: v }))}
+                  placeholder="Lifestyle / diet / activity advice, warning signs to watch for…" rows={3} />
+              </Field>
+              <Field label="Follow-up Date">
+                <input type="date" value={soap.followUpDate}
+                  onChange={e => setSoap(p => ({ ...p, followUpDate: e.target.value }))}
+                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 13, color: C.dark, background: C.card, boxSizing: "border-box", outline: "none", fontFamily: "inherit" }} />
+              </Field>
+            </div>
+            <div style={{ marginTop: 14 }}>
+              <Field label="Doctor Notes (Follow-up / Misc)">
+                <Textarea value={soap.doctorNotes} onChange={v => setSoap(p => ({ ...p, doctorNotes: v }))}
+                  placeholder="Private notes for next visit, special instructions for the patient…" rows={3} />
               </Field>
             </div>
           </Card>
@@ -2282,6 +2541,8 @@ export default function OPDAssessmentPage() {
                 <option value="25% Dextrose" />
                 <option value="50% Dextrose" />
                 <option value="Mannitol 20%" />
+                <option value="20% Human Albumin" />
+                <option value="5% Albumin" />
                 <option value="3% Hypertonic Saline" />
                 <option value="Insulin drip" />
                 <option value="Heparin drip" />

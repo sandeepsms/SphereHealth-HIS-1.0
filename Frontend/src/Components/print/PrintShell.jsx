@@ -13,6 +13,7 @@ import React from "react";
 import "./print.css";
 import PrintWatermark from "./PrintWatermark";
 import { absoluteLogoUrl } from "../../utils/printUtils";
+import { buildPrintIssuer } from "./printIssuer";
 
 const fmtAddress = (s) => {
   const bits = [
@@ -30,8 +31,24 @@ const PrintShell = ({
   infoItems = [],     // [{ label, value }] for the strip under title
   showBank = true,
   showSignatures = true,
-  signatureLabels = ["Authorised Signatory", "Patient / Attendant"],
+  // R7cf: empty signature lines replaced with a real digital-signature
+  // stamp. `signatureLabels` is retained as a prop but no longer
+  // rendered — every printable now stamps the issuing user identity
+  // instead of leaving lines for handwritten signatures. Callers that
+  // need a specific issuer (doctor sign-and-submit, original cashier
+  // on reprint) pass `signedBy` to override the stored user.
+  signatureLabels = ["Authorised Signatory", "Patient / Attendant"], // eslint-disable-line no-unused-vars
+  signedBy,
+  // OPD-PRINT-AUDIT Item 2 + 12: data URL of doctor's signature stamp.
+  // When present, rendered above the digital-signature name as <img>.
+  signatureImage,
+  // OPD-PRINT-AUDIT Item 12 / R7cf: ISO timestamp of e-sign — used for
+  // the "Signed at" line of the stamp. Falls back to "now" if omitted.
+  signedAt,
   showTerms = true,
+  // OPD-PRINT-AUDIT Item 20: caller-provided header extra (e.g. QR code).
+  // Rendered top-right inside the patient info strip.
+  headerExtra,
   // R7bf-F / A4-CRIT-5: full-page DUPLICATE watermark when this is a
   // reprint. printCount=0/1 → original, no watermark. Caller passes the
   // value returned by recordPrintAudit() (utils/printUtils.js).
@@ -94,10 +111,29 @@ const PrintShell = ({
           {settings.registrationNo && <div><strong>Reg No:</strong> {settings.registrationNo}</div>}
           {settings.panNumber      && <div><strong>PAN:</strong> {settings.panNumber}</div>}
           {settings.rohiniId       && <div><strong>ROHINI:</strong> {settings.rohiniId}</div>}
-          <div style={{ marginTop: 4 }}>
-            {settings.nabh && <span className="pr-accred pr-accred--nabh">NABH</span>}
-            {settings.nabl && <span className="pr-accred pr-accred--nabl">NABL</span>}
-          </div>
+          {/* R7cg: NABH pill on the print header now gates on
+              `nabhCertNumber` instead of the legacy `nabh` boolean
+              (which defaults true in the schema and was misleading on
+              fresh installs). Once admin enters the cert# in
+              Hospital Configuration → NABH tab, the pill renders and
+              carries the actual cert# in a tooltip for surveyor visits.
+              NABL stays on its boolean — that one defaults false, so
+              it only surfaces when admin explicitly turns it on. */}
+          {(() => {
+            const _cert = String(settings.nabhCertNumber || "").trim();
+            const _showNabh = !!_cert;
+            return (
+              <div style={{ marginTop: 4 }}>
+                {_showNabh && (
+                  <span
+                    className="pr-accred pr-accred--nabh"
+                    title={`NABH Accredited · Cert ${_cert}`}
+                  >NABH</span>
+                )}
+                {settings.nabl && <span className="pr-accred pr-accred--nabl">NABL</span>}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -107,15 +143,41 @@ const PrintShell = ({
         {serialNo && <span className="pr-title-bar__no">{serialNo}</span>}
       </div>
 
-      {/* ── Info strip ── */}
-      {infoItems.length > 0 && (
-        <div className="pr-info-grid">
-          {infoItems.map((it, i) => (
-            <div key={i} className="pr-info-grid__item">
-              <div className="pr-info-grid__lbl">{it.label}</div>
-              <div className="pr-info-grid__val">{it.value || "—"}</div>
+      {/* ── Info strip ──
+           OPD-PRINT-AUDIT Item 20: when `headerExtra` is passed (QR code
+           on Rx) the strip becomes a flex row — grid of info items on the
+           left, extra slot on the right. */}
+      {(infoItems.length > 0 || headerExtra) && (
+        <div
+          className={headerExtra ? "pr-info-grid pr-info-grid--with-extra" : "pr-info-grid"}
+          style={headerExtra ? { display: "flex", alignItems: "center", gap: 14 } : undefined}
+        >
+          {infoItems.length > 0 && (
+            /* R7ch: 2-column column-major flow keeps the strip balanced
+               regardless of item count (Patient/UHID/Age on left,
+               Doctor/Dept/Visit Date on right). headerExtra case (QR
+               code beside the strip) uses the same column-count
+               approach via inline style. */
+            <div
+              style={headerExtra ? {
+                flex: 1,
+                columnCount: 2,
+                columnGap: "24px",
+              } : undefined}
+            >
+              {infoItems.map((it, i) => (
+                <div key={i} className="pr-info-grid__item">
+                  <div className="pr-info-grid__lbl">{it.label}</div>
+                  <div className="pr-info-grid__val">{it.value || "—"}</div>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
+          {headerExtra && (
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
+              {headerExtra}
+            </div>
+          )}
         </div>
       )}
 
@@ -135,15 +197,44 @@ const PrintShell = ({
           </div>
         )}
 
-        {showSignatures && (
-          <div className="pr-signatures">
-            {signatureLabels.map((label, i) => (
-              <div key={i} className="pr-sig">
-                <div className="pr-sig__line">{label}</div>
+        {/* R7cf — Empty signature lines replaced with a real digital-
+            signature stamp. Every document now carries proof of WHO
+            issued / signed it (name, employee ID, role / designation,
+            department, timestamp). Reads the per-tab user mirror
+            sessionStorage['his_user'] set by AuthContext on login;
+            print windows opened via window.open() inherit it, so the
+            stamp lands on first paint. Callers may override via the
+            `issuer` prop (e.g. a doctor's sign-and-submit stamps the
+            doctor of record, not the receptionist who reprinted later)
+            and `signedAt` (so reprints preserve the ORIGINAL sign time
+            instead of "now"). */}
+        {showSignatures && (() => {
+          const issuer = buildPrintIssuer({ issuer: signedBy, signedAt });
+          const metaLine = [
+            issuer.designation || issuer.role,
+            issuer.department,
+            issuer.employeeId && `ID: ${issuer.employeeId}`,
+          ].filter(Boolean).join(" · ");
+          return (
+            <div className="pr-digsig-row">
+              <div className="pr-digsig">
+                <div className="pr-digsig__badge">
+                  <span aria-hidden="true">✓</span> DIGITALLY ISSUED
+                </div>
+                {signatureImage ? (
+                  <img
+                    src={signatureImage}
+                    alt="signature"
+                    className="pr-digsig__img"
+                  />
+                ) : null}
+                <div className="pr-digsig__name">{issuer.name}</div>
+                {metaLine ? <div className="pr-digsig__meta">{metaLine}</div> : null}
+                <div className="pr-digsig__time">Signed {issuer.when}</div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          );
+        })()}
 
         {settings.billFooterNote && (
           <div className="pr-footer__note">{settings.billFooterNote}</div>
@@ -154,9 +245,14 @@ const PrintShell = ({
             {settings.termsLine1 && <div>{settings.termsLine1}</div>}
             {settings.termsLine2 && <div>{settings.termsLine2}</div>}
             {settings.termsLine3 && <div>{settings.termsLine3}</div>}
+            {/* R7cb-C: settings-driven "computer-generated" disclosure.
+                Previously hardcoded "Powered by SphereHealth HIS" — now
+                renders "Generated by <hospitalName> HIS" so a deployed
+                tenant (e.g. "Apollo XYZ") sees their own brand. The
+                disclosure itself is preserved for NABH AAC.7 traceability. */}
             <div style={{ marginTop: 4, opacity: .7 }}>
               Generated on {new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-              {" "}· Powered by SphereHealth HIS
+              {" "}· Generated by {settings.hospitalName || "Hospital"} HIS
             </div>
           </div>
         )}

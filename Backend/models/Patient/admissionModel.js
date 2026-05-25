@@ -86,6 +86,14 @@ const AdmissionSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Ward",
       default: null },
+    // R7bi — denormalised ward name. Bed/ward lookups happen in many
+    // hot read paths (patient header, charts, pharmacy slips) so we
+    // mirror it on the admission at bed-assign / bed-transfer time.
+    // The Ward collection remains the source of truth — this is just
+    // a snapshot. Legacy admissions populated via wardId fallback in
+    // the frontend, and a one-shot backfill on backend boot copies
+    // wardName from Ward into Admission.wardName where missing.
+    wardName: { type: String, default: "" },
     floorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Floor",
@@ -405,6 +413,83 @@ AdmissionSchema.index({ admissionDate: -1 });
 AdmissionSchema.index({ admissionType: 1 });
 AdmissionSchema.index({ attendingDoctor: 1 });
 AdmissionSchema.index({ hasBed: 1 });
+
+// R7bo-Bug-A — UNIQUENESS GUARD: at most ONE Active admission per UHID.
+// ─────────────────────────────────────────────────────────────────────
+// Bug-A history: pre-R7bd-A-6 the admissionService.createAdmission guard
+// only blocked bed-on-bed double-admit; OPDService.createOPDVisit and
+// emergencyService (ER→IPD bridge) both call Admission.create() directly
+// without the per-patient guard. Result: a patient could land in the DB
+// with TWO `status:"Active"` rows (one OPD + one IPD, or two OPD on
+// different days, or a legacy IPD + a new ER-bridge IPD) — and different
+// frontend pages, querying with different filters, would each pick a
+// different one as "the active admission". Doctor Notes and Nursing
+// Notes would disagree on which admission the patient was on, orders
+// placed against one wouldn't show in the other.
+//
+// The application-level guard at admissionService.createAdmission lines
+// 82-97 catches the IPD path (R7bd-A-6). The schema-level guard here
+// closes the OPD + emergencyService back doors AND every future
+// admission-creation path that may be added — the DB itself refuses
+// the second insert with E11000, no matter how it was reached.
+//
+// PARTIAL FILTER: only enforced when status==="Active" — discharged /
+// cancelled / transferred / deleted history rows are unconstrained, so
+// legitimate readmissions (after the prior admission is moved to
+// Discharged/Cancelled) work as before. Multiple historical rows per
+// UHID are exactly what the patient history modal needs.
+//
+// ROLLOUT: requires Mongoose syncIndexes() on boot to materialise the
+// partial index on the existing collection. The pre-existing duplicates
+// must be cleaned up first (see scripts/dedupeActiveAdmissions.js) —
+// otherwise syncIndexes() will fail with E11000 on the duplicate keys
+// and the boot will log a warning. Once dedupe runs, the index is built.
+AdmissionSchema.index(
+  { UHID: 1, status: 1 },
+  {
+    name: "uniq_active_admission_per_uhid",
+    unique: true,
+    partialFilterExpression: { status: "Active" },
+  },
+);
+
+// R7bo-Bug-A — defense-in-depth pre("save") guard. The partial unique
+// index above is the DB-level safety net; this hook catches the race
+// BEFORE the insert hits the wire, so callers get a clean 409-style
+// error with a clear message instead of a raw E11000. Two requests
+// landing in the same millisecond can still both pass this hook and
+// race to the DB — only the index catches that case — but in practice
+// 99% of duplicate-create attempts come from sequential code paths
+// (OPD then ER, or admission UI fast-clicked twice) and this hook
+// gives them a helpful error.
+AdmissionSchema.pre("save", async function (next) {
+  if (!this.isNew) return next();
+  if (this.status !== "Active") return next();
+  if (!this.UHID) return next();
+  try {
+    const existing = await this.constructor.findOne({
+      UHID: this.UHID,
+      status: "Active",
+      _id: { $ne: this._id },
+    }).select("_id admissionNumber admissionType hasBed").lean();
+    if (existing) {
+      const err = new Error(
+        `Patient ${this.UHID} already has an active admission ` +
+        `(${existing.admissionNumber}, ${existing.admissionType}${existing.hasBed ? ", bedded" : ", bedless"}). ` +
+        `Discharge or cancel it before creating a new admission.`,
+      );
+      err.status = 409;
+      err.code   = "PATIENT_HAS_ACTIVE_ADMISSION";
+      return next(err);
+    }
+    next();
+  } catch (e) {
+    // Lookup failure shouldn't block creation outright — the index
+    // catches the race; surface the read error so logs show it.
+    console.warn("[Admission] uniqueness pre-save check failed:", e.message);
+    next();
+  }
+});
 // R7t: Discharge queue / "Discharged Today" tab + R7i MRD-page query
 // (status=Discharged + dischargedSince) — without this compound, every
 // page load scans the entire admissions collection.

@@ -25,6 +25,26 @@ import { toNum } from "../../../utils/printUtils";
 const _fmtDate = (d, opts) => d
   ? new Date(d).toLocaleDateString("en-IN", opts || { day: "2-digit", month: "short", year: "numeric" })
   : "—";
+
+// R7da — Decimal128-aware numeric coercion for reduce()/sum sites.
+// Mongoose Decimal128 fields surface as { $numberDecimal: "320" } when
+// the backend uses .lean() (which bypasses the toJSON transform).
+// Plain Number() on that wrapper returns NaN — so a single ₹NaN
+// poisoned summations on supplementary + return slips. fmtINR has the
+// same unwrap built-in, but reduce() callbacks need their own helper.
+const _dec = (v) => {
+  if (v == null) return 0;
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v === "string") { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; }
+  if (typeof v === "object") {
+    if (typeof v.$numberDecimal === "string") return parseFloat(v.$numberDecimal) || 0;
+    if (typeof v.toString === "function") {
+      const n = parseFloat(v.toString());
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return 0;
+};
 const _fmtAddr = (s = {}) => [
   s.addressLine1, s.addressLine2,
   [s.city, s.state, s.pincode].filter(Boolean).join(", "),
@@ -365,7 +385,10 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
               {r.status === "Supplemented"  && `${supplements.length} item${supplements.length === 1 ? "" : "s"} added via supplementary invoice`}
             </span>
             <span>
-              Original&nbsp;{fmtINR(Number(r.grandTotal || 0))}
+              {/* R7da — drop redundant Number() wrap. fmtINR now handles
+                  Decimal128 wire format ({$numberDecimal:"320"}) which
+                  Number() would NaN. */}
+              Original&nbsp;{fmtINR(r.grandTotal)}
               {supplementTotal > 0 && <> · Added&nbsp;<b style={{ color: "#15803d" }}>+ {fmtINR(supplementTotal)}</b></>}
               {refundTotal > 0     && <> · Refund&nbsp;<b style={{ color: "#b45309" }}>− {fmtINR(refundTotal)}</b></>}
               {(supplementTotal > 0 || refundTotal > 0) && <> · Net&nbsp;<b>{fmtINR(netAfter)}</b></>}
@@ -388,7 +411,7 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
                     {sup.paymentMode && <> · {sup.paymentMode}</>}
                     {sup.reason && <> · <i>{sup.reason}</i></>}
                   </span>
-                  <span>Total: <b>{fmtINR(Number(sup.addedTotal || 0))}</b></span>
+                  <span>Total: <b>{fmtINR(sup.addedTotal)}</b></span>
                 </div>
                 <table className="pb-supplements-table">
                   <thead>
@@ -409,9 +432,11 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
                         <td>{it.drugName}</td>
                         <td style={{ fontFamily: "DM Mono, monospace", fontSize: 9 }}>{it.batchNo || "—"}</td>
                         <td style={{ textAlign: "right" }}>{it.quantity}</td>
-                        <td style={{ textAlign: "right" }}>{fmtINR(Number(it.unitPrice || 0))}</td>
-                        <td style={{ textAlign: "right" }}>{fmtINR(Number(it.gstAmount || 0))}</td>
-                        <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR(Number(it.netAmount || 0))}</td>
+                        {/* R7da — fmtINR unwraps Decimal128 natively;
+                            the old Number() wrap NaN'd those values. */}
+                        <td style={{ textAlign: "right" }}>{fmtINR(it.unitPrice)}</td>
+                        <td style={{ textAlign: "right" }}>{fmtINR(it.gstAmount)}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR(it.netAmount)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -419,8 +444,10 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
               </div>
             ))}
             <div className="pb-supplements-foot">
-              <span>Paid: <b style={{ color: "#15803d" }}>{fmtINR(supplements.reduce((s, x) => s + Number(x.amountPaid || 0), 0))}</b></span>
-              <span>Balance due: <b style={{ color: "#dc2626" }}>{fmtINR(supplements.reduce((s, x) => s + Number(x.balanceDue || 0), 0))}</b></span>
+              {/* R7da — reduce() needs explicit unwrap for the Decimal128 wire
+                  format. Use a tiny inline _n() so summations stay safe. */}
+              <span>Paid: <b style={{ color: "#15803d" }}>{fmtINR(supplements.reduce((s, x) => s + _dec(x.amountPaid), 0))}</b></span>
+              <span>Balance due: <b style={{ color: "#dc2626" }}>{fmtINR(supplements.reduce((s, x) => s + _dec(x.balanceDue), 0))}</b></span>
               <span>Addendum total: <b style={{ color: "#15803d" }}>{fmtINR(supplementTotal)}</b></span>
             </div>
           </div>
@@ -441,7 +468,7 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
                     {ret.refundMode && <> · {ret.refundMode}</>}
                     {ret.reason && <> · <i>{ret.reason}</i></>}
                   </span>
-                  <span>Refund: <b>{fmtINR(Number(ret.refundAmount || 0))}</b></span>
+                  <span>Refund: <b>{fmtINR(ret.refundAmount)}</b></span>
                 </div>
                 <table className="pb-returns-table">
                   <thead>
@@ -462,9 +489,10 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
                         <td>{it.drugName}</td>
                         <td style={{ fontFamily: "DM Mono, monospace", fontSize: 9 }}>{it.batchNo || "—"}</td>
                         <td style={{ textAlign: "right" }}>{it.quantity}</td>
-                        <td style={{ textAlign: "right" }}>{fmtINR(Number(it.unitPrice || 0))}</td>
-                        <td style={{ textAlign: "right" }}>{fmtINR(Number(it.gstAmount || 0))}</td>
-                        <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR(Number(it.netAmount || 0))}</td>
+                        {/* R7da — same Decimal128 unwrap as supplements above */}
+                        <td style={{ textAlign: "right" }}>{fmtINR(it.unitPrice)}</td>
+                        <td style={{ textAlign: "right" }}>{fmtINR(it.gstAmount)}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR(it.netAmount)}</td>
                       </tr>
                     ))}
                   </tbody>

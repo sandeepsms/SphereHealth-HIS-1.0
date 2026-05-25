@@ -23,6 +23,7 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
+import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
 import { useAuth } from "../../context/AuthContext";
 import ActivePatientDirectory from "../../Components/ActivePatientDirectory";
 import "./reception-shared.css";
@@ -276,6 +277,23 @@ export default function ReceptionBilling() {
       else toast.info("No OPD bill found yet — try again in a moment");
     } else if (action === "advance") {
       setShowAdvDlg(true);
+    } else if (action === "collect-all") {
+      // R7bp: deep-link from the Receptionist Dashboard's Patient Credit
+      // Ledger (multi-select footer "Collect All for Patient" button).
+      // The receptionist has already picked one UHID; opening the
+      // BulkCollectModal here lets the existing FIFO flow distribute the
+      // collected amount across every open bill for the patient.
+      // Guard: only fire when there's at least one open bill — otherwise
+      // the modal would render an empty allocation table and the apply
+      // button would no-op (R7am surfaces this same warning).
+      const openBills = (bills || []).filter((b) =>
+        ["GENERATED", "PARTIAL"].includes(b.billStatus),
+      );
+      if (openBills.length === 0) {
+        toast.info("No open bills found for this patient");
+      } else {
+        setShowBulkCollect(true);
+      }
     }
 
     // Self-consume so refresh doesn't re-pop the modal.
@@ -431,6 +449,35 @@ export default function ReceptionBilling() {
     } finally { setBillLoading(false); }
   };
 
+  /* R7ci — Hard-delete a DRAFT bill (no payments, no audit footprint).
+     Bills move DRAFT → GENERATED → PARTIAL → PAID; a DRAFT was never
+     issued to the patient, so it can be scrapped cleanly. Backend
+     POST /api/billing/:billId/delete enforces the same guards
+     (DRAFT-only, zero collected) and voids any related triggers. */
+  const deleteDraftBill = async (bill) => {
+    if (!bill || bill._id == null) return;
+    if (bill.billStatus !== "DRAFT") {
+      toast.warning(`Only DRAFT bills can be deleted. Use Cancel on a ${bill.billStatus} bill.`);
+      return;
+    }
+    if (!(await confirm({
+      title: "Delete this DRAFT bill?",
+      body: `${bill.billNumber || "Draft"} — ${(bill.billItems || []).length} item(s) will be removed. This cannot be undone, but no money has been collected yet so it's safe to scrap.`,
+      confirmLabel: "Delete",
+      danger: true,
+    }))) return;
+    try {
+      await axios.post(`${API_ENDPOINTS.BILLING}/${bill._id}/delete`, {});
+      toast.success("Draft bill deleted");
+      // If the deleted bill was the currently selected one, clear the
+      // detail pane so the user doesn't see a stale card.
+      if (activeBill && activeBill._id === bill._id) setActiveBill(null);
+      await load(uhid);
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Could not delete bill");
+    }
+  };
+
   const generateBill = async (billId) => {
     // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
     if (!(await confirm({
@@ -540,7 +587,7 @@ export default function ReceptionBilling() {
         .filter((b) => NON_IPD_TYPES.has(b.visitType) && b.billStatus !== "CANCELLED");
       const freshAdv = await axios.get(`${API_ENDPOINTS.BILLING}/advance/uhid/${encodeURIComponent(uhid)}`);
       const advList  = (freshAdv?.data?.data?.advances || freshAdv?.data?.advances || []);
-      printConsolidatedFinalBill(freshBills, advList);
+      await printConsolidatedFinalBill(freshBills, advList);
       toast.success(`Final bill ready — ${freshBills.length} bill${freshBills.length === 1 ? "" : "s"} consolidated`);
     } catch (e) {
       toast.error(e?.response?.data?.message || `Generate Final Bill failed: ${e?.message}`);
@@ -551,7 +598,8 @@ export default function ReceptionBilling() {
      bill on this UHID (OPD / Day Care / ER / Services). Layout mirrors the
      IPD final-bill print but flattens across multiple bills instead of
      daily breakdown. */
-  const printConsolidatedFinalBill = (billsIn, advancesIn) => {
+  const printConsolidatedFinalBill = async (billsIn, advancesIn) => {
+    const hs = await fetchHospitalSettings();
     const list = billsIn || [];
     const adv  = advancesIn || [];
     const _num = (v) => {
@@ -585,6 +633,12 @@ export default function ReceptionBilling() {
     const win = window.open("", "_blank", "width=900,height=1100");
     if (!win) return toast.error("Pop-up blocked — allow pop-ups to print the final bill");
     const esc = (s = "") => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+    // R7cb-B: pull live hospital identity from Settings (logo, name, tagline,
+    // address, phones, GSTIN) so admin edits flow into every printed bill.
+    const _addrLine = [hs.addressLine1, hs.addressLine2, [hs.city, hs.state, hs.pincode].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+    const _phoneLine = [hs.phone1, hs.phone2, hs.emergencyPhone].filter(Boolean).join(" · ");
+    const _hospName = hs.hospitalName || "Hospital";
+    const _hospTagline = hs.tagline || "";
     const itemsHtml = billRows.map(({ b, bGross, bDisc, bTax, bNet, bPaid, bDue }) => {
       const itemsRows = (b.billItems || []).map((it) => `
         <tr>
@@ -672,8 +726,12 @@ export default function ReceptionBilling() {
       </style></head><body>
       <div class="hdr">
         <div>
-          <h1>SphereHealth Hospital</h1>
-          <div class="meta">NABH Accredited · Final Consolidated Bill</div>
+          ${hs.logo ? `<img src="${hs.logo}" alt="" style="max-height:54px;display:block;margin-bottom:6px"/>` : ""}
+          <h1 style="color:${hs.printHeaderColor || "#0f172a"}">${esc(_hospName)}</h1>
+          <div class="meta">${_hospTagline ? esc(_hospTagline) + " · " : ""}Final Consolidated Bill</div>
+          ${_addrLine ? `<div class="meta">${esc(_addrLine)}</div>` : ""}
+          ${_phoneLine ? `<div class="meta">${esc(_phoneLine)}</div>` : ""}
+          ${hs.gstin ? `<div class="meta">GSTIN: ${esc(hs.gstin)}</div>` : ""}
         </div>
         <div style="text-align:right">
           <strong>${esc(patient?.fullName || "Patient")}</strong><br>
@@ -699,7 +757,7 @@ export default function ReceptionBilling() {
       <div class="footer">
         Final consolidated bill generated by Reception · ${new Date().toLocaleString("en-IN")}<br>
         ${list.length} bill${list.length === 1 ? "" : "s"} across OPD / Day Care / ER / Services for this patient.
-        Thank you for choosing SphereHealth.
+        ${hs.billFooterNote ? esc(hs.billFooterNote) : ""}
       </div>
       <script>window.onload = () => { setTimeout(() => window.print(), 200); };</script>
       </body></html>`);
@@ -1157,11 +1215,11 @@ export default function ReceptionBilling() {
                   <i className="pi pi-file-pdf" /> Generate Final Bill
                 </button>
               )}
-              <button className="rx-action-btn"
-                      onClick={() => navigate(`/visit-history/${patient.UHID}`)}
-                      title="Visit history for this patient">
-                <i className="pi pi-clock" /> History
-              </button>
+              {/* R7ci: History button removed per user request. The complete
+                  per-UHID OPD/IPD chronology lives on the Patient File page
+                  (/patient-file/:uhid) which is reachable from Reception's
+                  sidebar + the patient-lookup page. The visit-history route
+                  itself is preserved — just unlinked from this counter. */}
               <button className="rx-action-btn rx-action-btn--danger"
                       onClick={clearPatient}
                       title="Clear current patient and return to directory (Esc)">
@@ -1390,6 +1448,7 @@ export default function ReceptionBilling() {
                   onRefund={() => setRefundTarget(activeBill)}
                   onCancel={() => setCancelTarget(activeBill)}
                   onAddService={() => setAddSvcTarget(activeBill)}
+                  onDelete={() => deleteDraftBill(activeBill)}
                   onApplyAdvance={async () => {
                     const unspent = advances.filter((a) => (a.remainingAmount || 0) > 0);
                     if (unspent.length === 0) { toast.warning("No unspent advance available"); return; }
@@ -1624,7 +1683,7 @@ export default function ReceptionBilling() {
 
 /* ───────────────────────────────────────────────────────────── */
 
-function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onSettle, onPrint, onRefund, onCancel, onApplyAdvance, onAddService }) {
+function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onSettle, onPrint, onRefund, onCancel, onApplyAdvance, onAddService, onDelete }) {
   const { can } = useAuth();
   const isDraft   = bill.billStatus === "DRAFT";
   const canPay    = ["GENERATED", "PARTIAL"].includes(bill.billStatus);
@@ -1695,6 +1754,16 @@ function BillDetail({ bill, unspentAdv = 0, onGenerate, onPay, onSettle, onPrint
         {isDraft && (
           <button className="rx-action-btn rx-action-btn--primary" onClick={onGenerate}>
             <i className="pi pi-check" /> Generate Bill
+          </button>
+        )}
+        {/* R7ci — Delete is DRAFT-only and only when nothing has been
+            collected against it. Backend re-validates both invariants
+            before actually removing the row. */}
+        {isDraft && onDelete && paidTotal === 0 && (
+          <button className="rx-action-btn rx-action-btn--danger"
+                  onClick={onDelete}
+                  title="Permanently delete this draft bill — items go with it. Use only when the draft was created by mistake.">
+            <i className="pi pi-trash" /> Delete Draft
           </button>
         )}
         {canApply && (
@@ -3175,7 +3244,14 @@ function CancelBillModal({ bill, onClose, onDone }) {
 /* ───────────────────────────────────────────────────────────── */
 /* Print receipt — opens a simple printable window                */
 
-function receiptHTML(bill, patient) {
+function receiptHTML(bill, patient, hs = {}) {
+  // R7cb-B: hs is the live HospitalSettings object (or {} if caller didn't
+  // pass one — DEFAULT_SETTINGS keeps strings non-empty). Callers should
+  // await fetchHospitalSettings() and forward it.
+  const _hospName = hs.hospitalName || "Hospital";
+  const _hospTagline = hs.tagline || "";
+  const _addrLine = [hs.addressLine1, hs.addressLine2, [hs.city, hs.state, hs.pincode].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+  const _phoneLine = [hs.phone1, hs.phone2, hs.emergencyPhone].filter(Boolean).join(" · ");
   const items = (bill.billItems || []).map(it => `
     <tr>
       <td>${escapeHtml(it.serviceName || it.name)}</td>
@@ -3230,8 +3306,12 @@ function receiptHTML(bill, patient) {
     .pill { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; background:#ecfeff; color:#0e7490; }
     .footer { margin-top: 24px; padding-top: 10px; border-top: 1px dashed #cbd5e1; font-size: 10px; color:#94a3b8; text-align:center; }
   </style></head><body>
-    <h1>SphereHealth Hospital</h1>
-    <div class="meta">NABH Accredited · Receipt of payment</div>
+    ${hs.logo ? `<img src="${hs.logo}" alt="" style="max-height:54px;display:block;margin-bottom:6px"/>` : ""}
+    <h1 style="color:${hs.printHeaderColor || "#0f172a"}">${escapeHtml(_hospName)}</h1>
+    <div class="meta">${_hospTagline ? escapeHtml(_hospTagline) + " · " : ""}Receipt of payment</div>
+    ${_addrLine ? `<div class="meta">${escapeHtml(_addrLine)}</div>` : ""}
+    ${_phoneLine ? `<div class="meta">${escapeHtml(_phoneLine)}</div>` : ""}
+    ${hs.gstin ? `<div class="meta">GSTIN: ${escapeHtml(hs.gstin)}</div>` : ""}
     <hr>
     <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
       <div>
@@ -3265,7 +3345,7 @@ function receiptHTML(bill, patient) {
 
     <div class="footer">
       Receipt generated by Reception · ${new Date().toLocaleString("en-IN")}<br>
-      This is a computer-generated receipt. Thank you for choosing SphereHealth.
+      This is a computer-generated receipt. ${hs.billFooterNote ? escapeHtml(hs.billFooterNote) : ""}
     </div>
   </body></html>`;
 }

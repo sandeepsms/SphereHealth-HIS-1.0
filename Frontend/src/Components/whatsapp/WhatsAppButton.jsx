@@ -69,7 +69,7 @@ function WhatsAppModal({ phone, patientName, context, defaultTemplate, onClose }
   // Compose full context (patient + settings + caller-provided)
   const fullContext = {
     patientName: patientName || "Sir/Madam",
-    hospitalName: settings?.hospitalName || "SphereHealth Hospital",
+    hospitalName: settings?.hospitalName || "your hospital",
     ...context,
   };
 
