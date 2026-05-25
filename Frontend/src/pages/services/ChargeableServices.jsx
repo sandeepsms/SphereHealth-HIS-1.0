@@ -1,5 +1,10 @@
 // frontend/pages/services/ChargeableServices.jsx
 // Manages dynamic chargeable services organized by domain (OPD, IPD, Emergency, DayCare, Common)
+//
+// Theme: re-skinned to match the HIS design used by PharmacyHomePage —
+// gradient amber Hero + KPI strip + slate-bg + max-width container +
+// admin-theme TabStrip. All existing functions / state / validation /
+// API calls are preserved verbatim — only the styling/layout changed.
 import React, { useState, useEffect, useRef } from "react";
 import { API_ENDPOINTS } from "../../config/api";
 
@@ -21,16 +26,29 @@ import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import { Tooltip } from "primereact/tooltip";
 
 import { useBilling } from "../../hooks/useBilling";
+import { TabStrip } from "../../Components/admin-theme";
+
+// ── HIS theme palette (matches PharmacyHomePage) ─────────────────
+const C = {
+  bg: "#f8fafc", card: "#fff", border: "#e2e8f0",
+  text: "#0f172a", muted: "#64748b", subtle: "#f8fafc",
+  amber: "#d97706", amberL: "#fffbeb",
+  blue: "#1d4ed8", blueL: "#eff6ff",
+  green: "#16a34a", greenL: "#dcfce7",
+  red: "#dc2626", redL: "#fef2f2",
+  orange: "#ea580c", orangeL: "#fff7ed",
+  slate: "#475569",
+};
 
 // ── Constants ────────────────────────────────────────────────────
 
 const DOMAIN_TABS = [
-  { label: "All", domain: null, color: "#4F46E5" },
-  { label: "OPD", domain: "OPD", color: "#10B981" },
-  { label: "IPD", domain: "IPD", color: "#3B82F6" },
-  { label: "Emergency", domain: "EMERGENCY", color: "#EF4444" },
-  { label: "Day Care", domain: "DAYCARE", color: "#F59E0B" },
-  { label: "Common", domain: "COMMON", color: "#6B7280" },
+  { label: "All", domain: null, color: "#4F46E5", icon: "pi-list" },
+  { label: "OPD", domain: "OPD", color: "#10B981", icon: "pi-user" },
+  { label: "IPD", domain: "IPD", color: "#3B82F6", icon: "pi-home" },
+  { label: "Emergency", domain: "EMERGENCY", color: "#EF4444", icon: "pi-bolt" },
+  { label: "Day Care", domain: "DAYCARE", color: "#F59E0B", icon: "pi-sun" },
+  { label: "Common", domain: "COMMON", color: "#6B7280", icon: "pi-globe" },
 ];
 
 const CATEGORIES = [
@@ -125,7 +143,10 @@ export default function ChargeableServices() {
   const toast = useRef(null);
   const billing = useBilling();
 
-  // Tab state
+  // Tab state — keep the same numeric activeTab so the rest of the
+  // load() / handleTabChange logic doesn't need to change. We just
+  // render the tab strip differently (admin-theme TabStrip instead
+  // of PrimeReact TabView).
   const [activeTab, setActiveTab] = useState(0);
 
   // Services data
@@ -203,8 +224,8 @@ export default function ChargeableServices() {
   }, []);
 
   // ── Tab switch: reset filters ────────────────────────────────
-  const handleTabChange = (e) => {
-    setActiveTab(e.index);
+  const handleTabChange = (idx) => {
+    setActiveTab(idx);
     setFilters({ search: "", category: null, status: null });
   };
 
@@ -424,8 +445,8 @@ export default function ChargeableServices() {
       style={{
         fontFamily: "monospace",
         fontSize: 12,
-        color: "#374151",
-        fontWeight: 600,
+        color: C.text,
+        fontWeight: 700,
       }}
     >
       {r.serviceCode}
@@ -441,13 +462,13 @@ export default function ChargeableServices() {
   );
 
   const billingTypeBodyTemplate = (r) => (
-    <span style={{ fontSize: 11, color: "#6B7280" }}>
+    <span style={{ fontSize: 11, color: C.muted }}>
       {r.billingType?.replace(/_/g, " ")}
     </span>
   );
 
   const priceBodyTemplate = (r) => (
-    <b style={{ color: "#059669" }}>
+    <b style={{ color: C.green }}>
       ₹{(r.defaultPrice || 0).toLocaleString("en-IN")}
     </b>
   );
@@ -456,7 +477,7 @@ export default function ChargeableServices() {
     r.isAutoCharged ? (
       <Tag value="AUTO" severity="warning" style={{ fontSize: 9 }} />
     ) : (
-      <span style={{ color: "#9CA3AF" }}>—</span>
+      <span style={{ color: "#cbd5e1" }}>—</span>
     );
 
   const statusBodyTemplate = (r) => (
@@ -474,7 +495,7 @@ export default function ChargeableServices() {
         rounded
         outlined
         size="small"
-        style={{ color: "#4F46E5", borderColor: "#4F46E5", width: 30, height: 30 }}
+        style={{ color: C.blue, borderColor: C.blue, width: 30, height: 30 }}
         tooltip="Edit Service"
         tooltipOptions={{ position: "top" }}
         onClick={() => openEdit(r)}
@@ -484,7 +505,7 @@ export default function ChargeableServices() {
         rounded
         outlined
         size="small"
-        style={{ color: "#3B82F6", borderColor: "#3B82F6", width: 30, height: 30 }}
+        style={{ color: C.amber, borderColor: C.amber, width: 30, height: 30 }}
         tooltip="Manage Pricing"
         tooltipOptions={{ position: "top" }}
         onClick={() => openPricing(r)}
@@ -495,8 +516,8 @@ export default function ChargeableServices() {
         outlined
         size="small"
         style={{
-          color: r.isActive ? "#EF4444" : "#10B981",
-          borderColor: r.isActive ? "#EF4444" : "#10B981",
+          color: r.isActive ? C.red : C.green,
+          borderColor: r.isActive ? C.red : C.green,
           width: 30,
           height: 30,
         }}
@@ -511,11 +532,15 @@ export default function ChargeableServices() {
   const filterBar = (
     <div
       style={{
+        background: C.card,
+        border: `1px solid ${C.border}`,
+        borderRadius: 12,
+        padding: "10px 14px",
+        marginBottom: 14,
         display: "flex",
         gap: 10,
         alignItems: "center",
         flexWrap: "wrap",
-        padding: "0.5rem 0",
       }}
     >
       <span className="p-input-icon-left" style={{ flex: "1 1 220px", minWidth: 180 }}>
@@ -547,259 +572,224 @@ export default function ChargeableServices() {
     </div>
   );
 
-  // ── Mini stats bar ───────────────────────────────────────────
-  const statsBar = (color) => (
+  // ── KPI strip ────────────────────────────────────────────────
+  // Horizontal grid matching the PharmacyHomePage KPI tile pattern —
+  // tinted icon box on the left, big number + uppercase muted label
+  // on the right. Tints come from the C palette so the strip blends
+  // with the rest of the HIS.
+  const statsBar = (
     <div
       style={{
-        display: "flex",
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
         gap: 12,
-        marginBottom: 12,
-        flexWrap: "wrap",
+        marginBottom: 14,
       }}
     >
-      {[
-        { label: "Active Services", value: activeCount, icon: "pi-check-circle" },
-        { label: "Auto-Charged", value: autoChargedCount, icon: "pi-sync" },
-        { label: "Categories", value: categoryCount, icon: "pi-tags" },
-        { label: "Total", value: total, icon: "pi-list" },
-      ].map((stat) => (
-        <div
-          key={stat.label}
-          style={{
-            background: "#F9FAFB",
-            border: "1px solid #E5E7EB",
-            borderRadius: 8,
-            padding: "8px 16px",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            minWidth: 140,
-          }}
-        >
-          <i
-            className={`pi ${stat.icon}`}
-            style={{ color, fontSize: 18 }}
-          />
-          <div>
-            <div
-              style={{
-                fontSize: 20,
-                fontWeight: 700,
-                color: "#1F2937",
-                lineHeight: 1.1,
-              }}
-            >
-              {stat.value}
-            </div>
-            <div style={{ fontSize: 11, color: "#6B7280" }}>{stat.label}</div>
-          </div>
-        </div>
-      ))}
+      <KpiTile label="Active Services" value={activeCount}      color={C.green} icon="pi-check-circle" />
+      <KpiTile label="Auto-Charged"    value={autoChargedCount} color={C.amber} icon="pi-sync" />
+      <KpiTile label="Categories"      value={categoryCount}    color={C.blue}  icon="pi-tags" />
+      <KpiTile label="Total"           value={total}            color={C.text}  icon="pi-list" />
     </div>
   );
 
   // ── DataTable (shared across tabs) ───────────────────────────
-  const serviceTable = (color) => (
-    <DataTable
-      value={services}
-      loading={billing.loading}
-      size="small"
-      stripedRows
-      paginator
-      rows={15}
-      rowsPerPageOptions={[10, 15, 25, 50]}
-      dataKey="_id"
-      emptyMessage={
-        <div style={{ textAlign: "center", padding: 40 }}>
-          <i
-            className="pi pi-inbox"
-            style={{ fontSize: "2.5rem", color: "#9CA3AF" }}
-          />
-          <p style={{ color: "#6B7280", marginTop: 12 }}>
-            No services found.{" "}
-            <b>Use "Seed Default Data"</b> to load 80+ default services.
-          </p>
-        </div>
-      }
-      style={{ fontSize: 13 }}
-    >
-      <Column
-        field="serviceCode"
-        header="Service Code"
-        body={codeBodyTemplate}
-        style={{ width: 130 }}
-        sortable
-      />
-      <Column
-        field="serviceName"
-        header="Service Name"
-        style={{ minWidth: 200 }}
-        sortable
-      />
-      <Column
-        header="Category"
-        body={categoryBodyTemplate}
-        style={{ width: 130 }}
-        sortable
-        field="category"
-      />
-      <Column
-        header="Billing Type"
-        body={billingTypeBodyTemplate}
-        style={{ width: 120 }}
-        field="billingType"
-        sortable
-      />
-      <Column
-        header="Default Price"
-        body={priceBodyTemplate}
-        style={{ width: 120 }}
-        field="defaultPrice"
-        sortable
-      />
-      <Column
-        header="Auto Charged"
-        body={autoChargedBodyTemplate}
-        style={{ width: 100, textAlign: "center" }}
-      />
-      <Column
-        header="Status"
-        body={statusBodyTemplate}
-        style={{ width: 85 }}
-        field="isActive"
-        sortable
-      />
-      <Column
-        header="Actions"
-        body={actionsBodyTemplate}
-        style={{ width: 120 }}
-      />
-    </DataTable>
+  // pt prop styles the table header to match the HIS subtle/muted look.
+  const serviceTable = (
+    <div style={{
+      background: C.card,
+      border: `1px solid ${C.border}`,
+      borderRadius: 12,
+      padding: 8,
+      boxShadow: "0 1px 3px rgba(15,23,42,.04)",
+    }}>
+      <DataTable
+        value={services}
+        loading={billing.loading}
+        size="small"
+        stripedRows
+        paginator
+        rows={15}
+        rowsPerPageOptions={[10, 15, 25, 50]}
+        dataKey="_id"
+        emptyMessage={
+          <div style={{ textAlign: "center", padding: 40 }}>
+            <i
+              className="pi pi-inbox"
+              style={{ fontSize: "2.5rem", color: "#cbd5e1" }}
+            />
+            <p style={{ color: C.muted, marginTop: 12 }}>
+              No services found.{" "}
+              <b>Use "Seed Default Data"</b> to load 80+ default services.
+            </p>
+          </div>
+        }
+        pt={{
+          thead: { style: { fontSize: 11 } },
+          headerRow: { style: { background: C.subtle } },
+        }}
+        style={{ fontSize: 13 }}
+      >
+        <Column
+          field="serviceCode"
+          header="Service Code"
+          body={codeBodyTemplate}
+          style={{ width: 130 }}
+          headerStyle={headerStyle}
+          sortable
+        />
+        <Column
+          field="serviceName"
+          header="Service Name"
+          style={{ minWidth: 200 }}
+          headerStyle={headerStyle}
+          sortable
+        />
+        <Column
+          header="Category"
+          body={categoryBodyTemplate}
+          style={{ width: 130 }}
+          headerStyle={headerStyle}
+          sortable
+          field="category"
+        />
+        <Column
+          header="Billing Type"
+          body={billingTypeBodyTemplate}
+          style={{ width: 120 }}
+          field="billingType"
+          headerStyle={headerStyle}
+          sortable
+        />
+        <Column
+          header="Default Price"
+          body={priceBodyTemplate}
+          style={{ width: 120 }}
+          field="defaultPrice"
+          headerStyle={headerStyle}
+          sortable
+        />
+        <Column
+          header="Auto Charged"
+          body={autoChargedBodyTemplate}
+          style={{ width: 100, textAlign: "center" }}
+          headerStyle={headerStyle}
+        />
+        <Column
+          header="Status"
+          body={statusBodyTemplate}
+          style={{ width: 85 }}
+          field="isActive"
+          headerStyle={headerStyle}
+          sortable
+        />
+        <Column
+          header="Actions"
+          body={actionsBodyTemplate}
+          style={{ width: 120 }}
+          headerStyle={headerStyle}
+        />
+      </DataTable>
+    </div>
   );
+
+  // ── Tabs for admin-theme TabStrip ────────────────────────────
+  // Map DOMAIN_TABS into the { key, label, icon } shape that TabStrip
+  // expects. Keys are stringified indices so handleTabChange can keep
+  // using a number internally.
+  const tabStripTabs = DOMAIN_TABS.map((t, i) => ({
+    key: String(i),
+    label: t.label,
+    icon: t.icon,
+  }));
 
   // ────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: "#F9FAFB" }}>
+    <div style={{ minHeight: "100vh", background: C.bg, padding: 20, fontFamily: "'DM Sans', sans-serif" }}>
       <Toast ref={toast} position="top-right" />
       <ConfirmDialog />
 
-      {/* ── Page container ── */}
-      <div
-        style={{
-          backgroundColor: "#FFFFFF",
-          padding: "1rem 1.25rem",
-          minHeight: "100vh",
-        }}
-      >
-        {/* ── Page header ── */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 10,
-            marginBottom: 16,
-          }}
-        >
-          <div>
-            <h2
+      <div style={{ maxWidth: 1600, margin: "0 auto" }}>
+        {/* ── Hero ── */}
+        <div style={{
+          background: "linear-gradient(135deg,#d97706,#b45309)",
+          borderRadius: 14, padding: "16px 22px", marginBottom: 16,
+          color: "#fff", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
+          boxShadow: "0 4px 14px rgba(217,119,6,.25)",
+        }}>
+          <div style={{
+            width: 48, height: 48, borderRadius: 12,
+            background: "rgba(255,255,255,.18)", border: "1.5px solid rgba(255,255,255,.32)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <i className="pi pi-dollar" style={{ fontSize: 22 }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-.2px" }}>Chargeable Services</div>
+            <div style={{ fontSize: 12, opacity: .85, marginTop: 2 }}>
+              Domain-scoped service catalog · per-tariff pricing · auto-charge rules · GST slabs
+            </div>
+          </div>
+          {/* CTAs sit in the Hero right slot — same pattern as the rest
+              of the HIS. Seed is muted (secondary), Add Service is the
+              primary white-on-amber call-to-action. */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              onClick={handleSeed}
+              disabled={billing.loading}
+              title="Run once to load 80+ default services"
               style={{
-                margin: 0,
-                color: "#1F2937",
+                padding: "8px 14px",
+                background: "rgba(255,255,255,.16)",
+                color: "#fff",
+                border: "1px solid rgba(255,255,255,.32)",
+                borderRadius: 8,
+                fontSize: 12,
                 fontWeight: 700,
-                fontSize: 22,
+                cursor: billing.loading ? "not-allowed" : "pointer",
+                opacity: billing.loading ? 0.6 : 1,
               }}
             >
-              <i
-                className="pi pi-th-large"
-                style={{ marginRight: 8, color: "#4F46E5" }}
-              />
-              Chargeable Services
-            </h2>
-            <p style={{ margin: "2px 0 0", color: "#6B7280", fontSize: 13 }}>
-              Manage hospital services, pricing and billing configuration
-            </p>
-          </div>
-
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <Button
-              label="Seed Default Data"
-              icon="pi pi-database"
-              severity="secondary"
-              outlined
-              size="small"
-              tooltip="Run once to load 80+ default services"
-              tooltipOptions={{ position: "bottom" }}
-              onClick={handleSeed}
-              loading={billing.loading}
-            />
-            <Button
-              label="Add Service"
-              icon="pi pi-plus"
-              size="small"
-              style={{
-                backgroundColor: "#4F46E5",
-                borderColor: "#4F46E5",
-              }}
+              <i className="pi pi-database" style={{ marginRight: 6 }} />
+              Seed Default Data
+            </button>
+            <button
               onClick={openAdd}
-            />
+              style={{
+                padding: "8px 14px",
+                background: "#fff",
+                color: C.amber,
+                border: "none",
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: "pointer",
+                boxShadow: "0 1px 3px rgba(0,0,0,.18)",
+              }}
+            >
+              <i className="pi pi-plus" style={{ marginRight: 6 }} />
+              Add Service
+            </button>
           </div>
         </div>
 
-        {/* ── Domain Tab View ── */}
-        <TabView
-          activeIndex={activeTab}
-          onTabChange={handleTabChange}
-          style={{ marginTop: 0 }}
-        >
-          {DOMAIN_TABS.map((tab, idx) => (
-            <TabPanel
-              key={tab.label}
-              header={
-                <span
-                  style={{
-                    fontWeight: activeTab === idx ? 700 : 500,
-                    color: activeTab === idx ? tab.color : "#6B7280",
-                    fontSize: 13,
-                  }}
-                >
-                  {tab.domain ? (
-                    <i
-                      className={
-                        tab.domain === "OPD"
-                          ? "pi pi-user"
-                          : tab.domain === "IPD"
-                          ? "pi pi-home"
-                          : tab.domain === "EMERGENCY"
-                          ? "pi pi-bolt"
-                          : tab.domain === "DAYCARE"
-                          ? "pi pi-sun"
-                          : "pi pi-globe"
-                      }
-                      style={{ marginRight: 5, color: tab.color }}
-                    />
-                  ) : (
-                    <i
-                      className="pi pi-list"
-                      style={{ marginRight: 5, color: tab.color }}
-                    />
-                  )}
-                  {tab.label}
-                </span>
-              }
-            >
-              {/* Mini stats bar */}
-              {statsBar(tab.color)}
+        {/* ── Tab strip — admin-theme pill style ── */}
+        <TabStrip
+          tabs={tabStripTabs}
+          value={String(activeTab)}
+          onChange={(k) => handleTabChange(parseInt(k, 10))}
+          accent={C.amber}
+          accentL={C.amberL}
+        />
 
-              {/* Filter bar */}
-              {filterBar}
+        {/* ── KPI strip ── */}
+        {statsBar}
 
-              {/* Services table */}
-              {serviceTable(tab.color)}
-            </TabPanel>
-          ))}
-        </TabView>
+        {/* ── Filters ── */}
+        {filterBar}
+
+        {/* ── Services table ── */}
+        {serviceTable}
       </div>
 
       {/* ════════════════════════════════════════
@@ -808,11 +798,21 @@ export default function ChargeableServices() {
       <Dialog
         visible={showSvcDlg}
         style={{ width: "min(720px, 95vw)" }}
+        contentStyle={{ borderRadius: "0 0 14px 14px" }}
+        headerStyle={{
+          background: C.amberL,
+          borderTop: `3px solid ${C.amber}`,
+          borderRadius: "14px 14px 0 0",
+          padding: "14px 18px",
+        }}
+        pt={{
+          root: { style: { borderRadius: 14, overflow: "hidden", boxShadow: "0 20px 50px rgba(0,0,0,.3)" } },
+        }}
         header={
-          <span style={{ color: "#1F2937", fontWeight: 700, fontSize: 16 }}>
+          <span style={{ color: C.text, fontWeight: 800, fontSize: 15 }}>
             <i
               className={editSvc ? "pi pi-pencil" : "pi pi-plus-circle"}
-              style={{ marginRight: 8, color: "#4F46E5" }}
+              style={{ marginRight: 8, color: C.amber }}
             />
             {editSvc ? "Edit Service" : "Add New Service"}
           </span>
@@ -824,25 +824,43 @@ export default function ChargeableServices() {
         modal
         draggable={false}
         footer={
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Button
-              label="Cancel"
-              severity="secondary"
-              outlined
-              size="small"
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", padding: "10px 4px 0" }}>
+            <button
               onClick={() => {
                 setShowSvcDlg(false);
                 setEditSvc(null);
               }}
-            />
-            <Button
-              label={editSvc ? "Update Service" : "Create Service"}
-              icon="pi pi-check"
-              size="small"
-              style={{ backgroundColor: "#4F46E5", borderColor: "#4F46E5" }}
+              style={{
+                padding: "8px 14px",
+                background: "#fff",
+                color: C.muted,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+            <button
               onClick={handleSaveService}
-              loading={billing.loading}
-            />
+              disabled={billing.loading}
+              style={{
+                padding: "8px 14px",
+                background: C.amber,
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: billing.loading ? "not-allowed" : "pointer",
+                opacity: billing.loading ? 0.6 : 1,
+              }}
+            >
+              <i className="pi pi-check" style={{ marginRight: 6 }} />
+              {editSvc ? "Update Service" : "Create Service"}
+            </button>
           </div>
         }
       >
@@ -851,6 +869,7 @@ export default function ChargeableServices() {
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
             gap: 14,
+            padding: "4px 0",
           }}
         >
           {/* Service Code */}
@@ -869,7 +888,7 @@ export default function ChargeableServices() {
               disabled={!!editSvc}
             />
             {!!editSvc && (
-              <small style={{ color: "#9CA3AF", fontSize: 11 }}>
+              <small style={{ color: C.muted, fontSize: 11 }}>
                 Service code cannot be changed after creation
               </small>
             )}
@@ -996,7 +1015,7 @@ export default function ChargeableServices() {
                 tooltip="Auto-added daily for IPD room/nursing charges"
                 tooltipOptions={{ position: "top" }}
               />
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: C.text }}>
                 Auto-Charge Daily
               </label>
             </div>
@@ -1007,7 +1026,7 @@ export default function ChargeableServices() {
                   setSvcForm({ ...svcForm, isTaxable: e.value })
                 }
               />
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: C.text }}>
                 Taxable
               </label>
             </div>
@@ -1051,12 +1070,21 @@ export default function ChargeableServices() {
       <Dialog
         visible={showPriceDlg}
         style={{ width: "min(720px, 95vw)" }}
+        headerStyle={{
+          background: C.blueL,
+          borderTop: `3px solid ${C.blue}`,
+          borderRadius: "14px 14px 0 0",
+          padding: "14px 18px",
+        }}
+        pt={{
+          root: { style: { borderRadius: 14, overflow: "hidden", boxShadow: "0 20px 50px rgba(0,0,0,.3)" } },
+        }}
         header={
           <div>
-            <span style={{ color: "#1F2937", fontWeight: 700, fontSize: 16 }}>
+            <span style={{ color: C.text, fontWeight: 800, fontSize: 15 }}>
               <i
                 className="pi pi-tag"
-                style={{ marginRight: 8, color: "#3B82F6" }}
+                style={{ marginRight: 8, color: C.blue }}
               />
               Pricing — {selService?.serviceName}
             </span>
@@ -1070,7 +1098,7 @@ export default function ChargeableServices() {
                 <span
                   style={{
                     marginLeft: 8,
-                    color: "#6B7280",
+                    color: C.muted,
                     fontSize: 12,
                   }}
                 >
@@ -1093,8 +1121,8 @@ export default function ChargeableServices() {
           <TabPanel header="Current Pricing">
             <div
               style={{
-                background: "#F0FDF4",
-                border: "1px solid #BBF7D0",
+                background: C.greenL,
+                border: `1px solid ${C.green}33`,
                 borderRadius: 8,
                 padding: "10px 14px",
                 display: "flex",
@@ -1105,7 +1133,7 @@ export default function ChargeableServices() {
             >
               <i
                 className="pi pi-info-circle"
-                style={{ color: "#16A34A", fontSize: 16 }}
+                style={{ color: C.green, fontSize: 16 }}
               />
               <span style={{ fontSize: 13, color: "#166534" }}>
                 <b>CASH pricing</b> is auto-created from the service's Default
@@ -1118,9 +1146,13 @@ export default function ChargeableServices() {
               size="small"
               stripedRows
               emptyMessage="No custom pricing configured. Default price is used for CASH transactions."
+              pt={{
+                headerRow: { style: { background: C.subtle } },
+              }}
             >
               <Column
                 header="Tariff"
+                headerStyle={headerStyle}
                 body={(r) => (
                   <Tag
                     value={r.tariffType}
@@ -1138,31 +1170,35 @@ export default function ChargeableServices() {
               />
               <Column
                 header="TPA / Corporate"
+                headerStyle={headerStyle}
                 body={(r) =>
-                  r.tpaId?.tpaName || r.corporateName || <span style={{ color: "#9CA3AF" }}>—</span>
+                  r.tpaId?.tpaName || r.corporateName || <span style={{ color: "#cbd5e1" }}>—</span>
                 }
                 style={{ minWidth: 140 }}
               />
               <Column
                 header="Price"
+                headerStyle={headerStyle}
                 body={(r) => `₹${(r.price || 0).toLocaleString("en-IN")}`}
                 style={{ width: 110 }}
               />
               <Column
                 header="Discount"
+                headerStyle={headerStyle}
                 body={(r) =>
                   r.discount > 0 ? (
-                    <span style={{ color: "#EF4444" }}>{r.discount}%</span>
+                    <span style={{ color: C.red }}>{r.discount}%</span>
                   ) : (
-                    <span style={{ color: "#9CA3AF" }}>—</span>
+                    <span style={{ color: "#cbd5e1" }}>—</span>
                   )
                 }
                 style={{ width: 80 }}
               />
               <Column
                 header="Final Price"
+                headerStyle={headerStyle}
                 body={(r) => (
-                  <b style={{ color: "#4F46E5" }}>
+                  <b style={{ color: C.blue }}>
                     ₹{(r.finalPrice || 0).toLocaleString("en-IN")}
                   </b>
                 )}
@@ -1170,15 +1206,17 @@ export default function ChargeableServices() {
               />
               <Column
                 header="TPA Limit"
+                headerStyle={headerStyle}
                 body={(r) =>
                   r.tpaApprovedLimit
                     ? `₹${r.tpaApprovedLimit.toLocaleString("en-IN")}`
-                    : <span style={{ color: "#9CA3AF" }}>—</span>
+                    : <span style={{ color: "#cbd5e1" }}>—</span>
                 }
                 style={{ width: 110 }}
               />
               <Column
                 header="Active"
+                headerStyle={headerStyle}
                 body={(r) => (
                   <Tag
                     value={r.isActive ? "Yes" : "No"}
@@ -1204,8 +1242,8 @@ export default function ChargeableServices() {
               {/* Info banner */}
               <div
                 style={{
-                  background: "#EFF6FF",
-                  border: "1px solid #BFDBFE",
+                  background: C.blueL,
+                  border: `1px solid ${C.blue}33`,
                   borderRadius: 8,
                   padding: "10px 14px",
                   display: "flex",
@@ -1215,7 +1253,7 @@ export default function ChargeableServices() {
               >
                 <i
                   className="pi pi-check-circle"
-                  style={{ color: "#2563EB", fontSize: 16 }}
+                  style={{ color: C.blue, fontSize: 16 }}
                 />
                 <span style={{ fontSize: 13, color: "#1E40AF" }}>
                   <b>CASH price auto-set</b> — only set TPA / Corporate prices
@@ -1325,7 +1363,7 @@ export default function ChargeableServices() {
                     placeholder="Max amount TPA will pay"
                     style={{ width: "100%" }}
                   />
-                  <small style={{ color: "#6B7280", fontSize: 11 }}>
+                  <small style={{ color: C.muted, fontSize: 11 }}>
                     TPA will not pay beyond this limit. Remaining is charged to
                     the patient.
                   </small>
@@ -1335,16 +1373,16 @@ export default function ChargeableServices() {
               {/* Final price preview */}
               <div
                 style={{
-                  background: "#F5F3FF",
-                  border: "1px solid #DDD6FE",
+                  background: C.amberL,
+                  border: `1px solid ${C.amber}33`,
                   borderRadius: 8,
                   padding: "10px 14px",
                   fontSize: 13,
-                  color: "#4B5563",
+                  color: C.slate,
                 }}
               >
                 Final price after discount:{" "}
-                <b style={{ color: "#4F46E5", fontSize: 16 }}>
+                <b style={{ color: C.amber, fontSize: 16 }}>
                   ₹
                   {(previewFinal || 0).toLocaleString("en-IN", {
                     minimumFractionDigits: 2,
@@ -1352,13 +1390,24 @@ export default function ChargeableServices() {
                 </b>
               </div>
 
-              <Button
-                label="Save Pricing"
-                icon="pi pi-check"
-                style={{ backgroundColor: "#4F46E5", borderColor: "#4F46E5" }}
+              <button
                 onClick={handleSavePricing}
-                loading={billing.loading}
-              />
+                disabled={billing.loading}
+                style={{
+                  padding: "10px 14px",
+                  background: C.amber,
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontWeight: 800,
+                  cursor: billing.loading ? "not-allowed" : "pointer",
+                  opacity: billing.loading ? 0.6 : 1,
+                }}
+              >
+                <i className="pi pi-check" style={{ marginRight: 6 }} />
+                Save Pricing
+              </button>
             </div>
           </TabPanel>
         </TabView>
@@ -1367,11 +1416,63 @@ export default function ChargeableServices() {
   );
 }
 
-// ── Shared label style ───────────────────────────────────────────
+// ── Shared inline-styles ────────────────────────────────────────────
+
 const labelStyle = {
-  fontWeight: 600,
-  fontSize: 12,
+  fontWeight: 700,
+  fontSize: 11,
   display: "block",
   marginBottom: 4,
-  color: "#374151",
+  color: "#475569",
+  textTransform: "uppercase",
+  letterSpacing: ".4px",
 };
+
+// Header style matches the HIS Table primitive in admin-theme — small
+// uppercase muted labels on a subtle background. Padding stays tight so
+// dense rows fit on screen.
+const headerStyle = {
+  background: "#f8fafc",
+  color: "#64748b",
+  fontWeight: 700,
+  fontSize: 11,
+  textTransform: "uppercase",
+  letterSpacing: ".4px",
+  padding: "9px 12px",
+};
+
+// ── KPI tile primitive ──────────────────────────────────────────────
+// Local copy of admin-theme's KPI shape (kept inline so the file stays
+// self-contained and so we don't have to import the named export when
+// every other style here is already local). Renders the icon left, big
+// number top-right, uppercase muted label bottom-right.
+function KpiTile({ label, value, color, icon }) {
+  return (
+    <div style={{
+      background: "#fff",
+      border: "1.5px solid #e2e8f0",
+      borderRadius: 12,
+      padding: "14px 16px",
+      boxShadow: "0 1px 3px rgba(15,23,42,.04)",
+      display: "flex",
+      alignItems: "center",
+      gap: 12,
+    }}>
+      <div style={{
+        width: 36, height: 36, borderRadius: 10,
+        background: color + "12",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        flexShrink: 0,
+      }}>
+        <i className={`pi ${icon}`} style={{ fontSize: 15, color }} />
+      </div>
+      <div>
+        <div style={{ fontSize: 20, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
+        <div style={{
+          fontSize: 10.5, fontWeight: 700, color: "#64748b",
+          textTransform: "uppercase", letterSpacing: ".5px", marginTop: 4,
+        }}>{label}</div>
+      </div>
+    </div>
+  );
+}

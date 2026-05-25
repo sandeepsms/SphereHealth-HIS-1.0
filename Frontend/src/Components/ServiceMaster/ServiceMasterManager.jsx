@@ -16,6 +16,53 @@ import { TabView, TabPanel } from "primereact/tabview";
 import { useBilling } from "../../hooks/useBilling";
 import { API_ENDPOINTS } from "../../config/api";
 
+// ── HIS theme palette (matches PharmacyHomePage) ───────────────
+const C = {
+  bg: "#f8fafc", card: "#fff", border: "#e2e8f0",
+  text: "#0f172a", muted: "#64748b", subtle: "#f8fafc",
+  amber: "#d97706", amberL: "#fffbeb",
+  blue: "#1d4ed8", blueL: "#eff6ff",
+  green: "#16a34a", greenL: "#dcfce7",
+  red: "#dc2626", redL: "#fef2f2",
+  orange: "#ea580c", orangeL: "#fff7ed",
+  teal: "#0d9488", tealL: "#f0fdfa",
+  slate: "#475569",
+};
+
+// ── Reusable section header pill (for dialog sections) ─────────
+const SectionLabel = ({ children, color = C.orange, bg = C.orangeL }) => (
+  <div style={{
+    background: bg, color, padding: "6px 12px", borderRadius: 6,
+    fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5,
+    display: "inline-block", marginBottom: 10,
+  }}>
+    {children}
+  </div>
+);
+
+// ── KPI tile ───────────────────────────────────────────────────
+const KpiTile = ({ icon, label, value, color, bg }) => (
+  <div style={{
+    flex: 1, minWidth: 180, background: C.card, border: `1px solid ${C.border}`,
+    borderRadius: 12, padding: 14, display: "flex", alignItems: "center", gap: 12,
+  }}>
+    <div style={{
+      width: 40, height: 40, borderRadius: 10, background: bg, color,
+      display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+    }}>
+      <i className={icon} style={{ fontSize: 18 }} />
+    </div>
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 20, fontWeight: 800, color: C.text, lineHeight: 1.1 }}>
+        {value}
+      </div>
+      <div style={{ fontSize: 11, color: C.muted, marginTop: 2, fontWeight: 600 }}>
+        {label}
+      </div>
+    </div>
+  </div>
+);
+
 // ── Select options ─────────────────────────────────────────────
 const CATEGORIES = [
   "REGISTRATION",
@@ -328,79 +375,147 @@ export default function ServiceMasterManager() {
   const previewFinal =
     priceForm.price - (priceForm.price * (priceForm.discount || 0)) / 100;
 
+  // ── Computed KPIs ────────────────────────────────────────────
+  const kpiActive = services.filter((s) => s.isActive).length;
+  const kpiWithTier = services.filter((s) => {
+    const tp = s.tierPricing;
+    return tp && (tp.generalWard || tp.semiPrivate || tp.private);
+  }).length;
+  const kpiWithDxTags = services.filter(
+    (s) => Array.isArray(s.diagnosisTags) && s.diagnosisTags.length > 0,
+  ).length;
+
   // ════════════════════════════════════════════════════════════
   return (
-    <div style={{ maxWidth: 1400, margin: "0 auto", padding: "8px 12px" }}>
-      <Toast ref={toast} position="top-right" />
+    <div style={{ minHeight: "100vh", background: C.bg, padding: 20, fontFamily: "'DM Sans', sans-serif" }}>
+      <div style={{ maxWidth: 1600, margin: "0 auto" }}>
+        <Toast ref={toast} position="top-right" />
 
-      {/* ── Filters bar ── */}
-      <Card style={{ marginBottom: 8 }}>
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            alignItems: "center",
-            flexWrap: "wrap",
-          }}
-        >
-          <span style={{ fontWeight: 700, fontSize: 15, color: "#0d6efd" }}>
-            <i className="pi pi-list" style={{ marginRight: 6 }} />
-            Service Master
-          </span>
+        {/* ── Hero band (orange — matches sidebar gear active state) ── */}
+        <div style={{
+          background: "linear-gradient(135deg,#ea580c,#c2410c)",
+          borderRadius: 14, padding: "16px 22px", marginBottom: 16,
+          color: "#fff", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
+          boxShadow: "0 4px 14px rgba(234,88,12,.25)",
+        }}>
+          <div style={{
+            width: 48, height: 48, borderRadius: 12,
+            background: "rgba(255,255,255,.18)", border: "1.5px solid rgba(255,255,255,.32)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <i className="pi pi-cog" style={{ fontSize: 22 }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-.2px" }}>Service Master</div>
+            <div style={{ fontSize: 12, opacity: .85, marginTop: 2 }}>
+              Service catalog · tier pricing (CASH/TPA/CORPORATE) · package inclusions · diagnosis tagging
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Button
+              label="Seed Default Data"
+              icon="pi pi-database"
+              tooltip="Run once — loads 80+ default services"
+              onClick={handleSeed}
+              loading={billing.loading}
+              style={{
+                background: "rgba(255,255,255,.18)",
+                border: "1px solid rgba(255,255,255,.32)",
+                color: "#fff",
+              }}
+            />
+            <Button
+              label="Add Service"
+              icon="pi pi-plus"
+              onClick={openAdd}
+              style={{
+                background: "#fff",
+                color: C.orange,
+                border: "1px solid #fff",
+                fontWeight: 700,
+              }}
+            />
+          </div>
+        </div>
+
+        {/* ── KPI strip ── */}
+        <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+          <KpiTile icon="pi pi-list" label="Total Services" value={total || services.length} color={C.blue} bg={C.blueL} />
+          <KpiTile icon="pi pi-check-circle" label="Active" value={kpiActive} color={C.green} bg={C.greenL} />
+          <KpiTile icon="pi pi-money-bill" label="With Tier Pricing" value={kpiWithTier} color={C.orange} bg={C.orangeL} />
+          <KpiTile icon="pi pi-tags" label="With Diagnosis Tags" value={kpiWithDxTags} color={C.teal} bg={C.tealL} />
+        </div>
+
+        {/* ── Filters bar ── */}
+        <div style={{
+          background: C.card, border: `1px solid ${C.border}`, borderRadius: 12,
+          padding: 12, marginBottom: 16, display: "flex", gap: 10,
+          alignItems: "center", flexWrap: "wrap",
+        }}>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6,
+            color: C.orange, fontWeight: 700, fontSize: 13,
+          }}>
+            <i className="pi pi-filter" />
+            Filter
+          </div>
           <InputText
             value={filters.search}
             onChange={(e) => setFilters({ ...filters, search: e.target.value })}
             placeholder="Name / code search..."
-            style={{ width: 220 }}
+            style={{ width: 240, fontSize: 13 }}
           />
           <Dropdown
             value={filters.domain}
             options={[{ label: "All Domains", value: null }, ...DOMAINS]}
             onChange={(e) => setFilters({ ...filters, domain: e.value })}
-            style={{ width: 150 }}
+            style={{ width: 160 }}
           />
           <Dropdown
             value={filters.category}
             options={[{ label: "All Categories", value: null }, ...CATEGORIES]}
             onChange={(e) => setFilters({ ...filters, category: e.value })}
-            style={{ width: 180 }}
+            style={{ width: 200 }}
           />
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          {(filters.search || filters.domain || filters.category) && (
             <Button
-              label="Seed Default Data"
-              icon="pi pi-database"
-              severity="secondary"
-              outlined
-              tooltip="Run once — loads 80+ default services"
-              onClick={handleSeed}
-              loading={billing.loading}
+              label="Clear"
+              icon="pi pi-times"
+              text
+              size="small"
+              onClick={() => setFilters({ category: null, domain: null, search: "" })}
             />
-            <Button
-              label="Add Service"
-              icon="pi pi-plus"
-              severity="success"
-              onClick={openAdd}
-            />
+          )}
+          <div style={{ marginLeft: "auto", fontSize: 12, color: C.muted, fontWeight: 600 }}>
+            {services.length} of {total || services.length} shown
           </div>
         </div>
-      </Card>
 
-      {/* ── Main table ── */}
-      <Card>
+        {/* ── Main table ── */}
+        <div style={{
+          background: C.card, border: `1px solid ${C.border}`, borderRadius: 12,
+          padding: 16, marginBottom: 16,
+        }}>
         <DataTable
           value={services}
           loading={billing.loading}
           size="small"
           stripedRows
-          header={
-            <span style={{ fontSize: 13, color: "#6c757d" }}>
-              {total} services total
-            </span>
-          }
+          headerStyle={{
+            background: C.subtle, color: C.muted, fontSize: 11,
+            fontWeight: 700, textTransform: "uppercase",
+          }}
+          pt={{
+            thead: {
+              style: {
+                background: C.subtle,
+              },
+            },
+            headerRow: { style: { background: C.subtle } },
+          }}
           emptyMessage={
-            <div style={{ textAlign: "center", padding: 40 }}>
-              No services found. <b>"Seed Default Data"</b> button dabao to load
-              all default services.
+            <div style={{ textAlign: "center", padding: 40, color: C.muted }}>
+              No services found. Click <b>Seed Default Data</b> to load default services.
             </div>
           }
         >
@@ -447,7 +562,11 @@ export default function ServiceMasterManager() {
           />
           <Column
             header="Default ₹"
-            body={(r) => <b>₹{r.defaultPrice.toLocaleString("en-IN")}</b>}
+            body={(r) => (
+              <b style={{ color: C.orange }}>
+                ₹{r.defaultPrice.toLocaleString("en-IN")}
+              </b>
+            )}
             style={{ width: 100 }}
           />
           <Column
@@ -506,15 +625,33 @@ export default function ServiceMasterManager() {
             style={{ width: 110 }}
           />
         </DataTable>
-      </Card>
+        </div>
 
       {/* ════════════════════════════════════════
           DIALOG: Add / Edit Service
       ════════════════════════════════════════ */}
       <Dialog
         visible={showSvcDlg}
-        style={{ width: "min(720px, 92vw)" }}
-        header={editSvc ? "Service Edit Karo" : "Naya Service Add Karo"}
+        style={{ width: "min(780px, 94vw)" }}
+        header={
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: 8,
+              background: C.orangeL, color: C.orange,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <i className={editSvc ? "pi pi-pencil" : "pi pi-plus"} style={{ fontSize: 14 }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>
+                {editSvc ? "Edit Service" : "New Service"}
+              </div>
+              <div style={{ fontSize: 11, color: C.muted, fontWeight: 500 }}>
+                {editSvc ? editSvc.serviceCode : "Define a billable service line"}
+              </div>
+            </div>
+          </div>
+        }
         onHide={() => {
           setShowSvcDlg(false);
           setEditSvc(null);
@@ -530,15 +667,32 @@ export default function ServiceMasterManager() {
             <Button
               label={editSvc ? "Update" : "Create"}
               icon="pi pi-check"
-              severity="success"
               onClick={handleSaveService}
               loading={billing.loading}
+              style={{
+                background: `linear-gradient(135deg, ${C.orange}, #c2410c)`,
+                border: "none",
+                color: "#fff",
+                fontWeight: 700,
+              }}
             />
           </div>
         }
       >
+        {/* Orange accent band */}
+        <div style={{
+          height: 4, background: `linear-gradient(90deg, ${C.orange}, #c2410c)`,
+          borderRadius: 2, marginBottom: 14,
+        }} />
+
+        {/* IDENTITY section */}
+        <SectionLabel>Identity</SectionLabel>
         <div
-          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}
+          style={{
+            display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14,
+            border: `1px dashed ${C.border}`, padding: "10px 12px",
+            borderRadius: 8, marginBottom: 14,
+          }}
         >
           <div>
             <label
@@ -620,6 +774,17 @@ export default function ServiceMasterManager() {
               style={{ width: "100%" }}
             />
           </div>
+        </div>
+
+        {/* PRICING section */}
+        <SectionLabel>Pricing</SectionLabel>
+        <div
+          style={{
+            display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14,
+            border: `1px dashed ${C.border}`, padding: "10px 12px",
+            borderRadius: 8, marginBottom: 14,
+          }}
+        >
           <div>
             <label
               style={{
@@ -753,21 +918,27 @@ export default function ServiceMasterManager() {
           </div>
 
           {/* ────────────────────────────────────────────────────────
-              ANH TARIFF / PACKAGE FIELDS
-              Optional fields — populated when the row was imported
-              from the hospital's published rate card (or when adding
-              a new package manually). Tier prices feed the engine's
-              per-room-category lookup. Diagnosis tags drive the
-              auto-matcher that snaps a package onto an admission.
+              TIER PRICING (per-room-category)
+              Patient's room category drives the engine's lookup:
+                GENW/DAYCARE → generalWard · SEMI → semiPrivate
+                · PVT/ICU/NICU → private.
+              CASH list price defaults to General Ward tier.
           ──────────────────────────────────────────────────────── */}
-          <div style={{ gridColumn: "span 2", marginTop: 12, padding: "12px 14px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: "#06b6d4", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
-              <i className="pi pi-tags" /> Tariff / Package Fields
-              <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "none", letterSpacing: 0 }}>
-                Used by the ANH auto-matcher · CASH = General Ward tier
+          <div style={{
+            gridColumn: "span 2", marginTop: 4,
+            border: `1px dashed ${C.border}`, padding: "10px 12px",
+            borderRadius: 8, marginBottom: 4,
+          }}>
+            <div style={{
+              fontSize: 11, fontWeight: 700, color: C.muted,
+              textTransform: "uppercase", letterSpacing: 0.5,
+              marginBottom: 10, display: "flex", alignItems: "center", gap: 8,
+            }}>
+              <i className="pi pi-money-bill" style={{ color: C.orange }} /> Tier Pricing
+              <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 600, color: C.muted, textTransform: "none", letterSpacing: 0 }}>
+                CASH = General Ward tier
               </span>
             </div>
-
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
               <div>
                 <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>General Ward (₹)</label>
@@ -796,66 +967,76 @@ export default function ServiceMasterManager() {
                   style={{ width: "100%" }}
                 />
               </div>
-
-              <div>
-                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Speciality</label>
-                <InputText
-                  value={svcForm.speciality || ""}
-                  onChange={(e) => setSvcForm({ ...svcForm, speciality: e.target.value })}
-                  placeholder="e.g. Cardiology, ENT, Medical Management"
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div>
-                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Max LOS (days, 0 = uncapped)</label>
-                <InputNumber
-                  value={svcForm.maxLOSDays ?? 0}
-                  onValueChange={(e) => setSvcForm({ ...svcForm, maxLOSDays: e.value || 0 })}
-                  min={0} max={90}
-                  suffix=" d"
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div style={{ display: "flex", alignItems: "flex-end" }}>
-                <small style={{ color: "#64748b", fontSize: 11 }}>
-                  After Max LOS, per-day billing reverts to room + nursing + investigations.
-                </small>
-              </div>
-
-              <div style={{ gridColumn: "span 3" }}>
-                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>
-                  Diagnosis Tags (comma-separated, used for auto-matching)
-                </label>
-                <InputText
-                  value={svcForm.diagnosisTagsText || ""}
-                  onChange={(e) => setSvcForm({ ...svcForm, diagnosisTagsText: e.target.value })}
-                  placeholder="e.g. dengue, fever, septicaemia, chikungunya"
-                  style={{ width: "100%" }}
-                />
-                <small style={{ color: "#64748b", fontSize: 11 }}>
-                  When an admission's diagnosis matches ≥ 2 of these tags (or 1 if only one is set), this package auto-attaches.
-                </small>
-              </div>
-
-              <div style={{ gridColumn: "span 3" }}>
-                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Inclusions</label>
-                <InputText
-                  value={svcForm.inclusions || ""}
-                  onChange={(e) => setSvcForm({ ...svcForm, inclusions: e.target.value })}
-                  placeholder="What this package covers (free text from rate card)"
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div style={{ gridColumn: "span 3" }}>
-                <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Exclusions</label>
-                <InputText
-                  value={svcForm.exclusions || ""}
-                  onChange={(e) => setSvcForm({ ...svcForm, exclusions: e.target.value })}
-                  placeholder="What's NOT included (charged separately)"
-                  style={{ width: "100%" }}
-                />
-              </div>
             </div>
+          </div>
+        </div>
+
+        {/* DIAGNOSIS & PACKAGES section */}
+        <SectionLabel>Diagnosis &amp; Packages</SectionLabel>
+        <div
+          style={{
+            display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12,
+            border: `1px dashed ${C.border}`, padding: "10px 12px",
+            borderRadius: 8, marginBottom: 6,
+          }}
+        >
+          <div>
+            <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Speciality</label>
+            <InputText
+              value={svcForm.speciality || ""}
+              onChange={(e) => setSvcForm({ ...svcForm, speciality: e.target.value })}
+              placeholder="e.g. Cardiology, ENT, Medical Management"
+              style={{ width: "100%" }}
+            />
+          </div>
+          <div>
+            <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Max LOS (days, 0 = uncapped)</label>
+            <InputNumber
+              value={svcForm.maxLOSDays ?? 0}
+              onValueChange={(e) => setSvcForm({ ...svcForm, maxLOSDays: e.value || 0 })}
+              min={0} max={90}
+              suffix=" d"
+              style={{ width: "100%" }}
+            />
+          </div>
+          <div style={{ display: "flex", alignItems: "flex-end" }}>
+            <small style={{ color: C.muted, fontSize: 11 }}>
+              After Max LOS, per-day billing reverts to room + nursing + investigations.
+            </small>
+          </div>
+
+          <div style={{ gridColumn: "span 3" }}>
+            <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>
+              Diagnosis Tags (comma-separated, used for auto-matching)
+            </label>
+            <InputText
+              value={svcForm.diagnosisTagsText || ""}
+              onChange={(e) => setSvcForm({ ...svcForm, diagnosisTagsText: e.target.value })}
+              placeholder="e.g. dengue, fever, septicaemia, chikungunya"
+              style={{ width: "100%" }}
+            />
+            <small style={{ color: C.muted, fontSize: 11 }}>
+              When an admission's diagnosis matches &ge; 2 of these tags (or 1 if only one is set), this package auto-attaches.
+            </small>
+          </div>
+
+          <div style={{ gridColumn: "span 3" }}>
+            <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Inclusions</label>
+            <InputText
+              value={svcForm.inclusions || ""}
+              onChange={(e) => setSvcForm({ ...svcForm, inclusions: e.target.value })}
+              placeholder="What this package covers (free text from rate card)"
+              style={{ width: "100%" }}
+            />
+          </div>
+          <div style={{ gridColumn: "span 3" }}>
+            <label style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}>Exclusions</label>
+            <InputText
+              value={svcForm.exclusions || ""}
+              onChange={(e) => setSvcForm({ ...svcForm, exclusions: e.target.value })}
+              placeholder="What's NOT included (charged separately)"
+              style={{ width: "100%" }}
+            />
           </div>
         </div>
       </Dialog>
@@ -865,8 +1046,26 @@ export default function ServiceMasterManager() {
       ════════════════════════════════════════ */}
       <Dialog
         visible={showPriceDlg}
-        style={{ width: "min(720px, 92vw)" }}
-        header={`💰 Pricing — ${selService?.serviceName || ""}`}
+        style={{ width: "min(760px, 94vw)" }}
+        header={
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: 8,
+              background: C.orangeL, color: C.orange,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <i className="pi pi-tag" style={{ fontSize: 14 }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>
+                Tariff Pricing
+              </div>
+              <div style={{ fontSize: 11, color: C.muted, fontWeight: 500 }}>
+                {selService?.serviceName || ""}
+              </div>
+            </div>
+          </div>
+        }
         onHide={() => setShowPriceDlg(false)}
       >
         <TabView>
@@ -904,7 +1103,7 @@ export default function ServiceMasterManager() {
               <Column
                 header="Final Price"
                 body={(r) => (
-                  <b style={{ color: "#0d6efd" }}>
+                  <b style={{ color: C.orange }}>
                     ₹{r.finalPrice.toLocaleString("en-IN")}
                   </b>
                 )}
@@ -1089,14 +1288,16 @@ export default function ServiceMasterManager() {
 
               <div
                 style={{
-                  background: "#e7f3ff",
+                  background: C.orangeL,
+                  border: `1px solid ${C.orange}33`,
                   padding: "10px 14px",
                   borderRadius: 8,
                   fontSize: 13,
+                  color: C.slate,
                 }}
               >
                 Final Price after discount:{" "}
-                <b style={{ color: "#0d6efd", fontSize: 15 }}>
+                <b style={{ color: C.orange, fontSize: 15 }}>
                   ₹
                   {(previewFinal || 0).toLocaleString("en-IN", {
                     minimumFractionDigits: 2,
@@ -1107,14 +1308,20 @@ export default function ServiceMasterManager() {
               <Button
                 label="Save Pricing"
                 icon="pi pi-check"
-                severity="success"
                 onClick={handleSavePricing}
                 loading={billing.loading}
+                style={{
+                  background: `linear-gradient(135deg, ${C.orange}, #c2410c)`,
+                  border: "none",
+                  color: "#fff",
+                  fontWeight: 700,
+                }}
               />
             </div>
           </TabPanel>
         </TabView>
       </Dialog>
+      </div>
     </div>
   );
 }
