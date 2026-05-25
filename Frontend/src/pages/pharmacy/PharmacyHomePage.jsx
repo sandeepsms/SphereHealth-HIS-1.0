@@ -3039,31 +3039,52 @@ function OPDRxTab() {
     const price = Number(qdUnitPrice);
     if (!Number.isFinite(price) || price < 0) { toast.warn("Invalid unit price"); return; }
     setQdSaving(true);
+    // R7cz — Resolve doctor name + prescription ref ONCE so the same
+    // values flow both to the top-level sale and to the per-item Rx
+    // payload below. The backend dispense() Schedule H/H1/X gate
+    // (D&C Rule 65) rejects with 400 RX_REF_REQUIRED unless BOTH
+    // prescriptionRef AND prescriberName are present on the item OR
+    // the sale. The OPD visitNumber IS the prescription identifier
+    // for an in-hospital OPD-Rx dispense, so we pass it through.
+    const visit = qdMed?._visit || {};
+    const docName = visit.consultantName ||
+      (visit.doctorId?.personalInfo
+        ? `Dr. ${visit.doctorId.personalInfo.firstName || ""} ${visit.doctorId.personalInfo.lastName || ""}`.trim()
+        : "");
+    const rxRef = visit.visitNumber || "";
     try {
       const r = await dispense({
-        patientUHID:   searchedUhid,
-        patientName:   patient?.fullName || qdMed?._visit?.patientName || "",
-        age:           patient?.age || "",
-        gender:        patient?.gender || "",
-        contactNumber: patient?.contactNumber || "",
-        doctorName:    qdMed?._visit?.consultantName || (qdMed?._visit?.doctorId?.personalInfo
-          ? `Dr. ${qdMed._visit.doctorId.personalInfo.firstName || ""} ${qdMed._visit.doctorId.personalInfo.lastName || ""}`.trim()
-          : ""),
-        saleType:      "OPD",
-        paymentMode:   qdPaymentMode,
+        patientUHID:     searchedUhid,
+        patientName:     patient?.fullName || visit.patientName || "",
+        age:             patient?.age || "",
+        gender:          patient?.gender || "",
+        contactNumber:   patient?.contactNumber || "",
+        doctorName:      docName,
+        // R7cz — sale-level fallback the backend reads when item-level
+        // fields are absent (we set both, belt-and-braces). For Schedule
+        // H drugs this satisfies the prescriber + Rx-ref requirement.
+        prescriptionRef: rxRef,
+        saleType:        "OPD",
+        paymentMode:     qdPaymentMode,
         items: [{
-          drugId:       qdDrug._id,
-          drugName:     qdDrug.brandName || qdDrug.genericName || qdDrug.name,
-          quantity:     qty,
-          unitPrice:    price,
-          gstRate:      Number(qdDrug.gstRate || qdDrug.taxPercentage || 0),
+          drugId:          qdDrug._id,
+          drugName:        qdDrug.brandName || qdDrug.genericName || qdDrug.name,
+          quantity:        qty,
+          unitPrice:       price,
+          gstRate:         Number(qdDrug.gstRate || qdDrug.taxPercentage || 0),
           discountPercent: 0,
+          // R7cz — per-item Rx fields, same values as sale-level.
+          // Item-level wins in the backend check; passing both lets the
+          // gate succeed even if a future change picks one path or the
+          // other.
+          prescriptionRef: rxRef,
+          prescriberName:  docName,
         }],
         // Audit trail — link this sale back to the OPD visit so the
         // pharmacist's bill can be reconciled to the prescription.
         sourceContext: {
           source:      "OPD-Rx",
-          visitNumber: qdMed?._visit?.visitNumber || "",
+          visitNumber: rxRef,
           medicineRef: qdMed?.medicineName || "",
           dosage:      qdMed?.dosage || "",
           frequency:   qdMed?.frequency || "",
