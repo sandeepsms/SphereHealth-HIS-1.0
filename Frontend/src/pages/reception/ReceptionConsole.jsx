@@ -299,22 +299,19 @@ export default function ReceptionConsole() {
     return doctors.filter(d => String(d.department) === String(dept));
   }, [doctors, opd.department, ipd.department, dayCare.department, visitType]);
 
-  /* ─── Pincode auto-lookup (R7dm — robust with timeout + fallback + cache) ─── */
-  // When user enters a 6-digit Indian pincode, fetch district + city + state
-  // and auto-fill the address fields. Receptionist only needs to ask the
-  // patient for their local street/landmark (verbal input).
+  /* ─── Pincode auto-lookup (R7dn — backend endpoint with multi-source cache) ─── */
+  // When user enters a 6-digit Indian pincode, hit our backend's
+  // /api/pincode/:pin endpoint. The backend tries postalpincode.in,
+  // Nominatim/OSM, and zippopotam.us in sequence and caches every
+  // successful lookup in MongoDB forever — so the second-ever hit
+  // for a given pincode is instant for every receptionist.
   //
-  // Reliability layers:
-  //   1. localStorage cache — successful lookups persist across reloads.
-  //      Pincode → {city, district, state} mappings rarely change, so a
-  //      one-time hit per pincode saves both the user and the upstream API.
-  //   2. AbortController with 5s timeout — primary API (api.postalpincode.in)
-  //      occasionally goes 503/down for hours at a time; we don't let the
-  //      spinner hang forever.
-  //   3. Fallback to api.zippopotam.us (returns city + state only — no
-  //      district — but better than nothing when the primary is down).
-  //   4. Manual retry button via the failed-state UI (user-driven, not
-  //      auto-retry, so we don't hammer a struggling API).
+  // Client-side layers retained:
+  //   1. localStorage cache — extra speed-up so repeat visits in the
+  //      same browser don't even need to hit our backend
+  //   2. AbortController 10s timeout — generous since backend does
+  //      all the multi-source chasing for us
+  //   3. Manual retry button — clears cache + bumps nonce
   useEffect(() => {
     const pin = patient.address.pincode;
     if (!pin || pin.length !== 6) {
@@ -322,10 +319,10 @@ export default function ReceptionConsole() {
       return;
     }
 
-    // 1. Cache hit — instant fill, no network.
+    // 1. localStorage cache — instant fill, no network at all.
     try {
       const cached = JSON.parse(localStorage.getItem(`pincode:${pin}`) || "null");
-      if (cached?.city && cached?.state) {
+      if (cached?.city && cached?.state && cached?.district) {
         setPatient(p => ({
           ...p,
           address: {
@@ -338,72 +335,54 @@ export default function ReceptionConsole() {
         setPincodeLookup({ loading: false, ok: true, error: "" });
         return;
       }
-    } catch (_) { /* cache miss / parse fail — fall through to network */ }
+    } catch (_) { /* cache miss / parse fail — fall through */ }
 
     if (pincodeTimerRef.current) clearTimeout(pincodeTimerRef.current);
     const ctrl = new AbortController();
     pincodeTimerRef.current = setTimeout(async () => {
       setPincodeLookup({ loading: true, ok: false, error: "" });
-      const timer = setTimeout(() => ctrl.abort(), 5000); // 5s hard cap
+      const timer = setTimeout(() => ctrl.abort(), 10000); // 10s — backend chases 3 sources
 
-      // tryApply — write result + cache. Returns true on success.
-      const tryApply = ({ city, district, state }) => {
-        if (!city && !state) return false;
-        setPatient(p => ({
-          ...p,
-          address: {
-            ...p.address,
-            city:     city     || p.address.city,
-            district: district || p.address.district,
-            state:    state    || p.address.state,
-          },
-        }));
-        try { localStorage.setItem(`pincode:${pin}`, JSON.stringify({ city, district, state })); }
-        catch (_) { /* quota full / private mode — non-fatal */ }
-        setPincodeLookup({ loading: false, ok: true, error: "" });
-        return true;
-      };
-
-      // 2. Primary — India Post Pincode API (best data: city/district/state).
       try {
-        const res  = await fetch(`https://api.postalpincode.in/pincode/${pin}`, { signal: ctrl.signal });
-        if (res.ok) {
-          const data = await res.json();
-          const entry = Array.isArray(data) ? data[0] : null;
-          if (entry?.Status === "Success" && entry.PostOffice?.length) {
-            const po = entry.PostOffice[0];
-            clearTimeout(timer);
-            if (tryApply({
-              city:     po.Block || po.Division || po.Name,
-              district: po.District,
-              state:    po.State,
-            })) return;
-          }
+        const res = await fetch(`${API_ENDPOINTS.BASE}/pincode/${pin}`, {
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) {
+          setPincodeLookup({
+            loading: false, ok: false,
+            error: res.status === 404 ? "Pincode not found — fill manually" : "Lookup failed — fill manually",
+          });
+          return;
         }
-      } catch (_) { /* primary failed — try fallback */ }
-
-      // 3. Fallback — zippopotam.us (no district, but city + state).
-      try {
-        const res = await fetch(`https://api.zippopotam.us/in/${pin}`, { signal: ctrl.signal });
-        if (res.ok) {
-          const data = await res.json();
-          const place = Array.isArray(data?.places) ? data.places[0] : null;
-          if (place) {
-            clearTimeout(timer);
-            if (tryApply({
-              city:     place["place name"] || "",
-              district: "",                 // zippopotam doesn't include district
-              state:    place.state || "",
-            })) return;
-          }
+        const json = await res.json();
+        const data = json?.data;
+        if (data && (data.city || data.state)) {
+          setPatient(p => ({
+            ...p,
+            address: {
+              ...p.address,
+              city:     data.city     || p.address.city,
+              district: data.district || p.address.district,
+              state:    data.state    || p.address.state,
+            },
+          }));
+          try {
+            localStorage.setItem(`pincode:${pin}`, JSON.stringify({
+              city: data.city, district: data.district, state: data.state,
+            }));
+          } catch (_) { /* quota / private — non-fatal */ }
+          setPincodeLookup({ loading: false, ok: true, error: "" });
+          return;
         }
-      } catch (_) { /* both APIs failed */ }
-
-      clearTimeout(timer);
-      setPincodeLookup({
-        loading: false, ok: false,
-        error: ctrl.signal.aborted ? "Lookup timed out — try again or fill manually" : "Lookup failed — fill manually",
-      });
+        setPincodeLookup({ loading: false, ok: false, error: "Pincode not found — fill manually" });
+      } catch (e) {
+        clearTimeout(timer);
+        setPincodeLookup({
+          loading: false, ok: false,
+          error: ctrl.signal.aborted ? "Lookup timed out — try again or fill manually" : "Lookup failed — fill manually",
+        });
+      }
     }, 400);
     return () => {
       if (pincodeTimerRef.current) clearTimeout(pincodeTimerRef.current);

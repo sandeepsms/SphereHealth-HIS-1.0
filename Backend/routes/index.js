@@ -96,6 +96,13 @@ router.use("/auth", authRoutes);
 const { clientErrorRateLimit } = require("../middleware/rateLimitAuth");
 router.use("/client-errors",    clientErrorRateLimit, require("./Admin/clientErrorRoutes"));
 
+// ── R7dn: Pincode lookup (anonymous-allowed, rate-limited) ──
+// Just postal data, not PHI. Mounted ABOVE the global authenticate
+// gate so the reception registration form can fetch it before the
+// receptionist has even saved the draft. Rate-limited at the route
+// layer (60 lookups/min/IP).
+router.use("/pincode", require("./Common/pincodeRoutes"));
+
 // ── Everything below requires a valid JWT ────────────────────
 router.use(authenticate);
 
