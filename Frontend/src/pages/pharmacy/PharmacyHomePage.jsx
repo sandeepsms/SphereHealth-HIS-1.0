@@ -3342,6 +3342,15 @@ function IPDCreditTab() {
   const [openAdm, setOpenAdm]   = useState(null);  // selected admission detail blob
   const [openLoading, setOpenLoading] = useState(false);
 
+  // R7cv — Per-day history of all IPD credit sales (both outstanding +
+  // already-paid). Pharmacist asked for "every IPD jisme pharmacy se
+  // credit pr kuch gya hai" — not just current outstanding.
+  const [histLoading, setHistLoading] = useState(false);
+  const [hist, setHist]               = useState([]);                // [{dateKey, totalDispensed, ..., bills:[]}]
+  const [histSummary, setHistSummary] = useState({ days: 0, bills: 0, totalDispensed: 0, totalCollected: 0, totalOutstanding: 0 });
+  const [histDays, setHistDays]       = useState(30);                // window selector
+  const [expandedDay, setExpandedDay] = useState(null);              // dateKey of the open day-card
+
   // Per-bill collection modal — open with `setCollect({sale, max})`.
   const [collect, setCollect] = useState(null);
   const [colAmt, setColAmt]   = useState("");
@@ -3357,10 +3366,31 @@ function IPDCreditTab() {
       setRows(r?.data?.data || []);
       setSummary(r?.data?.summary || { admissions: 0, totalOutstanding: 0 });
     } catch (e) {
-      toast.error(e?.response?.data?.message || "Failed to load IPD credit ledger");
+      // R7cv: if the new credit route 404s, the backend likely needs
+      // restart — make the message actionable instead of just relaying
+      // a generic "Route not found".
+      const status = e?.response?.status;
+      const isMissingRoute = status === 404 || e?.response?.data?.message === "Route not found";
+      toast.error(isMissingRoute
+        ? "Pharmacy credit endpoint unavailable — backend may need restart to pick up R7cu routes."
+        : (e?.response?.data?.message || "Failed to load IPD credit ledger"));
     } finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, []);
+  const loadHistory = async (days = histDays) => {
+    setHistLoading(true);
+    try {
+      const r = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/credit/ipd-history?days=${days}`);
+      setHist(r?.data?.data || []);
+      setHistSummary(r?.data?.summary || { days: 0, bills: 0, totalDispensed: 0, totalCollected: 0, totalOutstanding: 0 });
+    } catch (e) {
+      // Quietly fail — the outstanding view above is the primary, the
+      // history is the audit overlay. A backend-restart-pending toast
+      // already fires from load() so we don't double-notify.
+      console.warn("[IPDCreditTab] history fetch failed:", e?.message);
+      setHist([]);
+    } finally { setHistLoading(false); }
+  };
+  useEffect(() => { load(); loadHistory(); }, []);
 
   const openAdmission = async (adm) => {
     setOpenLoading(true);
@@ -3400,8 +3430,11 @@ function IPDCreditTab() {
       toast.success(r?.data?.message || "Collection recorded");
       setCollect(null);
       // Refresh both the list AND the open admission drawer so the
-      // outstanding numbers move immediately.
+      // outstanding numbers move immediately. Also reload the per-day
+      // history (R7cv) so today's collected total bumps + outstanding
+      // drops in real-time.
       await load();
+      await loadHistory();
       if (openAdm?._meta) await openAdmission(openAdm._meta);
     } catch (e) {
       const msg = e?.response?.data?.message || e.message || "Collect failed";
@@ -3509,6 +3542,128 @@ function IPDCreditTab() {
           </tbody>
         </table>
       )}
+
+      {/* ── R7cv: Per-Day History ─────────────────────────────────
+          The outstanding table above is "what blocks discharge RIGHT
+          NOW". This section is "what went out on credit, every day,
+          regardless of whether it's been paid since" — pharmacist
+          audit view + cross-check against ward registers. */}
+      <div style={{ marginTop: 22 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.text, letterSpacing: ".2px" }}>
+            <i className="pi pi-calendar" style={{ marginRight: 6, color: C.orange }} />
+            Day-wise IPD Credit Ledger
+          </div>
+          <select
+            value={histDays}
+            onChange={(e) => { const d = Number(e.target.value); setHistDays(d); loadHistory(d); }}
+            className="his-select"
+            style={{ fontSize: 11, padding: "4px 10px" }}
+          >
+            <option value={7}>Last 7 days</option>
+            <option value={15}>Last 15 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={60}>Last 60 days</option>
+            <option value={90}>Last 90 days</option>
+            <option value={180}>Last 180 days</option>
+          </select>
+          <div style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>
+            {histSummary.bills} bill{histSummary.bills === 1 ? "" : "s"} · Dispensed <strong style={{ color: C.text }}>{fmtINR(histSummary.totalDispensed)}</strong>
+            {" · "}Collected <strong style={{ color: C.green }}>{fmtINR(histSummary.totalCollected)}</strong>
+            {histSummary.totalOutstanding > 0 && <> · Outstanding <strong style={{ color: "#b91c1c" }}>{fmtINR(histSummary.totalOutstanding)}</strong></>}
+          </div>
+        </div>
+
+        {histLoading && hist.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", color: C.muted }}>
+            <i className="pi pi-spin pi-spinner" style={{ fontSize: 20 }} />
+          </div>
+        ) : hist.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", background: "#f8fafc", border: `1px dashed ${C.border}`, borderRadius: 8, color: C.muted, fontSize: 12 }}>
+            No IPD credit dispensed in the last {histDays} days.
+          </div>
+        ) : (
+          <div>
+            {hist.map((day) => {
+              const open  = expandedDay === day.dateKey;
+              const date  = new Date(day.dateKey);
+              const label = date.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+              return (
+                <div key={day.dateKey} style={{ border: `1px solid ${C.border}`, borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
+                  <div onClick={() => setExpandedDay(open ? null : day.dateKey)} style={{
+                    cursor: "pointer", display: "flex", alignItems: "center", gap: 12,
+                    padding: "10px 14px", background: open ? "#fff7ed" : "#fff",
+                  }}>
+                    <i className={`pi ${open ? "pi-chevron-down" : "pi-chevron-right"}`} style={{ fontSize: 11, color: C.muted }} />
+                    <span style={{ fontWeight: 800, fontSize: 12.5, color: C.text }}>{label}</span>
+                    <span style={{ fontSize: 11, color: C.muted, padding: "1px 8px", background: "#f1f5f9", borderRadius: 10, fontWeight: 700 }}>
+                      {day.billCount} bill{day.billCount === 1 ? "" : "s"}
+                    </span>
+                    <div style={{ marginLeft: "auto", display: "flex", gap: 16, fontSize: 11.5 }}>
+                      <span><span style={{ color: C.muted }}>Dispensed </span><strong style={{ color: C.text, fontFamily: "'DM Mono', monospace" }}>{fmtINR(day.totalDispensed)}</strong></span>
+                      <span><span style={{ color: C.muted }}>Collected </span><strong style={{ color: C.green, fontFamily: "'DM Mono', monospace" }}>{fmtINR(day.totalCollected)}</strong></span>
+                      <span>
+                        <span style={{ color: C.muted }}>Outstanding </span>
+                        <strong style={{
+                          color: day.totalOutstanding > 0 ? "#b91c1c" : "#15803d",
+                          fontFamily: "'DM Mono', monospace",
+                        }}>{fmtINR(day.totalOutstanding)}</strong>
+                      </span>
+                    </div>
+                  </div>
+                  {open && (
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, borderTop: `1px solid ${C.border}` }}>
+                      <thead>
+                        <tr style={{ background: "#fafafa" }}>
+                          <th style={{ padding: "6px 12px", textAlign: "left", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Bill #</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Admission</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Patient</th>
+                          <th style={{ padding: "6px 12px", textAlign: "left", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Items</th>
+                          <th style={{ padding: "6px 12px", textAlign: "right", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", width: 100 }}>Total</th>
+                          <th style={{ padding: "6px 12px", textAlign: "right", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", width: 100 }}>Paid</th>
+                          <th style={{ padding: "6px 12px", textAlign: "right", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", width: 110 }}>Outstanding</th>
+                          <th style={{ padding: "6px 12px", textAlign: "center", fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", width: 90 }}>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {day.bills.map(b => (
+                          <tr key={b._id} style={{ borderTop: `1px solid ${C.border}` }}>
+                            <td style={{ padding: "6px 12px", fontFamily: "'DM Mono', monospace", color: C.text, fontWeight: 700 }}>{b.billNumber}</td>
+                            <td style={{ padding: "6px 12px", fontFamily: "'DM Mono', monospace", color: C.muted, fontSize: 10.5 }}>{b.admissionNumber || "—"}</td>
+                            <td style={{ padding: "6px 12px", color: C.text }}>
+                              <div style={{ fontWeight: 600 }}>{b.patientName || "—"}</div>
+                              <div style={{ fontSize: 9.5, color: C.muted, fontFamily: "'DM Mono', monospace" }}>{b.UHID}</div>
+                            </td>
+                            <td style={{ padding: "6px 12px", color: C.muted, fontSize: 10.5, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                              title={(b.items || []).map(i => `${i.drugName} × ${i.quantity}`).join(", ")}>
+                              {(b.items || []).slice(0, 2).map(i => `${i.drugName} × ${i.quantity}`).join(", ")}
+                              {(b.items || []).length > 2 && ` +${b.items.length - 2}`}
+                            </td>
+                            <td style={{ padding: "6px 12px", textAlign: "right", fontFamily: "'DM Mono', monospace", color: C.text }}>{fmtINR(b.grandTotal)}</td>
+                            <td style={{ padding: "6px 12px", textAlign: "right", fontFamily: "'DM Mono', monospace", color: C.green }}>{fmtINR(b.amountPaid)}</td>
+                            <td style={{ padding: "6px 12px", textAlign: "right", fontFamily: "'DM Mono', monospace", color: b.balanceDue > 0 ? "#b91c1c" : "#15803d", fontWeight: 700 }}>
+                              {fmtINR(b.balanceDue)}
+                            </td>
+                            <td style={{ padding: "6px 12px", textAlign: "center" }}>
+                              <span style={{
+                                padding: "2px 8px", borderRadius: 10, fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px",
+                                background: b.cleared ? "#dcfce7" : "#fef3c7",
+                                color:      b.cleared ? "#15803d" : "#a16207",
+                              }}>
+                                {b.cleared ? "Paid" : "Credit"}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Drill-down drawer */}
       {openAdm && (

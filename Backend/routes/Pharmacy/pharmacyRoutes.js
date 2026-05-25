@@ -46,6 +46,10 @@ router.post  ("/sales/:id/add-items",   requireAction("pharmacy.add-items"), ctr
 router.get   ("/credit/ipd-admissions",         requireAction("rx.read"),            ctrl.listIpdCreditAdmissions);
 router.get   ("/credit/admission/:admissionId", validateObjectIdParam("admissionId"), requireAction("rx.read"),            ctrl.getCreditByAdmission);
 router.post  ("/sales/:id/collect-credit",      validateObjectIdParam("id"),          requireAction("pharmacy.dispense"),  ctrl.collectCredit);
+// R7cv — Day-wise audit log of every IPD credit sale (outstanding +
+// already-cleared) — pharmacist needs to see "what went out on
+// credit historically" not just "what's currently blocking".
+router.get   ("/credit/ipd-history",            requireAction("rx.read"),            ctrl.getIpdCreditHistory);
 
 // Settings (in-house vs outsourced print identity)
 router.get   ("/settings",       requireAction("rx.read"),            ctrl.getSettings);

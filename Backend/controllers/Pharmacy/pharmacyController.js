@@ -1055,6 +1055,117 @@ exports.getCreditByAdmission = async (req, res) => {
   } catch (e) { sendErr(res, e); }
 };
 
+// GET /api/pharmacy/credit/ipd-history?days=30
+// R7cv — Day-wise log of every IPD pharmacy credit sale (both
+// outstanding AND already-cleared) grouped by date. The pharmacist
+// asked for visibility into "every IPD where pharmacy credit ever
+// went out" — the outstanding-only list above hides bills that were
+// dispensed on credit but later paid. This endpoint surfaces the
+// full chronological audit so the pharmacist can see e.g. "on
+// 22-May ₹2000 went out on credit across 3 admissions, all paid
+// by 24-May" or "today ₹4500 went out, ₹500 still pending".
+//
+// Returns: array of { dateKey, totalDispensed, totalOutstanding,
+//   totalCollected, bills: [{billNumber, admissionNumber, UHID,
+//   patientName, grandTotal, amountPaid, balanceDue, items[], createdAt}] }
+// sorted newest-first.
+exports.getIpdCreditHistory = async (req, res) => {
+  try {
+    const days = Math.min(180, Math.max(1, Number(req.query.days) || 30));
+    const since = new Date(); since.setDate(since.getDate() - days);
+    since.setHours(0, 0, 0, 0);
+    const sales = await Sale.find({
+      saleType:    { $in: ["IPD", "Homecare"] },
+      // status:"Completed" excludes Cancelled — we want both the open
+      // credit AND the historically-credit-then-paid bills here.
+      status:      "Completed",
+      admissionId: { $ne: null },
+      createdAt:   { $gte: since },
+      // R7cv — A sale qualifies as "credit dispensed" if EITHER the
+      // original paymentMode was Credit, OR balanceDue > 0 at any
+      // point (which we infer from collectionLog being non-empty OR
+      // current balanceDue > 0). Cash-up-front IPD sales are
+      // excluded — they never went on credit.
+      $or: [
+        { paymentMode: "Credit" },
+        { balanceDue: { $gt: 0 } },
+        { "collectionLog.0": { $exists: true } },
+      ],
+    })
+      .select("billNumber admissionId admissionNumber patientUHID patientName grandTotal amountPaid balanceDue items createdAt paymentMode collectionLog")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Group by dateKey (YYYY-MM-DD in server-local timezone — fine
+    // for India-deployed servers; if multi-tz becomes a concern we
+    // switch to IST via Intl.DateTimeFormat like cron jobs do).
+    const byDay = new Map();
+    for (const s of sales) {
+      const dKey = s.createdAt
+        ? new Date(s.createdAt).toISOString().slice(0, 10)
+        : "unknown";
+      const total = Number(s.grandTotal?.toString?.() ?? s.grandTotal ?? 0);
+      const paid  = Number(s.amountPaid?.toString?.() ?? s.amountPaid ?? 0);
+      const bal   = Number(s.balanceDue?.toString?.() ?? s.balanceDue ?? 0);
+      if (!byDay.has(dKey)) {
+        byDay.set(dKey, {
+          dateKey: dKey,
+          totalDispensed:   0,
+          totalCollected:   0,
+          totalOutstanding: 0,
+          billCount:        0,
+          bills:            [],
+        });
+      }
+      const grp = byDay.get(dKey);
+      grp.totalDispensed   += total;
+      grp.totalCollected   += paid;
+      grp.totalOutstanding += bal;
+      grp.billCount        += 1;
+      grp.bills.push({
+        _id:            s._id,
+        billNumber:     s.billNumber,
+        admissionId:    s.admissionId,
+        admissionNumber: s.admissionNumber || "",
+        UHID:           s.patientUHID || "",
+        patientName:    s.patientName || "",
+        grandTotal:     total,
+        amountPaid:     paid,
+        balanceDue:     bal,
+        paymentMode:    s.paymentMode,
+        items:          (s.items || []).map(i => ({
+          drugName: i.drugName,
+          quantity: i.quantity,
+          netAmount: Number(i.netAmount?.toString?.() ?? i.netAmount ?? 0),
+        })),
+        createdAt:      s.createdAt,
+        // R7cv — convenience flag for the frontend pill colour
+        cleared:        bal === 0,
+      });
+    }
+    const days_arr = Array.from(byDay.values())
+      .map(d => ({
+        ...d,
+        totalDispensed:   round2(d.totalDispensed),
+        totalCollected:   round2(d.totalCollected),
+        totalOutstanding: round2(d.totalOutstanding),
+      }))
+      .sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+    res.json({
+      success: true,
+      data: days_arr,
+      summary: {
+        days:                days_arr.length,
+        bills:               sales.length,
+        totalDispensed:      round2(days_arr.reduce((s, d) => s + d.totalDispensed,   0)),
+        totalCollected:      round2(days_arr.reduce((s, d) => s + d.totalCollected,   0)),
+        totalOutstanding:    round2(days_arr.reduce((s, d) => s + d.totalOutstanding, 0)),
+        windowDays:          days,
+      },
+    });
+  } catch (e) { sendErr(res, e); }
+};
+
 // POST /api/pharmacy/sales/:id/collect-credit
 // Records a payment against an IPD/credit sale. Atomic:
 //   • amount must be > 0 and ≤ current balanceDue
