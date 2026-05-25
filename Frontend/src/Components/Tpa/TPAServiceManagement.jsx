@@ -515,47 +515,41 @@ function TPAServiceManagement() {
                   >
                     Select TPA *
                   </label>
-                  <Dropdown
+                  {/* R7dj — Native <select> instead of PrimeReact Dropdown.
+                     PrimeReact's Dropdown was rendering the placeholder
+                     in `.p-dropdown-label` SPAN with its own padding that
+                     no amount of pt overrides could centre vertically.
+                     Native <select> centres the text by default and
+                     respects our padding cleanly. We lose the filter/search
+                     feature but TPA lists are short — not needed. */}
+                  <select
                     id="tpaId"
-                    value={values.tpaId}
-                    options={tpaList.map((tpa) => ({
-                      label: `${tpa.tpaName} (${tpa.tpaCode})`,
-                      value: tpa._id,
-                    }))}
-                    onChange={(e) => setFieldValue("tpaId", e.value)}
-                    placeholder="Select TPA"
-                    filter
-                    className={errors.tpaId && touched.tpaId ? "p-invalid" : ""}
+                    value={values.tpaId || ""}
+                    onChange={(e) => setFieldValue("tpaId", e.target.value)}
                     disabled={editingService !== null}
-                    style={{ width: "100%" }}
-                    pt={{
-                      root: { style: {
-                        border: `1.5px solid ${C.border}`,
-                        borderRadius: 9,
-                        padding: 0,
-                        height: 44,
-                        display: "flex",
-                        alignItems: "center",
-                        background: editingService ? "#f1f5f9" : "#fff",
-                      }},
-                      // R7di — the visible placeholder/value lives in pt.input
-                      // (single-select Dropdown's label IS its <input>), so set
-                      // the height + line-height to the parent so the text
-                      // sits dead in the middle. Margin:0 kills PrimeReact's
-                      // default top/bottom margin that was pushing it upward.
-                      input: { style: {
-                        fontSize: 13.5,
-                        color: C.text,
-                        padding: "0 14px",
-                        margin: 0,
-                        height: "100%",
-                        lineHeight: "42px",
-                        boxSizing: "border-box",
-                        background: "transparent",
-                        border: "none",
-                      }},
+                    style={{
+                      width: "100%",
+                      height: 44,
+                      padding: "0 14px",
+                      border: `1.5px solid ${errors.tpaId && touched.tpaId ? C.red : C.border}`,
+                      borderRadius: 9,
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: 13.5,
+                      color: values.tpaId ? C.text : "#94a3b8",
+                      background: editingService ? "#f1f5f9" : "#fff",
+                      cursor: editingService ? "not-allowed" : "pointer",
+                      outline: "none",
+                      appearance: "auto",
+                      boxSizing: "border-box",
                     }}
-                  />
+                  >
+                    <option value="" disabled>Select TPA</option>
+                    {tpaList.map((tpa) => (
+                      <option key={tpa._id} value={tpa._id}>
+                        {tpa.tpaName} ({tpa.tpaCode})
+                      </option>
+                    ))}
+                  </select>
                   {errors.tpaId && touched.tpaId && (
                     <small style={{ color: C.red, fontSize: 11, marginTop: 4, display: "block" }}>
                       {errors.tpaId}
