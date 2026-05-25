@@ -532,10 +532,18 @@ function TPAServiceManagement() {
                       root: { style: {
                         border: `1.5px solid ${C.border}`,
                         borderRadius: 9,
-                        padding: "2px 4px",
+                        padding: 0,
+                        minHeight: 44,
+                        display: "flex",
+                        alignItems: "center",
                         background: editingService ? "#f1f5f9" : "#fff",
                       }},
-                      input: { style: { fontSize: 13.5, color: C.text }},
+                      input: { style: {
+                        fontSize: 13.5,
+                        color: C.text,
+                        padding: "11px 14px",
+                        lineHeight: 1.4,
+                      }},
                     }}
                   />
                   {errors.tpaId && touched.tpaId && (
