@@ -1559,9 +1559,56 @@ async function onOPDVitalsRecorded(opdVisit, admission, nurseName) {
 /**
  * Called when a Doctor saves an OPD assessment (SOAP note).
  * Creates a BillingTrigger for Doctor Assessment / Follow-up fee.
+ *
+ * R7dr — De-duplicate consultation charges for OPD visits.
+ *
+ * Pre-R7dr the OPD-CON registration fee (fired by onOPDRegistered) and
+ * the CON-001 doctor-assessment fee (this function) both landed on the
+ * same patient bill — the patient was charged TWICE for one consultation
+ * (₹500 + ₹500 = ₹1000 instead of the doctor's actual ₹300/₹500). The
+ * two triggers nominally cover different things ("registration token"
+ * vs "doctor's professional fee") but in practice every OPD visit incurs
+ * both, so the doubling was always there and always wrong.
+ *
+ * Resolution: when an OPD-CON trigger already exists for this opdVisit
+ * (i.e. the receptionist registered the visit at the desk), the doctor
+ * has nothing extra to bill — the registration fee IS the consultation
+ * fee. Skip the CON-001 trigger. The R7dp doctor-charges sheet's
+ * opdFirst/opdFollowup rates drive the single OPD-CON line via
+ * unitPriceOverride (R7dq), so the single bill line carries the
+ * doctor's actual professional fee.
+ *
+ * Edge cases preserved:
+ *   • An OPD assessment saved without a prior OPD-CON (unusual but
+ *     possible — e.g. a walk-in note before registration) still fires
+ *     CON-001 because the dedup query returns nothing. The patient is
+ *     still charged exactly once.
+ *   • IPD doctor notes are routed through onDoctorNoteSaved →
+ *     DOC-MORN-ROUND / DOC-EVE-ROUND etc., not CON-001, so this guard
+ *     does not affect any IPD billing.
  */
 async function onOPDAssessmentSaved(opdVisit, admission, doctorName, assessmentId) {
   if (!admission?._id) return;
+
+  // Look for an existing OPD-CON trigger on this visit. status: any
+  // non-cancelled/voided state implies the registration fee already
+  // landed (or is about to) on the bill.
+  try {
+    const existing = await BillingTrigger.findOne({
+      opdVisitId: opdVisit._id,
+      serviceCode: "OPD-CON",
+      status: { $nin: ["cancelled", "voided", "rejected"] },
+    }).lean();
+    if (existing) {
+      // Registration already covered the consult. Don't double-bill.
+      return null;
+    }
+  } catch (e) {
+    // If the dedup lookup fails, defaulting to fire CON-001 reproduces
+    // pre-R7dr behaviour — preferable to silently dropping a charge.
+    console.warn("[AutoBilling] OPD-CON dedup lookup failed (proceeding with CON-001):", e.message);
+  }
+
   return createTrigger({
     admissionId:         admission._id,
     opdVisitId:          opdVisit._id,
