@@ -80,6 +80,9 @@ const EditHospitalCharges = lazy(() => import("./pages/charges/EditHospitalCharg
 // were dropped in favour of /reception-billing + /billing/ipd.
 
 const ServiceMasterManager = lazy(() => import("./Components/ServiceMaster/ServiceMasterManager"));
+// R7dp — Bulk doctor-charges editor (per-doctor OPD First / Follow-up / ER /
+// MLC / IPD cross-consult). Admin + Accountant only.
+const DoctorChargesPage = lazy(() => import("./pages/admin/DoctorChargesPage"));
 const ChargeableServices = lazy(() => import("./pages/services/ChargeableServices"));
 // BillingIntelligencePage removed — receptionist Billing Counter is now
 // the single billing surface; AI suggestions are no longer auto-applied.
@@ -494,6 +497,14 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/chargeable-services" element={
               <RoleGuard action="billing.read"><ChargeableServices /></RoleGuard>
+            } />
+            {/* R7dp — Per-doctor consultation-fee editor. The page itself
+                gates by role (Admin / Accountant); the RoleGuard mirrors
+                that so a Doctor / Receptionist hitting the URL bounces
+                off here instead of loading the page and seeing it
+                self-deny. */}
+            <Route path="/doctor-charges" element={
+              <RoleGuard allow={["Admin", "Accountant"]}><DoctorChargesPage /></RoleGuard>
             } />
 
             {/* /billing-intelligence routes removed — receptionist Billing

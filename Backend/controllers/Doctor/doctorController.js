@@ -286,13 +286,11 @@ exports.getDoctorsByExperience = async (req, res) => {
 
 exports.updateConsultationFee = async (req, res) => {
   try {
-    const { opdFee, emergencyFee } = req.body;
-
-    const doctor = await doctorService.updateConsultationFee(
-      req.params.doctorId,
-      opdFee,
-      emergencyFee,
-    );
+    // R7dp — Accept any subset of opd/opdFirst/opdFollowup/emergency/mlc/ipdCrossConsult
+    // in the body. The service validates each key and only updates the
+    // ones present, so the receptionist UI can save a single field at a
+    // time without nuking the others.
+    const doctor = await doctorService.updateConsultationFee(req.params.doctorId, req.body || {});
 
     res.status(200).json({
       success: true,
@@ -301,6 +299,60 @@ exports.updateConsultationFee = async (req, res) => {
     });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+// R7dp — First-visit detection for receptionist OPD billing.
+// Receptionist picks a doctor → we tell them whether this patient has
+// EVER seen this specific doctor before, and return the right fee.
+// Business rule (per user): patient ↔ doctor relationship is the key,
+// not patient ↔ department. If they've seen Dr Sandeep before, next
+// visit is followup. If they want a different doctor (same or other
+// dept), that's a first visit with the new doctor.
+exports.getFirstVisitStatus = async (req, res) => {
+  try {
+    const { doctorId, patientId } = req.params;
+    if (!doctorId || !patientId) {
+      return res.status(400).json({ success: false, message: "doctorId and patientId required" });
+    }
+    const Doctor = require("../../models/Doctor/doctorModel");
+    // OPDModels.js exports the model directly (default export)
+    const OPDRegistration = require("../../models/Patient/OPDModels");
+    // Load doctor + fee schedule.
+    const doctor = await Doctor.findById(doctorId).select("consultationFee personalInfo.firstName personalInfo.lastName").lean();
+    if (!doctor) return res.status(404).json({ success: false, message: "Doctor not found" });
+    // Find any prior OPD visit for THIS patient with THIS doctor.
+    // patientId on OPDModels references the Patient master collection.
+    const prior = await OPDRegistration.findOne({
+      doctorId,
+      patientId,
+    }).sort({ visitDate: -1, createdAt: -1 }).select("visitDate createdAt").lean();
+
+    const fees = doctor.consultationFee || {};
+    const isFirst = !prior;
+    res.json({
+      success: true,
+      data: {
+        isFirstVisit: isFirst,
+        hasMetThisDoctor: !!prior,
+        lastVisitWithThisDoctor: prior ? (prior.visitDate || prior.createdAt) : null,
+        suggestedFee: isFirst
+          ? (Number(fees.opdFirst) || Number(fees.opd) || 0)
+          : (Number(fees.opdFollowup) || Number(fees.opd) || 0),
+        feeType: isFirst ? "opdFirst" : "opdFollowup",
+        // Echo back the full fee sheet so the UI can let the receptionist
+        // see all 5 rates if they need to override (e.g. MLC, IPD cross).
+        allFees: {
+          opdFirst:        Number(fees.opdFirst)        || Number(fees.opd) || 0,
+          opdFollowup:     Number(fees.opdFollowup)     || 0,
+          emergency:       Number(fees.emergency)       || 0,
+          mlc:             Number(fees.mlc)             || 0,
+          ipdCrossConsult: Number(fees.ipdCrossConsult) || 0,
+        },
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 

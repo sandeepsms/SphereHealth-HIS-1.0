@@ -112,27 +112,47 @@ class DoctorService {
       .sort({ "personalInfo.fullName": 1 });
   }
 
-  async updateConsultationFee(id, opdFee, emergencyFee) {
-    if (mongoose.Types.ObjectId.isValid(id)) {
+  // R7dp — Accept any subset of opd/opdFirst/opdFollowup/emergency/mlc/ipdCrossConsult
+  async updateConsultationFee(doctorId, fees) {
+    if (!doctorId) throw new Error("Doctor ID is required");
+    if (!fees || typeof fees !== "object") throw new Error("Fees object required");
+
+    const allowed = ["opd", "opdFirst", "opdFollowup", "emergency", "mlc", "ipdCrossConsult"];
+    const update = {};
+    for (const k of allowed) {
+      if (fees[k] !== undefined) {
+        const n = Number(fees[k]);
+        if (!Number.isFinite(n) || n < 0) throw new Error(`Invalid fee for ${k}`);
+        update[`consultationFee.${k}`] = n;
+      }
+    }
+    // If only legacy `opd` is passed, mirror it onto opdFirst so the new
+    // codepath (which reads opdFirst) gets the same value. This makes
+    // the field rename non-breaking for any external integration still
+    // sending {opd: X}.
+    if (fees.opd !== undefined && fees.opdFirst === undefined) {
+      update["consultationFee.opdFirst"] = Number(fees.opd) || 0;
+    }
+    if (Object.keys(update).length === 0) throw new Error("No fee fields to update");
+
+    // Support either ObjectId or string doctorId code, matching the rest
+    // of this service.
+    if (mongoose.Types.ObjectId.isValid(doctorId)) {
       const doctor = await Doctor.findByIdAndUpdate(
-        id,
-        {
-          "consultationFee.opd": opdFee,
-          "consultationFee.emergency": emergencyFee,
-        },
-        { new: true },
+        doctorId,
+        { $set: update },
+        { new: true, runValidators: true },
       ).populate("department");
       if (doctor) return doctor;
     }
 
-    return await Doctor.findOneAndUpdate(
-      { doctorId: id },
-      {
-        "consultationFee.opd": opdFee,
-        "consultationFee.emergency": emergencyFee,
-      },
-      { new: true },
+    const doctor = await Doctor.findOneAndUpdate(
+      { doctorId },
+      { $set: update },
+      { new: true, runValidators: true },
     ).populate("department");
+    if (!doctor) throw new Error("Doctor not found");
+    return doctor;
   }
 
   async getDoctorStats(id) {

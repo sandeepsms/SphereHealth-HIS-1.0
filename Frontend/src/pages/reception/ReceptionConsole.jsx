@@ -108,6 +108,10 @@ const emptyOPD = {
   chiefComplaint: "",
   consultationFee: 500,
   hasAppointment: false,
+  // R7dp — Auto-fee hints (UI-only; stripped before backend submit).
+  // feeType ∈ "opdFirst" | "opdFollowup" | "emergency" | "mlc" | ""
+  feeType: "",
+  feeTypeNote: "",
 };
 
 const emptyIPD = {
@@ -242,6 +246,11 @@ export default function ReceptionConsole() {
             (typeof d.department === "object" && d.department !== null)
               ? String(d.department._id || d.department)
               : (d.department ? String(d.department) : ""),
+          // R7dp — Per-doctor fee schedule, needed for the no-patient-yet
+          // fast path (brand-new registration) and ER/MLC overrides where
+          // we don't need a backend roundtrip. Shape:
+          // { opd, opdFirst, opdFollowup, emergency, mlc, ipdCrossConsult }
+          consultationFee: d.consultationFee || {},
         })));
 
         if (tpaRes?.success) {
@@ -406,6 +415,110 @@ export default function ReceptionConsole() {
     try { localStorage.removeItem(`pincode:${pin}`); } catch (_) {}
     setPincodeRetryNonce(n => n + 1);
   }, [patient.address.pincode]);
+
+  /* ─── R7dp · OPD auto-fee (first-visit vs follow-up) ────────────────
+     When the receptionist picks (Department →) Doctor for an OPD visit,
+     we figure out the right consultation fee automatically:
+       • Existing patient (UHID resolved via search): backend tells us
+         whether this patient has ever seen THIS doctor before, returns
+         opdFollowup if yes, opdFirst if no.
+       • Brand-new patient (no _id yet): can't be a follow-up — fill in
+         opdFirst from the cached doctor record (no roundtrip needed).
+     The receptionist can still type any number over the auto-filled
+     fee; we only pre-fill, the input stays editable. The fee-type pill
+     above the input surfaces why we picked the rate so it's auditable
+     ("First visit with this doctor" / "Follow-up — last seen 03/04/26").
+     feeType / feeTypeNote are UI-only — stripped before the OPD POST. */
+  useEffect(() => {
+    if (visitType !== "OPD") return;
+    const doctorId = opd.doctor;
+    if (!doctorId) {
+      // Doctor cleared (e.g. department change wipes doctor) — drop pill.
+      setOpd(p => (p.feeTypeNote ? { ...p, feeType: "", feeTypeNote: "" } : p));
+      return;
+    }
+    const patientId = patient._id;
+    if (!patientId) {
+      // Brand-new patient — no history possible. Fill opdFirst from the
+      // doctor record we cached in the doctors[] array (no API call).
+      const doc = doctors.find(d => d.value === doctorId);
+      if (doc) {
+        const fee = Number(doc.consultationFee?.opdFirst || doc.consultationFee?.opd || 0);
+        setOpd(p => ({
+          ...p,
+          consultationFee: fee || p.consultationFee,
+          feeType: "opdFirst",
+          feeTypeNote: "First visit (new patient)",
+        }));
+      }
+      return;
+    }
+    // Existing patient — ask backend to decide first vs follow-up based
+    // on patient ↔ doctor history.
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await axios.get(
+          `${API_ENDPOINTS.BASE}/doctors/${doctorId}/first-visit-status/${patientId}`
+        );
+        if (cancelled) return;
+        const d = r.data?.data;
+        if (!d) return;
+        setOpd(p => ({
+          ...p,
+          consultationFee: Number(d.suggestedFee) || p.consultationFee,
+          feeType: d.feeType,
+          feeTypeNote: d.isFirstVisit
+            ? "First visit with this doctor"
+            : `Follow-up · last seen ${
+                d.lastVisitWithThisDoctor
+                  ? new Date(d.lastVisitWithThisDoctor).toLocaleDateString("en-IN")
+                  : "—"
+              }`,
+        }));
+      } catch (_) {
+        // Backend down / 404 → fall back to whatever's already in the
+        // input. Receptionist can still type a fee manually.
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opd.doctor, patient._id, visitType, doctors]);
+
+  /* ─── R7dp · ER auto-fee + MLC override ─────────────────────────────
+     Emergency uses a separate state slice (`er.attendingDoctor`) but
+     the actual consult fee still rides on `opd.consultationFee` because
+     receiptTotal / printReceipt / saveAndProcess all read from there
+     for non-IPD visits. We keep that pipeline and just pick the right
+     rate: emergency by default, mlc when the MLC checkbox is flipped. */
+  useEffect(() => {
+    if (visitType !== "Emergency") return;
+    const doctorId = er.attendingDoctor;
+    if (!doctorId) {
+      setOpd(p => (p.feeTypeNote ? { ...p, feeType: "", feeTypeNote: "" } : p));
+      return;
+    }
+    const doc = doctors.find(d => d.value === doctorId);
+    if (!doc) return;
+    if (er.isMLC) {
+      const fee = Number(doc.consultationFee?.mlc || doc.consultationFee?.emergency || doc.consultationFee?.opd || 0);
+      setOpd(p => ({
+        ...p,
+        consultationFee: fee || p.consultationFee,
+        feeType: "mlc",
+        feeTypeNote: "MLC rate (police case)",
+      }));
+    } else {
+      const fee = Number(doc.consultationFee?.emergency || doc.consultationFee?.opd || 0);
+      setOpd(p => ({
+        ...p,
+        consultationFee: fee || p.consultationFee,
+        feeType: "emergency",
+        feeTypeNote: "ER consultation rate",
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [er.attendingDoctor, er.isMLC, visitType, doctors]);
 
   /* ─── Debounced patient search ─── */
   useEffect(() => {
@@ -1376,6 +1489,17 @@ export default function ReceptionConsole() {
                   </div>
                   <div className="his-field-group">
                     <label className="his-label">Consultation Fee</label>
+                    {opd.feeTypeNote && (
+                      <div style={{
+                        fontSize: 11,
+                        color: opd.feeType === "opdFollowup" ? "#15803d" : "#1e40af",
+                        background: opd.feeType === "opdFollowup" ? "#dcfce7" : "#dbeafe",
+                        padding: "2px 10px", borderRadius: 10, display: "inline-block",
+                        marginBottom: 4, fontWeight: 700, letterSpacing: ".3px",
+                      }}>
+                        {opd.feeType === "opdFollowup" ? "FOLLOW-UP RATE" : "FIRST VISIT RATE"} · {opd.feeTypeNote}
+                      </div>
+                    )}
                     <input className="his-field" type="number" value={opd.consultationFee}
                       onChange={e => setOpd(p => ({ ...p, consultationFee: e.target.value }))} />
                   </div>

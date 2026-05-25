@@ -43,7 +43,7 @@ const DoctorForm = ({ initialValues, onSubmit, submitting = false }) => {
         registrationNumber: "",
       },
       department: "",
-      consultationFee: { opd: 0, emergency: 0 },
+      consultationFee: { opd: 0, opdFirst: 0, opdFollowup: 0, emergency: 0, mlc: 0, ipdCrossConsult: 0 },
     }
   );
   const [departments, setDepartments] = useState([]);
@@ -250,9 +250,9 @@ const DoctorForm = ({ initialValues, onSubmit, submitting = false }) => {
         </div>
       </div>
 
-      {/* Department + Fees */}
+      {/* Department */}
       <div className="grid">
-        <div className="col-12 md:col-4 mb-3">
+        <div className="col-12 md:col-6 mb-3">
           <span className="p-float-label">
             <Dropdown
               inputId="department"
@@ -272,14 +272,30 @@ const DoctorForm = ({ initialValues, onSubmit, submitting = false }) => {
             </small>
           )}
         </div>
+      </div>
 
-        <div className="col-12 md:col-4 mb-3">
+      {/* R7dp — Per-visit consultation charges. Backend stores five
+          distinct fee fields under doctor.consultationFee so the
+          receptionist can bill the right amount based on visit type.
+          The legacy `opd` field is preserved on the form state but no
+          longer shown — `opdFirst` supersedes it. */}
+      <div className="mb-2 mt-2">
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>
+          Consultation Charges
+        </div>
+        <div style={{ fontSize: 11.5, color: "#64748b" }}>
+          Set per-visit charges. Follow-up rate applies if patient has previously met THIS doctor.
+        </div>
+      </div>
+
+      <div className="grid">
+        <div className="col-12 md:col-6 mb-3">
           <span className="p-float-label">
             <InputNumber
-              inputId="opdFee"
-              value={form.consultationFee.opd}
+              inputId="opdFirstFee"
+              value={form.consultationFee.opdFirst}
               onValueChange={(e) =>
-                updateField("consultationFee.opd", e.value || 0)
+                updateField("consultationFee.opdFirst", e.value || 0)
               }
               min={0}
               mode="currency"
@@ -287,11 +303,29 @@ const DoctorForm = ({ initialValues, onSubmit, submitting = false }) => {
               locale="en-IN"
               className="w-full"
             />
-            <label htmlFor="opdFee">OPD Fee</label>
+            <label htmlFor="opdFirstFee">OPD First Visit (₹)</label>
           </span>
         </div>
 
-        <div className="col-12 md:col-4 mb-3">
+        <div className="col-12 md:col-6 mb-3">
+          <span className="p-float-label">
+            <InputNumber
+              inputId="opdFollowupFee"
+              value={form.consultationFee.opdFollowup}
+              onValueChange={(e) =>
+                updateField("consultationFee.opdFollowup", e.value || 0)
+              }
+              min={0}
+              mode="currency"
+              currency="INR"
+              locale="en-IN"
+              className="w-full"
+            />
+            <label htmlFor="opdFollowupFee">OPD Follow-up (₹)</label>
+          </span>
+        </div>
+
+        <div className="col-12 md:col-6 mb-3">
           <span className="p-float-label">
             <InputNumber
               inputId="emergencyFee"
@@ -305,7 +339,43 @@ const DoctorForm = ({ initialValues, onSubmit, submitting = false }) => {
               locale="en-IN"
               className="w-full"
             />
-            <label htmlFor="emergencyFee">Emergency Fee</label>
+            <label htmlFor="emergencyFee">Emergency / ER (₹)</label>
+          </span>
+        </div>
+
+        <div className="col-12 md:col-6 mb-3">
+          <span className="p-float-label">
+            <InputNumber
+              inputId="mlcFee"
+              value={form.consultationFee.mlc}
+              onValueChange={(e) =>
+                updateField("consultationFee.mlc", e.value || 0)
+              }
+              min={0}
+              mode="currency"
+              currency="INR"
+              locale="en-IN"
+              className="w-full"
+            />
+            <label htmlFor="mlcFee">MLC (₹)</label>
+          </span>
+        </div>
+
+        <div className="col-12 md:col-6 mb-3">
+          <span className="p-float-label">
+            <InputNumber
+              inputId="ipdCrossConsultFee"
+              value={form.consultationFee.ipdCrossConsult}
+              onValueChange={(e) =>
+                updateField("consultationFee.ipdCrossConsult", e.value || 0)
+              }
+              min={0}
+              mode="currency"
+              currency="INR"
+              locale="en-IN"
+              className="w-full"
+            />
+            <label htmlFor="ipdCrossConsultFee">IPD Cross-Consult (₹)</label>
           </span>
         </div>
       </div>

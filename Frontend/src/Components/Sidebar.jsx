@@ -306,6 +306,7 @@ const NAV = [
       { label: "TPA Services",          icon: "pi-briefcase", path: "/addservice",          roles: [ADMIN, TPA, AC] },
       { label: "Chargeable Services",   icon: "pi-dollar",  path: "/chargeable-services",   roles: [ADMIN, AC] },
       { label: "Service Master",        icon: "pi-cog",     path: "/service-master",        roles: [ADMIN] },
+      { label: "Doctor Charges",        icon: "pi-user-edit", path: "/doctor-charges",      roles: [ADMIN, AC] },
     ],
   },
 

@@ -38,5 +38,9 @@ router.post("/",                               requireAction("doctors.write"), d
 router.put("/:doctorId",                       requireAction("doctors.write"), doctorController.updateDoctor);
 router.delete("/:doctorId",                    requireAction("doctors.write"), doctorController.deleteDoctor);
 router.put("/:doctorId/consultation-fee",      requireAction("doctors.write"), doctorController.updateConsultationFee);
+// R7dp — First-visit detection for OPD billing (receptionist auto-fee).
+// Returns whether the patient has ever seen THIS specific doctor before
+// + suggested fee (opdFirst vs opdFollowup) + the full fee schedule.
+router.get("/:doctorId/first-visit-status/:patientId", requireAction("doctors.read"), doctorController.getFirstVisitStatus);
 
 module.exports = router;

@@ -83,9 +83,34 @@ const DoctorSchema = new mongoose.Schema(
       required: true,
     },
 
+    // R7dp — Per-doctor charges sheet with 5 visit types.
+    //
+    //   opdFirst        — First-time OPD consultation with this doctor.
+    //                     Receptionist sees this when patient has NEVER
+    //                     met this specific doctor before (cross-doctor
+    //                     lookup, not cross-department).
+    //   opdFollowup     — Follow-up rate — applies when patient has seen
+    //                     this SAME doctor previously (any time in the past).
+    //                     Per business rule: "agar Dr Sandeep ko pahle
+    //                     dikhaya hai to agli baar followup, lakin agar
+    //                     duser dr ko dikhana hai to first visit count hoga".
+    //   emergency       — ER consultation fee (any first/repeat ER visit).
+    //   mlc             — Medico-Legal Case consultation fee (police case,
+    //                     accident, assault) — usually higher because of
+    //                     paperwork + court appearance liability.
+    //   ipdCrossConsult — When this doctor is called in to consult on
+    //                     an IPD patient admitted under ANOTHER doctor
+    //                     (or another department) — billed per visit
+    //                     per day per consulting doctor.
+    //
+    // Legacy `opd` field preserved (migration source for opdFirst).
     consultationFee: {
-      opd: { type: Number, default: 0 },
-      emergency: { type: Number, default: 0 },
+      opd:             { type: Number, default: 0, min: 0 }, // legacy — use opdFirst
+      opdFirst:        { type: Number, default: 0, min: 0 },
+      opdFollowup:     { type: Number, default: 0, min: 0 },
+      emergency:       { type: Number, default: 0, min: 0 },
+      mlc:             { type: Number, default: 0, min: 0 },
+      ipdCrossConsult: { type: Number, default: 0, min: 0 },
     },
 
     /* ── Live availability (manually set by the doctor) ── */
