@@ -15,7 +15,7 @@
  * All styling via ReceptionConsole.css — no inline JS styles.
  */
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "react-toastify";
 import axios from "axios";
@@ -187,6 +187,7 @@ export default function ReceptionConsole() {
   /* ── UI state ── */
   const [serviceSearch, setServiceSearch] = useState("");
   const [pincodeLookup, setPincodeLookup] = useState({ loading: false, ok: false, error: "" });
+  const [pincodeRetryNonce, setPincodeRetryNonce] = useState(0);
   const pincodeTimerRef = useRef(null);
   const [serviceDropdownOpen, setServiceDropdownOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -298,46 +299,126 @@ export default function ReceptionConsole() {
     return doctors.filter(d => String(d.department) === String(dept));
   }, [doctors, opd.department, ipd.department, dayCare.department, visitType]);
 
-  /* ─── Pincode auto-lookup (India Post free API) ─── */
+  /* ─── Pincode auto-lookup (R7dm — robust with timeout + fallback + cache) ─── */
   // When user enters a 6-digit Indian pincode, fetch district + city + state
   // and auto-fill the address fields. Receptionist only needs to ask the
   // patient for their local street/landmark (verbal input).
+  //
+  // Reliability layers:
+  //   1. localStorage cache — successful lookups persist across reloads.
+  //      Pincode → {city, district, state} mappings rarely change, so a
+  //      one-time hit per pincode saves both the user and the upstream API.
+  //   2. AbortController with 5s timeout — primary API (api.postalpincode.in)
+  //      occasionally goes 503/down for hours at a time; we don't let the
+  //      spinner hang forever.
+  //   3. Fallback to api.zippopotam.us (returns city + state only — no
+  //      district — but better than nothing when the primary is down).
+  //   4. Manual retry button via the failed-state UI (user-driven, not
+  //      auto-retry, so we don't hammer a struggling API).
   useEffect(() => {
     const pin = patient.address.pincode;
     if (!pin || pin.length !== 6) {
       setPincodeLookup({ loading: false, ok: false, error: "" });
       return;
     }
+
+    // 1. Cache hit — instant fill, no network.
+    try {
+      const cached = JSON.parse(localStorage.getItem(`pincode:${pin}`) || "null");
+      if (cached?.city && cached?.state) {
+        setPatient(p => ({
+          ...p,
+          address: {
+            ...p.address,
+            city:     cached.city     || p.address.city,
+            district: cached.district || p.address.district,
+            state:    cached.state    || p.address.state,
+          },
+        }));
+        setPincodeLookup({ loading: false, ok: true, error: "" });
+        return;
+      }
+    } catch (_) { /* cache miss / parse fail — fall through to network */ }
+
     if (pincodeTimerRef.current) clearTimeout(pincodeTimerRef.current);
+    const ctrl = new AbortController();
     pincodeTimerRef.current = setTimeout(async () => {
       setPincodeLookup({ loading: true, ok: false, error: "" });
+      const timer = setTimeout(() => ctrl.abort(), 5000); // 5s hard cap
+
+      // tryApply — write result + cache. Returns true on success.
+      const tryApply = ({ city, district, state }) => {
+        if (!city && !state) return false;
+        setPatient(p => ({
+          ...p,
+          address: {
+            ...p.address,
+            city:     city     || p.address.city,
+            district: district || p.address.district,
+            state:    state    || p.address.state,
+          },
+        }));
+        try { localStorage.setItem(`pincode:${pin}`, JSON.stringify({ city, district, state })); }
+        catch (_) { /* quota full / private mode — non-fatal */ }
+        setPincodeLookup({ loading: false, ok: true, error: "" });
+        return true;
+      };
+
+      // 2. Primary — India Post Pincode API (best data: city/district/state).
       try {
-        // India Post Pincode API — free, no auth, returns city/district/state
-        const res = await fetch(`https://api.postalpincode.in/pincode/${pin}`);
-        const data = await res.json();
-        const entry = Array.isArray(data) ? data[0] : null;
-        if (entry?.Status === "Success" && entry.PostOffice?.length) {
-          const po = entry.PostOffice[0];
-          setPatient(p => ({
-            ...p,
-            address: {
-              ...p.address,
-              // Don't overwrite user's manual entries unless empty
-              city:     po.Block || po.Division || po.Name || p.address.city,
-              district: po.District || p.address.district,
-              state:    po.State    || p.address.state,
-            },
-          }));
-          setPincodeLookup({ loading: false, ok: true, error: "" });
-        } else {
-          setPincodeLookup({ loading: false, ok: false, error: "Pincode not found" });
+        const res  = await fetch(`https://api.postalpincode.in/pincode/${pin}`, { signal: ctrl.signal });
+        if (res.ok) {
+          const data = await res.json();
+          const entry = Array.isArray(data) ? data[0] : null;
+          if (entry?.Status === "Success" && entry.PostOffice?.length) {
+            const po = entry.PostOffice[0];
+            clearTimeout(timer);
+            if (tryApply({
+              city:     po.Block || po.Division || po.Name,
+              district: po.District,
+              state:    po.State,
+            })) return;
+          }
         }
-      } catch (e) {
-        setPincodeLookup({ loading: false, ok: false, error: "Lookup failed" });
-      }
+      } catch (_) { /* primary failed — try fallback */ }
+
+      // 3. Fallback — zippopotam.us (no district, but city + state).
+      try {
+        const res = await fetch(`https://api.zippopotam.us/in/${pin}`, { signal: ctrl.signal });
+        if (res.ok) {
+          const data = await res.json();
+          const place = Array.isArray(data?.places) ? data.places[0] : null;
+          if (place) {
+            clearTimeout(timer);
+            if (tryApply({
+              city:     place["place name"] || "",
+              district: "",                 // zippopotam doesn't include district
+              state:    place.state || "",
+            })) return;
+          }
+        }
+      } catch (_) { /* both APIs failed */ }
+
+      clearTimeout(timer);
+      setPincodeLookup({
+        loading: false, ok: false,
+        error: ctrl.signal.aborted ? "Lookup timed out — try again or fill manually" : "Lookup failed — fill manually",
+      });
     }, 400);
-    return () => pincodeTimerRef.current && clearTimeout(pincodeTimerRef.current);
+    return () => {
+      if (pincodeTimerRef.current) clearTimeout(pincodeTimerRef.current);
+      ctrl.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient.address.pincode, pincodeRetryNonce]);
+
+  // Manual retry — clears cache for this pincode + bumps the nonce so the
+  // useEffect re-fires even though the pincode string is unchanged.
+  const retryPincodeLookup = useCallback(() => {
+    const pin = patient.address.pincode;
+    if (!pin || pin.length !== 6) return;
+    try { localStorage.removeItem(`pincode:${pin}`); } catch (_) {}
+    setPincodeRetryNonce(n => n + 1);
   }, [patient.address.pincode]);
 
   /* ─── Debounced patient search ─── */
@@ -1179,7 +1260,23 @@ export default function ReceptionConsole() {
                     Pincode
                     {pincodeLookup.loading && <span className="rc-pin-status rc-pin-status--loading">⏳ looking up…</span>}
                     {pincodeLookup.ok      && <span className="rc-pin-status rc-pin-status--ok">✓ found</span>}
-                    {pincodeLookup.error   && <span className="rc-pin-status rc-pin-status--err">⚠ {pincodeLookup.error}</span>}
+                    {pincodeLookup.error   && (
+                      <>
+                        <span className="rc-pin-status rc-pin-status--err">⚠ {pincodeLookup.error}</span>
+                        <button
+                          type="button"
+                          onClick={retryPincodeLookup}
+                          style={{
+                            marginLeft: 8, padding: "2px 8px", fontSize: 10, fontWeight: 700,
+                            background: "#fff", color: "#1e40af",
+                            border: "1.5px solid #c7d2fe", borderRadius: 6, cursor: "pointer",
+                            textTransform: "uppercase", letterSpacing: ".4px",
+                          }}
+                        >
+                          ↻ Retry
+                        </button>
+                      </>
+                    )}
                   </label>
                   <input
                     className={`his-field ${pincodeLookup.ok ? "his-field--ok" : pincodeLookup.error ? "his-field--err" : ""}`}
