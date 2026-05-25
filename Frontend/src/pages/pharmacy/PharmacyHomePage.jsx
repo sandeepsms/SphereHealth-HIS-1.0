@@ -2870,6 +2870,13 @@ function OPDRxTab() {
   const [visits, setVisits]         = useState([]);    // today's OPD visits for the UHID
   const [patient, setPatient]       = useState(null);  // first visit's patientId populated doc
   const [searchedUhid, setSearchedUhid] = useState("");
+  // R7cw — track API failure separately from "successfully returned
+  // empty list". Pre-R7cw a 404 on the new R7cr endpoint left the
+  // empty-state ("No OPD visit today") rendering — misleading because
+  // the patient might actually have a visit but the route 404'd
+  // because backend hadn't been restarted. Now we render distinct
+  // states for {idle, loading, ok-empty, ok-data, api-failed}.
+  const [loadError, setLoadError]   = useState(null);   // string or null
   // Quick-dispense modal state. We never push into the regular
   // DispenseTab cart — each prescription row dispenses as its own
   // sale so the pharmacist isn't blocked finishing visit-A before
@@ -2894,7 +2901,7 @@ function OPDRxTab() {
   const load = async (uhidArg) => {
     const u = (uhidArg ?? uhidInput).trim().toUpperCase();
     if (!u) { toast.warn("Enter a UHID"); return; }
-    setLoading(true); setSearchedUhid(u);
+    setLoading(true); setSearchedUhid(u); setLoadError(null);
     try {
       const r = await opdService.getTodayRxByUHID(u);
       const list = Array.isArray(r?.data?.data) ? r.data.data : [];
@@ -2904,8 +2911,18 @@ function OPDRxTab() {
         toast.info(`No OPD visit today for ${u}`);
       }
     } catch (e) {
-      const msg = e?.response?.data?.message || e.message || "Lookup failed";
-      toast.error(msg);
+      // R7cw: distinguish missing-route (backend restart needed) from
+      // a real lookup error so the operator sees an actionable message
+      // and the empty-state below doesn't lie about there being no
+      // visit when really the API never executed.
+      const status = e?.response?.status;
+      const serverMsg = e?.response?.data?.message;
+      const isMissingRoute = status === 404 || serverMsg === "Route not found";
+      const friendly = isMissingRoute
+        ? "OPD Rx endpoint unavailable — backend may need restart to pick up R7cr routes."
+        : (serverMsg || e.message || "Lookup failed");
+      toast.error(friendly);
+      setLoadError(friendly);
       setVisits([]); setPatient(null);
     } finally {
       setLoading(false);
@@ -2913,7 +2930,7 @@ function OPDRxTab() {
   };
 
   const clearAll = () => {
-    setUhidInput(""); setSearchedUhid(""); setVisits([]); setPatient(null);
+    setUhidInput(""); setSearchedUhid(""); setVisits([]); setPatient(null); setLoadError(null);
   };
 
   // R7cr — open the quick-dispense modal pre-filled from a prescription
@@ -3080,8 +3097,21 @@ function OPDRxTab() {
         </div>
       )}
 
-      {/* No-data state */}
-      {searchedUhid && !loading && visits.length === 0 && (
+      {/* R7cw — API failure state (e.g. 404 because backend didn't pick
+          up the R7cr OPD-Rx route). Surface the actionable error rather
+          than the misleading "no visit today" empty state. */}
+      {searchedUhid && !loading && loadError && (
+        <div style={{ padding: 24, background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 10, color: "#b91c1c", fontSize: 13 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <i className="pi pi-exclamation-triangle" style={{ fontSize: 18 }} />
+            <strong>Could not load OPD prescriptions for {searchedUhid}</strong>
+          </div>
+          <div style={{ fontSize: 11.5, color: "#991b1b" }}>{loadError}</div>
+        </div>
+      )}
+
+      {/* No-data state — only when the API succeeded with an empty result. */}
+      {searchedUhid && !loading && !loadError && visits.length === 0 && (
         <div style={{ padding: 36, textAlign: "center", background: "#f8fafc", border: `1px dashed ${C.border}`, borderRadius: 10, color: C.muted, fontSize: 13 }}>
           <i className="pi pi-info-circle" style={{ fontSize: 22, marginBottom: 8, display: "block" }} />
           No OPD visit found today for <strong style={{ color: C.text }}>{searchedUhid}</strong>.<br/>
