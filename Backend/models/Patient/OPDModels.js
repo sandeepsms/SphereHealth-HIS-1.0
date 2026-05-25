@@ -64,6 +64,28 @@ const OPDSchema = new mongoose.Schema(
       type: String,
     },
 
+    // R7dq — Consultation fee charged for this specific visit.
+    // Set by the receptionist (auto-filled from doctor's opdFirst /
+    // opdFollowup rate via the R7dp wiring, with manual override).
+    // autoBillingService.onOPDRegistered uses this as unitPriceOverride
+    // when materialising the OPD-CON line item on the patient bill, so
+    // the bill amount always matches what the receptionist showed the
+    // patient. Pre-R7dq this field was on the wire but Mongoose silently
+    // dropped it (not in schema) → bill amount was ServiceMaster default
+    // (₹500) regardless of what the receptionist actually charged.
+    consultationFee: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Optional UI hint stored alongside so the bill line + audit trail
+    // can show "First visit" vs "Follow-up" vs "MLC" rate context.
+    feeType: {
+      type: String,
+      enum: ["opdFirst", "opdFollowup", "emergency", "mlc", "ipdCrossConsult", ""],
+      default: "",
+    },
+
     // ── Chief Complaint & History ──
     chiefComplaint: {
       type: String,

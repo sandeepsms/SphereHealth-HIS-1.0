@@ -1485,9 +1485,24 @@ async function confirmAndBillTrigger(triggerId, { confirmedBy, confirmedByRole =
 /**
  * Called when an OPD visit is created (by Receptionist/Admin).
  * Creates a BillingTrigger for OPD Consultation fee.
+ *
+ * R7dq — Consult-fee bug fix: previously the trigger only carried
+ * serviceCode "OPD-CON" and addItemToBill would price it from
+ * ServiceMaster.defaultPrice (a hardcoded ₹500). That ignored the
+ * doctor's actual fee that the receptionist saw + the auto-fill from
+ * the doctor's opdFirst/opdFollowup rates (R7dp). Now we pass the
+ * exact consultationFee the OPD visit recorded as unitPriceOverride,
+ * so the bill amount matches what the receptionist showed the patient.
  */
 async function onOPDRegistered(opdVisit, admission) {
   if (!admission?._id) return;
+  // R7dq — Use the OPD visit's consultationFee field as the authoritative
+  // amount. It was set by the receptionist (either auto-filled from the
+  // doctor's opdFirst/opdFollowup rate via R7dp, or manually entered).
+  // Falls back to undefined if missing so addItemToBill drops to its
+  // ServiceMaster lookup like before.
+  const visitFee = Number(opdVisit.consultationFee);
+  const overrideAmount = Number.isFinite(visitFee) && visitFee >= 0 ? visitFee : undefined;
   return createTrigger({
     admissionId:         admission._id,
     opdVisitId:          opdVisit._id,
@@ -1497,6 +1512,7 @@ async function onOPDRegistered(opdVisit, admission) {
     serviceCode:         "OPD-CON",           // OPD Consultation service code
     serviceName:         "OPD Consultation",
     quantity:            1,
+    unitPriceOverride:   overrideAmount,      // R7dq — doctor-specific fee
     sourceType:          "DoctorVisit",
     sourceDocumentId:    opdVisit._id,
     sourceDocumentModel: "OPD",
