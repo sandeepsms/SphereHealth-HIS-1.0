@@ -454,30 +454,48 @@ export default function ServiceMasterManager() {
               Service catalog · tier pricing (CASH/TPA/CORPORATE) · package inclusions · diagnosis tagging
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Button
-              label="Seed Default Data"
-              icon="pi pi-database"
-              tooltip="Run once — loads 80+ default services"
+          {/* R7dl — Inline <button> instead of PrimeReact <Button>.
+             PrimeReact's Button was stripping our inline padding/radius
+             and rendering as flat text on the hero. Inline <button>
+             gives full control — matches the Chargeable Services
+             pattern exactly (Seed muted glass, Add solid white). */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
               onClick={handleSeed}
-              loading={billing.loading}
+              disabled={billing.loading}
+              title="Run once to load 80+ default services"
               style={{
-                background: "rgba(255,255,255,.18)",
-                border: "1px solid rgba(255,255,255,.32)",
+                padding: "8px 14px",
+                background: "rgba(255,255,255,.16)",
                 color: "#fff",
+                border: "1px solid rgba(255,255,255,.32)",
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: billing.loading ? "not-allowed" : "pointer",
+                opacity: billing.loading ? 0.6 : 1,
               }}
-            />
-            <Button
-              label="Add Service"
-              icon="pi pi-plus"
+            >
+              <i className="pi pi-database" style={{ marginRight: 6 }} />
+              Seed Default Data
+            </button>
+            <button
               onClick={openAdd}
               style={{
+                padding: "8px 14px",
                 background: "#fff",
                 color: C.orange,
-                border: "1px solid #fff",
-                fontWeight: 700,
+                border: "none",
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: "pointer",
+                boxShadow: "0 1px 3px rgba(0,0,0,.18)",
               }}
-            />
+            >
+              <i className="pi pi-plus" style={{ marginRight: 6 }} />
+              Add Service
+            </button>
           </div>
         </div>
 
