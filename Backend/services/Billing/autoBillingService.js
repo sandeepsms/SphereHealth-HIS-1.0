@@ -1589,12 +1589,18 @@ async function onOPDVitalsRecorded(_opdVisit, _admission, _nurseName) {
 async function onOPDAssessmentSaved(opdVisit, admission, doctorName, assessmentId) {
   if (!admission?._id) return;
 
-  // Look for an existing OPD-CON trigger on this visit. status: any
+  // Look for an existing OPD-CON trigger on this admission. status: any
   // non-cancelled/voided state implies the registration fee already
   // landed (or is about to) on the bill.
+  //
+  // Note (R7dr-FIX): we filter by admissionId, not opdVisitId. The
+  // createTrigger helper doesn't destructure opdVisitId from its config,
+  // so even though onOPDRegistered passes it, the field never lands on
+  // the saved trigger doc. admissionId IS persisted and is sufficient
+  // here — an OPD admission carries exactly one opd visit at a time.
   try {
     const existing = await BillingTrigger.findOne({
-      opdVisitId: opdVisit._id,
+      admissionId: admission._id,
       serviceCode: "OPD-CON",
       status: { $nin: ["cancelled", "voided", "rejected"] },
     }).lean();
