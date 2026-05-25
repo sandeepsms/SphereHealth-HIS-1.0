@@ -27,7 +27,7 @@ const PincodeMasterSchema = new mongoose.Schema(
     //   nominatim      — OSM, has state + county (treat as district)
     //   zippopotam     — has city + state (no district)
     //   manual         — admin seeded
-    source:   { type: String, enum: ["postalpincode", "nominatim", "zippopotam", "manual"], default: "manual" },
+    source:   { type: String, enum: ["local-india-post", "postalpincode", "nominatim", "zippopotam", "manual"], default: "manual" },
     // Optional secondary data we collected but don't surface in the form
     division: { type: String, default: "" },
     block:    { type: String, default: "" },

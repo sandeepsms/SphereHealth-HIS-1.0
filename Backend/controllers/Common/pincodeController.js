@@ -20,10 +20,42 @@
 // Rate-limited to 60/min/IP at the route layer.
 // ────────────────────────────────────────────────────────────────
 const PincodeMaster = require("../../models/Common/PincodeMasterModel");
+// R7do — Bundled India Post pincode database (~19,300 entries, offline).
+// Primary lookup source — instant, no network. If a pincode is missing
+// from the bundled set (very rare), we fall through to the API chain.
+const localIndianPincodes = require("india-pincode-search");
 
 const VALID_PIN = /^\d{6}$/;
 const TIMEOUT_MS = 4000;       // per-source hard cap
 const UA         = "SphereHealth-HIS/1.0 (+pincode-lookup)";
+
+// Title-case a SHOUTING-CASE string from India Post data.
+// "UTTAR PRADESH" → "Uttar Pradesh", "NEW DELHI" → "New Delhi".
+function titleCase(s) {
+  if (!s) return "";
+  return String(s).toLowerCase().replace(/\b\w/g, c => c.toUpperCase()).trim();
+}
+
+// ── Source #0: Bundled local DB (india-pincode-search)
+function lookupLocal(pin) {
+  try {
+    const matches = localIndianPincodes.search(pin);
+    if (!Array.isArray(matches) || matches.length === 0) return null;
+    // The local DB stores one row per post office. Pick the first
+    // (typically the head office / GPO) for city naming, then take
+    // district + state — those are identical across post offices in
+    // the same pincode.
+    const m = matches[0];
+    if (!m.pincode) return null;
+    return {
+      city:     titleCase(m.city || m.village || ""),
+      district: titleCase(m.district || ""),
+      state:    titleCase(m.state || ""),
+      country:  "India",
+      source:   "local-india-post",
+    };
+  } catch (_) { return null; }
+}
 
 // AbortSignal.timeout polyfill — Node 18+ has it natively, but be safe.
 function timeoutSignal(ms) {
@@ -126,26 +158,33 @@ exports.getPincodeLookup = async function (req, res) {
     return res.status(400).json({ success: false, message: "Invalid pincode — must be 6 digits." });
   }
 
-  // 1. Cache hit (full row — has district)
+  // 1. Local bundled DB (india-pincode-search) — instant offline lookup.
+  //    Covers ~19,300 Indian pincodes with city + district + state.
+  //    This is now our primary source — APIs are just safety net for any
+  //    edge case the local DB misses (newly-issued pincodes, etc).
+  const local = lookupLocal(pin);
+  if (local && local.city && local.state) {
+    // Persist to MongoDB cache (idempotent — same data every time anyway).
+    try {
+      await PincodeMaster.updateOne(
+        { pincode: pin },
+        { $set: { pincode: pin, ...local } },
+        { upsert: true },
+      );
+    } catch (_) { /* non-fatal */ }
+    return res.json({ success: true, data: { pincode: pin, ...local }, cached: false, source: "local" });
+  }
+
+  // 2. MongoDB cache hit (only reached if local missed — typically never)
   try {
     const cached = await PincodeMaster.findOne({ pincode: pin }).lean();
-    if (cached && cached.district && cached.state) {
+    if (cached && cached.state) {
       return res.json({ success: true, data: cached, cached: true });
-    }
-    // Partial cache (e.g. zippopotam-only) — fall through to try richer
-    // sources, then merge + upgrade the row.
-    if (cached) {
-      const richer = await fetchPostalPincode(pin) || await fetchNominatim(pin);
-      if (richer) {
-        const merged = mergePartial(cached, richer);
-        await PincodeMaster.updateOne({ pincode: pin }, { $set: merged }, { upsert: true });
-        return res.json({ success: true, data: { pincode: pin, ...merged }, cached: false, upgraded: true });
-      }
-      return res.json({ success: true, data: cached, cached: true, partial: true });
     }
   } catch (_) { /* cache lookup failed — fall through to fetch */ }
 
-  // 2/3/4. Fetch chain — stop on first source that has district.
+  // 3/4/5. API fetch chain — last-resort for pincodes missing from
+  //        the bundled DB. Stop on first source that has district.
   let result = await fetchPostalPincode(pin);
   if (!result || !result.district) {
     const nom = await fetchNominatim(pin);

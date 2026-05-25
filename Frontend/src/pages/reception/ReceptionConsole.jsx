@@ -320,16 +320,20 @@ export default function ReceptionConsole() {
     }
 
     // 1. localStorage cache — instant fill, no network at all.
+    //    R7do — Direct assignment (no `||` fallback) so a new pincode
+    //    ALWAYS overwrites the prior auto-filled fields. Otherwise
+    //    stale data persists when switching from e.g. 110001 (Delhi)
+    //    to 282001 (Agra).
     try {
       const cached = JSON.parse(localStorage.getItem(`pincode:${pin}`) || "null");
-      if (cached?.city && cached?.state && cached?.district) {
+      if (cached?.city && cached?.state) {
         setPatient(p => ({
           ...p,
           address: {
             ...p.address,
-            city:     cached.city     || p.address.city,
-            district: cached.district || p.address.district,
-            state:    cached.state    || p.address.state,
+            city:     cached.city     || "",
+            district: cached.district || "",
+            state:    cached.state    || "",
           },
         }));
         setPincodeLookup({ loading: false, ok: true, error: "" });
@@ -358,13 +362,16 @@ export default function ReceptionConsole() {
         const json = await res.json();
         const data = json?.data;
         if (data && (data.city || data.state)) {
+          // R7do — Always overwrite all 3 fields (no `||` fallback).
+          // A new pincode means a new location; stale district/city/state
+          // from a previous pincode must NOT persist.
           setPatient(p => ({
             ...p,
             address: {
               ...p.address,
-              city:     data.city     || p.address.city,
-              district: data.district || p.address.district,
-              state:    data.state    || p.address.state,
+              city:     data.city     || "",
+              district: data.district || "",
+              state:    data.state    || "",
             },
           }));
           try {
