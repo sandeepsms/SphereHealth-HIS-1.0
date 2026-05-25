@@ -321,15 +321,6 @@ function TPAServiceManagement() {
     }},
   };
 
-  // Per-column widths so header labels line up with body inputs in the
-  // inner Tests table (PrimeReact's default auto-layout was making TYPE
-  // too wide and shifting AMOUNT/DISCOUNT off their headers).
-  const colNameStyle    = { ...headerCellStyle, width: "auto",  minWidth: 200, padding: "10px 12px" };
-  const colTypeStyle    = { ...headerCellStyle, width: 140,     padding: "10px 12px" };
-  const colAmountStyle  = { ...headerCellStyle, width: 160,     padding: "10px 12px" };
-  const colDiscStyle    = { ...headerCellStyle, width: 130,     padding: "10px 12px" };
-  const colTotalStyle   = { ...headerCellStyle, width: 170,     padding: "10px 12px" };
-  const cellBodyStyle   = { padding: "8px 12px", verticalAlign: "middle" };
   const headerCellStyle = {
     background: C.subtle,
     color: C.muted,
@@ -339,6 +330,16 @@ function TPAServiceManagement() {
     letterSpacing: ".4px",
     borderBottom: `1px solid ${C.border}`,
   };
+
+  // Per-column widths so header labels line up with body inputs in the
+  // inner Tests table (PrimeReact's default auto-layout was making TYPE
+  // too wide and shifting AMOUNT/DISCOUNT off their headers).
+  const colNameStyle    = { ...headerCellStyle, width: "auto",  minWidth: 200, padding: "10px 12px" };
+  const colTypeStyle    = { ...headerCellStyle, width: 140,     padding: "10px 12px" };
+  const colAmountStyle  = { ...headerCellStyle, width: 160,     padding: "10px 12px" };
+  const colDiscStyle    = { ...headerCellStyle, width: 130,     padding: "10px 12px" };
+  const colTotalStyle   = { ...headerCellStyle, width: 170,     padding: "10px 12px" };
+  const cellBodyStyle   = { padding: "8px 12px", verticalAlign: "middle" };
 
   /* Dropdown pt for the inner table */
   const hisDropdownPt = {
