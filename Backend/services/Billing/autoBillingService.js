@@ -1528,32 +1528,31 @@ async function onOPDRegistered(opdVisit, admission) {
 
 /**
  * Called when a nurse records vitals for an OPD visit.
- * Creates a BillingTrigger for Vitals/Nursing fee.
+ *
+ * R7ds — No-op for OPD vitals.
+ *
+ * History: this used to create a BillingTrigger with serviceCode
+ * "NRS-009" intending to charge a "Vitals Recording" nursing fee.
+ * But NRS-009 in ServiceMaster is actually "Blood Glucose Monitoring
+ * (RBS) ₹50" — a wrong code mapping that resulted in every OPD patient
+ * who had vitals taken (i.e. every OPD patient) being billed for an
+ * RBS test they never had.
+ *
+ * Beyond the mapping bug, OPD vitals shouldn't be billed separately
+ * at all — they're part of the consultation. The doctor's consult fee
+ * (driven by opdFirst/opdFollowup via R7dp) already covers the
+ * vitals + assessment + Rx for one walk-in visit. IPD nursing-per-day
+ * charges are a different category and still fire from
+ * onDoctorNoteSaved / NurseNote:vitals → DOC-MORN-ROUND etc.
+ *
+ * Receptionist / nurse can still add nursing line items manually via
+ * Services & Orders when a separate procedure is performed.
+ *
+ * Kept as an exported no-op so any caller (OPDService, controllers)
+ * that already imports it doesn't crash.
  */
-async function onOPDVitalsRecorded(opdVisit, admission, nurseName) {
-  if (!admission?._id) return;
-  return createTrigger({
-    admissionId:         admission._id,
-    opdVisitId:          opdVisit._id,
-    patientId:           admission.patientId,
-    UHID:                admission.UHID,
-    patientType:         "OPD",
-    serviceCode:         "NRS-009",           // Nursing/Vitals service code
-    serviceName:         "Vitals Recording (OPD)",
-    quantity:            1,
-    sourceType:          "NurseNote",
-    sourceDocumentId:    opdVisit._id,
-    sourceDocumentModel: "OPD",
-    orderedBy:           nurseName || "Nurse",
-    orderedByRole:       "Nurse",
-    completedBy:         nurseName || "Nurse",
-    completedByRole:     "Nurse",
-    orderDetails:        `Vitals recorded for OPD visit ${opdVisit.visitNumber}`,
-    autoCharge:          true,
-    dailyDedup:          true,
-    department:          opdVisit.department || admission.department,
-    notes:               `Nurse: ${nurseName || "Nurse"} | Visit: ${opdVisit.visitNumber}`,
-  });
+async function onOPDVitalsRecorded(_opdVisit, _admission, _nurseName) {
+  return null;
 }
 
 /**
