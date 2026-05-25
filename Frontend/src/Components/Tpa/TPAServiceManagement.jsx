@@ -65,28 +65,6 @@ const Kpi = ({ icon, label, value, tone = "blue" }) => {
   );
 };
 
-/* Section pill used above the form ("Add New TPA Service" / "Edit TPA Service"). */
-const SectionTag = ({ children, tone = "blue" }) => {
-  const tones = {
-    blue:  { bg: C.blueL,  fg: C.blue  },
-    amber: { bg: C.amberL, fg: C.amber },
-  }[tone] || { bg: C.blueL, fg: C.blue };
-  return (
-    <span style={{
-      background: tones.bg,
-      color: tones.fg,
-      padding: "6px 12px",
-      borderRadius: 8,
-      fontSize: 11,
-      fontWeight: 800,
-      textTransform: "uppercase",
-      letterSpacing: ".5px",
-      marginBottom: 12,
-      display: "inline-block",
-    }}>{children}</span>
-  );
-};
-
 function TPAServiceManagement() {
   const [tpaServiceList, setTPAServiceList] = useState([]);
   const [tpaList, setTPAList] = useState([]);
@@ -352,6 +330,18 @@ function TPAServiceManagement() {
     borderBottom: `1px solid ${C.border}`,
   };
 
+  /* Dropdown pt for the inner table */
+  const hisDropdownPt = {
+    root: { style: {
+      width: "100%",
+      border: `1.5px solid ${C.border}`,
+      borderRadius: 9,
+      padding: "2px 4px",
+      background: "#fff",
+    }},
+    input: { style: { fontSize: 13.5, color: C.text }},
+  };
+
   return (
     <div style={{
       minHeight: "100vh",
@@ -430,12 +420,48 @@ function TPAServiceManagement() {
           background: C.card,
           border: `1px solid ${C.border}`,
           borderRadius: 12,
-          padding: 16,
+          padding: 18,
           marginBottom: 16,
         }}>
-          <SectionTag tone={editingService ? "amber" : "blue"}>
-            {editingService ? "Edit TPA Service" : "Add New TPA Service"}
-          </SectionTag>
+          {/* Card header — icon + title + accent stripe + edit pill */}
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 16,
+            paddingBottom: 14,
+            borderBottom: `1px solid ${C.border}`,
+          }}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}>
+              <div style={{
+                width: 4, height: 22, borderRadius: 2,
+                background: editingService ? C.amber : C.blue,
+              }} />
+              <i
+                className={editingService ? "pi pi-pencil" : "pi pi-id-card"}
+                style={{ color: editingService ? C.amber : C.blue, fontSize: 16 }}
+              />
+              <span style={{ fontSize: 14, fontWeight: 800, color: C.text, letterSpacing: "-.1px" }}>
+                {editingService ? "Edit TPA Service" : "Add New TPA Service"}
+              </span>
+              {editingService && (
+                <span style={{
+                  background: C.amberL,
+                  color: C.amber,
+                  padding: "3px 9px",
+                  borderRadius: 6,
+                  fontSize: 10,
+                  fontWeight: 800,
+                  textTransform: "uppercase",
+                  letterSpacing: ".4px",
+                }}>Editing</span>
+              )}
+            </div>
+          </div>
 
           <Formik
             initialValues={{
@@ -463,58 +489,82 @@ function TPAServiceManagement() {
             {({ values, errors, touched, setFieldValue, resetForm }) => (
               <Form>
                 {/* TPA Selection */}
-                <div className="p-fluid">
-                  <div className="field">
-                    <label
-                      htmlFor="tpaId"
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 700,
-                        color: C.slate,
-                        marginBottom: 6,
-                        display: "block",
-                      }}
-                    >
-                      Select TPA *
-                    </label>
-                    <Dropdown
-                      id="tpaId"
-                      value={values.tpaId}
-                      options={tpaList.map((tpa) => ({
-                        label: `${tpa.tpaName} (${tpa.tpaCode})`,
-                        value: tpa._id,
-                      }))}
-                      onChange={(e) => setFieldValue("tpaId", e.value)}
-                      placeholder="Select TPA"
-                      filter
-                      className={errors.tpaId && touched.tpaId ? "p-invalid" : ""}
-                      disabled={editingService !== null}
-                    />
-                    {errors.tpaId && touched.tpaId && (
-                      <small className="p-error">{errors.tpaId}</small>
-                    )}
-                  </div>
+                <div style={{ maxWidth: 520 }}>
+                  <label
+                    htmlFor="tpaId"
+                    style={{
+                      display: "block",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: C.muted,
+                      textTransform: "uppercase",
+                      letterSpacing: ".4px",
+                      marginBottom: 6,
+                    }}
+                  >
+                    Select TPA *
+                  </label>
+                  <Dropdown
+                    id="tpaId"
+                    value={values.tpaId}
+                    options={tpaList.map((tpa) => ({
+                      label: `${tpa.tpaName} (${tpa.tpaCode})`,
+                      value: tpa._id,
+                    }))}
+                    onChange={(e) => setFieldValue("tpaId", e.value)}
+                    placeholder="Select TPA"
+                    filter
+                    className={errors.tpaId && touched.tpaId ? "p-invalid" : ""}
+                    disabled={editingService !== null}
+                    style={{ width: "100%" }}
+                    pt={{
+                      root: { style: {
+                        border: `1.5px solid ${C.border}`,
+                        borderRadius: 9,
+                        padding: "2px 4px",
+                        background: editingService ? "#f1f5f9" : "#fff",
+                      }},
+                      input: { style: { fontSize: 13.5, color: C.text }},
+                    }}
+                  />
+                  {errors.tpaId && touched.tpaId && (
+                    <small style={{ color: C.red, fontSize: 11, marginTop: 4, display: "block" }}>
+                      {errors.tpaId}
+                    </small>
+                  )}
                 </div>
 
                 {/* Services Array */}
                 <FieldArray name="services">
                   {({ push, remove }) => (
-                    <div style={{ marginTop: 20 }}>
+                    <div style={{ marginTop: 22 }}>
                       <div style={{
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "space-between",
                         marginBottom: 12,
                       }}>
-                        <h3 style={{
-                          margin: 0,
-                          fontSize: 14,
-                          fontWeight: 800,
-                          color: C.text,
-                          letterSpacing: "-.1px",
+                        <div style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
                         }}>
-                          Tests
-                        </h3>
+                          <i className="pi pi-list-check" style={{ color: C.green, fontSize: 15 }} />
+                          <span style={{
+                            fontSize: 13,
+                            fontWeight: 800,
+                            color: C.text,
+                            letterSpacing: "-.1px",
+                          }}>Tests</span>
+                          <span style={{
+                            background: C.greenL,
+                            color: C.green,
+                            padding: "2px 8px",
+                            borderRadius: 10,
+                            fontSize: 11,
+                            fontWeight: 700,
+                          }}>{values.services.length}</span>
+                        </div>
                         <button
                           type="button"
                           onClick={() =>
@@ -527,29 +577,30 @@ function TPAServiceManagement() {
                             })
                           }
                           style={{
-                            background: C.green,
+                            padding: "8px 16px",
+                            background: `linear-gradient(135deg,${C.green},#15803d)`,
                             color: "#fff",
                             border: "none",
                             borderRadius: 8,
-                            padding: "8px 14px",
-                            fontWeight: 700,
                             fontSize: 12,
+                            fontWeight: 700,
+                            cursor: "pointer",
                             display: "inline-flex",
                             alignItems: "center",
                             gap: 6,
-                            cursor: "pointer",
-                            boxShadow: "0 1px 3px rgba(22,163,74,.25)",
+                            boxShadow: "0 4px 12px rgba(22,163,74,.25)",
                           }}
                         >
-                          <i className="pi pi-plus" style={{ fontSize: 12 }} />
+                          <i className="pi pi-plus" style={{ fontSize: 11 }} />
                           Add Test
                         </button>
                       </div>
 
                       <div style={{
-                        border: `1px solid ${C.border}`,
+                        border: `1px dashed ${C.border}`,
                         borderRadius: 10,
                         overflow: "hidden",
+                        background: C.subtle,
                       }}>
                         <DataTable
                           value={values.services}
@@ -574,13 +625,24 @@ function TPAServiceManagement() {
                                   className={
                                     errors.services?.[options.rowIndex]?.Name &&
                                     touched.services?.[options.rowIndex]?.Name
-                                      ? "p-invalid w-full"
-                                      : "w-full"
+                                      ? "p-invalid"
+                                      : ""
                                   }
+                                  style={{
+                                    padding: "9px 12px",
+                                    border: `1.5px solid ${C.border}`,
+                                    borderRadius: 9,
+                                    fontFamily: "'DM Sans', sans-serif",
+                                    fontSize: 13.5,
+                                    color: C.text,
+                                    width: "100%",
+                                    outline: "none",
+                                    background: "#fff",
+                                  }}
                                 />
                                 {errors.services?.[options.rowIndex]?.Name &&
                                   touched.services?.[options.rowIndex]?.Name && (
-                                    <small className="p-error">
+                                    <small style={{ color: C.red, fontSize: 11, marginTop: 4, display: "block" }}>
                                       {errors.services[options.rowIndex].Name}
                                     </small>
                                   )}
@@ -611,15 +673,17 @@ function TPAServiceManagement() {
                                       ?.serviceType &&
                                     touched.services?.[options.rowIndex]
                                       ?.serviceType
-                                      ? "p-invalid w-full"
-                                      : "w-full"
+                                      ? "p-invalid"
+                                      : ""
                                   }
+                                  style={{ width: "100%" }}
+                                  pt={hisDropdownPt}
                                 />
                                 {errors.services?.[options.rowIndex]
                                   ?.serviceType &&
                                   touched.services?.[options.rowIndex]
                                     ?.serviceType && (
-                                    <small className="p-error">
+                                    <small style={{ color: C.red, fontSize: 11, marginTop: 4, display: "block" }}>
                                       {
                                         errors.services[options.rowIndex]
                                           .serviceType
@@ -632,7 +696,7 @@ function TPAServiceManagement() {
 
                           {/* Amount */}
                           <Column
-                            header="Amount (₹)"
+                            header="Amount"
                             headerStyle={headerCellStyle}
                             body={(rowData, options) => (
                               <InputNumber
@@ -657,16 +721,28 @@ function TPAServiceManagement() {
                                 className={
                                   errors.services?.[options.rowIndex]?.Amount &&
                                   touched.services?.[options.rowIndex]?.Amount
-                                    ? "p-invalid w-full"
-                                    : "w-full"
+                                    ? "p-invalid"
+                                    : ""
                                 }
+                                inputStyle={{
+                                  padding: "9px 12px",
+                                  border: `1.5px solid ${C.border}`,
+                                  borderRadius: 9,
+                                  fontFamily: "'DM Sans', sans-serif",
+                                  fontSize: 13.5,
+                                  color: C.text,
+                                  width: "100%",
+                                  outline: "none",
+                                  background: "#fff",
+                                }}
+                                style={{ width: "100%" }}
                               />
                             )}
                           />
 
                           {/* Discount */}
                           <Column
-                            header="Discount (%)"
+                            header="Discount"
                             headerStyle={headerCellStyle}
                             body={(rowData, options) => (
                               <InputNumber
@@ -688,7 +764,18 @@ function TPAServiceManagement() {
                                 suffix="%"
                                 min={0}
                                 max={100}
-                                className="w-full"
+                                inputStyle={{
+                                  padding: "9px 12px",
+                                  border: `1.5px solid ${C.border}`,
+                                  borderRadius: 9,
+                                  fontFamily: "'DM Sans', sans-serif",
+                                  fontSize: 13.5,
+                                  color: C.text,
+                                  width: "100%",
+                                  outline: "none",
+                                  background: "#fff",
+                                }}
+                                style={{ width: "100%" }}
                               />
                             )}
                           />
@@ -706,25 +793,49 @@ function TPAServiceManagement() {
                                 currency="INR"
                                 locale="en-IN"
                                 readOnly
-                                className="w-full bg-gray-100"
+                                inputStyle={{
+                                  padding: "9px 12px",
+                                  border: `1.5px solid ${C.border}`,
+                                  borderRadius: 9,
+                                  fontFamily: "'DM Sans', sans-serif",
+                                  fontSize: 13.5,
+                                  color: C.text,
+                                  width: "100%",
+                                  outline: "none",
+                                  background: C.subtle,
+                                  fontWeight: 700,
+                                }}
+                                style={{ width: "100%" }}
                               />
                             )}
                           />
 
                           {/* Remove */}
                           <Column
-                            header="Actions"
-                            headerStyle={headerCellStyle}
+                            header=""
+                            headerStyle={{ ...headerCellStyle, width: 60 }}
+                            bodyStyle={{ width: 60, textAlign: "center" }}
                             body={(rowData, options) => (
-                              <Button
-                                icon="pi pi-trash"
-                                severity="danger"
-                                rounded
-                                outlined
+                              <button
                                 type="button"
                                 onClick={() => remove(options.rowIndex)}
                                 disabled={values.services.length === 1}
-                              />
+                                title="Remove test"
+                                style={{
+                                  padding: "7px 10px",
+                                  background: "#fff",
+                                  color: values.services.length === 1 ? "#cbd5e1" : C.red,
+                                  border: `1.5px solid ${values.services.length === 1 ? C.border : C.redL}`,
+                                  borderRadius: 8,
+                                  fontSize: 12,
+                                  cursor: values.services.length === 1 ? "not-allowed" : "pointer",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                }}
+                              >
+                                <i className="pi pi-trash" />
+                              </button>
                             )}
                           />
                         </DataTable>
@@ -733,32 +844,72 @@ function TPAServiceManagement() {
                   )}
                 </FieldArray>
 
-                {/* Form Actions */}
+                {/* Form Actions — footer band */}
                 <div style={{
-                  marginTop: 20,
+                  marginTop: 22,
+                  paddingTop: 16,
+                  borderTop: `1px solid ${C.border}`,
+                  background: C.subtle,
+                  margin: "22px -18px -18px",
+                  padding: "16px 18px",
+                  borderBottomLeftRadius: 12,
+                  borderBottomRightRadius: 12,
                   display: "flex",
                   gap: 10,
                   flexWrap: "wrap",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
                 }}>
-                  <Button
-                    type="submit"
-                    label={editingService ? "Update" : "Create"}
-                    icon="pi pi-check"
-                    severity="info"
-                    loading={loading}
-                  />
                   {editingService && (
-                    <Button
+                    <button
                       type="button"
-                      label="Cancel"
-                      icon="pi pi-times"
-                      severity="secondary"
                       onClick={() => {
                         setEditingService(null);
                         resetForm();
                       }}
-                    />
+                      style={{
+                        padding: "10px 18px",
+                        background: "#fff",
+                        color: C.slate,
+                        border: `1.5px solid ${C.border}`,
+                        borderRadius: 9,
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                    >
+                      <i className="pi pi-times" /> Cancel
+                    </button>
                   )}
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    style={{
+                      padding: "10px 22px",
+                      background: editingService
+                        ? `linear-gradient(135deg,${C.amber},#b45309)`
+                        : `linear-gradient(135deg,${C.blue},#1e40af)`,
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 9,
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: loading ? "wait" : "pointer",
+                      opacity: loading ? 0.7 : 1,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      boxShadow: editingService
+                        ? "0 4px 12px rgba(217,119,6,.25)"
+                        : "0 4px 12px rgba(29,78,216,.25)",
+                    }}
+                  >
+                    <i className={loading ? "pi pi-spin pi-spinner" : "pi pi-check"} />
+                    {editingService ? "Update" : "Create"}
+                  </button>
                 </div>
               </Form>
             )}
@@ -770,7 +921,7 @@ function TPAServiceManagement() {
           background: C.card,
           border: `1px solid ${C.border}`,
           borderRadius: 12,
-          padding: 12,
+          padding: 14,
           marginBottom: 16,
           display: "flex",
           alignItems: "center",
@@ -778,25 +929,74 @@ function TPAServiceManagement() {
           gap: 12,
           flexWrap: "wrap",
         }}>
-          <span className="p-input-icon-left" style={{ flex: "1 1 280px", minWidth: 0 }}>
-            <i className="pi pi-search" />
+          <div style={{
+            flex: "1 1 320px",
+            minWidth: 0,
+            position: "relative",
+            display: "flex",
+            alignItems: "center",
+          }}>
+            <i className="pi pi-search" style={{
+              position: "absolute",
+              left: 14,
+              top: "50%",
+              transform: "translateY(-50%)",
+              color: C.muted,
+              fontSize: 14,
+              pointerEvents: "none",
+            }} />
             <InputText
               placeholder="Search by TPA Name or Code..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full"
-              style={{ width: "100%" }}
+              style={{
+                width: "100%",
+                padding: "10px 14px 10px 38px",
+                border: `1.5px solid ${C.border}`,
+                borderRadius: 9,
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 13.5,
+                color: C.text,
+                outline: "none",
+                background: "#fff",
+              }}
             />
-          </span>
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm("")}
+                title="Clear"
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 6,
+                  borderRadius: 6,
+                  color: C.muted,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <i className="pi pi-times" style={{ fontSize: 12 }} />
+              </button>
+            )}
+          </div>
           <span style={{
             fontSize: 12,
-            fontWeight: 600,
+            fontWeight: 700,
             color: C.muted,
             background: C.subtle,
             border: `1px solid ${C.border}`,
             borderRadius: 8,
-            padding: "6px 12px",
+            padding: "8px 14px",
             whiteSpace: "nowrap",
+            textTransform: "uppercase",
+            letterSpacing: ".4px",
           }}>
             Showing {filteredList.length} of {tpaServiceList.length}
           </span>
@@ -807,10 +1007,43 @@ function TPAServiceManagement() {
           background: C.card,
           border: `1px solid ${C.border}`,
           borderRadius: 12,
-          padding: 16,
+          padding: 18,
           marginBottom: 16,
         }}>
-          <SectionTag>Configured TPA Services</SectionTag>
+          {/* Card header */}
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 14,
+            paddingBottom: 14,
+            borderBottom: `1px solid ${C.border}`,
+          }}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}>
+              <div style={{
+                width: 4, height: 22, borderRadius: 2,
+                background: C.blue,
+              }} />
+              <i className="pi pi-database" style={{ color: C.blue, fontSize: 16 }} />
+              <span style={{ fontSize: 14, fontWeight: 800, color: C.text, letterSpacing: "-.1px" }}>
+                Configured TPA Services
+              </span>
+            </div>
+            <span style={{
+              background: C.blueL,
+              color: C.blue,
+              padding: "5px 12px",
+              borderRadius: 10,
+              fontSize: 11,
+              fontWeight: 800,
+              textTransform: "uppercase",
+              letterSpacing: ".4px",
+            }}>{filteredList.length} record{filteredList.length === 1 ? "" : "s"}</span>
+          </div>
           <div style={{
             border: `1px solid ${C.border}`,
             borderRadius: 10,
@@ -821,21 +1054,38 @@ function TPAServiceManagement() {
               paginator
               rows={10}
               loading={loading}
-              emptyMessage="No TPA Services found"
+              stripedRows
+              emptyMessage={
+                <div style={{ padding: 40, textAlign: "center", color: C.muted }}>
+                  <i className="pi pi-inbox" style={{ fontSize: 32, color: "#cbd5e1" }} />
+                  <div style={{ marginTop: 10, fontSize: 13 }}>
+                    {searchTerm ? "No matches for your search." : "No TPA Services configured yet."}
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 11 }}>
+                    {searchTerm ? "Try a different TPA name or code." : "Use the form above to add the first one."}
+                  </div>
+                </div>
+              }
               responsiveLayout="scroll"
               pt={dtPt}
             >
               <Column
                 header="TPA Name"
                 headerStyle={headerCellStyle}
-                body={(rowData) => rowData.tpaId?.tpaName || "N/A"}
+                body={(rowData) => (
+                  <span style={{ fontWeight: 700, color: C.text, fontSize: 13 }}>
+                    {rowData.tpaId?.tpaName || "N/A"}
+                  </span>
+                )}
                 sortable
+                sortField="tpaId.tpaName"
               />
               <Column
                 header="TPA Code"
                 headerStyle={headerCellStyle}
                 body={codeBodyTemplate}
                 sortable
+                sortField="tpaId.tpaCode"
               />
               <Column
                 header="Tests"
@@ -844,7 +1094,8 @@ function TPAServiceManagement() {
               />
               <Column
                 header="Actions"
-                headerStyle={headerCellStyle}
+                headerStyle={{ ...headerCellStyle, width: 180 }}
+                bodyStyle={{ width: 180 }}
                 body={actionBodyTemplate}
               />
             </DataTable>
@@ -860,41 +1111,58 @@ function TPAServiceManagement() {
               gap: 10,
             }}>
               <div style={{
-                width: 4, height: 22, borderRadius: 2,
-                background: C.blue,
-              }} />
-              <span style={{ fontSize: 15, fontWeight: 800, color: C.text }}>
-                TPA Service Details
-              </span>
+                width: 36, height: 36, borderRadius: 10,
+                background: C.blueL, color: C.blue,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <i className="pi pi-eye" style={{ fontSize: 16 }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: C.text, letterSpacing: "-.1px" }}>
+                  TPA Service Details
+                </div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                  Read-only view of configured tests
+                </div>
+              </div>
             </div>
           }
           visible={viewDialog}
-          style={{ width: "60vw" }}
-          contentStyle={{ background: C.card }}
+          style={{ width: "70vw" }}
+          contentStyle={{ background: C.card, padding: "0 20px 20px" }}
           onHide={() => setViewDialog(false)}
-          breakpoints={{ "960px": "75vw", "641px": "90vw" }}
+          breakpoints={{ "960px": "85vw", "641px": "95vw" }}
         >
           {viewingService && (
-            <div style={{ padding: "4px 0" }}>
+            <div style={{ padding: "8px 0" }}>
+              {/* Summary tiles — 4 col grid */}
               <div style={{
-                background: C.subtle,
-                border: `1px solid ${C.border}`,
-                borderRadius: 10,
-                padding: 14,
-                marginBottom: 14,
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))",
+                gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))",
                 gap: 10,
+                marginBottom: 16,
               }}>
-                <div>
-                  <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>TPA Name</div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginTop: 4 }}>
-                    {viewingService.tpaId?.tpaName}
+                <div style={{
+                  background: C.blueL,
+                  border: `1px solid ${C.border}`,
+                  borderLeft: `3px solid ${C.blue}`,
+                  borderRadius: 10,
+                  padding: "12px 14px",
+                }}>
+                  <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>TPA Name</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginTop: 4, wordBreak: "break-word" }}>
+                    {viewingService.tpaId?.tpaName || "—"}
                   </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>TPA Code</div>
-                  <div style={{ marginTop: 4 }}>
+                <div style={{
+                  background: C.subtle,
+                  border: `1px solid ${C.border}`,
+                  borderLeft: `3px solid ${C.slate}`,
+                  borderRadius: 10,
+                  padding: "12px 14px",
+                }}>
+                  <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>TPA Code</div>
+                  <div style={{ marginTop: 6 }}>
                     <span style={{
                       background: C.card, color: C.slate,
                       padding: "3px 10px", borderRadius: 8,
@@ -902,26 +1170,70 @@ function TPAServiceManagement() {
                       border: `1px solid ${C.border}`,
                       fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                     }}>
-                      {viewingService.tpaId?.tpaCode}
+                      {viewingService.tpaId?.tpaCode || "—"}
                     </span>
                   </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Total Tests</div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginTop: 4 }}>
+                <div style={{
+                  background: C.greenL,
+                  border: `1px solid ${C.border}`,
+                  borderLeft: `3px solid ${C.green}`,
+                  borderRadius: 10,
+                  padding: "12px 14px",
+                }}>
+                  <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Total Tests</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: C.green, marginTop: 4 }}>
                     {viewingService.services?.length || 0}
+                  </div>
+                </div>
+                <div style={{
+                  background: C.amberL,
+                  border: `1px solid ${C.border}`,
+                  borderLeft: `3px solid ${C.amber}`,
+                  borderRadius: 10,
+                  padding: "12px 14px",
+                }}>
+                  <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Created</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginTop: 4 }}>
+                    {viewingService.createdAt
+                      ? new Date(viewingService.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+                      : "—"}
                   </div>
                 </div>
               </div>
 
-              <SectionTag>Tests</SectionTag>
+              {/* Tests section header */}
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 10,
+              }}>
+                <i className="pi pi-list-check" style={{ color: C.green, fontSize: 14 }} />
+                <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>Tests</span>
+                <span style={{
+                  background: C.greenL,
+                  color: C.green,
+                  padding: "2px 8px",
+                  borderRadius: 10,
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}>{viewingService.services?.length || 0}</span>
+              </div>
               <div style={{
                 border: `1px solid ${C.border}`,
                 borderRadius: 10,
                 overflow: "hidden",
               }}>
-                <DataTable value={viewingService.services} pt={dtPt}>
-                  <Column field="Name" header="Test Name" headerStyle={headerCellStyle} />
+                <DataTable value={viewingService.services} stripedRows pt={dtPt}>
+                  <Column
+                    field="Name"
+                    header="Test Name"
+                    headerStyle={headerCellStyle}
+                    body={(rowData) => (
+                      <span style={{ fontWeight: 700, color: C.text }}>{rowData.Name}</span>
+                    )}
+                  />
                   <Column
                     header="Type"
                     headerStyle={headerCellStyle}
@@ -931,23 +1243,36 @@ function TPAServiceManagement() {
                     field="Amount"
                     header="Amount"
                     headerStyle={headerCellStyle}
-                    body={(rowData) =>
-                      `₹${rowData.Amount?.toLocaleString("en-IN")}`
-                    }
+                    body={(rowData) => (
+                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: C.text, fontWeight: 600 }}>
+                        ₹{rowData.Amount?.toLocaleString("en-IN")}
+                      </span>
+                    )}
                   />
                   <Column
                     field="Discount"
                     header="Discount"
                     headerStyle={headerCellStyle}
-                    body={(rowData) => `${rowData.Discount}%`}
+                    body={(rowData) => (
+                      <span style={{
+                        background: rowData.Discount > 0 ? C.amberL : C.subtle,
+                        color: rowData.Discount > 0 ? C.amber : C.muted,
+                        padding: "2px 8px",
+                        borderRadius: 8,
+                        fontSize: 12,
+                        fontWeight: 700,
+                      }}>{rowData.Discount || 0}%</span>
+                    )}
                   />
                   <Column
                     field="Totalamount"
                     header="Total"
                     headerStyle={headerCellStyle}
-                    body={(rowData) =>
-                      `₹${rowData.Totalamount?.toLocaleString("en-IN")}`
-                    }
+                    body={(rowData) => (
+                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: C.green, fontWeight: 800 }}>
+                        ₹{rowData.Totalamount?.toLocaleString("en-IN")}
+                      </span>
+                    )}
                   />
                 </DataTable>
               </div>
