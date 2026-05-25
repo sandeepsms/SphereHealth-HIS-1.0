@@ -2896,6 +2896,15 @@ function OPDRxTab() {
   const [qdUnitPrice, setQdUnitPrice] = useState(0);
   const [qdPaymentMode, setQdPaymentMode] = useState("Cash");
   const [qdSaving, setQdSaving]     = useState(false);
+  // R7cy — FEFO batch info for the selected drug. The drug master does
+  // NOT carry a reliable sellPrice — the real price lives on each
+  // PharmacyDrugBatch row (set at GRN time, varies by purchase lot).
+  // Backend dispense() also reads price from batch.salePrice and
+  // IGNORES any client-supplied unitPrice (R7bh-F4 hardening). So we
+  // mirror that here for the UI preview — pull the FEFO batch on
+  // drug-pick and use its salePrice / batchNo / expiryDate.
+  const [qdFefoBatch, setQdFefoBatch] = useState(null);
+  const [qdBatchLoading, setQdBatchLoading] = useState(false);
 
   const today = new Date().toLocaleDateString("en-IN", {
     weekday: "long", day: "2-digit", month: "long", year: "numeric",
@@ -2979,13 +2988,48 @@ function OPDRxTab() {
     return () => { cancelled = true; };
   }, [debouncedSearch, qdOpen]);
 
-  const pickDrug = (drug) => {
+  const pickDrug = async (drug) => {
     setQdDrug(drug);
     setQdDrugSearch(drug.brandName || drug.genericName || drug.name || "");
     setQdMatches([]);
-    // Default unit price from the drug's MRP / sellPrice if available.
-    const mrp = Number(drug.sellPrice || drug.mrp || drug.unitPrice || 0);
-    if (mrp > 0) setQdUnitPrice(mrp);
+    setQdFefoBatch(null);
+    setQdUnitPrice(0);
+    // R7cy — drug master almost never carries a usable sellPrice
+    // (price is set per-batch at GRN time). Fetch in-stock batches,
+    // pick the FEFO winner (earliest expiry, not yet expired, with
+    // qty remaining), and use its salePrice. Falls back to any
+    // master-level price field if the batch fetch fails or returns
+    // nothing — the user can still override the field manually.
+    setQdBatchLoading(true);
+    try {
+      const r = await listBatches({ drugId: drug._id });
+      const list = Array.isArray(r) ? r : (r?.data || []);
+      const now = Date.now();
+      const fefo = list
+        .filter(b => {
+          const rem = Number(b.remaining ?? b.qtyRemaining ?? b.qty ?? 0);
+          const exp = b.expiryDate ? new Date(b.expiryDate).getTime() : Infinity;
+          return rem > 0 && exp > now;
+        })
+        .sort((a, b) => {
+          const ea = a.expiryDate ? new Date(a.expiryDate).getTime() : Infinity;
+          const eb = b.expiryDate ? new Date(b.expiryDate).getTime() : Infinity;
+          return ea - eb;
+        })[0];
+      if (fefo) {
+        setQdFefoBatch(fefo);
+        const price = Number(fefo.salePrice ?? fefo.sellPrice ?? fefo.mrp ?? 0);
+        if (price > 0) setQdUnitPrice(price);
+      } else {
+        const mrp = Number(drug.sellPrice || drug.mrp || drug.unitPrice || 0);
+        if (mrp > 0) setQdUnitPrice(mrp);
+      }
+    } catch (_) {
+      const mrp = Number(drug.sellPrice || drug.mrp || drug.unitPrice || 0);
+      if (mrp > 0) setQdUnitPrice(mrp);
+    } finally {
+      setQdBatchLoading(false);
+    }
   };
 
   const submitQuickDispense = async () => {
@@ -3357,9 +3401,36 @@ function OPDRxTab() {
               </div>
             )}
             {qdDrug && (
-              <div style={{ padding: "6px 10px", background: "#dcfce7", color: "#15803d", borderRadius: 6, fontSize: 11.5, marginBottom: 10, fontWeight: 600 }}>
-                <i className="pi pi-check" style={{ marginRight: 5 }} />
-                {qdDrug.brandName || qdDrug.genericName || qdDrug.name} — selected
+              <div style={{ padding: "8px 12px", background: "#dcfce7", color: "#15803d", borderRadius: 6, fontSize: 11.5, marginBottom: 10 }}>
+                <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                  <i className="pi pi-check" />
+                  {qdDrug.brandName || qdDrug.genericName || qdDrug.name} — selected
+                </div>
+                {/* R7cy — surface FEFO batch info so the pharmacist sees
+                    WHERE the price came from and which physical stock will
+                    be consumed. Empty-stock warning if no in-stock batch
+                    was found — backend will reject the sale, so flag it
+                    early instead of letting submit fail. */}
+                {qdBatchLoading ? (
+                  <div style={{ fontSize: 10.5, color: "#166534", marginTop: 3, fontStyle: "italic" }}>
+                    <i className="pi pi-spin pi-spinner" style={{ marginRight: 4, fontSize: 10 }} />
+                    Looking up FEFO batch…
+                  </div>
+                ) : qdFefoBatch ? (
+                  <div style={{ fontSize: 10.5, color: "#166534", marginTop: 3 }}>
+                    Batch <strong style={{ fontFamily: "'DM Mono', monospace" }}>{qdFefoBatch.batchNo}</strong>
+                    {qdFefoBatch.expiryDate && (
+                      <> · exp {new Date(qdFefoBatch.expiryDate).toLocaleDateString("en-IN", { month: "short", year: "numeric" })}</>
+                    )}
+                    {" · "}stock {Number(qdFefoBatch.remaining ?? qdFefoBatch.qtyRemaining ?? 0)}
+                    {" · "}price ₹{Number(qdFefoBatch.salePrice ?? qdFefoBatch.sellPrice ?? 0).toFixed(2)}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 10.5, color: "#b91c1c", marginTop: 3, fontWeight: 600 }}>
+                    <i className="pi pi-exclamation-triangle" style={{ marginRight: 4, fontSize: 10 }} />
+                    No in-stock batch — GRN this drug first or pick a different brand.
+                  </div>
+                )}
               </div>
             )}
 
