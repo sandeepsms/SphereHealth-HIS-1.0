@@ -865,14 +865,38 @@ export default function Sidebar({ collapsed, setCollapsed }) {
         background: "linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%)",
         flexShrink: 0,
       }}>
+        {/* R7dt — Hospital logo (from HospitalSettings.logo). Falls back
+            to a gradient "S" badge if no logo configured yet. Used in
+            both expanded and collapsed sidebar states so the brand
+            stays consistent. The hospital uploads its logo via the
+            Hospital Config wizard; once saved, it appears here +
+            in the footer + on every printed bill/receipt. */}
         {!collapsed && (
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{
-              width: 30, height: 30,
-              background: "linear-gradient(135deg,#38bdf8,#7c3aed)",
-              borderRadius: 8, display: "flex", alignItems: "center",
-              justifyContent: "center", fontSize: 14, fontWeight: 900, color: "#fff",
-            }}>S</div>
+            {settings?.logo
+              ? (
+                <div style={{
+                  width: 30, height: 30, borderRadius: 8, overflow: "hidden",
+                  background: "#fff", flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: "0 0 0 1px rgba(255,255,255,.18)",
+                }}>
+                  <img
+                    src={settings.logo}
+                    alt={settings?.hospitalName || "Hospital logo"}
+                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                  />
+                </div>
+              )
+              : (
+                <div style={{
+                  width: 30, height: 30,
+                  background: "linear-gradient(135deg,#38bdf8,#7c3aed)",
+                  borderRadius: 8, display: "flex", alignItems: "center",
+                  justifyContent: "center", fontSize: 14, fontWeight: 900, color: "#fff",
+                }}>{(settings?.hospitalName || "S").charAt(0).toUpperCase()}</div>
+              )
+            }
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", lineHeight: 1 }}>
                 {settings?.hospitalName || "Hospital"}<span style={{ color: "#38bdf8" }}> HIS</span>
@@ -890,12 +914,29 @@ export default function Sidebar({ collapsed, setCollapsed }) {
           </div>
         )}
         {collapsed && (
-          <div style={{
-            width: 30, height: 30,
-            background: "linear-gradient(135deg,#38bdf8,#7c3aed)",
-            borderRadius: 8, display: "flex", alignItems: "center",
-            justifyContent: "center", fontSize: 14, fontWeight: 900, color: "#fff",
-          }}>S</div>
+          settings?.logo
+            ? (
+              <div style={{
+                width: 30, height: 30, borderRadius: 8, overflow: "hidden",
+                background: "#fff",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                boxShadow: "0 0 0 1px rgba(255,255,255,.18)",
+              }}>
+                <img
+                  src={settings.logo}
+                  alt={settings?.hospitalName || "Hospital logo"}
+                  style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                />
+              </div>
+            )
+            : (
+              <div style={{
+                width: 30, height: 30,
+                background: "linear-gradient(135deg,#38bdf8,#7c3aed)",
+                borderRadius: 8, display: "flex", alignItems: "center",
+                justifyContent: "center", fontSize: 14, fontWeight: 900, color: "#fff",
+              }}>{(settings?.hospitalName || "S").charAt(0).toUpperCase()}</div>
+            )
         )}
         <button
           onClick={() => setCollapsed(p => !p)}
@@ -1027,14 +1068,35 @@ export default function Sidebar({ collapsed, setCollapsed }) {
           background: "#f8fafc", flexShrink: 0,
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
+          {/* R7dt — Footer brand mark also uses HospitalSettings.logo
+              when configured. Falls back to the role-colored shield
+              icon for first-run / pre-config state. */}
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <div style={{
-              width: 20, height: 20, borderRadius: 5,
-              background: roleMeta.color,
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
-              <i className={`pi ${roleMeta.icon}`} style={{ fontSize: 10, color: "#fff" }} />
-            </div>
+            {settings?.logo
+              ? (
+                <div style={{
+                  width: 20, height: 20, borderRadius: 5, overflow: "hidden",
+                  background: "#fff", flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: `0 0 0 1px ${roleMeta.color}30`,
+                }}>
+                  <img
+                    src={settings.logo}
+                    alt={settings?.hospitalName || "Hospital logo"}
+                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                  />
+                </div>
+              )
+              : (
+                <div style={{
+                  width: 20, height: 20, borderRadius: 5,
+                  background: roleMeta.color,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <i className={`pi ${roleMeta.icon}`} style={{ fontSize: 10, color: "#fff" }} />
+                </div>
+              )
+            }
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, color: "#1e293b", lineHeight: 1 }}>{`${settings?.hospitalName || "Hospital"} HIS`}</div>
               <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 1 }}>v2.0 · NABH Ready</div>
