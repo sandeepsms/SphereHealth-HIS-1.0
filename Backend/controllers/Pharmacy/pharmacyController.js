@@ -489,6 +489,12 @@ exports.dispense = async (req, res) => {
       patientUHID, patientName, contactNumber, age, gender, doctorName,
       saleType = "Walk-in", admissionId, admissionNumber, prescriptionRef,
       items, amountPaid, discountPercent = 0, remarks,
+      // R7ct — GST Act §31 + GSTR-1 fields. placeOfSupply (state code)
+      // drives intra-state vs inter-state split (CGST+SGST vs IGST).
+      // customerGstin enables B2B / corporate panel ITC claim on
+      // GSTR-1 schema. Both optional — when blank, intra-state default
+      // (CGST+SGST = gst/2 each) applies and B2C bucket is used.
+      placeOfSupply, customerGstin,
     } = req.body;
 
     // R7bh-F4 / R7bg-3-HIGH-1: normalise paymentMode at the controller boundary
@@ -559,11 +565,14 @@ exports.dispense = async (req, res) => {
     // once and reject the whole sale (atomic) on the first violation.
     // Schedule X gets the additional NDPS witness flow downstream
     // via scheduleXRegister.recordDispense.
-    const drugMetaMap = new Map(); // drugId → { schedule, name }
+    const drugMetaMap = new Map(); // drugId → { schedule, name, hsnCode }
     for (const it of items) {
       const key = String(it.drugId);
       if (drugMetaMap.has(key)) continue;
-      const d = await Drug.findById(it.drugId).select("schedule name").lean();
+      // R7ct — pull hsnCode too so the sale item snapshots the HSN that
+      // was in force at billing time (preserves historical GSTR-1 even
+      // if the drug master HSN is later reclassified by CBIC).
+      const d = await Drug.findById(it.drugId).select("schedule name hsnCode").lean();
       if (d) drugMetaMap.set(key, d);
     }
     for (const it of items) {
@@ -632,9 +641,26 @@ exports.dispense = async (req, res) => {
     // (`remaining: { $gte: take }`) and add cross-item rollback so a
     // mid-loop shortage on item B unrolls item A's already-reserved
     // stock — the sale is all-or-nothing.
+    // R7ct — Determine intra/inter-state for CGST/SGST vs IGST split.
+    // Pharmacy's own state comes from PharmacySettings.state (the singleton
+    // identity record); placeOfSupply on the request is the customer's
+    // state. When both are present and DIFFERENT → inter-state (IGST);
+    // otherwise intra-state default (CGST + SGST). Blank state on
+    // either side falls back to intra-state — safer default for the B2C
+    // walk-in case where state isn't captured.
+    let pharmacyState = "";
+    try {
+      const setRow = await Settings.findOne({}).select("state").lean();
+      pharmacyState = String(setRow?.state || "").trim().toUpperCase();
+    } catch (_) { /* settings missing — falls back to intra-state */ }
+    const customerState = String(placeOfSupply || "").trim().toUpperCase();
+    const interState = !!(pharmacyState && customerState && pharmacyState !== customerState);
+
     const saleItems = [];
     const scheduleXItems = []; // [{drugId, qty, prescriptionRef, prescriberName, drugName}]
     let subTotal = 0, totalGst = 0, totalDisc = 0;
+    // R7ct — bill-level GST split rollup, accumulated from per-item splits below.
+    let totalCgst = 0, totalSgst = 0, totalIgst = 0;
     const consumedAll = []; // [{ batchId, qty }] across all items, for rollback
     try {
     for (const it of items) {
@@ -669,16 +695,38 @@ exports.dispense = async (req, res) => {
         const taxable = gross - discAmt;
         const gstAmt  = taxable * gstR / 100;
         const net     = taxable + gstAmt;
+        // R7ct — split gstAmt into CGST/SGST (intra-state) or IGST
+        // (inter-state) using the bill-level interState flag computed
+        // from PharmacySettings.state vs req.body.placeOfSupply. The
+        // sum across all three columns always equals gstAmt so legacy
+        // GSTR-3B (which reads totalGst) and new GSTR-1 (which reads
+        // split columns) agree.
+        const cgstAmt = interState ? 0       : gstAmt / 2;
+        const sgstAmt = interState ? 0       : gstAmt / 2;
+        const igstAmt = interState ? gstAmt  : 0;
+        // R7ct — HSN snapshot from drug master (resolved in drugMetaMap
+        // pre-loop). Empty string is acceptable for compounded items
+        // without an HSN yet — GSTR-1 line 12 will then aggregate
+        // them under the unclassified bucket.
+        const hsnSnap = String(drugMetaMap.get(String(it.drugId))?.hsnCode || "");
+
         saleItems.push({
           drugId: it.drugId, drugName: it.drugName,
           batchId: u.batch._id, batchNo: u.batch.batchNo, expiryDate: u.batch.expiryDate,
           quantity: qty, unitPrice: unit, gstRate: gstR, discountPercent: discR,
+          hsnCode: hsnSnap,
           grossAmount: gross, discountAmount: discAmt,
-          taxableAmount: taxable, gstAmount: gstAmt, netAmount: net,
+          taxableAmount: taxable,
+          gstAmount: gstAmt,
+          cgstAmount: cgstAmt, sgstAmount: sgstAmt, igstAmount: igstAmt,
+          netAmount: net,
         });
         subTotal  += gross;
         totalDisc += discAmt;
         totalGst  += gstAmt;
+        totalCgst += cgstAmt;
+        totalSgst += sgstAmt;
+        totalIgst += igstAmt;
       }
     }
     const totalTaxable = subTotal - totalDisc;
@@ -708,6 +756,18 @@ exports.dispense = async (req, res) => {
       items: saleItems,
       subTotal, totalDiscount: totalDisc, totalTaxable, totalGst,
       roundOff, grandTotal,
+      // R7ct — GST Act §31 + GSTR-1 schema fields. placeOfSupply
+      // defaults to the pharmacy's own state for B2C walk-ins (no
+      // customer state captured = intra-state assumption); explicit
+      // value from req.body wins. customerGstin enables B2B ITC claim.
+      placeOfSupply: customerState || pharmacyState || null,
+      customerGstin: customerGstin ? String(customerGstin).trim().toUpperCase() : null,
+      // Bill-level CGST/SGST/IGST rollup mirrors PatientBill schema
+      // (R7ap-F18) — sum of per-item splits, kept independent so the
+      // GSTR-1 emitter doesn't need to re-derive on every read.
+      cgstAmount: totalCgst,
+      sgstAmount: totalSgst,
+      igstAmount: totalIgst,
       paymentMode, amountPaid: paid,
       balanceDue,
       patientCredit:    round2(overPaid),

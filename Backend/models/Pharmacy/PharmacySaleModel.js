@@ -43,6 +43,12 @@ const SALE_ITEM = new mongoose.Schema(
 
     quantity:   { type: Number, required: true, min: 1 },
     unitPrice:  { type: Dec, required: true },
+    // R7ct — HSN/SAC code snapshot. Captured from DrugMaster.hsnCode at
+    // dispense time so a historical sale still shows the HSN that was in
+    // force when it was billed, even if the drug master HSN is later
+    // changed (e.g. CBIC reclassifies a product). GSTR-1 line 12
+    // HSN-summary block reads this column.
+    hsnCode:    { type: String, default: "" },
     // R7bg-1-HIGH-1: constrain gstRate to the legal Indian slabs. The
     // previous `default: 12, type: Number` would silently accept a
     // decimal typo (180 instead of 18) and over-tax the patient by 10x.
