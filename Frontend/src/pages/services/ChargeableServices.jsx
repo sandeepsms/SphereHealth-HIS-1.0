@@ -612,22 +612,54 @@ export default function ChargeableServices() {
             }}
           />
         </div>
-        <Dropdown
-          value={filters.category}
-          options={[{ label: "All Categories", value: null }, ...CATEGORIES]}
-          onChange={(e) => setFilters({ ...filters, category: e.value })}
-          placeholder="Category"
-          className="p-inputtext-sm"
-          style={{ minWidth: 180 }}
-        />
-        <Dropdown
-          value={filters.status}
-          options={STATUS_OPTIONS}
-          onChange={(e) => setFilters({ ...filters, status: e.value })}
-          placeholder="Status"
-          className="p-inputtext-sm"
-          style={{ minWidth: 140 }}
-        />
+        {/* R7dk — Native <select> for clean vertical centering */}
+        <select
+          value={filters.category ?? ""}
+          onChange={(e) => setFilters({ ...filters, category: e.target.value || null })}
+          style={{
+            minWidth: 180,
+            height: 42,
+            padding: "0 14px",
+            border: `1.5px solid ${C.border}`,
+            borderRadius: 9,
+            fontSize: 13,
+            fontFamily: "'DM Sans', sans-serif",
+            color: filters.category ? C.text : "#94a3b8",
+            background: "#fff",
+            outline: "none",
+            cursor: "pointer",
+            appearance: "auto",
+            boxSizing: "border-box",
+          }}
+        >
+          <option value="">All Categories</option>
+          {CATEGORIES.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        <select
+          value={filters.status ?? ""}
+          onChange={(e) => setFilters({ ...filters, status: e.target.value || null })}
+          style={{
+            minWidth: 140,
+            height: 42,
+            padding: "0 14px",
+            border: `1.5px solid ${C.border}`,
+            borderRadius: 9,
+            fontSize: 13,
+            fontFamily: "'DM Sans', sans-serif",
+            color: filters.status ? C.text : "#94a3b8",
+            background: "#fff",
+            outline: "none",
+            cursor: "pointer",
+            appearance: "auto",
+            boxSizing: "border-box",
+          }}
+        >
+          {STATUS_OPTIONS.map(opt => (
+            <option key={String(opt.value)} value={opt.value ?? ""}>{opt.label}</option>
+          ))}
+        </select>
         {anyFilter && (
           <button
             onClick={clearFilters}
