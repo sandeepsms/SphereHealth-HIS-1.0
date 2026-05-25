@@ -607,255 +607,205 @@ function TPAServiceManagement() {
                         </button>
                       </div>
 
-                      <div style={{
-                        border: `1px dashed ${C.border}`,
-                        borderRadius: 10,
-                        overflow: "hidden",
-                        background: C.subtle,
-                      }}>
-                        <DataTable
-                          value={values.services}
-                          responsiveLayout="scroll"
-                          pt={dtPt}
-                        >
-                          {/* Test Name */}
-                          <Column
-                            header="Test Name"
-                            headerStyle={colNameStyle}
-                            bodyStyle={cellBodyStyle}
-                            body={(rowData, options) => (
-                              <div>
-                                <InputText
-                                  value={values.services[options.rowIndex].Name}
-                                  onChange={(e) =>
-                                    setFieldValue(
-                                      `services[${options.rowIndex}].Name`,
-                                      e.target.value,
-                                    )
-                                  }
-                                  placeholder="Enter test name"
-                                  className={
-                                    errors.services?.[options.rowIndex]?.Name &&
-                                    touched.services?.[options.rowIndex]?.Name
-                                      ? "p-invalid"
-                                      : ""
-                                  }
-                                  style={{
-                                    padding: "9px 12px",
-                                    border: `1.5px solid ${C.border}`,
-                                    borderRadius: 9,
-                                    fontFamily: "'DM Sans', sans-serif",
-                                    fontSize: 13.5,
-                                    color: C.text,
-                                    width: "100%",
-                                    outline: "none",
-                                    background: "#fff",
-                                  }}
-                                />
-                                {errors.services?.[options.rowIndex]?.Name &&
-                                  touched.services?.[options.rowIndex]?.Name && (
-                                    <small style={{ color: C.red, fontSize: 11, marginTop: 4, display: "block" }}>
-                                      {errors.services[options.rowIndex].Name}
-                                    </small>
-                                  )}
-                              </div>
-                            )}
-                          />
-
-                          {/* Service Type */}
-                          <Column
-                            header="Type"
-                            headerStyle={colTypeStyle}
-                            bodyStyle={cellBodyStyle}
-                            body={(rowData, options) => (
-                              <div>
-                                <Dropdown
-                                  value={
-                                    values.services[options.rowIndex].serviceType
-                                  }
-                                  options={SERVICE_TYPES}
-                                  onChange={(e) =>
-                                    setFieldValue(
-                                      `services[${options.rowIndex}].serviceType`,
-                                      e.value,
-                                    )
-                                  }
-                                  placeholder="Select type"
-                                  className={
-                                    errors.services?.[options.rowIndex]
-                                      ?.serviceType &&
-                                    touched.services?.[options.rowIndex]
-                                      ?.serviceType
-                                      ? "p-invalid"
-                                      : ""
-                                  }
-                                  style={{ width: "100%" }}
-                                  pt={hisDropdownPt}
-                                />
-                                {errors.services?.[options.rowIndex]
-                                  ?.serviceType &&
-                                  touched.services?.[options.rowIndex]
-                                    ?.serviceType && (
-                                    <small style={{ color: C.red, fontSize: 11, marginTop: 4, display: "block" }}>
-                                      {
-                                        errors.services[options.rowIndex]
-                                          .serviceType
-                                      }
-                                    </small>
-                                  )}
-                              </div>
-                            )}
-                          />
-
-                          {/* Amount */}
-                          <Column
-                            header="Amount"
-                            headerStyle={colAmountStyle}
-                            bodyStyle={cellBodyStyle}
-                            body={(rowData, options) => (
-                              <InputNumber
-                                value={values.services[options.rowIndex].Amount}
-                                onValueChange={(e) => {
-                                  setFieldValue(
-                                    `services[${options.rowIndex}].Amount`,
-                                    e.value,
-                                  );
-                                  const total = calculateTotal(
-                                    e.value,
-                                    values.services[options.rowIndex].Discount,
-                                  );
-                                  setFieldValue(
-                                    `services[${options.rowIndex}].Totalamount`,
-                                    total,
-                                  );
-                                }}
-                                mode="currency"
-                                currency="INR"
-                                locale="en-IN"
-                                className={
-                                  errors.services?.[options.rowIndex]?.Amount &&
-                                  touched.services?.[options.rowIndex]?.Amount
-                                    ? "p-invalid"
-                                    : ""
-                                }
-                                inputStyle={{
-                                  padding: "9px 12px",
-                                  border: `1.5px solid ${C.border}`,
-                                  borderRadius: 9,
-                                  fontFamily: "'DM Sans', sans-serif",
-                                  fontSize: 13.5,
-                                  color: C.text,
-                                  width: "100%",
-                                  outline: "none",
+                      {/* R7dg — CSS-grid replacement for PrimeReact DataTable.
+                         The DataTable + InputText/InputNumber wrapping was
+                         causing header/body column misalignment because each
+                         input had its own padding + container wrapper that
+                         didn't fill the table cell. A native grid with the
+                         same template-columns for header + every row makes
+                         the alignment exact regardless of input chrome. */}
+                      {(() => {
+                        const GRID_COLS = "minmax(200px, 1fr) 140px 160px 130px 170px 50px";
+                        const hdrCell   = {
+                          padding: "10px 12px", fontSize: 11, fontWeight: 700,
+                          color: C.muted, textTransform: "uppercase",
+                          letterSpacing: ".4px",
+                        };
+                        const inputBase = {
+                          width: "100%", padding: "9px 12px",
+                          border: `1.5px solid ${C.border}`, borderRadius: 9,
+                          fontFamily: "'DM Sans', sans-serif", fontSize: 13.5,
+                          color: C.text, background: "#fff", outline: "none",
+                          boxSizing: "border-box",
+                        };
+                        return (
+                          <div style={{
+                            border: `1px dashed ${C.border}`,
+                            borderRadius: 10,
+                            overflow: "hidden",
+                            background: C.subtle,
+                          }}>
+                            {/* Header row */}
+                            <div style={{
+                              display: "grid",
+                              gridTemplateColumns: GRID_COLS,
+                              gap: 12,
+                              background: C.subtle,
+                              borderBottom: `1px solid ${C.border}`,
+                              padding: "0 12px",
+                            }}>
+                              <div style={hdrCell}>Test Name</div>
+                              <div style={hdrCell}>Type</div>
+                              <div style={hdrCell}>Amount</div>
+                              <div style={hdrCell}>Discount</div>
+                              <div style={hdrCell}>Total Amount</div>
+                              <div style={hdrCell}></div>
+                            </div>
+                            {/* Body rows */}
+                            {values.services.map((svc, idx) => {
+                              const errName  = errors.services?.[idx]?.Name && touched.services?.[idx]?.Name;
+                              const errType  = errors.services?.[idx]?.serviceType && touched.services?.[idx]?.serviceType;
+                              const errAmt   = errors.services?.[idx]?.Amount && touched.services?.[idx]?.Amount;
+                              const disabled = values.services.length === 1;
+                              return (
+                                <div key={idx} style={{
+                                  display: "grid",
+                                  gridTemplateColumns: GRID_COLS,
+                                  gap: 12,
+                                  alignItems: "start",
+                                  padding: "10px 12px",
                                   background: "#fff",
-                                }}
-                                style={{ width: "100%" }}
-                              />
-                            )}
-                          />
+                                  borderBottom: idx === values.services.length - 1 ? "none" : `1px solid ${C.border}`,
+                                }}>
+                                  {/* Test Name */}
+                                  <div>
+                                    <input
+                                      type="text"
+                                      value={svc.Name}
+                                      onChange={(e) => setFieldValue(`services[${idx}].Name`, e.target.value)}
+                                      placeholder="Enter test name"
+                                      style={{
+                                        ...inputBase,
+                                        borderColor: errName ? C.red : C.border,
+                                      }}
+                                    />
+                                    {errName && (
+                                      <small style={{ color: C.red, fontSize: 11, marginTop: 4, display: "block" }}>
+                                        {errors.services[idx].Name}
+                                      </small>
+                                    )}
+                                  </div>
 
-                          {/* Discount */}
-                          <Column
-                            header="Discount"
-                            headerStyle={colDiscStyle}
-                            bodyStyle={cellBodyStyle}
-                            body={(rowData, options) => (
-                              <InputNumber
-                                value={values.services[options.rowIndex].Discount}
-                                onValueChange={(e) => {
-                                  setFieldValue(
-                                    `services[${options.rowIndex}].Discount`,
-                                    e.value,
-                                  );
-                                  const total = calculateTotal(
-                                    values.services[options.rowIndex].Amount,
-                                    e.value,
-                                  );
-                                  setFieldValue(
-                                    `services[${options.rowIndex}].Totalamount`,
-                                    total,
-                                  );
-                                }}
-                                suffix="%"
-                                min={0}
-                                max={100}
-                                inputStyle={{
-                                  padding: "9px 12px",
-                                  border: `1.5px solid ${C.border}`,
-                                  borderRadius: 9,
-                                  fontFamily: "'DM Sans', sans-serif",
-                                  fontSize: 13.5,
-                                  color: C.text,
-                                  width: "100%",
-                                  outline: "none",
-                                  background: "#fff",
-                                }}
-                                style={{ width: "100%" }}
-                              />
-                            )}
-                          />
+                                  {/* Type — native select */}
+                                  <div>
+                                    <select
+                                      value={svc.serviceType}
+                                      onChange={(e) => setFieldValue(`services[${idx}].serviceType`, e.target.value)}
+                                      style={{
+                                        ...inputBase,
+                                        borderColor: errType ? C.red : C.border,
+                                        cursor: "pointer",
+                                        appearance: "auto",
+                                      }}
+                                    >
+                                      {SERVICE_TYPES.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                      ))}
+                                    </select>
+                                    {errType && (
+                                      <small style={{ color: C.red, fontSize: 11, marginTop: 4, display: "block" }}>
+                                        {errors.services[idx].serviceType}
+                                      </small>
+                                    )}
+                                  </div>
 
-                          {/* Total */}
-                          <Column
-                            header="Total Amount"
-                            headerStyle={colTotalStyle}
-                            bodyStyle={cellBodyStyle}
-                            body={(rowData, options) => (
-                              <InputNumber
-                                value={
-                                  values.services[options.rowIndex].Totalamount
-                                }
-                                mode="currency"
-                                currency="INR"
-                                locale="en-IN"
-                                readOnly
-                                inputStyle={{
-                                  padding: "9px 12px",
-                                  border: `1.5px solid ${C.border}`,
-                                  borderRadius: 9,
-                                  fontFamily: "'DM Sans', sans-serif",
-                                  fontSize: 13.5,
-                                  color: C.text,
-                                  width: "100%",
-                                  outline: "none",
-                                  background: C.subtle,
-                                  fontWeight: 700,
-                                }}
-                                style={{ width: "100%" }}
-                              />
-                            )}
-                          />
+                                  {/* Amount — native number with ₹ prefix */}
+                                  <div style={{ position: "relative" }}>
+                                    <span style={{
+                                      position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)",
+                                      color: C.muted, fontSize: 13, pointerEvents: "none",
+                                    }}>₹</span>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step="0.01"
+                                      value={svc.Amount ?? 0}
+                                      onChange={(e) => {
+                                        const v = e.target.value === "" ? 0 : Number(e.target.value);
+                                        setFieldValue(`services[${idx}].Amount`, v);
+                                        setFieldValue(`services[${idx}].Totalamount`, calculateTotal(v, svc.Discount));
+                                      }}
+                                      style={{
+                                        ...inputBase,
+                                        paddingLeft: 24,
+                                        borderColor: errAmt ? C.red : C.border,
+                                      }}
+                                    />
+                                    {errAmt && (
+                                      <small style={{ color: C.red, fontSize: 11, marginTop: 4, display: "block" }}>
+                                        {errors.services[idx].Amount}
+                                      </small>
+                                    )}
+                                  </div>
 
-                          {/* Remove */}
-                          <Column
-                            header=""
-                            headerStyle={{ ...headerCellStyle, width: 60 }}
-                            bodyStyle={{ width: 60, textAlign: "center" }}
-                            body={(rowData, options) => (
-                              <button
-                                type="button"
-                                onClick={() => remove(options.rowIndex)}
-                                disabled={values.services.length === 1}
-                                title="Remove test"
-                                style={{
-                                  padding: "7px 10px",
-                                  background: "#fff",
-                                  color: values.services.length === 1 ? "#cbd5e1" : C.red,
-                                  border: `1.5px solid ${values.services.length === 1 ? C.border : C.redL}`,
-                                  borderRadius: 8,
-                                  fontSize: 12,
-                                  cursor: values.services.length === 1 ? "not-allowed" : "pointer",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                }}
-                              >
-                                <i className="pi pi-trash" />
-                              </button>
-                            )}
-                          />
-                        </DataTable>
-                      </div>
+                                  {/* Discount — native number with % suffix */}
+                                  <div style={{ position: "relative" }}>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      value={svc.Discount ?? 0}
+                                      onChange={(e) => {
+                                        const v = e.target.value === "" ? 0 : Number(e.target.value);
+                                        setFieldValue(`services[${idx}].Discount`, v);
+                                        setFieldValue(`services[${idx}].Totalamount`, calculateTotal(svc.Amount, v));
+                                      }}
+                                      style={{ ...inputBase, paddingRight: 26 }}
+                                    />
+                                    <span style={{
+                                      position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
+                                      color: C.muted, fontSize: 13, pointerEvents: "none",
+                                    }}>%</span>
+                                  </div>
+
+                                  {/* Total — read-only display */}
+                                  <div style={{ position: "relative" }}>
+                                    <span style={{
+                                      position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)",
+                                      color: C.muted, fontSize: 13, pointerEvents: "none",
+                                    }}>₹</span>
+                                    <input
+                                      type="text"
+                                      readOnly
+                                      value={Number(svc.Totalamount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      style={{
+                                        ...inputBase,
+                                        paddingLeft: 24,
+                                        background: C.subtle,
+                                        fontWeight: 700,
+                                        color: C.green,
+                                      }}
+                                    />
+                                  </div>
+
+                                  {/* Remove */}
+                                  <button
+                                    type="button"
+                                    onClick={() => remove(idx)}
+                                    disabled={disabled}
+                                    title={disabled ? "At least one test required" : "Remove test"}
+                                    style={{
+                                      width: 38, height: 38, padding: 0,
+                                      background: "#fff",
+                                      color: disabled ? "#cbd5e1" : C.red,
+                                      border: `1.5px solid ${disabled ? C.border : C.redL}`,
+                                      borderRadius: 8,
+                                      fontSize: 12,
+                                      cursor: disabled ? "not-allowed" : "pointer",
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      justifyContent: "center",
+                                      alignSelf: "start",
+                                    }}
+                                  >
+                                    <i className="pi pi-trash" />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </FieldArray>

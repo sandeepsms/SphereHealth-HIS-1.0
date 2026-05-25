@@ -588,21 +588,30 @@ export default function ChargeableServices() {
           flexWrap: "wrap",
         }}
       >
-        <span
-          style={{ flex: "1 1 280px", minWidth: 240, position: "relative", display: "inline-flex", alignItems: "center" }}
-        >
+        <div style={{ flex: "1 1 280px", minWidth: 240, position: "relative" }}>
           <i
             className="pi pi-search"
-            style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: C.muted, fontSize: 13, pointerEvents: "none", zIndex: 1 }}
+            style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.muted, fontSize: 14, pointerEvents: "none" }}
           />
-          <InputText
+          <input
+            type="text"
             value={filters.search}
             onChange={(e) => setFilters({ ...filters, search: e.target.value })}
             placeholder="Search by name or code..."
-            className="p-inputtext-sm"
-            style={{ width: "100%", paddingLeft: 34 }}
+            style={{
+              width: "100%",
+              padding: "10px 14px 10px 40px",
+              border: `1.5px solid ${C.border}`,
+              borderRadius: 9,
+              fontSize: 13.5,
+              fontFamily: "'DM Sans', sans-serif",
+              color: C.text,
+              background: "#fff",
+              outline: "none",
+              boxSizing: "border-box",
+            }}
           />
-        </span>
+        </div>
         <Dropdown
           value={filters.category}
           options={[{ label: "All Categories", value: null }, ...CATEGORIES]}
