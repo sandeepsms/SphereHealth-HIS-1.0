@@ -135,6 +135,28 @@ const PharmacySaleSchema = new mongoose.Schema(
     paymentMode: { type: String, enum: ["Cash","Card","UPI","Mixed","Credit"], default: "Cash" },
     amountPaid:  { type: Dec, default: () => toDec(0) },
     balanceDue:  { type: Dec, default: () => toDec(0) },
+    // R7cu — Credit-collection log. Every payment received AFTER the
+    // original dispense (i.e. against an IPD/Credit sale that was
+    // booked with balanceDue > 0) appends a row here so the pharmacy
+    // has an auditable per-payment trail rather than just an
+    // incremented amountPaid. Mirrors the patientCreditLog pattern but
+    // tracks money coming IN (credit collections) instead of OUT
+    // (over-payment refunds). Discharge gate reads balanceDue, not
+    // this array — array is for receipts + audit only.
+    collectionLog: {
+      type: [{
+        _id: false,
+        amount:        { type: Dec, required: true },
+        mode:          { type: String, enum: ["Cash","Card","UPI","Mixed","Credit"], default: "Cash" },
+        txnRef:        { type: String, default: "" },
+        receiptNumber: { type: String, default: "" }, // PHM-COLL-... if generated
+        collectedAt:   { type: Date, default: Date.now },
+        collectedBy:   { type: String, default: "" },
+        collectedById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        notes:         { type: String, default: "" },
+      }],
+      default: [],
+    },
 
     // ── Patient credit ledger (signed amount the pharmacy OWES the patient).
     //   Positive value = pharmacy is holding patient's money:

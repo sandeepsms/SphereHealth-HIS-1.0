@@ -31,6 +31,11 @@ const Patient     = require("../../models/Patient/patientModel");
 const mongoose    = require("mongoose");
 const { assertDrugSafeOrOverride } = require("../../utils/allergyCheck");
 const scheduleXRegister = require("../../services/Pharmacy/scheduleXRegister");
+// R7cu — pulled to module scope so collectCredit() can convert payment
+// amounts to Decimal128 + retry on VersionError races (two cashiers
+// collecting on the same sale simultaneously).
+const { toDec } = require("../../utils/money");
+const retryVersionError = require("../../utils/retryVersionError");
 
 const todayISO  = () => new Date().toISOString().slice(0, 10);
 const isOid     = (v) => mongoose.Types.ObjectId.isValid(v);
@@ -882,6 +887,270 @@ exports.getSale = async (req, res) => {
     if (!s) return res.status(404).json({ success: false, message: "Sale not found" });
     res.json({ success: true, data: s });
   } catch (e) { sendErr(res, e); }
+};
+
+/* ════════════════════════════════════════════════════════════════
+   R7cu — IPD PHARMACY CREDIT LEDGER
+   ──────────────────────────────────────────────────────────────
+   Pharmacy bills can be booked with balanceDue > 0 — most commonly
+   when the IPD ward sends a verbal indent and the patient settles
+   later (or family settles at discharge). This block exposes 3
+   surfaces + 1 helper:
+     1. listIpdCreditAdmissions — pharmacist sees every active IPD
+        admission that owes pharmacy money, oldest-due first
+     2. getCreditByAdmission     — drill into one admission's credit
+        sales (so pharmacist can hand a list to the family)
+     3. collectCredit            — record a payment against ONE sale,
+        atomically reduces balanceDue, appends collectionLog entry
+     4. getOutstandingForAdmission — shared helper used by both the
+        list endpoint AND the admission discharge gate (so the
+        ground truth "is pharmacy clear?" lives in one place)
+   ────────────────────────────────────────────────────────────── */
+
+// Internal helper — exported so admissionController can call it
+// during the BillCleared transition. Returns { total, count, sales }
+// where sales is the lean array of unpaid PharmacySale docs.
+exports.getOutstandingForAdmission = async function (admissionId) {
+  if (!admissionId || !isOid(admissionId)) {
+    return { total: 0, count: 0, sales: [] };
+  }
+  const sales = await Sale.find({
+    admissionId,
+    // status:"Completed" excludes Cancelled/Refunded sales — they
+    // don't carry real balance even if the field is non-zero.
+    status:    "Completed",
+    saleType:  { $in: ["IPD", "Homecare"] },
+  }).select("billNumber grandTotal amountPaid balanceDue items createdAt").lean();
+  let total = 0;
+  const open = [];
+  for (const s of sales) {
+    const bal = Number(s.balanceDue?.toString?.() ?? s.balanceDue ?? 0);
+    if (bal > 0) {
+      total += bal;
+      open.push({ ...s, balanceDue: bal });
+    }
+  }
+  return { total: round2(total), count: open.length, sales: open };
+};
+
+// GET /api/pharmacy/credit/ipd-admissions
+// One row per active IPD admission with pharmacy outstanding > 0.
+exports.listIpdCreditAdmissions = async (req, res) => {
+  try {
+    const Admission = require("../../models/Patient/admissionModel");
+    // Aggregate PharmacySale → group by admissionId where balanceDue > 0.
+    // We do the grouping in JS rather than via $group + $lookup because
+    // the typical active-IPD set is small (< 200) and the JS path keeps
+    // the Decimal128-unwrap logic identical to getOutstandingForAdmission
+    // (single source of truth).
+    const rawSales = await Sale.find({
+      saleType:    { $in: ["IPD", "Homecare"] },
+      status:      "Completed",
+      admissionId: { $ne: null },
+    }).select("admissionId admissionNumber patientUHID patientName balanceDue grandTotal createdAt billNumber").lean();
+    const byAdm = new Map();
+    for (const s of rawSales) {
+      const bal = Number(s.balanceDue?.toString?.() ?? s.balanceDue ?? 0);
+      if (bal <= 0) continue;
+      const key = String(s.admissionId);
+      const cur = byAdm.get(key) || {
+        admissionId:     s.admissionId,
+        admissionNumber: s.admissionNumber || "",
+        UHID:            s.patientUHID || "",
+        patientName:     s.patientName || "",
+        outstanding:     0,
+        billCount:       0,
+        oldestDueAt:     null,
+      };
+      cur.outstanding += bal;
+      cur.billCount   += 1;
+      if (!cur.oldestDueAt || (s.createdAt && s.createdAt < cur.oldestDueAt)) {
+        cur.oldestDueAt = s.createdAt;
+      }
+      byAdm.set(key, cur);
+    }
+    // Hydrate the admission record so we can show bed/ward/consultant
+    // and confirm the admission is still Active (a Cancelled or
+    // Discharged admission's pharmacy credit is still real but the
+    // discharge gate doesn't apply, so we flag it separately).
+    const admIds = Array.from(byAdm.keys());
+    const adms = await Admission.find({ _id: { $in: admIds } })
+      .select("admissionNumber UHID patientId bedId wardName department primaryConsultant status admissionDate")
+      .populate("patientId", "fullName age gender contactNumber")
+      .populate("bedId",     "bedNumber wardName")
+      .lean();
+    const admMap = new Map(adms.map(a => [String(a._id), a]));
+    const rows = Array.from(byAdm.values()).map(r => {
+      const a = admMap.get(String(r.admissionId)) || {};
+      return {
+        ...r,
+        outstanding:    round2(r.outstanding),
+        admissionStatus: a.status || "Unknown",
+        bedNumber:      a.bedId?.bedNumber || "—",
+        wardName:       a.bedId?.wardName || a.wardName || a.department || "—",
+        consultant:     a.primaryConsultant || "",
+        patientFullName: a.patientId?.fullName || r.patientName,
+        patientAge:     a.patientId?.age || null,
+        patientGender:  a.patientId?.gender || "",
+        patientPhone:   a.patientId?.contactNumber || "",
+        admissionDate:  a.admissionDate || null,
+      };
+    });
+    // Sort: still-Active first (those block discharge), then oldest-due first.
+    rows.sort((a, b) => {
+      const aActive = a.admissionStatus === "Active" ? 0 : 1;
+      const bActive = b.admissionStatus === "Active" ? 0 : 1;
+      if (aActive !== bActive) return aActive - bActive;
+      return new Date(a.oldestDueAt || 0) - new Date(b.oldestDueAt || 0);
+    });
+    const grand = rows.reduce((s, r) => s + r.outstanding, 0);
+    res.json({
+      success: true,
+      data: rows,
+      summary: { admissions: rows.length, totalOutstanding: round2(grand) },
+    });
+  } catch (e) { sendErr(res, e); }
+};
+
+// GET /api/pharmacy/credit/admission/:admissionId
+// Itemised credit sales for one admission — drill-down for the
+// pharmacist. Mirrors getOutstandingForAdmission but enriched with
+// per-bill item lines so the family can review what they're paying for.
+exports.getCreditByAdmission = async (req, res) => {
+  try {
+    const { admissionId } = req.params;
+    if (!isOid(admissionId)) {
+      return res.status(400).json({ success: false, message: "Invalid admissionId" });
+    }
+    const Admission = require("../../models/Patient/admissionModel");
+    const adm = await Admission.findById(admissionId)
+      .select("admissionNumber UHID patientId bedId wardName department primaryConsultant status admissionDate")
+      .populate("patientId", "fullName age gender contactNumber")
+      .populate("bedId",     "bedNumber wardName")
+      .lean();
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    const allSales = await Sale.find({
+      admissionId,
+      saleType: { $in: ["IPD", "Homecare"] },
+      status:   "Completed",
+    }).sort({ createdAt: 1 }).lean();
+    const openSales = allSales.filter(s => {
+      const b = Number(s.balanceDue?.toString?.() ?? s.balanceDue ?? 0);
+      return b > 0;
+    });
+    const totalOutstanding = openSales.reduce(
+      (s, x) => s + Number(x.balanceDue?.toString?.() ?? x.balanceDue ?? 0), 0,
+    );
+    res.json({
+      success: true,
+      data: {
+        admission: adm,
+        openSales,
+        // also include closed sales so the family sees "what you've
+        // already paid" + "what's outstanding" in one panel
+        closedSales: allSales.filter(s => !openSales.includes(s)),
+        totalOutstanding: round2(totalOutstanding),
+      },
+    });
+  } catch (e) { sendErr(res, e); }
+};
+
+// POST /api/pharmacy/sales/:id/collect-credit
+// Records a payment against an IPD/credit sale. Atomic:
+//   • amount must be > 0 and ≤ current balanceDue
+//   • amountPaid +=, balanceDue −=, collectionLog row appended
+//   • once balanceDue hits 0 the sale is "fully paid" but stays
+//     status:"Completed" — we never bounce status because the
+//     dispense already happened (only Cancelled/Refunded change status)
+exports.collectCredit = async (req, res) => {
+  try {
+    const saleId = req.params.id;
+    if (!isOid(saleId)) {
+      return res.status(400).json({ success: false, message: "Invalid sale id" });
+    }
+    const amt = Number(req.body?.amount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return res.status(400).json({
+        success: false, code: "INVALID_AMOUNT",
+        message: "amount must be a positive number",
+      });
+    }
+    const mode   = _normPaymentMode(req.body?.mode, "Cash");
+    const txnRef = String(req.body?.txnRef || "").trim();
+    const notes  = String(req.body?.notes  || "").trim();
+
+    // Load fresh, validate balance, mutate, save. Wrapped in
+    // retryVersionError so two concurrent collections on the same
+    // sale (rare but possible) don't 500 with VersionError —
+    // second one retries against the fresh doc + sees less balance.
+    const updated = await retryVersionError(async () => {
+      const sale = await Sale.findById(saleId);
+      if (!sale) {
+        const e = new Error("Sale not found"); e.status = 404; throw e;
+      }
+      if (sale.status !== "Completed") {
+        const e = new Error(`Cannot collect on a ${sale.status} sale`);
+        e.status = 409; e.code = "SALE_NOT_COLLECTABLE"; throw e;
+      }
+      const bal = Number(sale.balanceDue?.toString?.() ?? sale.balanceDue ?? 0);
+      if (bal <= 0) {
+        const e = new Error("Sale is already fully paid"); e.status = 409;
+        e.code = "ALREADY_PAID"; throw e;
+      }
+      if (amt > bal + 0.01) {           // 1 paisa epsilon
+        const e = new Error(`Amount ₹${amt.toFixed(2)} exceeds outstanding ₹${bal.toFixed(2)}`);
+        e.status = 400; e.code = "OVER_COLLECTION"; throw e;
+      }
+      const newPaid = Number(sale.amountPaid?.toString?.() ?? sale.amountPaid ?? 0) + amt;
+      const newBal  = round2(bal - amt);
+      sale.amountPaid = toDec(newPaid);
+      sale.balanceDue = toDec(newBal);
+      // Receipt # — sequential per pharmacy. Best-effort: failures
+      // here don't block the payment, just leave receiptNumber empty
+      // (operator can issue a manual receipt).
+      let receiptNumber = "";
+      try {
+        const seq = await nextSeq("pharmacyCreditCollection");
+        receiptNumber = `PHM-COLL-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
+      } catch (_) { /* non-fatal */ }
+      sale.collectionLog = sale.collectionLog || [];
+      sale.collectionLog.push({
+        amount: toDec(amt),
+        mode,
+        txnRef,
+        receiptNumber,
+        collectedAt: new Date(),
+        collectedBy: req.user?.fullName || "System",
+        collectedById: req.user?._id || null,
+        notes,
+      });
+      // Once balanceDue hits 0, paymentMode flips from "Credit" to
+      // whatever cleared it — so the bill print shows the final mode.
+      // Mixed mode if the original was Credit and we have ≥ 2
+      // distinct modes across collectionLog.
+      if (newBal === 0) {
+        const modes = new Set(sale.collectionLog.map(c => c.mode));
+        sale.paymentMode = modes.size > 1 ? "Mixed" : (mode || "Cash");
+      }
+      await sale.save();
+      return sale.toObject();
+    });
+
+    res.json({
+      success: true,
+      message: updated.balanceDue.toString() === "0"
+        ? "Credit cleared — bill is now fully paid"
+        : `Partial collection recorded — ₹${round2(Number(updated.balanceDue.toString()))} still outstanding`,
+      data: updated,
+    });
+  } catch (e) {
+    const status = e.status || 500;
+    res.status(status).json({
+      success: false,
+      code:    e.code || "COLLECT_FAILED",
+      message: e.message,
+    });
+  }
 };
 
 /* ════════════════════════════════════════════════════════════════

@@ -838,6 +838,31 @@ class AdmissionController {
     // never runs for them.
     const Admission   = require("../../models/Patient/admissionModel");
     const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+
+    // R7cu — HARD pharmacy-credit gate. Before flipping the stage to
+    // BillCleared, confirm there is NO outstanding pharmacy bill for
+    // this admission. Without this gate, a discharged patient walks
+    // out and the pharmacy chases family for ₹X that should have been
+    // collected at the counter — the user explicitly flagged this as
+    // unacceptable ("pharmacy IPD credit ledger fully paid hone tak
+    // discharge possible nhi hai"). Pharmacist clears the credit via
+    // Pharmacy → IPD Credit tab; only THEN the bill clearance can
+    // proceed.
+    const pharmacyCtrl = require("../Pharmacy/pharmacyController");
+    const phOutstanding = await pharmacyCtrl.getOutstandingForAdmission(req.params.id);
+    if (phOutstanding.total > 0) {
+      return res.status(409).json({
+        success: false,
+        code:    "PHARMACY_OUTSTANDING",
+        message: `Pharmacy outstanding ₹${phOutstanding.total.toFixed(2)} on ${phOutstanding.count} bill(s). ` +
+                 `Collect via Pharmacy → IPD Credit before clearing the final bill.`,
+        pharmacyOutstanding: phOutstanding.total,
+        pharmacyBillCount:   phOutstanding.count,
+        // Bill numbers so the frontend can deep-link the pharmacist.
+        pharmacyBillNumbers: phOutstanding.sales.map(s => s.billNumber).filter(Boolean),
+      });
+    }
+
     const set = {
       "dischargeWorkflow.stage":         "BillCleared",
       "dischargeWorkflow.billClearedAt": new Date(),

@@ -115,6 +115,10 @@ const BASE_TABS = [
   // line with one click. Avoids re-typing the drug list off a paper
   // prescription and prevents transcription errors.
   { key: "opdrx",     label: "OPD Rx",     icon: "pi-file" },
+  // R7cu — IPD Credit Ledger: pharmacist sees every active IPD admission
+  // with pharmacy outstanding > 0, drills in to collect payment. The
+  // discharge flow is HARD-blocked at the backend until this clears.
+  { key: "ipdcredit", label: "IPD Credit", icon: "pi-credit-card" },
   { key: "indents",   label: "Live Indents", icon: "pi-inbox" }, // badge + tone wired dynamically
   { key: "sales",     label: "Sales Register", icon: "pi-receipt" },
   { key: "registers", label: "Registers",  icon: "pi-book" },
@@ -196,8 +200,10 @@ export default function PharmacyHomePage() {
     // deployment. Hiding the tab is the first guard; the second guard is
     // the backend, which 404s the underlying routes when PHARMACY_MODE
     // === standalone so a leaked token can't reach them either.
+    // R7cu — IPD Credit also depends on hospital admission collections,
+    // so it's hidden in standalone retail mode alongside opdrx/indents.
     const filtered = IS_PHARMACY_STANDALONE
-      ? BASE_TABS.filter(t => t.key !== "opdrx" && t.key !== "indents")
+      ? BASE_TABS.filter(t => t.key !== "opdrx" && t.key !== "indents" && t.key !== "ipdcredit")
       : BASE_TABS;
     return filtered.map(t =>
       t.key === "indents" ? { ...t, badge, badgeTone } : t
@@ -257,6 +263,7 @@ export default function PharmacyHomePage() {
         {tab === "grn"       && <GRNTab />}
         {tab === "dispense"  && <DispenseTab />}
         {tab === "opdrx"     && <OPDRxTab />}
+        {tab === "ipdcredit" && <IPDCreditTab />}
         {tab === "indents"   && <PharmacyIndentsPage embedded />}
         {tab === "sales"     && <SalesTab />}
         {tab === "registers" && <RegistersTab />}
@@ -3312,6 +3319,374 @@ function OPDRxTab() {
                   {qdSaving ? "Dispensing…" : "Confirm & Sell"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+   R7cu — IPD CREDIT LEDGER TAB
+   Pharmacist sees every active IPD admission with pharmacy
+   outstanding > 0, drills in to collect payment. The discharge
+   flow at admissionController.clearFinalBill is HARD-blocked
+   on the same outstanding > 0 condition, so this tab is the
+   only place that credit can be cleared before discharge.
+══════════════════════════════════════════════════════════════════ */
+function IPDCreditTab() {
+  const [loading, setLoading]   = useState(false);
+  const [rows, setRows]         = useState([]);
+  const [summary, setSummary]   = useState({ admissions: 0, totalOutstanding: 0 });
+  const [openAdm, setOpenAdm]   = useState(null);  // selected admission detail blob
+  const [openLoading, setOpenLoading] = useState(false);
+
+  // Per-bill collection modal — open with `setCollect({sale, max})`.
+  const [collect, setCollect] = useState(null);
+  const [colAmt, setColAmt]   = useState("");
+  const [colMode, setColMode] = useState("Cash");
+  const [colTxn, setColTxn]   = useState("");
+  const [colNotes, setColNotes] = useState("");
+  const [colSaving, setColSaving] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/credit/ipd-admissions`);
+      setRows(r?.data?.data || []);
+      setSummary(r?.data?.summary || { admissions: 0, totalOutstanding: 0 });
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Failed to load IPD credit ledger");
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const openAdmission = async (adm) => {
+    setOpenLoading(true);
+    setOpenAdm({ admission: null, openSales: [], closedSales: [], totalOutstanding: 0, _meta: adm });
+    try {
+      const r = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/credit/admission/${adm.admissionId}`);
+      setOpenAdm({ ...(r?.data?.data || {}), _meta: adm });
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Failed to load credit detail");
+    } finally { setOpenLoading(false); }
+  };
+
+  const startCollect = (sale) => {
+    const bal = Number(sale.balanceDue?.toString?.() ?? sale.balanceDue ?? 0);
+    setCollect({ sale, max: bal });
+    setColAmt(String(bal.toFixed(2)));   // default = clear in full
+    setColMode("Cash");
+    setColTxn("");
+    setColNotes("");
+  };
+
+  const submitCollect = async () => {
+    if (!collect?.sale?._id) return;
+    const amt = Number(colAmt);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      toast.warn("Enter a positive collection amount"); return;
+    }
+    if (amt > collect.max + 0.01) {
+      toast.warn(`Amount cannot exceed outstanding ₹${collect.max.toFixed(2)}`); return;
+    }
+    setColSaving(true);
+    try {
+      const r = await axios.post(
+        `${API_ENDPOINTS.BASE}/pharmacy/sales/${collect.sale._id}/collect-credit`,
+        { amount: amt, mode: colMode, txnRef: colTxn, notes: colNotes },
+      );
+      toast.success(r?.data?.message || "Collection recorded");
+      setCollect(null);
+      // Refresh both the list AND the open admission drawer so the
+      // outstanding numbers move immediately.
+      await load();
+      if (openAdm?._meta) await openAdmission(openAdm._meta);
+    } catch (e) {
+      const msg = e?.response?.data?.message || e.message || "Collect failed";
+      toast.error(msg);
+    } finally { setColSaving(false); }
+  };
+
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+      {/* Hero strip */}
+      <div style={{ display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 220px", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 10, padding: "12px 16px" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "#92400e" }}>
+            Admissions with Outstanding
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#92400e", marginTop: 4, fontFamily: "'DM Mono', monospace" }}>
+            {summary.admissions}
+          </div>
+        </div>
+        <div style={{ flex: "1 1 220px", background: "#fee2e2", border: "1px solid #fecaca", borderRadius: 10, padding: "12px 16px" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "#b91c1c" }}>
+            Total Pharmacy Outstanding
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#b91c1c", marginTop: 4, fontFamily: "'DM Mono', monospace" }}>
+            {fmtINR(summary.totalOutstanding)}
+          </div>
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
+          <button onClick={load} disabled={loading} style={{
+            padding: "8px 14px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
+            borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 12,
+          }}>
+            <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} style={{ marginRight: 5 }} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Hard-block notice */}
+      <div style={{
+        background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af",
+        borderRadius: 8, padding: "8px 14px", fontSize: 11.5, marginBottom: 14,
+        display: "flex", alignItems: "center", gap: 8,
+      }}>
+        <i className="pi pi-lock" style={{ fontSize: 12 }} />
+        <span><strong>Discharge gate active.</strong> Until every row below shows ₹0 outstanding, the receptionist cannot clear the patient's final bill — they'll see a 409 with a deep-link to this tab.</span>
+      </div>
+
+      {loading && rows.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", color: C.muted }}>
+          <i className="pi pi-spin pi-spinner" style={{ fontSize: 24 }} />
+        </div>
+      ) : rows.length === 0 ? (
+        <div style={{ padding: 36, textAlign: "center", background: "#f0fdf4", border: "1px dashed #86efac", borderRadius: 10, color: "#15803d", fontSize: 13 }}>
+          <i className="pi pi-check-circle" style={{ fontSize: 22, marginBottom: 8, display: "block" }} />
+          All IPD pharmacy bills are fully paid. No admissions blocking discharge.
+        </div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: "#f1f5f9" }}>
+              <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px" }}>Admission</th>
+              <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px" }}>Patient</th>
+              <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px" }}>Bed / Ward</th>
+              <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", width: 80 }}>Bills</th>
+              <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", width: 130 }}>Outstanding</th>
+              <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", width: 110 }}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={String(r.admissionId)} style={{ borderTop: `1px solid ${C.border}` }}>
+                <td style={{ padding: "8px 12px", fontFamily: "'DM Mono', monospace", fontWeight: 700, color: C.text }}>
+                  {r.admissionNumber}
+                  {r.admissionStatus !== "Active" && (
+                    <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 6px", borderRadius: 8, background: "#f1f5f9", color: C.muted, fontWeight: 700 }}>
+                      {r.admissionStatus}
+                    </span>
+                  )}
+                </td>
+                <td style={{ padding: "8px 12px", color: C.text }}>
+                  <div style={{ fontWeight: 700 }}>{r.patientFullName || "—"}</div>
+                  <div style={{ fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace" }}>{r.UHID}</div>
+                </td>
+                <td style={{ padding: "8px 12px", color: C.text, fontSize: 11 }}>
+                  {r.bedNumber} · {r.wardName}
+                </td>
+                <td style={{ padding: "8px 12px", textAlign: "right", color: C.text, fontFamily: "'DM Mono', monospace" }}>
+                  {r.billCount}
+                </td>
+                <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: "#b91c1c", fontFamily: "'DM Mono', monospace" }}>
+                  {fmtINR(r.outstanding)}
+                </td>
+                <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                  <button onClick={() => openAdmission(r)} style={{
+                    padding: "5px 12px", background: C.orange, color: "#fff", border: "none",
+                    borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                  }}>
+                    <i className="pi pi-arrow-right" style={{ marginRight: 4, fontSize: 10 }} />
+                    Collect
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {/* Drill-down drawer */}
+      {openAdm && (
+        <div onClick={() => setOpenAdm(null)} style={{
+          position: "fixed", inset: 0, background: "rgba(15,23,42,.55)",
+          display: "flex", alignItems: "stretch", justifyContent: "flex-end", zIndex: 9999,
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            width: 720, maxWidth: "95vw", background: "#fff",
+            boxShadow: "-12px 0 40px rgba(0,0,0,.3)", padding: 22, overflowY: "auto",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>
+                Pharmacy Credit — {openAdm._meta?.admissionNumber}
+              </div>
+              <button onClick={() => setOpenAdm(null)} style={{
+                background: "transparent", border: "none", fontSize: 22, color: C.muted, cursor: "pointer",
+              }}>×</button>
+            </div>
+
+            {openLoading || !openAdm.admission ? (
+              <div style={{ padding: 60, textAlign: "center", color: C.muted }}>
+                <i className="pi pi-spin pi-spinner" style={{ fontSize: 24 }} />
+              </div>
+            ) : (
+              <>
+                <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 11.5 }}>
+                  <div style={{ fontWeight: 800, color: C.text, fontSize: 13, marginBottom: 4 }}>
+                    {openAdm.admission.patientId?.fullName || openAdm._meta?.patientName}
+                  </div>
+                  <div style={{ color: C.muted }}>
+                    <span style={{ fontFamily: "'DM Mono', monospace" }}>{openAdm.admission.UHID}</span>
+                    {openAdm.admission.patientId?.age != null && <> · {openAdm.admission.patientId.age}y</>}
+                    {openAdm.admission.patientId?.gender && <> · {openAdm.admission.patientId.gender}</>}
+                    {openAdm.admission.patientId?.contactNumber && <> · <i className="pi pi-phone" style={{ fontSize: 9 }} /> {openAdm.admission.patientId.contactNumber}</>}
+                  </div>
+                  <div style={{ color: C.muted, marginTop: 2 }}>
+                    Bed {openAdm.admission.bedId?.bedNumber || "—"} · {openAdm.admission.bedId?.wardName || openAdm.admission.wardName || openAdm.admission.department || "—"}
+                    {openAdm.admission.primaryConsultant && <> · {openAdm.admission.primaryConsultant}</>}
+                  </div>
+                </div>
+
+                {/* Open (outstanding) bills */}
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#b91c1c", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 6 }}>
+                  Outstanding Bills · {fmtINR(openAdm.totalOutstanding)}
+                </div>
+                {openAdm.openSales.length === 0 ? (
+                  <div style={{ padding: 18, textAlign: "center", color: "#15803d", background: "#f0fdf4", borderRadius: 8, fontSize: 12, marginBottom: 14 }}>
+                    <i className="pi pi-check-circle" style={{ marginRight: 6 }} />
+                    Fully cleared — discharge is unblocked.
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: 14 }}>
+                    {openAdm.openSales.map((s) => {
+                      const bal   = Number(s.balanceDue?.toString?.() ?? s.balanceDue ?? 0);
+                      const total = Number(s.grandTotal?.toString?.() ?? s.grandTotal ?? 0);
+                      const paid  = Number(s.amountPaid?.toString?.() ?? s.amountPaid ?? 0);
+                      return (
+                        <div key={s._id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", marginBottom: 8 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, fontSize: 12, color: C.text }}>
+                              {s.billNumber}
+                            </span>
+                            <span style={{ fontSize: 10, color: C.muted }}>
+                              {new Date(s.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: C.muted, marginBottom: 6 }}>
+                            <span>Total {fmtINR(total)} · Paid {fmtINR(paid)}</span>
+                            <strong style={{ color: "#b91c1c" }}>Due {fmtINR(bal)}</strong>
+                          </div>
+                          {Array.isArray(s.items) && s.items.length > 0 && (
+                            <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8, fontStyle: "italic" }}>
+                              {s.items.slice(0, 3).map(i => i.drugName).join(", ")}
+                              {s.items.length > 3 && ` +${s.items.length - 3} more`}
+                            </div>
+                          )}
+                          <button onClick={() => startCollect(s)} style={{
+                            padding: "6px 14px", background: C.green, color: "#fff", border: "none",
+                            borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                          }}>
+                            <i className="pi pi-wallet" style={{ marginRight: 5, fontSize: 10 }} />
+                            Collect ₹{bal.toFixed(2)}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Already-paid bills (history) */}
+                {openAdm.closedSales.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: "#15803d", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 6 }}>
+                      Already Cleared
+                    </div>
+                    <div style={{ fontSize: 11 }}>
+                      {openAdm.closedSales.map((s) => {
+                        const total = Number(s.grandTotal?.toString?.() ?? s.grandTotal ?? 0);
+                        return (
+                          <div key={s._id} style={{ padding: "6px 12px", border: `1px solid ${C.border}`, borderRadius: 6, marginBottom: 4, display: "flex", justifyContent: "space-between", color: C.muted }}>
+                            <span style={{ fontFamily: "'DM Mono', monospace" }}>{s.billNumber}</span>
+                            <span>{fmtINR(total)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Collection modal */}
+      {collect && (
+        <div onClick={() => !colSaving && setCollect(null)} style={{
+          position: "fixed", inset: 0, background: "rgba(15,23,42,.55)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10001,
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            width: 460, maxWidth: "90vw", background: "#fff", borderRadius: 14, padding: 22,
+            boxShadow: "0 20px 50px rgba(0,0,0,.3)",
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.text, marginBottom: 12 }}>
+              <i className="pi pi-wallet" style={{ marginRight: 6, color: C.green }} />
+              Collect Pharmacy Credit
+            </div>
+            <div style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 12px", fontSize: 11.5, color: "#92400e", marginBottom: 12 }}>
+              <strong>{collect.sale.billNumber}</strong> · Outstanding <strong>₹{collect.max.toFixed(2)}</strong>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Amount</label>
+                <input type="number" min="0" step="0.01" className="his-input"
+                  value={colAmt} onChange={(e) => setColAmt(e.target.value)}
+                  style={{ width: "100%", fontFamily: "'DM Mono', monospace", fontWeight: 700 }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Mode</label>
+                <select className="his-select" value={colMode}
+                  onChange={(e) => setColMode(e.target.value)} style={{ width: "100%" }}>
+                  {["Cash", "Card", "UPI", "Mixed"].map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Txn Ref (optional)</label>
+              <input className="his-input" value={colTxn}
+                onChange={(e) => setColTxn(e.target.value)}
+                placeholder="UPI ref / card last-4 / cheque #"
+                style={{ width: "100%" }} />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 3 }}>Notes (optional)</label>
+              <input className="his-input" value={colNotes}
+                onChange={(e) => setColNotes(e.target.value)}
+                placeholder="e.g. paid by family member at counter"
+                style={{ width: "100%" }} />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={() => setCollect(null)} disabled={colSaving} style={{
+                padding: "8px 16px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
+                borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: colSaving ? "not-allowed" : "pointer",
+              }}>Cancel</button>
+              <button onClick={submitCollect} disabled={colSaving} style={{
+                padding: "8px 18px", background: colSaving ? "#94a3b8" : C.green,
+                color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 12,
+                cursor: colSaving ? "not-allowed" : "pointer",
+              }}>
+                <i className={`pi ${colSaving ? "pi-spin pi-spinner" : "pi-check"}`} style={{ marginRight: 5 }} />
+                {colSaving ? "Recording…" : "Confirm Collection"}
+              </button>
             </div>
           </div>
         </div>
