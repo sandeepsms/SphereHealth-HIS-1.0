@@ -1534,6 +1534,23 @@ function NursingNotesContent({ selectedPatient }) {
                     state: { uhid: patient?.UHID || patient?.uhid || searchUHID || "" },
                   }),
                 },
+                /* R7du — Restraint Register (NABH COP.17). Nurse-side
+                   structured entry for restraint episodes (physical /
+                   chemical / both). Doctor enters the order as plain text
+                   in nursing communication; this tile opens the form that
+                   captures device, reason, monitoring frequency, and
+                   alternatives tried — auto-populating the COP.17 register
+                   row via /api/restraints → emitRestraint. */
+                {
+                  id: "restraint-nav",
+                  title: "Restraint Register",
+                  subtitle: "Physical / chemical restraint episodes (NABH COP.17)",
+                  icon: "pi-lock",
+                  color: "#dc2626",
+                  tint: "#fee2e2",
+                  badges: [{ label: "NABH", tone: "ok" }, { label: "COP.17", tone: "warn" }],
+                  action: () => navigate(`/nursing/restraints/${encodeURIComponent(patient?.UHID || patient?.uhid || searchUHID || "")}`),
+                },
                 {
                   id: "ipdassessment-nav",
                   title: "IPD Initial Assessment",

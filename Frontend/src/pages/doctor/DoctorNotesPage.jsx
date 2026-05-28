@@ -384,13 +384,22 @@ function DoctorNotesContent({ selectedPatient }) {
   const [consult, setConsult] = useState({ consultantName: "", speciality: "", consultantRegNo: "", referredBy: "", reason: "", clinicalSummary: "", investigations: "", findings: "", impression: "", recommendations: "", followUp: "" });
 
   /* Pre-op */
-  const [preop, setPreop] = useState({ procedure: "", indication: "", preopDiagnosis: "", asaGrade: "ASA I", plannedAnaesthesia: "General", bloodGroup: "", crossMatch: false, cbcReviewed: false, ptReviewed: false, ecgReviewed: false, cxrReviewed: false, echoReviewed: false, lftsReviewed: false, rftReviewed: false, comorbidities: "", currentMeds: "", allergies: "NKDA", consentObtained: true, surgeon: "", anaesthetist: "", preopOrders: "" });
+  // R7em-2 — added NABH COP.13 pre-op assessment fields (fastingHours, airwayPlan,
+  // preOpVitals, inductionAt/reversalAt, aldreteScore) so the ASA register row is complete.
+  const [preop, setPreop] = useState({ procedure: "", indication: "", preopDiagnosis: "", asaGrade: "ASA I", plannedAnaesthesia: "General", bloodGroup: "", crossMatch: false, cbcReviewed: false, ptReviewed: false, ecgReviewed: false, cxrReviewed: false, echoReviewed: false, lftsReviewed: false, rftReviewed: false, comorbidities: "", currentMeds: "", allergies: "NKDA", consentObtained: true, surgeon: "", anaesthetist: "", preopOrders: "",
+    /* R7em-2 — NABH COP.13 pre-op assessment */
+    fastingHours: "", airwayPlan: "", preOpBp: "", preOpPulse: "", preOpTemp: "", preOpSpo2: "",
+    inductionAt: "", reversalAt: "", aldreteScore: "" });
 
   /* Post-op */
   const [postop, setPostop] = useState({ procedurePerformed: "", operativeFindings: "", anaesthesia: "General", surgeon: "", anaesthetist: "", startTime: "", endTime: "", bloodLoss: "", transfusion: "None", fluidsGiven: "", urineOutput: "", specimenSent: false, specimenType: "", postopDiagnosis: "", conditionLeavingOT: "Stable", recoveryInstructions: "", postopOrders: "" });
 
   /* Death Note */
-  const [death, setDeath] = useState({ dateTime: "", causeDeath1: "", causeDeath2: "", causeDeath3: "", contributing: "", sequenceOfEvents: "", modeOfDeath: "Cardiac Arrest", dnrInPlace: false, familyInformed: true, familyInformedBy: "", familyInformedTime: "", mlc: false, pmAdvised: false, certificateIssued: false });
+  // R7em-7 — placeOfDeath / postMortemDone / deathCertificateNumber /
+  // deathCertificateIssuedAt added to mirror what the Mortality Register
+  // (COP.18) needs on emit. Legacy fields untouched; backend aliases tolerate
+  // both naming conventions (dateTime ↔ dateOfDeath, modeOfDeath ↔ manner).
+  const [death, setDeath] = useState({ dateTime: "", causeDeath1: "", causeDeath2: "", causeDeath3: "", contributing: "", sequenceOfEvents: "", modeOfDeath: "Cardiac Arrest", placeOfDeath: "Ward", dnrInPlace: false, familyInformed: true, familyInformedBy: "", familyInformedTime: "", mlc: false, pmAdvised: false, postMortemDone: false, certificateIssued: false, deathCertificateNumber: "", deathCertificateIssuedAt: "" });
 
   /* Amendment */
   const [amendment, setAmendment] = useState({ originalNoteId: "", correction: "", reason: "", witness: "" });
@@ -1729,9 +1738,13 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     dateTime:"Date/Time", causeDeath1:"Immediate Cause", causeDeath2:"Antecedent Cause",
                     causeDeath3:"Underlying Cause", contributing:"Contributing Conditions",
                     sequenceOfEvents:"Sequence of Events", modeOfDeath:"Mode of Death",
+                    placeOfDeath:"Place of Death",
                     dnrInPlace:"DNR", familyInformed:"Family Informed", familyInformedBy:"Informed By",
                     familyInformedTime:"Informed At", mlc:"MLC", pmAdvised:"PM Advised",
-                    certificateIssued:"Certificate Issued", originalNoteId:"Original Note",
+                    postMortemDone:"PM Done",
+                    certificateIssued:"Certificate Issued",
+                    deathCertificateNumber:"Certificate No", deathCertificateIssuedAt:"Certificate Issued At",
+                    originalNoteId:"Original Note",
                     correction:"Correction", witness:"Witness",
                   };
 
@@ -1784,8 +1797,8 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     ],
                     death: [
                       { label:"Cause of Death",             icon:"pi-exclamation-triangle",keys:["dateTime","causeDeath1","causeDeath2","causeDeath3","contributing"] },
-                      { label:"Clinical Sequence",          icon:"pi-file",               keys:["sequenceOfEvents","modeOfDeath"] },
-                      { label:"Administrative",             icon:"pi-clipboard",          keys:["dnrInPlace","familyInformed","familyInformedBy","familyInformedTime","mlc","pmAdvised","certificateIssued"] },
+                      { label:"Clinical Sequence",          icon:"pi-file",               keys:["sequenceOfEvents","modeOfDeath","placeOfDeath"] },
+                      { label:"Administrative",             icon:"pi-clipboard",          keys:["dnrInPlace","familyInformed","familyInformedBy","familyInformedTime","mlc","pmAdvised","postMortemDone","certificateIssued","deathCertificateNumber","deathCertificateIssuedAt"] },
                     ],
                     amendment: [
                       { label:"Amendment",                  icon:"pi-pencil",             keys:["originalNoteId","correction","reason","witness"] },
@@ -2753,6 +2766,25 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <FL label="Current Medications"><input className="his-field" value={preop.currentMeds} placeholder="Metformin held, anticoagulants…" onChange={e=>setPreop(p=>({...p,currentMeds:e.target.value}))} /></FL>
                   </div>
                   <FL label="Pre-op Orders"><textarea className="his-textarea" value={preop.preopOrders} placeholder="NBM from midnight, IV access, pre-med (Tab Alprazolam 0.5mg HS)…" onChange={e=>setPreop(p=>({...p,preopOrders:e.target.value}))} /></FL>
+
+                  {/* R7em-2 — Pre-op Assessment (NABH COP.13) */}
+                  <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Pre-op Assessment (NABH COP.13)</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
+                      <FL label="Fasting (hrs)"><input type="number" min="0" className="his-field" value={preop.fastingHours} placeholder="8" onChange={e=>setPreop(p=>({...p,fastingHours:e.target.value}))} /></FL>
+                      <FL label="Airway Plan"><input className="his-field" value={preop.airwayPlan} placeholder="ETT / LMA / Mask / Nasal" onChange={e=>setPreop(p=>({...p,airwayPlan:e.target.value}))} /></FL>
+                      <FL label="Induction At"><input type="datetime-local" className="his-field" value={preop.inductionAt} onChange={e=>setPreop(p=>({...p,inductionAt:e.target.value}))} /></FL>
+                      <FL label="Reversal At"><input type="datetime-local" className="his-field" value={preop.reversalAt} onChange={e=>setPreop(p=>({...p,reversalAt:e.target.value}))} /></FL>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 10, marginTop: 10 }}>
+                      <FL label="Pre-op BP"><input className="his-field" value={preop.preOpBp} placeholder="120/80" onChange={e=>setPreop(p=>({...p,preOpBp:e.target.value}))} /></FL>
+                      <FL label="Pulse"><input type="number" min="0" className="his-field" value={preop.preOpPulse} placeholder="78" onChange={e=>setPreop(p=>({...p,preOpPulse:e.target.value}))} /></FL>
+                      <FL label="Temp (°F)"><input type="number" step="0.1" className="his-field" value={preop.preOpTemp} placeholder="98.6" onChange={e=>setPreop(p=>({...p,preOpTemp:e.target.value}))} /></FL>
+                      <FL label="SpO₂ (%)"><input type="number" min="0" max="100" className="his-field" value={preop.preOpSpo2} placeholder="98" onChange={e=>setPreop(p=>({...p,preOpSpo2:e.target.value}))} /></FL>
+                      <FL label="Aldrete Score (0–10)"><input type="number" min="0" max="10" className="his-field" value={preop.aldreteScore} placeholder="10" onChange={e=>setPreop(p=>({...p,aldreteScore:e.target.value}))} /></FL>
+                    </div>
+                  </div>
+
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <FL label="Operating Surgeon"><input className="his-field" value={preop.surgeon} placeholder="Dr. Name" onChange={e=>setPreop(p=>({...p,surgeon:e.target.value}))} /></FL>
                     <FL label="Anaesthetist"><input className="his-field" value={preop.anaesthetist} placeholder="Dr. Name" onChange={e=>setPreop(p=>({...p,anaesthetist:e.target.value}))} /></FL>
@@ -2816,11 +2848,26 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   <div style={{ background: "#f1f5f9", border: `1.5px solid #94a3b8`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: C.slate, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
                     <i className="pi pi-exclamation-triangle" style={{ fontSize: 13 }} /> Death Summary — NABH MOI.10 · Complete all mandatory fields
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
                     <FL label="Date & Time of Death *"><input type="datetime-local" className="his-field" value={death.dateTime} onChange={e=>setDeath(p=>({...p,dateTime:e.target.value}))} /></FL>
                     <FL label="Mode of Death *">
                       <select className="his-select" value={death.modeOfDeath} onChange={e=>setDeath(p=>({...p,modeOfDeath:e.target.value}))}>
                         {["Cardiac Arrest","Respiratory Failure","Multi-organ Failure","Septic Shock","Haemorrhage","Renal Failure","Hepatic Failure","CNS Failure","Other"].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </FL>
+                    {/* R7em-7 — placeOfDeath required by NABH COP.18 Mortality Register.
+                        Values match the MortalityRegister enum so the backend accepts them as-is. */}
+                    <FL label="Place of Death *">
+                      <select className="his-select" value={death.placeOfDeath} onChange={e=>setDeath(p=>({...p,placeOfDeath:e.target.value}))}>
+                        {[
+                          ["Ward","Ward"],
+                          ["ICU","ICU"],
+                          ["Emergency","Emergency"],
+                          ["OT","Operation Theatre"],
+                          ["Recovery","Recovery"],
+                          ["Pre-Hospital-Arrival","Outside hospital"],
+                          ["Other","Other"],
+                        ].map(([v,l])=><option key={v} value={v}>{l}</option>)}
                       </select>
                     </FL>
                   </div>
@@ -2839,12 +2886,20 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                     <FL label="Time Family Informed"><input type="time" className="his-field" value={death.familyInformedTime} onChange={e=>setDeath(p=>({...p,familyInformedTime:e.target.value}))} /></FL>
                   </div>
                   <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-                    {[{k:"familyInformed",l:"Family Informed",c:C.green},{k:"dnrInPlace",l:"DNR Was in Place",c:C.blue},{k:"mlc",l:"MLC Case",c:C.red},{k:"pmAdvised",l:"Post-mortem Advised",c:C.amber},{k:"certificateIssued",l:"Death Certificate Issued",c:C.green}].map(f=>(
+                    {/* R7em-7 — postMortemDone added (separate from pmAdvised which only tracks advice) */}
+                    {[{k:"familyInformed",l:"Family Informed",c:C.green},{k:"dnrInPlace",l:"DNR Was in Place",c:C.blue},{k:"mlc",l:"MLC Case",c:C.red},{k:"pmAdvised",l:"Post-mortem Advised",c:C.amber},{k:"postMortemDone",l:"Post-mortem Done",c:C.amber},{k:"certificateIssued",l:"Death Certificate Issued",c:C.green}].map(f=>(
                       <label key={f.k} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontWeight:700, fontSize:13, color:death[f.k]?f.c:C.muted, padding:"6px 12px", border:`1.5px solid ${death[f.k]?f.c:C.border}`, borderRadius:20, background:death[f.k]?(f.c+"15"):"white", transition:"all .15s" }}>
                         <input type="checkbox" checked={death[f.k]} onChange={e=>setDeath(p=>({...p,[f.k]:e.target.checked}))} style={{ accentColor:f.c, width:13, height:13 }} />{f.l}
                       </label>
                     ))}
                   </div>
+                  {/* R7em-7 — Death-certificate fields required by NABH COP.18 Mortality Register */}
+                  {death.certificateIssued && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <FL label="Death Certificate Number"><input className="his-field" value={death.deathCertificateNumber} placeholder="e.g. DC-2026-00123" onChange={e=>setDeath(p=>({...p,deathCertificateNumber:e.target.value}))} /></FL>
+                      <FL label="Certificate Issued At"><input type="datetime-local" className="his-field" value={death.deathCertificateIssuedAt} onChange={e=>setDeath(p=>({...p,deathCertificateIssuedAt:e.target.value}))} /></FL>
+                    </div>
+                  )}
                 </div>
               )}
 

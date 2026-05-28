@@ -197,6 +197,9 @@ const AntimicrobialUseRegisterPage  = lazy(() => import("./pages/nabh/Antimicrob
 const HIC5InfectionControlPage      = lazy(() => import("./pages/compliance/HIC5InfectionControlPage"));
 // R7bq — DVT/VTE Caprini assessment (auto-pops DVT register).
 const CapriniDVTAssessmentPage = lazy(() => import("./pages/nursing/CapriniDVTAssessmentPage"));
+// R7du — Restraint Register entry page (NABH COP.17). Nurse-side write
+// surface; surveyor-facing read view stays at /compliance/nabh/restraint-register.
+const RestraintEntryPage = lazy(() => import("./pages/nursing/RestraintEntryPage"));
 const CredentialingPage = lazy(() => import("./pages/hr/CredentialingPage"));
 const MARPage = lazy(() => import("./pages/clinical/MARPage"));
 const DiabeticChartPage = lazy(() => import("./pages/clinical/DiabeticChartPage"));
@@ -656,6 +659,16 @@ function AppLayout({ collapsed, setCollapsed }) {
                 auto-populates the NABH DVT register (MOM.7 + AAC.4). */}
             <Route path="/nursing/caprini-dvt" element={
               <RoleGuard action="vitals.write"><CapriniDVTAssessmentPage /></RoleGuard>
+            } />
+            {/* R7du — Restraint Register entry (NABH COP.17). Nurse-side
+                write surface. POST to /api/restraints calls emitRestraint
+                inside the backend, populating the surveyor-facing register
+                read view at /compliance/nabh/restraint-register. */}
+            <Route path="/nursing/restraints" element={
+              <RoleGuard action="mar.write"><RestraintEntryPage /></RoleGuard>
+            } />
+            <Route path="/nursing/restraints/:uhid" element={
+              <RoleGuard action="mar.write"><RestraintEntryPage /></RoleGuard>
             } />
             <Route path="/credentials" element={
               <RoleGuard action="hr.credential.read"><CredentialingPage /></RoleGuard>

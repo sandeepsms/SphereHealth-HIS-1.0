@@ -324,6 +324,10 @@ router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
 // Surveyors ask for these as chronological audit-grade logs; the registers
 // are auto-populated from existing clinical flows via nabhRegisterEmitter.
 router.use("/registers/nabh",        require("./Compliance/nabhRegisterRoutes"));
+// R7du — Restraint Register write surface (NABH COP.17). Surveyor reads
+// are served by /registers/nabh/restraint-register above; this surface
+// is the nurse-side write path (POST + remove + monitor).
+router.use("/restraints",            require("./Compliance/restraintRoutes"));
 // R7eg — Clinical-audit roll-ups (NABH HIC.5 ICU bundle compliance, etc.).
 // Aggregates ICUBundle + ClinicalAudit collections for the IC officer's
 // register page (HIC5InfectionControlPage). Read-only, gated compliance.read.
@@ -413,6 +417,20 @@ try {
 } catch (e) {
   if (!/Cannot find module/i.test(e.message || "")) {
     console.warn("[routes] sharps-injury mount failed:", e.message);
+  }
+}
+
+// NABH COP.10 — Procedure notes (post-op completion for OT-bound orders).
+// Saving a note transitions the linked OTRegister row Scheduled → Completed
+// so surveyors get evidence (actual procedure, complications, blood loss,
+// specimens) for every completed surgery. Wrapped in try/catch to match the
+// surrounding pattern — keeps boot clean even if a partial deploy lands.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/procedure-notes", require("./Clinical/procedureNoteRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] procedure-notes mount failed:", e.message);
   }
 }
 

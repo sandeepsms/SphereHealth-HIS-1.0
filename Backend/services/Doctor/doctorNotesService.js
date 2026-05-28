@@ -202,6 +202,39 @@ const createDoctorNote = async (data, doctorUserId) => {
     }
   }
 
+  // R7em-7 — Auto-populate NABH COP.18 Mortality Register when a death
+  // note is saved. emitMortality is idempotent on admissionId (unique
+  // index in the model), so a draft-then-sign sequence won't double-emit.
+  // Death-note fields live in noteDetails (Mixed schema), so we lift
+  // them onto the deathNote shim — the emitter reads dateTime,
+  // causeDeath1, modeOfDeath, etc. directly (R7em-7 aliases).
+  if (note && note.noteType === "death") {
+    try {
+      const { emitMortality } = require("../Compliance/nabhRegisterEmitter");
+      const Patient = require("../../models/Patient/patientModel");
+      const Admission = require("../../models/Patient/admissionModel");
+      const deathNoteForEmit = {
+        ...note.toObject(),
+        ...(noteDetails || {}),
+        admissionId: note.admissionId,
+      };
+      const patient = note.patient
+        ? await Patient.findById(note.patient).select("_id UHID fullName name age gender sex").lean()
+        : null;
+      const admission = note.admissionId
+        ? await Admission.findById(note.admissionId).select("_id admissionNumber admissionDate attendingDoctor attendingDoctorId isMLC mlcNumber").lean()
+        : null;
+      emitMortality({
+        deathNote: deathNoteForEmit,
+        patient: patient || { _id: note.patient, UHID: note.patientUHID, fullName: note.patientName },
+        admission,
+        actor: { _id: doctorObjectId || doctorUserId, fullName: doctorName, role: "Doctor" },
+      }).catch((e) => console.error("[doctorNotes] emitMortality error:", e?.message));
+    } catch (e) {
+      console.error("[doctorNotes] Mortality emit wiring failed:", e?.message);
+    }
+  }
+
   return note;
 };
 
@@ -363,6 +396,39 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
         actor: req?.user || { _id: doctorUserId, name: signedByName },
       }).catch(() => {});
     } catch (_) { /* silent */ }
+  }
+
+  // R7em-7 — Mortality emit on sign-later flow. Death notes are often
+  // created as drafts during the resuscitation and signed once the
+  // attending verifies the clinical sequence. The create-path emit
+  // (above) handles save-and-sign-in-one-go; this branch covers the
+  // draft-then-sign sequence. emitMortality is idempotent on admissionId
+  // so the second call returns the existing row without duplicating.
+  if (note.noteType === "death") {
+    try {
+      const { emitMortality } = require("../Compliance/nabhRegisterEmitter");
+      const Patient = require("../../models/Patient/patientModel");
+      const Admission = require("../../models/Patient/admissionModel");
+      const deathNoteForEmit = {
+        ...note.toObject(),
+        ...(note.noteDetails || {}),
+        admissionId: note.admissionId,
+      };
+      const patient = note.patient
+        ? await Patient.findById(note.patient).select("_id UHID fullName name age gender sex").lean()
+        : null;
+      const admission = note.admissionId
+        ? await Admission.findById(note.admissionId).select("_id admissionNumber admissionDate attendingDoctor attendingDoctorId isMLC mlcNumber").lean()
+        : null;
+      emitMortality({
+        deathNote: deathNoteForEmit,
+        patient: patient || { _id: note.patient, UHID: note.patientUHID, fullName: note.patientName },
+        admission,
+        actor: req?.user || { _id: doctorUserId, fullName: signedByName, role: "Doctor" },
+      }).catch((e) => console.error("[doctorNotes] emitMortality (sign) error:", e?.message));
+    } catch (e) {
+      console.error("[doctorNotes] Mortality emit wiring (sign) failed:", e?.message);
+    }
   }
 
   return note;

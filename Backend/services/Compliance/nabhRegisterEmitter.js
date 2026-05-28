@@ -369,13 +369,18 @@ async function emitBloodTransfusion(args = {}) {
       // R7bn-6 / D2-fix: consentSigned + preTransfusion vitals stamped
       // at order time so the post-tx audit can verify NABH MOM.4 pre-
       // checks. Frontend doctor-order form pushes these via `order.preTransfusion`.
+      // R7em-D-FIX: BT model nests pre-tx vitals under .vitals (VitalsSchema),
+      // not flat. Earlier shape silently dropped bp/pulse/temp/spo2 because
+      // Mongoose strict mode rejected unknown top-level keys.
       preTransfusion: {
         consentSigned: !!order?.preTransfusion?.consentSigned,
-        consentFormId: order?.preTransfusion?.consentFormId || null,
-        bp:    order?.preTransfusion?.bp    || "",
-        pulse: order?.preTransfusion?.pulse || null,
-        temp:  order?.preTransfusion?.temp  || null,
-        spo2:  order?.preTransfusion?.spo2  || null,
+        consentFormId: order?.preTransfusion?.consentFormId || "",
+        vitals: {
+          bp:    order?.preTransfusion?.bp    || "",
+          pulse: order?.preTransfusion?.pulse || null,
+          temp:  order?.preTransfusion?.temp  || null,
+          spo2:  order?.preTransfusion?.spo2  || null,
+        },
       },
       status: "Draft",
       auditTrail: [{
@@ -426,7 +431,10 @@ async function emitPain(args = {}) {
     const { assessment, actor = {} } = args;
     if (!assessment?._id || !assessment?.UHID) return null;
     const data = assessment.data || {};
-    const score = Number(data.painScale);
+    // R7em-1: PainAssessmentPage.jsx posts `nrsScore` (not `painScale`).
+    // Accept both so legacy callers and the live form both work; `??` (not
+    // `||`) preserves 0 = "No Pain" as a valid value.
+    const score = Number(data.painScale ?? data.nrsScore);
     if (!Number.isFinite(score)) return null;
 
     const severity = _painSeverity(score);
@@ -444,6 +452,19 @@ async function emitPain(args = {}) {
       ? new Date(data.reassessmentDue)
       : _painReassessmentDue(severity, assessedAtVal);
 
+    // R7em-1: Frontend posts arrays for location/character (PillSelect
+    // multi-select) and a separate analgesicDrug/Dose/Route trio for the
+    // intervention. Normalise to the register's string-shaped columns.
+    const siteStr      = Array.isArray(data.site) ? data.site.join(", ")
+                       : Array.isArray(data.location) ? data.location.join(", ")
+                       : (data.site || data.location || "");
+    const characterStr = Array.isArray(data.character) ? data.character.join(", ")
+                       : (data.character || "");
+    // R7em-1: intervention = explicit field OR derived from analgesic trio.
+    const interventionStr = data.intervention
+      || [data.analgesicDrug, data.analgesicDose, data.analgesicRoute].filter(Boolean).join(" ")
+      || "";
+
     const row = await PainAssessmentRegister.create({
       patientId: assessment.patientId || null,
       UHID: assessment.UHID,
@@ -452,10 +473,10 @@ async function emitPain(args = {}) {
       painScale: score,
       severity,
       scaleUsed: data.scaleUsed || "NRS",
-      site: data.site || "",
-      character: data.character || "",
+      site: siteStr,                                          // R7em-1: array→string
+      character: characterStr,                                // R7em-1: array→string
       durationMinutes: data.durationMinutes || null,
-      intervention: data.intervention || "",
+      intervention: interventionStr,                          // R7em-1: alias analgesic trio
       reassessmentDue,
       assessedAt: assessedAtVal,
       assessedBy: assessment.recordedBy || actorMeta.byName || "",
@@ -503,7 +524,10 @@ async function emitFallRisk(args = {}) {
     const { assessment, actor = {} } = args;
     if (!assessment?._id || !assessment?.UHID) return null;
     const data = assessment.data || {};
-    const score = Number(data.morseScore);
+    // R7em-1: FallRiskAssessmentPage.jsx posts `score` (Morse total) and a
+    // nested `scores` object keyed by MORSE_ITEMS fields. Accept both names;
+    // `??` keeps 0 as a valid (no-risk) score.
+    const score = Number(data.morseScore ?? data.score);
     if (!Number.isFinite(score)) return null;
 
     const riskTier = _morseRiskTier(score);
@@ -515,7 +539,41 @@ async function emitFallRisk(args = {}) {
     // R7el-2: auto-fill intervention bundle from tier if the form didn't
     // pass one. Lets surveyors see the actual care plan rather than an
     // empty column.
-    const interventionBundle = data.interventionBundle || _FALL_BUNDLES[riskTier] || "";
+    const interventionBundle = data.interventionBundle
+      || data.actions                                          // R7em-1: FallRiskAssessmentPage posts `actions`
+      || _FALL_BUNDLES[riskTier] || "";
+
+    // R7em-1: Morse sub-scores are numeric points (e.g. fallHistory: 25=Yes,
+    // 0=No). Read them off data.scores (FallRiskAssessmentPage shape) or off
+    // data directly (legacy callers). Accept the IPDInitialAssessment naming
+    // (`secondDiagnosis`, `ivAccess`) plus the schema names. >0 = positive.
+    const sub = (data.scores && typeof data.scores === "object") ? data.scores : data;
+    const _bool = (v) => Number(v) > 0;                        // R7em-1: numeric→boolean
+    const historyOfFalling = data.historyOfFalling != null
+      ? !!data.historyOfFalling
+      : _bool(sub.fallHistory ?? sub.historyOfFalling);
+    const secondaryDx = data.secondaryDx != null
+      ? !!data.secondaryDx
+      : _bool(sub.secondDiagnosis ?? sub.secondaryDx);
+    const ivTherapy = data.ivTherapy != null
+      ? !!data.ivTherapy
+      : _bool(sub.ivAccess ?? sub.ivTherapy);
+    // R7em-1: ambulatoryAid/gait/mentalStatus stored as numeric points by
+    // FallRiskAssessmentPage. Map back to the schema's free-text columns
+    // when only the numeric value is available — keeps the register human-
+    // readable even when the form didn't pass the original label.
+    const _ambLabel  = (v) => v >= 30 ? "Furniture" : v >= 15 ? "Crutches/Cane/Walker" : v > 0 ? "Other" : "None";
+    const _gaitLabel = (v) => v >= 20 ? "Impaired" : v >= 10 ? "Weak" : "Normal";
+    const _mentLabel = (v) => v >= 15 ? "Forgets limitations" : "Oriented";
+    const ambRaw  = sub.ambulatoryAid;
+    const gaitRaw = sub.gait;
+    const mentRaw = sub.mentalStatus;
+    const ambulatoryAid = (typeof ambRaw === "string" && isNaN(Number(ambRaw))) ? ambRaw
+                        : (ambRaw != null) ? _ambLabel(Number(ambRaw)) : "";
+    const gait          = (typeof gaitRaw === "string" && isNaN(Number(gaitRaw))) ? gaitRaw
+                        : (gaitRaw != null) ? _gaitLabel(Number(gaitRaw)) : "";
+    const mentalStatus  = (typeof mentRaw === "string" && isNaN(Number(mentRaw))) ? mentRaw
+                        : (mentRaw != null) ? _mentLabel(Number(mentRaw)) : "";
 
     const row = await FallRiskRegister.create({
       patientId: assessment.patientId || null,
@@ -524,15 +582,15 @@ async function emitFallRisk(args = {}) {
       admissionId: canonicalAdmissionId,
       morseScore: score,
       riskTier,
-      historyOfFalling: !!data.historyOfFalling,
-      secondaryDx: !!data.secondaryDx,
-      ambulatoryAid: data.ambulatoryAid || "",
-      ivTherapy: !!data.ivTherapy,
-      gait: data.gait || "",
-      mentalStatus: data.mentalStatus || "",
+      historyOfFalling,                                        // R7em-1
+      secondaryDx,                                             // R7em-1
+      ambulatoryAid,                                           // R7em-1
+      ivTherapy,                                               // R7em-1
+      gait,                                                    // R7em-1
+      mentalStatus,                                            // R7em-1
       interventionBundle,
       assessedAt: assessment.recordedAt || new Date(),
-      assessedBy: assessment.recordedBy || actorMeta.byName || "",
+      assessedBy: assessment.recordedBy || data.nurse || actorMeta.byName || "",
       assessedByUserId: assessment.recordedByUser || actorMeta.byUserId,
       assessedByRole: actorMeta.byRole,
       sourceRef: assessment._id,
@@ -580,7 +638,9 @@ async function emitPressureUlcer(args = {}) {
     const { assessment, actor = {} } = args;
     if (!assessment?._id || !assessment?.UHID) return null;
     const data = assessment.data || {};
-    const score = Number(data.bradenScore);
+    // R7em-1: PressureAreaCarePage.jsx posts `score` (Braden total). Accept
+    // both `bradenScore` (legacy) and `score`; `??` preserves 0 as valid.
+    const score = Number(data.bradenScore ?? data.score);
     if (!Number.isFinite(score)) return null;
 
     const riskTier = _bradenRiskTier(score);
@@ -984,7 +1044,12 @@ async function emitASA(args = {}) {
     if (!note?._id || !patient._id || !patient.UHID) return null;
 
     // ASA grade is the foundational field. Without it the row is meaningless.
-    const asaGrade = String(note.asaGrade || note.data?.asaGrade || "").toUpperCase();
+    // R7em-2 — Frontend posts "ASA I" / "ASA IE"; strip prefix + emergency suffix,
+    // capture emergency as separate modifier flag (model has emergencyModifier:Boolean).
+    const asaRaw = String(note.asaGrade || note.data?.asaGrade || "").trim().toUpperCase();
+    const stripped = asaRaw.replace(/^ASA\s*/i, "").trim();          // "I" / "IE" / "I E"
+    const hasEmergencySuffix = /E$/i.test(stripped) && stripped.length > 1;
+    const asaGrade = stripped.replace(/\s*E$/i, "").trim();          // R7em-2
     if (!["I", "II", "III", "IV", "V", "VI"].includes(asaGrade)) return null;
 
     // Idempotency: one row per source note
@@ -1005,7 +1070,8 @@ async function emitASA(args = {}) {
       admissionId: admId,
       admissionNumber: admission?.admissionNumber || "",
       asaGrade,
-      emergencyModifier: !!data.emergencyModifier,
+      emergencyModifier: !!data.emergencyModifier || hasEmergencySuffix, // R7em-2
+
       anaesthesiaType: data.anaesthesiaType || "General",
       technique: data.technique || "",
       airwayPlan: data.airwayPlan || "",
@@ -1016,10 +1082,11 @@ async function emitASA(args = {}) {
       allergies: Array.isArray(data.allergies) ? data.allergies : [],
       comorbidities: Array.isArray(data.comorbidities) ? data.comorbidities : [],
       preOpVitals: {
-        bp:    data.preOpVitals?.bp    || data.bp    || "",
-        pulse: data.preOpVitals?.pulse || data.pulse || null,
-        temp:  data.preOpVitals?.temp  || data.temp  || null,
-        spo2:  data.preOpVitals?.spo2  || data.spo2  || null,
+        // R7em-2 — also accept flat preOpBp/preOpPulse/preOpTemp/preOpSpo2 from the form
+        bp:    data.preOpVitals?.bp    || data.preOpBp    || data.bp    || "",
+        pulse: data.preOpVitals?.pulse ?? (data.preOpPulse !== "" && data.preOpPulse != null ? Number(data.preOpPulse) : null) ?? data.pulse ?? null,
+        temp:  data.preOpVitals?.temp  ?? (data.preOpTemp  !== "" && data.preOpTemp  != null ? Number(data.preOpTemp)  : null) ?? data.temp  ?? null,
+        spo2:  data.preOpVitals?.spo2  ?? (data.preOpSpo2  !== "" && data.preOpSpo2  != null ? Number(data.preOpSpo2)  : null) ?? data.spo2  ?? null,
       },
       consentSigned: !!data.consentSigned,
       consentFormId: data.consentFormId || null,
@@ -1200,8 +1267,14 @@ async function emitMortality(args = {}) {
       if (existing) return existing;
     }
 
+    // R7em-7 — Death-note save path posts `dateTime` (a single
+    // datetime-local input) while DischargeSummary uses separate
+    // deathDate / deathTime. Read both legacy and new field names so
+    // either caller emits cleanly without forcing the frontend to
+    // migrate.
     const dateOfDeath = dischargeSummary?.deathDate
       || deathNote?.dateOfDeath
+      || deathNote?.dateTime
       || dischargeSummary?.dischargeDate
       || new Date();
 
@@ -1225,17 +1298,45 @@ async function emitMortality(args = {}) {
       admissionNumber: admission?.admissionNumber || dischargeSummary?.admissionNumber || "",
       mortalityNumber,
       dateOfDeath,
-      timeOfDeath: dischargeSummary?.deathTime || deathNote?.timeOfDeath || "",
+      // R7em-7 — derive HH:MM from deathNote.dateTime when timeOfDeath
+      // isn't sent explicitly (frontend posts a single datetime-local
+      // value, not a separate time field).
+      timeOfDeath: dischargeSummary?.deathTime || deathNote?.timeOfDeath
+        || (deathNote?.dateTime
+          ? new Date(deathNote.dateTime).toLocaleTimeString("en-IN", { hour12: false })
+          : "")
+        || "",
       placeOfDeath: deathNote?.placeOfDeath || dischargeSummary?.placeOfDeath || "Ward",
       primaryCause: dischargeSummary?.causeOfDeath
         || deathNote?.primaryCause
+        || deathNote?.causeDeath1 // R7em-7 — "I (a) Immediate Cause" doubles as the primary registry cause
         || dischargeSummary?.primaryDiagnosis
         || "Not Specified",
-      immediateCauseOfDeath: dischargeSummary?.immediateCauseOfDeath || deathNote?.immediateCauseOfDeath || "",
-      antecedentCauseOfDeath: dischargeSummary?.antecedentCauseOfDeath || deathNote?.antecedentCauseOfDeath || "",
-      underlyingCause: deathNote?.underlyingCause || "",
-      contributoryCauses: Array.isArray(deathNote?.contributoryCauses) ? deathNote.contributoryCauses : [],
-      manner: deathNote?.manner || "Natural",
+      // R7em-7 — frontend posts causeDeath1/2/3 + `contributing`; alias to
+      // the registry field names without losing existing callers.
+      immediateCauseOfDeath: dischargeSummary?.immediateCauseOfDeath
+        || deathNote?.immediateCauseOfDeath
+        || deathNote?.causeDeath1
+        || "",
+      antecedentCauseOfDeath: dischargeSummary?.antecedentCauseOfDeath
+        || deathNote?.antecedentCauseOfDeath
+        || deathNote?.causeDeath2
+        || "",
+      underlyingCause: deathNote?.underlyingCause || deathNote?.causeDeath3 || "",
+      contributoryCauses: Array.isArray(deathNote?.contributoryCauses)
+        ? deathNote.contributoryCauses
+        : (deathNote?.contributing
+          ? String(deathNote.contributing).split(",").map(s => s.trim()).filter(Boolean)
+          : []),
+      // R7em-7 — frontend's `modeOfDeath` is a clinical descriptor
+      // ("Cardiac Arrest", etc.) and is NOT the legal/forensic manner.
+      // Only alias when the value happens to match the manner enum
+      // (Natural/Accident/Suicide/Homicide/Undetermined/Pending), else
+      // default to "Natural" — the same default the legacy callers use.
+      manner: deathNote?.manner
+        || (["Natural","Accident","Suicide","Homicide","Undetermined","Pending"].includes(deathNote?.modeOfDeath)
+          ? deathNote.modeOfDeath
+          : "Natural"),
       admissionToDeathHours,
       bruceCategory,
       isMLC: !!(dischargeSummary?.isMLC || deathNote?.isMLC || admission?.isMLC),

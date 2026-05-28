@@ -210,7 +210,19 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
         const admission = order.admissionId
           ? await Admission.findById(order.admissionId).select("_id admissionNumber wardName ward").lean()
           : null;
-        emitBloodTransfusion({ order, patient: patient || {}, admission, actor: req.user || {} })
+        // R7du — DoctorOrderModel has no `preTransfusion` schema slot, so
+        // Mongoose strict-mode strips it on .create(). Build a plain-object
+        // shim that carries the persisted order's _id + identity fields plus
+        // the raw `preTransfusion` payload from the request body, so the
+        // NABH MOM.4 emitter (which reads `order.preTransfusion.{consentSigned,
+        // consentFormId, bp, pulse, temp, spo2}`) gets the consent + pre-tx
+        // vitals captured by the doctor at order entry. Adding the field at
+        // the DoctorOrder schema level is a separate, broader change.
+        const orderForEmit = order.toObject ? order.toObject() : { ...order };
+        if (body && body.preTransfusion && typeof body.preTransfusion === "object") {
+          orderForEmit.preTransfusion = body.preTransfusion;
+        }
+        emitBloodTransfusion({ order: orderForEmit, patient: patient || {}, admission, actor: req.user || {} })
           .catch((e) => console.error("[doctor-orders] emitBloodTransfusion error:", e?.message));
       } catch (e) {
         console.error("[doctor-orders] BloodTransfusion emit wiring failed:", e?.message);

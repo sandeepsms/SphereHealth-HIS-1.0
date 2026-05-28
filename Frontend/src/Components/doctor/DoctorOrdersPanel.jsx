@@ -12,6 +12,7 @@ import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import SharedDrugAutocomplete, { parseStrength, drugDisplayName } from "../clinical/DrugAutocomplete";
 import { confirm } from "../common/ConfirmDialog";
+import { createProcedureNote } from "../../Services/procedureNoteService";
 
 /* ── Design tokens ── */
 const C = {
@@ -413,6 +414,65 @@ function OrderForm({ typeId, form, set }) {
         <Field form={form} set={set} label="Pre-medications" name="premeds" placeholder="e.g. Paracetamol 1g IV, Hydrocortisone 100mg IV"/>
         <Field form={form} set={set} label="Monitoring Frequency" name="monitoring" options={["Every 15 min (1st hr)","Every 30 min","Hourly","Continuous"]}/>
       </div>
+
+      {/* R7du — Pre-Transfusion Checklist (NABH MOM.4)
+          The BloodTransfusionRegister.preTransfusion sub-document was wired
+          on the backend (emitBloodTransfusion reads order.preTransfusion.{
+          consentSigned, consentFormId, bp, pulse, temp, spo2 }) but no UI
+          ever populated it — every BT register row had blank consent + pre-tx
+          vitals. This sub-card captures those at order time. buildPayload()
+          collects these flat keys into a top-level `preTransfusion` object
+          on the order POST so the route → emitter chain sees the data. */}
+      <div style={{ padding: "10px 12px", background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 8, marginBottom: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <i className="pi pi-check-circle" style={{ fontSize: 13, color: "#dc2626" }}/>
+          <span style={{ fontWeight: 800, fontSize: 12, color: "#dc2626", letterSpacing: ".3px" }}>
+            Pre-Transfusion Checklist
+          </span>
+          <span style={{ fontSize: 10, color: "#991b1b", background: "#fee2e2", border: "1px solid #fca5a5", padding: "2px 7px", borderRadius: 4, fontWeight: 700 }}>
+            NABH MOM.4
+          </span>
+        </div>
+
+        {/* Consent capture */}
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+            <input type="checkbox"
+              checked={!!form.preTxConsentSigned}
+              onChange={e => set("preTxConsentSigned", e.target.checked)}
+              style={{ width: 15, height: 15, accentColor: "#dc2626" }}/>
+            <span style={{ fontWeight: 700, fontSize: 12, color: "#7f1d1d" }}>
+              Consent obtained from patient / relative
+            </span>
+          </label>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <input className="his-field" type="text"
+              placeholder="Consent form ID / attachment ref (optional)"
+              value={form.preTxConsentFormId || ""}
+              onChange={e => set("preTxConsentFormId", e.target.value)}/>
+          </div>
+        </div>
+
+        {/* Pre-transfusion vitals */}
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#7f1d1d", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 6 }}>
+          Pre-transfusion vitals (optional — recommended)
+        </div>
+        <div style={{ ...row, gridTemplateColumns: "1fr 1fr 1fr 1fr" }}>
+          <Field form={form} set={set} label="BP" name="preTxBp" placeholder="e.g. 120/80"/>
+          <Field form={form} set={set} label="Pulse" name="preTxPulse" type="number" placeholder="e.g. 78" unit="bpm"/>
+          <Field form={form} set={set} label="Temp" name="preTxTemp" type="number" placeholder="e.g. 37" unit="°C"/>
+          <Field form={form} set={set} label="SpO₂" name="preTxSpo2" type="number" placeholder="e.g. 98" unit="%"/>
+        </div>
+
+        {/* Warning banner — consent not obtained */}
+        {!form.preTxConsentSigned && (
+          <div style={{ marginTop: 10, padding: "8px 10px", background: "#fffbeb", border: "1.5px solid #fde68a", borderRadius: 6, fontSize: 11, color: "#92400e", display: "flex", alignItems: "center", gap: 6 }}>
+            <i className="pi pi-exclamation-triangle" style={{ fontSize: 12 }}/>
+            <span><strong>Consent should be obtained before transfusion starts</strong> — NABH MOM.4. You can save and add consent later, but the BT register row will flag this.</span>
+          </div>
+        )}
+      </div>
+
       <Field form={form} set={set} label="Special Instructions / Transfusion Notes" name="notes" placeholder="Reaction plan, warmer required, irradiated blood…" type="textarea"/>
     </>
   );
@@ -595,9 +655,315 @@ function AuditTrail({ order }) {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   COMPLETE PROCEDURE MODAL — NABH COP.10 evidence
+
+   Posts to /api/procedure-notes which transitions the underlying
+   OTRegister row Scheduled → Completed. Renders for Procedure orders
+   flagged requiresOT=true that have not yet been completed.
+
+   Required fields: startTime, endTime, actualProcedure. Everything
+   else (anaesthetist, complications, blood loss, specimens,
+   destination) is optional but encouraged for surveyor evidence.
+══════════════════════════════════════════════════════════════ */
+function CompleteProcedureModal({ order, onClose, onSaved }) {
+  const nowLocal = () => {
+    const d = new Date();
+    d.setSeconds(0, 0);
+    // Format YYYY-MM-DDTHH:MM for <input type="datetime-local">. Use the
+    // local-time getters (not toISOString) so the picker shows the user's
+    // wall clock, not UTC.
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  // Pre-populate from the order so the surgeon doesn't retype known fields.
+  const details = order.orderDetails || {};
+  const defaultStart = details.scheduledAt
+    ? new Date(details.scheduledAt).toISOString().slice(0, 16)
+    : nowLocal();
+
+  const [form, setForm] = useState({
+    startTime:         defaultStart,
+    endTime:           nowLocal(),
+    actualProcedure:   details.procedureName || details.surgeryName || "",
+    anaesthetistName:  details.anaesthetistName || "",
+    anaesthesiaType:   details.anaesthesiaType || "",
+    asaGrade:          details.asaGrade || "",
+    complications:     "",
+    bloodLossMl:       "",
+    postOpDestination: "Recovery",
+  });
+  const [specimens, setSpecimens] = useState([]);  // [{ name, sentTo }]
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
+
+  const addSpecimen = () => setSpecimens((p) => [...p, { name: "", sentTo: "Histopathology" }]);
+  const updSpecimen = (idx, patch) => setSpecimens((p) => p.map((s, i) => i === idx ? { ...s, ...patch } : s));
+  const delSpecimen = (idx) => setSpecimens((p) => p.filter((_, i) => i !== idx));
+
+  const handleSave = async () => {
+    if (saving) return;
+    setError("");
+    if (!form.startTime || !form.endTime) {
+      setError("Start time and end time are required");
+      return;
+    }
+    if (new Date(form.endTime) < new Date(form.startTime)) {
+      setError("End time cannot be before start time");
+      return;
+    }
+    if (!form.actualProcedure.trim()) {
+      setError("Actual procedure is required");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const payload = {
+        doctorOrderId:     order._id,
+        startTime:         new Date(form.startTime).toISOString(),
+        endTime:           new Date(form.endTime).toISOString(),
+        actualProcedure:   form.actualProcedure.trim(),
+        surgeryName:       details.surgeryName || details.procedureName || form.actualProcedure.trim(),
+        anaesthetistName:  form.anaesthetistName || undefined,
+        anaesthesiaType:   form.anaesthesiaType || undefined,
+        asaGrade:          form.asaGrade || undefined,
+        complications:     form.complications || undefined,
+        bloodLossMl:       form.bloodLossMl !== "" ? Number(form.bloodLossMl) : undefined,
+        postOpDestination: form.postOpDestination || "Recovery",
+        specimensSent:     specimens
+          .filter((s) => (s.name || "").trim() || (s.sentTo || "").trim())
+          .map((s) => ({ name: s.name.trim(), sentTo: s.sentTo.trim() })),
+      };
+      const r = await createProcedureNote(payload);
+      toast.success("Procedure note saved — OT register updated");
+      onSaved?.(r.data);
+      onClose?.();
+    } catch (e) {
+      const msg = e?.message || "Failed to save procedure note";
+      setError(msg);
+      toast.error(msg);
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 9000, padding: 16,
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
+    >
+      <div style={{
+        background: C.card, borderRadius: 12, width: "min(720px, 100%)",
+        maxHeight: "92vh", overflowY: "auto",
+        boxShadow: "0 24px 48px rgba(15,23,42,.3)",
+      }}>
+        {/* Header */}
+        <div style={{
+          background: `linear-gradient(135deg, ${C.green} 0%, #15803d 100%)`,
+          padding: "12px 16px", display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: "rgba(255,255,255,.18)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <i className="pi pi-check-circle" style={{ color: "white", fontSize: 15 }}/>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ color: "white", fontWeight: 800, fontSize: 14 }}>Complete Procedure</div>
+            <div style={{ color: "rgba(255,255,255,.8)", fontSize: 11 }}>
+              NABH COP.10 · {details.procedureName || details.surgeryName || "OT case"}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: "rgba(255,255,255,.15)", border: "none", borderRadius: 7, padding: "5px 8px", cursor: "pointer", color: "white" }}
+          ><i className="pi pi-times" style={{ fontSize: 11 }}/></button>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: 16, display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label className="his-label">Start Time *</label>
+              <input
+                className="his-field" type="datetime-local"
+                value={form.startTime}
+                onChange={(e) => set("startTime", e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="his-label">End Time *</label>
+              <input
+                className="his-field" type="datetime-local"
+                value={form.endTime}
+                onChange={(e) => set("endTime", e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="his-label">Actual Procedure Performed *</label>
+            <textarea
+              className="his-textarea" rows={2}
+              placeholder="e.g. Open cholecystectomy, no conversion. Liver bed coagulated."
+              value={form.actualProcedure}
+              onChange={(e) => set("actualProcedure", e.target.value)}
+            />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <div>
+              <label className="his-label">Anaesthetist</label>
+              <input
+                className="his-field" type="text"
+                placeholder="Dr. …"
+                value={form.anaesthetistName}
+                onChange={(e) => set("anaesthetistName", e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="his-label">Anaesthesia Type</label>
+              <select
+                className="his-select"
+                value={form.anaesthesiaType}
+                onChange={(e) => set("anaesthesiaType", e.target.value)}
+              >
+                <option value="">— select —</option>
+                {["General","Spinal","Epidural","Regional","Local","MAC","Sedation","Combined"].map((x) => (
+                  <option key={x} value={x}>{x}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="his-label">ASA Grade</label>
+              <select
+                className="his-select"
+                value={form.asaGrade}
+                onChange={(e) => set("asaGrade", e.target.value)}
+              >
+                <option value="">— select —</option>
+                {["I","II","III","IV","V","VI"].map((x) => (
+                  <option key={x} value={x}>{x}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
+            <div>
+              <label className="his-label">Complications (if any)</label>
+              <textarea
+                className="his-textarea" rows={2}
+                placeholder="Nil OR describe…"
+                value={form.complications}
+                onChange={(e) => set("complications", e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="his-label">Blood Loss (mL)</label>
+              <input
+                className="his-field" type="number" min="0"
+                placeholder="e.g. 150"
+                value={form.bloodLossMl}
+                onChange={(e) => set("bloodLossMl", e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="his-label">Post-Op Destination</label>
+            <select
+              className="his-select"
+              value={form.postOpDestination}
+              onChange={(e) => set("postOpDestination", e.target.value)}
+            >
+              {["Recovery","Ward","ICU","HDU","Discharge"].map((x) => (
+                <option key={x} value={x}>{x}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Specimens — repeating rows */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <label className="his-label" style={{ margin: 0 }}>Specimens Sent</label>
+              <button
+                type="button"
+                onClick={addSpecimen}
+                style={{ padding: "3px 10px", border: `1px solid ${C.border}`, borderRadius: 7, background: "white", color: C.primary, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+              >
+                <i className="pi pi-plus" style={{ fontSize: 10, marginRight: 4 }}/>Add
+              </button>
+            </div>
+            {specimens.length === 0 ? (
+              <div style={{ fontSize: 11, color: C.muted, padding: "6px 0" }}>No specimens sent.</div>
+            ) : (
+              specimens.map((s, idx) => (
+                <div key={idx} style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 6, marginBottom: 6 }}>
+                  <input
+                    className="his-field" type="text" placeholder="Specimen name"
+                    value={s.name}
+                    onChange={(e) => updSpecimen(idx, { name: e.target.value })}
+                  />
+                  <select
+                    className="his-select"
+                    value={s.sentTo}
+                    onChange={(e) => updSpecimen(idx, { sentTo: e.target.value })}
+                  >
+                    {["Histopathology","Microbiology","Frozen Section","Cytology","Other"].map((x) => (
+                      <option key={x} value={x}>{x}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => delSpecimen(idx)}
+                    style={{ padding: "5px 10px", border: `1px solid ${C.redB}`, borderRadius: 7, background: C.redL, color: C.red, fontSize: 11, cursor: "pointer" }}
+                  ><i className="pi pi-trash" style={{ fontSize: 10 }}/></button>
+                </div>
+              ))
+            )}
+          </div>
+
+          {error && (
+            <div style={{
+              padding: "8px 10px", borderRadius: 7,
+              background: C.redL, border: `1px solid ${C.redB}`,
+              color: C.red, fontSize: 12, fontWeight: 600,
+            }}>{error}</div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: 14, borderTop: `1px solid ${C.border}`, background: C.grayL,
+          display: "flex", justifyContent: "flex-end", gap: 8,
+        }}>
+          <button
+            onClick={onClose}
+            disabled={saving}
+            style={{ padding: "8px 18px", border: `1px solid ${C.border}`, borderRadius: 8, background: "white", color: C.muted, fontSize: 12, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer" }}
+          >Cancel</button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            style={{ padding: "8px 22px", border: "none", borderRadius: 8, background: `linear-gradient(135deg, ${C.green}, #15803d)`, color: "white", fontSize: 12, fontWeight: 800, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? .7 : 1, display: "flex", alignItems: "center", gap: 6 }}
+          >
+            {saving
+              ? <><i className="pi pi-spin pi-spinner" style={{ fontSize: 12 }}/> Saving…</>
+              : <><i className="pi pi-check" style={{ fontSize: 11 }}/> Save & Complete</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
    ORDER CARD
 ══════════════════════════════════════════════════════════════ */
-function OrderCard({ order, onCancel }) {
+function OrderCard({ order, onCancel, onComplete }) {
   const [expanded, setExpanded] = useState(false);
   const meta   = TYPE_MAP[order.orderType] || ORDER_TYPES[10];
   const status = STAT_STYLE[order.status] || STAT_STYLE.Pending;
@@ -664,24 +1030,40 @@ function OrderCard({ order, onCancel }) {
       {expanded && (
         <div style={{ padding: "0 14px 14px" }}>
           <AuditTrail order={order}/>
-          {order.status !== "Completed" && order.status !== "Cancelled" && (
-            <button
-              onClick={async (e) => {
-                e.stopPropagation();
-                // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
-                if (await confirm({
-                  title: "Cancel this order?",
-                  body: "The order will be marked Cancelled and will no longer appear in the active worklist.",
-                  danger: true,
-                  confirmLabel: "Cancel order",
-                  cancelLabel: "Keep",
-                })) onCancel(order._id);
-              }}
-              style={{ marginTop: 10, padding: "5px 12px", border: `1px solid ${C.redB}`, borderRadius: 7, background: C.redL, color: C.red, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-            >
-              <i className="pi pi-times" style={{ marginRight: 5 }}/> Cancel Order
-            </button>
-          )}
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {/* Complete Procedure button — only for OT-bound procedure orders
+                that haven't finished yet. Posting the note transitions the
+                linked OTRegister row Scheduled → Completed (NABH COP.10). */}
+            {order.orderType === "Procedure"
+              && order.orderDetails?.requiresOT === true
+              && order.status !== "Completed"
+              && order.status !== "Cancelled" && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onComplete?.(order); }}
+                  style={{ padding: "5px 12px", border: `1px solid ${C.greenB}`, borderRadius: 7, background: C.greenL, color: C.green, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                >
+                  <i className="pi pi-check-circle" style={{ marginRight: 5 }}/> Complete Procedure
+                </button>
+              )}
+            {order.status !== "Completed" && order.status !== "Cancelled" && (
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+                  if (await confirm({
+                    title: "Cancel this order?",
+                    body: "The order will be marked Cancelled and will no longer appear in the active worklist.",
+                    danger: true,
+                    confirmLabel: "Cancel order",
+                    cancelLabel: "Keep",
+                  })) onCancel(order._id);
+                }}
+                style={{ padding: "5px 12px", border: `1px solid ${C.redB}`, borderRadius: 7, background: C.redL, color: C.red, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+              >
+                <i className="pi pi-times" style={{ marginRight: 5 }}/> Cancel Order
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -704,6 +1086,9 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
   const [form,       setForm]       = useState({});
   const [filterType, setFilterType] = useState("All");
   const [filterStat, setFilterStat] = useState("Active");
+  // OT procedure-completion modal — the order being completed lives here
+  // so the modal can read its details / doctorOrderId.
+  const [completeOrder, setCompleteOrder] = useState(null);
 
   /* fetch orders — R7az-D4-HIGH-6/D4-HIGH-7: abort on UHID change and on
      unmount so the 30s polling timer doesn't keep firing requests after
@@ -761,6 +1146,13 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
     delete d.priority;
     // Strip root-level HAM flags from orderDetails (they live at root, not nested)
     delete d.hamFlag; delete d.twoNurseRequired; delete d.concentratedElectrolyte; delete d.highRisk;
+    // R7du — Strip Pre-Transfusion Checklist flat keys from orderDetails;
+    // they collect into a root-level `preTransfusion` object below so the
+    // NABH MOM.4 emitter (services/Compliance/nabhRegisterEmitter.js →
+    // emitBloodTransfusion) which reads `order.preTransfusion.{consentSigned,
+    // consentFormId, bp, pulse, temp, spo2}` finds them at the expected path.
+    delete d.preTxConsentSigned; delete d.preTxConsentFormId;
+    delete d.preTxBp; delete d.preTxPulse; delete d.preTxTemp; delete d.preTxSpo2;
 
     // Combine dose + unit into human-readable string (e.g. "500mg") for display
     if (d.dose !== undefined && d.dose !== "" && d.doseUnit) {
@@ -788,6 +1180,20 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
       base.route = form.route;
       base.frequency = form.frequency;
       base.duration = d.duration || form.duration;
+    }
+    // R7du — Pre-Transfusion Checklist (NABH MOM.4). Backend route picks
+    // up `body.preTransfusion` and threads it to emitBloodTransfusion so
+    // the BT register row stores consent + pre-tx vitals. Goes at root
+    // (not under orderDetails) because the emitter reads `order.preTransfusion`.
+    if (selType === "BloodTransfusion") {
+      base.preTransfusion = {
+        consentSigned: !!form.preTxConsentSigned,
+        consentFormId: form.preTxConsentFormId || null,
+        bp:    form.preTxBp || "",
+        pulse: form.preTxPulse !== undefined && form.preTxPulse !== "" ? Number(form.preTxPulse) : null,
+        temp:  form.preTxTemp  !== undefined && form.preTxTemp  !== "" ? Number(form.preTxTemp)  : null,
+        spo2:  form.preTxSpo2  !== undefined && form.preTxSpo2  !== "" ? Number(form.preTxSpo2)  : null,
+      };
     }
     if (selType === "Lab" || selType === "Radiology") {
       base.testName = form.testName;
@@ -1014,9 +1420,23 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
           </div>
         )}
         {!loading && filtered.map(order => (
-          <OrderCard key={order._id} order={order} onCancel={cancelOrder}/>
+          <OrderCard
+            key={order._id}
+            order={order}
+            onCancel={cancelOrder}
+            onComplete={setCompleteOrder}
+          />
         ))}
       </div>
+
+      {/* OT Procedure completion modal (NABH COP.10 evidence) */}
+      {completeOrder && (
+        <CompleteProcedureModal
+          order={completeOrder}
+          onClose={() => setCompleteOrder(null)}
+          onSaved={() => { setCompleteOrder(null); fetchOrders(); }}
+        />
+      )}
 
       {/* ── Footer legend ── */}
       <div style={{ borderTop: `1px solid ${C.border}`, padding: "7px 16px", background: C.grayL, display: "flex", gap: 14, flexWrap: "wrap" }}>

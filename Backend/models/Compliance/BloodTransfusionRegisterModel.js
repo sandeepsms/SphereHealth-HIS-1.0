@@ -127,6 +127,9 @@ const BloodTransfusionRegisterSchema = new Schema(
       vitals: { type: VitalsSchema, default: () => ({}) },
       hbGdL: { type: Number, default: null, min: 0, max: 25 },
       consentSigned: { type: Boolean, default: false },
+      // R7em-D: consent form attachment reference captured at the order
+      // form (NABH MOM.4 — every transfusion needs documented consent).
+      consentFormId: { type: String, default: "" },
       premedsGiven: { type: String, default: "" },
     },
 
