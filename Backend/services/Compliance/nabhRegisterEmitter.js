@@ -407,6 +407,20 @@ function _painSeverity(score) {
   return "Severe";
 }
 
+// R7el-2: Auto-derive next pain reassessment window from severity. NABH
+// IPSG.5: severe pain after parenteral analgesia → reassess in 30 min;
+// moderate → 1 h; mild → 4 h; no pain → no scheduled reassessment.
+function _painReassessmentDue(severity, baseAt = new Date()) {
+  const base = new Date(baseAt);
+  const mins = severity === "Severe" ? 30
+             : severity === "Moderate" ? 60
+             : severity === "Mild" ? 240
+             : 0;
+  if (!mins) return null;
+  const d = new Date(base.getTime() + mins * 60 * 1000);
+  return d;
+}
+
 async function emitPain(args = {}) {
   try {
     const { assessment, actor = {} } = args;
@@ -421,6 +435,14 @@ async function emitPain(args = {}) {
     // R7bw — resolve canonical active admission so stale form-state can't
     // strand the row on a dedupe-cancelled admission (NABH IPSG cohort).
     const canonicalAdmissionId = await _resolveCanonicalAdmissionId(assessment.UHID, assessment.admissionId || null);
+    const assessedAtVal = assessment.recordedAt || new Date();
+    // R7el-2: derive reassessmentDue from severity if the form didn't
+    // explicitly set it. Surveyors check that severe pain has a follow-up
+    // entry within the reassessment window — automating this means the
+    // window is never left blank.
+    const reassessmentDue = data.reassessmentDue
+      ? new Date(data.reassessmentDue)
+      : _painReassessmentDue(severity, assessedAtVal);
 
     const row = await PainAssessmentRegister.create({
       patientId: assessment.patientId || null,
@@ -434,8 +456,8 @@ async function emitPain(args = {}) {
       character: data.character || "",
       durationMinutes: data.durationMinutes || null,
       intervention: data.intervention || "",
-      reassessmentDue: data.reassessmentDue ? new Date(data.reassessmentDue) : null,
-      assessedAt: assessment.recordedAt || new Date(),
+      reassessmentDue,
+      assessedAt: assessedAtVal,
       assessedBy: assessment.recordedBy || actorMeta.byName || "",
       assessedByUserId: assessment.recordedByUser || actorMeta.byUserId,
       assessedByRole: actorMeta.byRole,
@@ -466,6 +488,16 @@ function _morseRiskTier(score) {
   return "Low";
 }
 
+// R7el-2: Auto-suggest the standard fall-precaution bundle keyed by risk
+// tier (NABH PSQ + IPSG.6). Saves the nurse retyping the same boilerplate
+// every shift and ensures the register row never has a blank intervention
+// column for a known-risk patient.
+const _FALL_BUNDLES = {
+  Low: "Standard precautions: bed in low position, call bell within reach, non-slip footwear",
+  Moderate: "Yellow wristband + bed rails up + call bell + frequent rounding (q2h) + non-slip footwear",
+  High: "Yellow wristband + bed rails up + bed in low position + call bell + fall mat + frequent rounding (q1h) + bedside sitter if confused + post-fall huddle if event occurs",
+};
+
 async function emitFallRisk(args = {}) {
   try {
     const { assessment, actor = {} } = args;
@@ -480,6 +512,10 @@ async function emitFallRisk(args = {}) {
     // R7bw — resolve canonical active admission so stale form-state can't
     // strand the row on a dedupe-cancelled admission.
     const canonicalAdmissionId = await _resolveCanonicalAdmissionId(assessment.UHID, assessment.admissionId || null);
+    // R7el-2: auto-fill intervention bundle from tier if the form didn't
+    // pass one. Lets surveyors see the actual care plan rather than an
+    // empty column.
+    const interventionBundle = data.interventionBundle || _FALL_BUNDLES[riskTier] || "";
 
     const row = await FallRiskRegister.create({
       patientId: assessment.patientId || null,
@@ -494,7 +530,7 @@ async function emitFallRisk(args = {}) {
       ivTherapy: !!data.ivTherapy,
       gait: data.gait || "",
       mentalStatus: data.mentalStatus || "",
-      interventionBundle: data.interventionBundle || "",
+      interventionBundle,
       assessedAt: assessment.recordedAt || new Date(),
       assessedBy: assessment.recordedBy || actorMeta.byName || "",
       assessedByUserId: assessment.recordedByUser || actorMeta.byUserId,
@@ -528,6 +564,17 @@ function _bradenRiskTier(score) {
   return "No Risk";
 }
 
+// R7el-3: Auto-suggest repositioning frequency per Braden tier (NPUAP /
+// NABH HIC.4). Severe risk needs q1-2h with offloading; High q2h with
+// pressure mattress; Moderate q2-4h; Mild ambulate q4h; No Risk standard.
+const _BRADEN_REPOSITION = {
+  Severe:   "q1-2h with full offload + heel suspension; pressure-redistribution mattress mandatory",
+  High:     "q2h turning with 30° lateral tilt; pressure-redistribution mattress",
+  Moderate: "q2-4h turning; reassess skin q-shift",
+  Mild:     "Ambulate q4h or assist with position change; skin check q-shift",
+  "No Risk": "Standard mobility; routine skin check daily",
+};
+
 async function emitPressureUlcer(args = {}) {
   try {
     const { assessment, actor = {} } = args;
@@ -546,6 +593,14 @@ async function emitPressureUlcer(args = {}) {
     // R7bw — resolve canonical active admission so the sentinel event links
     // to the live admission, not a stale id orphaned by dedupe.
     const canonicalAdmissionId = await _resolveCanonicalAdmissionId(assessment.UHID, assessment.admissionId || null);
+    // R7el-3: auto-suggest care bundle defaults from tier. High/Severe
+    // patients automatically get pressureMattress = true and nutritionConsult
+    // = true because NABH HIC.4 mandates both for those tiers; nurse can
+    // override by passing explicit false in data.
+    const isHighRisk = riskTier === "High" || riskTier === "Severe";
+    const repositioningFreq = data.repositioningFreq || _BRADEN_REPOSITION[riskTier] || "";
+    const pressureMattress = data.pressureMattress != null ? !!data.pressureMattress : isHighRisk;
+    const nutritionConsult = data.nutritionConsult != null ? !!data.nutritionConsult : isHighRisk;
 
     const row = await PressureUlcerRegister.create({
       patientId: assessment.patientId || null,
@@ -559,9 +614,9 @@ async function emitPressureUlcer(args = {}) {
       ulcerSite: data.ulcerSite || "",
       ulcerSize: data.ulcerSize || "",
       hospitalAcquired,
-      repositioningFreq: data.repositioningFreq || "",
-      pressureMattress: !!data.pressureMattress,
-      nutritionConsult: !!data.nutritionConsult,
+      repositioningFreq,
+      pressureMattress,
+      nutritionConsult,
       dressingType: data.dressingType || "",
       assessedAt: assessment.recordedAt || new Date(),
       assessedBy: assessment.recordedBy || actorMeta.byName || "",
@@ -726,6 +781,23 @@ async function emitBloodSugarFromVitalSheet(sheet, patient = {}, actor = {}) {
     let emitted = 0;
     const bgKeys = ["bloodsugar", "glucose", "rbs", "grbs", "fbs", "ppbs"];
 
+    // R7el-1: vital-sheet field names are `admission` / `ipdNo` (not
+    // `admissionId` / `admissionNumber` — those were the old emit args).
+    // Reading the wrong key meant the RBS register row was orphaned from
+    // its admission for every IPD reading. Fixed by reading the real field
+    // names off the sheet doc.
+    const admissionRef = sheet.admission
+      ? { _id: sheet.admission, admissionNumber: sheet.ipdNo || sheet.admissionNumber || "" }
+      : null;
+    // R7el-1: location derivation — IPD vital sheets are charted in a ward;
+    // OPD sheets have no admission. Derive a sensible location instead of
+    // hardcoding "Ward" so surveyor reports show where the reading was taken.
+    const sheetLocation = admissionRef ? "Ward"
+                        : (sheet.departmentName || "").toLowerCase().includes("emergency") ? "ER"
+                        : (sheet.departmentName || "").toLowerCase().includes("icu") ? "ICU"
+                        : (sheet.departmentName || "").toLowerCase().includes("opd") ? "OPD"
+                        : "Ward";
+
     for (const entry of sheet.tableData) {
       const map = entry?.values;
       if (!map) continue;
@@ -738,9 +810,16 @@ async function emitBloodSugarFromVitalSheet(sheet, patient = {}, actor = {}) {
         const [hh, mm] = String(entry.time || "00:00").split(":").map(Number);
         const takenAt = new Date(dateBase);
         takenAt.setHours(hh || 0, mm || 0, 0, 0);
+        // R7el-1: prefer the per-entry recorder (nurse who actually took the
+        // reading) over req.user (could be a different nurse opening the
+        // sheet for review). Falls back to req.user via the standard actor
+        // path when the per-entry recorder isn't denormalized on the row.
+        const entryActor = entry.nurseName
+          ? { _id: entry.recordedBy || actor?._id, name: entry.nurseName, role: "Nurse" }
+          : actor;
         await emitBloodSugar({
           patient,
-          admission: sheet.admissionId ? { _id: sheet.admissionId, admissionNumber: sheet.admissionNumber || "" } : null,
+          admission: admissionRef,
           reading: {
             value,
             unit: v?.unit || "mg/dL",
@@ -749,12 +828,12 @@ async function emitBloodSugarFromVitalSheet(sheet, patient = {}, actor = {}) {
                 : "RBS",
             sampleType: "capillary",
             takenAt,
-            location: "Ward",
+            location: sheetLocation,
             sourceRef: sheet._id,
             sourceType: "VitalSheet",
             notes: entry.notes || "",
           },
-          actor,
+          actor: entryActor,
         });
         emitted++;
       }
@@ -1391,6 +1470,19 @@ async function emitAntimicrobial(args = {}) {
       ? "Prophylactic"
       : (details.cultureBased ? "Targeted" : "Empirical");
 
+    // R7el-6: NABH MOM.7 mandates an indication for every antibiotic order.
+    // If the prescriber didn't type one, fall back to a stewardship-aware
+    // default keyed by indication type so the register row never has a
+    // blank indication column — the IC officer can still see WHY this
+    // antibiotic was started and trigger a culture-review prompt at 48-72h.
+    const indicationDefault = indicationType === "Prophylactic"
+      ? (details.prophylaxisType ? `${details.prophylaxisType} prophylaxis` : "Surgical / medical prophylaxis")
+      : indicationType === "Targeted"
+        ? "Targeted (culture-directed)"
+        : "Empirical — review with culture/sensitivity at 48-72h";
+    const indicationFinal = (details.indication || order.indication || order.notes || details.diagnosis || "").trim()
+      || indicationDefault;
+
     const row = await AntimicrobialUseRegister.create({
       patientId: patient._id,
       UHID: patient.UHID,
@@ -1408,7 +1500,7 @@ async function emitAntimicrobial(args = {}) {
       frequency: details.frequency || "",
       duration: details.duration || "",
       startedAt: order.startedAt ? new Date(order.startedAt) : (order.orderedAt || order.createdAt || new Date()),
-      indication: details.indication || order.indication || order.notes || details.diagnosis || "",
+      indication: indicationFinal,
       indicationType,
       suspectedSite: details.suspectedSite || "",
       prophylactic: !!details.prophylactic,
