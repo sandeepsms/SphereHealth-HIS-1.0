@@ -430,6 +430,13 @@ const NAV = [
     icon: "pi-verified", color: "#0d9488", light: "#f0fdfa",
     nabh: true, roles: [ADMIN, DR, NR, RX, PH, LB, SE, DT, WB, "Housekeeping", "MRD"],
     items: [
+      // R7ek — Inspection Dashboard is a manager-facing "what's happening
+      // today" view (KPIs + last-24h activity per register). Lives as its
+      // own sidebar entry above the registers gateway so it's reachable
+      // in one click without going through the tile landing page.
+      { label: "Inspection Dashboard", icon: "pi-chart-bar", path: "/compliance/inspection-dashboard",
+        nabh: true, badge: "TODAY",
+        roles: [ADMIN, DR, NR, RX, PH, LB, SE, DT, WB, "Housekeeping", "MRD"] },
       { label: "NABH Registers", icon: "pi-th-large", path: "/compliance/nabh-registers",
         nabh: true, badge: "R7bo",
         roles: [ADMIN, DR, NR, RX, PH, LB, SE, DT, WB, "Housekeeping", "MRD"] },

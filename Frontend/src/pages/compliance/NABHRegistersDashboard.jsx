@@ -11,12 +11,12 @@
  * page is read-only (drill into the register pages for entry). Date-range
  * filter + per-register table.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useCallback, useEffect, useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
-  AdminPage, Hero, KPI, Card, Table, EmptyRow, Empty, Badge, C,
+  AdminPage, Hero, Card, Table, EmptyRow, Badge, C,
 } from "../../Components/admin-theme";
 import { API_BASE_URL as API } from "../../config/api";
 
@@ -69,6 +69,24 @@ const REGISTER_CATEGORIES = [
   },
 ];
 
+/* ════════════════════════════════════════════════════════════════
+   R7ek — LIVE CLINICAL REGISTERS
+   Seven registers auto-populated from clinical save paths (vitals,
+   ER intake, transfusion, assessments). Same page renders the
+   chronological log inline when a tile is clicked — no separate
+   routes. Replaces the old tab-bar UX.
+══════════════════════════════════════════════════════════════ */
+const LIVE_REGISTERS = [
+  { id: "blood-sugar",       label: "Blood Sugar (RBS)",       icon: "pi-chart-line",  nabhRef: "AAC.4",  desc: "All RBS readings — critical flagging at <70 / >300 mg/dL" },
+  { id: "emergency",         label: "Emergency Register",      icon: "pi-bolt",        nabhRef: "AAC.5",  desc: "ER intake, triage, door-to-disposition time, MLC" },
+  { id: "blood-transfusion", label: "Blood Transfusion",       icon: "pi-flag-fill",   nabhRef: "COP.18", desc: "Transfusions with group / units / reaction tracking" },
+  { id: "pain",              label: "Pain Assessment",         icon: "pi-heart-fill",  nabhRef: "COP.6",  desc: "Pain scale + severity + intervention log" },
+  { id: "fall-risk",         label: "Fall Risk (Morse)",       icon: "pi-arrow-down",  nabhRef: "COP.4",  desc: "Morse fall scale + risk tier + history" },
+  { id: "pressure-ulcer",    label: "Pressure Ulcer (Braden)", icon: "pi-info-circle", nabhRef: "COP.4",  desc: "Braden score + ulcer stage + HAPU flagging" },
+  { id: "dvt",               label: "DVT / VTE (Caprini)",     icon: "pi-shield",      nabhRef: "COP.4",  desc: "Caprini + IMPROVE bleed + recommended prophylaxis" },
+];
+const LIVE_ACCENT = "#0891b2";
+
 const tileStyle = {
   display: "flex", flexDirection: "column", gap: 8,
   padding: 14, borderRadius: 10,
@@ -91,41 +109,27 @@ const isoDaysAgo = (n) => {
   return d.toISOString().slice(0, 10);
 };
 
-const REGISTER_TABS = [
-  { id: "summary", label: "Inspection Dashboard" },
-  { id: "blood-sugar", label: "Blood Sugar (RBS)" },
-  { id: "emergency", label: "Emergency" },
-  { id: "blood-transfusion", label: "Blood Transfusion" },
-  { id: "pain", label: "Pain Assessment" },
-  { id: "fall-risk", label: "Fall Risk" },
-  { id: "pressure-ulcer", label: "Pressure Ulcer" },
-  { id: "dvt", label: "DVT / VTE (Caprini)" },
-];
-
 const tdStyle = { padding: "8px 12px", borderBottom: `1px solid ${C.border}`, fontSize: 12 };
+
+const VALID_LIVE_IDS = new Set(LIVE_REGISTERS.map((r) => r.id));
 
 export default function NABHRegistersDashboard() {
   const navigate = useNavigate();
-  const [active, setActive] = useState("summary");
-  const [summary, setSummary] = useState([]);
+  const location = useLocation();
+  // R7ek — active = currently-expanded live register, or null if just
+  // showing the tile grid. Deep-link via URL hash (#blood-sugar etc.)
+  // from the Inspection Dashboard's "Open →" buttons.
+  const initialHash = (location.hash || "").replace(/^#/, "");
+  const [active, setActive] = useState(VALID_LIVE_IDS.has(initialHash) ? initialHash : null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [startDate, setStartDate] = useState(isoDaysAgo(7));
   const [endDate, setEndDate] = useState(todayISO());
   const [criticalOnly, setCriticalOnly] = useState(false);
-
-  const fetchSummary = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await axios.get(`${API}/registers/nabh/dashboard-summary`, authHdr());
-      setSummary(r.data?.data || []);
-    } catch (e) {
-      toast.error(e?.response?.data?.message || "Failed to load dashboard");
-    }
-    setLoading(false);
-  }, []);
+  const tableRef = React.useRef(null);
 
   const fetchList = useCallback(async (registerId) => {
+    if (!registerId) return;
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -141,26 +145,39 @@ export default function NABHRegistersDashboard() {
     setLoading(false);
   }, [startDate, endDate, criticalOnly]);
 
-  useEffect(() => {
-    if (active === "summary") fetchSummary();
-    else fetchList(active);
-  }, [active, fetchSummary, fetchList]);
+  useEffect(() => { if (active) fetchList(active); }, [active, fetchList]);
 
-  const kpis = useMemo(() => {
-    if (active !== "summary") return null;
-    return summary.map((s) => ({
-      label: s.name,
-      value: s.todayCount,
-      sub: `7d: ${s.sevenDayCount} · NABH ${s.nabhRef}`,
-    }));
-  }, [active, summary]);
+  // React to hash changes after mount (e.g. user navigates back from
+  // another page or clicks an internal link).
+  useEffect(() => {
+    const h = (location.hash || "").replace(/^#/, "");
+    if (VALID_LIVE_IDS.has(h) && h !== active) setActive(h);
+  }, [location.hash, active]);
+
+  // Smooth-scroll the expanded table into view when active changes.
+  useEffect(() => {
+    if (active && tableRef.current) {
+      tableRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [active]);
+
+  const openLiveRegister = (id) => {
+    setActive(id);
+    // Update URL hash without re-rendering the route — keeps deep-link parity.
+    navigate(`/compliance/nabh-registers#${id}`, { replace: true });
+  };
+  const closeLiveRegister = () => {
+    setActive(null);
+    setRows([]);
+    navigate(`/compliance/nabh-registers`, { replace: true });
+  };
 
   return (
     <AdminPage>
       <Hero
         icon="pi-th-large"
-        title="NABH Inspection Dashboard"
-        subtitle="Auto-populated compliance registers — surveyor-ready chronological logs"
+        title="NABH Registers"
+        subtitle="All compliance registers in one place — categorized for the surveyor visit"
         color="teal"
       />
 
@@ -231,67 +248,97 @@ export default function NABHRegistersDashboard() {
         </Card>
       ))}
 
-      {/* Tab bar */}
-      <Card title="Inspection Dashboard — Auto-populated Registers">
-        <div style={{ fontSize: 12, color: C.muted, marginBottom: 10, marginTop: -4 }}>
-          Live chronological logs auto-populated from clinical save paths (RBS readings,
-          ER visits, transfusions, pain / fall / pressure-ulcer / DVT assessments).
+      {/* R7ek — Live Clinical Registers as tiles (replaces tab bar). */}
+      <Card title="Live Clinical Registers">
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 12, marginTop: -4 }}>
+          Auto-populated from clinical save paths (vitals, ER intake, transfusions,
+          assessments). Click a tile to view that register's chronological log.
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {REGISTER_TABS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setActive(t.id)}
-              style={{
-                padding: "8px 14px",
-                borderRadius: 8,
-                border: `1px solid ${active === t.id ? C.teal : C.border}`,
-                background: active === t.id ? C.teal : "#fff",
-                color: active === t.id ? "#fff" : C.text,
-                fontWeight: 600,
-                cursor: "pointer",
-                fontSize: 13,
-              }}
-            >
-              {t.label}
-            </button>
-          ))}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+          gap: 10,
+        }}>
+          {LIVE_REGISTERS.map((reg) => {
+            const isActive = active === reg.id;
+            return (
+              <button
+                key={reg.id}
+                type="button"
+                onClick={() => openLiveRegister(reg.id)}
+                style={{
+                  ...tileStyle,
+                  borderColor: isActive ? LIVE_ACCENT : C.border,
+                  background: isActive ? `${LIVE_ACCENT}08` : "#fff",
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.transform = "translateY(-2px)";
+                    e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)";
+                    e.currentTarget.style.borderColor = LIVE_ACCENT;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.transform = "translateY(0)";
+                    e.currentTarget.style.boxShadow = "none";
+                    e.currentTarget.style.borderColor = C.border;
+                  }
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{
+                    width: 36, height: 36, borderRadius: 8,
+                    background: `${LIVE_ACCENT}15`, color: LIVE_ACCENT,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 18,
+                  }}>
+                    <i className={`pi ${reg.icon}`} />
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: C.text }}>
+                      {reg.label}
+                    </div>
+                    <div style={{ marginTop: 2 }}>
+                      <Badge value={reg.nabhRef} palette="blue" />
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.4 }}>
+                  {reg.desc}
+                </div>
+                <div style={{
+                  marginTop: "auto", paddingTop: 4,
+                  fontSize: 11, color: LIVE_ACCENT, fontWeight: 600,
+                }}>
+                  {isActive ? "Viewing ↓" : "Open ↓"}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </Card>
 
-      {/* Summary view */}
-      {active === "summary" && (
-        <>
-          {kpis && kpis.length > 0 && <KPI items={kpis} />}
-          <Card title="Register Status">
-            {summary.length === 0 ? (
-              <Empty text={loading ? "Loading…" : "No registers configured"} />
-            ) : (
-              <Table cols={["Register", "NABH Ref", "Today", "Last 7d", "Last Entry", "Action"]}>
-                {summary.map((r) => (
-                  <tr key={r.id}>
-                    <td style={tdStyle}><strong>{r.name}</strong></td>
-                    <td style={tdStyle}><Badge color="blue">{r.nabhRef}</Badge></td>
-                    <td style={tdStyle}><strong>{r.todayCount}</strong></td>
-                    <td style={tdStyle}>{r.sevenDayCount}</td>
-                    <td style={tdStyle}>{fmt(r.lastEntryAt)}</td>
-                    <td style={tdStyle}>
-                      <button
-                        onClick={() => setActive(r.id)}
-                        style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.teal}`, background: "#fff", color: C.teal, cursor: "pointer", fontSize: 12, fontWeight: 600 }}
-                      >Open →</button>
-                    </td>
-                  </tr>
-                ))}
-              </Table>
-            )}
+      {/* R7ek — Expanded register table renders inline below tiles. */}
+      {active && (
+        <div ref={tableRef}>
+          <Card>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>
+                {LIVE_REGISTERS.find((r) => r.id === active)?.label || active}
+              </div>
+              <button
+                type="button"
+                onClick={closeLiveRegister}
+                style={{
+                  padding: "4px 10px", borderRadius: 6,
+                  border: `1px solid ${C.border}`, background: "#fff",
+                  color: C.muted, cursor: "pointer",
+                  fontSize: 11, fontWeight: 600,
+                }}
+              >✕ Close</button>
+            </div>
           </Card>
-        </>
-      )}
-
-      {/* Per-register list views */}
-      {active !== "summary" && (
-        <>
           <Card title="Filters">
             <div style={{ display: "flex", gap: 12, alignItems: "end", flexWrap: "wrap" }}>
               <div>
@@ -323,11 +370,11 @@ export default function NABHRegistersDashboard() {
                     <td style={tdStyle}>{fmt(r.takenAt)}</td>
                     <td style={tdStyle}>{r.UHID}</td>
                     <td style={tdStyle}>{r.patientName}</td>
-                    <td style={tdStyle}><Badge>{r.readingType}</Badge></td>
+                    <td style={tdStyle}><Badge value={r.readingType} palette="muted" /></td>
                     <td style={tdStyle}><strong>{r.readingValue}</strong> {r.readingUnit}</td>
                     <td style={tdStyle}>{r.sampleType}</td>
                     <td style={tdStyle}>{r.location}</td>
-                    <td style={tdStyle}>{r.criticalFlag ? <Badge color="red">CRITICAL</Badge> : "—"}</td>
+                    <td style={tdStyle}>{r.criticalFlag ? <Badge value="CRITICAL" palette="red" /> : "—"}</td>
                     <td style={tdStyle}>{r.takenByName || "—"}</td>
                   </tr>
                 ))}
@@ -347,14 +394,15 @@ export default function NABHRegistersDashboard() {
                     <td style={tdStyle}>{r.UHID}</td>
                     <td style={tdStyle}>{r.patientName}</td>
                     <td style={tdStyle}>
-                      <Badge color={r.triageCategory === "Critical" ? "red" : r.triageCategory === "Emergency" ? "orange" : "blue"}>
-                        {r.triageCategory}
-                      </Badge>
+                      <Badge
+                        value={r.triageCategory}
+                        palette={r.triageCategory === "Critical" ? "red" : r.triageCategory === "Emergency" ? "orange" : "blue"}
+                      />
                     </td>
                     <td style={tdStyle}>{r.doorToTriageMinutes != null ? `${r.doorToTriageMinutes}m` : "—"}</td>
                     <td style={tdStyle}>{r.doorToDispositionMinutes != null ? `${r.doorToDispositionMinutes}m` : "—"}</td>
-                    <td style={tdStyle}>{r.disposition || <Badge color="muted">PENDING</Badge>}</td>
-                    <td style={tdStyle}>{r.isMLC ? <Badge color="orange">MLC</Badge> : "—"}</td>
+                    <td style={tdStyle}>{r.disposition || <Badge value="PENDING" palette="muted" />}</td>
+                    <td style={tdStyle}>{r.isMLC ? <Badge value="MLC" palette="orange" /> : "—"}</td>
                   </tr>
                 ))}
               </Table>
@@ -372,11 +420,11 @@ export default function NABHRegistersDashboard() {
                     <td style={tdStyle}>{fmt(r.createdAt)}</td>
                     <td style={tdStyle}>{r.UHID}</td>
                     <td style={tdStyle}>{r.patientName}</td>
-                    <td style={tdStyle}><Badge color="red">{r.bloodGroup}</Badge></td>
+                    <td style={tdStyle}><Badge value={r.bloodGroup} palette="red" /></td>
                     <td style={tdStyle}>{r.unitsRequested}</td>
-                    <td style={tdStyle}><Badge>{r.status}</Badge></td>
+                    <td style={tdStyle}><Badge value={r.status} palette="blue" /></td>
                     <td style={tdStyle}>{fmt(r.startedAt)}</td>
-                    <td style={tdStyle}>{r.reaction?.occurred ? <Badge color="red">{r.reaction.type || "YES"}</Badge> : "—"}</td>
+                    <td style={tdStyle}>{r.reaction?.occurred ? <Badge value={r.reaction.type || "YES"} palette="red" /> : "—"}</td>
                   </tr>
                 ))}
               </Table>
@@ -395,9 +443,10 @@ export default function NABHRegistersDashboard() {
                     <td style={tdStyle}>{r.patientName}</td>
                     <td style={tdStyle}><strong>{r.painScale}</strong>/10</td>
                     <td style={tdStyle}>
-                      <Badge color={r.severity === "Severe" ? "red" : r.severity === "Moderate" ? "orange" : r.severity === "Mild" ? "blue" : "muted"}>
-                        {r.severity}
-                      </Badge>
+                      <Badge
+                        value={r.severity}
+                        palette={r.severity === "Severe" ? "red" : r.severity === "Moderate" ? "orange" : r.severity === "Mild" ? "blue" : "muted"}
+                      />
                     </td>
                     <td style={tdStyle}>{r.scaleUsed}</td>
                     <td style={tdStyle}>{r.site || "—"}</td>
@@ -421,9 +470,10 @@ export default function NABHRegistersDashboard() {
                     <td style={tdStyle}>{r.patientName}</td>
                     <td style={tdStyle}><strong>{r.morseScore}</strong></td>
                     <td style={tdStyle}>
-                      <Badge color={r.riskTier === "High" ? "red" : r.riskTier === "Moderate" ? "orange" : "blue"}>
-                        {r.riskTier}
-                      </Badge>
+                      <Badge
+                        value={r.riskTier}
+                        palette={r.riskTier === "High" ? "red" : r.riskTier === "Moderate" ? "orange" : "blue"}
+                      />
                     </td>
                     <td style={tdStyle}>{r.historyOfFalling ? "Yes" : "No"}</td>
                     <td style={tdStyle}>{r.gait || "—"}</td>
@@ -447,14 +497,15 @@ export default function NABHRegistersDashboard() {
                     <td style={tdStyle}>{r.patientName}</td>
                     <td style={tdStyle}><strong>{r.bradenScore}</strong></td>
                     <td style={tdStyle}>
-                      <Badge color={r.riskTier === "Severe" ? "red" : r.riskTier === "High" ? "orange" : "blue"}>
-                        {r.riskTier}
-                      </Badge>
+                      <Badge
+                        value={r.riskTier}
+                        palette={r.riskTier === "Severe" ? "red" : r.riskTier === "High" ? "orange" : "blue"}
+                      />
                     </td>
                     <td style={tdStyle}>{r.ulcerPresent ? "Yes" : "No"}</td>
                     <td style={tdStyle}>{r.ulcerStage || "—"}</td>
                     <td style={tdStyle}>{r.ulcerSite || "—"}</td>
-                    <td style={tdStyle}>{r.sentinelFlag ? <Badge color="red">SENTINEL</Badge> : r.hospitalAcquired ? <Badge color="orange">HAPU</Badge> : "—"}</td>
+                    <td style={tdStyle}>{r.sentinelFlag ? <Badge value="SENTINEL" palette="red" /> : r.hospitalAcquired ? <Badge value="HAPU" palette="orange" /> : "—"}</td>
                     <td style={tdStyle}>{r.assessedBy || "—"}</td>
                   </tr>
                 ))}
@@ -474,25 +525,30 @@ export default function NABHRegistersDashboard() {
                     <td style={tdStyle}>{r.patientName}</td>
                     <td style={tdStyle}><strong>{r.capriniScore}</strong></td>
                     <td style={tdStyle}>
-                      <Badge color={
-                        r.capriniTier === "Highest" ? "red" :
-                        r.capriniTier === "High" ? "orange" :
-                        r.capriniTier === "Moderate" ? "blue" : "muted"
-                      }>
-                        {r.capriniTier}
-                      </Badge>
+                      <Badge
+                        value={r.capriniTier}
+                        palette={
+                          r.capriniTier === "Highest" ? "red" :
+                          r.capriniTier === "High" ? "orange" :
+                          r.capriniTier === "Moderate" ? "blue" : "muted"
+                        }
+                      />
                     </td>
                     <td style={tdStyle}>{r.improveScore != null ? r.improveScore : "—"}</td>
-                    <td style={tdStyle}>{r.bleedingRiskFlag ? <Badge color="red">HIGH</Badge> : (r.improveTier || "—")}</td>
+                    <td style={tdStyle}>{r.bleedingRiskFlag ? <Badge value="HIGH" palette="red" /> : (r.improveTier || "—")}</td>
                     <td style={tdStyle}>
-                      <Badge color={r.recommendedProphylaxis === "Combined" || r.recommendedProphylaxis === "Pharmacological" ? "orange" : r.recommendedProphylaxis === "Ambulation" ? "muted" : "blue"}>
-                        {r.recommendedProphylaxis}
-                      </Badge>
+                      <Badge
+                        value={r.recommendedProphylaxis}
+                        palette={r.recommendedProphylaxis === "Combined" || r.recommendedProphylaxis === "Pharmacological" ? "orange" : r.recommendedProphylaxis === "Ambulation" ? "muted" : "blue"}
+                      />
                       {r.recommendedAgent ? <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{r.recommendedAgent}</div> : null}
                     </td>
                     <td style={tdStyle}>
                       {r.escalatedFlag
-                        ? <Badge color={r.escalationStatus === "ADDRESSED" ? "green" : r.escalationStatus === "OVERDUE" ? "red" : "orange"}>{r.escalationStatus || "PENDING"}</Badge>
+                        ? <Badge
+                            value={r.escalationStatus || "PENDING"}
+                            palette={r.escalationStatus === "ADDRESSED" ? "green" : r.escalationStatus === "OVERDUE" ? "red" : "orange"}
+                          />
                         : "—"}
                     </td>
                     <td style={tdStyle}>{r.assessedBy || "—"}</td>
@@ -501,7 +557,7 @@ export default function NABHRegistersDashboard() {
               </Table>
             </Card>
           )}
-        </>
+        </div>
       )}
     </AdminPage>
   );

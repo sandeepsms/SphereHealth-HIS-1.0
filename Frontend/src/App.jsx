@@ -181,6 +181,9 @@ const ADRReportsPage = lazy(() => import("./pages/quality/ADRReportsPage"));
 const FireDrillRegisterPage = lazy(() => import("./pages/compliance/FireDrillRegisterPage"));
 // R7bo — NABH Inspection Dashboard (RBS / Emergency / Blood Transfusion).
 const NABHRegistersDashboard = lazy(() => import("./pages/compliance/NABHRegistersDashboard"));
+// R7ek — Inspection Dashboard split out as its own page (was a tab inside
+// NABHRegistersDashboard); shows KPI strip + register-status table.
+const InspectionDashboardPage = lazy(() => import("./pages/compliance/InspectionDashboardPage"));
 // R7bx — six new surveyor-facing NABH registers (COP.10/13/16/17/18 + MOM.7).
 const OTRegisterPage                = lazy(() => import("./pages/nabh/OTRegisterPage"));
 const ASARegisterPage               = lazy(() => import("./pages/nabh/ASARegisterPage"));
@@ -617,6 +620,10 @@ function AppLayout({ collapsed, setCollapsed }) {
                 Blood Transfusion registers in a unified surveyor view. */}
             <Route path="/compliance/nabh-registers" element={
               <RoleGuard action="compliance.read"><NABHRegistersDashboard /></RoleGuard>
+            } />
+            {/* R7ek — Inspection Dashboard (separate page; was a tab). */}
+            <Route path="/compliance/inspection-dashboard" element={
+              <RoleGuard action="compliance.read"><InspectionDashboardPage /></RoleGuard>
             } />
             {/* R7bx — six surveyor-facing NABH registers, each one a
                 filterable + printable + CSV-exportable chronological log.
