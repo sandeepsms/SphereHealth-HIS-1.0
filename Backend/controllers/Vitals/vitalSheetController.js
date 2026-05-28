@@ -19,11 +19,16 @@ exports.saveVitalSheet = handle(async (req, res) => {
   // R7bp — auto-populate NABH RBS register from any glucose readings
   // present in the sheet. Non-blocking; register writes never fail the
   // primary vital-sheet save.
+  // R7em-VERIFY-FIX: VitalSheet model stores `uhid` (lowercase), not `UHID`.
+  // The previous data?.UHID guard was always false → patient lookup never
+  // ran → RBS register never auto-populated from any vital-sheet save.
+  // Long-standing bug pre-dating R7el. Read both keys for safety.
   try {
     const emitter = require("../../services/Compliance/nabhRegisterEmitter");
     const Patient = require("../../models/Patient/patientModel");
-    const patient = data?.UHID
-      ? await Patient.findOne({ UHID: data.UHID }).select("_id UHID fullName gender age").lean()
+    const uhid = data?.uhid || data?.UHID || null;
+    const patient = uhid
+      ? await Patient.findOne({ UHID: uhid }).select("_id UHID fullName gender age").lean()
       : null;
     if (patient) {
       emitter.emitBloodSugarFromVitalSheet(data, patient, req.user).catch((e) =>
