@@ -1517,6 +1517,23 @@ function NursingNotesContent({ selectedPatient }) {
                     state: { uhid: patient?.UHID || patient?.uhid || searchUHID || "" },
                   }),
                 },
+                /* R7eg — Bundles of Care (ICU). One-shift bundle compliance
+                   sheet (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP). Same
+                   PHI-safe location.state handoff as the Diabetic Chart
+                   tile above. Saves + finalizes auto-feed the NABH HIC.5
+                   Infection Control register via ClinicalAudit. */
+                {
+                  id: "icubundles-nav",
+                  title: "Bundles of Care — ICU",
+                  subtitle: "VAP / CAUTI / CLABSI / DVT / Sepsis / SUP (NABH HIC.5)",
+                  icon: "pi-shield",
+                  color: "#059669",
+                  tint: "#d1fae5",
+                  badges: [{ label: "NABH", tone: "ok" }, { label: "Quality", tone: "accent" }],
+                  action: () => navigate("/icu-bundles", {
+                    state: { uhid: patient?.UHID || patient?.uhid || searchUHID || "" },
+                  }),
+                },
                 {
                   id: "ipdassessment-nav",
                   title: "IPD Initial Assessment",

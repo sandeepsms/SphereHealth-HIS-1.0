@@ -91,6 +91,14 @@ const ClinicalAuditSchema = new mongoose.Schema(
         "VITALS_RECORDED",
         "NURSING_ASSESSMENT_RECORDED",
         "PAIN_REASSESSED",
+
+        // R7eg — ICU Bundles of Care (NABH HIC.5 + COP.13)
+        // Each shift save + finalize + bundle-specific non-compliance
+        // signal feeds the Infection-Control register downstream.
+        "ICU_BUNDLE_SAVED",
+        "ICU_BUNDLE_SHIFT_FINALIZED",
+        "ICU_BUNDLE_VAP_NON_COMPLIANT",
+        "ICU_BUNDLE_CLABSI_NON_COMPLIANT",
       ],
       index: true,
     },

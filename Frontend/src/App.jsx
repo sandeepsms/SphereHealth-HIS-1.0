@@ -188,11 +188,17 @@ const ReadmissionRegisterPage       = lazy(() => import("./pages/nabh/Readmissio
 const MortalityRegisterPage         = lazy(() => import("./pages/nabh/MortalityRegisterPage"));
 const RestraintRegisterPage         = lazy(() => import("./pages/nabh/RestraintRegisterPage"));
 const AntimicrobialUseRegisterPage  = lazy(() => import("./pages/nabh/AntimicrobialUseRegisterPage"));
+// R7eg — NABH HIC.5 Infection Control register. Aggregates ICU care-bundle
+// compliance (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP) over time so the
+// IC officer can answer surveyor questions like "VAP trend last 3 months".
+const HIC5InfectionControlPage      = lazy(() => import("./pages/compliance/HIC5InfectionControlPage"));
 // R7bq — DVT/VTE Caprini assessment (auto-pops DVT register).
 const CapriniDVTAssessmentPage = lazy(() => import("./pages/nursing/CapriniDVTAssessmentPage"));
 const CredentialingPage = lazy(() => import("./pages/hr/CredentialingPage"));
 const MARPage = lazy(() => import("./pages/clinical/MARPage"));
 const DiabeticChartPage = lazy(() => import("./pages/clinical/DiabeticChartPage"));
+// R7eg — ICU Bundles of Care (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP)
+const ICUBundlesPage = lazy(() => import("./pages/clinical/ICUBundlesPage"));
 const MaintenanceDashboardPage = lazy(() => import("./pages/maintenance/MaintenanceDashboardPage"));
 const EquipmentDashboardPage   = lazy(() => import("./pages/maintenance/EquipmentDashboardPage"));
 const PharmacyHomePage         = lazy(() => import("./pages/pharmacy/PharmacyHomePage"));
@@ -216,6 +222,11 @@ const HospitalConfigWizard = lazy(() => import("./pages/admin/HospitalConfigWiza
 // R7bz — read-only System Health diagnostics page (DB / crons / errors /
 // activity / integrity / server).  Admin-only.
 const SystemHealthPage = lazy(() => import("./pages/admin/SystemHealthPage"));
+// R7dw — NABH Signage Generator. Bilingual (English + Hindi) generator
+// for all 88 NABH-mandated hospital signages. Embedded base64 logo,
+// printable templates. Admin-only — used for one-off signage printing
+// during accreditation prep.
+const NABHSignagePage = lazy(() => import("./pages/admin/NABHSignagePage"));
 const UserManagementPage = lazy(() => import("./pages/admin/UserManagementPage"));
 const RolesPage          = lazy(() => import("./pages/admin/RolesPage"));
 const RoleDashboardPage  = lazy(() => import("./pages/RoleDashboardPage"));
@@ -628,6 +639,12 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/compliance/nabh/antimicrobial-register" element={
               <RoleGuard action="compliance.read"><AntimicrobialUseRegisterPage /></RoleGuard>
             } />
+            {/* R7eg — NABH HIC.5 Infection Control register: ICU care-bundle
+                compliance aggregated over time (VAP / CAUTI / CLABSI / DVT
+                / Sepsis / SUP). Backed by /api/clinical-audit/icu-bundles. */}
+            <Route path="/compliance/hic5-infection-control" element={
+              <RoleGuard action="compliance.read"><HIC5InfectionControlPage /></RoleGuard>
+            } />
             {/* R7bq — Caprini DVT assessment. POST to /api/nursing-assessments/dvt
                 auto-populates the NABH DVT register (MOM.7 + AAC.4). */}
             <Route path="/nursing/caprini-dvt" element={
@@ -695,6 +712,13 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/mar" element={<MARPage />} />
             <Route path="/diabetic-chart" element={<DiabeticChartPage />} />
+            {/* R7eg — ICU Bundles of Care. R7ei: gate promoted to the new
+                `icu-bundle.write` action so intensivists (Doctor role) can
+                chart bundles in addition to Admin/Nurse. Mirrors the
+                backend route gate at /api/icu-bundles. */}
+            <Route path="/icu-bundles" element={
+              <RoleGuard action="icu-bundle.write"><ICUBundlesPage /></RoleGuard>
+            } />
             <Route path="/maintenance"    element={<MaintenanceDashboardPage />} />
             <Route path="/equipment"      element={<EquipmentDashboardPage />} />
             <Route path="/pharmacy"       element={
@@ -797,6 +821,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/admin/roles" element={
               <RoleGuard allow={["Admin"]}><RolesPage /></RoleGuard>
+            } />
+            {/* R7dw — NABH Signage Generator (Admin only). 88 bilingual
+                signage templates for accreditation. */}
+            <Route path="/admin/nabh-signage" element={
+              <RoleGuard allow={["Admin"]}><NABHSignagePage /></RoleGuard>
             } />
 
             {/* ── Accountant workspace — Day Book / GST / Outstanding / Refunds ─ */}

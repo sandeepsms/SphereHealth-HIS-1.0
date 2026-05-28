@@ -51,6 +51,10 @@ const PatientDietPlan    = DietitianModels?.PatientDietPlan || null;
 const LabRecordsModels   = (() => { try { return require("../../models/Clinical/labRecordsModels"); } catch { return null; } })();
 const LabTrend           = LabRecordsModels?.LabTrend  || null;
 const LabReport          = LabRecordsModels?.LabReport || null;
+// ICUBundle — six per-shift care-bundle sheets (VAP / CAUTI / CLABSI /
+// DVT / Sepsis / SUP). Surfaced into the Complete Patient File so the
+// NABH HIC.5 / COP.13 bundles appear in print without a separate API call.
+const ICUBundle          = (() => { try { return require("../../models/Clinical/ICUBundleModel"); } catch { return null; } })();
 
 // ── Helper: safe collection fetch — never let a single model failure
 // break the whole aggregator. If a query throws (missing model, schema
@@ -176,6 +180,60 @@ exports.getCompleteFile = async (req, res) => {
     const currentAdmission =
       admissions.find((a) => a.status === "Active") || admissions[0] || null;
 
+    // ICUBundle — fetched scoped to the current admission so the print sees
+    // every shift of every day of the stay (not the UHID-level 30-day cap
+    // applied by listByUhid). For OPD-only patients or visits with no
+    // currentAdmission we skip and return []. Each row is unwrapped into a
+    // print-friendly shape with bundles: [{key, title, items[], compliancePct, ...}].
+    const SHIFT_ORDER = { Morning: 0, Evening: 1, Night: 2 };
+    const BUNDLE_TITLES = {
+      vap:    "VAP — Ventilator-Associated Pneumonia",
+      cauti:  "CAUTI — Catheter-Associated UTI",
+      clabsi: "CLABSI — Central Line BSI",
+      dvt:    "DVT Prophylaxis",
+      sepsis: "Sepsis — Hour-1 Bundle",
+      sup:    "SUP — Stress Ulcer Prophylaxis",
+    };
+    const icuBundles = (ICUBundle && currentAdmission?._id)
+      ? await safe("icuBundles", async () => {
+          const rows = await ICUBundle
+            .find({ admissionId: currentAdmission._id })
+            .sort({ date: 1 })
+            .lean();
+          rows.sort((a, b) => {
+            if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+            return (SHIFT_ORDER[a.shift] ?? 9) - (SHIFT_ORDER[b.shift] ?? 9);
+          });
+          const BUNDLE_KEYS = ICUBundle.BUNDLE_KEYS || ["vap", "cauti", "clabsi", "dvt", "sepsis", "sup"];
+          return rows.map((r) => ({
+            _id: r._id,
+            UHID: r.UHID,
+            admissionId: r.admissionId,
+            admissionNumber: r.admissionNumber,
+            patientName: r.patientName,
+            date: r.date,
+            shift: r.shift,
+            status: r.status,
+            overallCompliancePct: r.overallCompliancePct,
+            notes: r.notes,
+            finalizedBy: r.finalizedBy || "",
+            finalizedAt: r.finalizedAt || null,
+            bundles: BUNDLE_KEYS.map((k) => {
+              const b = r[k] || {};
+              return {
+                key: k,
+                title: BUNDLE_TITLES[k] || k.toUpperCase(),
+                applicable: b.applicable !== false,
+                items: Array.isArray(b.items) ? b.items : [],
+                compliancePct: typeof b.compliancePct === "number" ? b.compliancePct : 0,
+                nurseName: b.nurseName || "",
+                signedAt: b.signedAt || null,
+              };
+            }),
+          }));
+        })
+      : [];
+
     // ── Build a unified chronological timeline. Each entry has a stable
     // shape the UI can render without knowing the source model.
     const timeline = [];
@@ -272,6 +330,13 @@ exports.getCompleteFile = async (req, res) => {
       { id: d._id, model: "PatientDietPlan" },
       { status: d.status, templateCode: d.plan?.templateCode }));
 
+    // ICU bundles — one timeline entry per shift sheet so the unified feed
+    // shows when each VAP/CAUTI/CLABSI/... bundle was finalized.
+    icuBundles.forEach((b) => push(b.finalizedAt || b.date, "icu-bundle",
+      `ICU bundles — ${b.date} ${b.shift} (${b.overallCompliancePct}%${b.status === "finalized" ? " · signed" : " · draft"})`,
+      { id: b._id, model: "ICUBundle" },
+      { status: b.status, shift: b.shift, date: b.date, compliancePct: b.overallCompliancePct }));
+
     activityLog.forEach((a) => push(a.createdAt, "audit",
       `${a.userName || "System"} — ${a.module}/${a.action}${a.area ? ` (${a.area})` : ""}`,
       { id: a._id, model: "PatientActivityLog" },
@@ -363,6 +428,10 @@ exports.getCompleteFile = async (req, res) => {
         intakeOutput,
         labTrends,
         labReports,
+        // ICU care bundles (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP) —
+        // every shift sheet for the current admission, with items[] unwrapped
+        // for direct print rendering.
+        icuBundles,
         timeline,
         completeness,
         pagination,

@@ -400,6 +400,9 @@ const NAV = [
       // activity / integrity / server).  Admin-only — the section itself
       // is already roles:[ADMIN] so no per-item role override is needed.
       { label: "System Health",      icon: "pi-server",     path: "/admin/system-health", badge: "NEW" },
+      // R7dw — NABH Signage Generator: 88 bilingual signage templates
+      // for accreditation. Admin-only — used during NABH prep / audit.
+      { label: "NABH Signage",       icon: "pi-images",     path: "/admin/nabh-signage",  badge: "NEW" },
       { label: "Hospital Charges",   icon: "pi-dollar",     path: "/hospital-charges" },
       // R7bf-G / NABH HRD.3 — staff credentialing register lives under
       // Masters & Admin since Admin owns the HR function today.
@@ -409,46 +412,27 @@ const NAV = [
     ],
   },
 
-  /* ── R7bf-G + R7bj-F2/F6 — Quality & Compliance (NABH scaffolds) ─ */
-  // Surfaces the NABH register pages: AAC.6 critical-value alerts,
-  // PRE.6 grievance, MOM.7 ADR, FMS.4 fire drill, and the new R7bj
-  // additions — food-reaction sentinel events (F2), BMW transport
-  // manifest (F6 / BMWM 2016), code response / rapid response (F6),
-  // sharps-injury register (F6 / HRD.8).
+  /* ── R7bf-G + R7bj-F2/F6 + R7ej — Quality & Compliance (NABH gateway) ─ */
+  // R7ej (May 2026): collapsed 15 individual NABH-register entries (AAC.6
+  // Critical Value Alerts, PRE.6 Grievance, MOM.7 ADR, FMS.4 Fire Drill,
+  // Food Reactions, BMW Manifest, Code Response, HRD.8 Sharps Injury,
+  // COP.10 OT, COP.13 Anaesthesia, COP.16 Readmission, COP.18 Mortality,
+  // COP.17 Restraint, MOM.7 Antimicrobial, HIC.5 Infection Control) into
+  // the /compliance/nabh-registers landing page as categorized tiles.
+  // The sidebar now exposes a single gateway entry; the gateway page itself
+  // role-gates the individual register pages via the existing route guards.
+  // Widened roles cover the union of all previously-permitted populations
+  // (Doctor/Nurse/Reception/Pharmacist/Lab/Security/Dietician/Ward Boy/
+  // Housekeeping/MRD) so role-specific registers (e.g. BMW Manifest for
+  // Housekeeping, Fire Drill for Security) are still reachable.
   {
     id: "quality", label: "Quality & Compliance",
     icon: "pi-verified", color: "#0d9488", light: "#f0fdfa",
-    nabh: true, roles: [ADMIN, DR, NR, RX, PH, SE, DT, WB, "Housekeeping", "MRD"],
+    nabh: true, roles: [ADMIN, DR, NR, RX, PH, LB, SE, DT, WB, "Housekeeping", "MRD"],
     items: [
-      { label: "Critical Value Alerts", icon: "pi-bell",                 path: "/critical-value-alerts", nabh: true, badge: "AAC.6", roles: [ADMIN, DR, NR] },
-      { label: "Grievance Register",    icon: "pi-comment",              path: "/grievances",            nabh: true, badge: "PRE.6", roles: [ADMIN, RX, DR, "MRD"] },
-      { label: "ADR Reports",           icon: "pi-flag",                 path: "/adr-reports",           nabh: true, badge: "MOM.7", roles: [ADMIN, DR, NR, PH] },
-      { label: "Fire Drill Register",   icon: "pi-shield",               path: "/fire-drills",           nabh: true, badge: "FMS.4", roles: [ADMIN, SE] },
-      // R7bj-F2 — adverse food reaction sentinel-event register.
-      { label: "Food Reactions",        icon: "pi-exclamation-triangle", path: "/food-reactions",        nabh: true, badge: "NEW",   roles: [ADMIN, DR, NR, DT, PH, "MRD"] },
-      // R7bj-F6 — biomedical waste manifest (cart-out → vendor → PCB).
-      { label: "BMW Manifest",          icon: "pi-truck",                path: "/bmw-manifest",          nabh: true, badge: "FMS.5", roles: [ADMIN, "Housekeeping", WB, "MRD"] },
-      // R7bj-F6 — code response (code blue / pink / purple / black) log.
-      { label: "Code Response Log",     icon: "pi-bolt",                 path: "/code-response",         nabh: true, badge: "NEW",   roles: [ADMIN, DR, NR, "MRD"] },
-      // R7bj-F6 — sharps-injury register (HRD.8 needle-stick reporting).
-      { label: "Sharps Injury",         icon: "pi-info-circle",          path: "/sharps-injury",         nabh: true, badge: "HRD.8", roles: [ADMIN, DR, NR, PH, LB, WB, "Housekeeping", "MRD"] },
-      // R7bo — NABH Inspection Dashboard: surveyor-ready unified view of
-      // RBS, Emergency, and Blood Transfusion registers (auto-populated).
-      // R7bs — DVT (Caprini) chip lives inside the Nursing Notes page as
-      // requested (Assessment & Monitoring section, next to Fall Risk).
-      // No separate sidebar entry — keeps the chip-page consolidation
-      // discipline established by R7e (avoid duplicate nursing entries).
-      { label: "NABH Registers",        icon: "pi-th-large",             path: "/compliance/nabh-registers", nabh: true, badge: "R7bo", roles: [ADMIN, DR, NR, "MRD"] },
-      // R7bx — six new surveyor-facing NABH registers. Each is a self-
-      // contained filterable + printable + CSV-exportable chronological
-      // log, auto-populated from existing clinical save paths (doctor
-      // orders, procedure notes, admissions, discharge finalize).
-      { label: "OT Register",           icon: "pi-briefcase",            path: "/compliance/nabh/ot-register",            nabh: true, badge: "COP.10",  roles: [ADMIN, DR, NR, "MRD"] },
-      { label: "Anaesthesia Register",  icon: "pi-shield",               path: "/compliance/nabh/asa-register",           nabh: true, badge: "COP.13",  roles: [ADMIN, DR, NR, "MRD"] },
-      { label: "Readmission Register",  icon: "pi-reply",                path: "/compliance/nabh/readmission-register",   nabh: true, badge: "COP.16",  roles: [ADMIN, DR, NR, "MRD"] },
-      { label: "Mortality Register",    icon: "pi-times-circle",         path: "/compliance/nabh/mortality-register",     nabh: true, badge: "COP.18",  roles: [ADMIN, DR, NR, "MRD"] },
-      { label: "Restraint Register",    icon: "pi-lock",                 path: "/compliance/nabh/restraint-register",     nabh: true, badge: "COP.17",  roles: [ADMIN, DR, NR, "MRD"] },
-      { label: "Antimicrobial Use",     icon: "pi-stop-circle",          path: "/compliance/nabh/antimicrobial-register", nabh: true, badge: "MOM.7",   roles: [ADMIN, DR, NR, "MRD"] },
+      { label: "NABH Registers", icon: "pi-th-large", path: "/compliance/nabh-registers",
+        nabh: true, badge: "R7bo",
+        roles: [ADMIN, DR, NR, RX, PH, LB, SE, DT, WB, "Housekeeping", "MRD"] },
     ],
   },
 ];

@@ -254,6 +254,11 @@ router.use("/reports",          require("./Reports/reportsRoutes"));
 // Diabetic chart — RBS readings + sliding-scale insulin per admission
 router.use("/diabetic-chart",   require("./Clinical/diabeticChartRoutes"));
 
+// R7eg — ICU Bundles of Care (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP).
+// One sheet per (admissionId, date, shift). Auto-feeds the NABH HIC.5
+// Infection-Control register via ClinicalAudit emit on finalize.
+router.use("/icu-bundles",      require("./Clinical/icuBundleRoutes"));
+
 // Equipment inventory + homecare loan tracker + service history
 router.use("/equipment",        require("./Equipment/equipmentRoutes"));
 
@@ -319,6 +324,10 @@ router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
 // Surveyors ask for these as chronological audit-grade logs; the registers
 // are auto-populated from existing clinical flows via nabhRegisterEmitter.
 router.use("/registers/nabh",        require("./Compliance/nabhRegisterRoutes"));
+// R7eg — Clinical-audit roll-ups (NABH HIC.5 ICU bundle compliance, etc.).
+// Aggregates ICUBundle + ClinicalAudit collections for the IC officer's
+// register page (HIC5InfectionControlPage). Read-only, gated compliance.read.
+router.use("/clinical-audit",        require("./Compliance/clinicalAuditRoutes"));
 
 // ── R7bh-F6 — Accountant regulatory ────────────────────────────
 // GSTR-1/3B exporter + Form 16A workflow. Both gated by tax.returns.*

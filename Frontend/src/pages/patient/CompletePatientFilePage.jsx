@@ -2185,9 +2185,13 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
   // dietPlans was missing from this destructure — PrintSection 9a was
   // reading a free variable that didn't exist, crashing the print popup.
   // (Audit finding HIGH-3.)
+  // icuBundles surfaces every per-shift VAP/CAUTI/CLABSI/DVT/Sepsis/SUP
+  // sheet for the current admission so NABH surveyors see them in the
+  // printable file (HIC.5 + COP.13 + IPSG.5).
   const { currentAdmission, doctorOrders, vitals, nurseNotes, doctorNotes,
     consents, investigations, mlc, dischargeSummary, bills, activityLog,
-    bedTransfers, shiftHandovers, dietPlans, nursingAssessments, nursingCarePlans, timeline } = data;
+    bedTransfers, shiftHandovers, dietPlans, nursingAssessments, nursingCarePlans, timeline,
+    icuBundles = [] } = data;
 
   // R7k: NABH-compliant chronological clinical narrative.
   // Previously this print rendered "4. Doctor Notes" then "5. Nursing
@@ -2281,13 +2285,28 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
           the stay, every active medication (+IV/oxygen) shows its
           scheduled doses with a green ✓ when administered, the
           nurse's name, and the actual administration time. Pages
-          break between days (pageBreakInside: avoid). */}
+          break between days (pageBreakInside: avoid).
+          NEW (R7eg2): per-day footer summarises ICU care bundles
+          finalized on that day so the bedside MAR + bundle compliance
+          are side-by-side. */}
       <PrintSection title="6a. Treatment Chart — Day-wise (NABH MOM.3)">
         <TreatmentChartPrintSection
           doctorOrders={doctorOrders}
           currentAdmission={currentAdmission}
+          icuBundles={icuBundles}
         />
       </PrintSection>
+
+      {/* R7eg2: ICU Care Bundles (NABH HIC.5 / COP.13 / IPSG.5). One block
+          per (date, shift) sheet — VAP / CAUTI / CLABSI / DVT / Sepsis /
+          SUP each with their checklist items (✓ / ✗ / N/A), per-bundle
+          compliance %, and the nurse who signed. Page-break between days
+          so a long ICU stay paginates cleanly. */}
+      {(icuBundles?.length || 0) > 0 && (
+        <PrintSection title="6b. ICU Care Bundles (NABH HIC.5 / COP.13)">
+          <ICUBundlesPrintSection bundles={icuBundles} />
+        </PrintSection>
+      )}
 
       <PrintSection title="7. Vital Trends">
         <VitalsSection vitals={vitals} nurseNotes={nurseNotes} />
@@ -3181,7 +3200,44 @@ function NursingAssessmentsSection({ assessments = [] }) {
    inside each day every medication shows its scheduled doses with a
    green ✓ when administered + the nurse name + actual time.
 ─────────────────────────────────────────────────────────────── */
-function TreatmentChartPrintSection({ doctorOrders = [], currentAdmission }) {
+function TreatmentChartPrintSection({ doctorOrders = [], currentAdmission, icuBundles = [] }) {
+  // R7eg2 — Per-day ICU bundle summary lookup: groups all bundle sheets
+  // by their date string (YYYY-MM-DD) and, for each date, lists which
+  // bundle/shift combinations were FINALIZED. The day-wise treatment
+  // chart renders a footer per day showing e.g. "VAP: ✓ M,E · CAUTI: ✓ M".
+  // Built once per re-render and indexed via dateKey for O(1) lookup.
+  const bundlesByDate = useMemo(() => {
+    const SHIFT_ABBR = { Morning: "M", Evening: "E", Night: "N" };
+    const BUNDLE_KEYS = ["vap", "cauti", "clabsi", "dvt", "sepsis", "sup"];
+    const out = {};
+    for (const sheet of icuBundles || []) {
+      if (!sheet?.date) continue;
+      if (sheet.status !== "finalized") continue; // only count signed sheets
+      const day = (out[sheet.date] = out[sheet.date] || {});
+      // sheet.bundles is the unwrapped array we built in the backend; fall
+      // back to the legacy flat keys (vap/cauti/...) if a future caller
+      // sends the model shape instead.
+      const arr = Array.isArray(sheet.bundles)
+        ? sheet.bundles
+        : BUNDLE_KEYS.map((k) => ({ key: k, ...(sheet[k] || {}) }));
+      for (const b of arr) {
+        if (!b?.key) continue;
+        if (b.applicable === false) continue;
+        const bucket = (day[b.key] = day[b.key] || { shifts: [], applicable: true });
+        const ab = SHIFT_ABBR[sheet.shift] || sheet.shift?.[0] || "?";
+        if (!bucket.shifts.includes(ab)) bucket.shifts.push(ab);
+      }
+    }
+    // Sort shifts canonically M → E → N within each (date, bundle).
+    const ORDER = { M: 0, E: 1, N: 2 };
+    for (const day of Object.values(out)) {
+      for (const b of Object.values(day)) {
+        b.shifts.sort((x, y) => (ORDER[x] ?? 9) - (ORDER[y] ?? 9));
+      }
+    }
+    return out;
+  }, [icuBundles]);
+
   const data = useMemo(() => {
     // Pull only Medication / IV-Fluid / Blood orders — those are what
     // populate the MAR. Other orderTypes (Lab / Radiology / Procedure)
@@ -3412,9 +3468,274 @@ function TreatmentChartPrintSection({ doctorOrders = [], currentAdmission }) {
                 })}
               </tbody>
             </table>
+            {/* R7eg2 — ICU Bundles Compliance footer for THIS day. One row
+                per applicable bundle, listing the shifts (M / E / N) that
+                were finalized. A bullet "–" means no finalized sheet for
+                that bundle today. Footer is hidden entirely when no
+                bundles exist for any day (non-ICU patient). */}
+            {Object.keys(bundlesByDate).length > 0 && (() => {
+              const dayKey = `${day.date.getFullYear()}-${String(day.date.getMonth() + 1).padStart(2, "0")}-${String(day.date.getDate()).padStart(2, "0")}`;
+              const today = bundlesByDate[dayKey] || {};
+              const BUNDLE_LABELS = [
+                ["vap",    "VAP"],
+                ["cauti",  "CAUTI"],
+                ["clabsi", "CLABSI"],
+                ["dvt",    "DVT"],
+                ["sepsis", "Sepsis"],
+                ["sup",    "SUP"],
+              ];
+              const haveAny = BUNDLE_LABELS.some(([k]) => today[k]?.shifts?.length);
+              if (!haveAny) return null;
+              return (
+                <div style={{
+                  padding: "6px 12px",
+                  background: "#f8fafc",
+                  borderTop: "1px dashed #cbd5e1",
+                  fontSize: 10.5, color: "#0f172a",
+                  display: "flex", flexWrap: "wrap", gap: "4px 10px", alignItems: "center",
+                }}>
+                  <span style={{ fontWeight: 800, color: "#3730a3", letterSpacing: 0.3, fontSize: 9.5, textTransform: "uppercase" }}>
+                    ICU Bundles
+                  </span>
+                  {BUNDLE_LABELS.map(([k, label]) => {
+                    const b = today[k];
+                    const shifts = b?.shifts || [];
+                    const ok = shifts.length > 0;
+                    return (
+                      <span key={k} style={{
+                        padding: "1px 8px", borderRadius: 4,
+                        background: ok ? "#dcfce7" : "#f1f5f9",
+                        color: ok ? "#166534" : "#64748b",
+                        border: `1px solid ${ok ? "#86efac" : "#cbd5e1"}`,
+                        fontWeight: 700, fontSize: 10,
+                      }}>
+                        {label}: {ok ? `✓ ${shifts.join(",")}` : "–"}
+                      </span>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   R7eg2 — ICU Care Bundles printable section.
+   Renders one block per (date, shift) sheet. Inside each block,
+   every APPLICABLE bundle (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP)
+   shows its checklist items with ✓ / ✗ / N/A markers, the bundle
+   compliance %, and the nurse who signed off. Sheets that are
+   not yet finalized still render but are visually flagged "DRAFT".
+
+   The sheets are pre-sorted (date asc, then shift M→E→N) by the
+   backend's listByAdmission / patient-file aggregator, so we just
+   iterate. We also insert a `pf-page-break` before each new day so
+   long ICU stays paginate cleanly. NABH HIC.5 / COP.13 / IPSG.5.
+─────────────────────────────────────────────────────────────── */
+function ICUBundlesPrintSection({ bundles = [] }) {
+  if (!Array.isArray(bundles) || bundles.length === 0) {
+    return <Empty icon="🛡️" msg="No ICU care bundles recorded" />;
+  }
+
+  const fmtTime = (when) => when
+    ? new Date(when).toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      })
+    : "—";
+  const fmtDate = (dStr) => {
+    if (!dStr) return "—";
+    try {
+      const [y, m, d] = dStr.split("-").map((n) => parseInt(n, 10));
+      const dt = new Date(y, (m || 1) - 1, d || 1);
+      return dt.toLocaleDateString("en-IN", {
+        weekday: "long", day: "2-digit", month: "long", year: "numeric",
+      });
+    } catch { return dStr; }
+  };
+
+  // Mark item with ✓ / ✗ / N/A. N/A only applies when the bundle itself
+  // is flagged not-applicable — individual items don't carry a
+  // tri-state, just checked/unchecked.
+  const renderItemMark = (checked, applicable) => {
+    if (!applicable) {
+      return <span style={{ color: "#64748b", fontWeight: 800 }}>N/A</span>;
+    }
+    return checked
+      ? <span style={{ color: "#16a34a", fontWeight: 900, fontSize: 13 }}>✓</span>
+      : <span style={{ color: "#b91c1c", fontWeight: 900, fontSize: 13 }}>✗</span>;
+  };
+
+  // Group sheets by date so we can insert a date header + page-break per day.
+  const byDate = useMemo(() => {
+    const map = new Map();
+    for (const s of bundles) {
+      if (!map.has(s.date)) map.set(s.date, []);
+      map.get(s.date).push(s);
+    }
+    // Already sorted by backend but enforce here for safety.
+    return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  }, [bundles]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ fontSize: 11, color: "var(--pf-muted)", marginBottom: -6 }}>
+        NABH HIC.5 (HAI prevention bundles) · COP.13 (ICU care standards) ·
+        IPSG.5 (reduce HAI risk). Each shift sheet shows VAP / CAUTI / CLABSI /
+        DVT / Sepsis / SUP with per-item compliance, signed by the bedside nurse.
+      </div>
+
+      {byDate.map(([dateStr, sheets], dayIdx) => (
+        <div
+          key={dateStr}
+          style={{
+            // First day breaks naturally; subsequent days insert a page
+            // break before the date header so each ICU day starts on a
+            // fresh page when printed.
+            pageBreakBefore: dayIdx > 0 ? "always" : "auto",
+            breakInside: "avoid-page",
+          }}
+        >
+          <div style={{
+            padding: "5px 12px",
+            background: "linear-gradient(90deg, #ecfeff 0%, #fff 60%)",
+            border: "1px solid #a5f3fc",
+            borderLeft: "4px solid #0891b2",
+            borderRadius: 6,
+            marginBottom: 8,
+            fontSize: 12.5, fontWeight: 800, color: "#0e7490",
+          }}>
+            📅 {fmtDate(dateStr)} — {sheets.length} shift sheet{sheets.length === 1 ? "" : "s"}
+          </div>
+
+          {sheets.map((sheet) => {
+            return (
+              <div
+                key={sheet._id}
+                style={{
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 6,
+                  marginBottom: 10,
+                  pageBreakInside: "avoid",
+                  breakInside: "avoid",
+                  overflow: "hidden",
+                }}
+              >
+                <div style={{
+                  padding: "5px 12px",
+                  background: "#f8fafc",
+                  borderBottom: "1px solid #e2e8f0",
+                  display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                }}>
+                  <span style={{ fontWeight: 800, color: "#0f172a", fontSize: 12 }}>
+                    {sheet.shift} shift
+                  </span>
+                  <span style={{
+                    padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 800,
+                    background: sheet.status === "finalized" ? "#dcfce7" : "#fef3c7",
+                    color: sheet.status === "finalized" ? "#166534" : "#92400e",
+                    border: `1px solid ${sheet.status === "finalized" ? "#86efac" : "#fcd34d"}`,
+                    textTransform: "uppercase",
+                  }}>
+                    {sheet.status}
+                  </span>
+                  <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 800, background: "#dbeafe", color: "#1e40af" }}>
+                    Overall: {sheet.overallCompliancePct ?? 0}%
+                  </span>
+                  <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--pf-muted)" }}>
+                    {sheet.finalizedBy ? `Signed by ${sheet.finalizedBy} · ` : ""}
+                    {fmtTime(sheet.finalizedAt)}
+                  </span>
+                </div>
+
+                {(sheet.bundles || []).map((b) => (
+                  <div
+                    key={b.key}
+                    style={{
+                      padding: "6px 12px",
+                      borderBottom: "1px dashed #e2e8f0",
+                      breakInside: "avoid",
+                    }}
+                  >
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                      marginBottom: 4,
+                    }}>
+                      <span style={{ fontWeight: 800, fontSize: 11.5, color: "#0f172a" }}>
+                        {b.title}
+                      </span>
+                      {!b.applicable && (
+                        <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 800, background: "#f1f5f9", color: "#475569", border: "1px solid #cbd5e1" }}>
+                          NOT APPLICABLE
+                        </span>
+                      )}
+                      {b.applicable && (
+                        <span style={{
+                          padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 800,
+                          background: b.compliancePct === 100 ? "#dcfce7"
+                                    : b.compliancePct >= 80 ? "#fef3c7"
+                                    : "#fee2e2",
+                          color:      b.compliancePct === 100 ? "#166534"
+                                    : b.compliancePct >= 80 ? "#92400e"
+                                    : "#b91c1c",
+                        }}>
+                          {b.compliancePct}%
+                        </span>
+                      )}
+                      {b.nurseName && (
+                        <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--pf-muted)" }}>
+                          {b.nurseName}{b.signedAt ? ` · ${fmtTime(b.signedAt)}` : ""}
+                        </span>
+                      )}
+                    </div>
+
+                    {(b.items || []).length > 0 && (
+                      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 2 }}>
+                        <tbody>
+                          {b.items.map((it, i) => (
+                            <tr key={i}>
+                              <td style={{
+                                width: 30, textAlign: "center", verticalAlign: "top",
+                                padding: "2px 4px", fontSize: 11,
+                              }}>
+                                {renderItemMark(!!it.checked, b.applicable)}
+                              </td>
+                              <td style={{
+                                padding: "2px 6px", fontSize: 10.5,
+                                color: b.applicable ? "#0f172a" : "#94a3b8",
+                              }}>
+                                {it.label}
+                                {it.notes && (
+                                  <span style={{ display: "block", fontSize: 9.5, color: "var(--pf-muted)", fontStyle: "italic", marginTop: 1 }}>
+                                    {it.notes}
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                ))}
+
+                {sheet.notes && (
+                  <div style={{
+                    padding: "5px 12px", fontSize: 10.5, fontStyle: "italic",
+                    background: "#fffbeb", color: "#78350f",
+                  }}>
+                    <b>Shift notes:</b> {sheet.notes}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }

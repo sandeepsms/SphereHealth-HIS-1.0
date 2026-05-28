@@ -121,6 +121,13 @@ const ACTIONS = {
   "ipd.discharge-summary": ["Admin", "Doctor"],
   "vitals.write":          ["Admin", "Nurse", "Doctor"],
   "mar.write":             ["Admin", "Nurse"],
+  // R7ei — ICU Bundles of Care (VAP/CAUTI/CLABSI/DVT/Sepsis/SUP).
+  // Distinct from mar.write because bundles are quality-of-care
+  // checklists charted by the bedside clinician (intensivist OR
+  // nurse), NOT medication administration. Adding Doctor onto the
+  // medication-administration token would muddy that ACL; this
+  // dedicated action covers exactly the ICU bundle write surface.
+  "icu-bundle.write":      ["Admin", "Doctor", "Nurse"],
   "doctor-orders.write":   ["Admin", "Doctor"],
   // R7m: Nurse-side actions on doctor orders. Acknowledge is the
   // first formal touch before any dose administration (NABH MOM.3).

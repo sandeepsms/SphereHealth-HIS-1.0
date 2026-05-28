@@ -12,12 +12,71 @@
  * filter + per-register table.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import {
   AdminPage, Hero, KPI, Card, Table, EmptyRow, Empty, Badge, C,
 } from "../../Components/admin-theme";
 import { API_BASE_URL as API } from "../../config/api";
+
+/* ════════════════════════════════════════════════════════════════
+   R7ej — REGISTER TILES
+   15 stand-alone NABH register pages that previously had their own
+   sidebar entries. Collapsed here as categorized tiles to declutter
+   the sidebar. Role gating on each route still applies — clicking
+   a tile a user cannot access will hit the route guard.
+══════════════════════════════════════════════════════════════ */
+const REGISTER_CATEGORIES = [
+  {
+    id: "safety",
+    title: "Patient Safety & Sentinel Events",
+    subtitle: "High-priority surveyor questions — incidents, callbacks, complaints",
+    accent: "#dc2626",
+    tiles: [
+      { label: "Critical Value Alerts", icon: "pi-bell",                 path: "/critical-value-alerts", nabhRef: "AAC.6", desc: "Lab callback acknowledgement log" },
+      { label: "Grievance Register",    icon: "pi-comment",              path: "/grievances",            nabhRef: "PRE.6", desc: "Patient/relative complaints + resolution" },
+      { label: "ADR Reports",           icon: "pi-flag",                 path: "/adr-reports",           nabhRef: "MOM.7", desc: "Adverse drug reactions reported to PvPI" },
+      { label: "Food Reactions",        icon: "pi-exclamation-triangle", path: "/food-reactions",        nabhRef: "NEW",   desc: "Adverse food / diet sentinel events" },
+      { label: "Sharps Injury",         icon: "pi-info-circle",          path: "/sharps-injury",         nabhRef: "HRD.8", desc: "Needle-stick + sharps exposure register" },
+      { label: "Code Response Log",     icon: "pi-bolt",                 path: "/code-response",         nabhRef: "NEW",   desc: "Code blue / pink / purple / black events" },
+    ],
+  },
+  {
+    id: "outcomes",
+    title: "Clinical Outcome Registers",
+    subtitle: "Auto-populated from doctor orders, procedures, admissions, discharges",
+    accent: "#7c3aed",
+    tiles: [
+      { label: "OT Register",          icon: "pi-briefcase",    path: "/compliance/nabh/ot-register",            nabhRef: "COP.10", desc: "Surgeries with surgeon / anaesthetist / start-end" },
+      { label: "Anaesthesia Register", icon: "pi-shield",       path: "/compliance/nabh/asa-register",           nabhRef: "COP.13", desc: "ASA grading + anaesthesia complications" },
+      { label: "Readmission Register", icon: "pi-reply",        path: "/compliance/nabh/readmission-register",   nabhRef: "COP.16", desc: "Unplanned 30-day readmissions with cause" },
+      { label: "Mortality Register",   icon: "pi-times-circle", path: "/compliance/nabh/mortality-register",     nabhRef: "COP.18", desc: "All in-hospital deaths + cause + reviews" },
+      { label: "Restraint Register",   icon: "pi-lock",         path: "/compliance/nabh/restraint-register",     nabhRef: "COP.17", desc: "Physical / chemical restraint episodes" },
+      { label: "Antimicrobial Use",    icon: "pi-stop-circle",  path: "/compliance/nabh/antimicrobial-register", nabhRef: "MOM.7",  desc: "Antibiotic stewardship — start/stop/de-escalation" },
+    ],
+  },
+  {
+    id: "infection-facility",
+    title: "Infection Control & Facilities",
+    subtitle: "HIC committee + FMS committee evidence trail",
+    accent: "#0d9488",
+    tiles: [
+      { label: "HIC.5 Infection Control", icon: "pi-shield",  path: "/compliance/hic5-infection-control", nabhRef: "HIC.5", desc: "VAP / CAUTI / CLABSI / DVT / Sepsis / SUP trend" },
+      { label: "BMW Manifest",            icon: "pi-truck",   path: "/bmw-manifest",                      nabhRef: "FMS.5", desc: "Biomedical waste cart-out → vendor → PCB" },
+      { label: "Fire Drill Register",     icon: "pi-shield",  path: "/fire-drills",                       nabhRef: "FMS.4", desc: "Quarterly fire drills + participation logs" },
+    ],
+  },
+];
+
+const tileStyle = {
+  display: "flex", flexDirection: "column", gap: 8,
+  padding: 14, borderRadius: 10,
+  border: `1px solid ${C.border}`, background: "#fff",
+  cursor: "pointer", textAlign: "left",
+  transition: "transform 0.1s ease, box-shadow 0.1s ease, border-color 0.1s ease",
+  minHeight: 110,
+};
 
 const authHdr = () => ({
   headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token")}` },
@@ -46,6 +105,7 @@ const REGISTER_TABS = [
 const tdStyle = { padding: "8px 12px", borderBottom: `1px solid ${C.border}`, fontSize: 12 };
 
 export default function NABHRegistersDashboard() {
+  const navigate = useNavigate();
   const [active, setActive] = useState("summary");
   const [summary, setSummary] = useState([]);
   const [rows, setRows] = useState([]);
@@ -104,8 +164,79 @@ export default function NABHRegistersDashboard() {
         color="teal"
       />
 
+      {/* R7ej — Categorized tile grid for the 15 stand-alone NABH register
+          pages. Replaces the cluttered sidebar entries; one tile per page
+          grouped by purpose. Clicking a tile navigates to the underlying
+          route which has its own role guard. */}
+      {REGISTER_CATEGORIES.map((cat) => (
+        <Card key={cat.id} title={cat.title}>
+          <div style={{ fontSize: 12, color: C.muted, marginBottom: 12, marginTop: -4 }}>
+            {cat.subtitle}
+          </div>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+            gap: 10,
+          }}>
+            {cat.tiles.map((tile) => (
+              <button
+                key={tile.path}
+                type="button"
+                onClick={() => navigate(tile.path)}
+                style={tileStyle}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                  e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)";
+                  e.currentTarget.style.borderColor = cat.accent;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "none";
+                  e.currentTarget.style.borderColor = C.border;
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{
+                    width: 36, height: 36, borderRadius: 8,
+                    background: `${cat.accent}15`, color: cat.accent,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 18,
+                  }}>
+                    <i className={`pi ${tile.icon}`} />
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: C.text }}>
+                      {tile.label}
+                    </div>
+                    <div style={{ marginTop: 2 }}>
+                      <Badge
+                        value={tile.nabhRef}
+                        palette={tile.nabhRef === "NEW" ? "orange" : "blue"}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.4 }}>
+                  {tile.desc}
+                </div>
+                <div style={{
+                  marginTop: "auto", paddingTop: 4,
+                  fontSize: 11, color: cat.accent, fontWeight: 600,
+                }}>
+                  Open →
+                </div>
+              </button>
+            ))}
+          </div>
+        </Card>
+      ))}
+
       {/* Tab bar */}
-      <Card>
+      <Card title="Inspection Dashboard — Auto-populated Registers">
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 10, marginTop: -4 }}>
+          Live chronological logs auto-populated from clinical save paths (RBS readings,
+          ER visits, transfusions, pain / fall / pressure-ulcer / DVT assessments).
+        </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {REGISTER_TABS.map((t) => (
             <button
