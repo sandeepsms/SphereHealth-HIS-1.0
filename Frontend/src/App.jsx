@@ -83,6 +83,10 @@ const ServiceMasterManager = lazy(() => import("./Components/ServiceMaster/Servi
 // R7dp — Bulk doctor-charges editor (per-doctor OPD First / Follow-up / ER /
 // MLC / IPD cross-consult). Admin + Accountant only.
 const DoctorChargesPage = lazy(() => import("./pages/admin/DoctorChargesPage"));
+// R7en — Per-room-category daily-charges matrix (bed rent, nursing,
+// doctor visit, RMO, monitoring, dietetics, housekeeping, linen).
+// Source of truth for the daily auto-billing cron. Admin + Accountant only.
+const RoomChargesPage = lazy(() => import("./pages/admin/RoomChargesPage"));
 const ChargeableServices = lazy(() => import("./pages/services/ChargeableServices"));
 // BillingIntelligencePage removed — receptionist Billing Counter is now
 // the single billing surface; AI suggestions are no longer auto-applied.
@@ -526,6 +530,12 @@ function AppLayout({ collapsed, setCollapsed }) {
                 self-deny. */}
             <Route path="/doctor-charges" element={
               <RoleGuard allow={["Admin", "Accountant"]}><DoctorChargesPage /></RoleGuard>
+            } />
+            {/* R7en — Per-room-category daily-charges matrix. Mirrors
+                /doctor-charges; same auth gate. The daily auto-billing
+                cron sources every line item from this grid. */}
+            <Route path="/room-charges" element={
+              <RoleGuard allow={["Admin", "Accountant"]}><RoomChargesPage /></RoleGuard>
             } />
 
             {/* /billing-intelligence routes removed — receptionist Billing

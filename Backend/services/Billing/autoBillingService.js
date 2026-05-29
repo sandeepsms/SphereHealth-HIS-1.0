@@ -213,6 +213,110 @@ async function resolveBedAndNursingRates(admission) {
   }
 }
 
+// ── R7en helper: resolve full charge matrix from RoomCategoryCharges ─────────
+// Returns the eight-field charge sheet from the new per-category matrix
+// (Backend/models/admin/RoomCategoryChargesModel.js). Falls back to a
+// minimal { bedRent, nursingCharge } shape derived from the legacy
+// RoomCategory.defaultPricing when no matrix row exists — so an
+// admission whose bed category hasn't been migrated yet still bills
+// the old two-line set (no silent revenue loss on the cron flip).
+//
+// Output shape:
+//   {
+//     matched:        boolean   — true if a RoomCategoryCharges row matched
+//     categoryCode:   "GENW" | "PVT" | ...
+//     categoryName:   "Private Room" | ...
+//     roomType:       legacy enum for serviceCode tagging
+//     chargingRule:   "Full" | "HalfOnAdmission" | "HalfOnDischarge" | "HalfBoth"
+//     charges: {
+//       bedRent, nursingCharge, doctorVisitCharge, rmoCharge,
+//       monitoringCharge, dieteticsCharge, housekeepingCharge, linenCharge
+//     }
+//   }
+async function resolveRoomCategoryChargeMatrix(admission) {
+  // Reuse the legacy resolver to discover the categoryCode + categoryName
+  // off the admission's populated room → roomCategory chain. That gives
+  // us the join key for the matrix lookup AND a safe legacy fallback.
+  const legacy = await resolveBedAndNursingRates(admission);
+  const empty = {
+    matched: false,
+    categoryCode: legacy.categoryCode,
+    categoryName: legacy.categoryName,
+    roomType:     legacy.roomType,
+    chargingRule: "HalfBoth",
+    charges: {
+      bedRent:           legacy.bedRate     || 0,
+      nursingCharge:     legacy.nursingRate || 0,
+      doctorVisitCharge: 0,
+      rmoCharge:         0,
+      monitoringCharge:  0,
+      dieteticsCharge:   0,
+      housekeepingCharge:0,
+      linenCharge:       0,
+    },
+  };
+  if (!legacy.categoryCode) return empty;
+  try {
+    const RoomCategoryCharges = require("../../models/admin/RoomCategoryChargesModel");
+    const row = await RoomCategoryCharges.findOne({
+      categoryCode: String(legacy.categoryCode).toUpperCase(),
+      active:       true,
+      effectiveTo:  null,
+    }).lean();
+    if (!row) return empty;
+    return {
+      matched: true,
+      categoryCode: row.categoryCode,
+      categoryName: row.categoryName || legacy.categoryName,
+      roomType:     legacy.roomType,
+      chargingRule: row.chargingRule || "HalfBoth",
+      charges: {
+        bedRent:           Number(row.charges?.bedRent           || 0),
+        nursingCharge:     Number(row.charges?.nursingCharge     || 0),
+        doctorVisitCharge: Number(row.charges?.doctorVisitCharge || 0),
+        rmoCharge:         Number(row.charges?.rmoCharge         || 0),
+        monitoringCharge:  Number(row.charges?.monitoringCharge  || 0),
+        dieteticsCharge:   Number(row.charges?.dieteticsCharge   || 0),
+        housekeepingCharge:Number(row.charges?.housekeepingCharge|| 0),
+        linenCharge:       Number(row.charges?.linenCharge       || 0),
+      },
+    };
+  } catch (e) {
+    console.error("[AutoBilling] resolveRoomCategoryChargeMatrix error:", e.message);
+    return empty;
+  }
+}
+
+// ── R7en helper: half-day proration multiplier ──────────────────────────────
+// Maps a (chargingRule, isAdmissionDay, isDischargeDay) tuple to a 0.5 or 1
+// multiplier. The cron call site computes `isAdmissionDay` from the
+// admission.admissionDate vs the day cursor, and `isDischargeDay` from
+// admission.actualDischargeDate (when present) vs the cursor.
+function halfDayMultiplier(chargingRule, { isAdmissionDay, isDischargeDay }) {
+  const rule = chargingRule || "HalfBoth";
+  if (rule === "Full") return 1;
+  if (rule === "HalfOnAdmission" && isAdmissionDay) return 0.5;
+  if (rule === "HalfOnDischarge" && isDischargeDay) return 0.5;
+  if (rule === "HalfBoth"        && (isAdmissionDay || isDischargeDay)) return 0.5;
+  return 1;
+}
+
+// ── R7en helper: serviceCode + category mapping for each line item ──────────
+// Single source of truth so the cron, the override paths, and the
+// ServiceMaster duplicate audit all stay aligned. Skip-zero short-circuits
+// at the call site — there's no "bill ₹0" line, the trigger isn't emitted.
+const ROOM_CATEGORY_LINE_ITEMS = [
+  // [chargesKey,         serviceCode prefix,    serviceName label,             billCategory]
+  ["bedRent",             "BED",                 "Bed Charge",                  "ROOM"],
+  ["nursingCharge",       "NURSING",             "Nursing Care",                "NURSING"],
+  ["doctorVisitCharge",   "DOC-VISIT",           "Doctor Daily Visit",          "DOCTOR_VISIT"],
+  ["rmoCharge",           "RMO",                 "RMO Attendance",              "DOCTOR_VISIT"],
+  ["monitoringCharge",    "ICU-MONITOR",         "Continuous Monitoring",       "ICU_MONITORING"],
+  ["dieteticsCharge",     "DIET",                "Clinical Dietetics",          "DIET"],
+  ["housekeepingCharge",  "HOUSEKEEPING",        "Housekeeping",                "HOUSEKEEPING"],
+  ["linenCharge",         "LINEN",               "Linen / Laundry",             "LINEN"],
+];
+
 // ── Helper: map doctor note (type + shift) → billable visit code ─────────────
 // One charge per doctor per round per day. The dedup-by-doctor flag ensures
 // two consultants on the same day each get a separate line.
@@ -1925,59 +2029,48 @@ async function onAdmissionCreated(admissionDoc) {
     }).catch((e) => { console.error("Admission charge trigger error:", e.message); return null; })
   );
 
-  // 3. First bed-day + nursing-daily charge (if IPD/Daycare) — daily cron
-  //    handles subsequent days. Rates come from the bed's room category
-  //    so ICU/HDU/Private/Ward patients pay their tier's price without
-  //    any per-category ServiceMaster pre-seed.
+  // 3. R7en — Day-1 charges (if IPD/Daycare) from the per-room-category
+  //    matrix. All 8 line items (bed, nursing, doctor visit, RMO,
+  //    monitoring, dietetics, housekeeping, linen) are emitted on admission
+  //    day with the category's half-day rule applied (HalfBoth/HalfOnAdmission
+  //    → 0.5×; Full/HalfOnDischarge → 1×). The daily cron in
+  //    runDailyBedChargeAccrual handles subsequent days idempotently.
+  //    When no matrix row exists yet for this category, the resolver
+  //    falls back to the legacy two-line shape priced from
+  //    RoomCategory.defaultPricing so revenue continuity is preserved.
   if (typeCode === "IPD" || typeCode === "DAYCARE") {
-    const rates = await resolveBedAndNursingRates(admissionDoc);
-    const catTag = rates.categoryCode ? `-${rates.categoryCode}` : "";
+    const matrix = await resolveRoomCategoryChargeMatrix(admissionDoc);
+    const catTag = matrix.categoryCode ? `-${matrix.categoryCode}` : "";
 
-    if (rates.bedRate > 0) {
+    const halfMult = halfDayMultiplier(matrix.chargingRule, {
+      isAdmissionDay: true,
+      isDischargeDay: false,
+    });
+    const halfNote = halfMult === 0.5 ? " [½ admission day]" : "";
+
+    for (const [chargesKey, codePrefix, label, _category] of ROOM_CATEGORY_LINE_ITEMS) {
+      const rawRate = Number(matrix.charges?.[chargesKey] || 0);
+      if (!(rawRate > 0)) continue;
       triggers.push(
         await createTrigger({
           admissionId:         admissionDoc._id,
           patientId:           admissionDoc.patientId,
           UHID:                admissionDoc.UHID,
           patientType:         typeCode,
-          serviceCode:         `BED${catTag}`,
-          serviceName:         `Bed Charge — ${rates.categoryName || rates.roomType || typeCode} (Day 1)`,
+          serviceCode:         `${codePrefix}${catTag}`,
+          serviceName:         `${label} — ${matrix.categoryName || matrix.roomType || typeCode} (Day 1)${halfNote}`,
           quantity:            1,
-          unitPriceOverride:   rates.bedRate,
-          sourceType:          "BedCharge",
+          unitPriceOverride:   rawRate * halfMult,
+          sourceType:          "DailyRoomAccrual",
           sourceDocumentId:    admissionDoc._id,
           sourceDocumentModel: "Admission",
           orderedBy:           "System",
           orderedByRole:       "System",
-          orderDetails:        `Day 1 bed charge — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.bedRate}/day`,
+          orderDetails:        `Day 1 ${label.toLowerCase()} — ${matrix.categoryName || matrix.roomType || "category"} @ ₹${rawRate}/day${halfNote}`,
           autoCharge:          true,
           dailyDedup:          true,
           department:          admissionDoc.department,
-        }).catch((e) => { console.error("Bed-day trigger error:", e.message); return null; })
-      );
-    }
-
-    if (rates.nursingRate > 0) {
-      triggers.push(
-        await createTrigger({
-          admissionId:         admissionDoc._id,
-          patientId:           admissionDoc.patientId,
-          UHID:                admissionDoc.UHID,
-          patientType:         typeCode,
-          serviceCode:         `NURSING${catTag}`,
-          serviceName:         `Nursing Care — ${rates.categoryName || rates.roomType || typeCode} (Day 1)`,
-          quantity:            1,
-          unitPriceOverride:   rates.nursingRate,
-          sourceType:          "BedCharge",
-          sourceDocumentId:    admissionDoc._id,
-          sourceDocumentModel: "Admission",
-          orderedBy:           "System",
-          orderedByRole:       "System",
-          orderDetails:        `Day 1 nursing care — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.nursingRate}/day`,
-          autoCharge:          true,
-          dailyDedup:          true,
-          department:          admissionDoc.department,
-        }).catch((e) => { console.error("Nursing-day trigger error:", e.message); return null; })
+        }).catch((e) => { console.error(`Day 1 ${chargesKey} trigger error:`, e.message); return null; })
       );
     }
   }
@@ -2199,64 +2292,112 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
     return { bedFired, nurseFired, skipped };   // Skip raw bed+nursing entirely
   }
 
-  const rates = await resolveBedAndNursingRates(admission);
-  const catTag = rates.categoryCode ? `-${rates.categoryCode}` : "";
+  // ── R7en: per-room-category multi-line emit ────────────────────────
+  // Pre-R7en the cron emitted ONE bed trigger + ONE nursing trigger,
+  // priced from the legacy `RoomCategory.defaultPricing`. R7en switches
+  // to the new RoomCategoryCharges matrix (8 line items: bed, nursing,
+  // doctor visit, RMO, monitoring, dietetics, housekeeping, linen). If
+  // no matrix row exists yet for this admission's category, the helper
+  // falls back to the legacy two-line shape so the cron flip is
+  // revenue-neutral.
+  //
+  // Half-day proration (chargingRule):
+  //   - "Full"             → 1× every day
+  //   - "HalfOnAdmission"  → 0.5× Day 1, 1× thereafter
+  //   - "HalfOnDischarge"  → 1× until discharge day, 0.5× on discharge
+  //   - "HalfBoth"         → 0.5× Day 1 AND 0.5× on discharge, 1× interior
+  // The Daycare prorateMultiplier above still wins for hourly visits.
+  const matrix = await resolveRoomCategoryChargeMatrix(admission);
+  const catTag = matrix.categoryCode ? `-${matrix.categoryCode}` : "";
 
-  if (rates.bedRate > 0) {
-    const bedRate = rates.bedRate * prorateMultiplier;
+  // Today's calendar day in IST. We compare admission/discharge days
+  // by their getDateKey() bucket — that avoids time-of-day edge cases
+  // (admission at 23:50 IST → not counted as discharge day at 00:10).
+  const todayKey = getDateKey();
+  const admDateKey = getDateKey(new Date(admission.admissionDate || admission.createdAt));
+  const dischargeDateKey = (admission.actualDischargeDate || _dischargingFlush)
+    ? getDateKey(new Date(admission.actualDischargeDate || Date.now()))
+    : null;
+
+  const halfMult = halfDayMultiplier(matrix.chargingRule, {
+    isAdmissionDay:  todayKey === admDateKey,
+    isDischargeDay:  !!dischargeDateKey && todayKey === dischargeDateKey,
+  });
+  // Daycare hourly proration and admission/discharge half-day proration
+  // are independent multipliers — Daycare halves AGAIN inside a half-day
+  // admission window. In practice only one ever applies (Daycare admissions
+  // discharge same day → half-day rule may also flag this day as discharge,
+  // but Daycare prorate is the dominant signal).
+  const finalMult = prorateMultiplier * halfMult;
+
+  const halfNoteFragment =
+    halfMult === 0.5
+      ? (todayKey === admDateKey ? " [½ admission day]"
+       : todayKey === dischargeDateKey ? " [½ discharge day]"
+       : "")
+      : "";
+
+  // Counters by category — exposed in the return shape so callers
+  // (admissionService.dischargePatient, runDailyBedChargeAccrual) can
+  // log per-line-item activity for ops triage.
+  const fired = {
+    bed: 0, nursing: 0, doctorVisit: 0, rmo: 0,
+    monitoring: 0, dietetics: 0, housekeeping: 0, linen: 0,
+  };
+
+  for (const [chargesKey, codePrefix, label, _category] of ROOM_CATEGORY_LINE_ITEMS) {
+    const rawRate = Number(matrix.charges?.[chargesKey] || 0);
+    if (!(rawRate > 0)) continue;     // skip zero-priced line items entirely
+    const lineRate = rawRate * finalMult;
     const r = await createTrigger({
       admissionId:         admission._id,
       patientId:           admission.patientId,
       UHID:                admission.UHID,
       patientType:         tc,
-      serviceCode:         `BED${catTag}`,
-      serviceName:         `Bed Charge — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})${prorateNote}`,
+      serviceCode:         `${codePrefix}${catTag}`,
+      serviceName:         `${label} — ${matrix.categoryName || matrix.roomType || tc} (Day ${dayN})${halfNoteFragment}${prorateNote}`,
       quantity:            1,
-      unitPriceOverride:   bedRate,
-      sourceType:          "BedCharge",
+      unitPriceOverride:   lineRate,
+      sourceType:          "DailyRoomAccrual",
       sourceDocumentId:    admission._id,
       sourceDocumentModel: "Admission",
       orderedBy:           "System",
       orderedByRole:       "System",
-      orderDetails:        `Daily bed accrual — Day ${dayN} — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.bedRate}/day${prorateNote}`,
+      orderDetails:        `Daily ${label.toLowerCase()} — Day ${dayN} — ${matrix.categoryName || matrix.roomType || "category"} @ ₹${rawRate}/day${halfNoteFragment}${prorateNote}`,
       autoCharge:          true,
       dailyDedup:          true,
       department:          admission.department,
       _dischargingFlush,                              // R7as-FIX-4
       triggeredByRole:     _cronRole,                 // R7bh-F3
     });
-    if (r?.skipped) skipped++;
-    else if (r?.trigger) bedFired++;
+    if (r?.skipped) { skipped++; continue; }
+    if (r?.trigger) {
+      // Map back into the per-line counter set for return-shape logging.
+      if (chargesKey === "bedRent")            fired.bed++;
+      else if (chargesKey === "nursingCharge") fired.nursing++;
+      else if (chargesKey === "doctorVisitCharge") fired.doctorVisit++;
+      else if (chargesKey === "rmoCharge")     fired.rmo++;
+      else if (chargesKey === "monitoringCharge") fired.monitoring++;
+      else if (chargesKey === "dieteticsCharge") fired.dietetics++;
+      else if (chargesKey === "housekeepingCharge") fired.housekeeping++;
+      else if (chargesKey === "linenCharge")   fired.linen++;
+    }
   }
 
-  if (rates.nursingRate > 0) {
-    const nurseRate = rates.nursingRate * prorateMultiplier;
-    const r = await createTrigger({
-      admissionId:         admission._id,
-      patientId:           admission.patientId,
-      UHID:                admission.UHID,
-      patientType:         tc,
-      serviceCode:         `NURSING${catTag}`,
-      serviceName:         `Nursing Care — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})${prorateNote}`,
-      quantity:            1,
-      unitPriceOverride:   nurseRate,
-      sourceType:          "BedCharge",
-      sourceDocumentId:    admission._id,
-      sourceDocumentModel: "Admission",
-      orderedBy:           "System",
-      orderedByRole:       "System",
-      orderDetails:        `Daily nursing care — Day ${dayN} — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.nursingRate}/day${prorateNote}`,
-      autoCharge:          true,
-      dailyDedup:          true,
-      department:          admission.department,
-      _dischargingFlush,                              // R7as-FIX-4
-      triggeredByRole:     _cronRole,                 // R7bh-F3
-    });
-    if (r?.skipped) skipped++;
-    else if (r?.trigger) nurseFired++;
-  }
-
-  return { bedFired, nurseFired, skipped };
+  // Preserve the legacy bedFired / nurseFired keys so existing callers
+  // (runDailyBedChargeAccrual summing into the cron-tick report,
+  // admissionService.dischargePatient logging the flush counts) keep
+  // working; expose the new per-line breakdown on `firedByLine` for
+  // future callers who care about the 8-line split.
+  return {
+    bedFired:   fired.bed,
+    nurseFired: fired.nursing,
+    skipped,
+    firedByLine: fired,
+    matrixMatched: matrix.matched,   // false → legacy two-line fallback
+    chargingRule:  matrix.chargingRule,
+    halfMult,
+  };
 }
 
 /**
@@ -2295,18 +2436,23 @@ async function backfillAdmissionCharges(admission) {
   };
   const tc = typeMap[admission.admissionType] || "IPD";
 
-  const rates = await resolveBedAndNursingRates(admission);
-  const catTag = rates.categoryCode ? `-${rates.categoryCode}` : "";
+  // R7en: use the matrix here too so backfill matches what the daily
+  // cron would have written. Falls back to the legacy two-line shape
+  // when no RoomCategoryCharges row exists for this category.
+  const matrix = await resolveRoomCategoryChargeMatrix(admission);
+  const catTag = matrix.categoryCode ? `-${matrix.categoryCode}` : "";
+  const matrixTotal = Object.values(matrix.charges || {}).reduce((a, b) => a + (b || 0), 0);
   console.log(
-    `[Backfill] ADM ${admission.admissionNumber} (${tc}) — room=${rates.roomType || "?"}/${rates.categoryName || rates.categoryCode || "?"}`,
-    `bed=₹${rates.bedRate} nursing=₹${rates.nursingRate}`,
+    `[Backfill] ADM ${admission.admissionNumber} (${tc}) — room=${matrix.roomType || "?"}/${matrix.categoryName || matrix.categoryCode || "?"}`,
+    `daily=₹${matrixTotal} rule=${matrix.chargingRule} matched=${matrix.matched}`,
   );
 
-  // ── 1. Bed + nursing day-by-day from admissionDate → today ──────────────────
-  if (rates.bedRate > 0 || rates.nursingRate > 0) {
+  // ── 1. Bed + nursing + other line items day-by-day from admissionDate → today ──
+  if (matrixTotal > 0) {
     const startDate = new Date(admission.admissionDate || admission.createdAt);
     if (!isNaN(startDate.getTime())) {
       const todayKey = getDateKey();
+      const admDateKey = getDateKey(startDate);
       // Anchor cursor at noon to dodge DST edges; we only care about the
       // calendar-day buckets in IST anyway.
       const cursor = new Date(startDate);
@@ -2319,51 +2465,35 @@ async function backfillAdmissionCharges(admission) {
         result.days++;
         const dayN = result.days;
 
-        if (rates.bedRate > 0) {
-          try {
-            const r = await createTrigger({
-              admissionId:         admission._id,
-              patientId:           admission.patientId,
-              UHID:                admission.UHID,
-              patientType:         tc,
-              serviceCode:         `BED${catTag}`,
-              serviceName:         `Bed Charge — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})`,
-              quantity:            1,
-              unitPriceOverride:   rates.bedRate,
-              sourceType:          "BedCharge",
-              sourceDocumentId:    admission._id,
-              sourceDocumentModel: "Admission",
-              orderedBy:           "System",
-              orderedByRole:       "System",
-              orderDetails:        `Backfill bed accrual — Day ${dayN} (${dateKey}) — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.bedRate}/day`,
-              autoCharge:          true,
-              dailyDedup:          true,
-              department:          admission.department,
-              overrideDateKey:     dateKey,
-              chargeDate:          new Date(cursor),
-            });
-            if (r?.skipped) result.skipped++;
-            else if (r?.trigger) result.bedFired++;
-          } catch (e) { result.errors++; console.error("[Backfill] bed:", e.message); }
-        }
+        // Half-day proration — for an open admission the discharge day
+        // is unknown, so only the admission-day half ever applies during
+        // backfill. The discharge-day half is added later by
+        // flushDailyChargesForAdmission when the admission closes.
+        const halfMult = halfDayMultiplier(matrix.chargingRule, {
+          isAdmissionDay: dateKey === admDateKey,
+          isDischargeDay: false,
+        });
+        const halfNote = halfMult === 0.5 ? " [½ admission day]" : "";
 
-        if (rates.nursingRate > 0) {
+        for (const [chargesKey, codePrefix, label, _category] of ROOM_CATEGORY_LINE_ITEMS) {
+          const rawRate = Number(matrix.charges?.[chargesKey] || 0);
+          if (!(rawRate > 0)) continue;
           try {
             const r = await createTrigger({
               admissionId:         admission._id,
               patientId:           admission.patientId,
               UHID:                admission.UHID,
               patientType:         tc,
-              serviceCode:         `NURSING${catTag}`,
-              serviceName:         `Nursing Care — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})`,
+              serviceCode:         `${codePrefix}${catTag}`,
+              serviceName:         `${label} — ${matrix.categoryName || matrix.roomType || tc} (Day ${dayN})${halfNote}`,
               quantity:            1,
-              unitPriceOverride:   rates.nursingRate,
-              sourceType:          "BedCharge",
+              unitPriceOverride:   rawRate * halfMult,
+              sourceType:          "DailyRoomAccrual",
               sourceDocumentId:    admission._id,
               sourceDocumentModel: "Admission",
               orderedBy:           "System",
               orderedByRole:       "System",
-              orderDetails:        `Backfill nursing care — Day ${dayN} (${dateKey}) — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.nursingRate}/day`,
+              orderDetails:        `Backfill ${label.toLowerCase()} — Day ${dayN} (${dateKey}) — ${matrix.categoryName || matrix.roomType || "category"} @ ₹${rawRate}/day${halfNote}`,
               autoCharge:          true,
               dailyDedup:          true,
               department:          admission.department,
@@ -2371,8 +2501,18 @@ async function backfillAdmissionCharges(admission) {
               chargeDate:          new Date(cursor),
             });
             if (r?.skipped) result.skipped++;
-            else if (r?.trigger) result.nurseFired++;
-          } catch (e) { result.errors++; console.error("[Backfill] nursing:", e.message); }
+            else if (r?.trigger) {
+              if (chargesKey === "bedRent")        result.bedFired++;
+              else if (chargesKey === "nursingCharge") result.nurseFired++;
+              // Other line-item types fold into the consumable counter
+              // for the existing return shape (so callers see a stable
+              // total of accrued non-bed/non-nursing rows).
+              else result.consumableFired++;
+            }
+          } catch (e) {
+            result.errors++;
+            console.error(`[Backfill] ${chargesKey}:`, e.message);
+          }
         }
 
         cursor.setDate(cursor.getDate() + 1);

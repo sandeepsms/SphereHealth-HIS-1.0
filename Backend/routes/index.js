@@ -242,6 +242,13 @@ router.use("/admin-dashboard",  require("./Admin/adminDashboardRoutes"));
 // endpoint, admin-only. Backs Frontend/src/pages/admin/SystemHealthPage.jsx.
 router.use("/admin",            require("./Admin/systemHealthRoutes"));
 
+// R7en — Per-room-category daily-charges matrix. Mirrors R7dp's
+// DoctorCharges pattern (one row per category, eight line items,
+// half-day proration rule). The daily auto-billing cron resolves
+// against this matrix instead of the legacy ServiceMaster BED-* /
+// NURSING-* rows. Reads gated on billing.read, writes on doctors.write.
+router.use("/admin/room-charges", require("./admin/roomCategoryChargesRoutes"));
+
 // (client-errors is mounted ABOVE the global authenticate — see top of file)
 
 // R7bf-H: reports + dashboards surface (A6-CRIT + A6-HIGH coverage).

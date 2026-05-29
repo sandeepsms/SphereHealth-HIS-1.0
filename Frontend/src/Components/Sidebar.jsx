@@ -307,6 +307,9 @@ const NAV = [
       { label: "Chargeable Services",   icon: "pi-dollar",  path: "/chargeable-services",   roles: [ADMIN, AC] },
       { label: "Service Master",        icon: "pi-cog",     path: "/service-master",        roles: [ADMIN] },
       { label: "Doctor Charges",        icon: "pi-user-edit", path: "/doctor-charges",      roles: [ADMIN, AC] },
+      // R7en — Per-room-category daily-charges matrix. Sits next to
+      // Doctor Charges so the two "master price tables" live together.
+      { label: "Room Charges",          icon: "pi-table",    path: "/room-charges",        roles: [ADMIN, AC] },
     ],
   },
 

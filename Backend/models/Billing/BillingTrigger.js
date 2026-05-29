@@ -55,7 +55,14 @@ const BillingTriggerSchema = new mongoose.Schema({
            // R7bj-F5 / R7bi-6-TBA-MED-1: support-staff kinds
            "PHYSIO_SESSION","DIET_MEAL","DIET_CONSULT",
            "HK_LINEN","HK_LAUNDRY","HK_BMW",
-           "SEC_VISITOR_PASS","WB_TRANSPORT"],
+           "SEC_VISITOR_PASS","WB_TRANSPORT",
+           // R7en — Per-room-category daily charges. One sourceType
+           // covers all 8 line items (bed, nursing, doctor visit, RMO,
+           // monitoring, dietetics, housekeeping, linen) so the audit
+           // trail can filter "all room-matrix accruals" cleanly. The
+           // existing "BedCharge" remains for legacy backfills + the
+           // PER_DAY package route (which keeps that label for now).
+           "DailyRoomAccrual"],
     required: true },
   sourceDocumentId:    { type: mongoose.Schema.Types.ObjectId },
   sourceDocumentModel: String, // "NurseNote", "DoctorNote", "MAR", etc.
