@@ -953,8 +953,30 @@ export default function ReceptionBilling() {
       age:         patient?.age,
       gender:      patient?.gender,
       // OPD-only fields (ignored by ServiceReceipt)
-      doctorName:  bill.doctorName || bill.consultantName,
-      department:  bill.department,
+      // R7en-DOC-DEPT-FIX: bill.doctorName + bill.department are often
+      // empty because the BillingService doesn't always denormalize them
+      // onto the bill at create time. Fall back to the populated visit /
+      // admission ref (server populates these for OPD/IPD), then to the
+      // patient's currentVisit object, then "—" so the slot is never
+      // literally blank like before.
+      doctorName:  bill.doctorName
+                || bill.consultantName
+                || bill.attendingDoctor
+                || bill.opdVisit?.attendingDoctor
+                || bill.opdVisit?.doctorName
+                || bill.admission?.attendingDoctor
+                || patient?.currentVisit?.attendingDoctor
+                || patient?.currentVisit?.doctorName
+                || patient?.currentAdmission?.attendingDoctor
+                || "—",
+      department:  bill.department
+                || bill.opdVisit?.department
+                || bill.opdVisit?.departmentName
+                || bill.admission?.department
+                || patient?.currentVisit?.department
+                || patient?.currentVisit?.departmentName
+                || patient?.currentAdmission?.department
+                || "—",
       visitDate:   bill.createdAt,
       // SERVICE-only fields (ignored by OPDReceipt)
       serviceDate: bill.createdAt,
