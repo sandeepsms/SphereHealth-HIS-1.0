@@ -34,6 +34,8 @@ const PainAssessmentRegister  = require("../../models/Compliance/PainAssessmentR
 const FallRiskRegister        = require("../../models/Compliance/FallRiskRegisterModel");
 const PressureUlcerRegister   = require("../../models/Compliance/PressureUlcerRegisterModel");
 const DVTRegister             = require("../../models/Compliance/DVTRegisterModel");
+// R7en — ECG register (NABH AAC.4 + IPSG.2 + COP.7)
+const ECGRegister             = require("../../models/Compliance/ECGRegisterModel");
 // R7bu — six new NABH registers (COP.10/13/16/17/18 + MOM.7)
 const OTRegister               = require("../../models/Compliance/OTRegisterModel");
 const ASARegister              = require("../../models/Compliance/ASARegisterModel");
@@ -905,6 +907,187 @@ async function emitBloodSugarFromVitalSheet(sheet, patient = {}, actor = {}) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// ECG Register — NABH AAC.4 + IPSG.2 + COP.7 (R7en)
+// ─────────────────────────────────────────────────────────────────────────
+
+async function _generateEcgNumber() {
+  const year = _safeYear();
+  const seq = await nextSequence(`ECG-REG:${year}`);
+  return `ECG-${year}-${String(seq).padStart(6, "0")}`;
+}
+
+/**
+ * Derive abnormal + critical flags from filed ECG findings.
+ *
+ * abnormalFlag — rhythm != NSR OR HR<50 OR HR>100 OR stChanges != None OR QTc>500
+ * criticalFlag — rhythm in {VT, VF, AV-Block-3, Asystole} OR stChanges == STE
+ *
+ * Returns { abnormalFlag, criticalFlag, criticalReason }. The reason is for
+ * audit / cross-link narration only.
+ */
+function _deriveEcgFlags(findings = {}) {
+  const rhythm = String(findings.rhythm || "").trim();
+  const hr = Number(findings.heartRate);
+  const qtc = Number(findings.qtcInterval);
+  const st = String(findings.stChanges || "").trim();
+
+  const CRITICAL_RHYTHMS = new Set(["VT", "VF", "AV-Block-3", "Asystole"]);
+  const criticalRhythm = CRITICAL_RHYTHMS.has(rhythm);
+  const criticalSt = st === "STE";
+  const criticalFlag = criticalRhythm || criticalSt;
+
+  const abnormalRhythm = !!rhythm && rhythm !== "NSR";
+  const abnormalHr = Number.isFinite(hr) && (hr < 50 || hr > 100);
+  const abnormalSt = !!st && st !== "None";
+  const abnormalQtc = Number.isFinite(qtc) && qtc > 500;
+  const abnormalFlag =
+    criticalFlag || abnormalRhythm || abnormalHr || abnormalSt || abnormalQtc;
+
+  let criticalReason = "";
+  if (criticalRhythm) criticalReason = `rhythm=${rhythm}`;
+  else if (criticalSt) criticalReason = "ST-elevation";
+
+  return { abnormalFlag, criticalFlag, criticalReason };
+}
+
+/**
+ * Emit an ECG into the NABH ECG register.
+ *
+ * @param {object} args
+ * @param {object} args.patient   — { _id, UHID, fullName/name, age, sex }
+ * @param {object} [args.admission] — { _id, admissionNumber }
+ * @param {object} args.ecg       — plain object of input fields. Common keys:
+ *   { performedAt, location, leadType, indication, indicationCategory,
+ *     rhythm, heartRate, prInterval, qrsDuration, qtInterval, qtcInterval,
+ *     axis, stChanges, leadsAffected, interpretation,
+ *     performedByName, reportedByName,
+ *     orderedAt, reportedAt,
+ *     doctorOrderId, sourceType }
+ * @param {object} [args.actor]   — req.user (defaults takenByName etc.)
+ */
+async function emitECG(args = {}) {
+  try {
+    const { patient = {}, admission = null, ecg = {}, actor = {} } = args;
+    if (!patient._id || !patient.UHID) return null;
+
+    // ── Idempotency for the auto-emit path: one register row per DoctorOrder.
+    // If the doctor places an ECG investigation order and the route fires
+    // twice (network retry, dedupe), we want the same pending row, not two.
+    if (ecg.doctorOrderId) {
+      const existing = await ECGRegister.findOne({ doctorOrderId: ecg.doctorOrderId }).lean();
+      if (existing) return existing;
+    }
+
+    const ecgNumber = await _generateEcgNumber();
+    const actorMeta = _actor(actor);
+    const canonicalAdmissionId = await _resolveCanonicalAdmissionId(
+      patient.UHID,
+      admission?._id || ecg.admissionId || null,
+    );
+
+    const performedAtVal = ecg.performedAt ? new Date(ecg.performedAt) : new Date();
+    const orderedAtVal = ecg.orderedAt ? new Date(ecg.orderedAt) : null;
+    const reportedAtVal = ecg.reportedAt ? new Date(ecg.reportedAt) : null;
+
+    const tatOrderToPerformedMin = orderedAtVal && performedAtVal
+      ? _diffMinutes(performedAtVal, orderedAtVal)
+      : null;
+    const tatPerformedToReportedMin = performedAtVal && reportedAtVal
+      ? _diffMinutes(reportedAtVal, performedAtVal)
+      : null;
+
+    const { abnormalFlag, criticalFlag, criticalReason } = _deriveEcgFlags(ecg);
+
+    // Status: if findings + interpretation already present at emit time, treat
+    // as Reported; otherwise PendingReport. Auto-emit from DoctorOrder always
+    // lands as PendingReport because there are no findings yet.
+    const hasFindings = !!(ecg.rhythm || ecg.heartRate || ecg.interpretation);
+    const initialStatus = hasFindings ? "Reported" : "PendingReport";
+
+    const auditTrail = [{
+      action: "CREATED",
+      at: new Date(),
+      ...actorMeta,
+      reason: `source=${ecg.sourceType || "Manual"}`,
+    }];
+    if (hasFindings) {
+      auditTrail.push({
+        action: "REPORTED",
+        at: new Date(),
+        ...actorMeta,
+        reason: `rhythm=${ecg.rhythm || "?"} HR=${ecg.heartRate ?? "?"}`,
+      });
+    }
+    if (criticalFlag) {
+      auditTrail.push({
+        action: "CRITICAL_FLAGGED",
+        at: new Date(),
+        ...actorMeta,
+        reason: criticalReason || "critical ECG finding",
+      });
+    }
+
+    const row = await ECGRegister.create({
+      patientId: patient._id,
+      UHID: patient.UHID,
+      patientName: patient.fullName || patient.name || ecg.patientName || "",
+      age: patient.age || null,
+      sex: patient.gender || patient.sex || "",
+      admissionId: canonicalAdmissionId,
+      admissionNumber: admission?.admissionNumber || ecg.admissionNumber || "",
+
+      ecgNumber,
+      performedAt: performedAtVal,
+      location: ecg.location || "Ward",
+      leadType: ecg.leadType || "12-lead",
+
+      indication: ecg.indication || "",
+      indicationCategory: ecg.indicationCategory || "Other",
+
+      rhythm: ecg.rhythm || "",
+      heartRate: ecg.heartRate != null && ecg.heartRate !== "" ? Number(ecg.heartRate) : null,
+      prInterval: ecg.prInterval != null && ecg.prInterval !== "" ? Number(ecg.prInterval) : null,
+      qrsDuration: ecg.qrsDuration != null && ecg.qrsDuration !== "" ? Number(ecg.qrsDuration) : null,
+      qtInterval: ecg.qtInterval != null && ecg.qtInterval !== "" ? Number(ecg.qtInterval) : null,
+      qtcInterval: ecg.qtcInterval != null && ecg.qtcInterval !== "" ? Number(ecg.qtcInterval) : null,
+      axis: ecg.axis || "",
+      stChanges: ecg.stChanges || "",
+      leadsAffected: Array.isArray(ecg.leadsAffected) ? ecg.leadsAffected : [],
+      interpretation: ecg.interpretation || "",
+
+      abnormalFlag,
+      criticalFlag,
+      criticalValueAlertId: null,
+
+      orderedAt: orderedAtVal,
+      reportedAt: hasFindings ? (reportedAtVal || new Date()) : null,
+      tatOrderToPerformedMin,
+      tatPerformedToReportedMin,
+
+      performedBy: _asObjectId(ecg.performedBy) || _asObjectId(actorMeta.byUserId),
+      performedByName: ecg.performedByName || actorMeta.byName || "",
+      reportedBy: _asObjectId(ecg.reportedBy),
+      reportedByName: ecg.reportedByName || "",
+      reviewedBy: null,
+      reviewedByName: "",
+
+      doctorOrderId: ecg.doctorOrderId || null,
+      sourceType: ecg.sourceType || "Manual",
+
+      status: initialStatus,
+      auditTrail,
+
+      hospitalId: ecg.hospitalId || null,
+    });
+    return row;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error("[nabhRegisterEmitter] emitECG FAILED:", e.message, "— orderId:", args?.ecg?.doctorOrderId);
+    return null;
+  }
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 // R7bu — Six new NABH registers (COP.10/13/16/17/18 + MOM.7)
 // ═════════════════════════════════════════════════════════════════════════
@@ -1658,6 +1841,9 @@ module.exports = {
   emitMortality,
   emitRestraint,
   emitAntimicrobial,
+  // R7en — ECG register
+  emitECG,
   // Helpers exposed for testing / re-use
   isAntibiotic,
+  _deriveEcgFlags,
 };

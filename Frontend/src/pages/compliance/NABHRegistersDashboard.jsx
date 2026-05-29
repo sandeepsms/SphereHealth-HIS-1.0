@@ -84,6 +84,8 @@ const LIVE_REGISTERS = [
   { id: "fall-risk",         label: "Fall Risk (Morse)",       icon: "pi-arrow-down",  nabhRef: "COP.4",  desc: "Morse fall scale + risk tier + history" },
   { id: "pressure-ulcer",    label: "Pressure Ulcer (Braden)", icon: "pi-info-circle", nabhRef: "COP.4",  desc: "Braden score + ulcer stage + HAPU flagging" },
   { id: "dvt",               label: "DVT / VTE (Caprini)",     icon: "pi-shield",      nabhRef: "COP.4",  desc: "Caprini + IMPROVE bleed + recommended prophylaxis" },
+  // R7en — ECG Register (NABH AAC.4 / IPSG.2 / COP.7)
+  { id: "ecg",               label: "ECG Register",            icon: "pi-bolt",        nabhRef: "AAC.4 / COP.7", desc: "12-lead ECG findings, critical-rhythm flagging, cardiologist review" },
 ];
 const LIVE_ACCENT = "#0891b2";
 
@@ -137,7 +139,14 @@ export default function NABHRegistersDashboard() {
       params.set("endDate", endDate);
       params.set("limit", "200");
       if (registerId === "blood-sugar" && criticalOnly) params.set("critical", "true");
-      const r = await axios.get(`${API}/registers/nabh/${registerId}?${params}`, authHdr());
+      // R7en — ECG lives on its own mount (/api/ecg-register) so the same
+      // page can also drive manual entry + report/review patches. Fall back
+      // to the unified /registers/nabh/* surface for every other live tile.
+      if (registerId === "ecg" && criticalOnly) params.set("critical", "true");
+      const baseUrl = registerId === "ecg"
+        ? `${API}/ecg-register?${params}`
+        : `${API}/registers/nabh/${registerId}?${params}`;
+      const r = await axios.get(baseUrl, authHdr());
       setRows(r.data?.data || []);
     } catch (e) {
       toast.error(e?.response?.data?.message || "Failed to load register");
@@ -357,6 +366,12 @@ export default function NABHRegistersDashboard() {
                   Critical only (&lt;70 or &gt;300 mg/dL)
                 </label>
               )}
+              {active === "ecg" && (
+                <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                  <input type="checkbox" checked={criticalOnly} onChange={(e) => setCriticalOnly(e.target.checked)} />
+                  Critical only (VT/VF/AVB-3/Asystole/STE)
+                </label>
+              )}
             </div>
           </Card>
 
@@ -507,6 +522,38 @@ export default function NABHRegistersDashboard() {
                     <td style={tdStyle}>{r.ulcerSite || "—"}</td>
                     <td style={tdStyle}>{r.sentinelFlag ? <Badge value="SENTINEL" palette="red" /> : r.hospitalAcquired ? <Badge value="HAPU" palette="orange" /> : "—"}</td>
                     <td style={tdStyle}>{r.assessedBy || "—"}</td>
+                  </tr>
+                ))}
+              </Table>
+            </Card>
+          )}
+
+          {active === "ecg" && (
+            <Card title={`ECG Register · ${rows.length} entries`}>
+              <div style={{ marginBottom: 8, fontSize: 12, color: C.muted }}>
+                Click <a href="/compliance/nabh/ecg-register" style={{ color: "#0891b2", fontWeight: 600 }}>open the full ECG Register page</a> for manual entry, report filing, and cardiologist review.
+              </div>
+              <Table cols={["ECG #", "Performed", "UHID", "Patient", "Loc", "Rhythm", "HR", "Flag", "Stage", "By"]}>
+                {rows.length === 0 ? (
+                  <EmptyRow span={10} text={loading ? "Loading…" : "No ECGs in this range"} />
+                ) : rows.map((r) => (
+                  <tr key={r._id}>
+                    <td style={tdStyle}><strong>{r.ecgNumber || "—"}</strong></td>
+                    <td style={tdStyle}>{fmt(r.performedAt)}</td>
+                    <td style={tdStyle}>{r.UHID}</td>
+                    <td style={tdStyle}>{r.patientName}</td>
+                    <td style={tdStyle}>{r.location}</td>
+                    <td style={tdStyle}>{r.rhythm ? <Badge value={r.rhythm} palette={r.criticalFlag ? "red" : r.rhythm === "NSR" ? "green" : "orange"} /> : "—"}</td>
+                    <td style={tdStyle}>{r.heartRate ?? "—"}</td>
+                    <td style={tdStyle}>
+                      {r.criticalFlag ? <Badge value="CRITICAL" palette="red" />
+                        : r.abnormalFlag ? <Badge value="ABNORMAL" palette="orange" />
+                        : <Badge value="NORMAL" palette="green" />}
+                    </td>
+                    <td style={tdStyle}>
+                      <Badge value={r.status} palette={r.status === "Reviewed" ? "green" : r.status === "Reported" ? "blue" : "muted"} />
+                    </td>
+                    <td style={tdStyle}>{r.performedByName || "—"}</td>
                   </tr>
                 ))}
               </Table>

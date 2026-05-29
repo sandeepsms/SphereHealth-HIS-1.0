@@ -27,6 +27,8 @@ const ReadmissionRegister = require("../../models/Compliance/ReadmissionRegister
 const MortalityRegister = require("../../models/Compliance/MortalityRegisterModel");
 const RestraintRegister = require("../../models/Compliance/RestraintRegisterModel");
 const AntimicrobialUseRegister = require("../../models/Compliance/AntimicrobialUseRegisterModel");
+// R7en — ECG Register (NABH AAC.4 + IPSG.2 + COP.7)
+const ECGRegister = require("../../models/Compliance/ECGRegisterModel");
 const emitter = require("../../services/Compliance/nabhRegisterEmitter");
 
 function _dateRange(query) {
@@ -412,7 +414,7 @@ exports.dashboardSummary = async (req, res) => {
       return { todayCount, sevenDayCount, lastEntryAt: last ? (last[dateField] || last.createdAt) : null };
     }
 
-    const [bs, er, bt, pn, fr, pu, dv, ot, asa, rea, mort, res2, amu] = await Promise.all([
+    const [bs, er, bt, pn, fr, pu, dv, ot, asa, rea, mort, res2, amu, ecg] = await Promise.all([
       summary(BloodSugarRegister, "takenAt"),
       summary(EmergencyRegister, "arrivalAt"),
       summary(BloodTransfusionRegister, "createdAt"),
@@ -427,6 +429,8 @@ exports.dashboardSummary = async (req, res) => {
       summary(MortalityRegister, "dateOfDeath"),
       summary(RestraintRegister, "createdAt"),
       summary(AntimicrobialUseRegister, "createdAt"),
+      // R7en — ECG register
+      summary(ECGRegister, "performedAt"),
     ]);
 
     res.json({
@@ -446,6 +450,8 @@ exports.dashboardSummary = async (req, res) => {
         { id: "mortality", name: "Mortality Register", route: "/compliance/nabh/mortality-register", nabhRef: "COP.18", ...mort },
         { id: "restraint", name: "Restraint Register", route: "/compliance/nabh/restraint-register", nabhRef: "COP.17", ...res2 },
         { id: "antimicrobial", name: "Antimicrobial Use Register", route: "/compliance/nabh/antimicrobial-register", nabhRef: "MOM.7 (AMS)", ...amu },
+        // R7en — ECG Register
+        { id: "ecg", name: "ECG Register", route: "/compliance/nabh-registers#ecg", nabhRef: "AAC.4 / COP.7", ...ecg },
       ],
     });
   } catch (e) {

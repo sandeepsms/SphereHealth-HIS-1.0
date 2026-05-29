@@ -184,6 +184,10 @@ const NABHRegistersDashboard = lazy(() => import("./pages/compliance/NABHRegiste
 // R7ek — Inspection Dashboard split out as its own page (was a tab inside
 // NABHRegistersDashboard); shows KPI strip + register-status table.
 const InspectionDashboardPage = lazy(() => import("./pages/compliance/InspectionDashboardPage"));
+// R7en — ECG Register (NABH AAC.4 / IPSG.2 / COP.7). Lives under
+// /compliance/nabh-registers#ecg via the consolidated landing page, but
+// also gets a direct deep-link route for quick access.
+const ECGRegisterPage               = lazy(() => import("./pages/compliance/ECGRegisterPage"));
 // R7bx — six new surveyor-facing NABH registers (COP.10/13/16/17/18 + MOM.7).
 const OTRegisterPage                = lazy(() => import("./pages/nabh/OTRegisterPage"));
 const ASARegisterPage               = lazy(() => import("./pages/nabh/ASARegisterPage"));
@@ -648,6 +652,12 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/compliance/nabh/antimicrobial-register" element={
               <RoleGuard action="compliance.read"><AntimicrobialUseRegisterPage /></RoleGuard>
+            } />
+            {/* R7en — ECG Register (NABH AAC.4 / IPSG.2 / COP.7). Standalone
+                deep-link mount; also reachable from the consolidated NABH
+                Registers landing page via #ecg hash. */}
+            <Route path="/compliance/nabh/ecg-register" element={
+              <RoleGuard action="compliance.read"><ECGRegisterPage /></RoleGuard>
             } />
             {/* R7eg — NABH HIC.5 Infection Control register: ICU care-bundle
                 compliance aggregated over time (VAP / CAUTI / CLABSI / DVT

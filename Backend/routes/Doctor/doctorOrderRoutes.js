@@ -281,6 +281,56 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
       }
     }
 
+    // R7en — Auto-populate NABH ECG register when an Investigation order
+    // names an ECG / EKG / Electrocardiogram. Creates a PendingReport row
+    // immediately so the surveyor sees the order in the register from the
+    // moment it's written; the nurse/tech files findings via the
+    // PATCH /api/ecg-register/:id/report endpoint once the strip is read.
+    // Non-blocking — never rolls back the primary doctor-order write.
+    if (order.orderType === "Investigation" || order.orderType === "Lab") {
+      try {
+        const details = order.orderDetails || {};
+        const name = String(
+          details.testName || details.displayName || details.investigationName || details.medicineName || ""
+        ).toLowerCase();
+        const isECG =
+          /\becg\b/.test(name) ||
+          /\bekg\b/.test(name) ||
+          name.includes("electrocardiogram") ||
+          name.includes("electro-cardiogram");
+        if (isECG) {
+          const { emitECG } = require("../../services/Compliance/nabhRegisterEmitter");
+          const Patient = require("../../models/Patient/patientModel");
+          const Admission = require("../../models/Patient/admissionModel");
+          const patient = order.patientId
+            ? await Patient.findById(order.patientId).select("_id UHID fullName name age gender sex").lean()
+            : null;
+          const admission = order.admissionId
+            ? await Admission.findById(order.admissionId).select("_id admissionNumber wardName ward").lean()
+            : null;
+          emitECG({
+            patient: patient || {},
+            admission,
+            ecg: {
+              orderedAt: order.orderedAt || order.createdAt || new Date(),
+              // performedAt defaults to orderedAt for PendingReport rows; the
+              // /report patch updates it with the actual performance time.
+              performedAt: order.orderedAt || order.createdAt || new Date(),
+              indication: details.indication || order.indication || order.notes || details.diagnosis || "",
+              indicationCategory: details.indicationCategory || "Other",
+              location: admission?.wardName || admission?.ward || "Ward",
+              leadType: details.leadType || "12-lead",
+              sourceType: "DoctorOrder",
+              doctorOrderId: order._id,
+            },
+            actor: req.user || {},
+          }).catch((e) => console.error("[doctor-orders] emitECG error:", e?.message));
+        }
+      } catch (e) {
+        console.error("[doctor-orders] ECG emit wiring failed:", e?.message);
+      }
+    }
+
     // R7bn-4 / D7-1-fix: when orderType==="Medication", auto-seed the
     // MAR so the nurse sees the drug on the Treatment Chart without
     // requiring a separate Prescription save. Pre-fix MAR rows came

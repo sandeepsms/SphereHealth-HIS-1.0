@@ -324,6 +324,10 @@ router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
 // Surveyors ask for these as chronological audit-grade logs; the registers
 // are auto-populated from existing clinical flows via nabhRegisterEmitter.
 router.use("/registers/nabh",        require("./Compliance/nabhRegisterRoutes"));
+// R7en — ECG Register (NABH AAC.4 + IPSG.2 + COP.7). Manual + auto-emit
+// from DoctorOrder (Investigation/ECG). Surveyor reads via dashboard-summary
+// above; this mount is the write surface (entry + report + cardio review).
+router.use("/ecg-register",          require("./Compliance/ecgRegisterRoutes"));
 // R7du — Restraint Register write surface (NABH COP.17). Surveyor reads
 // are served by /registers/nabh/restraint-register above; this surface
 // is the nurse-side write path (POST + remove + monitor).
