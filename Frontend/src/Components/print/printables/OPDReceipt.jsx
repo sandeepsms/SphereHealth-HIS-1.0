@@ -38,7 +38,23 @@ const OPDReceipt = ({ settings, receipt = {} }) => {
   );
 
   const printCount = toNum(receipt.printCount);
-  const docTitle = hasGstFields ? "Tax Invoice (OPD)" : "OPD Bill / Receipt";
+  // R7en-VISIT-TITLE: this template handles every non-Service receipt
+  // (OPD / IPD interim sub-bills / Daycare / Emergency), so the docTitle
+  // must reflect the bill's actual visitType — otherwise an IPD interim
+  // bill prints "OPD Bill / Receipt" even when the line items are clearly
+  // IPD (Bed Charge — ICU, IPD Registration Fee, etc.). Fall back to OPD
+  // when visitType isn't passed (legacy callers).
+  const visitTypeRaw = String(receipt.visitType || "OPD").toUpperCase();
+  const visitLabel =
+      visitTypeRaw === "IPD"        ? "IPD"
+    : visitTypeRaw === "DAYCARE"    ? "Daycare"
+    : visitTypeRaw === "DAY CARE"   ? "Daycare"
+    : visitTypeRaw === "EMERGENCY"  ? "Emergency"
+    : visitTypeRaw === "ER"         ? "Emergency"
+                                    : "OPD";
+  const docTitle = hasGstFields
+    ? `Tax Invoice (${visitLabel})`
+    : `${visitLabel} Bill / Receipt`;
 
   return (
     <PrintShell

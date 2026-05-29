@@ -952,6 +952,11 @@ export default function ReceptionBilling() {
       uhid:        patient?.UHID,
       age:         patient?.age,
       gender:      patient?.gender,
+      // R7en-VISIT-TITLE: lets OPDReceipt title the document with the
+      // actual visit type ("IPD Bill / Receipt" for IPD interim sub-bills,
+      // "Daycare Bill / Receipt" for Daycare, etc.) instead of the
+      // hardcoded "OPD Bill / Receipt".
+      visitType:   bill.visitType,
       // OPD-only fields (ignored by ServiceReceipt)
       // R7en-DOC-DEPT-FIX: bill.doctorName + bill.department are often
       // empty because the BillingService doesn't always denormalize them
