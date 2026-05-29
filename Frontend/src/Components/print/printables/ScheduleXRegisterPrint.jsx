@@ -8,7 +8,7 @@
 
 import React from "react";
 import PrintShell from "../PrintShell";
-import { toNum } from "../../../utils/printUtils";
+import { toNum, numberToIndianWords } from "../../../utils/printUtils";
 
 const fmtD = (d) => d
   ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
@@ -65,10 +65,21 @@ const ScheduleXRegisterPrint = ({ settings = {}, receipt = {} }) => {
 
   const totalRows = drugs.reduce((s, d) => s + d.rows.length, 0);
 
+  // R7eo-D — Pattern D regulatory fix (D&C Rules §66/67 Form B): derive
+  // title from registerKind so the same component prints the correct
+  // statutory label for Schedule H1 / Schedule X / NDPS Narcotic registers.
+  const titleByKind = {
+    scheduleH1: "Schedule H1 Register",
+    scheduleX:  "Schedule X Psychotropic Register",
+    narcotic:   "NDPS Narcotic Register",
+    ndps:       "NDPS Narcotic Register",
+  };
+  const computedTitle = titleByKind[r.registerKind] || "SCHEDULE X NARCOTICS REGISTER";
+
   return (
     <PrintShell
       settings={settings}
-      documentTitle="SCHEDULE X NARCOTICS REGISTER"
+      documentTitle={computedTitle}
       serialNo={r.registerNo}
       printCount={printCount}
       infoItems={[
@@ -151,7 +162,14 @@ const ScheduleXRegisterPrint = ({ settings = {}, receipt = {} }) => {
                 </div>
               </div>
 
-              {chunks.map((chunk, ci) => (
+              {chunks.map((chunk, ci) => {
+                // R7eo-D — Pattern D regulatory fix (D&C Rules §66/67 Form B):
+                // closing balance for this chunk, used for "Balance in words"
+                // sub-row below the chunk total.
+                const chunkClosingBal = chunk.length
+                  ? toNum(chunk[chunk.length - 1].balance)
+                  : toNum(d.openingBalance);
+                return (
                 <table key={ci} className="pr-table" style={{
                   fontSize: 10, marginTop: ci > 0 ? 8 : 0,
                   pageBreakInside: "auto",
@@ -162,9 +180,14 @@ const ScheduleXRegisterPrint = ({ settings = {}, receipt = {} }) => {
                       <th style={{ width: 60 }}>Type</th>
                       <th style={{ width: 70 }}>Batch</th>
                       <th>Invoice / Rx Ref</th>
+                      {/* R7eo-D — Pattern D regulatory fix (D&C §66/67 Form B): manufacturer + supplier columns required */}
+                      <th style={{ width: 80 }}>Manufacturer</th>
+                      <th style={{ width: 90 }}>Supplier</th>
                       <th style={{ width: 90 }}>Patient (UHID)</th>
                       <th style={{ width: 90 }}>Prescriber</th>
                       <th style={{ width: 90 }}>Witness</th>
+                      {/* R7eo-D — Pattern D regulatory fix (D&C §66/67): dispenser signature required */}
+                      <th style={{ width: 80 }}>Dispenser Sign</th>
                       <th className="right" style={{ width: 45 }}>In</th>
                       <th className="right" style={{ width: 45 }}>Out</th>
                       <th className="right" style={{ width: 55 }}>Bal</th>
@@ -172,7 +195,7 @@ const ScheduleXRegisterPrint = ({ settings = {}, receipt = {} }) => {
                   </thead>
                   <tbody>
                     {chunk.length === 0 ? (
-                      <tr><td colSpan={10} className="muted center" style={{ padding: 12, fontStyle: "italic" }}>No movements.</td></tr>
+                      <tr><td colSpan={13} className="muted center" style={{ padding: 12, fontStyle: "italic" }}>No movements.</td></tr>
                     ) : chunk.map((row, ri) => {
                       const type = row.type || (toNum(row.dispensed) > 0 ? "DISPENSE" : "RECEIPT");
                       const recv = toNum(row.receipt ?? (type === "RECEIPT" ? row.qty : 0));
@@ -192,6 +215,17 @@ const ScheduleXRegisterPrint = ({ settings = {}, receipt = {} }) => {
                           <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>
                             {row.invoiceRef || row.rxNo || row.refNo || "—"}
                           </td>
+                          {/* R7eo-D — Pattern D regulatory fix (D&C §66/67 Form B): manufacturer */}
+                          <td style={{ fontSize: 9.5 }}>
+                            {row.manufacturer || row.mfgName || "—"}
+                          </td>
+                          {/* R7eo-D — Pattern D regulatory fix (D&C §66/67 Form B): supplier (name + address) */}
+                          <td style={{ fontSize: 9.5 }}>
+                            {row.supplierName || row.vendor || "—"}
+                            {row.supplierAddress && (
+                              <div className="muted" style={{ fontSize: 8.5 }}>{row.supplierAddress}</div>
+                            )}
+                          </td>
                           <td style={{ fontSize: 9.5 }}>
                             {row.patientName || "—"}
                             {row.patientUHID && (
@@ -210,6 +244,10 @@ const ScheduleXRegisterPrint = ({ settings = {}, receipt = {} }) => {
                               <div className="muted" style={{ fontSize: 8.5 }}>Reg: {row.witnessRegNo}</div>
                             )}
                           </td>
+                          {/* R7eo-D — Pattern D regulatory fix (D&C §66/67): dispenser signature column */}
+                          <td style={{ fontSize: 9.5 }}>
+                            {row.dispenserName || row.dispenserId || ""}
+                          </td>
                           <td className="right" style={{ color: recv > 0 ? "#15803d" : "#94a3b8" }}>
                             {recv > 0 ? recv : "—"}
                           </td>
@@ -220,9 +258,19 @@ const ScheduleXRegisterPrint = ({ settings = {}, receipt = {} }) => {
                         </tr>
                       );
                     })}
+                    {/* R7eo-D — Pattern D regulatory fix (D&C §66/67 Form B): balance in words after each chunk total row */}
+                    {chunk.length > 0 && (
+                      <tr style={{ background: "#fffbeb" }}>
+                        <td colSpan={13} style={{ fontSize: 9.5, fontStyle: "italic", color: "#78350f", padding: "4px 8px" }}>
+                          <strong>Balance in figures:</strong> {chunkClosingBal} {d.unit || "units"} &nbsp;·&nbsp;
+                          <strong>Balance in words:</strong> {numberToIndianWords(chunkClosingBal)}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
-              ))}
+                );
+              })}
 
               {/* Per-drug reconciliation */}
               <div style={{
