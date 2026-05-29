@@ -891,6 +891,10 @@ export default function ReceptionConsole() {
 
             // Fire the AdvanceReceipt print via sessionStorage handoff
             // (matches ReceptionBilling printAdvanceReceipt helper).
+            // R7en-2: receipt now shows Department + Doctor in the slots
+            // previously occupied by Hospital/Customer GSTIN. Read them
+            // from the admission record (server canonical) with a fallback
+            // to admissionPayload (what we just sent).
             const advPayload = {
               receiptNo:     adv.receiptNumber || null,
               patientName:   [patient.title, patient.fullName].filter(Boolean).join(" "),
@@ -898,7 +902,9 @@ export default function ReceptionConsole() {
               ipdNo:         createdAdm.admissionNumber || null,
               admissionDate: createdAdm.admissionDate || new Date().toISOString(),
               bedNumber:     bedData.bedNumber || null,
-              wardName:      null, // bedData only carries IDs — name shown on visit receipt
+              wardName:      bedData.wardName || createdAdm.wardName || null,
+              department:    createdAdm.department || admissionPayload.department || null,
+              doctor:        createdAdm.attendingDoctor || admissionPayload.attendingDoctor || null,
               date:          adv.paidAt || adv.createdAt || new Date().toISOString(),
               amount:        toMoney(adv.amount) || advAmt,
               method:        adv.paymentMode || "CASH",

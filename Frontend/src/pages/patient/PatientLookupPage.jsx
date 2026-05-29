@@ -1390,10 +1390,15 @@ function printAdvanceReceipt(advance, patient) {
     receiptNo:    advance.receiptNumber,
     patientName:  [patient.title, patient.fullName].filter(Boolean).join(" "),
     uhid:         patient.UHID,
+    // R7en-2: surface IPD No / Bed / Ward / Department / Doctor on the
+    // advance receipt — they previously printed blank because callers
+    // only wired the admission number.
     ipdNo:        advance.admission?.admissionNumber || null,
     admissionDate: advance.admission?.admissionDate || null,
-    bedNumber:    null,
-    wardName:     null,
+    bedNumber:    advance.admission?.bedNumber || null,
+    wardName:     advance.admission?.wardName || null,
+    department:   advance.admission?.department || null,
+    doctor:       advance.admission?.attendingDoctor || null,
     date:         advance.paidAt || advance.createdAt || new Date().toISOString(),
     amount:       toMoney(advance.amount),
     method:       advance.paymentMode,

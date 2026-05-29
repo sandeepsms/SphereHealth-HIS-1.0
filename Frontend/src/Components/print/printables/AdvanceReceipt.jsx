@@ -29,7 +29,7 @@ const AdvanceReceipt = ({ settings = {}, receipt = {} }) => {
       infoItems={[
         { label: "Patient",    value: receipt.patientName },
         { label: "UHID",       value: receipt.uhid },
-        { label: "IPD No",     value: receipt.ipdNo },
+        { label: "IPD No",     value: receipt.ipdNo || "—" },
         { label: "Admission",  value: receipt.admissionDate
             ? new Date(receipt.admissionDate).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
             : "—" },
@@ -39,11 +39,13 @@ const AdvanceReceipt = ({ settings = {}, receipt = {} }) => {
         { label: "Receipt Date", value: receipt.date
             ? new Date(receipt.date).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
             : new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
-        // R7bh-F7 / R7bg-7-HIGH-1: hospital + customer GSTIN visible on
-        // the deposit receipt so corporate / TPA accounts can later claim
-        // input tax credit when the advance is adjusted on the final bill.
-        { label: "Hospital GSTIN", value: settings.gstin || "—" },
-        { label: "Customer GSTIN", value: customerGstin || (requiresGstin ? "MISSING — required for ≥ ₹50,000" : "—") },
+        // R7en-2: surveyors / patients care about WHO admitted them and
+        // under which clinical department, not the hospital GSTIN. Show
+        // Department + Doctor here. GSTIN (hospital + customer) still
+        // visible in the dedicated Tax Identification section below when
+        // customerGstin is captured (B2B advance ≥ ₹50,000).
+        { label: "Department", value: receipt.department || "—" },
+        { label: "Doctor",     value: receipt.doctor || "—" },
       ]}
       signatureLabels={["Authorised Cashier", "Depositor / Patient"]}
     >

@@ -58,14 +58,19 @@ const ADVANCE_MODES = ["CASH", "UPI", "CARD", "CHEQUE", "ONLINE"];
    success-state Print button and the per-row Reprint icon call this. */
 function printAdvanceReceipt(advance, patient) {
   if (!advance || !patient) return;
+  // R7en-2: receipt now shows Department + Doctor in the slots previously
+  // occupied by Hospital/Customer GSTIN; pull from advance.admission when
+  // populated (BillingService populates the nested admission ref).
   openPrint("advance-receipt", {
     receiptNo:    advance.receiptNumber,
     patientName:  [patient.title, patient.fullName].filter(Boolean).join(" "),
     uhid:         patient.UHID,
     ipdNo:        advance.admission?.admissionNumber || null,
     admissionDate: advance.admission?.admissionDate || null,
-    bedNumber:    null,
-    wardName:     null,
+    bedNumber:    advance.admission?.bedNumber || null,
+    wardName:     advance.admission?.wardName || null,
+    department:   advance.admission?.department || null,
+    doctor:       advance.admission?.attendingDoctor || null,
     date:         advance.paidAt || advance.createdAt || new Date().toISOString(),
     amount:       toMoney(advance.amount),
     method:       advance.paymentMode,
