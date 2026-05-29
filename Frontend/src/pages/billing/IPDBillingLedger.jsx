@@ -51,6 +51,11 @@ import { toMoney } from "../../utils/money";
         a user adds, the printout shows.
 */
 const CODE_PREFIX = {
+  // Registration & Admission (was "Other Charges" — too vague; R7ex)
+  REG: "Registration & Admission",
+  REGISTRATION: "Registration & Admission",
+  ADM: "Registration & Admission",
+  ADMISSION: "Registration & Admission",
   // Bed / Room
   BED: "Room/Bed Charges",       ROOM: "Room/Bed Charges",      WARD: "Room/Bed Charges",
   // Doctor / Consultant
@@ -89,7 +94,7 @@ const CODE_PREFIX = {
   // Misc
   NEB: "Nursing Charges",        // nebulization session
   PKG: "Other Charges", PACKAGE: "Other Charges",
-  ER: "Other Charges", REG: "Other Charges", ADM: "Other Charges",
+  ER: "Other Charges",
   IPD: null, OPD: null,           // pure prefixes — keep falling through
 };
 
@@ -506,17 +511,24 @@ export default function IPDBillingLedger() {
     if (!canGenerateFinal) {
       return toast.warn(`Discharge not yet approved (stage: ${dischargeStage}). Doctor must approve first.`);
     }
+    // R7ex — toMoney() unwraps Decimal128 ({$numberDecimal:"500"}); raw
+    // pass-through made every rate/amount render as ₹0.
     const items = (data.triggers || [])
       .filter(t => !["voided", "cancelled", "skipped"].includes(t.status))
-      .map(t => ({
-        category:    printCategoryFor(t),
-        name:        t.serviceName || t.serviceCode,
-        description: t.orderDetails,
-        date:        t.createdAt,
-        qty:         t.quantity || 1,
-        rate:        t.unitPrice || 0,
-        amount:      t.totalAmount || ((t.unitPrice || 0) * (t.quantity || 1)),
-      }));
+      .map(t => {
+        const rate = toMoney(t.unitPrice);
+        const qty  = Number(t.quantity || 1);
+        const amt  = toMoney(t.totalAmount) || (rate * qty);
+        return {
+          category:    printCategoryFor(t),
+          name:        t.serviceName || t.serviceCode,
+          description: t.orderDetails,
+          date:        t.createdAt,
+          qty,
+          rate,
+          amount:      amt,
+        };
+      });
     openPrint("final-bill", {
       isInterim:        false,
       viewMode:         "category",
@@ -596,9 +608,17 @@ export default function IPDBillingLedger() {
 
     const esc = (s = "") => String(s ?? "").replace(/[&<>"']/g, (c) =>
       ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+    // R7ex — Decimal128 unwrap. Mongoose serialises Decimal128 to JSON as
+    // { $numberDecimal: "500" }. The default Object#toString returns
+    // "[object Object]" → NaN, which silently zeroed every rate/amount on
+    // the print. Check $numberDecimal explicitly before generic .toString.
     const _num = (v) => {
       if (v == null) return 0;
-      if (typeof v === "object" && v.toString) v = v.toString();
+      if (typeof v === "object") {
+        if (v.$numberDecimal != null)         v = v.$numberDecimal;
+        else if (typeof v.toString === "function" && v.toString !== Object.prototype.toString) v = v.toString();
+        else                                  v = NaN;
+      }
       const n = Number(v); return Number.isFinite(n) ? n : 0;
     };
     const _money = (n) => `₹${_num(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -679,10 +699,20 @@ export default function IPDBillingLedger() {
        new Date(data.admission.admissionDate)) / 86400000,
     ));
     const patientName = (data.admission.patientId?.fullName) || data.admission.UHID || "Patient";
-    const consultant  = data.admission.consultantDoctor?.fullName || data.admission.primaryConsultant || "—";
+    // R7ex — admission fallback chain. The ledger payload deliberately
+    // doesn't populate consultantDoctor (perf — R7bh-F10), so the
+    // denormalized `attendingDoctor` string is the only source on most
+    // admissions. Same story for bedNumber / wardName after R7bi-1.
+    const _docRaw     = data.admission.consultantDoctor?.fullName
+                     || data.admission.primaryConsultant
+                     || data.admission.attendingDoctor
+                     || "";
+    const consultant  = _docRaw
+      ? (/^(Dr\.?|Prof\.?|Mr\.?|Mrs\.?|Ms\.?)\s+/i.test(_docRaw) ? _docRaw : `Dr. ${_docRaw}`)
+      : "—";
     const dx          = data.admission.provisionalDiagnosis || data.admission.workingDiagnosis || data.admission.diagnosis || "—";
-    const bedNo       = data.admission.bedId?.bedNumber || "—";
-    const wardName    = data.admission.bedId?.wardName || data.admission.wardName || data.admission.department || "—";
+    const bedNo       = data.admission.bedId?.bedNumber || data.admission.bedNumber || "—";
+    const wardName    = data.admission.bedId?.wardName   || data.admission.wardName  || data.admission.department || "—";
 
     // R7ce / R7cg: NABH badge only when the admin has stamped a real
     // certificate number on Hospital Settings — never claim NABH
@@ -1000,16 +1030,21 @@ export default function IPDBillingLedger() {
       const auditEntries = (data.triggers || [])
         .slice()                                  // copy before sort (lean response)
         .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
-        .map(t => ({
+        .map(t => {
+          // R7ex — Decimal128 unwrap so rate/amount aren't ₹0 on print
+          const rate = toMoney(t.unitPrice);
+          const qty  = Number(t.quantity || 1);
+          const amt  = toMoney(t.totalAmount) || (rate * qty);
+          return {
           when:           t.createdAt,
           source:         t.sourceType,
           category:       printCategoryFor(t),
           name:           t.serviceName || t.serviceCode,
           code:           t.serviceCode,
           remarks:        t.orderDetails,
-          qty:            t.quantity || 1,
-          rate:           t.unitPrice || 0,
-          amount:         t.totalAmount || ((t.unitPrice || 0) * (t.quantity || 1)),
+          qty,
+          rate,
+          amount:         amt,
           status:         t.status,
           actor:          t.orderedBy
             ? `${t.orderedBy}${t.orderedByRole ? ` (${t.orderedByRole})` : ""}`
@@ -1022,7 +1057,8 @@ export default function IPDBillingLedger() {
           overrideHistory:t.overrideHistory || [],
           originalUnitPrice: t.originalUnitPrice,
           originalQuantity:  t.originalQuantity,
-        }));
+          };
+        });
       openPrint("interim-bill", {
         ...baseHeader,
         viewMode:     "audit",
@@ -1058,9 +1094,10 @@ export default function IPDBillingLedger() {
             name:        t.serviceName || t.serviceCode,
             description: `${t.serviceCode}${t.orderDetails ? ` · ${t.orderDetails}` : ""}`,
             date:        t.createdAt,
-            qty:         t.quantity || 1,
-            rate:        t.unitPrice || 0,
-            amount:      t.totalAmount || ((t.unitPrice || 0) * (t.quantity || 1)),
+            // R7ex — Decimal128 unwrap (rate/amount were ₹0 on print)
+            qty:         Number(t.quantity || 1),
+            rate:        toMoney(t.unitPrice),
+            amount:      toMoney(t.totalAmount) || (toMoney(t.unitPrice) * Number(t.quantity || 1)),
           });
         });
       const categories = Object.values(byDay).sort((a, b) =>
@@ -1082,9 +1119,10 @@ export default function IPDBillingLedger() {
         name:        t.serviceName || t.serviceCode,
         description: t.orderDetails,
         date:        t.createdAt,
-        qty:         t.quantity || 1,
-        rate:        t.unitPrice || 0,
-        amount:      t.totalAmount || ((t.unitPrice || 0) * (t.quantity || 1)),
+        // R7ex — Decimal128 unwrap (rate/amount were ₹0 on print)
+        qty:         Number(t.quantity || 1),
+        rate:        toMoney(t.unitPrice),
+        amount:      toMoney(t.totalAmount) || (toMoney(t.unitPrice) * Number(t.quantity || 1)),
       }));
     openPrint("interim-bill", {
       ...baseHeader,
