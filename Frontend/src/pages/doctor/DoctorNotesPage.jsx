@@ -29,6 +29,10 @@ import "./note-page-redesign.css";
 // the standalone /emergency-assessment, /discharge-summary,
 // /consent-forms, /mlc routes for direct deep-links.
 import { EmergencyAssessmentPageContent } from "../emergency/EmergencyAssessmentPage";
+// R7ev — IPD/Planned/Daycare admissions need the IPD Initial Assessment
+// (no triage steps, no bed allotment at the end — patient is already
+// admitted). Emergency admissions keep using EmergencyAssessmentPageContent.
+import { IPDInitialAssessmentContent } from "../clinical/IPDInitialAssessmentPage";
 import { DischargeSummaryPageContent } from "../clinical/DischargeSummaryPage";
 import { ConsentFormPageContent } from "../clinical/ConsentFormPage";
 import { MLCPageContent } from "../mlc/MLCPage";
@@ -1215,15 +1219,37 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                    the per-patient hub. Standalone routes are still
                    registered in App.jsx so deep-links from email / print
                    headers keep working. */
-                {
-                  id: "emergency",
-                  title: "Emergency Assessment",
-                  subtitle: "ER triage + initial doctor assessment (NABH AAC.1)",
-                  icon: "pi-exclamation-circle",
-                  color: "#dc2626",
-                  tint: "#fee2e2",
-                  badges: [{ label: "NABH", tone: "ok" }],
-                },
+                // R7ev — tile adapts based on the patient's admission
+                // type. Emergency cases get the ER triage + ABCDE
+                // pathway; everyone else (Planned IPD, Day Care,
+                // Transfer, OPD-to-IPD) gets the IPD Initial Assessment
+                // — patient is already in a bed, no triage required, no
+                // bed-allotment step. Both flip
+                // admission.initialAssessment.doctorCompleted = true so
+                // the gate on the other tiles still lifts identically.
+                (() => {
+                  const at = String(patient?.admissionType || "").toLowerCase();
+                  const isER = at === "emergency" || at === "er";
+                  return isER
+                    ? {
+                        id: "emergency",
+                        title: "Emergency Assessment",
+                        subtitle: "ER triage + initial doctor assessment (NABH AAC.1)",
+                        icon: "pi-exclamation-circle",
+                        color: "#dc2626",
+                        tint: "#fee2e2",
+                        badges: [{ label: "NABH", tone: "ok" }],
+                      }
+                    : {
+                        id: "emergency",   // keep id so the gate-lock check below still works
+                        title: "Initial Doctor Assessment",
+                        subtitle: "IPD Initial Assessment — history, exam, diagnosis, plan (NABH AAC.1)",
+                        icon: "pi-clipboard",
+                        color: "#1d4ed8",
+                        tint: "#dbeafe",
+                        badges: [{ label: "NABH", tone: "ok" }],
+                      };
+                })(),
                 {
                   id: "discharge",
                   title: "Discharge Summary",
@@ -1277,7 +1303,12 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                   // those routes' content components.
                   onClick={() => {
                     if (locked) {
-                      toast.error("⛔ Complete the Doctor Initial Assessment first — open the 'Emergency Assessment' tile (NABH AAC.1).", { autoClose: 5500 });
+                      // R7ev — gate-lock message references the same
+                      // tile label the user actually sees on the page.
+                      const at = String(patient?.admissionType || "").toLowerCase();
+                      const isER = at === "emergency" || at === "er";
+                      const tileLabel = isER ? "'Emergency Assessment'" : "'Initial Doctor Assessment'";
+                      toast.error(`⛔ Complete the Doctor Initial Assessment first — open the ${tileLabel} tile (NABH AAC.1).`, { autoClose: 5500 });
                       return;
                     }
                     setActiveTile(t.id);
@@ -1561,11 +1592,22 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               "Back to All Sections" (rendered above when activeTile !=
               null) flips activeTile back to null and the tile grid
               reappears. */}
-          {patient && activeTile === "emergency" && (
-            <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
-              <EmergencyAssessmentPageContent selectedPatient={patient} />
-            </div>
-          )}
+          {patient && activeTile === "emergency" && (() => {
+            // R7ev — route to the right Initial Assessment surface based
+            // on how the patient was admitted. Emergency cases get the
+            // ER triage flow; IPD/Planned/Daycare cases get the proper
+            // IPD Initial Assessment (history/exam/3-tier diagnosis
+            // card/plan — no triage, no bed allotment at the end).
+            const at = String(patient?.admissionType || "").toLowerCase();
+            const isER = at === "emergency" || at === "er";
+            return (
+              <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
+                {isER
+                  ? <EmergencyAssessmentPageContent selectedPatient={patient} />
+                  : <IPDInitialAssessmentContent selectedPatient={patient} />}
+              </div>
+            );
+          })()}
           {patient && activeTile === "discharge" && (
             <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
               <DischargeSummaryPageContent selectedPatient={patient} />

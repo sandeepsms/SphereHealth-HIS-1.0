@@ -319,7 +319,12 @@ const ROUTES = ["Oral", "IV", "IM", "SC", "SL", "Topical", "Inhaled", "PR", "Nas
 const FREQS  = ["OD", "BD", "TDS", "QID", "SOS", "Stat", "HS", "Alternate days", "Weekly"];
 
 /* ════════════════════════════════════════════════════════════════ */
-function IPDInitialAssessmentContent({ selectedPatient }) {
+// R7ev — Named export so DoctorNotesPage can mount this inline (mirrors
+// the EmergencyAssessmentPageContent pattern). Without this, the only
+// way to reach this surface was the standalone /ipd-initial-assessment
+// route, so an IPD admission opened in DoctorNotes was being shown the
+// Emergency Assessment shape (triage + bed allotment) instead.
+export function IPDInitialAssessmentContent({ selectedPatient }) {
   const { uhid: uhidParam } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
