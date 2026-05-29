@@ -376,6 +376,52 @@ export default function ReceptionBilling() {
       setPatient(p);
       setBills(list);
 
+      // R7eq-FIX-2 — billingService.getBillsByUHID deliberately drops
+      // populate("admission") for perf (see Backend billingService.js
+      // line 294). When an IPD/Daycare/ER bill is present we therefore
+      // have no bed/ward/admission-date on the bill payload, and
+      // Patient.currentAdmission on the patient doc is just an ObjectId
+      // (not nested). Probe /admissions/patient/:patientId — same call
+      // the picker click handler runs — and stash the resolved active
+      // inpatient admission on patient.currentAdmission so the hero
+      // card's "Bed / Room" + "Admission" slots populate.
+      const hasIpdBill = list.some(
+        (b) => b.visitType === "IPD" || b.visitType === "Daycare"
+            || b.visitType === "Day Care" || b.visitType === "Emergency",
+      );
+      if (hasIpdBill && p._id) {
+        try {
+          const ar = await axios.get(
+            `${API_ENDPOINTS.BASE}/admissions/patient/${encodeURIComponent(p._id)}`,
+          );
+          const arr = ar?.data?.admissions || ar?.data?.data || ar?.data || [];
+          // R7eq-FIX-2 — admission.admissionType is the *category* enum
+          // (Planned / Emergency / Day Care / OPD-to-IPD / etc.), NOT a
+          // visit-type tag. Real "is this an inpatient stay" signal is:
+          //   • status === "Active"
+          //   • AND either has a bed assigned (bedId / hasBed / bedNumber)
+          //     OR the admissionNumber prefix says IPD/ER/DC
+          // This mirrors the IPDBillingLedger's own admission resolver.
+          const active = (Array.isArray(arr) ? arr : []).find((a) => {
+            if (!a || a.status !== "Active") return false;
+            const num = String(a.admissionNumber || "").toUpperCase();
+            return !!(a.bedId
+              || a.hasBed
+              || a.bedNumber
+              || /^(IPD|ER|EMG|DC|DAYCARE|DAY-CARE)-/.test(num)
+              || a.admissionType === "IPD"
+              || a.admissionType === "Emergency"
+              || a.admissionType === "Day Care"
+              || a.admissionType === "Daycare");
+          });
+          if (active) {
+            setPatient((prev) => prev ? { ...prev, currentAdmission: active } : prev);
+          }
+        } catch (e) {
+          console.warn("[ReceptionBilling] admission probe failed:", e?.message);
+        }
+      }
+
       // Parallel fetch — never blocks bill rendering if it 5xxs.
       try {
         const adv = await axios.get(`${API_ENDPOINTS.BILLING}/advance/uhid/${encodeURIComponent(uhidArg)}`);
@@ -1435,7 +1481,12 @@ export default function ReceptionBilling() {
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginTop: 5 }}>
                       {isIPD
-                        ? fmtDateTime(ipdBill?.admissionDate || todayBill?.createdAt)
+                        ? fmtDateTime(
+                            ipdBill?.admission?.admissionDate
+                            || patient?.currentAdmission?.admissionDate
+                            || ipdBill?.admissionDate
+                            || todayBill?.createdAt
+                          )
                         : fmtDateTime(todayBill?.createdAt || new Date())}
                     </div>
                     <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
@@ -1456,10 +1507,29 @@ export default function ReceptionBilling() {
                       {isIPD ? "Bed / Room" : "Department"}
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginTop: 5 }}>
-                      {isIPD ? (ipdBill?.bedNumber || ipdBill?.wardName || "—") : dept}
+                      {/* R7eq-FIX: PatientBill does NOT denormalize bed/ward —
+                          they live on the populated admission ref (mirrors the
+                          advance.admission?.bedNumber pattern at line 150).
+                          Read through the ref first, then admission-level
+                          patient fallbacks, then the flat bill fields as a
+                          last-resort safety net. */}
+                      {isIPD
+                        ? (ipdBill?.admission?.bedNumber
+                           || patient?.currentAdmission?.bedNumber
+                           || ipdBill?.bedNumber
+                           || patient?.bedNumber
+                           || "—")
+                        : dept}
                     </div>
                     <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
-                      {isIPD ? (ipdBill?.wardName || dept || "—") : (doc ? `Dr. ${doc}` : "—")}
+                      {isIPD
+                        ? (ipdBill?.admission?.wardName
+                           || patient?.currentAdmission?.wardName
+                           || ipdBill?.wardName
+                           || patient?.wardName
+                           || dept
+                           || "—")
+                        : (doc ? `Dr. ${doc}` : "—")}
                     </div>
                   </div>
                   {/* PACKAGE / TPA */}
