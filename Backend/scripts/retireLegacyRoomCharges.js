@@ -48,10 +48,30 @@ const APPLY = process.argv.includes("--apply");
 
   const ServiceMaster = require("../models/ServiceMaster/serviceMasterModel");
 
+  // R7et — broadened from R7es (ROOM+ICU only) to ALL categories the
+  // RoomCategoryCharges matrix now covers:
+  //   ROOM       → bedRent          (BED-<CAT>)
+  //   NURSING    → nursingCharge    (NURSING-<CAT>)
+  //   DOCTOR     → doctorVisitCharge + rmoCharge
+  //                                  (DOC-VISIT-<CAT>, RMO-<CAT>)
+  //   ICU        → monitoringCharge (ICU-MONITOR-<CAT>)
+  //   SUPPORT    → dietetics + housekeeping + linen
+  //                                  (DIET-<CAT>, HOUSEKEEPING-<CAT>, LINEN-<CAT>)
+  //   DAYCARE    → daycare per-day rows that pre-dated the matrix
+  // PER_DAY billingType + isAutoCharged together rule out per-procedure
+  // nursing (PER_UNIT), one-time consults (PER_VISIT), one-time admin
+  // charges (ONE_TIME), and the PACKAGE category (diagnosis-tagged
+  // bundles which are intentionally separate from the matrix).
+  // SUPPORT is intentionally excluded — those rows are equipment rentals
+  // (air-bed, infusion pump, syringe pump, bedside monitor) that admin
+  // staff still need to add manually when used. The matrix's
+  // housekeeping/linen/dietetics line items emit fresh dynamic codes
+  // (HOUSEKEEPING-<CAT> etc.) that don't have ServiceMaster duplicates,
+  // so there's no double-billing risk to chase in that category.
   const filter = {
     isAutoCharged: true,
     billingType:   "PER_DAY",
-    category:      { $in: ["ROOM", "ICU"] },
+    category:      { $in: ["ROOM", "ICU", "NURSING", "DOCTOR", "DAYCARE"] },
     isActive:      true,
   };
 
