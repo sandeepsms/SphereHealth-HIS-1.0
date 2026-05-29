@@ -31,6 +31,20 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
   const advice = Array.isArray(r.advice)
     ? r.advice
     : (r.advice ? String(r.advice).split("\n").filter(Boolean) : []);
+
+  // R7eo-C — Pattern C patient-safety fix (NABH AAC.4/COP.6)
+  // Allergy status MUST be explicit on every bedside / discharge doc.
+  // Red banner when known allergies exist, green NKDA pill when absent.
+  const allergiesText = Array.isArray(r.allergies)
+    ? r.allergies.filter(Boolean).join(", ")
+    : String(r.allergies || "").trim();
+  const hasAllergies = !!allergiesText;
+
+  // R7eo-C — secondary diagnoses can arrive as array OR free-text string
+  const secondaryDxList = Array.isArray(r.secondaryDiagnoses)
+    ? r.secondaryDiagnoses.filter(Boolean)
+    : [];
+  const secondaryDxText = !Array.isArray(r.secondaryDiagnoses) ? r.secondaryDiagnoses : "";
   // R7bf-F / A4-HIGH-1: total / cost fields are sometimes attached to
   // the summary payload (when the discharge endpoint inlines the final
   // bill snapshot). Pre-R7bf they were rendered as the raw mongoose
@@ -68,11 +82,50 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
         { label: "Length of Stay", value: r.totalDays ? `${r.totalDays} day${r.totalDays === 1 ? "" : "s"}` : "—" },
         { label: "Consultant", value: r.consultantName },
         { label: "Reg. No",    value: consultRegLine },
-        { label: "Bed / Ward", value: [r.bedNumber, r.wardName].filter(Boolean).join(" · ") },
+        { label: "Bed / Ward", value: [r.bedNumber, r.wardName].filter(Boolean).join(" · ") || "—" },
+        { label: "Blood Group", value: r.bloodGroup || "—" },
         { label: "Discharge Type", value: r.dischargeType || "Normal" },
       ]}
       signatureLabels={["Consultant", "Patient / Attendant"]}
     >
+      {/* R7eo-C — Pattern C patient-safety fix (NABH AAC.4/COP.6)
+          Allergy banner — red when allergies recorded, NKDA green pill otherwise. */}
+      {hasAllergies ? (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
+          background: "#fee2e2", border: "1.5px solid #dc2626",
+          borderLeft: "5px solid #b91c1c",
+          padding: "8px 12px", borderRadius: 6,
+          marginBottom: 12,
+          color: "#7f1d1d",
+        }}>
+          <span style={{ fontSize: 16, lineHeight: 1 }}>⚠</span>
+          <div>
+            <div style={{
+              fontSize: 9.5, fontWeight: 800,
+              textTransform: "uppercase", letterSpacing: ".5px",
+              color: "#7f1d1d",
+            }}>
+              Allergies
+            </div>
+            <div style={{ fontSize: 10.5, fontWeight: 700, color: "#7f1d1d" }}>
+              {allergiesText}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{
+          display: "inline-flex", alignItems: "center", gap: 6,
+          background: "#dcfce7", border: "1px solid #15803d",
+          padding: "3px 10px", borderRadius: 999,
+          marginBottom: 12,
+          fontSize: 9.5, fontWeight: 800,
+          color: "#14532d", textTransform: "uppercase", letterSpacing: ".4px",
+        }}>
+          <span style={{ fontSize: 11 }}>✓</span> NKDA — No Known Drug Allergies
+        </div>
+      )}
+
       <Section title="Final Diagnosis">
         <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>
           {r.finalDiagnosis || "—"}
@@ -83,10 +136,21 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
             {r.icd10Desc && <> — {r.icd10Desc}</>}
           </div>
         )}
-        {r.secondaryDiagnoses && (
+        {/* R7eo-C — accept array OR free-text for secondary diagnoses */}
+        {(secondaryDxList.length > 0 || secondaryDxText) && (
           <div style={{ marginTop: 6 }}>
             <strong>Co-morbidities / Secondary:</strong>
-            <div style={{ whiteSpace: "pre-wrap", marginTop: 2 }}>{r.secondaryDiagnoses}</div>
+            {secondaryDxList.length > 0 ? (
+              <ul style={{ margin: "2px 0 0 18px", padding: 0 }}>
+                {secondaryDxList.map((d, i) => (
+                  <li key={i} style={{ marginBottom: 2 }}>
+                    {typeof d === "string" ? d : (d.name || d.diagnosis || d.text || JSON.stringify(d))}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div style={{ whiteSpace: "pre-wrap", marginTop: 2 }}>{secondaryDxText}</div>
+            )}
           </div>
         )}
       </Section>
@@ -163,7 +227,7 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
               {meds.map((m, i) => (
                 <tr key={i}>
                   <td>{i + 1}</td>
-                  <td><strong>{m.name || m.drug}</strong>
+                  <td><strong>{m.name || m.drug || "—"}</strong>
                     {m.generic && <div className="muted" style={{ fontSize: 9.5 }}>({m.generic})</div>}
                   </td>
                   <td>{m.dose || m.strength || "—"}</td>
@@ -203,7 +267,74 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
         </Section>
       )}
 
-      {(r.followUpDate || r.followUpDoctor) && (
+      {/* R7eo-C — Pattern C patient-safety fix (NABH AAC.4/COP.6):
+          Sections below render the fields Pattern B will start
+          passing through. Each is gated so it only prints when data
+          is present. */}
+
+      {/* Operative Notes */}
+      {(r.operativeProcedure || r.operativeFindings || r.anaesthesiaType) && (
+        <Section title="Operative Notes">
+          {r.operativeProcedure && (
+            <div style={{ marginBottom: 3 }}><strong>Procedure:</strong> {r.operativeProcedure}</div>
+          )}
+          {r.anaesthesiaType && (
+            <div style={{ marginBottom: 3 }}><strong>Anaesthesia:</strong> {r.anaesthesiaType}</div>
+          )}
+          {r.operativeFindings && (
+            <div style={{ whiteSpace: "pre-wrap" }}><strong>Findings:</strong> {r.operativeFindings}</div>
+          )}
+        </Section>
+      )}
+
+      {/* Wound Care */}
+      {r.woundCare && (
+        <Section title="Wound Care">
+          <div style={{ whiteSpace: "pre-wrap" }}>{r.woundCare}</div>
+        </Section>
+      )}
+
+      {/* Department-Specific Findings */}
+      {(r.echoEF || r.ecgOnDischarge || r.tumorStage || r.nextChemoDate
+        || r.strokeType || r.nihssOnDischarge || r.deliveryType || r.babyDetails
+        || r.implantDetails || r.growthPercentile || r.immunisationGiven) && (
+        <Section title="Department-Specific Findings">
+          {r.echoEF && <div><strong>Echo EF:</strong> {r.echoEF}</div>}
+          {r.ecgOnDischarge && <div><strong>ECG on Discharge:</strong> {r.ecgOnDischarge}</div>}
+          {r.tumorStage && <div><strong>Tumor Stage:</strong> {r.tumorStage}</div>}
+          {r.nextChemoDate && <div><strong>Next Chemo Date:</strong> {fmtDate(r.nextChemoDate)}</div>}
+          {r.strokeType && <div><strong>Stroke Type:</strong> {r.strokeType}</div>}
+          {r.nihssOnDischarge && <div><strong>NIHSS on Discharge:</strong> {r.nihssOnDischarge}</div>}
+          {r.deliveryType && <div><strong>Delivery Type:</strong> {r.deliveryType}</div>}
+          {r.babyDetails && (
+            <div style={{ whiteSpace: "pre-wrap" }}><strong>Baby Details:</strong> {r.babyDetails}</div>
+          )}
+          {r.implantDetails && (
+            <div style={{ whiteSpace: "pre-wrap" }}><strong>Implant Details:</strong> {r.implantDetails}</div>
+          )}
+          {r.growthPercentile && <div><strong>Growth Percentile:</strong> {r.growthPercentile}</div>}
+          {r.immunisationGiven && (
+            <div style={{ whiteSpace: "pre-wrap" }}><strong>Immunisation Given:</strong> {r.immunisationGiven}</div>
+          )}
+        </Section>
+      )}
+
+      {/* Activity Advice */}
+      {r.activityAdvice && (
+        <Section title="Activity Advice">
+          <div style={{ whiteSpace: "pre-wrap" }}>{r.activityAdvice}</div>
+        </Section>
+      )}
+
+      {/* Special Instructions */}
+      {r.specialInstructions && (
+        <Section title="Special Instructions">
+          <div style={{ whiteSpace: "pre-wrap" }}>{r.specialInstructions}</div>
+        </Section>
+      )}
+
+      {/* R7eo-C — Follow-up rebuilt to include doctor / dept / instructions */}
+      {(r.followUpDate || r.followUpDoctor || r.followUpDepartment || r.followUpInstructions || r.followUpNotes) && (
         <Section title="Follow-up">
           {r.followUpDate && (
             <div><strong>Next visit:</strong> {fmtDate(r.followUpDate)}
@@ -211,14 +342,23 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
             </div>
           )}
           {r.followUpDoctor && <div><strong>With:</strong> {r.followUpDoctor}</div>}
+          {r.followUpDepartment && <div><strong>Department:</strong> {r.followUpDepartment}</div>}
+          {r.followUpInstructions && (
+            <div style={{ marginTop: 3, whiteSpace: "pre-wrap" }}>
+              <strong>Instructions:</strong> {r.followUpInstructions}
+            </div>
+          )}
           {r.followUpNotes && <div style={{ marginTop: 3 }}>{r.followUpNotes}</div>}
         </Section>
       )}
 
+      {/* R7eo-C — Warning Signs prefers r.emergencyWarnings, falls back to r.warningSigns */}
       <Section title="Warning Signs · Return Immediately If">
         <div style={{ fontSize: 11, color: "#7f1d1d", background: "#fee2e2",
           border: "1px solid #fca5a5", borderRadius: 6, padding: "8px 12px" }}>
-          {r.warningSigns || (
+          {(r.emergencyWarnings || r.warningSigns) ? (
+            <div style={{ whiteSpace: "pre-wrap" }}>{r.emergencyWarnings || r.warningSigns}</div>
+          ) : (
             <ul style={{ margin: 0, paddingLeft: 16 }}>
               <li>High fever (&gt; 101°F) not responding to medication</li>
               <li>Severe pain, vomiting, or bleeding</li>

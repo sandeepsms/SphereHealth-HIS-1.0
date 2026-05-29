@@ -16,6 +16,13 @@ const DoctorOrderSheet = ({ settings, receipt = {} }) => {
   const orders     = Array.isArray(r.orders)     ? r.orders     : [];
   const investigations = Array.isArray(r.investigations) ? r.investigations : [];
 
+  // R7eo-C — Pattern C patient-safety fix (NABH AAC.4/COP.6)
+  // Allergy banner above orders table — red on populated, NKDA green otherwise.
+  const allergiesText = Array.isArray(r.allergies)
+    ? r.allergies.filter(Boolean).join(", ")
+    : String(r.allergies || "").trim();
+  const hasAllergies = !!allergiesText;
+
   return (
     <PrintShell
       settings={settings}
@@ -27,13 +34,51 @@ const DoctorOrderSheet = ({ settings, receipt = {} }) => {
         { label: "UHID",         value: r.uhid },
         { label: "IPD No",       value: r.ipdNo },
         { label: "Age / Sex",    value: [r.age && `${r.age}Y`, r.gender].filter(Boolean).join(" / ") },
-        { label: "Bed / Ward",   value: [r.bedNumber, r.wardName].filter(Boolean).join(" · ") },
+        { label: "Bed / Ward",   value: [r.bedNumber, r.wardName].filter(Boolean).join(" · ") || "—" },
+        { label: "Blood Group",  value: r.bloodGroup || "—" },
+        { label: "Admitted",     value: r.admissionDate ? fmtDateTime(r.admissionDate) : "—" },
         { label: "Round Date",   value: fmtDateTime(r.roundAt || new Date()) },
         { label: "Consultant",   value: r.consultantName },
-        { label: "Allergies",    value: Array.isArray(r.allergies) ? r.allergies.join(", ") : r.allergies },
       ]}
       signatureLabels={["Consultant", "Nurse — Acknowledged"]}
     >
+      {/* R7eo-C — Pattern C patient-safety fix (NABH AAC.4/COP.6) */}
+      {hasAllergies ? (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
+          background: "#fee2e2", border: "1.5px solid #dc2626",
+          borderLeft: "5px solid #b91c1c",
+          padding: "8px 12px", borderRadius: 6,
+          marginBottom: 12,
+          color: "#7f1d1d",
+        }}>
+          <span style={{ fontSize: 16, lineHeight: 1 }}>⚠</span>
+          <div>
+            <div style={{
+              fontSize: 9.5, fontWeight: 800,
+              textTransform: "uppercase", letterSpacing: ".5px",
+              color: "#7f1d1d",
+            }}>
+              Allergies
+            </div>
+            <div style={{ fontSize: 10.5, fontWeight: 700, color: "#7f1d1d" }}>
+              {allergiesText}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{
+          display: "inline-flex", alignItems: "center", gap: 6,
+          background: "#dcfce7", border: "1px solid #15803d",
+          padding: "3px 10px", borderRadius: 999,
+          marginBottom: 12,
+          fontSize: 9.5, fontWeight: 800,
+          color: "#14532d", textTransform: "uppercase", letterSpacing: ".4px",
+        }}>
+          <span style={{ fontSize: 11 }}>✓</span> NKDA — No Known Drug Allergies
+        </div>
+      )}
+
       {r.clinicalSummary && (
         <div className="pr-section">
           <div className="pr-section__title">Round Summary</div>
@@ -41,7 +86,9 @@ const DoctorOrderSheet = ({ settings, receipt = {} }) => {
         </div>
       )}
 
-      {/* Medications */}
+      {/* Medications
+          R7eo-C — Ordered By column added so multi-doctor order sheets
+          attribute correctly (NABH MOM.1 traceability). */}
       <div className="pr-section">
         <div className="pr-section__title">Medication Orders</div>
         <table className="pr-table">
@@ -54,16 +101,17 @@ const DoctorOrderSheet = ({ settings, receipt = {} }) => {
               <th style={{ width: 100 }}>Frequency</th>
               <th style={{ width: 80 }}>Duration</th>
               <th className="center" style={{ width: 50 }}>STAT</th>
+              <th style={{ width: 100 }}>Ordered By</th>
               <th>Indication / Notes</th>
             </tr>
           </thead>
           <tbody>
             {orders.length === 0 ? (
-              <tr><td colSpan={8} className="muted center" style={{ padding: 16 }}>No medication orders today.</td></tr>
+              <tr><td colSpan={9} className="muted center" style={{ padding: 16 }}>No medication orders today.</td></tr>
             ) : orders.map((o, i) => (
               <tr key={i}>
                 <td>{i + 1}</td>
-                <td><strong>{o.drug || o.name}</strong>
+                <td><strong>{o.drug || o.name || "—"}</strong>
                   {o.generic && <div className="muted" style={{ fontSize: 9.5 }}>({o.generic})</div>}
                 </td>
                 <td>{o.dose || "—"}</td>
@@ -73,6 +121,7 @@ const DoctorOrderSheet = ({ settings, receipt = {} }) => {
                 <td className="center">
                   {o.stat ? <strong style={{ color: "#dc2626" }}>STAT</strong> : <span className="muted">—</span>}
                 </td>
+                <td style={{ fontSize: 10.5 }}>{o.orderedBy || o.doctorName || r.consultantName || "—"}</td>
                 <td style={{ fontSize: 10.5 }}>{o.indication || o.notes || ""}</td>
               </tr>
             ))}

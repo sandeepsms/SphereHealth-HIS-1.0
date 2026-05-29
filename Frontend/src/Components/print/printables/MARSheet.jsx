@@ -33,6 +33,29 @@ const MARSheet = ({ settings, receipt = {} }) => {
   const isMultiDay = !!r.multiDay || (Array.isArray(r.dates) && r.dates.length > 1);
   const printCount = toNum(r.printCount);
 
+  // R7eo-C — Pattern C patient-safety fix (NABH AAC.4/COP.6)
+  // Allergy banner — IV compat / bedside MAR critical.
+  const allergiesText = Array.isArray(r.allergies)
+    ? r.allergies.filter(Boolean).join(", ")
+    : String(r.allergies || "").trim();
+  const hasAllergies = !!allergiesText;
+
+  // R7eo-C — tfoot totals: count Given / Refused / Missed / Held
+  // across all medication rows and slots.
+  const totals = { Given: 0, Refused: 0, Missed: 0, Held: 0 };
+  meds.forEach((m) => {
+    const adm = m.administrations || {};
+    slots.forEach((s) => {
+      const a = adm[s];
+      if (!a || !a.status) return;
+      const st = String(a.status);
+      if (st === "Given") totals.Given += 1;
+      else if (st === "Refused") totals.Refused += 1;
+      else if (st === "Hold") totals.Held += 1;
+      else if (st === "Skipped" || st === "Missed" || st === "Not Available") totals.Missed += 1;
+    });
+  });
+
   return (
     <PrintShell
       settings={settings}
@@ -44,14 +67,51 @@ const MARSheet = ({ settings, receipt = {} }) => {
         { label: "UHID",        value: r.uhid },
         { label: "IPD No",      value: r.ipdNo },
         { label: "Age / Sex",   value: [r.age && `${r.age}Y`, r.gender].filter(Boolean).join(" / ") },
-        { label: "Bed / Ward",  value: [r.bedNumber, r.wardName].filter(Boolean).join(" · ") },
+        { label: "Bed / Ward",  value: [r.bedNumber, r.wardName].filter(Boolean).join(" · ") || "—" },
+        { label: "Blood Group", value: r.bloodGroup || "—" },
         { label: "Date",        value: fmtDate(r.date || new Date()) },
         { label: "Shift",       value: r.shift },
         { label: "Window",      value: isMultiDay ? `${r.dates?.length || "?"} days` : "1 day" },
-        { label: "Allergies",   value: Array.isArray(r.allergies) ? r.allergies.join(", ") : r.allergies },
       ]}
       signatureLabels={["Nurse-in-charge", "Doctor on Round"]}
     >
+      {/* R7eo-C — Pattern C patient-safety fix (NABH AAC.4/COP.6)
+          Bedside MAR allergy banner — IV compatibility critical. */}
+      {hasAllergies ? (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
+          background: "#fee2e2", border: "1.5px solid #dc2626",
+          borderLeft: "5px solid #b91c1c",
+          padding: "8px 12px", borderRadius: 6,
+          marginBottom: 12,
+          color: "#7f1d1d",
+        }}>
+          <span style={{ fontSize: 16, lineHeight: 1 }}>⚠</span>
+          <div>
+            <div style={{
+              fontSize: 9.5, fontWeight: 800,
+              textTransform: "uppercase", letterSpacing: ".5px",
+              color: "#7f1d1d",
+            }}>
+              Allergies
+            </div>
+            <div style={{ fontSize: 10.5, fontWeight: 700, color: "#7f1d1d" }}>
+              {allergiesText}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{
+          display: "inline-flex", alignItems: "center", gap: 6,
+          background: "#dcfce7", border: "1px solid #15803d",
+          padding: "3px 10px", borderRadius: 999,
+          marginBottom: 12,
+          fontSize: 9.5, fontWeight: 800,
+          color: "#14532d", textTransform: "uppercase", letterSpacing: ".4px",
+        }}>
+          <span style={{ fontSize: 11 }}>✓</span> NKDA — No Known Drug Allergies
+        </div>
+      )}
       <table className="pr-table" style={{ fontSize: 10.5 }}>
         <thead>
           <tr>
@@ -127,6 +187,27 @@ const MARSheet = ({ settings, receipt = {} }) => {
             );
           })}
         </tbody>
+        {/* R7eo-C — Pattern C patient-safety fix (NABH AAC.4/COP.6):
+            tfoot totals row — counts Given / Refused / Missed / Held
+            across the time slots so the auditor sees admin coverage
+            at a glance. */}
+        {meds.length > 0 && (
+          <tfoot>
+            <tr style={{ background: "#f1f5f9", fontWeight: 700 }}>
+              <td colSpan={4} style={{ textAlign: "right", padding: "6px 8px" }}>
+                Totals (across all slots):
+              </td>
+              <td colSpan={slots.length + 2} style={{ padding: "6px 8px" }}>
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 10.5 }}>
+                  <span style={{ color: "#15803d" }}>Given: <strong>{totals.Given}</strong></span>
+                  <span style={{ color: "#dc2626" }}>Refused: <strong>{totals.Refused}</strong></span>
+                  <span style={{ color: "#7c3aed" }}>Missed: <strong>{totals.Missed}</strong></span>
+                  <span style={{ color: "#475569" }}>Held: <strong>{totals.Held}</strong></span>
+                </div>
+              </td>
+            </tr>
+          </tfoot>
+        )}
       </table>
 
       <div className="pr-section">
