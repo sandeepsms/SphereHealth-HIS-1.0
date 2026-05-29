@@ -64,10 +64,30 @@ const SettlementStatement = ({ settings = {}, receipt = {} }) => {
   const netSettlement = billTotal - totalReceived - tdsDeducted;
   const isRefund = netSettlement < 0;
 
+  // R7eo-A — Pattern A fix: hardcoded "Settlement Statement" obscured
+  // whether this was an IPD / Daycare / OPD reconciliation. Derive a
+  // visit-aware title from receipt.settlementType first, falling back
+  // to receipt.visitType. Legacy callers (neither field set) keep the
+  // original generic banner.
+  const settlementTypeRaw = String(
+    r.settlementType || r.visitType || ""
+  ).toUpperCase();
+  const settlementLabel =
+      settlementTypeRaw === "IPD"        ? "IPD"
+    : settlementTypeRaw === "DAYCARE"    ? "Daycare"
+    : settlementTypeRaw === "DAY CARE"   ? "Daycare"
+    : settlementTypeRaw === "OPD"        ? "OPD"
+    : settlementTypeRaw === "EMERGENCY"  ? "Emergency"
+    : settlementTypeRaw === "ER"         ? "Emergency"
+                                         : "";
+  const docTitle = settlementLabel
+    ? `${settlementLabel} Final Settlement`
+    : "Settlement Statement";
+
   return (
     <PrintShell
       settings={settings}
-      documentTitle="Settlement Statement"
+      documentTitle={docTitle}
       serialNo={r.settlementNo || r.billNo}
       printCount={printCount}
       watermarkRecipient="RECIPIENT"

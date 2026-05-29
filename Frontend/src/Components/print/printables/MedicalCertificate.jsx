@@ -67,15 +67,45 @@ const CERT_TITLE = {
   "extending-leave": "Extension of Medical Leave Certificate",
 };
 
+// R7eo-A — Pattern A fix: certType aliases ("fit", "sick", "FITNESS",
+// random casing) silently fell through to the sickness body, hiding
+// data-quality bugs upstream. Normalize lowercase + alias-map known
+// values; for genuinely unknown types warn loudly and surface the raw
+// certType as the title instead of impersonating a sickness cert.
+const CERT_TYPE_ALIASES = {
+  fit:           "fitness",
+  fitness:       "fitness",
+  sick:          "sickness",
+  sickness:      "sickness",
+  leave:         "leave",
+  disability:    "disability",
+  emergency:     "emergency",
+  "healthy-now": "healthy-now",
+  "sick-leave":  "sick-leave",
+  "extending-leave": "extending-leave",
+};
+
 const MedicalCertificate = ({ settings, receipt = {} }) => {
   const r = receipt;
-  const kind = r.certType || "sickness";
+  const rawKind = String(r.certType || "sickness").trim();
+  const normalized = CERT_TYPE_ALIASES[rawKind.toLowerCase()];
+  const isKnown = !!normalized;
+  if (!isKnown && r.certType) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[MedicalCertificate] Unknown certType "${rawKind}" — falling back to sickness body but rendering raw type as the title.`
+    );
+  }
+  const kind = normalized || "sickness";
   const text = (CERT_TEXT[kind] || CERT_TEXT.sickness)(r);
+  const documentTitle = isKnown
+    ? (CERT_TITLE[kind] || "Medical Certificate")
+    : rawKind;
 
   return (
     <PrintShell
       settings={settings}
-      documentTitle={CERT_TITLE[kind] || "Medical Certificate"}
+      documentTitle={documentTitle}
       serialNo={r.certNo}
       printCount={toNum(r.printCount)}
       infoItems={[
@@ -99,7 +129,7 @@ const MedicalCertificate = ({ settings, receipt = {} }) => {
           color: "var(--pr-accent-color, #1d4ed8)", marginBottom: 14,
           paddingBottom: 8, borderBottom: "2px solid currentColor",
         }}>
-          {CERT_TITLE[kind] || "Medical Certificate"}
+          {documentTitle}
         </div>
 
         <p style={{ margin: "0 0 12px" }}>To Whom It May Concern,</p>

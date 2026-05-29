@@ -35,10 +35,32 @@ const PaymentReceipt = ({ settings = {}, receipt = {} }) => {
   const m = METHOD_STYLE[String(receipt.method || "cash").toLowerCase()] || METHOD_STYLE.cash;
   const runningBalance = toNum(receipt.runningBalance);
 
+  // R7eo-A — Pattern A fix: hardcoded "Payment Receipt" title forced
+  // OPD top-ups, IPD interim advances, and Final Settlements to print
+  // under the same banner. Derive a visit-aware label only when the
+  // caller supplies receipt.visitType / receipt.context — legacy
+  // callers (no fields set) keep the original "Payment Receipt" string.
+  const visitTypeRaw = receipt.visitType ? String(receipt.visitType).toUpperCase() : "";
+  const visitLabel =
+      visitTypeRaw === "IPD"        ? "IPD"
+    : visitTypeRaw === "DAYCARE"    ? "Daycare"
+    : visitTypeRaw === "DAY CARE"   ? "Daycare"
+    : visitTypeRaw === "EMERGENCY"  ? "Emergency"
+    : visitTypeRaw === "ER"         ? "Emergency"
+    : visitTypeRaw === "OPD"        ? "OPD"
+                                    : "";
+  const isFinalSettlement =
+    String(receipt.context || "").toUpperCase() === "FINAL_SETTLEMENT";
+  const docTitle = isFinalSettlement
+    ? `Final Settlement Receipt${visitLabel ? ` — ${visitLabel}` : ""}`
+    : visitLabel
+    ? `${visitLabel} Payment Receipt`
+    : "Payment Receipt";
+
   return (
     <PrintShell
       settings={settings}
-      documentTitle="Payment Receipt"
+      documentTitle={docTitle}
       serialNo={receipt.receiptNo}
       printCount={printCount}
       infoItems={[

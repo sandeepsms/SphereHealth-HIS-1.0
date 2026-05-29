@@ -110,6 +110,21 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const r = receipt;
   const items = Array.isArray(r.items) ? r.items : [];
 
+  // R7eo-A — Pattern A fix: registry default is "Pharmacy GST Tax
+  // Invoice" but the same component serves cash memos, OTC sales,
+  // credit-note duplicates, etc. Honour receipt.billLabel as a
+  // per-print override on the browser document.title (drives the
+  // print-dialog file name and OS taskbar) without mutating the
+  // registry default — callers that don't set billLabel keep the
+  // original title cascade.
+  React.useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (!r.billLabel) return;
+    const prev = document.title;
+    document.title = String(r.billLabel);
+    return () => { document.title = prev; };
+  }, [r.billLabel]);
+
   /* Tax + HSN ─────────────────────────────────────────────────── */
   const customerState = String(r.customerState || id.state || "").trim().toLowerCase();
   const hospState     = String(id.state || "").trim().toLowerCase();
@@ -168,9 +183,14 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const COL = { ink: "#0f172a", mute: "#64748b", line: "#e2e8f0", soft: "#f8fafc" };
   const SHEET = { fontFamily: "'DM Sans', 'Inter', system-ui, sans-serif", color: COL.ink, fontSize: 11 };
 
+  // R7eo-A — Templates that display a hardcoded "Tax Invoice" banner
+  // (T3 / T4 / T6) honour receipt.billLabel when set so callers can
+  // re-label the printable as "Cash Memo", "Credit Note", etc. without
+  // patching the registry default.
+  const billLabel = r.billLabel || null;
   const renderProps = {
     id, items, hsnRows, totals, isInterState, receipt: r,
-    COL, fmtINR, amountInWords, _fmtDate, hasControlled,
+    COL, fmtINR, amountInWords, _fmtDate, hasControlled, billLabel,
   };
 
   return (
