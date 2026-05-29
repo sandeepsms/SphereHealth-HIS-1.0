@@ -473,6 +473,32 @@ AdmissionSchema.pre("save", async function (next) {
       _id: { $ne: this._id },
     }).select("_id admissionNumber admissionType hasBed").lean();
     if (existing) {
+      // R7en-OPD-BLOCKER-FIX (mirror of admissionService): if existing
+      // is OPD bedless and the incoming admission is a hospitalising
+      // one (IPD / Emergency / Daycare with bed), auto-close the OPD
+      // and proceed. OPD visits are out-patient interactions, not
+      // hospital admissions, and shouldn't block IPD/ER intake.
+      const incomingType = this.admissionType || "IPD";
+      const incomingHasBed = !!this.bedId || incomingType === "IPD"
+        || incomingType === "Emergency" || incomingType === "Daycare";
+      const isStaleOpdBlocker =
+        existing.admissionType === "OPD" && !existing.hasBed
+        && incomingType !== "OPD" && incomingHasBed;
+
+      if (isStaleOpdBlocker) {
+        await this.constructor.updateOne(
+          { _id: existing._id, status: "Active" },
+          {
+            $set: {
+              status: "Discharged",
+              actualDischargeDate: new Date(),
+              dischargeNotes: `Auto-closed by incoming ${incomingType} admission (R7en-OPD-BLOCKER-FIX)`,
+            },
+          },
+        );
+        return next();
+      }
+
       const err = new Error(
         `Patient ${this.UHID} already has an active admission ` +
         `(${existing.admissionNumber}, ${existing.admissionType}${existing.hasBed ? ", bedded" : ", bedless"}). ` +

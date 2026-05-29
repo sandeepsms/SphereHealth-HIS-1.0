@@ -85,14 +85,44 @@ class AdmissionService {
         status: "Active",
       }).select("_id admissionNumber admissionType hasBed").lean();
       if (existingActive) {
-        const err = new Error(
-          `Patient already has an active admission: ${existingActive.admissionNumber} ` +
-          `(${existingActive.admissionType}${existingActive.hasBed ? ", bedded" : ", bedless"}). ` +
-          `Discharge or cancel it first before creating a new admission.`,
-        );
-        err.status = 409;
-        err.code   = "PATIENT_HAS_ACTIVE_ADMISSION";
-        throw err;
+        // R7en-OPD-BLOCKER-FIX: An active OPD bedless admission
+        // represents an out-patient visit, not a hospital admission. It
+        // shouldn't block an incoming IPD/Emergency/Daycare admission
+        // for the same patient — those are orthogonal workflows (the
+        // patient may have come for an OPD followup and then been
+        // admitted). Auto-close the OPD with status="Discharged" and an
+        // audit-trail note instead of throwing; the new admission then
+        // proceeds normally. Truly conflicting cases (existing IPD/ER
+        // OR an OPD/Daycare colliding with another OPD/Daycare) still
+        // throw the 409.
+        const incomingType = data.admissionType || "IPD";
+        const incomingHasBed = !!data.bedId || incomingType === "IPD"
+          || incomingType === "Emergency" || incomingType === "Daycare";
+        const isStaleOpdBlocker =
+          existingActive.admissionType === "OPD" && !existingActive.hasBed
+          && incomingType !== "OPD" && incomingHasBed;
+
+        if (isStaleOpdBlocker) {
+          await Admission.updateOne(
+            { _id: existingActive._id, status: "Active" },
+            {
+              $set: {
+                status: "Discharged",
+                actualDischargeDate: new Date(),
+                dischargeNotes: `Auto-closed by incoming ${incomingType} admission (R7en-OPD-BLOCKER-FIX)`,
+              },
+            },
+          );
+        } else {
+          const err = new Error(
+            `Patient already has an active admission: ${existingActive.admissionNumber} ` +
+            `(${existingActive.admissionType}${existingActive.hasBed ? ", bedded" : ", bedless"}). ` +
+            `Discharge or cancel it first before creating a new admission.`,
+          );
+          err.status = 409;
+          err.code   = "PATIENT_HAS_ACTIVE_ADMISSION";
+          throw err;
+        }
       }
     }
 
