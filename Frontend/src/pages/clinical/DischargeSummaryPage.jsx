@@ -652,6 +652,12 @@ function PrintModal({ data, dept, onClose }) {
   /* Wired to the unified print system — picks up the hospital
    * header/footer + paper-size selector automatically. */
   const handlePrint = () => {
+    // R7eo-B — Pattern B caller payload gap fix: form uses
+    // `doctorName` / `courseInHospital` / `specialInstructions` but the
+    // previous payload mapped to `consultantName` / `courseOfStay` /
+    // `dischargeAdvice` — 20+ dept-specific fields were silently
+    // dropped. Realign the names and spread through the dept-specific
+    // fields so the template (once Pattern C lands) can render them.
     openPrint("discharge-summary", {
       summaryNo:           data.summaryNumber,
       patientName:         data.patientName,
@@ -662,7 +668,8 @@ function PrintModal({ data, dept, onClose }) {
       admissionDate:       data.admissionDate,
       dischargeDate:       data.dischargeDate || new Date().toISOString(),
       totalDays:           data.totalDays,
-      consultantName:      data.consultantName,
+      consultantName:      data.doctorName || data.consultantName || "",
+      consultantReg:       data.doctorRegNo || "",
       bedNumber:           data.bedNumber,
       wardName:            data.wardName,
       dischargeType:       data.dischargeType || "Normal",
@@ -671,16 +678,45 @@ function PrintModal({ data, dept, onClose }) {
       icd10Desc:           data.icd10Desc,
       secondaryDiagnoses:  data.secondaryDiagnoses,
       chiefComplaints:     data.chiefComplaints,
-      courseOfStay:        data.courseOfStay || data.hospitalCourse,
+      courseOfStay:        data.courseInHospital || data.courseOfStay || data.hospitalCourse || "",
       proceduresDone:      data.procedures || data.proceduresDone,
       investigationsSummary: data.investigationsSummary || data.keyInvestigations,
       conditionOnDischarge: data.conditionOnDischarge,
       dischargeMeds:       data.dischargeMeds || data.medications || [],
-      advice:              data.dischargeAdvice ? String(data.dischargeAdvice).split("\n").filter(Boolean) : [],
+      advice:              [data.specialInstructions, data.activityAdvice].filter(Boolean).flatMap(s => String(s).split("\n").filter(Boolean)),
+      bloodGroup:          data.bloodGroup || data.patient?.bloodGroup,
+      allergies:           data.allergies  || data.patient?.allergies,
       dietAdvice:          data.dietAdvice,
       followUpDate:        data.followUpDate,
-      followUpDoctor:      data.followUpDoctor || data.consultantName,
+      followUpDoctor:      data.followUpDoctor || data.doctorName || data.consultantName,
+      followUpInstructions: data.followUpInstructions,
+      followUpDepartment:  data.followUpDepartment,
       warningSigns:        data.warningSigns,
+      // Pattern B passthrough — dept-specific fields the form
+      // already captures; will be rendered by the DischargeSummary
+      // template after Pattern C lands.
+      activityAdvice:       data.activityAdvice,
+      emergencyWarnings:    data.emergencyWarnings,
+      specialInstructions:  data.specialInstructions,
+      woundCare:            data.woundCare,
+      operativeProcedure:   data.operativeProcedure,
+      operativeFindings:    data.operativeFindings,
+      anaesthesiaType:      data.anaesthesiaType,
+      implantDetails:       data.implantDetails,
+      physiotherapyAdvice:  data.physiotherapyAdvice,
+      deliveryType:         data.deliveryType,
+      babyDetails:          data.babyDetails,
+      neonatalNotes:        data.neonatalNotes,
+      growthPercentile:     data.growthPercentile,
+      immunisationGiven:    data.immunisationGiven,
+      echoEF:               data.echoEF,
+      ecgOnDischarge:       data.ecgOnDischarge,
+      tumorStage:           data.tumorStage,
+      nextChemoDate:        data.nextChemoDate,
+      strokeType:           data.strokeType,
+      nihssOnDischarge:     data.nihssOnDischarge,
+      comorbidities:        data.comorbidities,
+      historyOfPresentIllness: data.historyOfPresentIllness,
       // R7bh-F1 / META-1: PrintAudit anchor — the DischargeSummary
       // document drives the printCount on its source row. NABH COP.7
       // + IMS.5 require the reprint trail.

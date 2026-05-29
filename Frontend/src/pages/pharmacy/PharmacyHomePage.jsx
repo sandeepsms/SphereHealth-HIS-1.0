@@ -1087,11 +1087,22 @@ function DispenseTab() {
       // Pharmacy settings travel with the payload so the bill renders
       // the right header/footer (hospital vs outsourced).
       const phSet = await getCachedPhSettings();
+      // R7eo-B — Pattern B caller payload gap fix: derive billLabel +
+      // forward customer GST identity so the pharmacy template can title
+      // it Cash Memo / Tax Invoice / Pharmacy Bill and render the B2B
+      // GSTIN block when set.
       openPrint("pharmacy-bill", {
         ...r.data,
         template:     phSet?.billTemplate || 1,
         defaultPaper: phSet?.defaultPaper || "half-a4",
         pharmacySettings: phSet,
+        billLabel:        r.data.saleType === "Walk-in" ? "Cash Memo" : r.data.customerGstin ? "Tax Invoice" : "Pharmacy Bill",
+        customerGstin:    r.data.customerGstin     || null,
+        customerLegalName:r.data.customerLegalName || null,
+        customerAddress:  r.data.customerAddress   || null,
+        customerState:    r.data.customerState     || null,
+        placeOfSupply:    r.data.placeOfSupply     || null,
+        saleType:         r.data.saleType          || null,
         // R7bh-F1 / META-1: PrintAudit anchor — PharmacyBill maps to
         // PharmacySale in ENTITY_MODEL. Bumps printCount + writes
         // DUPLICATE watermark on reprints (GST §35 / D&C audit trail).
@@ -1366,11 +1377,21 @@ function SalesTab() {
                 <RowAction icon="pi-print" color={C.blue}
                   onClick={async () => {
                     const phSet = await getCachedPhSettings();
+                    // R7eo-B — Pattern B caller payload gap fix: forward
+                    // billLabel + B2B GST identity so the reprint shows
+                    // the same title and GST block as the original.
                     openPrint("pharmacy-bill", {
                       ...s,
                       template:      phSet?.billTemplate || 1,
                       defaultPaper:  phSet?.defaultPaper || "half-a4",
                       pharmacySettings: phSet,
+                      billLabel:         s.saleType === "Walk-in" ? "Cash Memo" : s.customerGstin ? "Tax Invoice" : "Pharmacy Bill",
+                      customerGstin:     s.customerGstin     || null,
+                      customerLegalName: s.customerLegalName || null,
+                      customerAddress:   s.customerAddress   || null,
+                      customerState:     s.customerState     || null,
+                      placeOfSupply:     s.placeOfSupply     || null,
+                      saleType:          s.saleType          || null,
                       // R7bh-F1 / META-1: PrintAudit anchor — reprint
                       // from the sales register bumps printCount on
                       // the PharmacySale so DUPLICATE watermark fires.
@@ -1508,6 +1529,10 @@ function ReturnModal({ sale, onClose, onDone }) {
       // Auto-open the revised tax invoice right after — caller can keep
       // both windows side-by-side.
       setTimeout(() => {
+        // R7eo-B — Pattern B caller payload gap fix: forward B2B GST
+        // identity onto the revised invoice so the reprint matches the
+        // original tax invoice format. billLabel stays "REVISED TAX
+        // INVOICE" — this is the post-return reprint variant.
         openPrint("pharmacy-bill", {
           ...updated,
           template:     phSet?.billTemplate || 1,
@@ -1515,6 +1540,12 @@ function ReturnModal({ sale, onClose, onDone }) {
           pharmacySettings: phSet,
           // header overlay so the bill is clearly labelled as REVISED
           billLabel: "REVISED TAX INVOICE", revisionNote: `${updated.returns?.length || 1} return event(s) applied · latest ${rec.refundSlipNumber}`,
+          customerGstin:     updated.customerGstin     || null,
+          customerLegalName: updated.customerLegalName || null,
+          customerAddress:   updated.customerAddress   || null,
+          customerState:     updated.customerState     || null,
+          placeOfSupply:     updated.placeOfSupply     || null,
+          saleType:          updated.saleType          || null,
           // R7bh-F1 / META-1: PrintAudit anchor — revised invoice
           // reprint after a return event.
           printAudit: {
@@ -1725,6 +1756,10 @@ function AddItemsModal({ sale, onClose, onDone }) {
       // Auto-print revised tax invoice — patient + pharmacy each need a copy
       const phSet = await getCachedPhSettings();
       setTimeout(() => {
+        // R7eo-B — Pattern B caller payload gap fix: forward B2B GST
+        // identity onto the supplementary reprint so the debit-note
+        // matches the original tax invoice. billLabel stays "REVISED
+        // TAX INVOICE" — this is the post-addendum reprint variant.
         openPrint("pharmacy-bill", {
           ...updated,
           template:     phSet?.billTemplate || 1,
@@ -1732,6 +1767,12 @@ function AddItemsModal({ sale, onClose, onDone }) {
           pharmacySettings: phSet,
           billLabel: "REVISED TAX INVOICE",
           revisionNote: `Supplementary slip ${rec.supplementSlipNumber} · ${fmtINR(rec.addedTotal)} added`,
+          customerGstin:     updated.customerGstin     || null,
+          customerLegalName: updated.customerLegalName || null,
+          customerAddress:   updated.customerAddress   || null,
+          customerState:     updated.customerState     || null,
+          placeOfSupply:     updated.placeOfSupply     || null,
+          saleType:          updated.saleType          || null,
           // R7bh-F1 / META-1: PrintAudit anchor — supplementary
           // (debit-note) reprint tracked against the parent sale.
           printAudit: {

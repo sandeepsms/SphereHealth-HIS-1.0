@@ -301,6 +301,11 @@ function ClearBillModal({ admission, onClose, onCleared, userName }) {
       // hands a physical slip to the patient. Fires regardless of
       // payment mode (cash / UPI / card / cheque / online / TPA).
       try {
+        // R7eo-B — Pattern B caller payload gap fix: pass visitType +
+        // context + department + doctorName so PaymentReceipt template
+        // (Pattern A1) can title it "Final Settlement Receipt — IPD/
+        // Daycare/Emergency" instead of the generic header.
+        const adm = admission;
         openPrint("payment-receipt", {
           receiptNo:    `${billNumber || admission.admissionNumber}-FINAL`,
           patientName:  admission.patientName,
@@ -308,6 +313,10 @@ function ClearBillModal({ admission, onClose, onCleared, userName }) {
           ipdNo:        admission.admissionNumber,
           age:          admission.patientId?.age,
           gender:       admission.patientId?.gender,
+          visitType:    adm.admissionType,
+          context:      "FINAL_SETTLEMENT",
+          department:   adm.department,
+          doctorName:   adm.attendingDoctor,
           amount:       Number(amount) || 0,
           method:       paymentMode,
           refNo:        transactionId || "",
@@ -484,6 +493,11 @@ function IssueGatePassModal({ admission, onClose, onIssued, userName }) {
 function printDischargeSummary(adm) {
   const p = adm.patientId || {};
   const w = adm.dischargeWorkflow || {};
+  // R7eo-B — Pattern B caller payload gap fix: extend fallback chain
+  // (w.dischargeSummary → adm → p → "") for all NABH COP.7 fields so
+  // the DischargeSummary template renders complete data when launched
+  // from the discharge queue.
+  const ds = w.dischargeSummary || {};
   openPrint("discharge-summary", {
     summaryNo:      w.summaryNumber || `DS-${(adm.ipdNo || "").replace(/[^A-Z0-9]/gi, "")}`,
     patientName:    adm.patientName,
@@ -491,20 +505,38 @@ function printDischargeSummary(adm) {
     ipdNo:          adm.ipdNo,
     age:            p.age,
     gender:         p.gender,
+    bloodGroup:     ds.bloodGroup     || adm.bloodGroup     || p.bloodGroup     || "",
+    allergies:      ds.allergies      || adm.allergies      || p.allergies      || "",
     admissionDate:  adm.admissionDate,
     dischargeDate:  w.dischargedAt || new Date().toISOString(),
     totalDays:      adm.totalDays,
-    consultantName: adm.attendingDoctor || w.doctorApprovedBy,
+    consultantName: ds.consultantName || adm.attendingDoctor || w.doctorApprovedBy,
+    consultantReg:  ds.consultantReg  || ds.doctorRegNo    || adm.consultantReg  || adm.attendingDoctorReg || "",
+    consultantDmc:  ds.consultantDmc  || adm.consultantDmc  || "",
     bedNumber:      adm.bedNumber,
     wardName:       adm.wardName,
     dischargeType:  w.dischargeType || "Normal",
-    finalDiagnosis: adm.finalDiagnosis || adm.diagnosis,
-    chiefComplaints: adm.chiefComplaints,
-    conditionOnDischarge: w.conditionOnDischarge,
-    dischargeMeds:  adm.dischargeMeds || [],
-    advice:         adm.dischargeAdvice ? String(adm.dischargeAdvice).split("\n").filter(Boolean) : [],
-    followUpDate:   adm.followUpDate,
-    followUpDoctor: adm.attendingDoctor,
+    finalDiagnosis: ds.finalDiagnosis || adm.finalDiagnosis || adm.diagnosis,
+    icd10:          ds.icd10          || adm.icd10          || "",
+    icd10Desc:      ds.icd10Desc      || adm.icd10Description || adm.icd10Desc || "",
+    secondaryDiagnoses: ds.secondaryDiagnoses || adm.secondaryDiagnoses || [],
+    chiefComplaints: ds.chiefComplaints || adm.chiefComplaints,
+    courseInHospital: ds.courseInHospital || ds.courseOfStay || adm.courseInHospital || "",
+    proceduresDone:  ds.proceduresDone   || ds.procedures   || adm.proceduresDone || [],
+    investigationsSummary: ds.investigationsSummary || ds.keyInvestigations || adm.investigationsSummary || "",
+    conditionOnDischarge: w.conditionOnDischarge || ds.conditionOnDischarge,
+    dischargeMeds:  ds.dischargeMeds || ds.medications || adm.dischargeMeds || [],
+    advice:         (ds.dischargeAdvice || adm.dischargeAdvice) ? String(ds.dischargeAdvice || adm.dischargeAdvice).split("\n").filter(Boolean) : [],
+    dietAdvice:           ds.dietAdvice           || adm.dietAdvice           || "",
+    warningSigns:         ds.warningSigns         || adm.warningSigns         || "",
+    activityAdvice:       ds.activityAdvice       || adm.activityAdvice       || "",
+    emergencyWarnings:    ds.emergencyWarnings    || adm.emergencyWarnings    || "",
+    specialInstructions:  ds.specialInstructions  || adm.specialInstructions  || "",
+    woundCare:            ds.woundCare            || adm.woundCare            || "",
+    followUpInstructions: ds.followUpInstructions || adm.followUpInstructions || "",
+    followUpDepartment:   ds.followUpDepartment   || adm.followUpDepartment   || adm.department || "",
+    followUpDate:   ds.followUpDate   || adm.followUpDate,
+    followUpDoctor: ds.followUpDoctor || adm.attendingDoctor,
     // R7bh-F1 / META-1: PrintAudit anchor — DischargeSummary maps to
     // the DischargeSummary model when one exists; fallback to the
     // admission so $inc still has somewhere to land. NABH IMS.5
@@ -522,6 +554,9 @@ function printDischargeSummary(adm) {
 function printFinalBill(adm) {
   const p = adm.patientId || {};
   const w = adm.dischargeWorkflow || {};
+  // R7eo-B — Pattern B caller payload gap fix: pass visitType +
+  // GST B2B fields so FinalBill template (Pattern A2) can adapt
+  // the title and render B2B GSTIN / legal name block when set.
   openPrint("final-bill", {
     // dischargeWorkflow stores the bill number under `finalBillNumber`
     // (see backend admissionController.clearFinalBill). The previous
@@ -533,6 +568,10 @@ function printFinalBill(adm) {
     ipdNo:          adm.ipdNo,
     age:            p.age,
     gender:         p.gender,
+    visitType:      adm.admissionType,
+    customerGstin:  adm.customerGstin,
+    placeOfSupply:  adm.placeOfSupply,
+    customerLegalName: adm.customerLegalName,
     admissionDate:  adm.admissionDate,
     dischargeDate:  w.dischargedAt || new Date().toISOString(),
     totalDays:      adm.totalDays,

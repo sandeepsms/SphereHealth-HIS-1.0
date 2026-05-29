@@ -1283,6 +1283,10 @@ export default function OPDAssessmentPage() {
       p => p && (p.name || p.procedureName)
     );
 
+    // R7eo-B — Pattern B caller payload gap fix: pass visitType so the
+    // OPD prescription template can render IPD-context fields (IPD No.,
+    // Bed, Ward) when an inpatient consult uses the same printable.
+    // Doctor reg fallback chain extended for robustness.
     openPrint("opd-prescription", {
       rxNo:         v.visitNumber || "",
       patientName:  v.patientName || v.UHID || "",
@@ -1297,8 +1301,10 @@ export default function OPDAssessmentPage() {
       bloodGroup:   patientBloodGroup,
       address:      patientAddress,
       doctorName:   drName,
-      doctorReg:    docUser?.registrationNo || "",
+      doctorReg:    docUser?.registrationNo || v?.consultantRegistrationNo || v?.attendingDoctorReg || "",
       department:   v.department || docUser?.department || "",
+      visitType:    v.visitType || "OPD",
+      ...(v.visitType === "IPD" ? { ipdNo: v.ipdNo, bedNumber: v.bedNumber, wardName: v.wardName } : {}),
       visitDate:    v.visitDate || new Date().toISOString(),
       vitals: {
         // R7bt-OPD-PRINT-9: BP is normalized to "<sys>/<dia>" string
