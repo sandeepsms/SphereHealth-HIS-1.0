@@ -148,6 +148,12 @@ export default function ReceptionBilling() {
   const [uhid, setUhid] = useState(paramUhid || "");
   const [patient, setPatient] = useState(null);
   const [bills, setBills] = useState([]);
+  // R7en-CURRENT-CTX: toggle to show historical (non-current-visit) bills
+  // + advances. Default hidden so the page only shows the CURRENT visit's
+  // billing context (IPD admission OR today's OPD walk-in). Receptionists
+  // were getting confused seeing an IPD patient's 5-month-old OPD bill
+  // mixed with the active IPD draft on the same page.
+  const [showHistory, setShowHistory] = useState(false);
   const [loading, setLoading] = useState(false);
   const [activeBill, setActiveBill] = useState(null); // full bill detail
   const [billLoading, setBillLoading] = useState(false);
@@ -169,6 +175,71 @@ export default function ReceptionBilling() {
   const [advances,      setAdvances]      = useState([]);
   const [unspentAdv,    setUnspentAdv]    = useState(0);
   const [showAdvDlg,    setShowAdvDlg]    = useState(false);
+
+  /* ─── R7en-CURRENT-CTX: split bills + advances into "current visit"
+       vs "history" ────────────────────────────────────────────────
+     Receptionists were seeing IPD draft + 5-month-old OPD bill on the
+     same screen for the same patient, which made it unclear which row
+     they were actually meant to collect against. Now:
+
+       • If the patient has any ACTIVE IPD bill (DRAFT / GENERATED /
+         PARTIAL) → currentContext = { type: "IPD", admissionNumber }.
+         Current view shows ONLY bills for that admission + advances
+         tied to it (or unscoped advances). History view shows the rest.
+       • Else if there are OPD/Daycare/Emergency bills created today →
+         currentContext = { type: "OPD" } and current shows today's
+         non-IPD activity.
+       • Else → patient has no active visit; current view is empty and
+         the user is nudged to click History to see past bills.
+
+     History toggle (showHistory) flips the lists shown — current and
+     history never appear simultaneously, so receptionists see exactly
+     one bucket and can drill into the other on demand. */
+  const { currentBills, pastBills, currentAdvances, pastAdvances, currentContext } = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const isToday = (d) => {
+      if (!d) return false;
+      const x = new Date(d); x.setHours(0, 0, 0, 0);
+      return x.getTime() === today.getTime();
+    };
+    const isActiveStatus = (s) => ["DRAFT", "GENERATED", "PARTIAL"].includes(s);
+
+    // 1. Look for an active IPD bill
+    const activeIpd = bills.find(b =>
+      b.visitType === "IPD" && isActiveStatus(b.billStatus));
+    if (activeIpd?.admissionNumber) {
+      const adm = activeIpd.admissionNumber;
+      const cur = bills.filter(b =>
+        b.visitType === "IPD" && b.admissionNumber === adm);
+      const past = bills.filter(b => !cur.includes(b));
+      const curAdv = advances.filter(a =>
+        a.admission?.admissionNumber === adm || !a.admission);
+      const pastAdv = advances.filter(a => !curAdv.includes(a));
+      return { currentBills: cur, pastBills: past, currentAdvances: curAdv, pastAdvances: pastAdv,
+               currentContext: { type: "IPD", admissionNumber: adm } };
+    }
+
+    // 2. No active IPD — look for today's OPD/Daycare/Emergency
+    const todayBills = bills.filter(b =>
+      b.visitType !== "IPD" && (isToday(b.createdAt) || isActiveStatus(b.billStatus)));
+    if (todayBills.length > 0) {
+      const past = bills.filter(b => !todayBills.includes(b));
+      // OPD advances rarely have admission scoping — keep advances with no
+      // admission OR ones created today as "current".
+      const curAdv = advances.filter(a => !a.admission || isToday(a.createdAt) || isToday(a.paidAt));
+      const pastAdv = advances.filter(a => !curAdv.includes(a));
+      return { currentBills: todayBills, pastBills: past, currentAdvances: curAdv, pastAdvances: pastAdv,
+               currentContext: { type: "OPD" } };
+    }
+
+    // 3. No current visit at all
+    return { currentBills: [], pastBills: bills, currentAdvances: [], pastAdvances: advances,
+             currentContext: null };
+  }, [bills, advances]);
+
+  // Pick the active list based on the toggle
+  const displayBills    = showHistory ? pastBills    : currentBills;
+  const displayAdvances = showHistory ? pastAdvances : currentAdvances;
   // ── Smart search + active-patient directory ────────────────────
   //   searchQ        — text in the search box (name / UHID / phone)
   //   searchResults  — live dropdown matches (debounced 250ms)
@@ -1284,15 +1355,15 @@ export default function ReceptionBilling() {
               icon on each non-void row. When a bill is selected on the
               right, "Apply Advance" button on its toolbar consumes from
               the oldest active deposit. */}
-          {advances.length > 0 && (
+          {displayAdvances.length > 0 && (
             <div className="rx-card rx-mb-12" style={{ borderLeft: "4px solid #06b6d4", display: "block" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 12, fontWeight: 800, color: "#06b6d4", textTransform: "uppercase", letterSpacing: 0.4 }}>
-                <i className="pi pi-wallet" /> Advance Deposits
+                <i className="pi pi-wallet" /> Advance Deposits{showHistory && " (History)"}
                 <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: unspentAdv > 0 ? "#15803d" : "#64748b", background: unspentAdv > 0 ? "#f0fdf4" : "#f1f5f9", padding: "3px 10px", borderRadius: 999, border: `1px solid ${unspentAdv > 0 ? "#86efac" : "#e2e8f0"}`, letterSpacing: 0, textTransform: "none" }}>
                   {unspentAdv > 0 ? `Available: ${fmtCur(unspentAdv)}` : "Fully applied"}
                 </span>
               </div>
-              {advances.map((a) => {
+              {displayAdvances.map((a) => {
                 const isVoid = a.status === "REFUNDED" || a.status === "CANCELLED";
                 return (
                   <div key={a._id} style={{
@@ -1383,22 +1454,62 @@ export default function ReceptionBilling() {
                   one instead of duplicating. */}
               <div className="rx-bill-list-head">
                 <div className="rx-bill-list-head-title">
-                  <i className="pi pi-list" /> Bills
-                  {bills.length > 0 && <span className="rx-bill-list-count">{bills.length}</span>}
+                  <i className="pi pi-list" /> {showHistory ? "Bills (History)" : "Bills"}
+                  {displayBills.length > 0 && <span className="rx-bill-list-count">{displayBills.length}</span>}
+                  {/* R7en-CURRENT-CTX: surface the current visit context so
+                      the receptionist knows what bucket they're viewing. */}
+                  {!showHistory && currentContext && (
+                    <span style={{
+                      marginLeft: 8, fontSize: 10, fontWeight: 700,
+                      color: currentContext.type === "IPD" ? "#7c3aed" : "#0891b2",
+                      background: currentContext.type === "IPD" ? "#f5f3ff" : "#ecfeff",
+                      padding: "2px 8px", borderRadius: 999,
+                      border: `1px solid ${currentContext.type === "IPD" ? "#c4b5fd" : "#a5f3fc"}`,
+                      textTransform: "none", letterSpacing: 0,
+                    }}>
+                      Current: {currentContext.type === "IPD" ? `IPD ${currentContext.admissionNumber}` : "Today's OPD/Daycare/ER"}
+                    </span>
+                  )}
                 </div>
-                <button className="rx-action-btn rx-action-btn--primary"
-                        onClick={() => setShowNewBill(true)}
-                        title="Create a fresh DRAFT bill for ad-hoc charges">
-                  <i className="pi pi-plus" /> New Bill
-                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {/* R7en-CURRENT-CTX: History toggle — flips current ↔ past
+                      view. Hidden when there are no past entries at all. */}
+                  {(pastBills.length > 0 || pastAdvances.length > 0) && (
+                    <button
+                      type="button"
+                      className="rx-action-btn"
+                      onClick={() => setShowHistory(v => !v)}
+                      style={{
+                        background: showHistory ? "#fef3c7" : "#fff",
+                        borderColor: showHistory ? "#fcd34d" : "#cbd5e1",
+                        color: showHistory ? "#92400e" : "#475569",
+                      }}
+                      title={showHistory ? "Back to current visit" : "View past bills + advances"}
+                    >
+                      <i className={`pi ${showHistory ? "pi-arrow-left" : "pi-history"}`} />
+                      {showHistory ? "Back to Current" : `History${pastBills.length + pastAdvances.length > 0 ? ` (${pastBills.length + pastAdvances.length})` : ""}`}
+                    </button>
+                  )}
+                  {!showHistory && (
+                    <button className="rx-action-btn rx-action-btn--primary"
+                            onClick={() => setShowNewBill(true)}
+                            title="Create a fresh DRAFT bill for ad-hoc charges">
+                      <i className="pi pi-plus" /> New Bill
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {bills.length === 0 ? (
+              {displayBills.length === 0 ? (
                 <div className="rx-empty">
                   <span className="rx-empty-icon">📑</span>
-                  No bills yet for this patient.
+                  {showHistory
+                    ? "No past bills for this patient."
+                    : currentContext
+                      ? `No bills yet for the current ${currentContext.type === "IPD" ? "admission" : "visit"}.`
+                      : "No active visit. Click History to see past bills."}
                 </div>
-              ) : bills.map(b => {
+              ) : displayBills.map(b => {
                 const isActive = activeBill?._id === b._id;
                 const cls = STATUS_CLASS[b.billStatus] || "pending";
                 // R7aa: derive effective Total/Paid/Due from billItems when
