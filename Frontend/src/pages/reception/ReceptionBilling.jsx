@@ -1492,6 +1492,14 @@ export default function ReceptionBilling() {
           // patient still auto-redirects to /billing/ipd/:admissionId
           // (see pickPatient at line ~624 — the activeIpd probe).
           typesToShow={["OPD", "Emergency", "Services", "ALL"]}
+          // R7ew — "All Types" must also respect the OPD/Emergency/
+          // Services whitelist. Without this filter the backend's
+          // unfiltered fetch (when listType === "ALL") would include
+          // IPD and Daycare rows again, defeating R7eu.
+          patientFilter={(p) => {
+            const t = String(p.registrationType || "").toLowerCase();
+            return t !== "ipd" && t !== "daycare" && t !== "day care";
+          }}
         />
       ) : (
         <>

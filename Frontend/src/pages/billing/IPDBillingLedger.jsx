@@ -362,6 +362,13 @@ export default function IPDBillingLedger() {
      ALL admissions (including discharged) so the receptionist can also
      re-open a closed bill for re-print / refund. */
   const [pickerList,   setPickerList]   = useState([]);
+  // R7ew — IPD vs Daycare pill filter on the no-admission picker.
+  // Default to "IPD" (matches admissionType in IPD/Planned/Transfer/
+  // Emergency — true inpatient stays). "DAYCARE" matches Day Care /
+  // Daycare. The picker already drops OPD/Services upstream via
+  // INPATIENT_TYPES; this pill just splits the inpatient bucket so
+  // the receptionist sees one workflow at a time.
+  const [typeFilter,   setTypeFilter]   = useState("IPD");
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerSearch, setPickerSearch] = useState("");
 
@@ -400,11 +407,21 @@ export default function IPDBillingLedger() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [admissionId]);
+  // R7ew — pill-driven type buckets.
+  const IPD_BUCKET     = new Set(["IPD", "Planned", "Transfer", "Emergency"]);
+  const DAYCARE_BUCKET = new Set(["Day Care", "Daycare"]);
+  const matchesTypePill = (a) => {
+    const t = a?.admissionType;
+    if (typeFilter === "DAYCARE") return DAYCARE_BUCKET.has(t);
+    return IPD_BUCKET.has(t); // default "IPD" pill
+  };
+  const typedList = pickerList.filter(matchesTypePill);
+
   // Live filter — search by name / UHID / IPD No / bed / doctor / dept.
   const filteredPicker = (() => {
     const q = pickerSearch.trim().toLowerCase();
-    if (!q) return pickerList;
-    return pickerList.filter(a => {
+    if (!q) return typedList;
+    return typedList.filter(a => {
       const hay = [
         a.patientName, a.UHID, a.admissionNumber, a.bedNumber,
         a.attendingDoctor, a.department, a.admissionType,
@@ -1126,6 +1143,55 @@ export default function IPDBillingLedger() {
             </div>
           </div>
 
+          {/* R7ew — Type filter pills. IPD bucket covers true inpatient
+              stays (IPD/Planned/Transfer/Emergency); Daycare bucket
+              covers same-day procedures (Day Care/Daycare). Each pill
+              shows its own count from the unfiltered picker list so the
+              receptionist can see at a glance how many of each type are
+              live. */}
+          {(() => {
+            const ipdCount = pickerList.filter(a => IPD_BUCKET.has(a?.admissionType)).length;
+            const dcCount  = pickerList.filter(a => DAYCARE_BUCKET.has(a?.admissionType)).length;
+            const Pill = ({ value, label, count, icon, color, tint }) => {
+              const active = typeFilter === value;
+              return (
+                <button
+                  type="button"
+                  onClick={() => setTypeFilter(value)}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 999,
+                    border: `1.5px solid ${active ? color : C.border}`,
+                    background: active ? `linear-gradient(135deg, ${color}, ${color}dd)` : C.card,
+                    color: active ? "#fff" : C.dark,
+                    fontSize: 12.5, fontWeight: 800,
+                    fontFamily: "inherit",
+                    cursor: "pointer",
+                    display: "inline-flex", alignItems: "center", gap: 7,
+                    transition: "all .15s",
+                    boxShadow: active ? `0 2px 8px ${color}40` : "none",
+                  }}
+                >
+                  <i className={`pi ${icon}`} style={{ fontSize: 13 }} />
+                  {label}
+                  <span style={{
+                    background: active ? "rgba(255,255,255,.25)" : tint,
+                    color: active ? "#fff" : color,
+                    fontSize: 10.5, fontWeight: 800,
+                    padding: "1px 7px", borderRadius: 999,
+                    minWidth: 18, textAlign: "center",
+                  }}>{count}</span>
+                </button>
+              );
+            };
+            return (
+              <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                <Pill value="IPD"     label="IPD"     count={ipdCount} icon="pi-home" color="#7c3aed" tint="#f3e8ff" />
+                <Pill value="DAYCARE" label="Day Care" count={dcCount}  icon="pi-sun"  color="#d97706" tint="#fef3c7" />
+              </div>
+            );
+          })()}
+
           {/* Search box */}
           <div style={{
             background: C.card,
@@ -1138,14 +1204,14 @@ export default function IPDBillingLedger() {
               autoFocus
               value={pickerSearch}
               onChange={(e) => setPickerSearch(e.target.value)}
-              placeholder="Search by name, UHID, IPD No, bed, doctor or department…"
+              placeholder={`Search ${typeFilter === "DAYCARE" ? "daycare admissions" : "IPD admissions"} by name, UHID, IPD No, bed, doctor or department…`}
               style={{
                 flex: 1, border: "none", outline: "none",
                 fontSize: 14, fontFamily: "inherit", color: C.dark,
               }}
             />
             <span style={{ fontSize: 11, color: C.muted, fontFamily: "'DM Mono', monospace" }}>
-              {filteredPicker.length} / {pickerList.length}
+              {filteredPicker.length} / {typedList.length}
             </span>
           </div>
 
@@ -1159,9 +1225,17 @@ export default function IPDBillingLedger() {
             ) : filteredPicker.length === 0 ? (
               <div style={{ padding: 40, textAlign: "center", color: C.muted, fontSize: 13 }}>
                 <i className="pi pi-inbox" style={{ fontSize: 28, marginBottom: 8, color: "#cbd5e1" }} />
-                <div>{pickerSearch ? "No matching admissions" : "No active IPD/DC/ER admissions"}</div>
+                <div>{pickerSearch
+                  ? "No matching admissions"
+                  : (typeFilter === "DAYCARE" ? "No active Day Care admissions" : "No active IPD admissions")
+                }</div>
                 <div style={{ fontSize: 11, marginTop: 6 }}>
-                  {pickerSearch ? "Try a different search term" : "Admit a patient via Reception → New Registration → IPD/Daycare/Emergency"}
+                  {pickerSearch
+                    ? "Try a different search term"
+                    : (typeFilter === "DAYCARE"
+                        ? "Admit a patient via Reception → New Registration → Day Care"
+                        : "Admit a patient via Reception → New Registration → IPD/Emergency")
+                  }
                 </div>
               </div>
             ) : (
