@@ -247,7 +247,7 @@ router.use("/admin",            require("./Admin/systemHealthRoutes"));
 // half-day proration rule). The daily auto-billing cron resolves
 // against this matrix instead of the legacy ServiceMaster BED-* /
 // NURSING-* rows. Reads gated on billing.read, writes on doctors.write.
-router.use("/admin/room-charges", require("./admin/roomCategoryChargesRoutes"));
+router.use("/admin/room-charges", require("./Admin/roomCategoryChargesRoutes"));
 
 // (client-errors is mounted ABOVE the global authenticate — see top of file)
 

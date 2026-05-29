@@ -113,6 +113,16 @@ function RoomChargesInner() {
   const [busySeed, setBusySeed] = useState(false);
   const [busyAdd, setBusyAdd]   = useState(false);
   const [toast, setToast] = useState(null); // { type:"ok"|"err", text }
+  // R7ep — Auto-discover state. `discovery` is the GET /discover
+  // response (configured + missing + summary). `busyImport` covers
+  // both the "Import All" path and the per-row import action.
+  const [discovery, setDiscovery] = useState(null);
+  const [busyDiscover, setBusyDiscover] = useState(false);
+  const [busyImport,   setBusyImport]   = useState(false);
+  // Codes the admin has un-checked in the import modal — defaults to
+  // empty (all missing categories imported by default).
+  const [importPickerOpen, setImportPickerOpen] = useState(false);
+  const [importSelected,   setImportSelected]   = useState(() => new Set());
 
   /* Per-cell save state. Keyed by `${rowId}:${col}` → "saving" | "ok"
      | { error }. Cell consults to render spinner / check / error pill. */
@@ -142,7 +152,30 @@ function RoomChargesInner() {
       setLoading(false);
     }
   };
-  useEffect(() => { refetch(); }, []);
+
+  // R7ep — Run discover in parallel with the list fetch. Soft-fail so
+  // a missing Room/Bed/RoomCategory model just hides the banner; the
+  // matrix grid still renders.
+  const runDiscover = async () => {
+    try {
+      setBusyDiscover(true);
+      const r = await roomCategoryChargesService.discover();
+      setDiscovery(r?.data || null);
+      // Pre-select every missing category for the import picker.
+      const allMissing = new Set((r?.data?.missing || []).map(m => m.categoryCode));
+      setImportSelected(allMissing);
+    } catch (e) {
+      // Don't toast — quietly hide the banner. The grid is the main UI.
+      setDiscovery(null);
+    } finally {
+      setBusyDiscover(false);
+    }
+  };
+
+  useEffect(() => {
+    refetch();
+    runDiscover();
+  }, []);
 
   const visibleRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -257,6 +290,46 @@ function RoomChargesInner() {
     }
   };
 
+  // R7ep — Auto-import discovered categories. With `pickAll` we POST
+  // { all:true } (covers everything currently missing). With a per-row
+  // pick we send { categoryCodes:[…] } from the modal's selection set.
+  const handleAutoImport = async (pickAll) => {
+    setBusyImport(true);
+    try {
+      const payload = pickAll
+        ? { all: true }
+        : { categoryCodes: Array.from(importSelected) };
+      if (!pickAll && payload.categoryCodes.length === 0) {
+        fireToast("err", "Pick at least one category to import.");
+        setBusyImport(false);
+        return;
+      }
+      const r = await roomCategoryChargesService.autoImport(payload);
+      const n = r?.count || (r?.data?.length || 0);
+      if (n > 0) {
+        fireToast("ok", `Imported ${n} categor${n === 1 ? "y" : "ies"} from rooms`);
+        await refetch();
+        await runDiscover();
+        setImportPickerOpen(false);
+      } else {
+        fireToast("err", r?.message || "Nothing new to import");
+      }
+    } catch (e) {
+      fireToast("err", e.response?.data?.message || e.message || "Auto-import failed");
+    } finally {
+      setBusyImport(false);
+    }
+  };
+
+  const toggleImportPick = (code) => {
+    setImportSelected(s => {
+      const n = new Set(s);
+      if (n.has(code)) n.delete(code);
+      else n.add(code);
+      return n;
+    });
+  };
+
   /* Create new category. */
   const handleCreate = async () => {
     if (!addCode || !addName) {
@@ -320,8 +393,88 @@ function RoomChargesInner() {
           <KPI label="Categories configured" value={`${kpis.configured} / ${kpis.total}`} color={C.text} icon="pi-th-large" />
           <KPI label="Avg daily total"        value={fmtINR(kpis.avgDaily)}              color={C.blue} icon="pi-indian-rupee" />
           <KPI label="ICU daily total"        value={fmtINR(kpis.icuDaily)}              color={C.red}  icon="pi-bolt" />
-          <KPI label="Auto-billing"           value="Active"                              color={C.green} icon="pi-check-circle" />
+          {/* R7ep — Show live bed coverage instead of static "Active" pill. */}
+          <KPI
+            label="Beds covered"
+            value={discovery
+              ? `${discovery.summary?.totalBeds || 0} bed${discovery.summary?.totalBeds === 1 ? "" : "s"}`
+              : "—"}
+            color={C.green}
+            icon="pi-server"
+          />
         </div>
+
+        {/* R7ep — Discovery banner. Only renders when the system found
+            categories in Rooms that don't have a matrix row yet.
+            Single click "Import All" or open the picker to select. */}
+        {discovery && discovery.missing && discovery.missing.length > 0 && (
+          <div style={{
+            background: "#fffbeb", border: `1.5px solid ${C.amber}`,
+            borderRadius: 12, padding: "14px 16px", marginBottom: 14,
+            display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap",
+          }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 9,
+              background: "#fef3c7", color: C.amber,
+              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+            }}>
+              <i className="pi pi-info-circle" style={{ fontSize: 16 }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div style={{ fontWeight: 800, fontSize: 13.5, color: "#92400e" }}>
+                {discovery.missing.length} room categor{discovery.missing.length === 1 ? "y" : "ies"} in your beds aren't priced yet
+              </div>
+              <div style={{ fontSize: 12, color: "#92400e", marginTop: 4, lineHeight: 1.5 }}>
+                Found these category{discovery.missing.length === 1 ? "" : "ies"} on live Rooms / Beds —
+                IPD admissions to them currently fall back to ServiceMaster pricing. Import to add a
+                matrix row with smart defaults (you can fine-tune each cell after).
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                {discovery.missing.map(m => (
+                  <span key={m.categoryCode} style={{
+                    fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 700,
+                    padding: "3px 8px", background: "#fff", color: "#92400e",
+                    border: `1px solid ${C.amber}`, borderRadius: 999,
+                  }}>
+                    {m.categoryCode}
+                    <span style={{ color: C.muted, fontWeight: 600, marginLeft: 6 }}>
+                      {m.bedCount} bed{m.bedCount === 1 ? "" : "s"}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "stretch" }}>
+              <button
+                onClick={() => handleAutoImport(true)}
+                disabled={busyImport}
+                style={{
+                  padding: "9px 14px", background: busyImport ? "#94a3b8" : C.amber,
+                  color: "#fff", border: "none", borderRadius: 8, fontSize: 12.5,
+                  fontWeight: 800, cursor: busyImport ? "default" : "pointer",
+                  textTransform: "uppercase", letterSpacing: ".4px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <i className="pi pi-bolt" style={{ fontSize: 11, marginRight: 6 }} />
+                {busyImport ? "Importing…" : `Import All (${discovery.missing.length})`}
+              </button>
+              <button
+                onClick={() => setImportPickerOpen(true)}
+                disabled={busyImport}
+                style={{
+                  padding: "7px 12px", background: "#fff",
+                  color: "#92400e", border: `1.5px solid ${C.amber}`,
+                  borderRadius: 8, fontSize: 11.5, fontWeight: 700,
+                  cursor: busyImport ? "default" : "pointer",
+                  textTransform: "uppercase", letterSpacing: ".4px",
+                }}
+              >
+                Pick &amp; review
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Filter bar */}
         <div style={{
@@ -370,6 +523,24 @@ function RoomChargesInner() {
           >
             <i className="pi pi-plus" style={{ fontSize: 11, marginRight: 6 }} />
             Add Category
+          </button>
+          {/* R7ep — Re-scan re-runs discovery (e.g. admin just created
+              a new Room/Bed/RoomCategory and wants the banner to refresh
+              without a full page reload). */}
+          <button
+            onClick={runDiscover}
+            disabled={busyDiscover}
+            title="Re-scan Rooms and Beds to find missing categories"
+            style={{
+              padding: "8px 12px", background: "#fff",
+              color: C.text, border: `1.5px solid ${C.border}`,
+              borderRadius: 8, fontSize: 11.5, fontWeight: 700,
+              cursor: busyDiscover ? "default" : "pointer",
+              textTransform: "uppercase", letterSpacing: ".4px",
+            }}
+          >
+            <i className={`pi ${busyDiscover ? "pi-spin pi-spinner" : "pi-refresh"}`} style={{ fontSize: 11, marginRight: 6 }} />
+            {busyDiscover ? "Scanning…" : "Re-scan rooms"}
           </button>
           {rows.length === 0 && (
             <button
@@ -427,6 +598,139 @@ function RoomChargesInner() {
             onSaveRule={saveRule}
             onDelete={deleteRow}
           />
+        )}
+
+        {/* R7ep — Import picker — admin reviews suggested defaults +
+            checks/un-checks categories before bulk import. */}
+        {importPickerOpen && discovery && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(15,23,42,.45)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000,
+          }} onClick={() => !busyImport && setImportPickerOpen(false)}>
+            <div onClick={(e) => e.stopPropagation()} style={{
+              background: "#fff", borderRadius: 12, padding: 20,
+              minWidth: 520, maxWidth: 720, maxHeight: "84vh",
+              display: "flex", flexDirection: "column",
+              boxShadow: "0 12px 36px rgba(0,0,0,.18)",
+            }}>
+              <div style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                marginBottom: 6,
+              }}>
+                <div style={{ fontWeight: 800, fontSize: 15, color: C.text }}>
+                  Import Room Categories
+                </div>
+                <button
+                  onClick={() => !busyImport && setImportPickerOpen(false)}
+                  style={{
+                    background: "transparent", border: "none", cursor: "pointer",
+                    color: C.muted, fontSize: 16, padding: 4,
+                  }}
+                ><i className="pi pi-times" /></button>
+              </div>
+              <div style={{ fontSize: 12, color: C.muted, marginBottom: 14, lineHeight: 1.55 }}>
+                These categories exist in your Rooms/Beds but don't have a charges-matrix row yet.
+                Default charges are suggested from the RoomCategory's <code>defaultPricing</code>;
+                you can edit any cell after import.
+              </div>
+              <div style={{ flex: 1, overflowY: "auto", border: `1.5px solid ${C.border}`, borderRadius: 10 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: C.subtle, borderBottom: `1.5px solid ${C.border}` }}>
+                      <th style={{ ...th(), textAlign: "center", width: 40 }}>
+                        <input
+                          type="checkbox"
+                          checked={importSelected.size === discovery.missing.length}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setImportSelected(new Set(discovery.missing.map(m => m.categoryCode)));
+                            } else {
+                              setImportSelected(new Set());
+                            }
+                          }}
+                        />
+                      </th>
+                      <th style={th({ textAlign: "left" })}>Category</th>
+                      <th style={th({ textAlign: "right", minWidth: 80 })}>Beds</th>
+                      <th style={th({ textAlign: "right", minWidth: 100 })}>Bed Rent</th>
+                      <th style={th({ textAlign: "right", minWidth: 100 })}>Total/Day</th>
+                      <th style={th({ textAlign: "left", minWidth: 130 })}>Rule</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {discovery.missing.map((m) => {
+                      const sug = m.suggested || {};
+                      const total = totalOf(sug.charges || {});
+                      const checked = importSelected.has(m.categoryCode);
+                      return (
+                        <tr key={m.categoryCode} style={{
+                          borderTop: `1px solid ${C.border}`,
+                          background: checked ? "#fffbeb" : "#fff",
+                        }}>
+                          <td style={{ padding: "8px 10px", textAlign: "center" }}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleImportPick(m.categoryCode)}
+                            />
+                          </td>
+                          <td style={{ padding: "8px 10px" }}>
+                            <div style={{ fontWeight: 800, color: C.text }}>{m.categoryName}</div>
+                            <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "'DM Mono', monospace" }}>
+                              {m.categoryCode}
+                              {m.roomType && <span style={{ marginLeft: 6, color: "#94a3b8" }}>· {m.roomType}</span>}
+                            </div>
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right", color: C.text, fontWeight: 700 }}>
+                            {m.bedCount}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right", color: C.muted, fontFamily: "'DM Mono', monospace" }}>
+                            {fmtINR(sug.charges?.bedRent)}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right", color: C.blue, fontWeight: 800, fontFamily: "'DM Mono', monospace" }}>
+                            {fmtINR(total)}
+                          </td>
+                          <td style={{ padding: "8px 10px", color: C.muted, fontSize: 11 }}>
+                            {sug.chargingRule === "Full" ? "Full (no half-day)" : "Half on Both"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                gap: 8, marginTop: 14,
+              }}>
+                <div style={{ fontSize: 11.5, color: C.muted, fontWeight: 700 }}>
+                  {importSelected.size} of {discovery.missing.length} selected
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => !busyImport && setImportPickerOpen(false)}
+                    style={{
+                      padding: "9px 14px", border: `1.5px solid ${C.border}`, borderRadius: 8,
+                      background: "#fff", color: C.text, fontWeight: 700, cursor: "pointer",
+                    }}
+                  >Cancel</button>
+                  <button
+                    onClick={() => handleAutoImport(false)}
+                    disabled={busyImport || importSelected.size === 0}
+                    style={{
+                      padding: "9px 16px", border: "none", borderRadius: 8,
+                      background: (busyImport || importSelected.size === 0) ? "#94a3b8" : C.amber,
+                      color: "#fff", fontWeight: 800, cursor: busyImport ? "default" : "pointer",
+                      textTransform: "uppercase", letterSpacing: ".4px", fontSize: 12,
+                    }}
+                  >
+                    <i className="pi pi-bolt" style={{ fontSize: 11, marginRight: 6 }} />
+                    {busyImport ? "Importing…" : `Import ${importSelected.size}`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Add-category dialog */}
@@ -564,6 +868,24 @@ function Row({ row, striped, cellState, onSaveCell, onSaveRule, onDelete }) {
         <div style={{ fontSize: 10.5, color: C.muted, marginTop: 1, fontFamily: "'DM Mono', monospace" }}>
           {row.categoryCode}
         </div>
+        {/* R7ep — Live bed/room coverage badge. Hidden when the
+            enrichment endpoint isn't available (legacy back-end). */}
+        {(row.bedCount > 0 || row.roomCount > 0) && (
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 4,
+            fontSize: 10, fontWeight: 700, color: "#475569",
+            background: "#f1f5f9", padding: "2px 7px",
+            borderRadius: 999, marginTop: 4,
+          }}>
+            <i className="pi pi-server" style={{ fontSize: 9 }} />
+            {row.bedCount} bed{row.bedCount === 1 ? "" : "s"}
+            {row.roomCount > 0 && (
+              <span style={{ color: "#94a3b8", fontWeight: 600 }}>
+                · {row.roomCount} room{row.roomCount === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+        )}
       </td>
       {COLS.map(col => (
         <td key={col.key} style={{ padding: "8px 10px", textAlign: "right" }}>

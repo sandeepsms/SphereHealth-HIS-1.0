@@ -78,6 +78,33 @@ const roomCategoryChargesService = {
       throw e;
     }
   },
+
+  // R7ep — GET /api/admin/room-charges/discover
+  // Walks RoomCategoryModel + Room + Bed to surface categories that
+  // have beds in the system but no matrix row yet. Returns
+  // { configured:[…], missing:[…], summary:{…} }.
+  discover: async () => {
+    try {
+      const r = await axios.get(`${API_URL}/discover`);
+      return r.data;
+    } catch (e) {
+      console.error("roomCategoryChargesService.discover error:", e);
+      throw e;
+    }
+  },
+
+  // R7ep — POST /api/admin/room-charges/auto-import
+  // Bulk-create matrix rows for the categories admin picked from the
+  // discover panel. Pass { all:true } or { categoryCodes:[...] }.
+  autoImport: async (payload) => {
+    try {
+      const r = await axios.post(`${API_URL}/auto-import`, payload);
+      return r.data;
+    } catch (e) {
+      console.error("roomCategoryChargesService.autoImport error:", e);
+      throw e;
+    }
+  },
 };
 
 export default roomCategoryChargesService;

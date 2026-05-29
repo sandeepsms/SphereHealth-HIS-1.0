@@ -257,7 +257,7 @@ async function resolveRoomCategoryChargeMatrix(admission) {
   };
   if (!legacy.categoryCode) return empty;
   try {
-    const RoomCategoryCharges = require("../../models/admin/RoomCategoryChargesModel");
+    const RoomCategoryCharges = require("../../models/Admin/RoomCategoryChargesModel");
     const row = await RoomCategoryCharges.findOne({
       categoryCode: String(legacy.categoryCode).toUpperCase(),
       active:       true,
