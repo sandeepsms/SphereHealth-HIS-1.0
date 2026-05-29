@@ -333,6 +333,15 @@ export default function ReceptionBilling() {
   const [searchBusy,      setSearchBusy]      = useState(false);
   const [directory,       setDirectory]       = useState([]);
   const [listType,        setListType]        = useState("OPD");
+  // R7eu — guard against stale listType values that point at the now-
+  // hidden IPD/Daycare chips. Without this, a session that was on the
+  // IPD tab before R7eu would render an empty directory (the chip is
+  // gone but the filter is still active).
+  useEffect(() => {
+    if (listType === "IPD" || listType === "Daycare" || listType === "Day Care") {
+      setListType("OPD");
+    }
+  }, [listType]);
   const [directoryLoading,setDirectoryLoading]= useState(false);
   const searchDebRef = React.useRef(null);
 
@@ -1228,9 +1237,12 @@ export default function ReceptionBilling() {
       // action-shortcuts.
       if (isTyping) return;
 
-      // 1-6 — directory tab switch (only when no patient loaded).
-      if (!patient && /^[1-6]$/.test(e.key)) {
-        const TABS = ["OPD","IPD","Daycare","Emergency","Services","ALL"];
+      // 1-4 — directory tab switch (only when no patient loaded).
+      // R7eu — keep parity with the now-visible chips: OPD / Emergency
+      // / Services / ALL. IPD + Daycare moved to /ipd-ledger so the
+      // 2/3 digit shortcuts are unmapped here.
+      if (!patient && /^[1-4]$/.test(e.key)) {
+        const TABS = ["OPD","Emergency","Services","ALL"];
         setListType(TABS[Number(e.key) - 1]);
         return;
       }
@@ -1472,6 +1484,14 @@ export default function ReceptionBilling() {
           rows={directory}
           loading={directoryLoading}
           onPick={pickPatient}
+          // R7eu — IPD + Daycare billing now lives exclusively in
+          // /ipd-ledger (per-admission live ledger). Hiding those two
+          // chips here removes the duplicate entry point and keeps the
+          // Billing Counter focused on OPD / Emergency / Services
+          // walk-in collection. Picker click for an IPD/Daycare/ER
+          // patient still auto-redirects to /billing/ipd/:admissionId
+          // (see pickPatient at line ~624 — the activeIpd probe).
+          typesToShow={["OPD", "Emergency", "Services", "ALL"]}
         />
       ) : (
         <>
@@ -3943,11 +3963,9 @@ function ShortcutsModal({ patientLoaded, activeBillStatus, unspentAdv, onClose }
           </div>
           <div style={dim(!patientLoaded)}>
             <ShortcutRow keys={["1"]} label="OPD" />
-            <ShortcutRow keys={["2"]} label="IPD" />
-            <ShortcutRow keys={["3"]} label="Day Care" />
-            <ShortcutRow keys={["4"]} label="Emergency" />
-            <ShortcutRow keys={["5"]} label="Services" />
-            <ShortcutRow keys={["6"]} label="All Types" />
+            <ShortcutRow keys={["2"]} label="Emergency" />
+            <ShortcutRow keys={["3"]} label="Services" />
+            <ShortcutRow keys={["4"]} label="All Types" />
           </div>
 
           <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "#06b6d4", letterSpacing: 0.4, marginTop: 10 }}>
