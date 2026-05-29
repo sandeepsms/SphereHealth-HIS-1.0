@@ -514,9 +514,17 @@ export default function IPDBillingLedger() {
       totalDays:        stayDays,
       bedNumber:        data.admission.bedId?.bedNumber || "",
       wardName:         data.admission.bedId?.wardName || data.admission.department || "",
-      consultantName:   data.admission.consultantDoctor?.fullName || data.admission.primaryConsultant || "",
+      // R7en-FIX: stored field is attendingDoctor (legacy fields never
+      // populated). TPA falls back to Self-pay for cash patients.
+      consultantName:   data.admission.attendingDoctor
+                      || data.admission.consultantDoctor?.fullName
+                      || data.admission.primaryConsultant
+                      || "—",
       finalDiagnosis:   data.admission.finalDiagnosis || data.admission.provisionalDiagnosis || data.admission.workingDiagnosis || data.admission.diagnosis || "",
-      tpaName:          data.bill?.tpaName || null,
+      tpaName:          data.bill?.tpaName
+                      || data.admission.tpaProvider
+                      || data.admission.insuranceProvider
+                      || "Self-pay",
       items,
       discount:         totalDiscount,
       advanceReceived:  paid,
@@ -930,9 +938,22 @@ export default function IPDBillingLedger() {
       totalDays:        stayDaysCalc,
       bedNumber:        data.admission.bedId?.bedNumber || "",
       wardName:         data.admission.bedId?.wardName || data.admission.department || "",
-      consultantName:   data.admission.consultantDoctor?.fullName || data.admission.primaryConsultant || "",
+      // R7en-FIX: the admission row stores the admitting/treating doctor
+      // in `attendingDoctor` (string), not `consultantDoctor` / `primary
+      // Consultant` — those legacy field names were never populated by the
+      // reception form, so every interim bill printed "—" for Consultant.
+      // Same fix for TPA: cash patients have no bill row + no TPA, but
+      // the receipt shouldn't leave the field blank — fall back to
+      // "Self-pay" so the surveyor / patient sees the payment basis.
+      consultantName:   data.admission.attendingDoctor
+                      || data.admission.consultantDoctor?.fullName
+                      || data.admission.primaryConsultant
+                      || "—",
       finalDiagnosis:   data.admission.provisionalDiagnosis || data.admission.workingDiagnosis || data.admission.diagnosis || "",
-      tpaName:          data.bill?.tpaName || null,
+      tpaName:          data.bill?.tpaName
+                      || data.admission.tpaProvider
+                      || data.admission.insuranceProvider
+                      || "Self-pay",
       discount:         totalDiscount,
       advanceReceived:  paid,
       payments:         (data.bill?.payments || []).map(p => ({
