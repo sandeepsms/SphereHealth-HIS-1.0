@@ -385,10 +385,53 @@ export default function ReceptionBilling() {
       // the picker click handler runs — and stash the resolved active
       // inpatient admission on patient.currentAdmission so the hero
       // card's "Bed / Room" + "Admission" slots populate.
+      //
+      // Same gap exists for OPD bills: the bill carries only `visitId`
+      // (no doctor/department denormalization) and the patient root has
+      // no `currentVisit` field. So we ALSO probe /opd/patient/:pid for
+      // the most recent OPD visit and stash it on patient.currentVisit
+      // so the hero card's "Doctor" + "Department" slots populate.
       const hasIpdBill = list.some(
         (b) => b.visitType === "IPD" || b.visitType === "Daycare"
             || b.visitType === "Day Care" || b.visitType === "Emergency",
       );
+      const hasOpdBill = list.some((b) => b.visitType === "OPD");
+      if (hasOpdBill && !hasIpdBill && p._id) {
+        try {
+          const vr = await axios.get(
+            `${API_ENDPOINTS.BASE}/opd/patient/${encodeURIComponent(p._id)}`,
+          );
+          const varr = vr?.data?.data || vr?.data?.visits || vr?.data || [];
+          // Most recent first (server sorts by visitDate desc already).
+          let recent = (Array.isArray(varr) ? varr : [])[0];
+          if (recent) {
+            // R7eq-FIX-3 — some OPD visits store the department as a raw
+            // ObjectId on `.department` (legacy) without populating
+            // `.departmentId`. Doctor profiles always carry their
+            // department fully populated, so when the visit doesn't have
+            // a usable department name we merge the doctor's into
+            // `recent.doctorProfile.department` so the hero fallback
+            // chain can read `cv.doctorProfile.department.departmentName`.
+            const visitDeptName = recent?.departmentId?.departmentName
+                                || recent?.departmentName;
+            const docId = recent?.doctorId?._id || recent?.doctorId;
+            if (!visitDeptName && docId) {
+              try {
+                const dr = await axios.get(
+                  `${API_ENDPOINTS.BASE}/doctors/${encodeURIComponent(docId)}`,
+                );
+                const docDoc = dr?.data?.data || dr?.data?.doctor || dr?.data;
+                if (docDoc) {
+                  recent = { ...recent, doctorProfile: docDoc };
+                }
+              } catch (e) { /* soft-fail */ }
+            }
+            setPatient((prev) => prev ? { ...prev, currentVisit: recent } : prev);
+          }
+        } catch (e) {
+          console.warn("[ReceptionBilling] OPD visit probe failed:", e?.message);
+        }
+      }
       if (hasIpdBill && p._id) {
         try {
           const ar = await axios.get(
@@ -1447,12 +1490,39 @@ export default function ReceptionBilling() {
             const ipdBill = (bills || []).find((b) => b.visitType === "IPD" && b.admissionNumber);
             const ctxType = currentContext?.type;
             const isIPD   = ctxType === "IPD";
-            const dept = typeof patient.department === "object"
-              ? (patient.department?.name || "—")
-              : (patient.department || "—");
-            const doc  = typeof patient.doctor === "object"
-              ? (patient.doctor?.fullName || patient.doctor?.personalInfo?.fullName || "—")
-              : (patient.doctor || "—");
+            // R7eq-FIX-3 — PatientBill carries no doctor/department for
+            // OPD; the OPDVisit doc has them on `consultantName` (denorm
+            // string) + `doctorId` (populated to {personalInfo.fullName})
+            // + `departmentId` (populated to {departmentName}) or the
+            // legacy `department` string. load() now stashes the most
+            // recent OPD visit on patient.currentVisit so this chain has
+            // something to read from. Last fallback skips raw ObjectIds
+            // (24-hex chars) that some legacy visits stored in `.department`
+            // by mistake — we'd rather render "—" than an ObjectId.
+            const cv = patient.currentVisit;
+            const _looksLikeObjectId = (s) =>
+              typeof s === "string" && /^[a-f0-9]{24}$/i.test(s);
+            const _safe = (v) => (_looksLikeObjectId(v) ? "" : v);
+            const dept =
+                 (cv?.departmentId?.departmentName)
+              || (cv?.departmentName)
+              || (cv?.doctorProfile?.department?.departmentName)
+              || (cv?.doctorProfile?.department?.name)
+              || _safe(cv?.department)
+              || (typeof patient.department === "object"
+                    ? (patient.department?.name)
+                    : _safe(patient.department))
+              || "—";
+            const doc =
+                 (cv?.consultantName)
+              || (cv?.doctorId?.personalInfo?.fullName)
+              || (cv?.doctorId?.fullName)
+              || (cv?.doctorName)
+              || (cv?.attendingDoctor)
+              || (typeof patient.doctor === "object"
+                    ? (patient.doctor?.fullName || patient.doctor?.personalInfo?.fullName)
+                    : patient.doctor)
+              || "—";
             // OPD/Daycare/ER bills created today (for the visit summary slot)
             const todayBill = (currentBills || [])[0] || (bills || [])[0];
             return (
@@ -1529,7 +1599,9 @@ export default function ReceptionBilling() {
                            || patient?.wardName
                            || dept
                            || "—")
-                        : (doc ? `Dr. ${doc}` : "—")}
+                        : (doc
+                            ? (/^(Dr\.?|Prof\.?|Mr\.?|Mrs\.?|Ms\.?)\s+/i.test(doc) ? doc : `Dr. ${doc}`)
+                            : "—")}
                     </div>
                   </div>
                   {/* PACKAGE / TPA */}
