@@ -9,15 +9,26 @@ const extractId = (obj) => {
   return obj;
 };
 
+// R7er — preserve the populated roomCategory subdoc when the backend
+// returned it (Backend roomService populates "categoryName categoryCode
+// roomType"). Collapsing to a bare ID like the original code did meant
+// every downstream consumer lost the category name + code, which broke
+// the bed-visual room cards' ability to surface a "₹X/day · CODE" chip.
+// Keep extractId() for the other refs that are still ID-only on disk.
 const normalizeRoom = (room) => {
   if (!room) return room;
+  const cat = room.roomCategory;
   return {
     ...room,
     _id: extractId(room._id),
     building: extractId(room.building),
     floor: extractId(room.floor),
     ward: extractId(room.ward),
-    roomCategory: extractId(room.roomCategory),
+    // Object → keep the {_id, categoryName, categoryCode, roomType} subdoc.
+    // String/legacy → fall through to extractId so old callers still see an ID.
+    roomCategory: (cat && typeof cat === "object" && !cat.$oid)
+      ? { ...cat, _id: extractId(cat._id) }
+      : extractId(cat),
   };
 };
 
