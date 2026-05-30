@@ -34,6 +34,14 @@ import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import useHospitalSettings from "../../Components/print/useHospitalSettings";
+// R7fq Track D: shared SGRH/Max-style print shell for header/footer
+// consistency across every printable in the HIS. The Patient File can
+// span 8–15 pages — the shell's @page running header/footer + per-page
+// terms keep every page self-identifying for NABH AAC.7 traceability.
+// PrintLetterhead + PrintFooter (R7eo) are RETIRED in print mode because
+// PrintShell now renders the canonical hospital header + footer; keeping
+// both would double-stamp every page.
+import PrintShell from "../../Components/print/PrintShell";
 import "./patient-file.css";
 
 const BASE = API_ENDPOINTS.BASE;
@@ -2221,7 +2229,11 @@ function PrintLetterhead({ patient, currentAdmission, role, hs = {} }) {
   );
 }
 
-function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther, viewerRole }) {
+function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther, viewerRole,
+  // R7fq Track D: PrintShell needs the same identity/admission props the
+  // retired PrintLetterhead used to consume, plus the live hospital
+  // settings + the viewer's display name/role for the signed-by stamp.
+  patient = {}, hospitalSettings = {}, viewerName = "", role = "doctor", uhid = "" }) {
   // dietPlans was missing from this destructure — PrintSection 9a was
   // reading a free variable that didn't exist, crashing the print popup.
   // (Audit finding HIGH-3.)
@@ -2282,8 +2294,67 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther, viewe
     [nurseNotes],
   );
 
+  // R7fq Track D: assemble the patient-info strip the shell renders
+  // under the title bar. Two logical columns flattened into one ordered
+  // list — PrintShell.css uses column-count:2 so they paginate as a
+  // side-by-side grid, matching the SGRH/Max print layout.
+  const infoItems = currentAdmission
+    ? [
+        { label: "UHID",        value: patient.UHID },
+        { label: "Patient Name",value: patient.fullName },
+        { label: "Age",         value: patient.age },
+        { label: "Sex",         value: patient.gender },
+        { label: "Blood Group", value: patient.bloodGroup || "—" },
+        { label: "Contact",     value: patient.contactNumber },
+        { label: "IP No",       value: currentAdmission.admissionNumber },
+        { label: "Admit Date",  value: fmtDate(currentAdmission.admissionDate) },
+        { label: "Status",      value: currentAdmission.status },
+        { label: "Ward/Bed",    value: `${currentAdmission.wardName || ""}/${currentAdmission.bedNumber || ""}` },
+        { label: "Consultant",  value: currentAdmission.attendingDoctor || "—" },
+        { label: "Diagnosis",   value: currentAdmission.provisionalDiagnosis || "—" },
+      ]
+    : [
+        { label: "UHID",        value: patient.UHID },
+        { label: "Patient Name",value: patient.fullName },
+        { label: "Age",         value: patient.age },
+        { label: "Sex",         value: patient.gender },
+        { label: "Blood Group", value: patient.bloodGroup || "—" },
+        { label: "Contact",     value: patient.contactNumber },
+        { label: "Type",        value: "OPD History" },
+        { label: "Total OPD Visits", value: patient.totalOPDVisits || 0 },
+        { label: "Total IPD Visits", value: patient.totalIPDVisits || 0 },
+        { label: "Last Visit",  value: fmtDate(patient.lastVisitDate) },
+      ];
+  const docTitle = "Complete Patient File";
+  const docSubtitle = currentAdmission
+    ? `IPD ${currentAdmission.admissionNumber || "—"} — ${currentAdmission.wardName || ""}`
+    : "OPD History";
+  // Subtitle is appended into the document title (the shell exposes one
+  // title slot + one serial slot). The shell's serial slot takes the
+  // IP/UHID so each printed page carries the doc number on its title bar.
+  const fullTitle = `${docTitle} · ${docSubtitle}`;
+  const serialNo  = currentAdmission?.admissionNumber || patient.UHID || "";
+  // Override the signed-by stamp the shell footer renders so a
+  // doctor-view print shows "Consultant", a nurse-view print shows
+  // "Senior Nurse" — instead of falling back to whichever user happens
+  // to be on that browser tab.
+  const signedBy = {
+    name: viewerName || "Treating Team",
+    role: role === "nurse" ? "Senior Nurse" : "Consultant",
+  };
+
   return (
-    <main className="pf-print-body">
+    <PrintShell
+      settings={hospitalSettings}
+      documentTitle={fullTitle}
+      serialNo={serialNo}
+      infoItems={infoItems}
+      signedBy={signedBy}
+      showBank={false}
+      showSignatures={true}
+      showTerms={true}
+    >
+    <main className="pf-print-body" data-uhid={uhid}>
       <PrintSection title="1. Admission Summary">
         <AdmissionSection admission={currentAdmission} />
       </PrintSection>
@@ -2481,6 +2552,7 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther, viewe
         </PrintSection>
       )}
     </main>
+    </PrintShell>
   );
 }
 
@@ -3977,11 +4049,30 @@ export default function CompletePatientFilePage() {
   // top-to-bottom so the browser print dialog gets the entire file in one
   // continuous stream.
   if (printMode) {
+    // R7fq Track D — PrintShell (rendered inside PrintBody) now provides
+    // the SGRH/Max-style triple-zone header, the patient-info strip and
+    // the footer with digital-signature stamp + terms. PrintLetterhead
+    // (R7eo) and PrintFooter (R7eo) are intentionally NOT invoked here
+    // anymore so a single page doesn't double-stamp the header / repeat
+    // the footer. Their function definitions remain in the file (still
+    // referenced by no one) — left in place to keep the patch surgical
+    // and to make a quick revert one-line if PrintShell turns out to
+    // miss anything those custom blocks covered.
     return (
       <div className={`pf-page pf-print-mode pf-tint--${role === "nurse" ? "nurse" : "doctor"}`}>
-        <PrintLetterhead patient={patient} currentAdmission={currentAdmission} role={role} hs={hospitalSettings} />
-        <PrintBody data={data} docInitial={docInitial} nurseInitial={nurseInitial} docOther={docOther} nurseOther={nurseOther} viewerRole={viewerRole} />
-        <PrintFooter uhid={uhid} role={role} hs={hospitalSettings} />
+        <PrintBody
+          data={data}
+          docInitial={docInitial}
+          nurseInitial={nurseInitial}
+          docOther={docOther}
+          nurseOther={nurseOther}
+          viewerRole={viewerRole}
+          patient={patient}
+          hospitalSettings={hospitalSettings}
+          viewerName={user?.name || user?.fullName || ""}
+          role={role}
+          uhid={uhid}
+        />
       </div>
     );
   }

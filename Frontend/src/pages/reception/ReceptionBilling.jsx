@@ -29,6 +29,15 @@ import ActivePatientDirectory from "../../Components/ActivePatientDirectory";
 import "./reception-shared.css";
 // R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
 import { toMoney } from "../../utils/money";
+// R7fq Track B — shared NABH-style print frame. The consolidated Final
+// Bill (R7an: OPD + Day Care + ER + Services in one print) previously
+// duplicated the hospital-logo masthead inline; every Hospital Settings
+// edit drifted from every other printable until someone hand-synced.
+// buildPrintShellHtml returns the full <!doctype>…</html> string with
+// hospital header, patient strip, banners, signature zone, disclaimer
+// + footer baked in; callers only own the body slot.
+import { buildPrintShellHtml } from "../../templates/PrintShell";
+import { amountInWords } from "../../Components/print/amountWords";
 import { confirm } from "../../Components/common/ConfirmDialog";
 
 const fmtCur  = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;

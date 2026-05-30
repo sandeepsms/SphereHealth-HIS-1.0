@@ -1,0 +1,376 @@
+/* ─────────────────────────────────────────────────────────────────
+   PrintShell — shared NABH-style print frame
+   Consumed by every print template in the HIS (bills, advance receipts,
+   refund slips, prescriptions, lab requisitions, discharge summaries…)
+   via Frontend/src/templates/PrintShell.jsx (both React + HTML helper).
+
+   Visual references: scanned prints from Sir Ganga Ram, Max Saket,
+   Tirath Ram Shah hospitals.  Triple-zone header, bordered title bar,
+   2-col demographics strip, role-aware signature zone, banners,
+   disclaimer, page metadata, rich footer.
+
+   All sizes in px (A4 @96dpi = 794×1123).
+   ───────────────────────────────────────────────────────────────── */
+
+@page { size: A4; margin: 12mm; }
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: 'DM Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  color: #1f2937;
+  background: #ffffff;
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.pf-page {
+  width: 794px;
+  margin: 0 auto;
+  padding: 14px 18px 18px;
+  position: relative;
+}
+
+/* ── 1. Triple-zone header ───────────────────────────────────── */
+.pf-header {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 8px;
+}
+
+.pf-header-left,
+.pf-header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+}
+
+.pf-header-left  { align-items: flex-start; text-align: left; }
+.pf-header-right { align-items: flex-end;   text-align: right; }
+
+.pf-logo {
+  max-height: 60px;
+  max-width: 140px;
+  object-fit: contain;
+}
+
+.pf-nabh-logo {
+  max-height: 50px;
+  max-width: 110px;
+  object-fit: contain;
+}
+
+.pf-tagline-side {
+  font-size: 9px;
+  color: #4b5563;
+  font-style: italic;
+  letter-spacing: 0.2px;
+}
+
+.pf-header-center {
+  text-align: center;
+}
+
+.pf-hospital-name {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--pf-header-color, #1e3a8a);
+  margin: 0;
+  line-height: 1.1;
+}
+
+.pf-tagline-main {
+  font-size: 10px;
+  font-style: italic;
+  color: #6b7280;
+  margin-top: 3px;
+}
+
+.pf-nabh-caption {
+  font-size: 8px;
+  letter-spacing: 0.5px;
+  color: #4b5563;
+  text-transform: uppercase;
+}
+
+.pf-nabh-cert {
+  font-size: 8px;
+  color: #6b7280;
+}
+
+/* ── 2. Header divider ──────────────────────────────────────── */
+.pf-header-divider {
+  border-bottom: 2px solid var(--pf-header-color, #1e3a8a);
+  margin-bottom: 10px;
+}
+
+/* ── 3. Title bar ────────────────────────────────────────────── */
+.pf-title-bar {
+  border-top: 1px solid #1f2937;
+  border-bottom: 1px solid #1f2937;
+  padding: 6px 8px;
+  text-align: center;
+  margin: 8px 0 10px;
+}
+
+.pf-title {
+  font-size: 15px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #111827;
+}
+
+.pf-subtitle {
+  font-size: 10px;
+  color: #4b5563;
+  margin-top: 2px;
+}
+
+/* ── 4. Patient demographics strip ───────────────────────────── */
+.pf-patient {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 24px;
+  padding: 6px 4px 10px;
+  border-bottom: 1px dashed #cbd5e1;
+  margin-bottom: 10px;
+}
+
+.pf-kv {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.pf-kv-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.pf-kv-value {
+  font-size: 11px;
+  color: #111827;
+  font-weight: 500;
+}
+
+/* ── 5. Body wrapper ─────────────────────────────────────────── */
+.pf-body {
+  padding: 4px 2px 12px;
+  min-height: 200px;
+}
+
+.pf-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.pf-body th,
+.pf-body td {
+  padding: 5px 6px;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+  vertical-align: top;
+}
+
+.pf-body th {
+  background: #f3f4f6;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: #374151;
+}
+
+/* ── 6. Signature zone ───────────────────────────────────────── */
+.pf-sig-zone {
+  margin-top: 24px;
+  position: relative;
+  page-break-inside: avoid;
+}
+
+.pf-sig-double {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+}
+
+.pf-sig-single {
+  display: flex;
+  justify-content: center;
+}
+
+.pf-sig-prepared {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.pf-sig-block {
+  text-align: center;
+  padding-top: 30px;
+}
+
+.pf-sig-block.left  { text-align: left;  border-top: 1px solid #1f2937; padding-top: 4px; }
+.pf-sig-block.right { text-align: right; border-top: 1px solid #1f2937; padding-top: 4px; }
+.pf-sig-block.centre{ text-align: center;border-top: 1px solid #1f2937; padding-top: 4px; min-width: 240px; }
+
+.pf-sig-prepared .pf-sig-block { text-align: right; border-top: 1px solid #1f2937; padding-top: 4px; min-width: 220px; }
+
+.pf-sig-name {
+  font-weight: 600;
+  font-size: 11px;
+  color: #111827;
+}
+
+.pf-sig-role {
+  font-size: 9px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.pf-sig-reg {
+  font-size: 9px;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.pf-sig-prepared-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.pf-attested {
+  position: absolute;
+  right: 10px;
+  bottom: 36px;
+  width: 80px;
+  height: 80px;
+  border: 2px solid #b91c1c;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #b91c1c;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  transform: rotate(-12deg);
+  opacity: 0.85;
+  text-transform: uppercase;
+}
+
+/* ── 7. Banners ──────────────────────────────────────────────── */
+.pf-banners {
+  margin: 12px 0 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pf-banner {
+  padding: 5px 10px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.pf-banner-emergency {
+  background: #fee2e2;
+  color: #991b1b;
+  border-left: 3px solid #b91c1c;
+}
+
+.pf-banner-home {
+  background: #dcfce7;
+  color: #166534;
+  border-left: 3px solid #16a34a;
+}
+
+.pf-banner-custom {
+  background: #fef9c3;
+  color: #854d0e;
+  border-left: 3px solid #ca8a04;
+}
+
+/* ── 8. Disclaimer ───────────────────────────────────────────── */
+.pf-disclaimer {
+  font-size: 9px;
+  font-style: italic;
+  color: #6b7280;
+  text-align: center;
+  margin: 8px 0 4px;
+}
+
+/* ── 9. Print metadata strip ─────────────────────────────────── */
+.pf-meta-strip {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  font-size: 9px;
+  color: #6b7280;
+  padding: 4px 0;
+  border-top: 1px dashed #cbd5e1;
+  margin-top: 4px;
+}
+
+.pf-meta-strip > :nth-child(1) { text-align: left; }
+.pf-meta-strip > :nth-child(2) { text-align: center; }
+.pf-meta-strip > :nth-child(3) { text-align: right; }
+
+/* ── 10. Footer ──────────────────────────────────────────────── */
+.pf-footer {
+  border-top: 1px solid #9ca3af;
+  padding-top: 6px;
+  margin-top: 6px;
+  text-align: center;
+  font-size: 9px;
+  color: #4b5563;
+  line-height: 1.5;
+}
+
+.pf-footer-address {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.pf-footer-line {
+  margin-top: 2px;
+}
+
+.pf-footer-line a { color: inherit; text-decoration: none; }
+
+/* ── Print rules ─────────────────────────────────────────────── */
+@media print {
+  html, body { background: #fff; }
+  .pf-page { padding: 0; width: auto; }
+  .pf-no-print { display: none !important; }
+  .pf-page-break { page-break-before: always; }
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+  tr, td, th { page-break-inside: avoid; }
+}
+
+@media screen {
+  body { background: #e5e7eb; padding: 20px 0; }
+  .pf-page {
+    background: #fff;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    min-height: 1123px;
+  }
+}

@@ -8,6 +8,11 @@ import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
 // R7cb-C: hospital settings for the printed note header.
 import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
+// R7fq Track C: shared print shell — replaces inline hospital header/footer
+// HTML in printNote() with a SGRH-style triple-zone header + 2-col patient
+// strip + role-aware signature zone. The doctor-note body (SOAP grid +
+// vitals + noteDetails recursion from R7fp) goes in bodyHtml.
+import { buildPrintShellHtml } from "@/templates/PrintShell";
 import "../../Components/clinical/clinical-forms.css";
 // Roadmap follow-up — new dnp-* design system for the recorded-notes
 // timeline. Form modals + save/sign flow remain untouched.
@@ -1154,47 +1159,76 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
       ? `<div style="margin-top:20px;padding:10px 14px;border:1px solid #bbf7d0;border-radius:8px;background:#f0fdf4;display:flex;align-items:center;gap:10px"><div><strong style="color:#15803d;font-size:12px">✓ SIGNED & SUBMITTED</strong><br/><span style="font-size:11px;color:#166534">By: ${note.doctorName||doctorName} ${note.doctorRegNo ? "· Reg: "+note.doctorRegNo : ""} · ${note.signedAt ? new Date(note.signedAt).toLocaleString("en-IN") : noteDate}</span></div></div>`
       : `<div style="margin-top:20px;padding:8px 12px;border:1px solid #fde68a;border-radius:8px;background:#fffbeb"><strong style="color:#d97706;font-size:12px">DRAFT — Not yet signed</strong></div>`;
 
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Doctor Note — ${pName}</title>
-<style>body{font-family:'Segoe UI',Arial,sans-serif;color:#0f172a;margin:0;padding:0}@media print{.no-print{display:none!important}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head>
-<body>
-<!-- Print Header -->
-<div style="background:linear-gradient(135deg,#1e40af,#2563eb);color:white;padding:16px 24px;display:flex;align-items:center;justify-content:space-between">
-  <div>
-    <div style="font-size:18px;font-weight:800;letter-spacing:-.3px">${escapeHtml(hs.hospitalName || "Hospital")}</div>
-    <div style="font-size:11px;opacity:.8">${escapeHtml(hs.tagline || "Clinical Documentation")}</div>
-  </div>
-  <div style="text-align:right;font-size:11px;opacity:.85">
-    <div>Printed: ${new Date().toLocaleString("en-IN")}</div>
-    <div>Confidential — Medical Record</div>
-  </div>
-</div>
-
-<!-- Patient Header -->
-<div style="background:#f8fafc;border-bottom:2px solid #e2e8f0;padding:12px 24px;display:flex;gap:30px;flex-wrap:wrap">
-  <div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;font-weight:700">Patient</div><div style="font-size:14px;font-weight:800">${pName}</div></div>
-  <div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;font-weight:700">UHID</div><div style="font-size:13px;font-weight:700;font-family:monospace">${uhid}</div></div>
-  <div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;font-weight:700">IPD No.</div><div style="font-size:13px;font-weight:700;font-family:monospace">${ipd}</div></div>
-  <div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;font-weight:700">Ward / Bed</div><div style="font-size:12px;font-weight:600">${ward}</div></div>
-  <div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;font-weight:700">Note Date</div><div style="font-size:12px;font-weight:600">${noteDate}</div></div>
-  <div><div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;font-weight:700">Shift</div><div style="font-size:12px;font-weight:700;text-transform:capitalize">${shift}</div></div>
-</div>
-
-<!-- Note Body -->
-<div style="padding:20px 24px">
+    // R7fq Track C — body block (status pill row + clinical sections).
+    // The hospital header / patient strip / sig zone / footer are now
+    // owned by the shared <PrintShell>; only the medical content lives
+    // here. SOAP grid + vitals + noteDetails recursion from R7fp are
+    // preserved verbatim.
+    const noteBodyHtml = `
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
     <div style="padding:5px 14px;border-radius:6px;font-size:13px;font-weight:800;background:#eff6ff;color:#1e40af">${modLabel}</div>
     <div style="padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:${note.status==="signed"?"#dcfce7":"#fffbeb"};color:${note.status==="signed"?"#16a34a":"#d97706"}">${note.status==="signed"?"✓ SIGNED":"DRAFT"}</div>
     ${note.isCritical ? '<div style="padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:#fef2f2;color:#dc2626">⚠ CRITICAL EVENT</div>' : ""}
-    <div style="margin-left:auto;font-size:12px;color:#64748b">Doctor: <strong>${note.doctorName||doctorName}</strong>${note.doctorRegNo ? " · Reg: "+note.doctorRegNo : ""}</div>
+    <div style="margin-left:auto;font-size:12px;color:#64748b">Shift: <strong style="text-transform:capitalize">${shift}</strong> · Recorded: ${noteDate}</div>
   </div>
 
-  ${vitalsHtml}${soapHtml}${diagHtml}${invHtml}${ordersHtml}${medOrdersHtml}${infOrdersHtml}${tagsHtml}${noteDetailsHtml}${sigHtml}
-</div>
-<div class="no-print" style="padding:16px 24px;border-top:1px solid #e2e8f0;display:flex;gap:10px">
-  <button onclick="window.print()" style="padding:9px 24px;background:#1e40af;color:white;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">🖨 Print</button>
-  <button onclick="window.close()" style="padding:9px 20px;background:white;color:#64748b;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;cursor:pointer">Close</button>
-</div>
-</body></html>`;
+  ${vitalsHtml}${soapHtml}${diagHtml}${invHtml}${ordersHtml}${medOrdersHtml}${infOrdersHtml}${tagsHtml}${noteDetailsHtml}${sigHtml}`;
+
+    // Consultant / Resident split for the signature zone:
+    //   - Right = Consultant (note.doctorName or current doctor of record)
+    //   - Left  = Resident (signedBy if different from consultant, else falls back)
+    // If no Consultant is recorded fall back to "single" stamp with the
+    // current doctor (matches the contract's fallback rule).
+    const consultantName = note.doctorName || doctorName || "";
+    const consultantReg  = note.doctorRegNo || doctorRegNo || "";
+    const residentName   = note.signedByName && note.signedByName !== consultantName
+      ? note.signedByName : "";
+    const sigSpec = consultantName
+      ? {
+          type: "double",
+          left:  { name: residentName || "", role: "Resident Doctor", reg: "" },
+          right: { name: consultantName, role: "Consultant", reg: consultantReg },
+        }
+      : {
+          type: "single",
+          centre: { name: doctorName || "—", role: "Doctor", reg: doctorRegNo || "" },
+        };
+
+    // Pull a department for the subtitle if available on patient / note.
+    const _dept = patient?.department || patient?.attendingDoctorDept || note?.department || "";
+
+    const html = buildPrintShellHtml({
+      hospital: hs,
+      docTitle: `Doctor Note — ${modLabel}`,
+      docSubtitle: _dept ? `Department of ${_dept}` : "Clinical Documentation",
+      patient: {
+        left: [
+          { label: "Reg. No",      value: uhid },
+          { label: "Patient Name", value: pName },
+          { label: "Age",          value: patient?.age || patient?.patientId?.age || "—" },
+          { label: "Sex",          value: patient?.gender || patient?.patientId?.gender || "—" },
+          { label: "Contact",      value: patient?.contactNumber || patient?.patientId?.contactNumber || "—" },
+          { label: "Address",      value: patient?.completeAddress || patient?.patientId?.completeAddress || "—" },
+        ],
+        right: [
+          { label: "Episode No",          value: ipd },
+          { label: "DOA",                 value: patient?.admissionDate
+              ? new Date(patient.admissionDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+              : "—" },
+          { label: "Note Date",           value: noteDate },
+          { label: "Ward",                value: _wn || "—" },
+          { label: "Admitting Consultant", value: patient?.attendingDoctor || consultantName || "—" },
+          { label: "Bed",                 value: _bn || "—" },
+        ],
+      },
+      signatures: sigSpec,
+      banners: { emergency24x7: true, homeCare: false },
+      meta: {
+        docNumber: note._id || ipd,
+        pageOf: "Page 1 of 1",
+      },
+      bodyHtml: noteBodyHtml,
+    });
 
     const w = window.open("", "_blank", "width=900,height=700");
     if (w) { w.document.write(html); w.document.close(); }
