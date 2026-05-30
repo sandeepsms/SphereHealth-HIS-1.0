@@ -1665,47 +1665,91 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           },
         } : prev);
       }
-      // R7fj-HIGH-2: PATCH Patient.allergies so PatientHeaderCard's
-      // banner, drug-allergy gate, and Pharmacy/MAR cross-checks pick
-      // up the structured allergy list at sign-off. We MERGE nurse +
-      // doctor agents so a cross-check captured by either party lands
-      // on the patient record. Non-blocking — banner is convenience,
-      // not a hard constraint; failure to patch shouldn't fail save.
+      // R7fj-HIGH-2 + R7fl: PATCH Patient.allergyList so PatientHeaderCard's
+      // banner, drug-allergy gate, and Pharmacy/MAR cross-checks pick up the
+      // structured allergy list at sign-off. We MERGE nurse + doctor agents
+      // so a cross-check captured by either party lands on the patient
+      // record. Non-blocking — banner is convenience, not a hard constraint;
+      // failure to patch shouldn't fail save.
+      //
+      // R7fl-FIX: previously PATCHed `{allergies: [...]}` but `allergies` is
+      // a Mongoose VIRTUAL (read-only) on PatientSchema — Mongo silently
+      // dropped the write and the legacy `knownAllergies` string (e.g.
+      // "Nill" from registration) kept feeding the virtual via fallback,
+      // so the banner never updated. We now PATCH the real schema path
+      // `allergyList[]` with the canonical shape:
+      //   { allergen, severity (enum UPPER), type (enum UPPER), recordedBy }
+      // and rewrite `knownAllergies` to a human summary so legacy displays
+      // that still read the string field stay in sync. This is an
+      // array-REPLACE (Mongo `$set`) so legacy seed rows are wiped.
       if (sign && patient?._id) {
         try {
-          const mergedAllergies = [];
+          const SEV_ENUM  = new Set(["MILD","MODERATE","SEVERE","ANAPHYLAXIS","UNKNOWN"]);
+          const TYPE_ENUM = new Set(["DRUG","FOOD","OTHER"]);
+          const normSev   = (s) => {
+            const u = String(s || "").trim().toUpperCase();
+            return SEV_ENUM.has(u) ? u : "UNKNOWN";
+          };
+          const normType  = (t) => {
+            const u = String(t || "").trim().toUpperCase();
+            return TYPE_ENUM.has(u) ? u : "DRUG";
+          };
+
+          const mergedAllergyList = [];
           const seen = new Set();
           const addRow = (a, source) => {
-            const k = (a?.agent || "").toLowerCase().trim();
+            const k = String(a?.agent || "").toLowerCase().trim();
             if (!k || seen.has(k)) return;
             seen.add(k);
-            mergedAllergies.push({
-              type:     a.type || "Drug",
-              agent:    a.agent,
-              severity: a.severity || "Unknown",
-              reaction: a.reaction || "",
-              source,   // 'doctor' | 'nurse' (for audit)
-              capturedAt: new Date().toISOString(),
+            mergedAllergyList.push({
+              allergen:   a.agent,                       // schema field name
+              severity:   normSev(a.severity),           // SEVERE / MODERATE / MILD / ANAPHYLAXIS / UNKNOWN
+              type:       normType(a.type),              // DRUG / FOOD / OTHER
+              recordedBy: `${source} — IPD Initial Assessment`,
+              // recordedAt defaults server-side
             });
           };
-          (allergyList || []).forEach(a => addRow(a, "doctor"));
+          (allergyList      || []).forEach(a => addRow(a, "doctor"));
           (nurseAllergyList || []).forEach(a => addRow(a, "nurse"));
 
-          if (mergedAllergies.length > 0 || noKnownAllergies || nurseNoKnownAllergies) {
-            await axios.patch(
-              `${API_ENDPOINTS.PATIENTS}/${patient._id}`,
-              {
-                allergies: mergedAllergies,
-                noKnownAllergies: !!(noKnownAllergies || nurseNoKnownAllergies) && mergedAllergies.length === 0,
-              },
-            ).catch(() => {}); // legacy patient endpoints may use PUT; suppress 404/405
-            // Try PUT as fallback (some deployments)
+          const nkda = !!(noKnownAllergies || nurseNoKnownAllergies) && mergedAllergyList.length === 0;
+
+          // Build a human-readable summary string for `knownAllergies` so
+          // any legacy view that still reads the string field shows the
+          // same data. Wipe to empty string when NKDA so the registration
+          // placeholder ("Nill" / "None" / etc.) is cleared.
+          const knownAllergiesSummary = nkda
+            ? ""
+            : mergedAllergyList
+                .map(r => `${r.allergen} (${r.severity})`)
+                .join(", ");
+
+          if (mergedAllergyList.length > 0 || nkda) {
+            // PUT is the canonical patient update verb in this codebase.
+            // findByIdAndUpdate with $set: { allergyList } REPLACES the
+            // array (clears legacy seed rows). Wrapped in try/catch so a
+            // 403 (missing patient.write-clinical) or 4xx doesn't fail
+            // the assessment save.
             try {
               await axios.put(
                 `${API_ENDPOINTS.PATIENTS}/${patient._id}`,
-                { allergies: mergedAllergies, noKnownAllergies: mergedAllergies.length === 0 && (noKnownAllergies || nurseNoKnownAllergies) },
-              ).catch(() => {});
-            } catch (_) {}
+                {
+                  allergyList:     mergedAllergyList,
+                  knownAllergies:  knownAllergiesSummary,
+                },
+              );
+            } catch (e) {
+              // Fallback: try PATCH in case a deployment routes PATCH separately.
+              try {
+                await axios.patch(
+                  `${API_ENDPOINTS.PATIENTS}/${patient._id}`,
+                  {
+                    allergyList:    mergedAllergyList,
+                    knownAllergies: knownAllergiesSummary,
+                  },
+                );
+              } catch (_) { /* non-fatal */ }
+            }
           }
         } catch (_) { /* non-fatal */ }
       }
