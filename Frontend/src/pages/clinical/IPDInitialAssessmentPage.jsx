@@ -465,11 +465,113 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   const [dietAdvice, setDietAdvice]     = useState("");
   const [activityAdvice, setActivityAdvice] = useState("");
 
+  /* ══ R7fb · DOCTOR P0 NABH FIELDS (D1-D9) ══════════════════════
+     Adds the NABH AAC.1 / COP.1 / AAC.4 fields that were missing
+     when the doctor block was first uncovered (R7ey-F80). Each
+     state group maps 1:1 to a section below — keep them aligned. */
+  // D1 · Chief Complaint (distinct from HPI per NABH AAC.1)
+  const [docCC, setDocCC]               = useState("");
+  const [ccDuration, setCcDuration]     = useState("");
+  // D2 · Structured Allergies (replaces old single docAllergy textarea)
+  const [allergyList, setAllergyList]   = useState([]); // [{type, agent, severity, reaction}]
+  const [noKnownAllergies, setNoKnownAllergies] = useState(false);
+  // D3 · Medication Reconciliation (drugs patient was taking at home)
+  const [medRecon, setMedRecon]         = useState([]); // [{drug, dose, frequency, lastTaken, continueOnAdmit}]
+  // D4 · Working Diagnosis + Differential Diagnoses (3-tier per AAC.1)
+  const [workingDx, setWorkingDx]       = useState("");
+  const [differentialDx, setDifferentialDx] = useState(""); // freeform list, one per line
+  // D5 · Co-morbidity structured checklist
+  const [comorbid, setComorbid]         = useState({
+    diabetes: false, hypertension: false, cad: false, ckd: false, copd: false,
+    asthma: false, liverDx: false, cancer: false, stroke: false, mentalHealth: false,
+    hypothyroid: false, hiv: false, hepB: false, hepC: false, other: "",
+  });
+  // D6 · Code Status (NABH AAC.4 / ROP.1)
+  const [codeStatus, setCodeStatus]     = useState("FULL_CODE"); // FULL_CODE | DNR | DNI | LIMITED
+  const [codeStatusDiscussedWith, setCodeStatusDiscussedWith] = useState("");
+  const [codeStatusLimitations, setCodeStatusLimitations] = useState("");
+  // D7 · Estimated Length of Stay + Goal of Care (AAC.4 discharge planning Day 1)
+  const [elosDays, setElosDays]         = useState("");
+  const [goalOfCare, setGoalOfCare]     = useState(""); // curative | palliative | supportive | rehabilitative
+  // D8 · Doctor's risk acknowledgement (independent of nurse capture)
+  const [docRiskAck, setDocRiskAck]     = useState({
+    fall: { acknowledged: false, plan: "" },
+    dvt:  { acknowledged: false, score: "", plan: "" }, // Caprini score moved here per audit
+    ulcer:{ acknowledged: false, plan: "" },
+    pain: { acknowledged: false, plan: "" },
+  });
+  // D9 · Review of Systems (brief checklist with "NAD" default)
+  const [ros, setRos]                   = useState({
+    constitutional: "NAD", cardiac: "NAD", respiratory: "NAD", gi: "NAD",
+    gu: "NAD", musculoskeletal: "NAD", neuro: "NAD", skin: "NAD",
+    endocrine: "NAD", psych: "NAD",
+  });
+
+  /* ══ R7fc · NURSE P0 NABH FIELDS (N1-N10) ══════════════════════ */
+  // N1 · Identification Band Check (PSQ.1 two-identifier verification)
+  const [idBand, setIdBand]             = useState({
+    bandAttached: false, nameVerified: false, uhidVerified: false,
+    dobVerified: false, verifiedBy: "",
+  });
+  // N2 · Independent nursing allergy capture (cross-check with doctor)
+  const [nurseAllergyList, setNurseAllergyList] = useState([]); // same shape as allergyList
+  const [nurseNoKnownAllergies, setNurseNoKnownAllergies] = useState(false);
+  // N3 · Brief PMH + home medications (independent reconciliation)
+  const [nurseBriefPmh, setNurseBriefPmh] = useState("");
+  const [homeMeds, setHomeMeds]         = useState([]); // [{drug, dose, frequency, lastTaken}]
+  // N4 · Anthropometry
+  const [anthropo, setAnthropo]         = useState({ heightCm: "", weightKg: "", bmi: "" });
+  // N5 · Psychosocial assessment
+  const [psychosocial, setPsychosocial] = useState({
+    emotionalState: "Calm",   // Calm | Anxious | Depressed | Agitated | Withdrawn
+    moodAffect: "",
+    languagePreferred: "Hindi",
+    familySupport: "Adequate",  // Adequate | Limited | Absent
+    notes: "",
+  });
+  // N6 · Functional / ADL (Barthel Index — 10 items, 0-100 scale)
+  const [barthel, setBarthel]           = useState({
+    feeding: 10, bathing: 5, grooming: 5, dressing: 10, bowels: 10,
+    bladder: 10, toilet: 10, transfer: 15, mobility: 15, stairs: 10,
+  });
+  // N7 · Body chart / wound diagram (freeform per region for now)
+  const [bodyChart, setBodyChart]       = useState({
+    headNeck: "", chestBack: "", abdomenGroin: "", upperLimbs: "",
+    lowerLimbs: "", existingWounds: "", existingBruises: "",
+  });
+  // N8 · Discharge planning needs (initiated Day 1 per AAC.4)
+  const [dischargePlan, setDischargePlan] = useState({
+    homeSupport: "",       // Lives with family / alone / institution
+    primaryCaregiver: "",
+    equipmentNeeded: [],   // checkboxes: walker / wheelchair / oxygen / commode / hospital-bed
+    transportNeed: "",
+    anticipatedBarriers: "",
+  });
+  // N9 · Education needs assessment (AAC.6 + PRE.5)
+  const [educationNeeds, setEducationNeeds] = useState({
+    canRead: true, canWrite: true,
+    preferredLanguage: "Hindi",
+    learningStyle: "Verbal",     // Verbal | Written | Demonstration | Mixed
+    barriersToLearning: "",
+    targetAudience: "Self",      // Self | Spouse | Parent | Adult-child | LAR
+  });
+  // N10 · Special precautions (links to existing Restraint/Isolation registers)
+  const [precautions, setPrecautions]   = useState({
+    isolation: { required: false, type: "" }, // Contact | Droplet | Airborne | Protective
+    restraints: { required: false, type: "", reason: "" },
+    suicide: false, fallPrecaution: false, aspiration: false, bleed: false,
+    seizure: false, mri: false, latex: false,
+  });
+
   /* ── Auto-save draft ── */
   const draftKey = patient?._id ? `sphere_draft_ipd_initial_${patient._id}` : null;
   const { savedAt, hasDraft, clearDraft } = useAutoSave(
     draftKey,
-    { admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit, consciousnessLevel, mobility, allergy, chiefComplaint, vitals, painPresent, painScore, painLocation, painCharacter, devices, skinIntact, skinNotes, morse, braden, nutri, vte, nursingProblems, nursingGoals, nursingNotes, doctorName, regNo, hopi, pmh, psh, famHx, socHx, docAllergy, genExam, cvs, rs, abdomen, cns, provDx, finalDx, icd10, investigations, rxRows, treatmentPlan, followupNotes, dietAdvice, activityAdvice },
+    { admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit, consciousnessLevel, mobility, allergy, chiefComplaint, vitals, painPresent, painScore, painLocation, painCharacter, devices, skinIntact, skinNotes, morse, braden, nutri, vte, nursingProblems, nursingGoals, nursingNotes, doctorName, regNo, hopi, pmh, psh, famHx, socHx, docAllergy, genExam, cvs, rs, abdomen, cns, provDx, finalDx, icd10, investigations, rxRows, treatmentPlan, followupNotes, dietAdvice, activityAdvice,
+      // R7fb · doctor P0 fields
+      docCC, ccDuration, allergyList, noKnownAllergies, medRecon, workingDx, differentialDx, comorbid, codeStatus, codeStatusDiscussedWith, codeStatusLimitations, elosDays, goalOfCare, docRiskAck, ros,
+      // R7fc · nurse P0 fields
+      idBand, nurseAllergyList, nurseNoKnownAllergies, nurseBriefPmh, homeMeds, anthropo, psychosocial, barthel, bodyChart, dischargePlan, educationNeeds, precautions },
     2000
   );
   const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
@@ -569,7 +671,10 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
     status,
     assessmentDate: new Date().toISOString(),
     section, // "nursing" | "doctor" | "both"
-    formData: {
+    // R7fb/R7fc — DoctorNotes schema is strict; the only catch-all field is
+    // `noteDetails` (Mixed). Pack the entire role-specific form data here so
+    // the new NABH P0 fields persist instead of being silently dropped.
+    noteDetails: {
       nursing: {
         admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit,
         consciousnessLevel, mobility, allergy, chiefComplaint,
@@ -587,6 +692,32 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         provDx, finalDx, icd10, investigations,
         rxRows: rxRows.filter(r => r.drug.trim()),
         treatmentPlan, followupNotes, dietAdvice, activityAdvice,
+        // R7fb — doctor P0 NABH fields (AAC.1 / COP.1 / AAC.4)
+        nabh: {
+          chiefComplaint: docCC, ccDuration,
+          allergies: { list: allergyList, noKnown: noKnownAllergies },
+          medicationReconciliation: medRecon,
+          workingDx, differentialDx,
+          comorbidities: comorbid,
+          codeStatus: { value: codeStatus, discussedWith: codeStatusDiscussedWith, limitations: codeStatusLimitations },
+          elosDays, goalOfCare,
+          riskAcknowledgement: docRiskAck,
+          reviewOfSystems: ros,
+        },
+      },
+      // R7fc — nurse P0 NABH fields (AAC.1 / AAC.4 / IPC / PSQ)
+      nursingNabh: {
+        identification: idBand,
+        allergies: { list: nurseAllergyList, noKnown: nurseNoKnownAllergies },
+        briefPmh: nurseBriefPmh,
+        homeMedications: homeMeds,
+        anthropometry: anthropo,
+        psychosocial,
+        adlBarthel: { ...barthel, total: Object.values(barthel).reduce((s, v) => s + Number(v || 0), 0) },
+        bodyChart,
+        dischargePlanning: dischargePlan,
+        educationNeeds,
+        specialPrecautions: precautions,
       },
     },
   });
@@ -1002,53 +1133,404 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             </div>
           </Section>
 
-          {/* ── VTE Risk — Caprini ── */}
-          <Section title="VTE Risk Assessment (Caprini Score)" icon="pi-wave-pulse" color={C.red} badge="NABH Required">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 20, alignItems: "start" }}>
-              <div>
-                {VTE_GROUPS.map(grp => (
-                  <div key={grp.group} style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase",
-                      letterSpacing: ".7px", marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                      {grp.group}
-                      <span style={{ background: C.redL, color: C.red, padding: "1px 7px",
-                        borderRadius: 4, fontSize: 10, fontWeight: 800 }}>
-                        +{VTE_POINTS[grp.group]} each
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 12px" }}>
-                      {grp.items.map(item => (
-                        <label key={item.key} style={{
-                          display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
-                          padding: "4px 10px", borderRadius: 6,
-                          border: `1.5px solid ${vte[item.key] ? C.red : C.border}`,
-                          background: vte[item.key] ? C.redL : "white",
-                          fontWeight: vte[item.key] ? 700 : 400, fontSize: 12,
-                          color: vte[item.key] ? C.red : C.muted,
-                        }}>
-                          <input type="checkbox" checked={!!vte[item.key]}
-                            onChange={e => setVte(v => ({ ...v, [item.key]: e.target.checked }))}
-                            style={{ accentColor: C.red, width: 13, height: 13 }} />
-                          {item.label}
-                        </label>
+          {/* R7fc · Caprini VTE removed from nursing — DVT/VTE is a
+              medico-decisional assessment (drives anticoagulation
+              prescribing). Moved to Doctor's "Care Decisions → Risk
+              Acknowledgement → DVT" row, which now carries the Caprini
+              score + plan. Nurses continue to flag suspected DVT in
+              vitals + ongoing observations as before. */}
+
+          {/* ══════════════════════════════════════════════════════════
+              R7fc · NURSE P0 NABH FIELDS (N1-N10)
+              Inserted between the risk-scale block and the care-plan
+              block so all the nursing P0 items live together. Each new
+              section is tagged with the NABH chapter that requires it,
+              so an inspector can map field → standard at a glance.
+              ══════════════════════════════════════════════════════════ */}
+
+          {/* ── N1 · Patient Identification (PSQ.1 two-identifier) ── */}
+          <Section title="Patient Identification" icon="pi-id-card" color={C.teal} badge="NABH PSQ.1">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12, fontSize: 12 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input type="checkbox" checked={idBand.bandAttached}
+                  onChange={e => setIdBand(b => ({ ...b, bandAttached: e.target.checked }))} />
+                ID band physically attached to patient
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input type="checkbox" checked={idBand.nameVerified}
+                  onChange={e => setIdBand(b => ({ ...b, nameVerified: e.target.checked }))} />
+                Name verified with patient / family
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input type="checkbox" checked={idBand.uhidVerified}
+                  onChange={e => setIdBand(b => ({ ...b, uhidVerified: e.target.checked }))} />
+                UHID matches admission paper
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input type="checkbox" checked={idBand.dobVerified}
+                  onChange={e => setIdBand(b => ({ ...b, dobVerified: e.target.checked }))} />
+                DOB / age verified with patient
+              </label>
+            </div>
+            <Field label="Verified by (nurse name)" style={{ marginTop: 10 }}>
+              <input value={idBand.verifiedBy} onChange={e => setIdBand(b => ({ ...b, verifiedBy: e.target.value }))}
+                placeholder="Nurse who completed two-identifier check" className="his-field" />
+            </Field>
+          </Section>
+
+          {/* ── N4 · Anthropometry (drug dosing safety) ── */}
+          <Section title="Anthropometry" icon="pi-chart-bar" color={C.teal}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <Field label="Height (cm)">
+                <input type="number" value={anthropo.heightCm}
+                  onChange={e => {
+                    const h = e.target.value;
+                    const w = Number(anthropo.weightKg);
+                    const hM = Number(h) / 100;
+                    const bmi = (h && w && hM > 0) ? (w / (hM * hM)).toFixed(1) : "";
+                    setAnthropo(a => ({ ...a, heightCm: h, bmi }));
+                  }} placeholder="e.g. 168" className="his-field" />
+              </Field>
+              <Field label="Weight (kg)">
+                <input type="number" value={anthropo.weightKg}
+                  onChange={e => {
+                    const w = e.target.value;
+                    const h = Number(anthropo.heightCm) / 100;
+                    const bmi = (w && h > 0) ? (Number(w) / (h * h)).toFixed(1) : "";
+                    setAnthropo(a => ({ ...a, weightKg: w, bmi }));
+                  }} placeholder="e.g. 68" className="his-field" />
+              </Field>
+              <Field label="BMI (auto)">
+                <input value={anthropo.bmi} readOnly placeholder="—"
+                  className="his-field" style={{ background: "#f8fafc", fontWeight: 700 }} />
+              </Field>
+            </div>
+          </Section>
+
+          {/* ── N2 · Allergies (independent of doctor capture) ── */}
+          <Section title="Allergies (Nursing check)" icon="pi-shield" color={C.red} badge="NABH PSQ.4">
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: C.muted, cursor: "pointer" }}>
+                <input type="checkbox" checked={nurseNoKnownAllergies}
+                  onChange={e => { setNurseNoKnownAllergies(e.target.checked); if (e.target.checked) setNurseAllergyList([]); }} />
+                NKDA — No known drug allergies declared by patient / family
+              </label>
+            </div>
+            {!nurseNoKnownAllergies && (
+              <>
+                {nurseAllergyList.length > 0 && (
+                  <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 6, fontSize: 11.5 }}>
+                    <thead>
+                      <tr style={{ background: C.redL }}>
+                        {["Type", "Agent", "Severity", "Reaction", ""].map(h => (
+                          <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.red, textTransform: "uppercase", borderBottom: `1.5px solid ${C.red}30` }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {nurseAllergyList.map((a, i) => (
+                        <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                          <td style={{ padding: "6px 8px" }}>
+                            <select value={a.type || "Drug"} onChange={e => setNurseAllergyList(l => l.map((x, j) => j === i ? { ...x, type: e.target.value } : x))} className="his-field" style={{ padding: "4px 6px" }}>
+                              {["Drug", "Food", "Latex", "Contact", "Environmental", "Other"].map(t => <option key={t}>{t}</option>)}
+                            </select>
+                          </td>
+                          <td><input value={a.agent || ""} onChange={e => setNurseAllergyList(l => l.map((x, j) => j === i ? { ...x, agent: e.target.value } : x))} placeholder="Agent" className="his-field" style={{ padding: "4px 6px" }} /></td>
+                          <td>
+                            <select value={a.severity || "Mild"} onChange={e => setNurseAllergyList(l => l.map((x, j) => j === i ? { ...x, severity: e.target.value } : x))} className="his-field" style={{ padding: "4px 6px" }}>
+                              {["Mild", "Moderate", "Severe", "Anaphylaxis"].map(t => <option key={t}>{t}</option>)}
+                            </select>
+                          </td>
+                          <td><input value={a.reaction || ""} onChange={e => setNurseAllergyList(l => l.map((x, j) => j === i ? { ...x, reaction: e.target.value } : x))} placeholder="Reaction" className="his-field" style={{ padding: "4px 6px" }} /></td>
+                          <td>
+                            <button onClick={() => setNurseAllergyList(l => l.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}>
+                              <i className="pi pi-trash" style={{ fontSize: 12 }} />
+                            </button>
+                          </td>
+                        </tr>
                       ))}
-                    </div>
+                    </tbody>
+                  </table>
+                )}
+                <button onClick={() => setNurseAllergyList(l => [...l, { type: "Drug", agent: "", severity: "Mild", reaction: "" }])}
+                  style={{ padding: "5px 12px", border: `1.5px dashed ${C.red}60`, borderRadius: 6, background: C.redL, cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: C.red }}>
+                  <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add allergy
+                </button>
+              </>
+            )}
+          </Section>
+
+          {/* ── N3 · Brief PMH + Home Medications ── */}
+          <Section title="Brief History & Home Medications" icon="pi-list" color={C.purple} badge="NABH MOM">
+            <Field label="Past Medical History (brief — for nursing context)" style={{ marginBottom: 10 }}>
+              <textarea value={nurseBriefPmh} onChange={e => setNurseBriefPmh(e.target.value)}
+                placeholder="e.g. DM on insulin since 2018, HTN, post-MI 2022…"
+                className="his-textarea" style={{ minHeight: 56 }} />
+            </Field>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: C.muted, marginBottom: 6 }}>Home medications brought / declared</div>
+            {homeMeds.length > 0 && (
+              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 6, fontSize: 11.5 }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc" }}>
+                    {["Drug", "Dose", "Frequency", "Last taken", ""].map(h => (
+                      <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", borderBottom: `1.5px solid ${C.border}` }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {homeMeds.map((m, i) => (
+                    <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                      <td><input value={m.drug || ""} onChange={e => setHomeMeds(l => l.map((x, j) => j === i ? { ...x, drug: e.target.value } : x))} placeholder="Drug" className="his-field" style={{ padding: "4px 6px" }} /></td>
+                      <td><input value={m.dose || ""} onChange={e => setHomeMeds(l => l.map((x, j) => j === i ? { ...x, dose: e.target.value } : x))} placeholder="Dose" className="his-field" style={{ padding: "4px 6px" }} /></td>
+                      <td><input value={m.frequency || ""} onChange={e => setHomeMeds(l => l.map((x, j) => j === i ? { ...x, frequency: e.target.value } : x))} placeholder="OD/BD" className="his-field" style={{ padding: "4px 6px" }} /></td>
+                      <td><input value={m.lastTaken || ""} onChange={e => setHomeMeds(l => l.map((x, j) => j === i ? { ...x, lastTaken: e.target.value } : x))} placeholder="Date/Time" className="his-field" style={{ padding: "4px 6px" }} /></td>
+                      <td><button onClick={() => setHomeMeds(l => l.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}><i className="pi pi-trash" style={{ fontSize: 12 }} /></button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <button onClick={() => setHomeMeds(l => [...l, { drug: "", dose: "", frequency: "", lastTaken: "" }])}
+              style={{ padding: "5px 12px", border: `1.5px dashed ${C.purple}60`, borderRadius: 6, background: "#f5f3ff", cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: C.purple }}>
+              <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add home medicine
+            </button>
+          </Section>
+
+          {/* ── N5 · Psychosocial Assessment ── */}
+          <Section title="Psychosocial Assessment" icon="pi-heart" color={C.pink} badge="NABH AAC.1.b">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <Field label="Emotional state">
+                <select value={psychosocial.emotionalState} onChange={e => setPsychosocial(p => ({ ...p, emotionalState: e.target.value }))} className="his-field">
+                  {["Calm", "Anxious", "Depressed", "Agitated", "Withdrawn", "Confused"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+              <Field label="Family support">
+                <select value={psychosocial.familySupport} onChange={e => setPsychosocial(p => ({ ...p, familySupport: e.target.value }))} className="his-field">
+                  {["Adequate", "Limited", "Absent"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+              <Field label="Preferred language">
+                <select value={psychosocial.languagePreferred} onChange={e => setPsychosocial(p => ({ ...p, languagePreferred: e.target.value }))} className="his-field">
+                  {["Hindi", "English", "Punjabi", "Haryanvi", "Urdu", "Bengali", "Tamil", "Telugu", "Marathi", "Other"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+            </div>
+            <Field label="Mood / affect / additional notes" style={{ marginTop: 10 }}>
+              <textarea value={psychosocial.notes} onChange={e => setPsychosocial(p => ({ ...p, notes: e.target.value }))}
+                placeholder="Affect, suicidal ideation screening, recent loss, financial stress…"
+                className="his-textarea" style={{ minHeight: 56 }} />
+            </Field>
+          </Section>
+
+          {/* ── N6 · Functional / ADL (Barthel Index) ── */}
+          <Section title="Functional Assessment — Barthel ADL" icon="pi-check-square" color={C.teal} badge="NABH AAC.1.b">
+            {(() => {
+              const cfg = [
+                ["feeding", "Feeding", [[0,"Unable"],[5,"Needs help"],[10,"Independent"]]],
+                ["bathing", "Bathing", [[0,"Dependent"],[5,"Independent"]]],
+                ["grooming", "Grooming", [[0,"Needs help"],[5,"Independent"]]],
+                ["dressing", "Dressing", [[0,"Unable"],[5,"Needs help"],[10,"Independent"]]],
+                ["bowels", "Bowels", [[0,"Incontinent"],[5,"Occasional"],[10,"Continent"]]],
+                ["bladder", "Bladder", [[0,"Incontinent / catheterised"],[5,"Occasional"],[10,"Continent"]]],
+                ["toilet", "Toilet use", [[0,"Dependent"],[5,"Needs help"],[10,"Independent"]]],
+                ["transfer", "Transfer (bed↔chair)", [[0,"Unable"],[5,"Major help"],[10,"Minor help"],[15,"Independent"]]],
+                ["mobility", "Mobility (level surface)", [[0,"Immobile"],[5,"Wheelchair"],[10,"Walks with help"],[15,"Independent"]]],
+                ["stairs", "Stairs", [[0,"Unable"],[5,"Needs help"],[10,"Independent"]]],
+              ];
+              const total = cfg.reduce((s, [k]) => s + Number(barthel[k] || 0), 0);
+              return (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8, fontSize: 11.5 }}>
+                    {cfg.map(([k, label, opts]) => (
+                      <div key={k} style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 6, alignItems: "center" }}>
+                        <span style={{ fontWeight: 600, color: C.muted }}>{label}</span>
+                        <select value={barthel[k]} onChange={e => setBarthel(b => ({ ...b, [k]: Number(e.target.value) }))} className="his-field" style={{ padding: "4px 6px" }}>
+                          {opts.map(([v, lbl]) => <option key={v} value={v}>{v} — {lbl}</option>)}
+                        </select>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                  <div style={{ marginTop: 10, padding: "8px 12px", background: total >= 80 ? C.greenL : total >= 60 ? C.warnL : C.redL,
+                    border: `1.5px solid ${total >= 80 ? C.green : total >= 60 ? C.warn : C.red}30`, borderRadius: 8, fontSize: 12, fontWeight: 700, color: C.text }}>
+                    Total Barthel score: <strong>{total} / 100</strong>
+                    <span style={{ color: C.muted, marginLeft: 8, fontWeight: 500 }}>
+                      ({total >= 80 ? "Independent" : total >= 60 ? "Mild dependence" : total >= 40 ? "Moderate dependence" : total >= 20 ? "Severe dependence" : "Total dependence"})
+                    </span>
+                  </div>
+                </>
+              );
+            })()}
+          </Section>
+
+          {/* ── N7 · Body Chart / Wound Documentation ── */}
+          <Section title="Body Chart — Existing wounds / bruises / scars" icon="pi-user-edit" color={C.purple} badge="NABH IPC + AAC.6">
+            <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
+              Document all existing skin findings AT ADMISSION — defends against "developed in hospital" claims.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Field label="Head / Neck"><input value={bodyChart.headNeck} onChange={e => setBodyChart(b => ({ ...b, headNeck: e.target.value }))} placeholder="Wound location + size + appearance" className="his-field" /></Field>
+              <Field label="Chest / Back"><input value={bodyChart.chestBack} onChange={e => setBodyChart(b => ({ ...b, chestBack: e.target.value }))} placeholder="—" className="his-field" /></Field>
+              <Field label="Abdomen / Groin"><input value={bodyChart.abdomenGroin} onChange={e => setBodyChart(b => ({ ...b, abdomenGroin: e.target.value }))} placeholder="—" className="his-field" /></Field>
+              <Field label="Upper limbs"><input value={bodyChart.upperLimbs} onChange={e => setBodyChart(b => ({ ...b, upperLimbs: e.target.value }))} placeholder="—" className="his-field" /></Field>
+              <Field label="Lower limbs"><input value={bodyChart.lowerLimbs} onChange={e => setBodyChart(b => ({ ...b, lowerLimbs: e.target.value }))} placeholder="—" className="his-field" /></Field>
+              <Field label="Existing pressure injuries / bedsores"><input value={bodyChart.existingWounds} onChange={e => setBodyChart(b => ({ ...b, existingWounds: e.target.value }))} placeholder="Stage + location" className="his-field" /></Field>
+            </div>
+            <Field label="Bruises / scars / other markings" style={{ marginTop: 10 }}>
+              <textarea value={bodyChart.existingBruises} onChange={e => setBodyChart(b => ({ ...b, existingBruises: e.target.value }))}
+                placeholder="Describe location, colour, age of bruise…"
+                className="his-textarea" style={{ minHeight: 50 }} />
+            </Field>
+          </Section>
+
+          {/* ── N10 · Special Precautions ── */}
+          <Section title="Special Precautions" icon="pi-exclamation-triangle" color={C.warn} badge="NABH IPC + PSQ.4">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+              <div>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 600, marginBottom: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={precautions.isolation.required}
+                    onChange={e => setPrecautions(p => ({ ...p, isolation: { ...p.isolation, required: e.target.checked } }))} />
+                  Isolation required
+                </label>
+                {precautions.isolation.required && (
+                  <select value={precautions.isolation.type}
+                    onChange={e => setPrecautions(p => ({ ...p, isolation: { ...p.isolation, type: e.target.value } }))}
+                    className="his-field" style={{ padding: "5px 8px" }}>
+                    <option value="">— Select type —</option>
+                    {["Contact", "Droplet", "Airborne", "Protective / Reverse"].map(o => <option key={o}>{o}</option>)}
+                  </select>
+                )}
               </div>
-              <div style={{ minWidth: 140 }}>
-                <ScoreBadge score={vteTotal} label="Caprini Score" risk={vteMeta.label} color={vteMeta.color} />
-                <div style={{ marginTop: 10, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
-                  {vteTotal === 0 && "Early ambulation only"}
-                  {vteTotal >= 1 && vteTotal <= 2 && "IPCD recommended"}
-                  {vteTotal >= 3 && vteTotal <= 4 && "LMWH + IPCD"}
-                  {vteTotal >= 5 && "LMWH + IPCD + stockings"}
-                </div>
+              <div>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 600, marginBottom: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={precautions.restraints.required}
+                    onChange={e => setPrecautions(p => ({ ...p, restraints: { ...p.restraints, required: e.target.checked } }))} />
+                  Restraints required
+                </label>
+                {precautions.restraints.required && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                    <input value={precautions.restraints.type}
+                      onChange={e => setPrecautions(p => ({ ...p, restraints: { ...p.restraints, type: e.target.value } }))}
+                      placeholder="Type (soft / bed rail)" className="his-field" style={{ padding: "5px 8px" }} />
+                    <input value={precautions.restraints.reason}
+                      onChange={e => setPrecautions(p => ({ ...p, restraints: { ...p.restraints, reason: e.target.value } }))}
+                      placeholder="Reason" className="his-field" style={{ padding: "5px 8px" }} />
+                  </div>
+                )}
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, fontSize: 12 }}>
+              {[
+                ["suicide", "Suicide precaution"],
+                ["fallPrecaution", "Fall precaution"],
+                ["aspiration", "Aspiration precaution"],
+                ["bleed", "Bleeding precaution"],
+                ["seizure", "Seizure precaution"],
+                ["mri", "MRI safety alert"],
+                ["latex", "Latex-free environment"],
+              ].map(([k, label]) => (
+                <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!precautions[k]}
+                    onChange={e => setPrecautions(p => ({ ...p, [k]: e.target.checked }))} />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </Section>
+
+          {/* ── N9 · Education Needs ── */}
+          <Section title="Patient Education Needs" icon="pi-book" color={C.green} badge="NABH AAC.6 + PRE.5">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12 }}>
+              <Field label="Preferred language">
+                <select value={educationNeeds.preferredLanguage}
+                  onChange={e => setEducationNeeds(p => ({ ...p, preferredLanguage: e.target.value }))} className="his-field">
+                  {["Hindi", "English", "Punjabi", "Haryanvi", "Urdu", "Bengali", "Tamil", "Telugu", "Marathi", "Other"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+              <Field label="Preferred learning style">
+                <select value={educationNeeds.learningStyle}
+                  onChange={e => setEducationNeeds(p => ({ ...p, learningStyle: e.target.value }))} className="his-field">
+                  {["Verbal", "Written", "Demonstration", "Mixed"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+              <Field label="Target audience (who will receive teaching?)">
+                <select value={educationNeeds.targetAudience}
+                  onChange={e => setEducationNeeds(p => ({ ...p, targetAudience: e.target.value }))} className="his-field">
+                  {["Self", "Spouse", "Parent", "Adult-child", "Sibling", "Caregiver", "LAR"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+              <div style={{ display: "flex", alignItems: "center", gap: 18, paddingTop: 24 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                  <input type="checkbox" checked={educationNeeds.canRead}
+                    onChange={e => setEducationNeeds(p => ({ ...p, canRead: e.target.checked }))} />
+                  Can read
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                  <input type="checkbox" checked={educationNeeds.canWrite}
+                    onChange={e => setEducationNeeds(p => ({ ...p, canWrite: e.target.checked }))} />
+                  Can write
+                </label>
+              </div>
+            </div>
+            <Field label="Barriers to learning" style={{ marginTop: 10 }}>
+              <input value={educationNeeds.barriersToLearning}
+                onChange={e => setEducationNeeds(p => ({ ...p, barriersToLearning: e.target.value }))}
+                placeholder="e.g. Hearing impairment, anxiety, cognitive impairment" className="his-field" />
+            </Field>
+          </Section>
+
+          {/* ── N8 · Discharge Planning (initiated Day 1) ── */}
+          <Section title="Discharge Planning — Day 1" icon="pi-home" color={C.accent} badge="NABH AAC.4">
+            <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
+              Discharge planning starts at admission — gives time to arrange home support, equipment, follow-up.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="Home support">
+                <select value={dischargePlan.homeSupport}
+                  onChange={e => setDischargePlan(p => ({ ...p, homeSupport: e.target.value }))} className="his-field">
+                  <option value="">— Select —</option>
+                  {["Lives with family", "Lives alone", "Lives in institution / care home", "Homeless / no fixed address"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+              <Field label="Primary caregiver (name + relation)">
+                <input value={dischargePlan.primaryCaregiver}
+                  onChange={e => setDischargePlan(p => ({ ...p, primaryCaregiver: e.target.value }))}
+                  placeholder="e.g. Wife — Mrs Smita Sharma" className="his-field" />
+              </Field>
+              <Field label="Transport needs at discharge">
+                <select value={dischargePlan.transportNeed}
+                  onChange={e => setDischargePlan(p => ({ ...p, transportNeed: e.target.value }))} className="his-field">
+                  <option value="">— Select —</option>
+                  {["Own transport", "Hospital ambulance", "Wheelchair transport", "Other"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+              <Field label="Anticipated barriers to discharge">
+                <input value={dischargePlan.anticipatedBarriers}
+                  onChange={e => setDischargePlan(p => ({ ...p, anticipatedBarriers: e.target.value }))}
+                  placeholder="e.g. No-one at home, ground-floor access only" className="his-field" />
+              </Field>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                Equipment likely needed at discharge
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, fontSize: 12 }}>
+                {["Walker", "Wheelchair", "Oxygen concentrator", "Commode", "Hospital bed", "Suction machine", "Nebuliser", "Glucometer"].map(item => (
+                  <label key={item} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                    <input type="checkbox" checked={dischargePlan.equipmentNeeded.includes(item)}
+                      onChange={e => setDischargePlan(p => ({
+                        ...p,
+                        equipmentNeeded: e.target.checked
+                          ? [...p.equipmentNeeded, item]
+                          : p.equipmentNeeded.filter(x => x !== item),
+                      }))} />
+                    {item}
+                  </label>
+                ))}
               </div>
             </div>
           </Section>
 
-          {/* ── Nursing Plan ── */}
+          {/* ── Nursing Plan (existing) ── */}
           <Section title="Nursing Problems & Care Goals" icon="pi-pencil" color={C.pink}>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <Field label="Identified Nursing Problems">
@@ -1129,13 +1611,27 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             </div>
           </Section>
 
+          {/* ── D1 · Chief Complaint (NABH AAC.1 — distinct from HPI) ── */}
+          <Section title="Chief Complaint" icon="pi-comment" color={C.accent} badge="NABH AAC.1">
+            <Grid2>
+              <Field label="Chief Complaint *">
+                <input value={docCC} onChange={e => setDocCC(e.target.value)}
+                  placeholder="e.g. Fever and cough" className="his-field" />
+              </Field>
+              <Field label="Duration / Onset">
+                <input value={ccDuration} onChange={e => setCcDuration(e.target.value)}
+                  placeholder="e.g. 3 days, sudden onset" className="his-field" />
+              </Field>
+            </Grid2>
+          </Section>
+
           {/* ── History ── */}
           <Section title="History" icon="pi-book" color={C.purple}>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <Field label="History of Present Illness / Chief Complaint *">
+              <Field label="History of Present Illness *">
                 <textarea value={hopi} onChange={e => setHopi(e.target.value)}
-                  placeholder="Onset, duration, character, progression, associated symptoms, relieving/aggravating factors…"
-                  className="his-textarea" style={{ minHeight: 100 }} />
+                  placeholder="Onset, character, progression, associated symptoms, relieving/aggravating factors…"
+                  className="his-textarea" style={{ minHeight: 90 }} />
               </Field>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
                 <Field label="Past Medical History">
@@ -1152,13 +1648,171 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
                 </Field>
                 <Field label="Social / Personal History">
                   <textarea value={socHx} onChange={e => setSocHx(e.target.value)}
-                    placeholder="Smoking, alcohol, occupation…" className="his-textarea" style={{ minHeight: 64 }} />
+                    placeholder="Smoking, alcohol, occupation, travel…" className="his-textarea" style={{ minHeight: 64 }} />
                 </Field>
               </div>
-              <Field label="Known Allergies">
-                <input value={docAllergy} onChange={e => setDocAllergy(e.target.value)}
-                  placeholder="Drug / food allergies — None if none" className="his-field" />
-              </Field>
+            </div>
+          </Section>
+
+          {/* ── D5 · Co-morbidity checklist (NABH AAC.1 / COP.1) ── */}
+          <Section title="Co-morbidities" icon="pi-list-check" color={C.purple} badge="NABH AAC.1">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, fontSize: 12 }}>
+              {[
+                ["diabetes", "Diabetes Mellitus"],   ["hypertension", "Hypertension"],
+                ["cad", "CAD / IHD"],                ["ckd", "Chronic Kidney Disease"],
+                ["copd", "COPD"],                    ["asthma", "Asthma"],
+                ["liverDx", "Liver Disease"],        ["cancer", "Cancer / Malignancy"],
+                ["stroke", "Stroke / CVA"],          ["mentalHealth", "Mental Health"],
+                ["hypothyroid", "Hypothyroidism"],   ["hiv", "HIV / AIDS"],
+                ["hepB", "Hepatitis B"],             ["hepC", "Hepatitis C"],
+              ].map(([k, label]) => (
+                <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!comorbid[k]}
+                    onChange={e => setComorbid(c => ({ ...c, [k]: e.target.checked }))} />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+            <Field label="Other co-morbidities" style={{ marginTop: 10 }}>
+              <input value={comorbid.other}
+                onChange={e => setComorbid(c => ({ ...c, other: e.target.value }))}
+                placeholder="Free-text — e.g. Rheumatoid arthritis, Sickle cell…" className="his-field" />
+            </Field>
+          </Section>
+
+          {/* ── D2+D3 · Structured Allergies + Medication Reconciliation
+                       (NABH PSQ.4 + MOM + AAC.4) ────────────────────────── */}
+          <Section title="Allergies & Medication Reconciliation" icon="pi-shield" color={C.red} badge="NABH PSQ.4 + MOM">
+            {/* Allergies — structured list */}
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Known Allergies</div>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: C.muted, cursor: "pointer" }}>
+                  <input type="checkbox" checked={noKnownAllergies}
+                    onChange={e => { setNoKnownAllergies(e.target.checked); if (e.target.checked) setAllergyList([]); }} />
+                  No known allergies (NKDA)
+                </label>
+              </div>
+              {!noKnownAllergies && (
+                <>
+                  {allergyList.length > 0 && (
+                    <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 6, fontSize: 11.5 }}>
+                      <thead>
+                        <tr style={{ background: C.redL }}>
+                          {["Type", "Agent", "Severity", "Reaction", ""].map(h => (
+                            <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.red, textTransform: "uppercase", borderBottom: `1.5px solid ${C.red}30` }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allergyList.map((a, i) => (
+                          <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                            <td style={{ padding: "6px 8px" }}>
+                              <select value={a.type || "Drug"} onChange={e => setAllergyList(l => l.map((x, j) => j === i ? { ...x, type: e.target.value } : x))} className="his-field" style={{ padding: "4px 6px" }}>
+                                {["Drug", "Food", "Latex", "Contact", "Environmental", "Other"].map(t => <option key={t}>{t}</option>)}
+                              </select>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <input value={a.agent || ""} onChange={e => setAllergyList(l => l.map((x, j) => j === i ? { ...x, agent: e.target.value } : x))} placeholder="e.g. Penicillin" className="his-field" style={{ padding: "4px 6px" }} />
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <select value={a.severity || "Mild"} onChange={e => setAllergyList(l => l.map((x, j) => j === i ? { ...x, severity: e.target.value } : x))} className="his-field" style={{ padding: "4px 6px" }}>
+                                {["Mild", "Moderate", "Severe", "Anaphylaxis"].map(t => <option key={t}>{t}</option>)}
+                              </select>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <input value={a.reaction || ""} onChange={e => setAllergyList(l => l.map((x, j) => j === i ? { ...x, reaction: e.target.value } : x))} placeholder="e.g. Rash, breathlessness" className="his-field" style={{ padding: "4px 6px" }} />
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <button onClick={() => setAllergyList(l => l.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}>
+                                <i className="pi pi-trash" style={{ fontSize: 12 }} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  <button onClick={() => setAllergyList(l => [...l, { type: "Drug", agent: "", severity: "Mild", reaction: "" }])}
+                    style={{ padding: "5px 12px", border: `1.5px dashed ${C.red}60`, borderRadius: 6,
+                      background: C.redL, cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: C.red }}>
+                    <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add allergy
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* Medication Reconciliation */}
+            <div style={{ borderTop: `1px dashed ${C.border}`, paddingTop: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 }}>
+                Medication Reconciliation
+                <span style={{ fontSize: 10.5, fontWeight: 500, color: C.muted, marginLeft: 8 }}>
+                  (drugs patient was taking before admission)
+                </span>
+              </div>
+              {medRecon.length > 0 && (
+                <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 6, fontSize: 11.5 }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc" }}>
+                      {["Drug", "Dose", "Frequency", "Last taken", "Continue?", ""].map(h => (
+                        <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", borderBottom: `1.5px solid ${C.border}` }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {medRecon.map((m, i) => (
+                      <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                        <td style={{ padding: "6px 8px" }}>
+                          <input value={m.drug || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, drug: e.target.value } : x))} placeholder="Drug name" className="his-field" style={{ padding: "4px 6px" }} />
+                        </td>
+                        <td style={{ padding: "6px 8px" }}>
+                          <input value={m.dose || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, dose: e.target.value } : x))} placeholder="500mg" className="his-field" style={{ padding: "4px 6px" }} />
+                        </td>
+                        <td style={{ padding: "6px 8px" }}>
+                          <input value={m.frequency || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, frequency: e.target.value } : x))} placeholder="BD / TDS" className="his-field" style={{ padding: "4px 6px" }} />
+                        </td>
+                        <td style={{ padding: "6px 8px" }}>
+                          <input value={m.lastTaken || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, lastTaken: e.target.value } : x))} placeholder="Date / time" className="his-field" style={{ padding: "4px 6px" }} />
+                        </td>
+                        <td style={{ padding: "6px 8px" }}>
+                          <select value={m.continueOnAdmit || "Continue"} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, continueOnAdmit: e.target.value } : x))} className="his-field" style={{ padding: "4px 6px" }}>
+                            {["Continue", "Hold", "Modify", "Discontinue"].map(t => <option key={t}>{t}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding: "6px 8px" }}>
+                          <button onClick={() => setMedRecon(l => l.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}>
+                            <i className="pi pi-trash" style={{ fontSize: 12 }} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <button onClick={() => setMedRecon(l => [...l, { drug: "", dose: "", frequency: "", lastTaken: "", continueOnAdmit: "Continue" }])}
+                style={{ padding: "5px 12px", border: `1.5px dashed ${C.accent}60`, borderRadius: 6,
+                  background: C.accentL, cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: C.accent }}>
+                <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add home medication
+              </button>
+            </div>
+          </Section>
+
+          {/* ── D9 · Review of Systems (NABH AAC.1) ── */}
+          <Section title="Review of Systems" icon="pi-clipboard" color={C.teal} badge="NABH AAC.1">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8, fontSize: 12 }}>
+              {[
+                ["constitutional", "Constitutional"], ["cardiac", "Cardiac"],
+                ["respiratory", "Respiratory"],       ["gi", "GI"],
+                ["gu", "Genitourinary"],              ["musculoskeletal", "Musculoskeletal"],
+                ["neuro", "Neuro"],                   ["skin", "Skin"],
+                ["endocrine", "Endocrine"],           ["psych", "Psychiatric"],
+              ].map(([k, label]) => (
+                <div key={k} style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 8, alignItems: "center" }}>
+                  <label style={{ fontSize: 11.5, fontWeight: 600, color: C.muted }}>{label}</label>
+                  <input value={ros[k] || ""} onChange={e => setRos(r => ({ ...r, [k]: e.target.value }))}
+                    placeholder="NAD or describe abnormality" className="his-field" style={{ padding: "5px 8px", fontSize: 11.5 }} />
+                </div>
+              ))}
             </div>
           </Section>
 
@@ -1191,24 +1845,34 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             </div>
           </Section>
 
-          {/* ── Diagnosis ── */}
-          <Section title="Diagnosis" icon="pi-tag" color={C.accent} badge="NABH Required">
+          {/* ── D4 · 3-tier Diagnosis + Differentials (NABH AAC.1) ── */}
+          <Section title="Diagnosis" icon="pi-tag" color={C.accent} badge="NABH AAC.1 · 3-tier">
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <Field label="Provisional Diagnosis *">
+              <Field label="Provisional Diagnosis * (on admission, based on Hx + Exam)">
                 <textarea value={provDx} onChange={e => setProvDx(e.target.value)}
-                  placeholder="Clinical impression based on history and examination…"
-                  className="his-textarea" style={{ minHeight: 64 }} />
+                  placeholder="Initial clinical impression…"
+                  className="his-textarea" style={{ minHeight: 56 }} />
+              </Field>
+              <Field label="Working Diagnosis (after initial investigations)">
+                <textarea value={workingDx} onChange={e => setWorkingDx(e.target.value)}
+                  placeholder="Refined diagnosis after labs/imaging during the stay…"
+                  className="his-textarea" style={{ minHeight: 56 }} />
               </Field>
               <Grid2>
                 <Field label="Final / Confirmed Diagnosis">
                   <textarea value={finalDx} onChange={e => setFinalDx(e.target.value)}
-                    placeholder="Confirmed after investigations…" className="his-textarea" style={{ minHeight: 56 }} />
+                    placeholder="Confirmed at discharge…" className="his-textarea" style={{ minHeight: 56 }} />
                 </Field>
                 <Field label="ICD-10 Code">
                   <input value={icd10} onChange={e => setIcd10(e.target.value)}
                     placeholder="e.g. J18.9, K35.9…" className="his-field" />
                 </Field>
               </Grid2>
+              <Field label="Differential Diagnoses">
+                <textarea value={differentialDx} onChange={e => setDifferentialDx(e.target.value)}
+                  placeholder="Alternative diagnoses to rule out — one per line"
+                  className="his-textarea" style={{ minHeight: 56 }} />
+              </Field>
             </div>
           </Section>
 
@@ -1293,6 +1957,95 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
                 fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: C.green }}>
               <i className="pi pi-plus" style={{ marginRight: 6, fontSize: 11 }} />Add Medicine
             </button>
+          </Section>
+
+          {/* ── D6 + D7 + D8 · Care Decisions (NABH AAC.4 / ROP.1 / PSQ.4) ── */}
+          <Section title="Care Decisions" icon="pi-flag" color={C.accent} badge="NABH AAC.4 + ROP.1">
+            {/* Code Status */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>
+                Code Status (resuscitation preference)
+              </div>
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12 }}>
+                {[
+                  ["FULL_CODE", "Full code (all measures)"],
+                  ["DNR", "DNR (no CPR)"],
+                  ["DNI", "DNI (no intubation)"],
+                  ["LIMITED", "Limited / partial resuscitation"],
+                ].map(([v, label]) => (
+                  <label key={v} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                    <input type="radio" name="codeStatus" checked={codeStatus === v}
+                      onChange={() => setCodeStatus(v)} />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+              {codeStatus !== "FULL_CODE" && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 10 }}>
+                  <Field label="Discussed with (name + relation)">
+                    <input value={codeStatusDiscussedWith} onChange={e => setCodeStatusDiscussedWith(e.target.value)}
+                      placeholder="e.g. Wife — Mrs Smita Sharma" className="his-field" />
+                  </Field>
+                  <Field label="Specific limitations">
+                    <input value={codeStatusLimitations} onChange={e => setCodeStatusLimitations(e.target.value)}
+                      placeholder="e.g. No vasopressors, no dialysis" className="his-field" />
+                  </Field>
+                </div>
+              )}
+            </div>
+
+            {/* ELOS + Goal of Care */}
+            <div style={{ borderTop: `1px dashed ${C.border}`, paddingTop: 12, marginBottom: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <Field label="Estimated Length of Stay (days)">
+                  <input type="number" min="1" value={elosDays}
+                    onChange={e => setElosDays(e.target.value)} placeholder="e.g. 5" className="his-field" />
+                </Field>
+                <Field label="Goal of Care">
+                  <select value={goalOfCare} onChange={e => setGoalOfCare(e.target.value)} className="his-field">
+                    <option value="">— Select —</option>
+                    <option value="Curative">Curative</option>
+                    <option value="Palliative">Palliative</option>
+                    <option value="Supportive">Supportive</option>
+                    <option value="Rehabilitative">Rehabilitative</option>
+                    <option value="Diagnostic">Diagnostic workup</option>
+                  </select>
+                </Field>
+              </div>
+            </div>
+
+            {/* Risk Acknowledgement — Fall / DVT / Pressure Ulcer / Pain */}
+            <div style={{ borderTop: `1px dashed ${C.border}`, paddingTop: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>
+                Doctor's Risk Acknowledgement (independent of nursing capture)
+              </div>
+              {[
+                ["fall",  "Fall risk",         "Plan: e.g. bed-rail, footwear, side-rail toilet…"],
+                ["dvt",   "DVT / VTE risk",    "Plan: e.g. LMWH 40mg SC OD, compression stockings…"],
+                ["ulcer", "Pressure ulcer",    "Plan: e.g. 2-hourly turning, air-mattress…"],
+                ["pain",  "Pain management",   "Plan: e.g. PRN analgesia, multimodal, regional block…"],
+              ].map(([k, label, hint]) => (
+                <div key={k} style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 12, alignItems: "flex-start", marginBottom: 8 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", paddingTop: 8 }}>
+                    <input type="checkbox" checked={!!docRiskAck[k]?.acknowledged}
+                      onChange={e => setDocRiskAck(r => ({ ...r, [k]: { ...r[k], acknowledged: e.target.checked } }))} />
+                    {label}
+                  </label>
+                  <div>
+                    {k === "dvt" && (
+                      <input value={docRiskAck.dvt?.score || ""}
+                        onChange={e => setDocRiskAck(r => ({ ...r, dvt: { ...r.dvt, score: e.target.value } }))}
+                        placeholder="Caprini score (e.g. 4)" className="his-field"
+                        style={{ marginBottom: 6, padding: "5px 8px", fontSize: 11.5 }} />
+                    )}
+                    <input value={docRiskAck[k]?.plan || ""}
+                      onChange={e => setDocRiskAck(r => ({ ...r, [k]: { ...r[k], plan: e.target.value } }))}
+                      placeholder={hint} className="his-field"
+                      style={{ padding: "5px 8px", fontSize: 11.5 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
           </Section>
 
           {/* ── Diet, Activity & Follow-up ── */}
