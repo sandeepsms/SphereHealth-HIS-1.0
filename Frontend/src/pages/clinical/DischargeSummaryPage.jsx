@@ -1078,6 +1078,71 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
                           || p.doctorRegNo,
           admittingDiagnosis: found.provisionalDiagnosis || p.admittingDiagnosis,
         }));
+
+        /* ══ R7fj-HIGH-3 · Prefill from IPD Initial Assessment ══════
+           Pull the most recent signed IPD_INITIAL DoctorNote for this
+           IPD number and prefill the matching discharge fields so the
+           doctor doesn't retype chief complaint / HPI / co-morbidities
+           / allergies / diagnosis. Failure is non-fatal — discharge
+           summary still loads if the assessment was never signed. */
+        try {
+          if (found.admissionNumber) {
+            const r = await axios.get(
+              `${API_ENDPOINTS.BASE}/doctor-notes/ipd/${encodeURIComponent(found.admissionNumber)}`,
+              { headers },
+            );
+            const list = Array.isArray(r?.data?.data) ? r.data.data : (Array.isArray(r?.data) ? r.data : []);
+            const ia = list.find(n =>
+              n.visitType === "IPD_INITIAL" ||
+              (n.noteType || "").toLowerCase() === "initialassessment" ||
+              (n.noteType || "").toLowerCase() === "initial"
+            );
+            if (ia) {
+              const nabh = ia?.noteDetails?.doctor?.nabh || {};
+              const nrsg = ia?.noteDetails?.nursing || {};
+              const dr   = ia?.noteDetails?.doctor || {};
+
+              // Build a comorbidity string from the structured checklist
+              const cmbObj = nabh.comorbidities || {};
+              const cmbList = Object.entries(cmbObj)
+                .filter(([k, v]) => v === true)
+                .map(([k]) => k.replace(/([A-Z])/g, " $1").replace(/^./, c => c.toUpperCase()));
+              if (cmbObj.other) cmbList.push(cmbObj.other);
+              const comorbidities = cmbList.join(", ");
+
+              // Allergies — prefer doctor's structured list, fall back to nurse, then to text
+              const docAllergies = nabh.allergies?.list || [];
+              const nrsAllergies = ia?.noteDetails?.nursingNabh?.allergies?.list || [];
+              const allergyText =
+                docAllergies.length
+                  ? docAllergies.map(a => `${a.agent} (${a.severity})${a.reaction ? " — " + a.reaction : ""}`).join("; ")
+                  : nrsAllergies.length
+                    ? nrsAllergies.map(a => `${a.agent} (${a.severity})${a.reaction ? " — " + a.reaction : ""}`).join("; ")
+                    : (nabh.allergies?.noKnown || ia?.noteDetails?.nursingNabh?.allergies?.noKnown
+                      ? "NKDA — No Known Drug Allergies"
+                      : (dr.docAllergy || nrsg.allergy || ""));
+
+              setForm(p => ({
+                ...p,
+                // Only prefill if not already set (user may have typed before patient load)
+                chiefComplaints:           p.chiefComplaints           || nabh.chiefComplaint || nrsg.chiefComplaint || "",
+                historyOfPresentIllness:   p.historyOfPresentIllness   || dr.hopi || "",
+                pastMedicalHistory:        p.pastMedicalHistory        || dr.pmh || "",
+                pastSurgicalHistory:       p.pastSurgicalHistory       || dr.psh || "",
+                familyHistory:             p.familyHistory             || dr.famHx || "",
+                socialHistory:             p.socialHistory             || dr.socHx || "",
+                comorbidities:             p.comorbidities             || comorbidities,
+                allergies:                 p.allergies                 || allergyText,
+                physicalExamination:       p.physicalExamination       || [dr.genExam, dr.cvs, dr.rs, dr.abdomen, dr.cns].filter(Boolean).join(" · "),
+                admittingDiagnosis:        p.admittingDiagnosis        || nabh.workingDx || dr.provDx || found.provisionalDiagnosis || "",
+                finalDiagnosis:            p.finalDiagnosis            || dr.finalDx || nabh.workingDx || "",
+                icdCode:                   p.icdCode                   || dr.icd10 || "",
+              }));
+              toast.info("Discharge fields prefilled from Initial Assessment");
+            }
+          }
+        } catch (_) { /* assessment not found / endpoint missing — silently skip */ }
+
         // Restore auto-save draft if available
         const dKey = `sphere_draft_discharge_${found._id}`;
         const raw = localStorage.getItem(dKey);

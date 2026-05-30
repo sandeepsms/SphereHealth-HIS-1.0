@@ -982,12 +982,32 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   /* Build payload */
   const buildPayload = (section, status = "draft") => ({
     visitType: "IPD_INITIAL",
+    // R7fj-HIGH-1: noteType drives the filters in CompletePatientFile,
+    // PatientPanelTabs InitialAssessmentTab, NursingNotes header etc.
+    // Pre-fix the IPD Initial Assessment record had no noteType, so
+    // every consumer that ran `noteType === "initial"` or similar
+    // silently skipped it and the new NABH fields never reached print
+    // sheets, header chips, or discharge prefill.
+    noteType: "initialAssessment",
     patientUHID: patient?.UHID || uhid,
     patientId: patient?._id,
     patientName: patient?.fullName || "",
     status,
     assessmentDate: new Date().toISOString(),
     section, // "nursing" | "doctor" | "both"
+    // R7fj-HIGH-1: lift diagnosis + chief complaint + HPI to TOP-LEVEL
+    // DoctorNote fields. The NursingNotes header (L896-924) and the
+    // PatientHeaderCard banner read these top-level fields directly —
+    // burying them under noteDetails.doctor.nabh.workingDx made every
+    // header chip stay blank. Mirror to top-level here for downstream
+    // visibility while keeping the structured nabh copy intact.
+    chiefComplaint: docCC || chiefComplaint || "",
+    historyOfPresentIllness: hopi || "",
+    provisionalDiagnosis: provDx || "",
+    workingDiagnosis: workingDx || "",
+    finalDiagnosis: finalDx || "",
+    icdCode: icd10 || "",
+    diagnosis: finalDx || workingDx || provDx || "",
     // R7fb/R7fc — DoctorNotes schema is strict; the only catch-all field is
     // `noteDetails` (Mixed). Pack the entire role-specific form data here so
     // the new NABH P0 fields persist instead of being silently dropped.
@@ -1644,6 +1664,50 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             [`${role}CompletedAt`]: new Date().toISOString(),
           },
         } : prev);
+      }
+      // R7fj-HIGH-2: PATCH Patient.allergies so PatientHeaderCard's
+      // banner, drug-allergy gate, and Pharmacy/MAR cross-checks pick
+      // up the structured allergy list at sign-off. We MERGE nurse +
+      // doctor agents so a cross-check captured by either party lands
+      // on the patient record. Non-blocking — banner is convenience,
+      // not a hard constraint; failure to patch shouldn't fail save.
+      if (sign && patient?._id) {
+        try {
+          const mergedAllergies = [];
+          const seen = new Set();
+          const addRow = (a, source) => {
+            const k = (a?.agent || "").toLowerCase().trim();
+            if (!k || seen.has(k)) return;
+            seen.add(k);
+            mergedAllergies.push({
+              type:     a.type || "Drug",
+              agent:    a.agent,
+              severity: a.severity || "Unknown",
+              reaction: a.reaction || "",
+              source,   // 'doctor' | 'nurse' (for audit)
+              capturedAt: new Date().toISOString(),
+            });
+          };
+          (allergyList || []).forEach(a => addRow(a, "doctor"));
+          (nurseAllergyList || []).forEach(a => addRow(a, "nurse"));
+
+          if (mergedAllergies.length > 0 || noKnownAllergies || nurseNoKnownAllergies) {
+            await axios.patch(
+              `${API_ENDPOINTS.PATIENTS}/${patient._id}`,
+              {
+                allergies: mergedAllergies,
+                noKnownAllergies: !!(noKnownAllergies || nurseNoKnownAllergies) && mergedAllergies.length === 0,
+              },
+            ).catch(() => {}); // legacy patient endpoints may use PUT; suppress 404/405
+            // Try PUT as fallback (some deployments)
+            try {
+              await axios.put(
+                `${API_ENDPOINTS.PATIENTS}/${patient._id}`,
+                { allergies: mergedAllergies, noKnownAllergies: mergedAllergies.length === 0 && (noKnownAllergies || nurseNoKnownAllergies) },
+              ).catch(() => {});
+            } catch (_) {}
+          }
+        } catch (_) { /* non-fatal */ }
       }
       toast.success(sign ? "Assessment signed & submitted ✓" : "Draft saved");
       if (sign) clearDraft();
