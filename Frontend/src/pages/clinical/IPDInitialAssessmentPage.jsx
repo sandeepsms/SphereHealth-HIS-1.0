@@ -679,7 +679,10 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
 
   /* ══ R7fg · NURSE P2 NABH FIELDS (N18-N21) ═════════════════════ */
   // N18 · Mobility / Gait assessment
-  const [mobility, setMobility]         = useState({
+  // R7fi-FIX: renamed from mobility to mobilityGait to avoid collision
+  // with the existing nurse-side `mobility` (simple string for admission
+  // consciousness/mobility level declared on line ~385).
+  const [mobilityGait, setMobilityGait] = useState({
     independent: true,
     usesAid: "", // walker / cane / wheelchair / crutches
     gaitNormal: true,
@@ -727,7 +730,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
       cognitive, cultural, elimination, sleep, valuables, caregiver, highRisk,
       // R7fg · P2 fields
       obGyn, immunisation, ecog, spiritual,
-      mobility, preAnaesthesia, nrsQuick, promPrem },
+      mobilityGait, preAnaesthesia, nrsQuick, promPrem },
     2000
   );
   const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
@@ -1056,7 +1059,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         familyCaregiver: caregiver,
         highRiskFlags: highRisk,
         // R7fg · nurse P2
-        mobilityGait: mobility,
+        mobilityGait,
         preAnaesthesia,
         nutritionalScreeningQuick: nrsQuick,
         promPremTriggers: promPrem,
@@ -1111,7 +1114,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           ${kv("Ward", ward)}
           ${kv("Bed", bedNo)}
           ${kv("Consciousness", consciousnessLevel)}
-          ${kv("Mobility", mobility?.usesAid || (mobility?.independent ? "Independent" : "—"))}
+          ${kv("Mobility", mobilityGait?.usesAid || (mobilityGait?.independent ? "Independent" : "—"))}
         </div>`)}
 
       ${block("Patient Identification", "NABH PSQ.1", `
@@ -1315,11 +1318,11 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
 
       ${block("Mobility & Gait", "—", `
         <div class="grid grid-2">
-          ${kv("Independent", yn(mobility.independent))}
-          ${kv("Aid used", mobility.usesAid)}
-          ${kv("Gait normal", yn(mobility.gaitNormal))}
-          ${kv("Fall risk observed", yn(mobility.fallRisk))}
-          ${kv("Notes", mobility.notes, true)}
+          ${kv("Independent", yn(mobilityGait.independent))}
+          ${kv("Aid used", mobilityGait.usesAid)}
+          ${kv("Gait normal", yn(mobilityGait.gaitNormal))}
+          ${kv("Fall risk observed", yn(mobilityGait.fallRisk))}
+          ${kv("Notes", mobilityGait.notes, true)}
         </div>`)}
 
       ${block("Pre-Anaesthesia (if elective surgery)", "—", `
@@ -2748,23 +2751,23 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           <Section title="Mobility & Gait" icon="pi-arrow-right" color={C.teal}>
             <div style={{ display: "flex", gap: 18, fontSize: 12, flexWrap: "wrap" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                <input type="checkbox" checked={mobility.independent} onChange={e => setMobility(p => ({ ...p, independent: e.target.checked }))} />
+                <input type="checkbox" checked={mobilityGait.independent} onChange={e => setMobilityGait(p => ({ ...p, independent: e.target.checked }))} />
                 Independent mobility
               </label>
               <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                <input type="checkbox" checked={mobility.gaitNormal} onChange={e => setMobility(p => ({ ...p, gaitNormal: e.target.checked }))} />
+                <input type="checkbox" checked={mobilityGait.gaitNormal} onChange={e => setMobilityGait(p => ({ ...p, gaitNormal: e.target.checked }))} />
                 Gait normal
               </label>
               <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                <input type="checkbox" checked={mobility.fallRisk} onChange={e => setMobility(p => ({ ...p, fallRisk: e.target.checked }))} />
+                <input type="checkbox" checked={mobilityGait.fallRisk} onChange={e => setMobilityGait(p => ({ ...p, fallRisk: e.target.checked }))} />
                 Fall risk observed
               </label>
             </div>
             <Field label="Aids used" style={{ marginTop: 10 }}>
-              <input value={mobility.usesAid} onChange={e => setMobility(p => ({ ...p, usesAid: e.target.value }))} placeholder="Walker / cane / wheelchair / crutches" className="his-field" />
+              <input value={mobilityGait.usesAid} onChange={e => setMobilityGait(p => ({ ...p, usesAid: e.target.value }))} placeholder="Walker / cane / wheelchair / crutches" className="his-field" />
             </Field>
             <Field label="Notes" style={{ marginTop: 10 }}>
-              <textarea value={mobility.notes} onChange={e => setMobility(p => ({ ...p, notes: e.target.value }))} placeholder="Antalgic / ataxic / hemiparetic gait, unsteady on uneven surface…" className="his-textarea" style={{ minHeight: 50 }} />
+              <textarea value={mobilityGait.notes} onChange={e => setMobilityGait(p => ({ ...p, notes: e.target.value }))} placeholder="Antalgic / ataxic / hemiparetic gait, unsteady on uneven surface…" className="his-textarea" style={{ minHeight: 50 }} />
             </Field>
           </Section>
 
