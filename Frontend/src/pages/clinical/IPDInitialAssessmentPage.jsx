@@ -648,14 +648,25 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </button>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>IPD Initial Assessment</div>
+              {/* R7fa — title is role-aware. Doctor sees the doctor-only
+                  Initial Assessment surface (HPI / exam / 3-tier diagnosis
+                  / plan / Rx); nurse sees the nursing-only one (vitals /
+                  fall risk / pain / devices / care plan). Two completely
+                  separate forms; whichever role mounted the page sees
+                  only their fields. */}
+              <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>
+                {isDoctorRole ? "Doctor Initial Assessment" : "Nursing Initial Assessment"}
+              </div>
               <span style={{ background: C.accentL, color: C.accent, border: `1px solid ${C.accent}30`,
                 padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 800, letterSpacing: 1 }}>IPD</span>
               <span style={{ background: C.greenL, color: C.green, border: `1px solid ${C.green}30`,
-                padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700 }}>NABH Compliant</span>
+                padding: "2px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700 }}>NABH AAC.1</span>
             </div>
             <div style={{ fontSize: 11, color: C.muted }}>
-              Nursing Assessment + Doctor Initial Assessment · {new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+              {isDoctorRole
+                ? "History · Physical Examination · Diagnosis · Plan · Prescription"
+                : "Vitals · Fall Risk · Pain · Pressure Ulcer · ADL · Devices · Care Plan"
+              } · {new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
             </div>
           </div>
         </div>
@@ -665,19 +676,26 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             style={{ padding:"7px 12px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
             {signature ? <><i className="pi pi-verified" /> Signature Set</> : <><i className="pi pi-pen-to-square" /> Setup Signature</>}
           </button>
-          <button onClick={() => handleSave(false)} disabled={saving}
-            style={{ padding: "8px 18px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-              background: "white", cursor: saving ? "not-allowed" : "pointer",
-              fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
-            <i className="pi pi-save" style={{ marginRight: 6, fontSize: 12 }} />Save Draft
-          </button>
-          <button onClick={() => handleSave(true)} disabled={saving || !patient}
-            style={{ padding: "8px 22px", border: "none", borderRadius: 8,
-              background: saving ? "#93c5fd" : C.accent, cursor: saving ? "not-allowed" : "pointer",
-              fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white" }}>
-            <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
-            {saving ? "Saving…" : "Sign & Submit"}
-          </button>
+          {/* R7fa — these header buttons default to section="nursing".
+              For doctor mode they'd save the wrong role, so the buttons
+              are hidden — the doctor uses the dedicated Doctor sign-off
+              block at the bottom of the doctor form which calls
+              handleSave(true, "doctor"). */}
+          {!isDoctorRole && (<>
+            <button onClick={() => handleSave(false)} disabled={saving}
+              style={{ padding: "8px 18px", border: `1.5px solid ${C.border}`, borderRadius: 8,
+                background: "white", cursor: saving ? "not-allowed" : "pointer",
+                fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
+              <i className="pi pi-save" style={{ marginRight: 6, fontSize: 12 }} />Save Draft
+            </button>
+            <button onClick={() => handleSave(true)} disabled={saving || !patient}
+              style={{ padding: "8px 22px", border: "none", borderRadius: 8,
+                background: saving ? "#93c5fd" : C.accent, cursor: saving ? "not-allowed" : "pointer",
+                fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white" }}>
+              <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
+              {saving ? "Saving…" : "Sign & Submit"}
+            </button>
+          </>)}
         </div>
       </div>
 
@@ -726,9 +744,13 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
 
       {patient && (<>
 
-        {/* R7bd — Tab switcher + nursing-tab wrapper removed. Renders the
-            nursing assessment content directly (this page is now nursing-
-            only; see note on activeTab removal above). */}
+        {/* R7fa — Nursing form gate. When a DOCTOR mounts this component
+            (via DoctorNotes embed), skip every nursing-shaped section and
+            jump straight to the doctor-side form below. Pre-R7fa the
+            doctor saw the entire nursing assessment + their own form
+            stacked together (confusing + duplicate-data risk). Now the
+            page renders one role-appropriate form, never both. */}
+        {!isDoctorRole && (<>
 
           {/* ── Admission Details ── */}
           <Section title="Admission Details" icon="pi-calendar-plus" color={C.teal}>
@@ -1080,6 +1102,8 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             </div>
           </div>
           )}
+
+        </>)}{/* /R7fa — end nursing form */}
 
         {/* R7ey-F80 — Doctor authoring surface, gated on role. When a DOCTOR
             mounts this component from the DoctorNotes embed, render the
