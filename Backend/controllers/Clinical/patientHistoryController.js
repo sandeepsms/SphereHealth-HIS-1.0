@@ -476,6 +476,17 @@ exports.getIPDFile = async (req, res) => {
         .sort({ reportedAt: 1, createdAt: 1 }).lean() : []),
     ]);
 
+    // R7ey-F19 — .lean() strips each schema's toJSON decimalToNumber
+    // transform, so money fields ship as raw Decimal128 EJSON. The patient
+    // history aggregator's billing section then reducer-poisons to NaN/₹0.
+    // Unwrap once per collection so every downstream consumer (chronological
+    // print, BillingSection, audit-trail printing) gets plain Numbers.
+    try {
+      const { decimalToNumber } = require("../../utils/money");
+      (bills || []).forEach((b) => decimalToNumber(null, b));
+      (billingTriggers || []).forEach((t) => decimalToNumber(null, t));
+    } catch (_) { /* utils/money is always present */ }
+
     // ── Build the merged ASC timeline ──
     // Each entry shape: { when, kind, label, ref, payload, source }.
     //

@@ -947,7 +947,11 @@ function DoctorNotesContent({ selectedPatient }) {
     const pName  = patient?.patientName || patient?.patientId?.fullName || "—";
     const uhid   = patient?.UHID || patient?.uhid || searchUHID || "—";
     const ipd    = patient?.ipdNo || patient?.admissionNumber || "—";
-    const ward   = patient?.wardName ? `${patient.wardName} · Bed ${patient.bedNumber || "—"}` : "—";
+    // R7ey-F40: patient may not carry wardName directly — derive through
+    // R7bi-1 denormalized field, then wardId-populated ref, then department.
+    const _wn    = patient?.wardName || patient?.wardId?.wardName || patient?.currentAdmission?.wardName || patient?.department;
+    const _bn    = patient?.bedNumber || patient?.bedId?.bedNumber || patient?.currentAdmission?.bedNumber;
+    const ward   = _wn ? `${_wn} · Bed ${_bn || "—"}` : "—";
     const modLabel = modDef(note.noteType)?.label || "Daily Progress";
     const noteDate = note.createdAt ? new Date(note.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
     const shift  = (note.shift || "morning");
@@ -1593,18 +1597,48 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               null) flips activeTile back to null and the tile grid
               reappears. */}
           {patient && activeTile === "emergency" && (() => {
-            // R7ev — route to the right Initial Assessment surface based
-            // on how the patient was admitted. Emergency cases get the
-            // ER triage flow; IPD/Planned/Daycare cases get the proper
-            // IPD Initial Assessment (history/exam/3-tier diagnosis
-            // card/plan — no triage, no bed allotment at the end).
+            // R7ev / R7ey-F82/F83 — route to the right Initial Assessment
+            // surface based on how the patient was admitted. Empty / OPD
+            // admissionType used to silently fall through to the IPD
+            // surface (broken for non-admitted patients) — now we render
+            // an explicit "not applicable" notice instead.
             const at = String(patient?.admissionType || "").toLowerCase();
             const isER = at === "emergency" || at === "er";
+            const IPD_TYPES = ["ipd", "planned", "transfer", "daycare", "day care", "emergency", "er"];
+            const isInpatientFlow = IPD_TYPES.includes(at);
+            // R7ey-F81 — refresh patient.initialAssessment locally on sign
+            // so the gate-lock drops without forcing a full reload.
+            const handleAssessmentSigned = (role) => {
+              setPatient(prev => prev ? {
+                ...prev,
+                initialAssessment: {
+                  ...(prev?.initialAssessment || {}),
+                  [`${role}Completed`]: true,
+                  [`${role}CompletedAt`]: new Date().toISOString(),
+                },
+              } : prev);
+            };
+            if (!isInpatientFlow) {
+              return (
+                <div className="dnp-embedded-panel" style={{ marginBottom: 14, padding: "28px 24px", textAlign: "center", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a", marginBottom: 6 }}>
+                    Initial Assessment not applicable
+                  </div>
+                  <div style={{ fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+                    NABH AAC.1 Initial Assessment is only required for inpatient admissions (IPD / Planned / Day Care / Emergency).
+                    {patient?.admissionType
+                      ? <> This patient was registered as <strong>{patient.admissionType}</strong>.</>
+                      : <> This patient has no active admission record.</>}
+                    <br />For OPD visits use the standard Doctor Notes timeline / Add a Note.
+                  </div>
+                </div>
+              );
+            }
             return (
               <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
                 {isER
-                  ? <EmergencyAssessmentPageContent selectedPatient={patient} />
-                  : <IPDInitialAssessmentContent selectedPatient={patient} />}
+                  ? <EmergencyAssessmentPageContent selectedPatient={patient} onSign={handleAssessmentSigned} />
+                  : <IPDInitialAssessmentContent  selectedPatient={patient} onSign={handleAssessmentSigned} />}
               </div>
             );
           })()}

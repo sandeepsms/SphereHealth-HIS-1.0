@@ -532,6 +532,9 @@ export default function IPDBillingLedger() {
     openPrint("final-bill", {
       isInterim:        false,
       viewMode:         "category",
+      // R7ey-F3 — pass visitType so FinalBill prints "Day Care" / "Emergency"
+      // / "IPD" titles correctly instead of always "IPD".
+      visitType:        data.admission.admissionType,
       billNo:           data.bill?.billNumber || `FINAL-${data.admission.admissionNumber}`,
       patientName:      patient.fullName || data.admission.UHID,
       uhid:             data.admission.UHID,
@@ -699,13 +702,13 @@ export default function IPDBillingLedger() {
        new Date(data.admission.admissionDate)) / 86400000,
     ));
     const patientName = (data.admission.patientId?.fullName) || data.admission.UHID || "Patient";
-    // R7ex — admission fallback chain. The ledger payload deliberately
-    // doesn't populate consultantDoctor (perf — R7bh-F10), so the
-    // denormalized `attendingDoctor` string is the only source on most
-    // admissions. Same story for bedNumber / wardName after R7bi-1.
-    const _docRaw     = data.admission.consultantDoctor?.fullName
+    // R7ex / R7ey-F39 — admission fallback chain. The audit confirmed
+    // that `consultantDoctor` and `primaryConsultant` are phantom
+    // fields (never populated by any save path); `attendingDoctor` is
+    // the canonical denormalized name string. Lead with that.
+    const _docRaw     = data.admission.attendingDoctor
+                     || data.admission.consultantDoctor?.fullName
                      || data.admission.primaryConsultant
-                     || data.admission.attendingDoctor
                      || "";
     const consultant  = _docRaw
       ? (/^(Dr\.?|Prof\.?|Mr\.?|Mrs\.?|Ms\.?)\s+/i.test(_docRaw) ? _docRaw : `Dr. ${_docRaw}`)
@@ -713,6 +716,22 @@ export default function IPDBillingLedger() {
     const dx          = data.admission.provisionalDiagnosis || data.admission.workingDiagnosis || data.admission.diagnosis || "—";
     const bedNo       = data.admission.bedId?.bedNumber || data.admission.bedNumber || "—";
     const wardName    = data.admission.bedId?.wardName   || data.admission.wardName  || data.admission.department || "—";
+
+    // R7ey-F2 — derive visitLabel + visitLabelShort from admissionType so
+    // Day Care / Emergency / Transfer admissions don't all print as "IPD".
+    // Pattern-A from the R7eo print sweep (OPDReceipt etc. all use this
+    // same ladder).
+    const _visitRaw = String(data.admission.admissionType || "IPD").toUpperCase();
+    const visitLabel =
+        _visitRaw === "DAYCARE"   ? "Day Care"
+      : _visitRaw === "DAY CARE"  ? "Day Care"
+      : _visitRaw === "EMERGENCY" ? "Emergency"
+      : _visitRaw === "ER"        ? "Emergency"
+      : _visitRaw === "TRANSFER"  ? "Transfer"
+      : _visitRaw === "PLANNED"   ? "IPD"
+                                  : "IPD";
+    // "IPD #:" / "Day Care #:" / "Emergency #:" row label — keep it terse.
+    const visitNumLabel = visitLabel === "Day Care" ? "Day Care #" : `${visitLabel} #`;
 
     // R7ce / R7cg: NABH badge only when the admin has stamped a real
     // certificate number on Hospital Settings — never claim NABH
@@ -737,10 +756,10 @@ export default function IPDBillingLedger() {
           ${nabhOk ? `<div class="h-meta nabh">NABH Certified · ${esc(hs.nabhCertNumber)}</div>` : ""}
         </div>
         <div class="hdr-right">
-          <div class="doc-title">COMPLETE IPD BILL</div>
+          <div class="doc-title">COMPLETE ${esc(visitLabel.toUpperCase())} BILL</div>
           <div class="h-meta"><strong>${esc(patientName)}</strong></div>
           <div class="h-meta">UHID: ${esc(data.admission.UHID)} · ${data.admission.patientId?.age ? data.admission.patientId.age + "y" : ""} · ${esc(data.admission.patientId?.gender || "")}</div>
-          <div class="h-meta">IPD #: ${esc(data.admission.admissionNumber)}</div>
+          <div class="h-meta">${esc(visitNumLabel)}: ${esc(data.admission.admissionNumber)}</div>
           <div class="h-meta">Bill #: ${esc(data.bill?.billNumber || "DRAFT")}</div>
           <div class="h-meta">Printed: ${_dt(new Date())}</div>
         </div>
@@ -890,7 +909,7 @@ export default function IPDBillingLedger() {
 
     const html = `<!doctype html><html><head>
       <meta charset="utf-8">
-      <title>Complete IPD Bill — ${esc(patientName)} · ${esc(data.admission.admissionNumber)}</title>
+      <title>Complete ${esc(visitLabel)} Bill — ${esc(patientName)} · ${esc(data.admission.admissionNumber)}</title>
       <style>
         *{margin:0;padding:0;box-sizing:border-box}
         body{font-family:'Segoe UI',Arial,sans-serif;padding:18px 22px 40px;color:#0f172a;font-size:12px;line-height:1.45}
@@ -941,7 +960,7 @@ export default function IPDBillingLedger() {
       ${paymentsHtml}
       ${totalsHtml}
       <div class="footer">
-        Complete IPD bill generated ${_dt(new Date())} · Sections A (category-wise) + B (day-wise) + C (payments &amp; advances) + D (grand totals).<br>
+        Complete ${esc(visitLabel)} bill generated ${_dt(new Date())} · Sections A (category-wise) + B (day-wise) + C (payments &amp; advances) + D (grand totals).<br>
         ${esc(hs.billFooterNote || "Thank you for choosing our hospital.")}<br>
         This is a computer-generated document — every line maps to the live billing trigger ledger.
       </div>
@@ -974,6 +993,9 @@ export default function IPDBillingLedger() {
     // bill number, totals. Only the middle table changes.
     const baseHeader = {
       isInterim:        true,
+      // R7ey-F3 — pass visitType so FinalBill normalises the doc title
+      // (Day Care / Emergency / IPD) instead of always saying "IPD".
+      visitType:        data.admission.admissionType,
       billNo:           data.bill?.billNumber || `INTERIM-${data.admission.admissionNumber}`,
       patientName:      patient.fullName || data.admission.UHID,
       uhid:             data.admission.UHID,

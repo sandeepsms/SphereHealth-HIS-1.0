@@ -177,6 +177,18 @@ exports.getCompleteFile = async (req, res) => {
     const labTrends  = LabTrend  ? await safe("labTrends",  () => LabTrend.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean())  : [];
     const labReports = LabReport ? await safe("labReports", () => LabReport.find({ UHID, reportDate: win }).sort({ reportDate: -1 }).limit(PER_SECTION_LIMIT).lean()) : [];
 
+    // R7ey-F19 — .lean() bypasses each schema's toJSON decimalToNumber
+    // transform, so every money field on bills/triggers shipped as raw
+    // Decimal128 EJSON. CompletePatientFile's billing section reducer
+    // then poisoned to "[object Object]" → ₹0 Gross / Paid / Outstanding
+    // even when the patient had real outstanding balance. Clinicians
+    // could discharge a patient without seeing what was owed.
+    try {
+      const { decimalToNumber } = require("../../utils/money");
+      (bills || []).forEach((b) => decimalToNumber(null, b));
+      (billingTriggers || []).forEach((t) => decimalToNumber(null, t));
+    } catch (_) { /* utils/money is always present in this tree; this is paranoia */ }
+
     const currentAdmission =
       admissions.find((a) => a.status === "Active") || admissions[0] || null;
 

@@ -324,11 +324,20 @@ const FREQS  = ["OD", "BD", "TDS", "QID", "SOS", "Stat", "HS", "Alternate days",
 // way to reach this surface was the standalone /ipd-initial-assessment
 // route, so an IPD admission opened in DoctorNotes was being shown the
 // Emergency Assessment shape (triage + bed allotment) instead.
-export function IPDInitialAssessmentContent({ selectedPatient }) {
+// R7ey-F79/F80/F81 — accept `onSign` callback so the parent (DoctorNotesPage
+// embed) can refresh its local `patient.initialAssessment` cache the moment
+// the doctor signs, lifting the tile-gate without a full page reload.
+export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   const { uhid: uhidParam } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  // R7ey-F79/F80 — when a DOCTOR mounts this component (via DoctorNotesPage),
+  // show the Doctor sign-off block instead of the Nursing one. Pre-R7ey the
+  // Doctor block was dead under {false && ...} so the doctor saw the Nurse
+  // sign button → signed as a nurse → admission.initialAssessment.nurseCompleted
+  // got set instead of doctorCompleted → DoctorNotes tile-gate never lifted.
+  const isDoctorRole = String(user?.role || "").toLowerCase() === "doctor";
 
   // Support both path param (:uhid) and query param (?uhid=)
   const initUhid = uhidParam || searchParams.get("uhid") || "";
@@ -1038,7 +1047,11 @@ export function IPDInitialAssessmentContent({ selectedPatient }) {
             </div>
           </Section>
 
-          {/* ── Nursing sign-off ── */}
+          {/* ── Nursing sign-off — only shown when the mounter is a NURSE
+              (or unknown role, for the legacy standalone /ipd-initial-
+              assessment route). When a DOCTOR mounts via DoctorNotes the
+              Doctor sign-off block below renders instead. R7ey-F79. ── */}
+          {!isDoctorRole && (
           <div style={{ background: "#fdf2f8", border: `1px solid ${C.pink}30`, borderRadius: 12,
             padding: "14px 20px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div>
@@ -1056,7 +1069,7 @@ export function IPDInitialAssessmentContent({ selectedPatient }) {
                   fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
                 Save Draft
               </button>
-              <button onClick={() => handleSave(true, "nursing")} disabled={saving}
+              <button onClick={async () => { await handleSave(true, "nursing"); onSign?.("nurse"); }} disabled={saving}
                 style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: C.pink,
                   cursor: saving ? "not-allowed" : "pointer",
                   fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
@@ -1066,17 +1079,16 @@ export function IPDInitialAssessmentContent({ selectedPatient }) {
               </button>
             </div>
           </div>
+          )}
 
-        {/* R7bd — Doctor Initial Assessment tab + entire form block
-            removed. The doctor's initial assessment now lives in the
-            dedicated Doctor Notes → Initial Assessment chip (Add a Note
-            card grid), keeping nursing and doctor authoring surfaces
-            cleanly separated. The Doctor Header / History / Physical
-            Examination / Diagnosis / Investigations / Treatment Plan /
-            Prescription / Diet & Activity / Follow-up / Sign-off panels
-            that used to render under {activeTab === "doctor"} have all
-            been removed. */}
-        {false && (<>
+        {/* R7ey-F80 — Doctor authoring surface, gated on role. When a DOCTOR
+            mounts this component from the DoctorNotes embed, render the
+            full doctor-side form + sign-off. R7bd had blanket-hidden the
+            block (which made the page useful only to Nurses); the audit
+            (F80) confirmed the doctor block was completely dead under
+            `{false && ...}`, so a doctor saw the Nurse sign-off and
+            unintentionally signed as a nurse. */}
+        {isDoctorRole && (<>
 
           {/* ── Doctor Header ── */}
           <Section title="Doctor & Admission Info" icon="pi-id-card" color={C.accent}>
@@ -1295,7 +1307,7 @@ export function IPDInitialAssessmentContent({ selectedPatient }) {
                   fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
                 Save Draft
               </button>
-              <button onClick={() => handleSave(true, "doctor")} disabled={saving}
+              <button onClick={async () => { await handleSave(true, "doctor"); onSign?.("doctor"); }} disabled={saving}
                 style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: C.accent,
                   cursor: saving ? "not-allowed" : "pointer",
                   fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",

@@ -3406,7 +3406,7 @@ async function getIPDLedger(admissionId, user = {}) {
   // earliest live bill wins when picking the primary action target —
   // newer DRAFTs (created mid-stay after a previous one settled) take
   // precedence over PAID/CANCELLED.
-  const { toNum } = require("../../utils/money");
+  const { toNum, decimalToNumber } = require("../../utils/money");
   const allBills = await PatientBill.find({ admission: admissionId })
     .sort({ createdAt: 1 })
     .lean();
@@ -3442,7 +3442,6 @@ async function getIPDLedger(admissionId, user = {}) {
   let advanceBalance = 0;
   try {
     const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
-    const { toNum } = require("../../utils/money");
     const advances = await PatientAdvance.find({
       UHID: admission.UHID,
       status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
@@ -3461,6 +3460,17 @@ async function getIPDLedger(admissionId, user = {}) {
   const triggerLiveTotal = decorated
     .filter(t => !["voided", "cancelled", "skipped"].includes(t.status))
     .reduce((s, t) => s + toNum(t.totalAmount), 0);
+
+  // R7ey-F18 — Architectural fix. .lean() bypasses each schema's toJSON
+  // decimalToNumber transform, so the wire shipped raw Decimal128 EJSON
+  // ({$numberDecimal:"500"}) for every money field on admission / bills /
+  // triggers. Frontend consumers had to compensate per-field with toMoney
+  // calls — they missed sites (R7ex / F1 / F16 / F17), so amounts rendered
+  // as ₹0 or NaN. Unwrap ONCE here: walks recursively over every nested
+  // money field. Closes the class at the source.
+  decimalToNumber(null, admission);
+  allBills.forEach(b => decimalToNumber(null, b));   // also covers `bill` (same refs)
+  decorated.forEach(t => decimalToNumber(null, t));  // also covers byCategory/byDay items (same refs)
 
   return {
     admission,

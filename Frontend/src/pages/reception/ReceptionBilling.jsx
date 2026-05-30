@@ -1110,12 +1110,19 @@ export default function ReceptionBilling() {
    * receiptHTML() path below is kept as a fallback if anyone needs it
    * but new code should always go through openPrint(). */
   const printReceipt = (bill) => {
+    // R7ey-F1 — pre-R7ey passed `amount: it.netAmount` here (per-item
+    // discount already applied) AND `discount: bill.totalDiscount` (which
+    // INCLUDES the per-item portion). The receipt template then computed
+    // `grand = subtotal − discount + tax`, double-subtracting per-item
+    // discount and undercharging the customer vs the ledger. Fix: send
+    // GROSS per-line amount (unitPrice × quantity) so the printed math
+    // reads cleanly: Subtotal (gross) − Discount (per-item + extra) + Tax = Grand.
     const items = (bill.billItems || []).map(it => ({
       name: it.serviceName || it.name,
       description: it.description,
       qty:  it.quantity || 1,
       rate: it.unitPrice,
-      amount: it.netAmount,
+      amount: toMoney(it.unitPrice) * Number(it.quantity || 1),
     }));
     const lastPay = (bill.payments || []).slice(-1)[0];
     // R7b-HIGH-3b: SERVICE bills (walk-in lab/imaging/day procedures with

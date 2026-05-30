@@ -1125,7 +1125,9 @@ exports.listIpdCreditAdmissions = async (req, res) => {
         admissionStatus: a.status || "Unknown",
         bedNumber:      a.bedId?.bedNumber || "—",
         wardName:       a.bedId?.wardName || a.wardName || a.department || "—",
-        consultant:     a.primaryConsultant || "",
+        // R7ey-F39: attendingDoctor is the canonical denormalized name;
+        // primaryConsultant was a phantom field that no save path populated.
+        consultant:     a.attendingDoctor || a.primaryConsultant || "",
         patientFullName: a.patientId?.fullName || r.patientName,
         patientAge:     a.patientId?.age || null,
         patientGender:  a.patientId?.gender || "",

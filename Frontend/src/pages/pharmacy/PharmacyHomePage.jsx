@@ -4586,8 +4586,9 @@ function IPDCreditTab() {
                     {openAdm.admission.patientId?.contactNumber && <> · <i className="pi pi-phone" style={{ fontSize: 9 }} /> {openAdm.admission.patientId.contactNumber}</>}
                   </div>
                   <div style={{ color: C.muted, marginTop: 2 }}>
-                    Bed {openAdm.admission.bedId?.bedNumber || "—"} · {openAdm.admission.bedId?.wardName || openAdm.admission.wardName || openAdm.admission.department || "—"}
-                    {openAdm.admission.primaryConsultant && <> · {openAdm.admission.primaryConsultant}</>}
+                    Bed {openAdm.admission.bedId?.bedNumber || openAdm.admission.bedNumber || "—"} · {openAdm.admission.bedId?.wardName || openAdm.admission.wardName || openAdm.admission.department || "—"}
+                    {/* R7ey-F39: attendingDoctor is canonical; primaryConsultant was phantom */}
+                    {(openAdm.admission.attendingDoctor || openAdm.admission.primaryConsultant) && <> · {openAdm.admission.attendingDoctor || openAdm.admission.primaryConsultant}</>}
                   </div>
                 </div>
 

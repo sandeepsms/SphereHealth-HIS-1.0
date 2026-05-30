@@ -338,7 +338,8 @@ export default function IndentRaisePage() {
           <div>
             <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Consultant</div>
             <div style={{ fontSize: 12, color: C.dark, marginTop: 4 }}>
-              {admission.consultantDoctor?.fullName || admission.primaryConsultant || "—"}
+              {/* R7ey-F39: canonical field is attendingDoctor — phantom legacy fields kept as last-resort fallback */}
+              {admission.attendingDoctor || admission.consultantDoctor?.fullName || admission.primaryConsultant || "—"}
             </div>
           </div>
           <div>
