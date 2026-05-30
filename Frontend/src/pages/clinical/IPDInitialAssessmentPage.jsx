@@ -374,14 +374,18 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   }, [selectedPatient?._id, selectedPatient?.UHID]);
   const [loadingPt, setLoadingPt] = useState(false);
   const [saving, setSaving]       = useState(false);
-  const [noteId, setNoteId]       = useState(null);
-  // R7fm — separate NurseNote id for the nursing-section mirror write.
-  // The page POSTs to /doctor-notes (canonical IPD_INITIAL bucket), but
-  // /nursing-notes is a SEPARATE collection that NursingNotes.jsx reads
-  // for its timeline. Without this mirror, signed nurse Initial
-  // Assessments never surfaced on the nurse timeline (R7fk live test
-  // showed empty NurseNotes for Badal). On subsequent saves we PUT to
-  // this id so we don't create duplicate timeline rows on re-edit.
+  // R7fn-v2 — TWO distinct DoctorNote rows: one per section. The R7fa
+  // design said nurse and doctor have SEPARATE Initial Assessments, but
+  // the original code reused a single id. That meant once the nurse
+  // signed (status="signed"), the doctor's PATCH /sign came back 400
+  // ("Note already signed") because the backend tried to lock the SAME
+  // row a second time. Each section now tracks its own DoctorNote id so
+  // the doctor's save creates a new doc on top of the nurse's signed
+  // one — and signs it cleanly.
+  const [doctorNoteId, setDoctorNoteId] = useState(null);
+  const [nurseSectionNoteId, setNurseSectionNoteId] = useState(null);
+  // R7fm — separate NurseNote id for the nursing-section mirror write
+  // (NurseNotes collection / nursing timeline). See R7fm.
   const [nurseNoteId, setNurseNoteId] = useState(null);
   // R7bd — activeTab + Doctor Initial Assessment tab removed. This page
   // is now nursing-only: the Doctor's initial assessment lives in the
@@ -1022,12 +1026,28 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           const noteList = Array.isArray(noteRes.data) ? noteRes.data
                          : Array.isArray(noteRes.data?.data) ? noteRes.data.data
                          : [];
-          const existing = noteList
+          const initials = noteList
             .filter(n => n?.noteType === "initial" || n?.visitType === "IPD_INITIAL")
-            .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))[0];
+            .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
+          // R7fn-v2: split the existing notes by section. Nurse-section
+          // notes feed cross-flow auto-populate; doctor-section notes
+          // are the doctor's write target (PUT vs POST).
+          //
+          // CRITICAL: only reuse an id as the write target when the row
+          // is still a DRAFT. A note that was already signed/amended
+          // can't be re-signed — PATCH /sign returns 400. In that case
+          // we leave the section's noteId null so handleSave POSTs a
+          // FRESH draft row that we can sign cleanly. We still hydrate
+          // the form from it (read-only restore).
+          const nurseSec  = initials.find(n => n.section === "nursing" || (n.noteDetails?.nursing && !n.noteDetails?.doctor?.hopi));
+          const doctorSec = initials.find(n => n.section === "doctor"  || (n.noteDetails?.doctor?.hopi));
+          const isReusable = (n) => n && n.status !== "signed" && n.status !== "amended";
+          if (isReusable(nurseSec))  setNurseSectionNoteId(nurseSec._id);
+          if (isReusable(doctorSec)) setDoctorNoteId(doctorSec._id);
+          // Hydrate from whichever has the richest combined data.
+          const existing = doctorSec || nurseSec;
 
           if (existing?._id) {
-            setNoteId(existing._id);
             const nur = existing.noteDetails?.nursing || {};
             const nNabh = existing.noteDetails?.nursingNabh || {};
             const doc = existing.noteDetails?.doctor || {};
@@ -1133,9 +1153,15 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             if (dNabh.functionalEcog)   setEcog(e => ({ ...e, ...dNabh.functionalEcog }));
             if (dNabh.spiritualNeeds)   setSpiritual(s => ({ ...s, ...dNabh.spiritualNeeds }));
 
+            // Friendly status label — surveyors don't want to see
+            // "amended" alarming the doctor. "Locked" conveys
+            // signed/amended (nurse already finalised); "Draft" otherwise.
+            const statusLabel = (existing.status === "signed" || existing.status === "amended")
+              ? "nurse-signed"
+              : (existing.status || "draft");
             toast.info(
-              `Existing IPD Initial Assessment loaded (status: ${existing.status || "draft"}). ` +
-              `Nursing data pre-filled — doctor fields auto-flow on save.`,
+              `Nursing Initial Assessment found (${statusLabel}). ` +
+              `Nurse data ready — fill the Doctor section and Sign to add your assessment.`,
               { autoClose: 3500 },
             );
           }
@@ -1820,13 +1846,27 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
     setSaving(true);
     try {
       const payload = buildPayload(section, sign ? "signed" : "draft");
+      // R7fn-v2 — pick the section-specific id so doctor and nurse each
+      // sign their own DoctorNote. Mixing them caused PATCH /sign → 400
+      // ("Note already signed") when the doctor saved on top of a
+      // nurse-signed initial.
+      const sectionNoteId = section === "doctor" ? doctorNoteId : nurseSectionNoteId;
       let res;
-      if (noteId) {
-        res = await axios.put(`${API_ENDPOINTS.DOCTOR_NOTES}/${noteId}`, payload);
-        if (sign) await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${noteId}/sign`);
+      if (sectionNoteId) {
+        res = await axios.put(`${API_ENDPOINTS.DOCTOR_NOTES}/${sectionNoteId}`, payload);
+        if (sign) await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${sectionNoteId}/sign`);
       } else {
         res = await axios.post(`${API_ENDPOINTS.DOCTOR_NOTES}`, payload);
-        setNoteId(res.data?.data?._id || res.data?._id);
+        const newId = res.data?.data?._id || res.data?._id;
+        if (newId) {
+          if (section === "doctor") setDoctorNoteId(newId);
+          else setNurseSectionNoteId(newId);
+          // After POST, the row is still draft; if `sign` requested, hit
+          // /sign now on the freshly-created row.
+          if (sign) {
+            try { await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${newId}/sign`); } catch (_) {}
+          }
+        }
       }
 
       // R7fm — Mirror nursing-section assessments to /nursing-notes so they

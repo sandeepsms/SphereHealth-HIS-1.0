@@ -781,15 +781,21 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/nurse-initial-assessment" element={
               <RoleGuard action="mar.write"><NurseInitialAssessmentPage /></RoleGuard>
             } />
+            {/* R7fn-FIX — IPD Initial Assessment is filled by BOTH doctor
+                and nurse (R7fa split design). The old `mar.write` gate
+                (Admin/Nurse only) blocked Doctor with "Access denied" —
+                the entire doctor side of the form was unreachable. Switch
+                to `patient.write-clinical` (Admin/Doctor/Nurse) which is
+                the correct gate for clinical-write surfaces. */}
             <Route path="/ipd-initial-assessment" element={
-              <RoleGuard action="mar.write"><IPDInitialAssessmentPage /></RoleGuard>
+              <RoleGuard action="patient.write-clinical"><IPDInitialAssessmentPage /></RoleGuard>
             } />
             {/* Alias — many pages link to /ipd-assessment which is the same flow */}
             <Route path="/ipd-assessment" element={
-              <RoleGuard action="mar.write"><IPDInitialAssessmentPage /></RoleGuard>
+              <RoleGuard action="patient.write-clinical"><IPDInitialAssessmentPage /></RoleGuard>
             } />
             <Route path="/ipd-assessment/:uhid" element={
-              <RoleGuard action="mar.write"><IPDInitialAssessmentPage /></RoleGuard>
+              <RoleGuard action="patient.write-clinical"><IPDInitialAssessmentPage /></RoleGuard>
             } />
 
             {/* Investigation / Lab — used by Lab Tech, Radiologist, Doctor */}
