@@ -16,6 +16,8 @@ import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+// R7ez — paperless consent capture panel (WebAuthn + staff e-sign + bypass).
+import BiometricConsentPanel from "../../Components/consent/BiometricConsentPanel";
 
 const API = `${API_ENDPOINTS.BASE}/consent-forms`;
 
@@ -775,6 +777,14 @@ export function ConsentFormPageContent({ selectedPatient }) {
   const [previewData, setPreviewData] = useState(null);
   const [previewType, setPreviewType] = useState(null);
 
+  // R7ez — paperless consent state. After Save Draft the API returns the
+  // new PENDING ConsentForm; we hold the doc here so the BiometricConsentPanel
+  // can target /:id/biometric/options and /:id/staff-sign. Sign-and-Lock
+  // (the final PATCH /:id/sign) is gated until all three sub-steps green.
+  const [activeConsent, setActiveConsent] = useState(null); // { _id, biometric, staffSignature, consentingParty, bypass, status }
+  const [biometricReady, setBiometricReady] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+
   const token = (sessionStorage.getItem("his_token"));
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -894,11 +904,20 @@ export function ConsentFormPageContent({ selectedPatient }) {
         additionalNotes: consentData.additionalNotes,
         status: "PENDING",
       };
-      await axios.post(API, payload, { headers });
-      toast.success("Consent form saved");
+      const res = await axios.post(API, payload, { headers });
+      // R7ez — keep the new PENDING form in state so the biometric/staff
+      // sign panel below can target it. Do NOT auto-open print preview yet
+      // — that would skip the paperless ceremony.
+      const created = res.data?.data;
+      if (created?._id) {
+        setActiveConsent(created);
+        setBiometricReady(false);
+        toast.success("Draft saved — now capture biometric + staff signature to lock");
+      } else {
+        toast.success("Consent form saved");
+      }
       clearDraft();
       fetchSavedForms();
-      openPreview();
     } catch (err) {
       // FIX (audit P18-B4): the legacy 404-swallow lied to the user
       // about a successful save when the backend route was misrouted /
@@ -906,6 +925,46 @@ export function ConsentFormPageContent({ selectedPatient }) {
       toast.error(err.response?.data?.message || `Save failed (${err.response?.status || "network"})`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  // R7ez — finalize: PATCH /:id/sign with the body that was already on
+  // the form. Backend re-validates biometric + staff sign + consenting
+  // party before flipping PENDING → SIGNED. Once signed, the print
+  // preview opens automatically so the staff can hand a copy to the
+  // patient / file it.
+  const finalizeConsent = async () => {
+    if (!activeConsent?._id) return;
+    if (!biometricReady) {
+      return toast.warn("Complete biometric + staff signature first");
+    }
+    setFinalizing(true);
+    try {
+      const res = await axios.patch(`${API}/${activeConsent._id}/sign`, {
+        guardianName: consentData.guardianName,
+        guardianRelation: consentData.guardianRelation,
+        witnessName: consentData.witnessName,
+      }, { headers });
+      toast.success("Consent signed & locked ✓");
+      setActiveConsent(null);
+      setBiometricReady(false);
+      fetchSavedForms();
+      openPreview();
+      // Reset back to catalogue after a short delay so the user sees the toast.
+      setTimeout(() => setView("catalogue"), 600);
+    } catch (err) {
+      const code = err.response?.data?.code;
+      const msg = err.response?.data?.message || err.message || "Sign failed";
+      if (code === "CONSENT_INCOMPLETE") {
+        toast.error(`Cannot sign: ${msg}`);
+      } else if (code === "CONSENT_STATE_CHANGED") {
+        toast.warn(msg);
+        setActiveConsent(null);
+      } else {
+        toast.error(msg);
+      }
+    } finally {
+      setFinalizing(false);
     }
   };
 
@@ -1318,15 +1377,61 @@ export function ConsentFormPageContent({ selectedPatient }) {
             }}>
               <i className="pi pi-eye" style={{ marginRight: 6 }} />Preview
             </button>
-            <button onClick={handleSave} disabled={saving} style={{
+            <button onClick={handleSave} disabled={saving || !!activeConsent} style={{
               padding: "9px 24px", borderRadius: 8, border: "none",
               background: saving ? C.muted : selectedType.color,
               color: "white", fontWeight: 700, fontSize: 13,
-              cursor: saving ? "not-allowed" : "pointer",
+              cursor: (saving || activeConsent) ? "not-allowed" : "pointer",
+              opacity: activeConsent ? 0.55 : 1,
             }}>
-              {saving ? "Saving…" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Save & Print</>}
+              {saving ? "Saving…" : activeConsent ? "Draft saved · capture biometric below" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Save Draft & Begin Sign</>}
             </button>
           </div>
+
+          {/* R7ez — Paperless authentication block: consenting party form,
+              Windows Hello biometric capture, staff e-signature. The whole
+              card stays hidden until handleSave creates the PENDING draft.
+              The Sign-and-Lock button below the card only enables once all
+              three sub-steps are green. */}
+          {activeConsent && (
+            <>
+              <BiometricConsentPanel
+                consentId={activeConsent._id}
+                initialConsentingParty={activeConsent.consentingParty}
+                initialBiometric={activeConsent.biometric}
+                initialStaffSignature={activeConsent.staffSignature}
+                initialBypass={activeConsent.bypass}
+                onUpdated={(doc) => doc && setActiveConsent((prev) => ({ ...(prev || {}), ...doc }))}
+                onAllComplete={() => setBiometricReady(true)}
+                disabled={finalizing}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
+                <button
+                  onClick={() => { if (window.confirm("Discard this draft? The form will need to be saved again.")) { setActiveConsent(null); setBiometricReady(false); } }}
+                  style={{
+                    padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${C.muted}`,
+                    background: "white", color: C.muted, fontWeight: 600, fontSize: 12, cursor: "pointer",
+                  }}
+                >
+                  Discard draft
+                </button>
+                <button
+                  onClick={finalizeConsent}
+                  disabled={!biometricReady || finalizing}
+                  style={{
+                    padding: "10px 28px", borderRadius: 8, border: "none",
+                    background: (!biometricReady || finalizing) ? C.muted : "#16a34a",
+                    color: "white", fontWeight: 800, fontSize: 13,
+                    cursor: (!biometricReady || finalizing) ? "not-allowed" : "pointer",
+                    boxShadow: biometricReady ? "0 4px 14px #16a34a40" : "none",
+                  }}
+                >
+                  <i className="pi pi-check-circle" style={{ marginRight: 6 }} />
+                  {finalizing ? "Signing…" : biometricReady ? "Sign & Lock Consent" : "Complete biometric + e-sign first"}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
       {showSetup && (
