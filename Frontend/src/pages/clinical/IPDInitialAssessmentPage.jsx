@@ -642,6 +642,77 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
     notes: "",
   });
 
+  /* ══ R7fg · DOCTOR P2 NABH FIELDS (D15-D18) ════════════════════ */
+  // D15 · Menstrual / Obstetric history (women of childbearing age)
+  const [obGyn, setObGyn]               = useState({
+    isApplicable: false,  // tick if female of childbearing age
+    lmp: "", cycleRegular: true, cycleDays: "",
+    gravida: "", para: "", abortions: "", livingChildren: "",
+    contraception: "",    // type
+    lastPregnancyOutcome: "",
+    pregnancyTestDone: false, pregnancyTestResult: "",
+    notes: "",
+  });
+  // D16 · Immunisation status (esp paediatric, immunocompromised, pre-op)
+  const [immunisation, setImmunisation] = useState({
+    upToDateForAge: true,
+    tetanus: { vaccinated: false, lastDate: "" },
+    hepB:    { vaccinated: false, lastDate: "" },
+    covid:   { vaccinated: false, lastDate: "", doses: "" },
+    influenza:{ vaccinated: false, lastDate: "" },
+    pneumococcal: { vaccinated: false, lastDate: "" },
+    other: "",
+  });
+  // D17 · Functional / Disability — ECOG performance status
+  const [ecog, setEcog]                 = useState({
+    score: "",  // 0–4 or "5" for dead (not used here)
+    disabilities: "", // free-text: visual / hearing / cognitive / motor
+    aidsRequired: "", // walker / wheelchair / NIV / oxygen
+  });
+  // D18 · Spiritual / existential needs (doctor's reflection — beyond
+  // nurse's N12 cultural-spiritual capture)
+  const [spiritual, setSpiritual]       = useState({
+    distressNoted: false,
+    concerns: "",
+    chaplainReferralRequested: false,
+  });
+
+  /* ══ R7fg · NURSE P2 NABH FIELDS (N18-N21) ═════════════════════ */
+  // N18 · Mobility / Gait assessment
+  const [mobility, setMobility]         = useState({
+    independent: true,
+    usesAid: "", // walker / cane / wheelchair / crutches
+    gaitNormal: true,
+    fallRisk: false,
+    notes: "",
+  });
+  // N19 · Pre-anaesthesia basics (for elective surgery — quick screen)
+  const [preAnaesthesia, setPreAnaesthesia] = useState({
+    plannedSurgery: false,
+    npoSince: "",
+    looseTooth: false, crowns: false, dentures: false,
+    difficulIntubationHistory: false,
+    anaesthesiaHistory: "",  // GA / SA / RA previously
+    pacScheduled: false, pacDate: "",
+  });
+  // N20 · NRS-2002 simplification — 4 quick screening questions
+  // (full NRS-2002 stays in the existing nutri section; this is the
+  //  fast triage that triggers dietitian referral if positive ≥ 1)
+  const [nrsQuick, setNrsQuick]         = useState({
+    bmiUnder20: false,
+    weightLossLast3Months: false,
+    reducedIntakeLastWeek: false,
+    severelyIll: false,
+    dietitianReferralTriggered: false,
+  });
+  // N21 · PROM / PREM trigger (Patient-reported outcome / experience
+  //   surveys — flag at admission, dispatched at discharge)
+  const [promPrem, setPromPrem]         = useState({
+    promPlanned: false, promSurvey: "",  // EQ-5D / SF-36 / PROMIS
+    premPlanned: true,  premSurvey: "Hospital experience (NABH PSQ)",
+    notes: "",
+  });
+
   /* ── Auto-save draft ── */
   const draftKey = patient?._id ? `sphere_draft_ipd_initial_${patient._id}` : null;
   const { savedAt, hasDraft, clearDraft } = useAutoSave(
@@ -653,7 +724,10 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
       idBand, nurseAllergyList, nurseNoKnownAllergies, nurseBriefPmh, homeMeds, anthropo, psychosocial, barthel, bodyChart, dischargePlan, educationNeeds, precautions,
       // R7fd · doctor P1 + nurse P1
       docAnthropo, localExam, referrals, prognosis, consentNeeded,
-      cognitive, cultural, elimination, sleep, valuables, caregiver, highRisk },
+      cognitive, cultural, elimination, sleep, valuables, caregiver, highRisk,
+      // R7fg · P2 fields
+      obGyn, immunisation, ecog, spiritual,
+      mobility, preAnaesthesia, nrsQuick, promPrem },
     2000
   );
   const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
@@ -949,6 +1023,11 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           referrals,
           prognosis,
           consentRequired: consentNeeded,
+          // R7fg · doctor P2
+          obstetricGynae: obGyn,
+          immunisationStatus: immunisation,
+          functionalEcog: ecog,
+          spiritualNeeds: spiritual,
         },
       },
       // R7ff — Cross-check alerts snapshot for backend audit trail.
@@ -976,6 +1055,11 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         valuablesBelongings: valuables,
         familyCaregiver: caregiver,
         highRiskFlags: highRisk,
+        // R7fg · nurse P2
+        mobilityGait: mobility,
+        preAnaesthesia,
+        nutritionalScreeningQuick: nrsQuick,
+        promPremTriggers: promPrem,
       },
     },
   });
@@ -2102,6 +2186,141 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             </Field>
           </Section>
 
+          {/* ══════════════════════════════════════════════════════════
+              R7fg · NURSE P2 NABH FIELDS (N18-N21)
+              ══════════════════════════════════════════════════════════ */}
+
+          {/* ── N18 · Mobility / Gait ── */}
+          <Section title="Mobility & Gait" icon="pi-arrow-right" color={C.teal}>
+            <div style={{ display: "flex", gap: 18, fontSize: 12, flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input type="checkbox" checked={mobility.independent} onChange={e => setMobility(p => ({ ...p, independent: e.target.checked }))} />
+                Independent mobility
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input type="checkbox" checked={mobility.gaitNormal} onChange={e => setMobility(p => ({ ...p, gaitNormal: e.target.checked }))} />
+                Gait normal
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input type="checkbox" checked={mobility.fallRisk} onChange={e => setMobility(p => ({ ...p, fallRisk: e.target.checked }))} />
+                Fall risk observed
+              </label>
+            </div>
+            <Field label="Aids used" style={{ marginTop: 10 }}>
+              <input value={mobility.usesAid} onChange={e => setMobility(p => ({ ...p, usesAid: e.target.value }))} placeholder="Walker / cane / wheelchair / crutches" className="his-field" />
+            </Field>
+            <Field label="Notes" style={{ marginTop: 10 }}>
+              <textarea value={mobility.notes} onChange={e => setMobility(p => ({ ...p, notes: e.target.value }))} placeholder="Antalgic / ataxic / hemiparetic gait, unsteady on uneven surface…" className="his-textarea" style={{ minHeight: 50 }} />
+            </Field>
+          </Section>
+
+          {/* ── N19 · Pre-anaesthesia basics (elective surgery quick screen) ── */}
+          <Section title="Pre-Anaesthesia Screen (if elective surgery planned)" icon="pi-bolt" color={C.warn}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
+              <input type="checkbox" checked={preAnaesthesia.plannedSurgery} onChange={e => setPreAnaesthesia(p => ({ ...p, plannedSurgery: e.target.checked }))} />
+              Elective surgery planned this admission
+            </label>
+            {preAnaesthesia.plannedSurgery && (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <Field label="NPO since (date / time)">
+                    <input value={preAnaesthesia.npoSince} onChange={e => setPreAnaesthesia(p => ({ ...p, npoSince: e.target.value }))} placeholder="e.g. 22:00 last night" className="his-field" />
+                  </Field>
+                  <Field label="Previous anaesthesia history">
+                    <input value={preAnaesthesia.anaesthesiaHistory} onChange={e => setPreAnaesthesia(p => ({ ...p, anaesthesiaHistory: e.target.value }))} placeholder="GA 2020 (uneventful) / SA 2018" className="his-field" />
+                  </Field>
+                </div>
+                <div style={{ display: "flex", gap: 18, fontSize: 12, flexWrap: "wrap", marginTop: 10 }}>
+                  {[
+                    ["looseTooth", "Loose tooth"],
+                    ["crowns", "Crowns / bridges"],
+                    ["dentures", "Dentures"],
+                    ["difficulIntubationHistory", "Difficult intubation history"],
+                  ].map(([k, label]) => (
+                    <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                      <input type="checkbox" checked={!!preAnaesthesia[k]} onChange={e => setPreAnaesthesia(p => ({ ...p, [k]: e.target.checked }))} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                    <input type="checkbox" checked={preAnaesthesia.pacScheduled} onChange={e => setPreAnaesthesia(p => ({ ...p, pacScheduled: e.target.checked }))} />
+                    PAC (pre-anaesthesia consultation) scheduled
+                  </label>
+                  <Field label="PAC date / time">
+                    <input value={preAnaesthesia.pacDate} onChange={e => setPreAnaesthesia(p => ({ ...p, pacDate: e.target.value }))} className="his-field" />
+                  </Field>
+                </div>
+              </>
+            )}
+          </Section>
+
+          {/* ── N20 · NRS-2002 Quick Screen ── */}
+          <Section title="Nutritional Quick Screen (NRS-2002 short)" icon="pi-bookmark" color={C.green}>
+            <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
+              4-question rapid triage. Any "Yes" triggers dietitian referral. Full NRS-2002 is in the
+              "Nutritional Risk Screening" section above.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
+              {[
+                ["bmiUnder20", "BMI < 20.5 kg/m²"],
+                ["weightLossLast3Months", "Weight loss in last 3 months"],
+                ["reducedIntakeLastWeek", "Reduced intake in last week"],
+                ["severelyIll", "Severely ill (e.g. ICU)"],
+              ].map(([k, label]) => (
+                <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!nrsQuick[k]}
+                    onChange={e => {
+                      const next = { ...nrsQuick, [k]: e.target.checked };
+                      next.dietitianReferralTriggered = next.bmiUnder20 || next.weightLossLast3Months || next.reducedIntakeLastWeek || next.severelyIll;
+                      setNrsQuick(next);
+                    }} />
+                  {label}
+                </label>
+              ))}
+            </div>
+            {nrsQuick.dietitianReferralTriggered && (
+              <div style={{ marginTop: 10, padding: "6px 10px", background: C.warnL, border: `1.5px solid ${C.warn}40`, borderRadius: 6, fontSize: 11.5, color: C.warn, fontWeight: 600 }}>
+                <i className="pi pi-flag" style={{ marginRight: 6 }} />
+                Dietitian referral triggered — raise nutrition consult.
+              </div>
+            )}
+          </Section>
+
+          {/* ── N21 · PROM / PREM Surveys (NABH PSQ) ── */}
+          <Section title="Outcome & Experience Surveys (PROM / PREM)" icon="pi-comments" color={C.accent} badge="NABH PSQ">
+            <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
+              Schedule patient-reported outcomes (PROM) and experience (PREM) at discharge.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 6 }}>
+                  <input type="checkbox" checked={promPrem.promPlanned} onChange={e => setPromPrem(p => ({ ...p, promPlanned: e.target.checked }))} />
+                  PROM (Outcome) planned
+                </label>
+                {promPrem.promPlanned && (
+                  <select value={promPrem.promSurvey} onChange={e => setPromPrem(p => ({ ...p, promSurvey: e.target.value }))} className="his-field" style={{ padding: "5px 8px" }}>
+                    <option value="">— Select survey —</option>
+                    {["EQ-5D-5L", "SF-36", "PROMIS", "Oxford knee / hip", "VAS pain", "Other"].map(o => <option key={o}>{o}</option>)}
+                  </select>
+                )}
+              </div>
+              <div>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 6 }}>
+                  <input type="checkbox" checked={promPrem.premPlanned} onChange={e => setPromPrem(p => ({ ...p, premPlanned: e.target.checked }))} />
+                  PREM (Experience) planned
+                </label>
+                {promPrem.premPlanned && (
+                  <input value={promPrem.premSurvey} onChange={e => setPromPrem(p => ({ ...p, premSurvey: e.target.value }))} placeholder="Survey name" className="his-field" style={{ padding: "5px 8px" }} />
+                )}
+              </div>
+            </div>
+            <Field label="Notes" style={{ marginTop: 10 }}>
+              <input value={promPrem.notes} onChange={e => setPromPrem(p => ({ ...p, notes: e.target.value }))} placeholder="Language preference, follow-up call number…" className="his-field" />
+            </Field>
+          </Section>
+
           {/* ── Nursing Plan (existing) ── */}
           <Section title="Nursing Problems & Care Goals" icon="pi-pencil" color={C.pink}>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -2812,6 +3031,124 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
                 </label>
               ))}
             </div>
+          </Section>
+
+          {/* ══════════════════════════════════════════════════════════
+              R7fg · DOCTOR P2 NABH FIELDS (D15-D18)
+              ══════════════════════════════════════════════════════════ */}
+
+          {/* ── D15 · Menstrual / Obstetric (women of childbearing age) ── */}
+          <Section title="Menstrual & Obstetric History" icon="pi-heart" color={C.pink}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
+              <input type="checkbox" checked={obGyn.isApplicable} onChange={e => setObGyn(p => ({ ...p, isApplicable: e.target.checked }))} />
+              Patient is female of childbearing age — capture below
+            </label>
+            {obGyn.isApplicable && (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
+                  <Field label="LMP (Last Menstrual Period)"><input type="date" value={obGyn.lmp} onChange={e => setObGyn(p => ({ ...p, lmp: e.target.value }))} className="his-field" /></Field>
+                  <Field label="Cycle days (e.g. 28)"><input value={obGyn.cycleDays} onChange={e => setObGyn(p => ({ ...p, cycleDays: e.target.value }))} className="his-field" placeholder="28" /></Field>
+                  <Field label="G P A L">
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <input value={obGyn.gravida} onChange={e => setObGyn(p => ({ ...p, gravida: e.target.value }))} placeholder="G" className="his-field" style={{ padding: "5px 6px" }} />
+                      <input value={obGyn.para} onChange={e => setObGyn(p => ({ ...p, para: e.target.value }))} placeholder="P" className="his-field" style={{ padding: "5px 6px" }} />
+                      <input value={obGyn.abortions} onChange={e => setObGyn(p => ({ ...p, abortions: e.target.value }))} placeholder="A" className="his-field" style={{ padding: "5px 6px" }} />
+                      <input value={obGyn.livingChildren} onChange={e => setObGyn(p => ({ ...p, livingChildren: e.target.value }))} placeholder="L" className="his-field" style={{ padding: "5px 6px" }} />
+                    </div>
+                  </Field>
+                  <Field label="Contraception (current)">
+                    <input value={obGyn.contraception} onChange={e => setObGyn(p => ({ ...p, contraception: e.target.value }))} placeholder="OCP / IUCD / barrier / nil" className="his-field" />
+                  </Field>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 10 }}>
+                  <Field label="Last pregnancy outcome">
+                    <input value={obGyn.lastPregnancyOutcome} onChange={e => setObGyn(p => ({ ...p, lastPregnancyOutcome: e.target.value }))} placeholder="LSCS 2022 / Term-vaginal 2020 / Miscarriage" className="his-field" />
+                  </Field>
+                  <Field label="Pregnancy test (β-hCG)">
+                    <select value={obGyn.pregnancyTestResult} onChange={e => setObGyn(p => ({ ...p, pregnancyTestResult: e.target.value, pregnancyTestDone: !!e.target.value }))} className="his-field">
+                      <option value="">Not done</option>
+                      <option>Negative</option>
+                      <option>Positive</option>
+                    </select>
+                  </Field>
+                  <Field label="Cycle regularity">
+                    <select value={obGyn.cycleRegular ? "Regular" : "Irregular"} onChange={e => setObGyn(p => ({ ...p, cycleRegular: e.target.value === "Regular" }))} className="his-field">
+                      <option>Regular</option>
+                      <option>Irregular</option>
+                    </select>
+                  </Field>
+                </div>
+                <Field label="Notes" style={{ marginTop: 10 }}>
+                  <textarea value={obGyn.notes} onChange={e => setObGyn(p => ({ ...p, notes: e.target.value }))} placeholder="Menstrual concerns, PCOS, endometriosis, infertility…" className="his-textarea" style={{ minHeight: 50 }} />
+                </Field>
+              </>
+            )}
+          </Section>
+
+          {/* ── D16 · Immunisation Status ── */}
+          <Section title="Immunisation Status" icon="pi-shield" color={C.green}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
+              <input type="checkbox" checked={immunisation.upToDateForAge} onChange={e => setImmunisation(p => ({ ...p, upToDateForAge: e.target.checked }))} />
+              Up-to-date for age per national schedule
+            </label>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+              {[
+                ["tetanus", "Tetanus / Td"], ["hepB", "Hepatitis B"],
+                ["covid", "COVID-19"],       ["influenza", "Influenza"],
+                ["pneumococcal", "Pneumococcal"],
+              ].map(([k, label]) => (
+                <div key={k} style={{ display: "grid", gridTemplateColumns: "180px 1fr 1fr", gap: 6, alignItems: "center" }}>
+                  <label style={{ fontSize: 11.5, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontWeight: 600 }}>
+                    <input type="checkbox" checked={immunisation[k]?.vaccinated || false} onChange={e => setImmunisation(p => ({ ...p, [k]: { ...p[k], vaccinated: e.target.checked } }))} />
+                    {label}
+                  </label>
+                  <input type="date" value={immunisation[k]?.lastDate || ""} onChange={e => setImmunisation(p => ({ ...p, [k]: { ...p[k], lastDate: e.target.value } }))} className="his-field" style={{ padding: "5px 7px" }} />
+                  {k === "covid" && (
+                    <input value={immunisation.covid?.doses || ""} onChange={e => setImmunisation(p => ({ ...p, covid: { ...p.covid, doses: e.target.value } }))} placeholder="Doses (1/2/3 + booster)" className="his-field" style={{ padding: "5px 7px" }} />
+                  )}
+                </div>
+              ))}
+            </div>
+            <Field label="Other vaccines / notes" style={{ marginTop: 10 }}>
+              <input value={immunisation.other} onChange={e => setImmunisation(p => ({ ...p, other: e.target.value }))} placeholder="Rabies post-exposure / Yellow fever / Typhoid…" className="his-field" />
+            </Field>
+          </Section>
+
+          {/* ── D17 · Functional / ECOG ── */}
+          <Section title="Functional Status (ECOG)" icon="pi-user" color={C.teal}>
+            <Field label="ECOG Performance Status (0–4)">
+              <select value={ecog.score} onChange={e => setEcog(p => ({ ...p, score: e.target.value }))} className="his-field">
+                <option value="">— Select —</option>
+                <option value="0">0 — Fully active, no restriction</option>
+                <option value="1">1 — Light work; ambulatory</option>
+                <option value="2">2 — Ambulatory, self-care; up &gt; 50% waking hours; no work</option>
+                <option value="3">3 — Limited self-care; bed/chair &gt; 50% waking hours</option>
+                <option value="4">4 — Completely disabled; cannot self-care; bedbound</option>
+              </select>
+            </Field>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+              <Field label="Disabilities">
+                <input value={ecog.disabilities} onChange={e => setEcog(p => ({ ...p, disabilities: e.target.value }))} placeholder="Visual / hearing / cognitive / motor" className="his-field" />
+              </Field>
+              <Field label="Aids required">
+                <input value={ecog.aidsRequired} onChange={e => setEcog(p => ({ ...p, aidsRequired: e.target.value }))} placeholder="Walker / wheelchair / NIV / oxygen" className="his-field" />
+              </Field>
+            </div>
+          </Section>
+
+          {/* ── D18 · Spiritual / Existential Needs ── */}
+          <Section title="Spiritual / Existential Needs" icon="pi-star" color={C.purple}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
+              <input type="checkbox" checked={spiritual.distressNoted} onChange={e => setSpiritual(p => ({ ...p, distressNoted: e.target.checked }))} />
+              Spiritual / existential distress noted at this visit
+            </label>
+            <Field label="Concerns expressed">
+              <textarea value={spiritual.concerns} onChange={e => setSpiritual(p => ({ ...p, concerns: e.target.value }))} placeholder="Loss of meaning, fear of death, unresolved guilt, family rifts…" className="his-textarea" style={{ minHeight: 50 }} />
+            </Field>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginTop: 10 }}>
+              <input type="checkbox" checked={spiritual.chaplainReferralRequested} onChange={e => setSpiritual(p => ({ ...p, chaplainReferralRequested: e.target.checked }))} />
+              Chaplain / spiritual counsellor referral requested
+            </label>
           </Section>
 
           {/* ── Diet, Activity & Follow-up ── */}
