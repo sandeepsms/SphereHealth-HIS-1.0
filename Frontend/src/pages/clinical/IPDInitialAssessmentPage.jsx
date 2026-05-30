@@ -738,13 +738,25 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   // E · Family Caregiver — doctor's prognosis "Discussed with" pre-fills
   // from nurse's N16 primary caregiver. Doctor can override (sometimes
   // the prognosis discussion happens with a different relative).
+  //
+  // R7fe-VERIFY-FIX: the original guard `!prognosis.discussedWith` blocked
+  // re-formatting when name was typed before relation (initial fire set
+  // "Sunita Sharma"; later relation change skipped). Detect the auto-
+  // generated shapes — empty, name-alone, or "Name (Relation)" — and
+  // re-format when nursing's caregiver fields change. A user-edited
+  // value that doesn't match those shapes is preserved verbatim.
   useEffect(() => {
-    if (!prognosis.discussedWith && caregiver.primaryName?.trim()) {
-      const formatted = caregiver.primaryRelation
-        ? `${caregiver.primaryName.trim()} (${caregiver.primaryRelation.trim()})`
-        : caregiver.primaryName.trim();
-      setPrognosis(p => ({ ...p, discussedWith: formatted }));
-    }
+    const name = caregiver.primaryName?.trim();
+    const rel  = caregiver.primaryRelation?.trim();
+    if (!name) return;
+    const formatted = rel ? `${name} (${rel})` : name;
+    setPrognosis(p => {
+      const cur = (p.discussedWith || "").trim();
+      const isAutoShape = !cur || cur === name || /^.+\s\(.+\)$/.test(cur);
+      if (!isAutoShape) return p;            // user customised — leave alone
+      if (cur === formatted) return p;       // no change needed
+      return { ...p, discussedWith: formatted };
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caregiver.primaryName, caregiver.primaryRelation]);
 
