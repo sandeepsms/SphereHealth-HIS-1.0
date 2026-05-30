@@ -563,6 +563,85 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
     seizure: false, mri: false, latex: false,
   });
 
+  /* ══ R7fd · DOCTOR P1 NABH FIELDS (D10-D14) ════════════════════ */
+  // D10 · Anthropometry (doctor's own — even if nurse captured, doctor
+  // confirms for drug-dosing safety, esp. cachectic / edematous cases)
+  const [docAnthropo, setDocAnthropo]   = useState({
+    heightCm: "", weightKg: "", bmi: "", idealBodyWeightKg: "",
+  });
+  // D11 · Local examination (surgical patients / focused exam)
+  const [localExam, setLocalExam]       = useState("");
+  // D12 · Cross-consultation / Referral plan
+  const [referrals, setReferrals]       = useState([]); // [{specialty, reason, urgency, status}]
+  // D13 · Prognosis discussion (NABH PRE.4)
+  const [prognosis, setPrognosis]       = useState({
+    discussedWith: "",  // name + relation
+    languageUsed: "Hindi",
+    summary: "",
+    questionsAddressed: "",
+  });
+  // D14 · Consent linkage — flag which consents must be obtained
+  const [consentNeeded, setConsentNeeded] = useState({
+    surgical: false, anesthesia: false, bloodTransfusion: false,
+    hivTesting: false, photography: false, research: false,
+    dnr: false, lama: false,
+  });
+
+  /* ══ R7fd · NURSE P1 NABH FIELDS (N11-N17) ═════════════════════ */
+  // N11 · Cognitive / Communication assessment
+  const [cognitive, setCognitive]       = useState({
+    orientationPerson: true, orientationPlace: true, orientationTime: true,
+    visionDeficit: false, hearingDeficit: false, speechDeficit: false,
+    aidsUsed: "",   // glasses / hearing aid / dentures
+    gcs: "",        // optional Glasgow score
+    notes: "",
+  });
+  // N12 · Cultural / Spiritual preferences
+  const [cultural, setCultural]         = useState({
+    religion: "",
+    dietaryRestrictions: "", // vegetarian / non-veg / halal / jain / kosher / other
+    spiritualNeeds: "",
+    customs: "",            // specific care preferences
+  });
+  // N13 · Bowel / Bladder pattern
+  const [elimination, setElimination]   = useState({
+    bowelContinence: "Continent", // Continent | Occasional | Incontinent | Stoma
+    bowelLastBM: "",
+    bowelFrequency: "",
+    bladderContinence: "Continent",
+    bladderCatheterised: false,
+    bladderOutput24h: "",
+    notes: "",
+  });
+  // N14 · Sleep pattern
+  const [sleep, setSleep]               = useState({
+    hoursPerNight: "",
+    quality: "Good",  // Good | Disturbed | Poor
+    sleepAids: "",
+    snoring: false,
+    apneaDx: false,
+  });
+  // N15 · Valuables / Belongings noted at admission
+  const [valuables, setValuables]       = useState({
+    status: "Sent home with family", // 'Sent home with family' | 'Locker' | 'Patient retains' | 'Nil declared'
+    items: "",
+    handedTo: "",
+    receiptIssued: false,
+  });
+  // N16 · Family / Primary Caregiver identification
+  const [caregiver, setCaregiver]       = useState({
+    primaryName: "", primaryRelation: "", primaryContact: "",
+    escalationName: "", escalationRelation: "", escalationContact: "",
+    lives_with_patient: true,
+  });
+  // N17 · High-risk patient flag (drives observation frequency + escalation)
+  const [highRisk, setHighRisk]         = useState({
+    pediatric: false, geriatric: false, pregnant: false,
+    immunocompromised: false, mentalHealth: false,
+    bariatric: false, polyTrauma: false, severeMalnutrition: false,
+    notes: "",
+  });
+
   /* ── Auto-save draft ── */
   const draftKey = patient?._id ? `sphere_draft_ipd_initial_${patient._id}` : null;
   const { savedAt, hasDraft, clearDraft } = useAutoSave(
@@ -571,7 +650,10 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
       // R7fb · doctor P0 fields
       docCC, ccDuration, allergyList, noKnownAllergies, medRecon, workingDx, differentialDx, comorbid, codeStatus, codeStatusDiscussedWith, codeStatusLimitations, elosDays, goalOfCare, docRiskAck, ros,
       // R7fc · nurse P0 fields
-      idBand, nurseAllergyList, nurseNoKnownAllergies, nurseBriefPmh, homeMeds, anthropo, psychosocial, barthel, bodyChart, dischargePlan, educationNeeds, precautions },
+      idBand, nurseAllergyList, nurseNoKnownAllergies, nurseBriefPmh, homeMeds, anthropo, psychosocial, barthel, bodyChart, dischargePlan, educationNeeds, precautions,
+      // R7fd · doctor P1 + nurse P1
+      docAnthropo, localExam, referrals, prognosis, consentNeeded,
+      cognitive, cultural, elimination, sleep, valuables, caregiver, highRisk },
     2000
   );
   const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
@@ -703,6 +785,12 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           elosDays, goalOfCare,
           riskAcknowledgement: docRiskAck,
           reviewOfSystems: ros,
+          // R7fd · doctor P1
+          anthropometry: docAnthropo,
+          localExamination: localExam,
+          referrals,
+          prognosis,
+          consentRequired: consentNeeded,
         },
       },
       // R7fc — nurse P0 NABH fields (AAC.1 / AAC.4 / IPC / PSQ)
@@ -718,6 +806,14 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         dischargePlanning: dischargePlan,
         educationNeeds,
         specialPrecautions: precautions,
+        // R7fd · nurse P1
+        cognitiveCommunication: cognitive,
+        culturalSpiritual: cultural,
+        bowelBladder: elimination,
+        sleepPattern: sleep,
+        valuablesBelongings: valuables,
+        familyCaregiver: caregiver,
+        highRiskFlags: highRisk,
       },
     },
   });
@@ -1530,6 +1626,285 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             </div>
           </Section>
 
+          {/* ══════════════════════════════════════════════════════════
+              R7fd · NURSE P1 NABH FIELDS (N11-N17)
+              ══════════════════════════════════════════════════════════ */}
+
+          {/* ── N11 · Cognitive / Communication ── */}
+          <Section title="Cognitive & Communication" icon="pi-eye" color={C.purple} badge="NABH AAC.1.b">
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
+              Orientation
+            </div>
+            <div style={{ display: "flex", gap: 18, fontSize: 12, marginBottom: 10 }}>
+              {[
+                ["orientationPerson", "Oriented to Person"],
+                ["orientationPlace", "Oriented to Place"],
+                ["orientationTime", "Oriented to Time"],
+              ].map(([k, label]) => (
+                <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!cognitive[k]}
+                    onChange={e => setCognitive(c => ({ ...c, [k]: e.target.checked }))} />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
+              Sensory deficits
+            </div>
+            <div style={{ display: "flex", gap: 18, fontSize: 12, marginBottom: 10 }}>
+              {[
+                ["visionDeficit", "Vision deficit"],
+                ["hearingDeficit", "Hearing deficit"],
+                ["speechDeficit", "Speech deficit / aphasia"],
+              ].map(([k, label]) => (
+                <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!cognitive[k]}
+                    onChange={e => setCognitive(c => ({ ...c, [k]: e.target.checked }))} />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="Aids used (glasses / hearing aid / dentures)">
+                <input value={cognitive.aidsUsed}
+                  onChange={e => setCognitive(c => ({ ...c, aidsUsed: e.target.value }))}
+                  placeholder="e.g. Spectacles, dentures (upper)" className="his-field" />
+              </Field>
+              <Field label="GCS (if applicable)">
+                <input value={cognitive.gcs}
+                  onChange={e => setCognitive(c => ({ ...c, gcs: e.target.value }))}
+                  placeholder="e.g. E4 V5 M6 = 15/15" className="his-field" />
+              </Field>
+            </div>
+            <Field label="Additional notes" style={{ marginTop: 10 }}>
+              <textarea value={cognitive.notes}
+                onChange={e => setCognitive(c => ({ ...c, notes: e.target.value }))}
+                placeholder="Confusion, dementia history, communication preferences…"
+                className="his-textarea" style={{ minHeight: 50 }} />
+            </Field>
+          </Section>
+
+          {/* ── N12 · Cultural / Spiritual ── */}
+          <Section title="Cultural & Spiritual Preferences" icon="pi-globe" color={C.green} badge="NABH ROP">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="Religion">
+                <select value={cultural.religion}
+                  onChange={e => setCultural(p => ({ ...p, religion: e.target.value }))} className="his-field">
+                  <option value="">— Select / decline —</option>
+                  {["Hindu", "Muslim", "Christian", "Sikh", "Buddhist", "Jain", "Parsi", "Jewish", "Atheist / None", "Other"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+              <Field label="Dietary restrictions">
+                <select value={cultural.dietaryRestrictions}
+                  onChange={e => setCultural(p => ({ ...p, dietaryRestrictions: e.target.value }))} className="his-field">
+                  <option value="">— Select —</option>
+                  {["No restrictions", "Vegetarian", "Vegan", "Non-vegetarian", "Halal", "Jain (no root vegetables)", "Kosher", "Eggetarian", "Other"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+            </div>
+            <Field label="Spiritual / religious needs (prayer, visits from clergy, fasting)" style={{ marginTop: 10 }}>
+              <input value={cultural.spiritualNeeds}
+                onChange={e => setCultural(p => ({ ...p, spiritualNeeds: e.target.value }))}
+                placeholder="e.g. Pre-dawn prayer, weekly visit from temple, Ramzan fasting" className="his-field" />
+            </Field>
+            <Field label="Care customs / preferences" style={{ marginTop: 10 }}>
+              <input value={cultural.customs}
+                onChange={e => setCultural(p => ({ ...p, customs: e.target.value }))}
+                placeholder="e.g. Same-gender caregiver preferred, family-decision-maker, modesty" className="his-field" />
+            </Field>
+          </Section>
+
+          {/* ── N13 · Bowel / Bladder Pattern ── */}
+          <Section title="Bowel / Bladder Pattern" icon="pi-sync" color={C.teal}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Bowel</div>
+                <Field label="Continence">
+                  <select value={elimination.bowelContinence}
+                    onChange={e => setElimination(p => ({ ...p, bowelContinence: e.target.value }))} className="his-field">
+                    {["Continent", "Occasional incontinence", "Incontinent", "Colostomy / Ileostomy"].map(o => <option key={o}>{o}</option>)}
+                  </select>
+                </Field>
+                <Field label="Last bowel movement">
+                  <input value={elimination.bowelLastBM}
+                    onChange={e => setElimination(p => ({ ...p, bowelLastBM: e.target.value }))}
+                    placeholder="Date / today / 3 days ago" className="his-field" />
+                </Field>
+                <Field label="Frequency / character">
+                  <input value={elimination.bowelFrequency}
+                    onChange={e => setElimination(p => ({ ...p, bowelFrequency: e.target.value }))}
+                    placeholder="Once daily, soft / diarrhoea x 4 stools" className="his-field" />
+                </Field>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Bladder</div>
+                <Field label="Continence">
+                  <select value={elimination.bladderContinence}
+                    onChange={e => setElimination(p => ({ ...p, bladderContinence: e.target.value }))} className="his-field">
+                    {["Continent", "Occasional incontinence", "Incontinent", "Urinary retention"].map(o => <option key={o}>{o}</option>)}
+                  </select>
+                </Field>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer", marginTop: 10 }}>
+                  <input type="checkbox" checked={elimination.bladderCatheterised}
+                    onChange={e => setElimination(p => ({ ...p, bladderCatheterised: e.target.checked }))} />
+                  Currently catheterised
+                </label>
+                <Field label="24-hour urine output (mL)" style={{ marginTop: 6 }}>
+                  <input type="number" value={elimination.bladderOutput24h}
+                    onChange={e => setElimination(p => ({ ...p, bladderOutput24h: e.target.value }))}
+                    placeholder="e.g. 1400" className="his-field" />
+                </Field>
+              </div>
+            </div>
+            <Field label="Notes" style={{ marginTop: 10 }}>
+              <input value={elimination.notes}
+                onChange={e => setElimination(p => ({ ...p, notes: e.target.value }))}
+                placeholder="e.g. Burning micturition, BPH, recent laxative use" className="his-field" />
+            </Field>
+          </Section>
+
+          {/* ── N14 · Sleep Pattern ── */}
+          <Section title="Sleep Pattern" icon="pi-moon" color={C.accent}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <Field label="Hours per night">
+                <input type="number" value={sleep.hoursPerNight}
+                  onChange={e => setSleep(p => ({ ...p, hoursPerNight: e.target.value }))}
+                  placeholder="e.g. 6" className="his-field" />
+              </Field>
+              <Field label="Sleep quality">
+                <select value={sleep.quality}
+                  onChange={e => setSleep(p => ({ ...p, quality: e.target.value }))} className="his-field">
+                  {["Good", "Disturbed", "Poor", "Insomnia"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+              <Field label="Sleep aids used">
+                <input value={sleep.sleepAids}
+                  onChange={e => setSleep(p => ({ ...p, sleepAids: e.target.value }))}
+                  placeholder="e.g. Alprazolam 0.25mg HS" className="his-field" />
+              </Field>
+            </div>
+            <div style={{ display: "flex", gap: 18, marginTop: 10, fontSize: 12 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input type="checkbox" checked={sleep.snoring}
+                  onChange={e => setSleep(p => ({ ...p, snoring: e.target.checked }))} />
+                Snoring reported
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input type="checkbox" checked={sleep.apneaDx}
+                  onChange={e => setSleep(p => ({ ...p, apneaDx: e.target.checked }))} />
+                Diagnosed sleep apnea
+              </label>
+            </div>
+          </Section>
+
+          {/* ── N15 · Valuables / Belongings ── */}
+          <Section title="Valuables & Belongings" icon="pi-briefcase" color={C.warn} badge="NABH ROP + PSQ">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="Status">
+                <select value={valuables.status}
+                  onChange={e => setValuables(p => ({ ...p, status: e.target.value }))} className="his-field">
+                  {["Sent home with family", "Stored in hospital locker", "Patient retains", "Nil declared"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+              <Field label="Handed to (name + relation)">
+                <input value={valuables.handedTo}
+                  onChange={e => setValuables(p => ({ ...p, handedTo: e.target.value }))}
+                  placeholder="e.g. Wife — Mrs Smita Sharma" className="his-field" />
+              </Field>
+            </div>
+            <Field label="Itemised list (if locker / retained)" style={{ marginTop: 10 }}>
+              <textarea value={valuables.items}
+                onChange={e => setValuables(p => ({ ...p, items: e.target.value }))}
+                placeholder="e.g. Gold chain (~10g), wedding ring, ₹3,500 cash, mobile phone, ID proof"
+                className="his-textarea" style={{ minHeight: 50 }} />
+            </Field>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer", marginTop: 8 }}>
+              <input type="checkbox" checked={valuables.receiptIssued}
+                onChange={e => setValuables(p => ({ ...p, receiptIssued: e.target.checked }))} />
+              Receipt issued to patient / family
+            </label>
+          </Section>
+
+          {/* ── N16 · Family / Caregiver Identification ── */}
+          <Section title="Family & Primary Caregiver" icon="pi-users" color={C.pink} badge="NABH AAC.6">
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
+              Primary caregiver
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <Field label="Name">
+                <input value={caregiver.primaryName}
+                  onChange={e => setCaregiver(p => ({ ...p, primaryName: e.target.value }))}
+                  placeholder="Full name" className="his-field" />
+              </Field>
+              <Field label="Relation">
+                <input value={caregiver.primaryRelation}
+                  onChange={e => setCaregiver(p => ({ ...p, primaryRelation: e.target.value }))}
+                  placeholder="e.g. Husband / Daughter" className="his-field" />
+              </Field>
+              <Field label="Contact">
+                <input value={caregiver.primaryContact}
+                  onChange={e => setCaregiver(p => ({ ...p, primaryContact: e.target.value }))}
+                  placeholder="+91 ..." className="his-field" />
+              </Field>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer", marginTop: 8 }}>
+              <input type="checkbox" checked={caregiver.lives_with_patient}
+                onChange={e => setCaregiver(p => ({ ...p, lives_with_patient: e.target.checked }))} />
+              Lives with patient
+            </label>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginTop: 14, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
+              Escalation contact (if primary unavailable)
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <Field label="Name">
+                <input value={caregiver.escalationName}
+                  onChange={e => setCaregiver(p => ({ ...p, escalationName: e.target.value }))}
+                  placeholder="Full name" className="his-field" />
+              </Field>
+              <Field label="Relation">
+                <input value={caregiver.escalationRelation}
+                  onChange={e => setCaregiver(p => ({ ...p, escalationRelation: e.target.value }))}
+                  placeholder="e.g. Son / Sister" className="his-field" />
+              </Field>
+              <Field label="Contact">
+                <input value={caregiver.escalationContact}
+                  onChange={e => setCaregiver(p => ({ ...p, escalationContact: e.target.value }))}
+                  placeholder="+91 ..." className="his-field" />
+              </Field>
+            </div>
+          </Section>
+
+          {/* ── N17 · High-Risk Patient Flag ── */}
+          <Section title="High-Risk Patient Flag" icon="pi-flag-fill" color={C.red} badge="NABH PSQ.4">
+            <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
+              Flag drives observation frequency, escalation protocols, and discharge planning urgency.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, fontSize: 12 }}>
+              {[
+                ["pediatric", "Pediatric (<18y)"],
+                ["geriatric", "Geriatric (>65y)"],
+                ["pregnant", "Pregnant"],
+                ["immunocompromised", "Immunocompromised"],
+                ["mentalHealth", "Mental health / suicide"],
+                ["bariatric", "Bariatric (BMI ≥ 40)"],
+                ["polyTrauma", "Polytrauma"],
+                ["severeMalnutrition", "Severe malnutrition"],
+              ].map(([k, label]) => (
+                <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!highRisk[k]}
+                    onChange={e => setHighRisk(p => ({ ...p, [k]: e.target.checked }))} />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <Field label="Additional risk notes" style={{ marginTop: 10 }}>
+              <textarea value={highRisk.notes}
+                onChange={e => setHighRisk(p => ({ ...p, notes: e.target.value }))}
+                placeholder="Other clinical risks driving observation cadence…"
+                className="his-textarea" style={{ minHeight: 50 }} />
+            </Field>
+          </Section>
+
           {/* ── Nursing Plan (existing) ── */}
           <Section title="Nursing Problems & Care Goals" icon="pi-pencil" color={C.pink}>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -2044,6 +2419,150 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
                       style={{ padding: "5px 8px", fontSize: 11.5 }} />
                   </div>
                 </div>
+              ))}
+            </div>
+          </Section>
+
+          {/* ══════════════════════════════════════════════════════════
+              R7fd · DOCTOR P1 NABH FIELDS (D10-D14)
+              ══════════════════════════════════════════════════════════ */}
+
+          {/* ── D10 · Anthropometry (drug-dosing safety) ── */}
+          <Section title="Anthropometry" icon="pi-chart-line" color={C.teal} badge="Drug-dosing safety">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+              <Field label="Height (cm)">
+                <input type="number" value={docAnthropo.heightCm}
+                  onChange={e => {
+                    const h = e.target.value;
+                    const w = Number(docAnthropo.weightKg);
+                    const hM = Number(h) / 100;
+                    const bmi = (h && w && hM > 0) ? (w / (hM * hM)).toFixed(1) : "";
+                    setDocAnthropo(a => ({ ...a, heightCm: h, bmi }));
+                  }} placeholder="e.g. 168" className="his-field" />
+              </Field>
+              <Field label="Weight (kg)">
+                <input type="number" value={docAnthropo.weightKg}
+                  onChange={e => {
+                    const w = e.target.value;
+                    const h = Number(docAnthropo.heightCm) / 100;
+                    const bmi = (w && h > 0) ? (Number(w) / (h * h)).toFixed(1) : "";
+                    setDocAnthropo(a => ({ ...a, weightKg: w, bmi }));
+                  }} placeholder="e.g. 68" className="his-field" />
+              </Field>
+              <Field label="BMI (auto)">
+                <input value={docAnthropo.bmi} readOnly placeholder="—"
+                  className="his-field" style={{ background: "#f8fafc", fontWeight: 700 }} />
+              </Field>
+              <Field label="Ideal Body Weight (kg)">
+                <input type="number" value={docAnthropo.idealBodyWeightKg}
+                  onChange={e => setDocAnthropo(a => ({ ...a, idealBodyWeightKg: e.target.value }))}
+                  placeholder="e.g. 65 (Devine formula)" className="his-field" />
+              </Field>
+            </div>
+            <div style={{ marginTop: 8, fontSize: 10.5, color: C.muted }}>
+              Devine IBW: Males = 50 + 2.3 kg per inch &gt; 5 ft; Females = 45.5 + 2.3 kg per inch &gt; 5 ft.
+              Use IBW (not actual weight) for aminoglycoside / vancomycin / heparin dosing in obese patients.
+            </div>
+          </Section>
+
+          {/* ── D11 · Local examination (surgical/focused) ── */}
+          <Section title="Local / Focused Examination" icon="pi-search" color={C.purple}>
+            <Field label="Local examination findings (relevant to chief complaint)">
+              <textarea value={localExam} onChange={e => setLocalExam(e.target.value)}
+                placeholder="e.g. RIF tender, McBurney's positive, Rovsing's negative, no rebound. Wound: clean, healthy granulation, 4×3 cm, no slough…"
+                className="his-textarea" style={{ minHeight: 72 }} />
+            </Field>
+          </Section>
+
+          {/* ── D12 · Cross-Consultation / Referrals ── */}
+          <Section title="Cross-Consultation / Referrals" icon="pi-users" color={C.accent} badge="NABH COP">
+            {referrals.length > 0 && (
+              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 8, fontSize: 11.5 }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc" }}>
+                    {["Specialty", "Reason", "Urgency", "Status", ""].map(h => (
+                      <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", borderBottom: `1.5px solid ${C.border}` }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {referrals.map((r, i) => (
+                    <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                      <td><input value={r.specialty || ""} onChange={e => setReferrals(l => l.map((x, j) => j === i ? { ...x, specialty: e.target.value } : x))} placeholder="Specialty" className="his-field" style={{ padding: "4px 6px" }} /></td>
+                      <td><input value={r.reason || ""} onChange={e => setReferrals(l => l.map((x, j) => j === i ? { ...x, reason: e.target.value } : x))} placeholder="Reason" className="his-field" style={{ padding: "4px 6px" }} /></td>
+                      <td>
+                        <select value={r.urgency || "Routine"} onChange={e => setReferrals(l => l.map((x, j) => j === i ? { ...x, urgency: e.target.value } : x))} className="his-field" style={{ padding: "4px 6px" }}>
+                          {["Stat", "Urgent", "Routine"].map(t => <option key={t}>{t}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <select value={r.status || "Requested"} onChange={e => setReferrals(l => l.map((x, j) => j === i ? { ...x, status: e.target.value } : x))} className="his-field" style={{ padding: "4px 6px" }}>
+                          {["Requested", "Accepted", "Seen", "Declined"].map(t => <option key={t}>{t}</option>)}
+                        </select>
+                      </td>
+                      <td><button onClick={() => setReferrals(l => l.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}><i className="pi pi-trash" style={{ fontSize: 12 }} /></button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <button onClick={() => setReferrals(l => [...l, { specialty: "", reason: "", urgency: "Routine", status: "Requested" }])}
+              style={{ padding: "5px 12px", border: `1.5px dashed ${C.accent}60`, borderRadius: 6, background: C.accentL, cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: C.accent }}>
+              <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add referral
+            </button>
+          </Section>
+
+          {/* ── D13 · Prognosis Discussion ── */}
+          <Section title="Prognosis Discussed With" icon="pi-comments" color={C.pink} badge="NABH PRE.4">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="Discussed with (name + relation)">
+                <input value={prognosis.discussedWith}
+                  onChange={e => setPrognosis(p => ({ ...p, discussedWith: e.target.value }))}
+                  placeholder="e.g. Mr Ravi Sharma (Husband)" className="his-field" />
+              </Field>
+              <Field label="Language used">
+                <select value={prognosis.languageUsed}
+                  onChange={e => setPrognosis(p => ({ ...p, languageUsed: e.target.value }))} className="his-field">
+                  {["Hindi", "English", "Punjabi", "Haryanvi", "Urdu", "Bengali", "Tamil", "Telugu", "Marathi", "Other"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+            </div>
+            <Field label="Summary of prognosis communicated" style={{ marginTop: 10 }}>
+              <textarea value={prognosis.summary}
+                onChange={e => setPrognosis(p => ({ ...p, summary: e.target.value }))}
+                placeholder="e.g. Explained diagnosis of severe sepsis with multi-organ dysfunction. Mortality risk ~30%. Family understood and consented to ICU admission + ventilation if needed."
+                className="his-textarea" style={{ minHeight: 56 }} />
+            </Field>
+            <Field label="Questions addressed / concerns" style={{ marginTop: 10 }}>
+              <textarea value={prognosis.questionsAddressed}
+                onChange={e => setPrognosis(p => ({ ...p, questionsAddressed: e.target.value }))}
+                placeholder="What did family ask? What was the response?"
+                className="his-textarea" style={{ minHeight: 50 }} />
+            </Field>
+          </Section>
+
+          {/* ── D14 · Consent Linkage ── */}
+          <Section title="Consents Required" icon="pi-id-card" color={C.green} badge="NABH PRE.3 + PRE.4">
+            <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
+              Flag which consents must be obtained before procedures. Each flagged consent must be captured
+              with biometric + staff e-sign via the Consent Forms page (R7ez).
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, fontSize: 12 }}>
+              {[
+                ["surgical", "Surgical / Operation"],
+                ["anesthesia", "Anaesthesia"],
+                ["bloodTransfusion", "Blood Transfusion"],
+                ["hivTesting", "HIV Testing"],
+                ["photography", "Photography / Recording"],
+                ["research", "Research / Trial"],
+                ["dnr", "DNR"],
+                ["lama", "LAMA (pre-emptive)"],
+              ].map(([k, label]) => (
+                <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!consentNeeded[k]}
+                    onChange={e => setConsentNeeded(c => ({ ...c, [k]: e.target.checked }))} />
+                  {label}
+                </label>
               ))}
             </div>
           </Section>
