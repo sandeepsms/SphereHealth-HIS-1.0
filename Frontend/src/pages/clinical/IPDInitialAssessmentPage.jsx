@@ -663,6 +663,91 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* ══ R7fe · Cross-form auto-flows — kill the duplications ══════
+     Doctor and nurse share the same component, so we can wire fields
+     that one party owns to flow into the other's display. Each effect
+     only fires when the target field is still empty — i.e. it's a one-
+     way pre-fill, not a clobber. The doctor can always override.
+     ───────────────────────────────────────────────────────────── */
+
+  // A · Chief Complaint — nurse's `chiefComplaint` is the patient's
+  // reported reason at intake. Doctor's structured CC defaults to it.
+  useEffect(() => {
+    if (!docCC && chiefComplaint?.trim()) setDocCC(chiefComplaint.trim());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chiefComplaint]);
+
+  // B · PMH — bidirectional best-effort sync. Whichever party fills
+  // first becomes the seed for the other. Doctor's full > nurse's brief.
+  useEffect(() => {
+    if (!pmh && nurseBriefPmh?.trim()) setPmh(nurseBriefPmh.trim());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nurseBriefPmh]);
+  useEffect(() => {
+    if (!nurseBriefPmh && pmh?.trim()) setNurseBriefPmh(pmh.trim().slice(0, 240));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pmh]);
+
+  // C · Medication Reconciliation — nurse owns the home-meds list (she
+  // sees the drugs the patient brought). Doctor's table inherits each
+  // row + only adds the Continue/Hold/Modify/Discontinue decision.
+  // Doctor can still add rows nurse didn't (e.g. insulin the patient
+  // didn't mention) — those stay marked `_doctorOnly: true`.
+  useEffect(() => {
+    setMedRecon(prev => {
+      // Index existing doctor rows so we preserve their decisions.
+      const byDrug = new Map(
+        prev.map(r => [(r.drug || "").toLowerCase().trim(), r]),
+      );
+      const nursingRows = (homeMeds || [])
+        .filter(hm => (hm.drug || "").trim())
+        .map(hm => {
+          const key = hm.drug.toLowerCase().trim();
+          const existing = byDrug.get(key) || {};
+          return {
+            drug: hm.drug, dose: hm.dose, frequency: hm.frequency, lastTaken: hm.lastTaken,
+            continueOnAdmit: existing.continueOnAdmit || "Continue",
+            _fromNursing: true,
+          };
+        });
+      const nursingKeys = new Set(nursingRows.map(r => r.drug.toLowerCase().trim()));
+      const doctorOnly = prev.filter(r => {
+        const k = (r.drug || "").toLowerCase().trim();
+        return k && !nursingKeys.has(k) && !r._fromNursing;
+      }).map(r => ({ ...r, _doctorOnly: true }));
+      return [...nursingRows, ...doctorOnly];
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [homeMeds]);
+
+  // D · Anthropometry — nurse measures Ht/Wt with calibrated scale at
+  // admission. Doctor's section mirrors nurse's values (read-only) and
+  // only IBW (Devine formula) stays doctor-editable.
+  useEffect(() => {
+    if (anthropo.heightCm || anthropo.weightKg || anthropo.bmi) {
+      setDocAnthropo(prev => ({
+        ...prev,
+        heightCm: anthropo.heightCm || prev.heightCm,
+        weightKg: anthropo.weightKg || prev.weightKg,
+        bmi:      anthropo.bmi      || prev.bmi,
+      }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anthropo.heightCm, anthropo.weightKg, anthropo.bmi]);
+
+  // E · Family Caregiver — doctor's prognosis "Discussed with" pre-fills
+  // from nurse's N16 primary caregiver. Doctor can override (sometimes
+  // the prognosis discussion happens with a different relative).
+  useEffect(() => {
+    if (!prognosis.discussedWith && caregiver.primaryName?.trim()) {
+      const formatted = caregiver.primaryRelation
+        ? `${caregiver.primaryName.trim()} (${caregiver.primaryRelation.trim()})`
+        : caregiver.primaryName.trim();
+      setPrognosis(p => ({ ...p, discussedWith: formatted }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caregiver.primaryName, caregiver.primaryRelation]);
+
   const loadPatient = async (id) => {
     if (!id?.trim()) return;
     setLoadingPt(true); setPatient(null); setAdmission(null);
@@ -2125,6 +2210,10 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
                   (drugs patient was taking before admission)
                 </span>
               </div>
+              {/* R7fe-C — nursing-sourced rows render read-only with a
+                  small "from nursing" badge. Doctor only edits the
+                  Continue/Hold dropdown for those rows. Doctor-added
+                  rows (not in nurse's homeMeds) remain fully editable. */}
               {medRecon.length > 0 && (
                 <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 6, fontSize: 11.5 }}>
                   <thead>
@@ -2135,39 +2224,65 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {medRecon.map((m, i) => (
-                      <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-                        <td style={{ padding: "6px 8px" }}>
-                          <input value={m.drug || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, drug: e.target.value } : x))} placeholder="Drug name" className="his-field" style={{ padding: "4px 6px" }} />
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <input value={m.dose || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, dose: e.target.value } : x))} placeholder="500mg" className="his-field" style={{ padding: "4px 6px" }} />
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <input value={m.frequency || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, frequency: e.target.value } : x))} placeholder="BD / TDS" className="his-field" style={{ padding: "4px 6px" }} />
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <input value={m.lastTaken || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, lastTaken: e.target.value } : x))} placeholder="Date / time" className="his-field" style={{ padding: "4px 6px" }} />
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <select value={m.continueOnAdmit || "Continue"} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, continueOnAdmit: e.target.value } : x))} className="his-field" style={{ padding: "4px 6px" }}>
-                            {["Continue", "Hold", "Modify", "Discontinue"].map(t => <option key={t}>{t}</option>)}
-                          </select>
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <button onClick={() => setMedRecon(l => l.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}>
-                            <i className="pi pi-trash" style={{ fontSize: 12 }} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {medRecon.map((m, i) => {
+                      const ro = !!m._fromNursing;
+                      const cellStyle = ro
+                        ? { padding: "6px 8px", background: "#f8fafc", color: C.text, fontSize: 11.5 }
+                        : { padding: "6px 8px" };
+                      return (
+                        <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                          <td style={cellStyle}>
+                            {ro ? (
+                              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                {m.drug}
+                                <span style={{ background: C.pink, color: "white", padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 800, letterSpacing: ".3px" }}>NURSING</span>
+                              </span>
+                            ) : (
+                              <input value={m.drug || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, drug: e.target.value } : x))} placeholder="Drug name" className="his-field" style={{ padding: "4px 6px" }} />
+                            )}
+                          </td>
+                          <td style={cellStyle}>
+                            {ro ? (m.dose || "—") : (
+                              <input value={m.dose || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, dose: e.target.value } : x))} placeholder="500mg" className="his-field" style={{ padding: "4px 6px" }} />
+                            )}
+                          </td>
+                          <td style={cellStyle}>
+                            {ro ? (m.frequency || "—") : (
+                              <input value={m.frequency || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, frequency: e.target.value } : x))} placeholder="BD / TDS" className="his-field" style={{ padding: "4px 6px" }} />
+                            )}
+                          </td>
+                          <td style={cellStyle}>
+                            {ro ? (m.lastTaken || "—") : (
+                              <input value={m.lastTaken || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, lastTaken: e.target.value } : x))} placeholder="Date / time" className="his-field" style={{ padding: "4px 6px" }} />
+                            )}
+                          </td>
+                          <td style={{ padding: "6px 8px" }}>
+                            <select value={m.continueOnAdmit || "Continue"} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, continueOnAdmit: e.target.value } : x))} className="his-field" style={{ padding: "4px 6px" }}>
+                              {["Continue", "Hold", "Modify", "Discontinue"].map(t => <option key={t}>{t}</option>)}
+                            </select>
+                          </td>
+                          <td style={{ padding: "6px 8px" }}>
+                            {!ro && (
+                              <button onClick={() => setMedRecon(l => l.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}>
+                                <i className="pi pi-trash" style={{ fontSize: 12 }} />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
-              <button onClick={() => setMedRecon(l => [...l, { drug: "", dose: "", frequency: "", lastTaken: "", continueOnAdmit: "Continue" }])}
+              {homeMeds.length > 0 && medRecon.length === 0 && (
+                <div style={{ fontSize: 11, color: C.muted, fontStyle: "italic", marginTop: 4 }}>
+                  Nursing has captured {homeMeds.length} home medication{homeMeds.length === 1 ? "" : "s"} — they'll appear here automatically.
+                </div>
+              )}
+              <button onClick={() => setMedRecon(l => [...l, { drug: "", dose: "", frequency: "", lastTaken: "", continueOnAdmit: "Continue", _doctorOnly: true }])}
                 style={{ padding: "5px 12px", border: `1.5px dashed ${C.accent}60`, borderRadius: 6,
                   background: C.accentL, cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: C.accent }}>
-                <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add home medication
+                <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add medication (doctor-only)
               </button>
             </div>
           </Section>
@@ -2427,43 +2542,63 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
               R7fd · DOCTOR P1 NABH FIELDS (D10-D14)
               ══════════════════════════════════════════════════════════ */}
 
-          {/* ── D10 · Anthropometry (drug-dosing safety) ── */}
-          <Section title="Anthropometry" icon="pi-chart-line" color={C.teal} badge="Drug-dosing safety">
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-              <Field label="Height (cm)">
-                <input type="number" value={docAnthropo.heightCm}
-                  onChange={e => {
-                    const h = e.target.value;
-                    const w = Number(docAnthropo.weightKg);
-                    const hM = Number(h) / 100;
-                    const bmi = (h && w && hM > 0) ? (w / (hM * hM)).toFixed(1) : "";
-                    setDocAnthropo(a => ({ ...a, heightCm: h, bmi }));
-                  }} placeholder="e.g. 168" className="his-field" />
-              </Field>
-              <Field label="Weight (kg)">
-                <input type="number" value={docAnthropo.weightKg}
-                  onChange={e => {
-                    const w = e.target.value;
-                    const h = Number(docAnthropo.heightCm) / 100;
-                    const bmi = (w && h > 0) ? (Number(w) / (h * h)).toFixed(1) : "";
-                    setDocAnthropo(a => ({ ...a, weightKg: w, bmi }));
-                  }} placeholder="e.g. 68" className="his-field" />
-              </Field>
-              <Field label="BMI (auto)">
-                <input value={docAnthropo.bmi} readOnly placeholder="—"
-                  className="his-field" style={{ background: "#f8fafc", fontWeight: 700 }} />
-              </Field>
-              <Field label="Ideal Body Weight (kg)">
-                <input type="number" value={docAnthropo.idealBodyWeightKg}
-                  onChange={e => setDocAnthropo(a => ({ ...a, idealBodyWeightKg: e.target.value }))}
-                  placeholder="e.g. 65 (Devine formula)" className="his-field" />
-              </Field>
-            </div>
-            <div style={{ marginTop: 8, fontSize: 10.5, color: C.muted }}>
-              Devine IBW: Males = 50 + 2.3 kg per inch &gt; 5 ft; Females = 45.5 + 2.3 kg per inch &gt; 5 ft.
-              Use IBW (not actual weight) for aminoglycoside / vancomycin / heparin dosing in obese patients.
-            </div>
-          </Section>
+          {/* ── D10 · Anthropometry (drug-dosing safety) ──
+              R7fe-D: Nurse owns Ht / Wt / BMI (measured with calibrated
+              scale at admission). Doctor's section mirrors nurse's values
+              read-only and only IBW (Devine formula) stays doctor-
+              editable. Falls back to writable inputs if no nursing
+              measurement exists yet — the doctor can still proceed. */}
+          {(() => {
+            const fromNursing = !!(anthropo.heightCm || anthropo.weightKg);
+            return (
+              <Section title="Anthropometry" icon="pi-chart-line" color={C.teal} badge="Drug-dosing safety">
+                {fromNursing && (
+                  <div style={{ background: "#fdf2f8", border: `1.5px solid ${C.pink}40`, borderRadius: 6, padding: "6px 10px", marginBottom: 10, fontSize: 11, color: C.pink, fontWeight: 600 }}>
+                    <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
+                    Ht / Wt / BMI measured by nursing — read-only here. Only IBW is doctor-editable.
+                  </div>
+                )}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+                  <Field label={fromNursing ? "Height (cm) · from nursing" : "Height (cm)"}>
+                    <input type="number" value={docAnthropo.heightCm} readOnly={fromNursing}
+                      onChange={e => {
+                        if (fromNursing) return;
+                        const h = e.target.value;
+                        const w = Number(docAnthropo.weightKg);
+                        const hM = Number(h) / 100;
+                        const bmi = (h && w && hM > 0) ? (w / (hM * hM)).toFixed(1) : "";
+                        setDocAnthropo(a => ({ ...a, heightCm: h, bmi }));
+                      }} placeholder="e.g. 168" className="his-field"
+                      style={fromNursing ? { background: "#f8fafc", fontWeight: 600 } : undefined} />
+                  </Field>
+                  <Field label={fromNursing ? "Weight (kg) · from nursing" : "Weight (kg)"}>
+                    <input type="number" value={docAnthropo.weightKg} readOnly={fromNursing}
+                      onChange={e => {
+                        if (fromNursing) return;
+                        const w = e.target.value;
+                        const h = Number(docAnthropo.heightCm) / 100;
+                        const bmi = (w && h > 0) ? (Number(w) / (h * h)).toFixed(1) : "";
+                        setDocAnthropo(a => ({ ...a, weightKg: w, bmi }));
+                      }} placeholder="e.g. 68" className="his-field"
+                      style={fromNursing ? { background: "#f8fafc", fontWeight: 600 } : undefined} />
+                  </Field>
+                  <Field label="BMI (auto)">
+                    <input value={docAnthropo.bmi} readOnly placeholder="—"
+                      className="his-field" style={{ background: "#f8fafc", fontWeight: 700 }} />
+                  </Field>
+                  <Field label="Ideal Body Weight (kg)">
+                    <input type="number" value={docAnthropo.idealBodyWeightKg}
+                      onChange={e => setDocAnthropo(a => ({ ...a, idealBodyWeightKg: e.target.value }))}
+                      placeholder="e.g. 65 (Devine formula)" className="his-field" />
+                  </Field>
+                </div>
+                <div style={{ marginTop: 8, fontSize: 10.5, color: C.muted }}>
+                  Devine IBW: Males = 50 + 2.3 kg per inch &gt; 5 ft; Females = 45.5 + 2.3 kg per inch &gt; 5 ft.
+                  Use IBW (not actual weight) for aminoglycoside / vancomycin / heparin dosing in obese patients.
+                </div>
+              </Section>
+            );
+          })()}
 
           {/* ── D11 · Local examination (surgical/focused) ── */}
           <Section title="Local / Focused Examination" icon="pi-search" color={C.purple}>
