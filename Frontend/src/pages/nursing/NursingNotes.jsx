@@ -301,8 +301,9 @@ const bradenBand = (score) => {
 
 function getShift() {
   const h = new Date().getHours();
-  if (h >= 7 && h < 14) return "morning";
-  if (h >= 14 && h < 21) return "evening";
+  if (h >= 7  && h < 12) return "morning";
+  if (h >= 12 && h < 17) return "afternoon";
+  if (h >= 17 && h < 21) return "evening";
   return "night";
 }
 
@@ -446,6 +447,7 @@ function NursingNotesContent({ selectedPatient }) {
   const [notes,      setNotes]      = useState([]);
   const [loading,    setLoading]    = useState(false);
   const [activeModal,setActiveModal]= useState(null);
+  const [editingNote,setEditingNote]= useState(null);
 
   /* ── Late-entry mode (NABH HIC.6 backdated entry) ──
      Enabled when the loaded admission is already DISCHARGED — typically
@@ -475,6 +477,9 @@ function NursingNotesContent({ selectedPatient }) {
   const gateActive = !!patient && !nurseAssessmentDone;
   const [filterType, setFilterType] = useState("All");
   const [filterShift,setFilterShift]= useState("");
+  // R7fp — date range filter (parity with Doctor Notes timeline).
+  // Values: "today" | "week" | "7days" | "all". Default "today".
+  const [filterDateRange, setFilterDateRange] = useState("today");
   const [shift,      setShift]      = useState(getShift());
   const [selectedTags, setSelectedTags] = useState([]);
   const [noteText,   setNoteText]   = useState("");
@@ -1210,10 +1215,32 @@ function NursingNotesContent({ selectedPatient }) {
     finally { setLoading(false); }
   };
 
+  // R7fp — date range matcher. "today" = since 00:00 local; "week" = current
+  // ISO week (Mon→Sun); "7days" = rolling 7 days; "all" = no constraint.
+  const dateRangeMatch = (n) => {
+    if (filterDateRange === "all") return true;
+    const d = new Date(n.createdAt || n.noteDate || 0);
+    if (isNaN(d.getTime())) return true;
+    const now = new Date();
+    if (filterDateRange === "today") {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return d >= start;
+    }
+    if (filterDateRange === "7days") {
+      const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      return d >= start;
+    }
+    if (filterDateRange === "week") {
+      const day = now.getDay() || 7; // Mon = 1, Sun = 7
+      const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (day - 1));
+      return d >= monday;
+    }
+    return true;
+  };
   const filteredNotes = notes.filter(n => {
     const typeMatch = filterType === "All" || n.noteType === filterType;
     const shiftMatch = !filterShift || n.shift === filterShift;
-    return typeMatch && shiftMatch;
+    return typeMatch && shiftMatch && dateRangeMatch(n);
   });
 
   const modDef = (id) => MODULES.find(m => m.id === id);
@@ -2100,6 +2127,20 @@ function NursingNotesContent({ selectedPatient }) {
                           {mod?.label
                             || (note.noteType === "initial" ? "Initial Assessment · NABH AAC.1" : note.noteType?.toUpperCase())}
                         </span>
+                        <span
+                          style={{
+                            fontSize: 9,
+                            fontWeight: 700,
+                            padding: "2px 7px",
+                            borderRadius: 4,
+                            background: note.status === "submitted" ? "#dcfce7" : note.status === "draft" ? "#fef3c7" : "#e2e8f0",
+                            color: note.status === "submitted" ? "#15803d" : note.status === "draft" ? "#92400e" : "#475569",
+                            letterSpacing: 0.3,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {note.status === "submitted" ? "✓ Submitted" : (note.status || "draft").toUpperCase()}
+                        </span>
                         {note.isCriticalEvent && (
                           <span className="dnp-note__status dnp-note__status--critical">
                             <i className="pi pi-exclamation-triangle" style={{ fontSize: 9 }} /> CRITICAL EVENT
@@ -2119,8 +2160,8 @@ function NursingNotesContent({ selectedPatient }) {
                             { label: "TEMP",  value: note.vitals.temp ? `${note.vitals.temp}\u00b0F` : "\u2014", abnormal: isAbnormal("temp", note.vitals.temp) },
                             { label: "SPO\u2082",  value: note.vitals.spo2 ? `${note.vitals.spo2}%` : "\u2014", abnormal: isAbnormal("spo2", note.vitals.spo2) },
                             { label: "RR",    value: note.vitals.rr ? `${note.vitals.rr} /min` : "\u2014", abnormal: isAbnormal("rr", note.vitals.rr) },
-                            { label: "GCS",   value: note.moduleData?.vitals?.gcs || note.vitals.gcs || "\u2014" },
-                            { label: "BSL",   value: (note.moduleData?.vitals?.bsl || note.vitals.bsl) ? `${note.moduleData?.vitals?.bsl || note.vitals.bsl} mg/dL` : "\u2014", abnormal: isAbnormal("bsl", note.moduleData?.vitals?.bsl || note.vitals.bsl) },
+                            { label: "GCS",   value: note.noteData?.vitals?.gcs || note.vitals.gcs || "\u2014" },
+                            { label: "BSL",   value: (note.noteData?.vitals?.bsl || note.vitals.bsl) ? `${note.noteData?.vitals?.bsl || note.vitals.bsl} mg/dL` : "\u2014", abnormal: isAbnormal("bsl", note.noteData?.vitals?.bsl || note.vitals.bsl) },
                           ].map(v => (
                             <div key={v.label} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                               <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".6px", color: C.muted }}>{v.label}</span>
@@ -2131,8 +2172,8 @@ function NursingNotesContent({ selectedPatient }) {
                       )}
 
                       {/* ── MEWS Score (special colored band display) ── */}
-                      {note.moduleData?.mewsScore && note.noteType === "mews" && (() => {
-                        const ms = note.moduleData.mewsScore;
+                      {note.noteData?.mewsScore && note.noteType === "mews" && (() => {
+                        const ms = note.noteData.mewsScore;
                         const band = mewsBand(ms.total || 0);
                         return (
                           <div style={{ display:"flex", gap:12, flexWrap:"wrap", padding:"8px 14px", background:band.bg, borderRadius:7, marginBottom:8, alignItems:"center", border:`1px solid ${band.color}20` }}>
@@ -2154,10 +2195,10 @@ function NursingNotesContent({ selectedPatient }) {
                         );
                       })()}
 
-                      {/* ── All module data: generic renderer from note.moduleData ──
+                      {/* ── All module data: generic renderer from note.noteData ──
                            Covers: pain, blood, iv, intake, neuro, wound, skin, fall,
                            procedure, discharge, daily, initial, carePlan, nutrition, education */}
-                      {note.moduleData && (() => {
+                      {note.noteData && (() => {
                         const SKIP = new Set(
                           note.noteType === "mews"   ? ["mewsScore"] :
                           note.noteType === "vitals" ? ["vitals"]    : []
@@ -2257,7 +2298,7 @@ function NursingNotesContent({ selectedPatient }) {
                           }
                           return String(v);
                         };
-                        const blocks = Object.entries(note.moduleData)
+                        const blocks = Object.entries(note.noteData)
                           .filter(([k]) => !SKIP.has(k))
                           .map(([mk, mv]) => {
                             if (!mv) return null;
@@ -2316,10 +2357,27 @@ function NursingNotesContent({ selectedPatient }) {
 
                     {/* Actions */}
                     <div className="dnp-note__actions">
-                      <button className="dnp-note__btn dnp-note__btn--info">
-                        <i className="pi pi-pencil" style={{ fontSize: 10 }} /> Edit
-                      </button>
-                      <button className="dnp-note__btn">
+                      {note.status !== "submitted" && (
+                        <button
+                          className="dnp-note__btn dnp-note__btn--info"
+                          onClick={() => {
+                            setActiveModal(note.noteType);
+                            setEditingNote(note);
+                          }}
+                        >
+                          <i className="pi pi-pencil" style={{ fontSize: 10 }} /> Edit
+                        </button>
+                      )}
+                      <button
+                        className="dnp-note__btn"
+                        onClick={() => {
+                          const w = window.open('', '_blank');
+                          if (!w) return toast.error('Pop-up blocked');
+                          w.document.write(`<!doctype html><html><head><title>Nursing Note · ${note.noteType}</title><style>body{font-family:sans-serif;padding:20px;max-width:800px;margin:auto}h1{color:#1e3a8a}pre{background:#f1f5f9;padding:12px;border-radius:6px;white-space:pre-wrap}.kv{display:flex;gap:12px;padding:6px 0;border-bottom:1px dotted #cbd5e1}.k{font-weight:600;color:#64748b;min-width:140px}</style></head><body><h1>Nursing Note — ${(note.noteType||'general').toUpperCase()}</h1><div class="kv"><span class="k">Date</span><span>${new Date(note.createdAt).toLocaleString()}</span></div><div class="kv"><span class="k">Shift</span><span>${note.shift||'general'}</span></div><div class="kv"><span class="k">Nurse</span><span>${note.nurseName||'—'}</span></div><div class="kv"><span class="k">Status</span><span>${note.status||'draft'}</span></div><h2>Remarks</h2><pre>${note.remarks||'—'}</pre><h2>Module Data</h2><pre>${JSON.stringify(note.noteData||{}, null, 2)}</pre></body></html>`);
+                          w.document.close();
+                          setTimeout(() => w.print(), 300);
+                        }}
+                      >
                         <i className="pi pi-print" style={{ fontSize: 10 }} /> Print
                       </button>
                     </div>

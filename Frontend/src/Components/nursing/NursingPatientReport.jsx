@@ -74,7 +74,7 @@ function NoteCard({ note, index, hospitalName }) {
   const shift  = note.shift || "—";
   const mod    = MODULE_LABELS[note.noteType] || note.noteType || "General Observation";
   const isCrit = note.isCriticalEvent || note.isCritical;
-  const mData  = note.moduleData || {};
+  const mData  = note.noteData || {};
 
   return (
     <div style={{
@@ -251,7 +251,7 @@ export default function NursingPatientReport({ ipdNo, patientName, patientUHID, 
       <span style="font-weight:400;font-size:11px;color:#64748b"> — ${dayNotes.length} record(s)</span>
     </div>
     ${dayNotes.map((note, i) => {
-      const mData = note.moduleData || {};
+      const mData = note.noteData || {};
       const mod = MODULE_LABELS[note.noteType] || note.noteType || "General Observation";
       const isCrit = note.isCriticalEvent;
       const dt = new Date(note.noteDate || note.createdAt);
@@ -407,7 +407,7 @@ export default function NursingPatientReport({ ipdNo, patientName, patientUHID, 
                   <span style={{ fontSize:11, opacity:.8 }}>{dayNotes.length} record(s)</span>
                 </div>
                 {dayNotes.map((note, i) => {
-                  const mData = note.moduleData || {};
+                  const mData = note.noteData || {};
                   const mod = MODULE_LABELS[note.noteType] || note.noteType || "General Observation";
                   const isCrit = note.isCriticalEvent;
                   const dt = new Date(note.noteDate || note.createdAt);

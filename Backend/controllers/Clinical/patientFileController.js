@@ -141,7 +141,13 @@ exports.getCompleteFile = async (req, res) => {
       safe("opdVisits",        () => OPDRegistration.find({ UHID }).sort({ visitDate: -1, createdAt: -1 }).limit(100).lean()),
       // The 7-day window applies to high-cardinality recorded data.
       safe("doctorNotes",      () => DoctorNotes.find({ patientUHID: UHID, createdAt: win }).sort({ visitDate: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
-      safe("nurseNotes",       () => NurseNotes.find({ patientUHID: UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      // R7fo — nursing-timeline visibility regression. The `createdAt: win`
+      // 7-day default hid older nurse notes from the patient file (e.g.
+      // an admission's initial assessment from day-1 vanished on day-9).
+      // Drop the date window: notes are scoped by patientUHID and the
+      // PER_SECTION_LIMIT cap (default 200, max 500) prevents bloat.
+      // Sort DESC by createdAt picks the newest within the cap.
+      safe("nurseNotes",       () => NurseNotes.find({ patientUHID: UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("doctorOrders",     () => DoctorOrder.find({ UHID, createdAt: win }).sort({ orderedAt: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       // Consents are infrequent + must be visible historically — load all but capped.
       safe("consents",         () => ConsentForm.find({ UHID }).sort({ createdAt: -1 }).limit(100).lean()),
@@ -157,7 +163,9 @@ exports.getCompleteFile = async (req, res) => {
       // query matched zero rows. Fall back to the canonical `createdAt`
       // window for the date filter; entry-level time precision is the
       // dedicated /patient-history/:id/file endpoint's job.
-      safe("vitals",             () => VitalSheet ? VitalSheet.find({ uhid: UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
+      // R7fo — same widening as nurseNotes: vitals from before the 7-day
+      // window were invisible. PER_SECTION_LIMIT cap still bounds payload.
+      safe("vitals",             () => VitalSheet ? VitalSheet.find({ uhid: UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
       // MLC + bills + admissions don't bloat — keep small, no window.
       safe("mlc",                () => MLCReport ? MLCReport.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
       safe("investigations",     () => InvestigationOrder.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
@@ -165,10 +173,11 @@ exports.getCompleteFile = async (req, res) => {
       safe("billingTriggers",    () => BillingTrigger.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("activityLog",        () => PatientActivityLog.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("dietPlans",          () => PatientDietPlan ? PatientDietPlan.find({ UHID }).sort({ assignedAt: -1, createdAt: -1 }).limit(50).lean() : []),
-      // IntakeOutput — every IN/OUT event for this patient inside the
-      // active window. Lets the timeline show per-fluid balance and the
-      // I/O section render an accurate chronological list.
-      safe("intakeOutput",       () => IntakeOutputEntry ? IntakeOutputEntry.find({ UHID, ts: win, voided: { $ne: true } }).sort({ ts: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
+      // IntakeOutput — every IN/OUT event for this patient. R7fo widening:
+      // the 7-day `ts: win` filter hid the start-of-stay I/O entries (the
+      // graph showed only the trailing week, not the full admission).
+      // PER_SECTION_LIMIT bounds the response.
+      safe("intakeOutput",       () => IntakeOutputEntry ? IntakeOutputEntry.find({ UHID, voided: { $ne: true } }).sort({ ts: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
     ]);
 
     // Lab-records (manual trend sheets + imaging/micro/histopath reports).

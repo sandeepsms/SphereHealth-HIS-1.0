@@ -289,7 +289,32 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
     } catch (_) { /* surface as missing-reg below */ }
   }
   if (actorUser?.role === "Doctor") {
-    const regNo = String(actorUser.doctorDetails?.registrationNumber || "").trim();
+    // R7fp — MCI reg-no can live in several places depending on how the
+    // user was provisioned. Pre-fix we only checked `doctorDetails.
+    // registrationNumber` and false-positive blocked doctors whose
+    // reg-no was on the linked Doctor profile or a sibling field. Accept
+    // any of: User.doctorDetails.registrationNumber, User.medicalRegNo,
+    // User.registrationNumber, or Doctor.professional.registrationNumber
+    // (looked up by Doctor.user → actorUser._id).
+    let regNo = String(
+      actorUser.doctorDetails?.registrationNumber ||
+      actorUser.medicalRegNo ||
+      actorUser.registrationNumber ||
+      "",
+    ).trim();
+    if (!regNo) {
+      try {
+        const Doctor = require("../../models/Doctor/doctorModel");
+        const docProfile = await Doctor.findOne({ user: actorUser._id })
+          .select("professional.registrationNumber regNo")
+          .lean();
+        regNo = String(
+          docProfile?.professional?.registrationNumber ||
+          docProfile?.regNo ||
+          "",
+        ).trim();
+      } catch (_) { /* fall through to missing-reg error */ }
+    }
     if (!regNo) {
       const err = new Error(
         "Doctor's MCI registration number is missing. Add it in Settings → Doctor Profile before signing.",

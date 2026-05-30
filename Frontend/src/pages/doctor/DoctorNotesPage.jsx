@@ -544,7 +544,16 @@ function DoctorNotesContent({ selectedPatient }) {
       try {
         const u = JSON.parse(sessionStorage.getItem("his_user") || "{}");
         if (u?.role === "Doctor") {
-          const regNo = String(u.doctorDetails?.registrationNumber || "").trim();
+          // R7fp — widened from doctorDetails.registrationNumber only.
+          // Backend doctorNotesService.js now accepts ANY of these.
+          const regNo = String(
+            u.doctorDetails?.registrationNumber
+            || u.doctorDetails?.regNo
+            || u.medicalRegNo
+            || u.registrationNumber
+            || u.regNo
+            || ""
+          ).trim();
           if (!regNo) {
             toast.error("Add your MCI registration number in your Profile before signing");
             return;
@@ -1028,6 +1037,119 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
     const tagsHtml = note.tags?.length
       ? `<p style="margin:6px 0;font-size:11px"><strong>Tags:</strong> ${note.tags.join(" · ")}</p>` : "";
 
+    // R7fn-v3 — Generic noteDetails renderer. Pre-R7fn the print HTML
+    // assembled only the well-known sections (vitals, SOAP, diagnosis,
+    // investigations, orders, med/inf orders, tags, sig) and silently
+    // dropped every other field that lives under `note.noteDetails`:
+    // ICU ventilator settings, procedure technique, ASA grade, cause of
+    // death, etc. We walk noteDetails recursively (skipping the two
+    // already-rendered keys medicationOrders / infusionOrders), emit
+    // human-readable kv rows for primitives and collapsible <details>
+    // blocks for nested objects. Depth capped at 4 so a pathological
+    // payload can't blow up the printout.
+    const HUMAN_LBL = {
+      // Generic / Admission
+      admissionMode:"Admission Mode", chiefComplaint:"Chief Complaint", duration:"Duration", hpi:"HPI",
+      pastMedical:"Past Medical Hx", pastSurgical:"Past Surgical Hx", familyHistory:"Family Hx",
+      socialHistory:"Social Hx", currentMeds:"Current Meds", allergies:"Allergies",
+      // Vitals
+      bp_sys:"Systolic BP", bp_dia:"Diastolic BP", pulse:"Pulse (/min)", temp:"Temp (°F)",
+      spo2:"SpO₂ (%)", rr:"RR (/min)", bsl:"BSL (mg/dL)", weight:"Weight (kg)", height:"Height (cm)",
+      // General/System exam
+      generalCondition:"Gen Condition", builtNutrition:"Built / Nutrition",
+      pallor:"Pallor", icterus:"Icterus", cyanosis:"Cyanosis", clubbing:"Clubbing",
+      lymphadenopathy:"Lymphadenopathy", oedema:"Oedema",
+      resp:"Resp System", cvs:"CVS", abdomen:"Abdomen", cns:"CNS / Neuro",
+      // Diagnosis
+      provisionalDx:"Provisional Dx", differentialDx:"Differential Dx", finalDx:"Final Dx", icd10:"ICD-10",
+      investigations:"Investigations", managementPlan:"Management Plan",
+      // ICU / Ventilator
+      ventMode:"Vent Mode", fio2:"FiO₂ (%)", peep:"PEEP (cmH₂O)", tv:"Tidal Volume (mL)",
+      ventRR:"Vent RR", pip:"PIP", map:"MAP (mmHg)", cvp:"CVP (mmHg)",
+      rassScore:"RASS Score", bpsScore:"BPS Score", dailyGoals:"Daily Goals",
+      neuro:"Neuro", renal:"Renal", gi:"GI", haem:"Haematology", infective:"Infective",
+      sedation:"Sedation", vasopressors:"Vasopressors", vasopressorDetail:"Vasopressor Detail",
+      // Procedure
+      procedureName:"Procedure", indication:"Indication", laterality:"Laterality",
+      surgeon:"Surgeon", assistant:"Assistant", anaesthesia:"Anaesthesia",
+      position:"Position", consentObtained:"Consent Obtained",
+      technique:"Technique", findings:"Findings",
+      complications:"Complications", bloodLoss:"Blood Loss",
+      specimenSent:"Specimen Sent", specimenType:"Specimen Type", postInstructions:"Post Instructions",
+      // Consultation
+      consultantName:"Consultant", speciality:"Speciality", consultantRegNo:"Reg No",
+      referredBy:"Referred By", reason:"Reason", clinicalSummary:"Clinical Summary",
+      impression:"Impression", recommendations:"Recommendations", followUp:"Follow-Up",
+      // Pre-op
+      procedure:"Procedure", preopDiagnosis:"Pre-op Dx", asaGrade:"ASA Grade",
+      plannedAnaesthesia:"Planned Anaesthesia", bloodGroup:"Blood Group", crossMatch:"Cross Match",
+      comorbidities:"Comorbidities", preopOrders:"Pre-op Orders",
+      cbcReviewed:"CBC ✓", ptReviewed:"PT/APTT ✓", ecgReviewed:"ECG ✓", cxrReviewed:"CXR ✓",
+      echoReviewed:"Echo ✓", lftsReviewed:"LFTs ✓", rftReviewed:"RFTs ✓",
+      // Post-op
+      procedurePerformed:"Procedure Performed", operativeFindings:"Operative Findings",
+      startTime:"Start Time", endTime:"End Time", transfusion:"Transfusion",
+      fluidsGiven:"Fluids Given", urineOutput:"Urine Output",
+      postopDiagnosis:"Post-op Dx", conditionLeavingOT:"Condition (OT)",
+      recoveryInstructions:"Recovery Instructions", postopOrders:"Post-op Orders",
+      // Death
+      dateTime:"Date/Time", causeDeath1:"Immediate Cause", causeDeath2:"Antecedent Cause",
+      causeDeath3:"Underlying Cause", contributing:"Contributing Conditions",
+      sequenceOfEvents:"Sequence of Events", modeOfDeath:"Mode of Death",
+      placeOfDeath:"Place of Death",
+      dnrInPlace:"DNR", familyInformed:"Family Informed", familyInformedBy:"Informed By",
+      familyInformedTime:"Informed At", mlc:"MLC", pmAdvised:"PM Advised",
+      postMortemDone:"PM Done",
+      certificateIssued:"Certificate Issued",
+      deathCertificateNumber:"Certificate No", deathCertificateIssuedAt:"Certificate Issued At",
+      // Amendment
+      originalNoteId:"Original Note",
+      correction:"Correction", witness:"Witness",
+    };
+    const humanizeKey = (k) => HUMAN_LBL[k] || k.replace(/([A-Z])/g, " $1").replace(/^./, c => c.toUpperCase()).trim();
+    const isEmptyVal = (v) => v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
+    const renderNoteDetailsAsHtml = (obj, depth = 0) => {
+      if (depth > 4 || !obj || typeof obj !== "object") return "";
+      const SKIP = new Set(["medicationOrders", "infusionOrders"]); // already rendered above
+      const rows = [];
+      for (const [k, v] of Object.entries(obj)) {
+        if (SKIP.has(k)) continue;
+        if (isEmptyVal(v)) continue;
+        const lbl = escapeHtml(humanizeKey(k));
+        if (typeof v === "boolean") {
+          rows.push(`<div class="kv"><span class="lbl">${lbl}</span><span class="val">${v ? "✓ Yes" : "✗ No"}</span></div>`);
+        } else if (Array.isArray(v)) {
+          // Array of primitives → join; array of objects → nested details
+          if (v.every(x => typeof x !== "object" || x === null)) {
+            rows.push(`<div class="kv"><span class="lbl">${lbl}</span><span class="val">${escapeHtml(v.join(", "))}</span></div>`);
+          } else {
+            const inner = v.map((x, i) => typeof x === "object" && x !== null
+              ? `<details style="margin:3px 0 3px 12px"><summary style="font-size:11px;cursor:pointer;color:#475569">${escapeHtml(String(i + 1))}</summary>${renderNoteDetailsAsHtml(x, depth + 1)}</details>`
+              : `<div class="kv" style="margin-left:12px"><span class="lbl">${i + 1}</span><span class="val">${escapeHtml(String(x))}</span></div>`
+            ).join("");
+            rows.push(`<details style="margin:4px 0"><summary style="font-size:11px;font-weight:600;cursor:pointer;color:#1e40af">${lbl}</summary>${inner}</details>`);
+          }
+        } else if (typeof v === "object") {
+          // BP shorthand
+          if ("systolic" in v || "diastolic" in v) {
+            rows.push(`<div class="kv"><span class="lbl">${lbl}</span><span class="val">${escapeHtml((v.systolic ?? "—") + "/" + (v.diastolic ?? "—"))}</span></div>`);
+          } else {
+            const nested = renderNoteDetailsAsHtml(v, depth + 1);
+            if (nested) rows.push(`<details style="margin:4px 0"><summary style="font-size:11px;font-weight:600;cursor:pointer;color:#1e40af">${lbl}</summary>${nested}</details>`);
+          }
+        } else {
+          rows.push(`<div class="kv"><span class="lbl">${lbl}</span><span class="val">${escapeHtml(String(v))}</span></div>`);
+        }
+      }
+      return rows.join("");
+    };
+    const noteDetailsHtml = note.noteDetails && Object.keys(note.noteDetails).filter(k => k !== "medicationOrders" && k !== "infusionOrders").length
+      ? `<div class="section" style="margin-top:14px;padding-top:10px;border-top:1px solid #e2e8f0">
+<h3 style="margin:0 0 8px;color:#1e40af;font-size:12px;text-transform:uppercase;letter-spacing:.5px">Additional Details (${escapeHtml(modDef(note.noteType)?.label || note.noteType || "Note")})</h3>
+<style>.kv{display:flex;gap:8px;font-size:12px;margin:2px 0;align-items:baseline}.kv .lbl{flex:0 0 180px;font-weight:600;color:#475569;font-size:11px}.kv .val{flex:1;color:#0f172a;white-space:pre-wrap;word-break:break-word}</style>
+${renderNoteDetailsAsHtml(note.noteDetails)}
+</div>` : "";
+
     const sigHtml = note.status === "signed"
       ? `<div style="margin-top:20px;padding:10px 14px;border:1px solid #bbf7d0;border-radius:8px;background:#f0fdf4;display:flex;align-items:center;gap:10px"><div><strong style="color:#15803d;font-size:12px">✓ SIGNED & SUBMITTED</strong><br/><span style="font-size:11px;color:#166534">By: ${note.doctorName||doctorName} ${note.doctorRegNo ? "· Reg: "+note.doctorRegNo : ""} · ${note.signedAt ? new Date(note.signedAt).toLocaleString("en-IN") : noteDate}</span></div></div>`
       : `<div style="margin-top:20px;padding:8px 12px;border:1px solid #fde68a;border-radius:8px;background:#fffbeb"><strong style="color:#d97706;font-size:12px">DRAFT — Not yet signed</strong></div>`;
@@ -1066,7 +1188,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
     <div style="margin-left:auto;font-size:12px;color:#64748b">Doctor: <strong>${note.doctorName||doctorName}</strong>${note.doctorRegNo ? " · Reg: "+note.doctorRegNo : ""}</div>
   </div>
 
-  ${vitalsHtml}${soapHtml}${diagHtml}${invHtml}${ordersHtml}${medOrdersHtml}${infOrdersHtml}${tagsHtml}${sigHtml}
+  ${vitalsHtml}${soapHtml}${diagHtml}${invHtml}${ordersHtml}${medOrdersHtml}${infOrdersHtml}${tagsHtml}${noteDetailsHtml}${sigHtml}
 </div>
 <div class="no-print" style="padding:16px 24px;border-top:1px solid #e2e8f0;display:flex;gap:10px">
   <button onclick="window.print()" style="padding:9px 24px;background:#1e40af;color:white;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">🖨 Print</button>
@@ -1690,9 +1812,16 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
                 <span style={{ background: C.primary, color: "white", padding: "2px 9px", borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{filteredNotes.length}</span>
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                {[{id:"All"}, ...["daily","icu","procedure","consultation","preop","postop","medication","infusion","death","amendment"].map(id=>({id}))].map(f => {
+                {[{id:"All"}, ...["initial","daily","icu","procedure","consultation","preop","postop","medication","infusion","death","amendment"].map(id=>({id}))].map(f => {
                   const cnt = f.id === "All" ? notes.length : (noteTypeCounts[f.id] || 0);
-                  const label = f.id === "All" ? "All" : MODULES.find(m => m.id === f.id)?.label || f.id;
+                  // R7fn-v3 — Initial Assessment notes (noteType==="initial") had no
+                  // chip because the picker MODULES array intentionally omits it
+                  // (the picker now routes to /ipd-initial-assessment instead).
+                  // Without a chip the filter for "initial" notes was unreachable,
+                  // even though the timeline rendered them. Synthetic fallback
+                  // label here keeps the picker grid unchanged.
+                  const FALLBACK_LBL = { initial: "Initial Assessment" };
+                  const label = f.id === "All" ? "All" : (MODULES.find(m => m.id === f.id)?.label || FALLBACK_LBL[f.id] || f.id);
                   if (f.id !== "All" && cnt === 0) return null;
                   return (
                     <button key={f.id} onClick={() => setFilterType(f.id)}
@@ -1835,6 +1964,15 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
 
                   /* ── Section maps per note type ── */
                   const NOTE_SECTIONS = {
+                    // R7fn-v3 — Daily progress notes were falling through to a flat
+                    // chip dump because NOTE_SECTIONS had no `daily` key. Adds the
+                    // three canonical sections so SOAP / vitals / diagnosis render
+                    // grouped (matching the print-note layout above).
+                    daily: [
+                      { title: "SOAP", keys: ["soap.s","soap.o","soap.a","soap.p"] },
+                      { title: "Vitals", keys: ["vitals.bp","vitals.pulse","vitals.temp","vitals.spo2","vitals.rr","vitals.bsl","vitals.gcs"] },
+                      { title: "Diagnosis & Plan", keys: ["diagnosis","plan"] },
+                    ],
                     initial: [
                       { label:"Admission Details",          icon:"pi-id-card",           keys:["admissionMode","chiefComplaint","duration","hpi"] },
                       { label:"Past History",               icon:"pi-history",            keys:["pastMedical","pastSurgical","currentMeds","allergies","familyHistory","socialHistory"] },

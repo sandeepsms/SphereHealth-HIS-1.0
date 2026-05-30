@@ -39,6 +39,36 @@ router.post("/:type", requireAction("vitals.write"), async (req, res) => {
       data: rest,
     });
 
+    // R7fp — DVT (Caprini) assessments must ALSO appear on the nursing
+    // timeline + patient-file print. Mirror the assessment into a
+    // NurseNote so it round-trips through the same pipeline as every
+    // other nursing entry. Non-blocking: failure here must NOT roll
+    // back the assessment itself.
+    if (type === "dvt") {
+      try {
+        const NurseNotes = require("../../models/Nurse/NurseNotesModel");
+        const capriniScore = rest.capriniScore ?? rest.score ?? doc.data?.capriniScore;
+        const capriniRisk  = rest.capriniRisk  ?? rest.risk  ?? doc.data?.capriniRisk;
+        await NurseNotes.create({
+          patient:     rest.patientId || rest.patient || undefined,
+          patientName: patientName || "",
+          patientUHID: UHID,
+          ipdNo:       rest.ipdNo || rest.admissionNumber || undefined,
+          noteDate:    new Date(),
+          shift:       "general",
+          nurseName:   req.user?.fullName || "Nurse",
+          noteType:    "dvt",
+          status:      "submitted",
+          submittedAt: new Date(),
+          remarks:     `Caprini score: ${capriniScore ?? "N/A"} (${capriniRisk ?? "N/A"})`,
+          tags:        ["dvt-assessment", "nabh-mom7"],
+          noteData:    { dvt: rest, source: "nursing-assessments/dvt" },
+        });
+      } catch (e) {
+        console.warn("DVT NurseNote mirror failed:", e.message);
+      }
+    }
+
     // R7bp — fan out to the NABH register matching this assessment type
     // (pain → PainAssessmentRegister, fall-risk → FallRiskRegister,
     // pressure-area → PressureUlcerRegister). Non-blocking: the assessment

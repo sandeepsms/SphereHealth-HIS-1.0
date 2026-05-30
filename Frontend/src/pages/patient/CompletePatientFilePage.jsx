@@ -30,6 +30,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
+import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import useHospitalSettings from "../../Components/print/useHospitalSettings";
@@ -1759,47 +1760,85 @@ function OrdersSection({ orders }) {
   );
 }
 
-function VitalsSection({ vitals, nurseNotes }) {
+function VitalsSection({ vitals, nurseNotes, doctorNotes, currentAdmission }) {
   // Merge dedicated VitalSheet rows + vitals embedded inside nurse notes,
-  // dedupe on (timestamp minute, BP, pulse).
+  // doctor notes, and the admission-level nurse IA payload. Dedupe on
+  // (timestamp minute, BP, pulse).
+  //
+  // R7g: previously this was VitalSheet+NurseNote only. Doctor notes,
+  // admission-level IA, and noteDetails.systemic.* readings were silently
+  // missing from the trend table — the printed file showed only nursing-
+  // recorded vitals, not the doctor's clinical observations.
   const merged = useMemo(() => {
     const rows = [];
-    vitals.forEach((v) => rows.push({
-      when: v.recordedAt || v.createdAt,
-      by: v.recordedBy || v.nurseName || "—",
-      bp: v.bp ? `${v.bp.systolic || "—"}/${v.bp.diastolic || "—"}` : "—",
-      pulse: v.pulse || "—", temp: v.temperature || v.temp || "—",
-      rr: v.rr || v.respiratoryRate || "—", spo2: v.spo2 || "—",
-      bsl: v.bsl || v.bloodSugar || "—", gcs: v.gcs || "—",
-    }));
-    nurseNotes.forEach((n) => {
-      if (!n.vitals) return;
+    const fmtBp = (bp) => {
+      if (!bp) return "—";
+      if (typeof bp === "string") return bp || "—";
+      const sys = bp.systolic ?? bp.sys ?? bp.bp_sys;
+      const dia = bp.diastolic ?? bp.dia ?? bp.bp_dia;
+      return `${sys ?? "—"}/${dia ?? "—"}`;
+    };
+    const pushFrom = (v, when, by, source) => {
+      if (!v) return;
+      const bpRaw = v.bp || (v.bp_sys ? { systolic: v.bp_sys, diastolic: v.bp_dia } : null);
+      if (!bpRaw && !v.pulse && !v.temp && !v.temperature && !v.spo2 && !v.rr && !v.respiratoryRate) return;
       rows.push({
-        when: n.createdAt,
-        by: n.nurseName || "—",
-        bp: n.vitals.bp ? `${n.vitals.bp.systolic || "—"}/${n.vitals.bp.diastolic || "—"}` : "—",
-        pulse: n.vitals.pulse || "—", temp: n.vitals.temp || "—",
-        rr: n.vitals.rr || "—", spo2: n.vitals.spo2 || "—",
-        bsl: n.vitals.bsl || "—", gcs: n.vitals.gcs || "—",
+        when, by, source,
+        bp: fmtBp(bpRaw),
+        pulse: v.pulse || "—",
+        temp: v.temperature || v.temp || "—",
+        rr: v.rr || v.respiratoryRate || "—",
+        spo2: v.spo2 || "—",
+        bsl: v.bsl || v.bloodSugar || "—",
+        gcs: v.gcs || "—",
       });
+    };
+    (vitals || []).forEach((v) =>
+      pushFrom(v, v.recordedAt || v.createdAt, v.recordedBy || v.nurseName || "—", "VitalSheet"));
+    (nurseNotes || []).forEach((n) =>
+      pushFrom(n.vitals, n.noteDate || n.createdAt, n.nurseName || "—", "NurseNote"));
+    (doctorNotes || []).forEach((n) => {
+      pushFrom(n.vitals, n.visitDate || n.createdAt, n.doctorName || n.signedBy || "—", "DoctorNote");
+      // Some doctor notes carry vitals inside noteDetails.systemic.* (per-system exam block)
+      const sys = n.noteDetails?.systemic;
+      if (sys && typeof sys === "object") {
+        Object.values(sys).forEach((blk) => {
+          if (blk && typeof blk === "object" && (blk.bp || blk.pulse || blk.spo2 || blk.rr || blk.temp)) {
+            pushFrom(blk, n.visitDate || n.createdAt, n.doctorName || n.signedBy || "—", "DoctorNote (systemic)");
+          }
+        });
+      }
     });
+    if (currentAdmission?.nurseInitialAssessment?.vitals) {
+      pushFrom(currentAdmission.nurseInitialAssessment.vitals,
+        currentAdmission.admissionDate || currentAdmission.createdAt,
+        currentAdmission.nurseInitialAssessment.assessedBy || "Admission IA",
+        "IA");
+    }
+    if (currentAdmission?.initialAssessment?.vitals) {
+      pushFrom(currentAdmission.initialAssessment.vitals,
+        currentAdmission.admissionDate || currentAdmission.createdAt,
+        currentAdmission.initialAssessment.assessedBy || "Doctor IA",
+        "IA (Doctor)");
+    }
     rows.sort((a, b) => new Date(b.when) - new Date(a.when));
     // Dedupe by minute precision
     const seen = new Set();
     return rows.filter((r) => {
+      if (!r.when) return false;
       const key = `${new Date(r.when).toISOString().slice(0, 16)}|${r.bp}|${r.pulse}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-  }, [vitals, nurseNotes]);
+  }, [vitals, nurseNotes, doctorNotes, currentAdmission]);
 
   if (!merged.length) return <Empty icon="📈" msg="No vitals captured" />;
   return (
     <table className="pf-table pf-table--compact">
       <thead>
         <tr>
-          <th>When</th><th>By</th><th>BP</th><th>Pulse</th>
+          <th>When</th><th>By</th><th>Source</th><th>BP</th><th>Pulse</th>
           <th>Temp</th><th>RR</th><th>SpO₂</th><th>BSL</th><th>GCS</th>
         </tr>
       </thead>
@@ -1809,6 +1848,7 @@ function VitalsSection({ vitals, nurseNotes }) {
           // breaking reconciliation when new vitals were inserted mid-stream.
           <tr key={`${r.when || ""}|${r.bp}|${r.pulse}|${i}`}>
             <td>{fmtDT(r.when)}</td><td>{r.by}</td>
+            <td style={{ fontSize: 11, color: "#64748b" }}>{r.source || "—"}</td>
             <td>{r.bp}</td><td>{r.pulse}</td><td>{r.temp}</td>
             <td>{r.rr}</td><td>{r.spo2}</td><td>{r.bsl}</td><td>{r.gcs}</td>
           </tr>
@@ -2181,7 +2221,7 @@ function PrintLetterhead({ patient, currentAdmission, role, hs = {} }) {
   );
 }
 
-function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
+function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther, viewerRole }) {
   // dietPlans was missing from this destructure — PrintSection 9a was
   // reading a free variable that didn't exist, crashing the print popup.
   // (Audit finding HIGH-3.)
@@ -2249,11 +2289,17 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
       </PrintSection>
 
       <PrintSection title="2. Initial Assessment — Doctor">
-        <NoteList notes={docInitial} kind="doctor" emptyMsg="Doctor initial assessment not recorded" />
+        <div style={{ marginBottom: 8, fontSize: 11, color: "#78350f", fontStyle: "italic" }}>
+          Showing latest signed version. Full amendment history visible in Activity Log.
+        </div>
+        <NoteList notes={docInitial.filter((n) => n.section === "doctor" || (!n.section && n.noteDetails?.doctor) || (!n.section && !n.noteDetails?.nursing))} kind="doctor" emptyMsg="Doctor initial assessment not recorded" />
       </PrintSection>
 
       <PrintSection title="3. Initial Assessment — Nursing">
-        <NoteList notes={nurseInitial} kind="nurse" emptyMsg="Nursing initial assessment not recorded" />
+        <NoteList notes={[
+          ...docInitial.filter((n) => n.section === "nursing" || n.noteDetails?.nursing),
+          ...nurseInitial,
+        ]} kind="nurse" emptyMsg="Nursing initial assessment not recorded" />
       </PrintSection>
 
       {/* R7k: ONE chronological progress-notes section instead of two
@@ -2309,7 +2355,7 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
       )}
 
       <PrintSection title="7. Vital Trends">
-        <VitalsSection vitals={vitals} nurseNotes={nurseNotes} />
+        <VitalsSection vitals={vitals} nurseNotes={nurseNotes} doctorNotes={doctorNotes} currentAdmission={currentAdmission} />
       </PrintSection>
 
       {/* R7k: Dedicated Blood Transfusion Records (NABH MOM.7).
@@ -2427,9 +2473,13 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
         <BillingSection bills={bills} />
       </PrintSection>
 
-      <PrintSection title="15. Activity / Audit Trail (latest 50)">
-        <ActivityFeed activityLog={(activityLog || []).slice(0, 50)} />
-      </PrintSection>
+      {/* R7g: Activity Log restricted to audit-eligible roles in print
+          (matches interactive view NABH AAC.7). */}
+      {["Admin", "Doctor", "MRD", "Accountant"].includes(viewerRole) && (
+        <PrintSection title="15. Activity / Audit Trail (latest 50)">
+          <ActivityFeed activityLog={(activityLog || []).slice(0, 50)} />
+        </PrintSection>
+      )}
     </main>
   );
 }
@@ -3775,17 +3825,31 @@ export default function CompletePatientFilePage() {
     return () => { cancelled = true; };
   }, [uhid]);
 
-  // Fire the browser print dialog once the data is rendered. We delay a beat
-  // so React commits the DOM + any signature <img> tags get a chance to
-  // start loading. afterprint closes the popup (no-op if it's the main tab).
+  // Fire the browser print dialog once the data is rendered AND all images
+  // (letterhead, signatures, logos) have decoded. R7g: previously this was a
+  // blind 500ms setTimeout which often fired before signature <img> tags
+  // finished loading, so the print preview had blank signature blocks.
+  // afterprint closes the popup (no-op if it's the main tab).
   useEffect(() => {
     if (!autoprint || !data) return;
-    const handle = setTimeout(() => {
-      window.print();
-      const close = () => { try { window.close(); } catch {} };
-      window.addEventListener("afterprint", close, { once: true });
-    }, 500);
-    return () => clearTimeout(handle);
+    let cancelled = false;
+    const close = () => { try { window.close(); } catch {} };
+    const imgs = Array.from(document.images);
+    Promise.all(imgs.map((img) =>
+      img.complete
+        ? Promise.resolve()
+        : (img.decode ? img.decode().catch(() => {}) : new Promise((r) => {
+            img.addEventListener("load", r, { once: true });
+            img.addEventListener("error", r, { once: true });
+          }))
+    )).then(() => {
+      if (cancelled) return;
+      setTimeout(() => {
+        window.print();
+        window.addEventListener("afterprint", close, { once: true });
+      }, 200);
+    });
+    return () => { cancelled = true; };
   }, [autoprint, data]);
 
   /* Scroll-spy for the sticky nav */
@@ -3845,10 +3909,42 @@ export default function CompletePatientFilePage() {
   const RELOCATED_NURSE_TYPES = /^(intake|procedure|operative|preop|postop)$/i;
   const RELOCATED_DOC_TYPES   = /^(procedure|operative|preop|postop)$/i;
 
-  const docInitial   = doctorNotes.filter((n) =>  /initial/i.test(n.noteType || ""));
+  const docInitialAll = doctorNotes.filter((n) =>  /initial/i.test(n.noteType || ""));
   const nurseInitial = nurseNotes.filter((n)  =>  /initial/i.test(n.noteType || ""));
   const docOther     = doctorNotes.filter((n) => !/initial/i.test(n.noteType || "") && !RELOCATED_DOC_TYPES.test(n.noteType || ""));
   const nurseOther   = nurseNotes.filter((n)  => !/initial/i.test(n.noteType || "") && !RELOCATED_NURSE_TYPES.test(n.noteType || ""));
+
+  // R7g (Print bloat fix): collapse Initial-Assessment records to the latest
+  // signed version per section (doctor / nursing). The patient may have 3
+  // signed + 2 amended + 1 submitted IA rows — rendering all of them with
+  // full NABH P0/P1/P2 trees produces 20-40 pages of duplicate output.
+  // Activity Log still shows the full amendment history.
+  const pickLatestIA = (arr, section) => arr
+    .filter((n) => n.section === section || (!n.section && n.noteDetails?.[section]))
+    .sort((a, b) => {
+      const rank = (s) => s === "signed" ? 0 : s === "amended" ? 1 : 2;
+      return rank(a.status) - rank(b.status)
+        || new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt);
+    })[0];
+  const latestDocIA   = pickLatestIA(docInitialAll, "doctor");
+  const latestNurseIA = pickLatestIA(docInitialAll, "nursing");
+  // If the per-section filter yields nothing (older rows without section
+  // tags), fall back to the most-recent signed/amended/any IA so the
+  // section never goes blank when records actually exist.
+  const fallbackDocIA = !latestDocIA && docInitialAll.length
+    ? [...docInitialAll].sort((a, b) => {
+        const rank = (s) => s === "signed" ? 0 : s === "amended" ? 1 : 2;
+        return rank(a.status) - rank(b.status)
+          || new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt);
+      })[0]
+    : null;
+  const docInitial = [latestDocIA || fallbackDocIA, latestNurseIA].filter(Boolean);
+  // Has any nurse-section IA been captured as a DoctorNote? If so the
+  // admission-level nurseInitialAssessment fallback below is a duplicate
+  // (7th dump) — skip it.
+  const hasNurseSectionIA = Boolean(latestNurseIA)
+    || nurseInitial.length > 0
+    || docInitialAll.some((n) => n.section === "nursing" || n.noteDetails?.nursing);
 
   const navItems = [
     { id: "admission",     label: "Admission",          icon: "🛏", count: data.admissions?.length },
@@ -3884,7 +3980,7 @@ export default function CompletePatientFilePage() {
     return (
       <div className={`pf-page pf-print-mode pf-tint--${role === "nurse" ? "nurse" : "doctor"}`}>
         <PrintLetterhead patient={patient} currentAdmission={currentAdmission} role={role} hs={hospitalSettings} />
-        <PrintBody data={data} docInitial={docInitial} nurseInitial={nurseInitial} docOther={docOther} nurseOther={nurseOther} />
+        <PrintBody data={data} docInitial={docInitial} nurseInitial={nurseInitial} docOther={docOther} nurseOther={nurseOther} viewerRole={viewerRole} />
         <PrintFooter uhid={uhid} role={role} hs={hospitalSettings} />
       </div>
     );
@@ -3898,7 +3994,15 @@ export default function CompletePatientFilePage() {
           currentAdmission={currentAdmission}
           role={role}
           onBack={() => navigate(-1)}
-          onPrint={() => window.open(`/patient-file/${uhid}?role=${role}&autoprint=1`, "_blank", "noopener,width=1100,height=900")}
+          onPrint={() => {
+            const url = `/patient-file/${uhid}?role=${role}&autoprint=1`;
+            const w = window.open(url, "_blank", "noopener,width=1100,height=900");
+            if (!w || w.closed || typeof w.closed === "undefined") {
+              // Pop-up blocked — fall back to same-tab navigation
+              try { toast.warn("Pop-up blocked — opening in same tab. Use Ctrl+P to print."); } catch {}
+              setTimeout(() => { window.location.href = url; }, 500);
+            }
+          }}
         />
         {/* R7i: Same-day discharge undo (Admin only). Component
             short-circuits when conditions aren't met. */}
@@ -3941,22 +4045,27 @@ export default function CompletePatientFilePage() {
             </Section>
 
             <Section id="initial" icon="🩺" title="Initial Assessment" sub="NABH COP.2 + IPSG.6 — combined intake">
+              <div style={{ marginBottom: 10, padding: "8px 12px", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 6, fontSize: 12, color: "#78350f" }}>
+                Showing latest signed version. Full amendment history visible in Activity Log.
+              </div>
               <h4 style={{ margin: "0 0 8px", color: "var(--pf-accent-d)" }}>Doctor — Initial Assessment</h4>
               <RoleAddCTA viewerRole={viewerRole} uhid={uhid}
                 allow={["Doctor"]} href="/ipd-assessment/{UHID}"
                 color="#7c3aed" label="Add Doctor IA in console" icon="✏" />
-              <NoteList notes={docInitial} kind="doctor" emptyMsg="Doctor initial assessment not recorded" />
+              <NoteList notes={latestDocIA || fallbackDocIA ? [latestDocIA || fallbackDocIA] : []} kind="doctor" emptyMsg="Doctor initial assessment not recorded" />
               <h4 style={{ margin: "16px 0 8px", color: "var(--pf-accent-d)" }}>Nursing — Initial Assessment</h4>
               <RoleAddCTA viewerRole={viewerRole} uhid={uhid}
                 allow={["Nurse"]} href="/nurse-initial-assessment?uhid={UHID}"
                 color="#db2777" label="Add Nursing IA in console" icon="✏" />
-              <NoteList notes={nurseInitial} kind="nurse" emptyMsg="Nursing initial assessment not recorded" />
+              <NoteList notes={latestNurseIA ? [latestNurseIA] : nurseInitial} kind="nurse" emptyMsg="Nursing initial assessment not recorded" />
               {/* The dedicated /nurse-initial-assessment page stores its full
                   NABH-required payload directly on the admission document
                   (admission.nurseInitialAssessment, type: Mixed). It's
                   separate from NurseNote.noteData and was never being
-                  surfaced here. Render every populated field. */}
-              {isMeaningful(currentAdmission?.nurseInitialAssessment) && (
+                  surfaced here. Render every populated field.
+                  R7g: skip when a nurse-section DoctorNote already covers it
+                  (else this becomes a 7th duplicate dump). */}
+              {!hasNurseSectionIA && isMeaningful(currentAdmission?.nurseInitialAssessment) && (
                 <div className="pf-record pf-record--nurse" style={{ marginTop: 12 }}>
                   <div className="pf-record__head">
                     <span className="pf-record__title">Nurse IA — full assessment payload</span>
@@ -3967,8 +4076,9 @@ export default function CompletePatientFilePage() {
                   </div>
                 </div>
               )}
-              {/* Same idea for the admission-level doctor IA payload, if any */}
-              {isMeaningful(currentAdmission?.initialAssessment) && (
+              {/* Same idea for the admission-level doctor IA payload, if any.
+                  R7g: only render when no doctor-section IA already covers it. */}
+              {!(latestDocIA || fallbackDocIA) && isMeaningful(currentAdmission?.initialAssessment) && (
                 <div className="pf-record pf-record--doctor" style={{ marginTop: 12 }}>
                   <div className="pf-record__head">
                     <span className="pf-record__title">Doctor IA gate</span>
@@ -4018,7 +4128,7 @@ export default function CompletePatientFilePage() {
                 allow={["Nurse", "Doctor"]}
                 href={`/updateVitalSheet/{UHID}/${new Date().toISOString().slice(0,10)}`}
                 color="#0d9488" label="Record vitals (today)" icon="📈" />
-              <VitalsSection vitals={vitals} nurseNotes={nurseNotes} />
+              <VitalsSection vitals={vitals} nurseNotes={nurseNotes} doctorNotes={doctorNotes} currentAdmission={currentAdmission} />
             </Section>
 
             <Section id="investigations" icon="🧪" title="Investigations" sub="Lab + imaging orders with results" count={investigations.length}>

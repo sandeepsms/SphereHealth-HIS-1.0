@@ -1951,9 +1951,40 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         const name = section === "nursing"
           ? (nurseName || user?.fullName || "")
           : (doctorName || user?.fullName || "");
-        await axios.put(`${API_ENDPOINTS.BASE}/admissions/${admission._id}/initial-assessment`, { role, name })
-          .catch(() => {}); // non-blocking; flag is a UX gate not a hard constraint
-        // Update local admission state so the gate lifts without page reload
+        // R7fn-v3 — Hardened gate-flag PUT. Previously a silent .catch(() => {})
+        // swallowed any failure, leaving the other-role tile locked even after
+        // a successful sign — and the user had no signal. Now: log first
+        // failure, retry once with explicit completedAt, and as last resort
+        // patch the nested flag directly via PATCH /admissions/:id. Local
+        // admission state is always updated below so the in-page gate UI
+        // lifts even if the backend disagrees.
+        try {
+          await axios.put(`${API_ENDPOINTS.BASE}/admissions/${admission._id}/initial-assessment`, { role, name });
+        } catch (err) {
+          console.warn("[R7fn] Initial Assessment gate flag PUT failed, retrying:", err?.response?.data || err.message);
+          try {
+            await axios.put(`${API_ENDPOINTS.BASE}/admissions/${admission._id}/initial-assessment`, {
+              role, name, completedAt: new Date().toISOString(),
+            });
+          } catch (err2) {
+            // Last resort: update via PATCH /admissions/:id with the nested flag
+            try {
+              const patchBody = {
+                initialAssessment: {
+                  ...(admission.initialAssessment || {}),
+                  [`${role}Completed`]: true,
+                  [`${role}CompletedAt`]: new Date().toISOString(),
+                  [`${role}Name`]: name,
+                },
+              };
+              await axios.put(`${API_ENDPOINTS.BASE}/admissions/${admission._id}`, patchBody);
+            } catch (err3) {
+              console.error("[R7fn] All gate-flag update attempts failed:", err3?.response?.data || err3.message);
+              toast.warn("Sign succeeded but admission gate flag couldn't update. Other doctor tiles may stay locked — refresh the page.");
+            }
+          }
+        }
+        // Always update local admission state so the gate UI lifts even if backend disagreed
         setAdmission(prev => prev ? {
           ...prev,
           initialAssessment: {
