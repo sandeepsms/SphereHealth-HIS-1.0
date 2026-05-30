@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import "../../Components/clinical/clinical-forms.css";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
@@ -760,6 +760,67 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caregiver.primaryName, caregiver.primaryRelation]);
 
+  /* ══ R7ff · Cross-validation alerts (NABH PSQ.4) ═════════════════
+     Live diff between doctor's and nurse's independently-captured
+     fields. The point of capturing allergies / weight / caregiver
+     twice is so a discrepancy SURFACES — silent agreement is fine,
+     silent disagreement is a safety event. Banner stays visible at
+     the top of the form until both sides reconcile or admin overrides.
+     ───────────────────────────────────────────────────────────── */
+  const crossCheckAlerts = useMemo(() => {
+    const alerts = [];
+
+    // 1. Allergy list mismatch — both sides should converge.
+    const norm = (s) => (s || "").toString().toLowerCase().trim();
+    const nurseSet  = new Set((nurseAllergyList || []).map(a => norm(a.agent)).filter(Boolean));
+    const doctorSet = new Set((allergyList || []).map(a => norm(a.agent)).filter(Boolean));
+    const onlyNurse  = [...nurseSet].filter(a => !doctorSet.has(a));
+    const onlyDoctor = [...doctorSet].filter(a => !nurseSet.has(a));
+    if (onlyNurse.length) alerts.push({
+      severity: "high", category: "Allergy",
+      message: `Nurse logged allergen(s) not on doctor's list: ${onlyNurse.join(", ")}`,
+    });
+    if (onlyDoctor.length) alerts.push({
+      severity: "high", category: "Allergy",
+      message: `Doctor logged allergen(s) not on nurse's list: ${onlyDoctor.join(", ")}`,
+    });
+    // NKDA flag mismatch (one side says "no known", other has entries)
+    if (noKnownAllergies && nurseAllergyList?.length) alerts.push({
+      severity: "high", category: "Allergy",
+      message: `Doctor marked NKDA but nurse listed ${nurseAllergyList.length} allergen(s)`,
+    });
+    if (nurseNoKnownAllergies && allergyList?.length) alerts.push({
+      severity: "high", category: "Allergy",
+      message: `Nurse marked NKDA but doctor listed ${allergyList.length} allergen(s)`,
+    });
+
+    // 2. Anthropometry mismatch — both sides may type independently
+    //    if doctor opens form before nurse's measurement lands. Flag
+    //    differences > 2 cm / 2 kg (within calibration tolerance).
+    const nh = Number(anthropo?.heightCm), dh = Number(docAnthropo?.heightCm);
+    if (nh && dh && Math.abs(nh - dh) > 2) alerts.push({
+      severity: "medium", category: "Anthropometry",
+      message: `Height mismatch: nurse ${nh} cm vs doctor ${dh} cm (Δ ${Math.abs(nh-dh).toFixed(1)} cm)`,
+    });
+    const nw = Number(anthropo?.weightKg), dw = Number(docAnthropo?.weightKg);
+    if (nw && dw && Math.abs(nw - dw) > 2) alerts.push({
+      severity: "medium", category: "Anthropometry",
+      message: `Weight mismatch: nurse ${nw} kg vs doctor ${dw} kg (Δ ${Math.abs(nw-dw).toFixed(1)} kg)`,
+    });
+
+    // 3. Caregiver vs prognosis "discussed with" — flag only when both
+    //    are populated and the discussed-with text doesn't contain the
+    //    primary caregiver name (case-insensitive substring).
+    const nName = caregiver?.primaryName?.trim();
+    const dwTxt = (prognosis?.discussedWith || "").trim();
+    if (nName && dwTxt && !norm(dwTxt).includes(norm(nName))) alerts.push({
+      severity: "low", category: "Family",
+      message: `Doctor's "Discussed with" = "${dwTxt}" doesn't match nurse's primary caregiver "${nName}"`,
+    });
+
+    return alerts;
+  }, [allergyList, noKnownAllergies, nurseAllergyList, nurseNoKnownAllergies, anthropo, docAnthropo, caregiver, prognosis]);
+
   const loadPatient = async (id) => {
     if (!id?.trim()) return;
     setLoadingPt(true); setPatient(null); setAdmission(null);
@@ -890,6 +951,10 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           consentRequired: consentNeeded,
         },
       },
+      // R7ff — Cross-check alerts snapshot for backend audit trail.
+      // 'high' severity should ideally block sign-off; for now persisted
+      // so accountability is preserved.
+      crossCheckAlerts,
       // R7fc — nurse P0 NABH fields (AAC.1 / AAC.4 / IPC / PSQ)
       nursingNabh: {
         identification: idBand,
@@ -1067,6 +1132,41 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
       )}
 
       {patient && (<>
+
+        {/* R7ff · Cross-check banner — appears at top whenever nurse's
+            and doctor's independently-captured fields disagree. Sticky
+            visibility forces reconciliation before sign-off. */}
+        {crossCheckAlerts.length > 0 && (
+          <div style={{
+            background: "#fef3c7", border: "1.5px solid #f59e0b", borderRadius: 10,
+            padding: "12px 16px", marginBottom: 14, color: "#78350f",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <i className="pi pi-exclamation-triangle" style={{ fontSize: 14, color: "#d97706" }} />
+              <div style={{ fontSize: 13, fontWeight: 800 }}>
+                Cross-check alerts ({crossCheckAlerts.length}) — reconcile before sign
+              </div>
+              <span style={{ background: "#fef9c3", color: "#78350f", padding: "1px 8px", borderRadius: 4, fontSize: 9, fontWeight: 800, letterSpacing: ".4px" }}>
+                NABH PSQ.4
+              </span>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 22, fontSize: 11.5, lineHeight: 1.55 }}>
+              {crossCheckAlerts.map((a, i) => (
+                <li key={i} style={{ marginBottom: 2 }}>
+                  <span style={{
+                    background: a.severity === "high" ? "#fee2e2" : a.severity === "medium" ? "#fef3c7" : "#e0e7ff",
+                    color:      a.severity === "high" ? "#b91c1c" : a.severity === "medium" ? "#92400e" : "#3730a3",
+                    padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 800,
+                    marginRight: 6, letterSpacing: ".3px",
+                  }}>
+                    {a.severity.toUpperCase()}
+                  </span>
+                  <strong>{a.category}:</strong> {a.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* R7fa — Nursing form gate. When a DOCTOR mounts this component
             (via DoctorNotes embed), skip every nursing-shaped section and
