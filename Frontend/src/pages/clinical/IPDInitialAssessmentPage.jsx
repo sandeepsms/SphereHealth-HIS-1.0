@@ -365,6 +365,14 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   const [loadingPt, setLoadingPt] = useState(false);
   const [saving, setSaving]       = useState(false);
   const [noteId, setNoteId]       = useState(null);
+  // R7fm — separate NurseNote id for the nursing-section mirror write.
+  // The page POSTs to /doctor-notes (canonical IPD_INITIAL bucket), but
+  // /nursing-notes is a SEPARATE collection that NursingNotes.jsx reads
+  // for its timeline. Without this mirror, signed nurse Initial
+  // Assessments never surfaced on the nurse timeline (R7fk live test
+  // showed empty NurseNotes for Badal). On subsequent saves we PUT to
+  // this id so we don't create duplicate timeline rows on re-edit.
+  const [nurseNoteId, setNurseNoteId] = useState(null);
   // R7bd — activeTab + Doctor Initial Assessment tab removed. This page
   // is now nursing-only: the Doctor's initial assessment lives in the
   // dedicated Doctor Notes → Initial Assessment flow, and combining
@@ -1647,6 +1655,83 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         res = await axios.post(`${API_ENDPOINTS.DOCTOR_NOTES}`, payload);
         setNoteId(res.data?.data?._id || res.data?._id);
       }
+
+      // R7fm — Mirror nursing-section assessments to /nursing-notes so they
+      // appear on the Nursing Notes timeline. The IPDInitialAssessmentPage
+      // POSTs the canonical record to /doctor-notes (which DischargeSummary,
+      // PatientPanelTabs, and CompletePatientFile read), but NursingNotes.jsx
+      // reads exclusively from /nursing-notes — a separate collection. Live
+      // R7fk verify showed an empty NurseNotes collection for Badal even
+      // after a signed save. We dual-write here so both timelines stay in
+      // sync. Failure to mirror is non-fatal — the canonical DoctorNote save
+      // already succeeded.
+      if (section === "nursing" && patient?._id) {
+        try {
+          const nursePayload = {
+            patient:        patient._id,
+            patientId:      patient._id,
+            patientUHID:    patient.UHID || uhid,
+            patientName:    patient.fullName || "",
+            UHID:           patient.UHID || uhid,
+            admissionNumber: ipdNo,
+            ipdNo,
+            noteDate:       new Date().toISOString(),
+            shift:          "general",
+            nurseName:      nurseName || user?.fullName || "Nurse",
+            noteType:       "initial",
+            isCriticalEvent: false,
+            status:         sign ? "submitted" : "draft",
+            ...(sign ? { submittedAt: new Date().toISOString() } : {}),
+            vitals: {
+              bp:    { systolic: Number(vitals?.bp?.split("/")?.[0]) || undefined,
+                       diastolic: Number(vitals?.bp?.split("/")?.[1]) || undefined },
+              pulse:      Number(vitals?.pulse) || undefined,
+              temp:       Number(vitals?.temp)  || undefined,
+              rr:         Number(vitals?.rr)    || undefined,
+              spo2:       Number(vitals?.spo2)  || undefined,
+              bloodSugar: Number(vitals?.rbs)   || undefined,
+            },
+            painScore: Number(painScore) || 0,
+            painAssessment: painPresent
+              ? [painLocation, painCharacter].filter(Boolean).join(" — ")
+              : "No pain reported on admission",
+            remarks: nursingNotes
+              || `Nursing Initial Assessment (NABH AAC.1 / COP.2) — ${
+                   chiefComplaint || patient?.fullName || "patient"
+                 }`,
+            tags: ["initial-assessment", "nabh-aac1", "nabh-cop2"],
+            signedByName: sign ? (nurseName || user?.fullName || "") : undefined,
+            // Mixed catch-all — full role-specific payload so any downstream
+            // reader (timeline expansion, print, audit) has the whole record.
+            noteData: payload.noteDetails?.nursing && {
+              nursing:     payload.noteDetails.nursing,
+              nursingNabh: payload.noteDetails.nursingNabh,
+              section:     "nursing",
+              linkedDoctorNoteId: noteId || res.data?.data?._id || res.data?._id,
+              assessmentDate: payload.assessmentDate,
+            },
+          };
+
+          if (nurseNoteId) {
+            await axios.put(
+              `${API_ENDPOINTS.NURSING_NOTES}/${nurseNoteId}`,
+              nursePayload,
+            );
+          } else {
+            const nr = await axios.post(
+              `${API_ENDPOINTS.NURSING_NOTES}`,
+              nursePayload,
+            );
+            const nid = nr.data?.data?._id || nr.data?._id;
+            if (nid) setNurseNoteId(nid);
+          }
+        } catch (e) {
+          // Non-fatal — canonical save already landed in DoctorNotes.
+          // Surface a soft warning so a nurse can re-try / report it.
+          console.warn("Nursing timeline mirror failed:", e?.response?.data || e.message);
+        }
+      }
+
       // On sign-off, mark the corresponding initial assessment flag on the admission
       if (sign && admission?._id) {
         const role = section === "nursing" ? "nurse" : "doctor";

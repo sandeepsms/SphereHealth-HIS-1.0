@@ -2089,8 +2089,16 @@ function NursingNotesContent({ selectedPatient }) {
                     <div className="dnp-note__body">
                       <div className="dnp-note__badge-row">
                         <span className="dnp-note__type-badge">
-                          {mod && <i className={`pi ${mod.icon}`} style={{ fontSize: 10 }} />}
-                          {mod?.label || note.noteType?.toUpperCase()}
+                          {mod
+                            ? <i className={`pi ${mod.icon}`} style={{ fontSize: 10 }} />
+                            : note.noteType === "initial"
+                              ? <i className="pi pi-clipboard" style={{ fontSize: 10 }} />
+                              : null}
+                          {/* R7fm — friendlier label for the dual-written
+                              IPD Initial Assessment (no MODULES entry by
+                              design — R7bj removed the inline picker). */}
+                          {mod?.label
+                            || (note.noteType === "initial" ? "Initial Assessment · NABH AAC.1" : note.noteType?.toUpperCase())}
                         </span>
                         {note.isCriticalEvent && (
                           <span className="dnp-note__status dnp-note__status--critical">
