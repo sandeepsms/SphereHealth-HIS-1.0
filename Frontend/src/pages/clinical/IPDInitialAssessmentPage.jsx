@@ -10,6 +10,12 @@ import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
+// R7fr Track C: shared NABH print frame — replaces the inline
+// <head><style>...</style></head> + .hdr/.pat-strip blocks in
+// handlePrintAssessment() with the canonical PrintShell triple-zone
+// header + 2-col patient strip + double-signature zone. The
+// role-aware nursing/doctor block HTML (R7fh) flows in via bodyHtml.
+import { buildPrintShellHtml } from "@/templates/PrintShell";
 
 /* ── Design tokens ── */
 const C = {
@@ -1773,72 +1779,84 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         </div>
       </div>`;
 
-    const roleTitle = isDoctorRole ? "DOCTOR INITIAL ASSESSMENT" : "NURSING INITIAL ASSESSMENT";
+    const roleTitle = isDoctorRole ? "Doctor Initial Assessment" : "Nursing Initial Assessment";
     const contentHtml = isDoctorRole ? doctorHtml : nursingHtml;
 
-    const css = `
-      *{box-sizing:border-box;margin:0;padding:0}
-      body{font-family:'Segoe UI',Arial,sans-serif;color:#0f172a;font-size:11.5px;line-height:1.45;padding:18px 22px 40px}
-      @media print { body{print-color-adjust:exact;-webkit-print-color-adjust:exact} @page{margin:8mm 10mm;size:A4} .block{page-break-inside:avoid} }
-      .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:10px;margin-bottom:12px}
-      .h-name{font-size:18px;font-weight:800}
-      .h-tag,.h-meta{font-size:10.5px;color:#475569;margin-top:2px}
-      .doc-title{font-size:14px;font-weight:900;color:#1d4ed8;letter-spacing:.5px;text-align:right}
-      .pat-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:6px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:10.5px}
-      .pat-strip .lbl{color:#94a3b8;text-transform:uppercase;font-size:9px;letter-spacing:.4px;display:block;margin-bottom:1px}
-      .block{margin-top:10px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
-      .block-title{display:flex;justify-content:space-between;align-items:center;background:#e0e7ff;padding:6px 12px;font-size:12px;font-weight:800;color:#1e3a8a;border-left:4px solid #4f46e5}
-      .badge{background:#fff;color:#4f46e5;border:1px solid #c7d2fe;padding:1px 7px;border-radius:4px;font-size:9px;font-weight:700;letter-spacing:.3px}
-      .block-body{padding:8px 12px}
-      .grid{display:grid;gap:4px 12px}
-      .grid-2{grid-template-columns:1fr 1fr}.grid-3{grid-template-columns:repeat(3,1fr)}.grid-4{grid-template-columns:repeat(4,1fr)}
-      .kv{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dotted #e2e8f0;font-size:10.5px}
-      .kv.full{grid-column:1 / -1}
-      .kv .lbl{color:#64748b;font-weight:600;flex:0 0 auto}
-      .kv .val{color:#0f172a;text-align:right;flex:1;word-break:break-word}
-      .empty{padding:8px;text-align:center;color:#94a3b8;font-style:italic}
-      .alert{margin-top:6px;padding:4px 8px;background:#fef3c7;border:1px solid #fbbf24;border-radius:4px;color:#92400e;font-size:10.5px}
-      .sub-title{font-size:10.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin:8px 0 4px}
-      table{width:100%;border-collapse:collapse;margin:4px 0;font-size:10.5px}
-      th,td{padding:4px 6px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}
-      th{background:#f1f5f9;font-weight:700;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px;color:#475569}
-      .sign{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;padding-top:14px;border-top:2px solid #0f172a}
-      .sign-line{border-bottom:1.5px solid #0f172a;height:36px}
-      .sign-label{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;margin-top:4px}
-      .sign-meta{font-size:10.5px;color:#0f172a;font-weight:600;margin-top:1px}`;
+    // R7fr Track C — section-block CSS only (kept inline within
+    // bodyHtml so the shell's <head> stays generic). PrintShell embeds
+    // its own header / patient-strip / footer CSS via ?inline import.
+    const bodyCss = `
+      <style>
+        .block{margin-top:10px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
+        .block-title{display:flex;justify-content:space-between;align-items:center;background:#e0e7ff;padding:6px 12px;font-size:12px;font-weight:800;color:#1e3a8a;border-left:4px solid #4f46e5}
+        .badge{background:#fff;color:#4f46e5;border:1px solid #c7d2fe;padding:1px 7px;border-radius:4px;font-size:9px;font-weight:700;letter-spacing:.3px}
+        .block-body{padding:8px 12px}
+        .grid{display:grid;gap:4px 12px}
+        .grid-2{grid-template-columns:1fr 1fr}
+        .grid-3{grid-template-columns:repeat(3,1fr)}
+        .grid-4{grid-template-columns:repeat(4,1fr)}
+        .kv{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dotted #e2e8f0;font-size:10.5px}
+        .kv.full{grid-column:1 / -1}
+        .kv .lbl{color:#64748b;font-weight:600;flex:0 0 auto}
+        .kv .val{color:#0f172a;text-align:right;flex:1;word-break:break-word}
+        .empty{padding:8px;text-align:center;color:#94a3b8;font-style:italic}
+        .alert{margin-top:6px;padding:4px 8px;background:#fef3c7;border:1px solid #fbbf24;border-radius:4px;color:#92400e;font-size:10.5px}
+        .sub-title{font-size:10.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin:8px 0 4px}
+        .block table{width:100%;border-collapse:collapse;margin:4px 0;font-size:10.5px}
+        .block th,.block td{padding:4px 6px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}
+        .block th{background:#f1f5f9;font-weight:700;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px;color:#475569}
+        .sign{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:18px;padding-top:10px;border-top:1.5px solid #cbd5e1}
+        .sign-line{border-bottom:1.5px solid #0f172a;height:30px}
+        .sign-label{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;margin-top:4px}
+        .sign-meta{font-size:10.5px;color:#0f172a;font-weight:600;margin-top:1px}
+        @media print { .block{page-break-inside:avoid} }
+      </style>`;
 
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(roleTitle)} · ${esc(patient.fullName)}</title><style>${css}</style></head><body>
-      <div class="hdr">
-        <div>
-          ${hs.logo ? `<img src="${esc(hs.logo)}" alt="" style="max-height:54px;display:block;margin-bottom:4px"/>` : ""}
-          <div class="h-name" style="color:${esc(hs.printHeaderColor || "#0f172a")}">${esc(hs.hospitalName || "Hospital")}</div>
-          ${hs.tagline ? `<div class="h-tag">${esc(hs.tagline)}</div>` : ""}
-          ${hs.addressLine1 ? `<div class="h-meta">${esc(hs.addressLine1)}${hs.addressLine2 ? " · " + esc(hs.addressLine2) : ""}</div>` : ""}
-        </div>
-        <div>
-          <div class="doc-title">${esc(roleTitle)}</div>
-          <div class="h-meta">${_dt(new Date())}</div>
-        </div>
-      </div>
-      <div class="pat-strip">
-        <div><span class="lbl">Patient</span> ${esc(patient.fullName || "—")}</div>
-        <div><span class="lbl">UHID</span> ${esc(patient.UHID)}</div>
-        <div><span class="lbl">Age / Sex</span> ${esc(patient.age || "—")} y / ${esc(patient.gender?.[0] || "—")}</div>
-        <div><span class="lbl">Blood Group</span> ${esc(patient.bloodGroup || "—")}</div>
-        <div><span class="lbl">IPD #</span> ${esc(ipdNo || "—")}</div>
-        <div><span class="lbl">Admit Date</span> ${esc(admitDate || "—")} ${esc(admitTime || "")}</div>
-        <div><span class="lbl">Ward / Bed</span> ${esc(ward || "—")} / ${esc(bedNo || "—")}</div>
-        <div><span class="lbl">Consultant</span> ${esc(admission?.attendingDoctor || "—")}</div>
-      </div>
-      ${contentHtml}
-    </body></html>`;
+    const html = buildPrintShellHtml({
+      hospital: hs,
+      docTitle: roleTitle,
+      docSubtitle: `IPD ${ipdNo || ""} · NABH AAC.1 / COP.2`,
+      patient: {
+        left: [
+          { label: "UHID",        value: patient.UHID || "—" },
+          { label: "Patient",     value: patient.fullName || "—" },
+          { label: "Age/Sex",     value: `${patient.age || "—"}/${patient.gender?.[0] || "—"}` },
+          { label: "Blood Group", value: patient.bloodGroup || "—" },
+          { label: "Contact",     value: patient.contactNumber || "—" },
+        ],
+        right: [
+          { label: "IPD #",            value: ipdNo || "—" },
+          { label: "Admit Date",       value: `${admitDate || ""} ${admitTime || ""}`.trim() || "—" },
+          { label: "Ward/Bed",         value: `${ward || "—"}/${bedNo || "—"}` },
+          { label: "Consultant",       value: admission?.attendingDoctor || "—" },
+          { label: "Assessment Date",  value: new Date().toLocaleDateString("en-IN") },
+        ],
+      },
+      signatures: {
+        type: "double",
+        // Left = Nurse, Right = Doctor — preserves the dual-author
+        // intent of R7fh's section-aware design even when only one
+        // role is printing this run.
+        left:  { name: nurseName || user?.fullName || "Nurse", role: "Nursing Staff" },
+        right: { name: doctorName || (isDoctorRole ? user?.fullName : "") || "Doctor", role: "Consultant", reg: regNo || "" },
+      },
+      banners: {
+        emergency24x7: true,
+        custom: "NABH AAC.1: This Initial Assessment is part of the patient's permanent clinical record.",
+      },
+      meta: {
+        docNumber: (`IA-${ipdNo || ""}`).replace(/[^A-Z0-9\-]/gi, "") || `IA-${Date.now()}`,
+        pageOf: "1 of 2",
+      },
+      bodyHtml: bodyCss + contentHtml,
+    });
 
     const w = window.open("", "_blank");
     if (!w) return toast.error("Pop-up blocked — allow pop-ups to print");
     w.document.write(html);
     w.document.close();
-    w.focus();
-    setTimeout(() => { try { w.print(); } catch(_){} }, 500);
+    // PrintShell's embedded <script> auto-fires window.print() on load —
+    // no manual setTimeout needed.
   };
 
   const handleSave = async (sign = false, section = "nursing") => {

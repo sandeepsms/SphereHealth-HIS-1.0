@@ -1,11 +1,29 @@
 // Components/print/printables/DischargeSummary.jsx
+//
 // Standalone discharge summary — what goes home with the patient.
 // Different from Complete IPD File: this is a curated, patient-facing
 // document with diagnosis, course of stay, discharge medications,
 // advice, and follow-up. NABH COP.6 compliant.
+//
+// R7fr Track C: migrated onto the new shared <PrintShell> contract
+// (templates/PrintShell.jsx). The previous shell signature
+// (`settings`/`documentTitle`/`infoItems`/`signatureLabels`) drove the
+// legacy SGRH-frame component; the new contract is `hospital` +
+// `docTitle` + `patient.{left,right}` + `signatures.{type,left,right}`
+// + `banners` + `meta`. The body (allergy banner, Final Diagnosis,
+// Course in Hospital, Procedures, Discharge Meds, Advice, Follow-up,
+// Warning Signs) is unchanged — only the outer shell mapping moves.
+//
+// Patient-strip mapping (Track-C contract — Reg.No left, Episode right):
+//   left:  Reg. No · Patient Name · Age · Sex · Contact · Address
+//   right: Episode No · DOA · DOD · Ward · Admitting Consultant · Bed
+//
+// DAMA / LAMA dispositions surface as the docSubtitle ("(Discharge
+// Against Medical Advice)" / "(Left Against Medical Advice)"), matching
+// the R7fr task spec.
 
 import React from "react";
-import PrintShell from "../PrintShell";
+import PrintShell from "@/templates/PrintShell";
 import { fmtINR } from "../amountWords";
 import { toNum } from "../../../utils/printUtils";
 
@@ -25,7 +43,7 @@ const Section = ({ title, children }) => (
   </div>
 );
 
-const DischargeSummary = ({ settings, receipt = {} }) => {
+const DischargeSummary = ({ settings = {}, receipt = {} }) => {
   const r = receipt;
   const meds = Array.isArray(r.dischargeMeds) ? r.dischargeMeds : [];
   const advice = Array.isArray(r.advice)
@@ -45,12 +63,10 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
     ? r.secondaryDiagnoses.filter(Boolean)
     : [];
   const secondaryDxText = !Array.isArray(r.secondaryDiagnoses) ? r.secondaryDiagnoses : "";
+
   // R7bf-F / A4-HIGH-1: total / cost fields are sometimes attached to
   // the summary payload (when the discharge endpoint inlines the final
-  // bill snapshot). Pre-R7bf they were rendered as the raw mongoose
-  // Decimal128 wire shape `{$numberDecimal:"4500.00"}` because the
-  // template used `${r.totalAmount}` directly. toNum() guarantees a
-  // proper Number even if the controller skipped its toJSON transform.
+  // bill snapshot). toNum() guards against Decimal128 wire shape.
   const totalBill = toNum(r.totalAmount ?? r.totalBill ?? r.finalBillAmount);
   const printCount = toNum(r.printCount);
 
@@ -66,27 +82,58 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
   const consultCouncil = r.consultant?.councilName || r.consultantCouncil || "Medical Council";
   const consultRegLine = consultDmc === "—" ? "—" : `${consultDmc} · ${consultCouncil}`;
 
+  // R7fr Track C — DAMA / LAMA disposition surfaces as docSubtitle.
+  const docSubtitle =
+    r.dischargeType === "DAMA" ? "(Discharge Against Medical Advice)"
+    : r.dischargeType === "LAMA" ? "(Left Against Medical Advice)"
+    : r.dischargeType && r.dischargeType !== "Normal" ? `(${r.dischargeType})`
+    : "";
+
+  // R7fr Track C — Patient-strip mapping per task spec.
+  const patientLeft = [
+    { label: "Reg. No",       value: r.uhid || "—" },
+    { label: "Patient Name",  value: r.patientName || "—" },
+    { label: "Age",           value: r.age != null ? `${r.age}Y` : "—" },
+    { label: "Sex",           value: r.gender || "—" },
+    { label: "Contact",       value: r.contactNumber || r.mobile || "—" },
+    { label: "Address",       value: r.completeAddress || r.address || "—" },
+  ];
+  const patientRight = [
+    { label: "Episode No",            value: r.ipdNo || r.admissionNumber || "—" },
+    { label: "DOA",                   value: fmtDate(r.admissionDate, true) },
+    { label: "DOD",                   value: fmtDate(r.dischargeDate, true) },
+    { label: "Ward",                  value: r.wardName || "—" },
+    { label: "Admitting Consultant",  value: r.consultantName || "—" },
+    { label: "Bed",                   value: r.bedNumber || "—" },
+  ];
+
+  // R7fr Track C — Double-signature zone. Resident on the left, the
+  // attending consultant on the right with the NMC/DMC line. ds.residentDoctor
+  // isn't in every payload shape — fall back to the consultant's name so
+  // the slot never prints empty. Track-C spec calls this gap out explicitly.
+  const residentName = r.residentDoctor || r.resident || r.consultantName || "Resident Doctor";
+  const consultantName = r.consultantName || "Consultant";
+
   return (
     <PrintShell
-      settings={settings}
-      documentTitle="Discharge Summary"
-      serialNo={r.summaryNo || r.ipdNo}
-      printCount={printCount}
-      infoItems={[
-        { label: "Patient",    value: r.patientName },
-        { label: "UHID",       value: r.uhid },
-        { label: "IPD No",     value: r.ipdNo },
-        { label: "Age / Sex",  value: [r.age && `${r.age}Y`, r.gender].filter(Boolean).join(" / ") },
-        { label: "Admitted",   value: fmtDate(r.admissionDate, true) },
-        { label: "Discharged", value: fmtDate(r.dischargeDate, true) },
-        { label: "Length of Stay", value: r.totalDays ? `${r.totalDays} day${r.totalDays === 1 ? "" : "s"}` : "—" },
-        { label: "Consultant", value: r.consultantName },
-        { label: "Reg. No",    value: consultRegLine },
-        { label: "Bed / Ward", value: [r.bedNumber, r.wardName].filter(Boolean).join(" · ") || "—" },
-        { label: "Blood Group", value: r.bloodGroup || "—" },
-        { label: "Discharge Type", value: r.dischargeType || "Normal" },
-      ]}
-      signatureLabels={["Consultant", "Patient / Attendant"]}
+      hospital={settings}
+      docTitle="Discharge Summary"
+      docSubtitle={docSubtitle}
+      patient={{ left: patientLeft, right: patientRight }}
+      signatures={{
+        type: "double",
+        left:  { name: residentName,   role: "Resident Doctor" },
+        right: { name: consultantName, role: "Consultant", reg: consultRegLine === "—" ? undefined : consultRegLine },
+      }}
+      banners={{
+        emergency24x7: true,
+        custom: "All investigations done during hospital stay are provided on a separate sheet.",
+      }}
+      meta={{
+        docNumber: r.summaryNo || `DS-${String(r.ipdNo || "").replace(/[^A-Z0-9]/gi, "")}`,
+        pageOf:    "1 of 2",
+        printCount,
+      }}
     >
       {/* R7eo-C — Pattern C patient-safety fix (NABH AAC.4/COP.6)
           Allergy banner — red when allergies recorded, NKDA green pill otherwise. */}
@@ -126,6 +173,27 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
         </div>
       )}
 
+      {/* Length-of-stay + blood group chip row — used to live in the
+          legacy infoItems array; surface here so the discharge bundle
+          still carries the at-a-glance LOS context. */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10, fontSize: 10.5 }}>
+        {r.totalDays != null && (
+          <span style={{ padding: "3px 9px", borderRadius: 6, background: "#eff6ff", color: "#1e3a8a", fontWeight: 700 }}>
+            Length of Stay: {r.totalDays} day{r.totalDays === 1 ? "" : "s"}
+          </span>
+        )}
+        {r.bloodGroup && (
+          <span style={{ padding: "3px 9px", borderRadius: 6, background: "#fef2f2", color: "#991b1b", fontWeight: 700 }}>
+            Blood Group: {r.bloodGroup}
+          </span>
+        )}
+        {r.dischargeType && r.dischargeType !== "Normal" && (
+          <span style={{ padding: "3px 9px", borderRadius: 6, background: "#fef3c7", color: "#92400e", fontWeight: 800, letterSpacing: ".3px" }}>
+            {r.dischargeType.toUpperCase()}
+          </span>
+        )}
+      </div>
+
       <Section title="Final Diagnosis">
         <div style={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>
           {r.finalDiagnosis || "—"}
@@ -155,15 +223,20 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
         )}
       </Section>
 
+      {/* R7eo-B/R7fr — Clinical Summary / chief complaints. Payload
+          callers (DischargeQueue + DischargeSummaryPage) populate this
+          via the `chiefComplaints` field; legacy data also lands here. */}
       {r.chiefComplaints && (
-        <Section title="Reason for Admission">
+        <Section title="Clinical Summary / Reason for Admission">
           <div style={{ whiteSpace: "pre-wrap" }}>{r.chiefComplaints}</div>
         </Section>
       )}
 
-      {r.courseOfStay && (
+      {/* R7eo-B accepts BOTH courseOfStay and courseInHospital — the
+          DischargeQueue payload spec uses courseInHospital. */}
+      {(r.courseInHospital || r.courseOfStay) && (
         <Section title="Course in Hospital">
-          <div style={{ whiteSpace: "pre-wrap" }}>{r.courseOfStay}</div>
+          <div style={{ whiteSpace: "pre-wrap" }}>{r.courseInHospital || r.courseOfStay}</div>
         </Section>
       )}
 
@@ -186,7 +259,7 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
       )}
 
       {r.investigationsSummary && (
-        <Section title="Key Investigations">
+        <Section title="Pending Reports / Key Investigations">
           <div style={{ whiteSpace: "pre-wrap" }}>{r.investigationsSummary}</div>
         </Section>
       )}
@@ -256,8 +329,7 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
       )}
 
       {/* R7bf-F / A4-HIGH-1: when a final-bill snapshot is inlined on
-          the summary payload, render it as a proper money string —
-          never the raw {$numberDecimal:"..."} object. */}
+          the summary payload, render it as a proper money string. */}
       {totalBill > 0 && (
         <Section title="Financial Summary">
           <div style={{ display: "flex", justifyContent: "space-between", maxWidth: 360, fontWeight: 800, fontSize: 12 }}>
@@ -266,11 +338,6 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
           </div>
         </Section>
       )}
-
-      {/* R7eo-C — Pattern C patient-safety fix (NABH AAC.4/COP.6):
-          Sections below render the fields Pattern B will start
-          passing through. Each is gated so it only prints when data
-          is present. */}
 
       {/* Operative Notes */}
       {(r.operativeProcedure || r.operativeFindings || r.anaesthesiaType) && (
@@ -335,7 +402,7 @@ const DischargeSummary = ({ settings, receipt = {} }) => {
 
       {/* R7eo-C — Follow-up rebuilt to include doctor / dept / instructions */}
       {(r.followUpDate || r.followUpDoctor || r.followUpDepartment || r.followUpInstructions || r.followUpNotes) && (
-        <Section title="Follow-up">
+        <Section title="Follow Up">
           {r.followUpDate && (
             <div><strong>Next visit:</strong> {fmtDate(r.followUpDate)}
               <span className="muted"> ({new Date(r.followUpDate).toLocaleDateString("en-IN", { weekday: "long" })})</span>
