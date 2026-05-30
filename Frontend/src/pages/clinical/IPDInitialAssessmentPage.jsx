@@ -337,7 +337,17 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   // Doctor block was dead under {false && ...} so the doctor saw the Nurse
   // sign button → signed as a nurse → admission.initialAssessment.nurseCompleted
   // got set instead of doctorCompleted → DoctorNotes tile-gate never lifted.
-  const isDoctorRole = String(user?.role || "").toLowerCase() === "doctor";
+  // R7fn — make the role-aware view toggleable for Admin. The page was
+  // previously locked to NURSING view for Admin (isDoctorRole === false),
+  // so Admin couldn't fill the Doctor side at all. Now Admin gets a small
+  // toggle in the header to flip between Nurse and Doctor view. Doctor
+  // users always see Doctor view; Nurse users always see Nursing view —
+  // no UX change for them.
+  const _userRoleRaw = String(user?.role || "").toLowerCase();
+  const isAdminUser  = _userRoleRaw === "admin";
+  const _defaultViewRole = _userRoleRaw === "doctor" ? "doctor" : "nurse";
+  const [viewRole, setViewRole] = useState(_defaultViewRole);
+  const isDoctorRole = viewRole === "doctor";
 
   // Support both path param (:uhid) and query param (?uhid=)
   const initUhid = uhidParam || searchParams.get("uhid") || "";
@@ -918,7 +928,18 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
       if (!pt) { toast.error("Patient not found"); return; }
       setPatient(pt);
       setUhid(pt.UHID || id);
-      if (pt.allergies) { setAllergy(pt.allergies); setDocAllergy(pt.allergies); }
+      // R7fn — guard against the typed allergies virtual (R7fl) being
+      // splatted into the legacy free-text fields. `pt.allergies` is now
+      // an array of {allergen, severity, type}; only the structured
+      // allergyList[] block consumes it. Free-text legacy fields stay
+      // either empty or are restored from the prior note's noteDetails.
+      if (typeof pt.allergies === "string" && pt.allergies.trim()) {
+        setAllergy(pt.allergies);
+        setDocAllergy(pt.allergies);
+      } else if (typeof pt.knownAllergies === "string" && pt.knownAllergies.trim() && pt.knownAllergies !== "Nill") {
+        setAllergy(pt.knownAllergies);
+        setDocAllergy(pt.knownAllergies);
+      }
       // Restore auto-save draft if available
       const dKey = `sphere_draft_ipd_initial_${pt._id}`;
       const raw = localStorage.getItem(dKey);
@@ -983,6 +1004,158 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
       if (adm?.admissionNumber) setIpdNo(adm.admissionNumber);
       if (adm?.department) setWard(adm.department);
       if (adm?.bedNumber) setBedNo(adm.bedNumber);
+
+      // R7fn — Restore from the LATEST signed/draft IPD_INITIAL DoctorNote
+      // for this admission. Without this, when a doctor opens the page
+      // after a nurse has signed, every nursing field is blank — which
+      // means the R7fe cross-form auto-flows (nurse→doctor) can't fire
+      // because their source state is empty. By rehydrating the nursing
+      // sub-block here we let the existing useEffects do their job:
+      // docCC, pmh, medRecon, docAnthropo, prognosis.discussedWith all
+      // auto-populate from the nurse's data the moment the doctor opens
+      // the form.
+      if (adm?.admissionNumber) {
+        try {
+          const noteRes = await axios.get(
+            `${API_ENDPOINTS.DOCTOR_NOTES}/ipd/${encodeURIComponent(adm.admissionNumber)}`,
+          );
+          const noteList = Array.isArray(noteRes.data) ? noteRes.data
+                         : Array.isArray(noteRes.data?.data) ? noteRes.data.data
+                         : [];
+          const existing = noteList
+            .filter(n => n?.noteType === "initial" || n?.visitType === "IPD_INITIAL")
+            .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))[0];
+
+          if (existing?._id) {
+            setNoteId(existing._id);
+            const nur = existing.noteDetails?.nursing || {};
+            const nNabh = existing.noteDetails?.nursingNabh || {};
+            const doc = existing.noteDetails?.doctor || {};
+            const dNabh = doc.nabh || {};
+
+            // ── Nursing-section restore (needed for R7fe auto-flows) ──
+            if (nur.admitDate)          setAdmitDate(nur.admitDate);
+            if (nur.admitTime)          setAdmitTime(nur.admitTime);
+            if (nur.nurseName)          setNurseName(nur.nurseName);
+            if (nur.ward)               setWard(nur.ward);
+            if (nur.bedNo)              setBedNo(nur.bedNo);
+            if (nur.modeOfAdmit)        setModeOfAdmit(nur.modeOfAdmit);
+            if (nur.consciousnessLevel) setConsciousnessLevel(nur.consciousnessLevel);
+            if (typeof nur.mobility === "string") setMobility(nur.mobility);
+            if (nur.allergy)            setAllergy(nur.allergy);
+            if (nur.chiefComplaint)     setChiefComplaint(nur.chiefComplaint);
+            if (nur.vitals)             setVitals(v => ({ ...v, ...nur.vitals }));
+            if (nur.painPresent !== undefined) setPainPresent(!!nur.painPresent);
+            if (nur.painScore !== undefined)   setPainScore(String(nur.painScore));
+            if (nur.painLocation)       setPainLocation(nur.painLocation);
+            if (nur.painCharacter)      setPainCharacter(nur.painCharacter);
+            if (nur.devices)            setDevices(d => ({ ...d, ...nur.devices }));
+            if (nur.skinIntact !== undefined) setSkinIntact(!!nur.skinIntact);
+            if (nur.skinNotes)          setSkinNotes(nur.skinNotes);
+            if (nur.morse?.scores)      setMorse(nur.morse.scores);
+            if (nur.braden?.scores)     setBraden(nur.braden.scores);
+            if (nur.nutri?.scores)      setNutri(nur.nutri.scores);
+            if (nur.vte?.scores)        setVte(nur.vte.scores);
+            if (nur.nursingProblems)    setNursingProblems(nur.nursingProblems);
+            if (nur.nursingGoals)       setNursingGoals(nur.nursingGoals);
+            if (nur.nursingNotes)       setNursingNotes(nur.nursingNotes);
+
+            // ── Nursing NABH P0/P1/P2 (drives 5 cross-form auto-flows) ──
+            if (nNabh.identification)   setIdBand(b => ({ ...b, ...nNabh.identification }));
+            if (Array.isArray(nNabh.allergies?.list)) setNurseAllergyList(nNabh.allergies.list);
+            if (nNabh.allergies?.noKnown !== undefined) setNurseNoKnownAllergies(!!nNabh.allergies.noKnown);
+            if (nNabh.briefPmh)         setNurseBriefPmh(nNabh.briefPmh);
+            if (Array.isArray(nNabh.homeMedications)) setHomeMeds(nNabh.homeMedications);
+            if (nNabh.anthropometry)    setAnthropo(a => ({ ...a, ...nNabh.anthropometry }));
+            if (nNabh.psychosocial)     setPsychosocial(p => ({ ...p, ...nNabh.psychosocial }));
+            if (nNabh.adlBarthel)       setBarthel(b => ({ ...b, ...nNabh.adlBarthel }));
+            if (nNabh.bodyChart)        setBodyChart(c => ({ ...c, ...nNabh.bodyChart }));
+            if (nNabh.dischargePlanning) setDischargePlan(d => ({ ...d, ...nNabh.dischargePlanning }));
+            if (nNabh.educationNeeds)   setEducationNeeds(e => ({ ...e, ...nNabh.educationNeeds }));
+            if (nNabh.specialPrecautions) setPrecautions(p => ({ ...p, ...nNabh.specialPrecautions }));
+            if (nNabh.cognitiveCommunication) setCognitive(c => ({ ...c, ...nNabh.cognitiveCommunication }));
+            if (nNabh.culturalSpiritual) setCultural(c => ({ ...c, ...nNabh.culturalSpiritual }));
+            if (nNabh.bowelBladder)     setElimination(e => ({ ...e, ...nNabh.bowelBladder }));
+            if (nNabh.sleepPattern)     setSleep(s => ({ ...s, ...nNabh.sleepPattern }));
+            if (nNabh.valuablesBelongings) setValuables(v => ({ ...v, ...nNabh.valuablesBelongings }));
+            if (nNabh.familyCaregiver)  setCaregiver(c => ({ ...c, ...nNabh.familyCaregiver }));
+            if (nNabh.highRiskFlags)    setHighRisk(h => ({ ...h, ...nNabh.highRiskFlags }));
+            if (nNabh.mobilityGait)     setMobilityGait(m => ({ ...m, ...nNabh.mobilityGait }));
+            if (nNabh.preAnaesthesia)   setPreAnaesthesia(p => ({ ...p, ...nNabh.preAnaesthesia }));
+            if (nNabh.nutritionalScreeningQuick) setNrsQuick(n => ({ ...n, ...nNabh.nutritionalScreeningQuick }));
+            if (nNabh.promPremTriggers) setPromPrem(p => ({ ...p, ...nNabh.promPremTriggers }));
+
+            // ── Doctor-section restore (preserves prior doctor draft) ──
+            if (doc.doctorName)         setDoctorName(doc.doctorName);
+            if (doc.regNo)              setRegNo(doc.regNo);
+            if (doc.hopi)               setHopi(doc.hopi);
+            if (doc.pmh)                setPmh(doc.pmh);
+            if (doc.psh)                setPsh(doc.psh);
+            if (doc.famHx)              setFamHx(doc.famHx);
+            if (doc.socHx)              setSocHx(doc.socHx);
+            if (doc.docAllergy)         setDocAllergy(doc.docAllergy);
+            if (doc.genExam)            setGenExam(doc.genExam);
+            if (doc.cvs)                setCvs(doc.cvs);
+            if (doc.rs)                 setRs(doc.rs);
+            if (doc.abdomen)            setAbdomen(doc.abdomen);
+            if (doc.cns)                setCns(doc.cns);
+            if (doc.provDx)             setProvDx(doc.provDx);
+            if (doc.finalDx)            setFinalDx(doc.finalDx);
+            if (doc.icd10)              setIcd10(doc.icd10);
+            if (doc.investigations)     setInvestigations(doc.investigations);
+            if (Array.isArray(doc.rxRows) && doc.rxRows.length) setRxRows(doc.rxRows);
+            if (doc.treatmentPlan)      setTreatmentPlan(doc.treatmentPlan);
+            if (doc.followupNotes)      setFollowupNotes(doc.followupNotes);
+            if (doc.dietAdvice)         setDietAdvice(doc.dietAdvice);
+            if (doc.activityAdvice)     setActivityAdvice(doc.activityAdvice);
+            if (dNabh.chiefComplaint)   setDocCC(dNabh.chiefComplaint);
+            if (dNabh.ccDuration)       setCcDuration(dNabh.ccDuration);
+            if (Array.isArray(dNabh.allergies?.list)) setAllergyList(dNabh.allergies.list);
+            if (dNabh.allergies?.noKnown !== undefined) setNoKnownAllergies(!!dNabh.allergies.noKnown);
+            if (Array.isArray(dNabh.medicationReconciliation)) setMedRecon(dNabh.medicationReconciliation);
+            if (dNabh.workingDx)        setWorkingDx(dNabh.workingDx);
+            if (dNabh.differentialDx)   setDifferentialDx(dNabh.differentialDx);
+            if (dNabh.comorbidities)    setComorbid(c => ({ ...c, ...dNabh.comorbidities }));
+            if (dNabh.codeStatus?.value) setCodeStatus(dNabh.codeStatus.value);
+            if (dNabh.codeStatus?.discussedWith) setCodeStatusDiscussedWith(dNabh.codeStatus.discussedWith);
+            if (dNabh.codeStatus?.limitations) setCodeStatusLimitations(dNabh.codeStatus.limitations);
+            if (dNabh.elosDays)         setElosDays(dNabh.elosDays);
+            if (dNabh.goalOfCare)       setGoalOfCare(dNabh.goalOfCare);
+            if (dNabh.riskAcknowledgement) setDocRiskAck(r => ({ ...r, ...dNabh.riskAcknowledgement }));
+            if (dNabh.reviewOfSystems)  setRos(s => ({ ...s, ...dNabh.reviewOfSystems }));
+            if (dNabh.anthropometry)    setDocAnthropo(a => ({ ...a, ...dNabh.anthropometry }));
+            if (dNabh.localExamination) setLocalExam(e => ({ ...e, ...dNabh.localExamination }));
+            if (dNabh.referrals)        setReferrals(r => ({ ...r, ...dNabh.referrals }));
+            if (dNabh.prognosis)        setPrognosis(p => ({ ...p, ...dNabh.prognosis }));
+            if (dNabh.consentRequired !== undefined) setConsentNeeded(!!dNabh.consentRequired);
+            if (dNabh.obstetricGynae)   setObGyn(o => ({ ...o, ...dNabh.obstetricGynae }));
+            if (dNabh.immunisationStatus) setImmunisation(i => ({ ...i, ...dNabh.immunisationStatus }));
+            if (dNabh.functionalEcog)   setEcog(e => ({ ...e, ...dNabh.functionalEcog }));
+            if (dNabh.spiritualNeeds)   setSpiritual(s => ({ ...s, ...dNabh.spiritualNeeds }));
+
+            toast.info(
+              `Existing IPD Initial Assessment loaded (status: ${existing.status || "draft"}). ` +
+              `Nursing data pre-filled — doctor fields auto-flow on save.`,
+              { autoClose: 3500 },
+            );
+          }
+
+          // Also resolve the NurseNote mirror id so future sign-offs PUT
+          // to the same row (no duplicate timeline entries).
+          try {
+            const nurseRes = await axios.get(
+              `${API_ENDPOINTS.NURSING_NOTES}/ipd/${encodeURIComponent(adm.admissionNumber)}`,
+            );
+            const nurseList = Array.isArray(nurseRes.data) ? nurseRes.data
+                            : Array.isArray(nurseRes.data?.data) ? nurseRes.data.data
+                            : [];
+            const nurseInitial = nurseList
+              .filter(n => n?.noteType === "initial")
+              .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))[0];
+            if (nurseInitial?._id) setNurseNoteId(nurseInitial._id);
+          } catch { /* non-fatal */ }
+        } catch { /* non-fatal — page can still POST a fresh note */ }
+      }
     } catch { toast.error("Patient not found"); }
     finally { setLoadingPt(false); }
   };
@@ -1886,6 +2059,26 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {/* R7fn — Admin role-view toggle. Admins are the only role that
+              legitimately needs to fill BOTH halves (training, late entries,
+              QA fixes). Doctor users always see Doctor view; Nurse users
+              always see Nursing view — toggle hidden for them. */}
+          {isAdminUser && (
+            <div style={{ display: "flex", border: `1.5px solid ${C.border}`, borderRadius: 8, overflow: "hidden", marginRight: 4 }}>
+              <button onClick={() => setViewRole("nurse")}
+                style={{ padding: "7px 11px", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700,
+                  background: viewRole === "nurse" ? C.accent : "white",
+                  color:      viewRole === "nurse" ? "white"   : C.muted }}>
+                <i className="pi pi-user" style={{ fontSize: 10, marginRight: 4 }} /> Nurse View
+              </button>
+              <button onClick={() => setViewRole("doctor")}
+                style={{ padding: "7px 11px", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700,
+                  background: viewRole === "doctor" ? C.accent : "white",
+                  color:      viewRole === "doctor" ? "white"   : C.muted }}>
+                <i className="pi pi-id-card" style={{ fontSize: 10, marginRight: 4 }} /> Doctor View
+              </button>
+            </div>
+          )}
           <AutoSaveIndicator savedAt={savedAt} hasDraft={hasDraft} />
           <button onClick={() => setShowSetup(true)}
             style={{ padding:"7px 12px", background: signature ? "#f0fdf4" : "#fffbeb", border:`1.5px solid ${signature ? "#bbf7d0" : "#fde68a"}`, borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, color: signature ? "#16a34a" : "#92400e", display:"flex", alignItems:"center", gap:5 }}>
