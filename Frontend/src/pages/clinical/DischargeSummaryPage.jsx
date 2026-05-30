@@ -1094,7 +1094,6 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
             const list = Array.isArray(r?.data?.data) ? r.data.data : (Array.isArray(r?.data) ? r.data : []);
             const ia = list.find(n =>
               n.visitType === "IPD_INITIAL" ||
-              (n.noteType || "").toLowerCase() === "initialassessment" ||
               (n.noteType || "").toLowerCase() === "initial"
             );
             if (ia) {

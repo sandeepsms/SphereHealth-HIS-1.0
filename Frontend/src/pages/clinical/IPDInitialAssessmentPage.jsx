@@ -984,11 +984,11 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
     visitType: "IPD_INITIAL",
     // R7fj-HIGH-1: noteType drives the filters in CompletePatientFile,
     // PatientPanelTabs InitialAssessmentTab, NursingNotes header etc.
-    // Pre-fix the IPD Initial Assessment record had no noteType, so
-    // every consumer that ran `noteType === "initial"` or similar
-    // silently skipped it and the new NABH fields never reached print
-    // sheets, header chips, or discharge prefill.
-    noteType: "initialAssessment",
+    // Backend DoctorNotes schema (R7g) restricts noteType to a fixed
+    // enum — "initial" is the NABH COP.1 first-contact bucket which
+    // both upstream consumers filter on. Earlier draft used
+    // "initialAssessment" which failed enum validation with 400.
+    noteType: "initial",
     patientUHID: patient?.UHID || uhid,
     patientId: patient?._id,
     patientName: patient?.fullName || "",
