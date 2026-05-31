@@ -648,8 +648,21 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
   const dayIndex = buildDayIndex(f, events);
   const totalDays = f.admission?.totalDays || dayIndex.length;
 
-  /* ── Per-day groupings (used by MAR) ────────────────────────── */
-  const marByDay = groupByDay(f.mar, (m) => m.givenAt || m.createdAt);
+  /* ── Per-day groupings — R7fy day-wise restructure ──────────── */
+  const marByDay      = groupByDay(f.mar,            (m) => m.givenAt   || m.createdAt);
+  const docNotesByDay = groupByDay(f.doctorNotes,    (n) => n.createdAt);
+  const nurNotesByDay = groupByDay(f.nursingNotes,   (n) => n.createdAt);
+  const ordersByDay   = groupByDay(f.doctorOrders,   (o) => o.orderedAt || o.createdAt);
+  const handoverByDay = groupByDay(f.shiftHandovers, (h) => h.at);
+  // Merge doctor + nursing notes for a given day into a single chronological
+  // stream so the printout reads like a real clinical timeline (R7fy).
+  const notesForDay = (dayKeyStr) => {
+    const docs  = (docNotesByDay.get(dayKeyStr) || []).map((n) => ({ ...n, _kind: "doctor"  }));
+    const nurs  = (nurNotesByDay.get(dayKeyStr) || []).map((n) => ({ ...n, _kind: "nursing" }));
+    return [...docs, ...nurs].sort((a, b) =>
+      new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
+    );
+  };
 
   /* ── Diagnosis triplet ──────────────────────────────────────── */
   const dxProv  = f.admission?.provisionalDiagnosis || f.ia?.doctor?.provisionalDiagnosis || "";
@@ -1196,120 +1209,190 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
       ) : null}
 
       {/* ════════════════════════════════════════════════════════════
-          3. DOCTOR NOTES                                  [NABH COP.7]
+          R7fy — DAY-WISE CLINICAL JOURNEY              [NABH COP.6/7/2]
+          Per user requirement, the body now mirrors the bedside record:
+          one block per calendar day with 4 sub-sections each — Notes
+          (doctor + nursing interleaved chronologically), Orders raised
+          that day, MAR doses given that day, and shift Handovers.
+          Replaces 4 flat sections (Doctor Notes, Nurse Notes, Orders &
+          MAR, Shift Handovers) which printed as horizontal lists and
+          made it impossible to read the file day-by-day.
           ════════════════════════════════════════════════════════════ */}
-      {(f.doctorNotes || []).length > 0 ? (
-        <>
-          <SectionHeader nabh="NABH COP.7">Doctor Notes</SectionHeader>
-          {f.doctorNotes.map((dn, i) => (
-            <Para key={`dn-${i}`}>
-              <strong>{fmtDateTime(dn.createdAt)}</strong>
-              {dn.noteType ? <> · {dn.noteType}</> : null}
-              {dn.doctorName ? <> · <em>{displayActor(dn.doctorName)}</em></> : null}
-              {" — "}{dn.content}
-            </Para>
-          ))}
-        </>
-      ) : null}
+      {(() => {
+        // Build set of all keys touched by any of the 4 streams, then
+        // intersect with the admission day-index so we render in
+        // admission → discharge order. Use union so spontaneous events
+        // (out-of-band orders) on a day before/after the index also
+        // surface.
+        const allKeys = new Set();
+        [docNotesByDay, nurNotesByDay, ordersByDay, marByDay, handoverByDay].forEach((m) => {
+          for (const k of m.keys()) allKeys.add(k);
+        });
+        if (allKeys.size === 0) return null;
+        const indexKeys = new Set(dayIndex.map((d) => d.key));
+        const orderedKeys = Array.from(allKeys).sort((a, b) => a.localeCompare(b));
+        // Show all days; cap to 30 for safety (large stays).
+        const showKeys = orderedKeys.slice(0, 30);
+        return (
+          <>
+            <SectionHeader nabh="NABH COP.6 / COP.7 / COP.2 / MOM.4">
+              Day-wise Clinical Journey
+            </SectionHeader>
+            {showKeys.map((k) => {
+              const notes    = notesForDay(k);
+              const orders   = (ordersByDay.get(k)   || []).slice().sort((a,b) =>
+                new Date(a.orderedAt || a.createdAt || 0) - new Date(b.orderedAt || b.createdAt || 0));
+              const marRows  = marByDay.get(k)       || [];
+              const handovrs = (handoverByDay.get(k) || []).slice().sort((a,b) =>
+                new Date(a.at || 0) - new Date(b.at || 0));
+              if (!notes.length && !orders.length && !marRows.length && !handovrs.length) return null;
 
-      {/* ════════════════════════════════════════════════════════════
-          4. NURSE NOTES                                   [NABH COP.2]
-          ════════════════════════════════════════════════════════════ */}
-      {(f.nursingNotes || []).length > 0 ? (
-        <>
-          <SectionHeader nabh="NABH COP.2">Nurse Notes</SectionHeader>
-          {f.nursingNotes.map((nn, i) => {
-            const vit = nn.vitals && typeof nn.vitals === "object" ? vitalsSentence(nn.vitals) : "";
-            return (
-              <Para key={`nn-${i}`}>
-                <strong>{fmtDateTime(nn.createdAt)}</strong>
-                {nn.noteType ? <> · {nn.noteType}</> : null}
-                {nn.shift ? <> · {nn.shift} shift</> : null}
-                {nn.nurseName ? <> · <em>{displayActor(nn.nurseName)}</em></> : null}
-                {" — "}{nn.content}
-                {vit ? <> <em style={{ color: COL.muted }}>· {vit.toLowerCase()}</em></> : null}
-              </Para>
-            );
-          })}
-        </>
-      ) : null}
+              const dayMatch = dayIndex.find((d) => d.key === k);
+              const dayLabel = dayMatch ? `Day ${dayMatch.n} — ${dayHeading(dayMatch.date)}` : dayHeading(notes[0]?.createdAt || orders[0]?.orderedAt || marRows[0]?.givenAt || k);
 
-      {/* ════════════════════════════════════════════════════════════
-          5. ORDERS + MAR                            [NABH MOM.2/MOM.4]
-          ════════════════════════════════════════════════════════════ */}
-      {((f.doctorOrders || []).length > 0 || (f.mar || []).length > 0) ? (
-        <>
-          <SectionHeader nabh="NABH MOM.2 / MOM.4">Orders & Medication Administration</SectionHeader>
+              // ── Day banner ──
+              const banner = (
+                <div key={`day-banner-${k}`} style={{
+                  marginTop: 12,
+                  marginBottom: 6,
+                  padding: "4px 10px",
+                  background: "#eff6ff",
+                  borderLeft: `3px solid ${COL.head}`,
+                  fontWeight: 700,
+                  fontSize: 11,
+                  color: COL.head,
+                  letterSpacing: 0.3,
+                }}>
+                  {dayLabel}
+                </div>
+              );
 
-          {(f.doctorOrders || []).length > 0 ? (
-            <>
-              <SubHeader>Doctor Orders</SubHeader>
-              <MiniTable
-                headers={["Date / Time", "Type", "Order detail", "Status", "Ordered by"]}
-                rows={f.doctorOrders.map((o) => [
-                  fmtDateTime(o.orderedAt),
-                  o.orderType || "—",
-                  orderDetailLine(o),
-                  o.status || "—",
-                  displayActor(o.orderedBy),
-                ])}
-                widths={["16%", "14%", "44%", "12%", "14%"]}
-              />
-            </>
-          ) : null}
-
-          {(f.mar || []).length > 0 ? (() => {
-            // Group MAR by calendar day; show last 3 days max to keep print tight.
-            const sortedDays = Array.from(marByDay.keys()).sort();
-            const showDays = sortedDays.slice(-3);
-            return (
-              <>
-                <SubHeader>Medication Administration Record (last {showDays.length} day{showDays.length === 1 ? "" : "s"})</SubHeader>
-                {showDays.map((k) => {
-                  const day = marByDay.get(k) || [];
-                  const drugMap = new Map();
-                  day.forEach((m) => {
-                    const key = `${m.drug}|${m.dose}|${m.route}|${m.frequency}`;
-                    if (!drugMap.has(key)) {
-                      drugMap.set(key, {
-                        drug: m.drug, dose: m.dose, route: m.route, frequency: m.frequency,
-                        times: [], by: new Set(),
-                      });
-                    }
-                    const entry = drugMap.get(key);
-                    if (m.givenAt) entry.times.push(fmtTimeOnly(m.givenAt));
-                    if (m.givenBy) entry.by.add(displayActor(m.givenBy));
-                  });
-                  return (
-                    <div key={`mar-${k}`} style={{ marginBottom: 6 }}>
-                      <Para style={{ fontWeight: 600, marginBottom: 2 }}>
-                        {dayHeading(day[0]?.givenAt || day[0]?.createdAt || k)}
-                      </Para>
-                      <MiniTable
-                        headers={["Drug", "Dose", "Route", "Frequency", "Times given", "By"]}
-                        rows={Array.from(drugMap.values()).map((e) => [
-                          <strong>{e.drug || "—"}</strong>,
-                          e.dose || "—",
-                          e.route || "—",
-                          e.frequency || "—",
-                          e.times.join(", ") || "—",
-                          Array.from(e.by).join(", ") || "—",
-                        ])}
-                        widths={["28%", "10%", "10%", "12%", "26%", "14%"]}
-                      />
-                    </div>
-                  );
-                })}
-                {sortedDays.length > showDays.length ? (
-                  <Para style={{ color: COL.muted, fontSize: 9 }}>
-                    <em>{sortedDays.length - showDays.length} earlier day(s) of MAR archived on the patient record.</em>
+              // ── Notes sub-section (doctor + nursing interleaved) ──
+              const notesBlock = notes.length > 0 ? (
+                <div key={`day-notes-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={{ fontWeight: 700, fontSize: 9.5, color: COL.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 0 2px" }}>
+                    Clinical Notes
                   </Para>
-                ) : null}
-              </>
-            );
-          })() : null}
-        </>
-      ) : null}
+                  {notes.map((n, idx) => {
+                    const isDoc = n._kind === "doctor";
+                    const author = isDoc ? n.doctorName : n.nurseName;
+                    const vit = !isDoc && n.vitals && typeof n.vitals === "object" ? vitalsSentence(n.vitals) : "";
+                    return (
+                      <Para key={`day-${k}-n-${idx}`} style={{
+                        borderLeft: `2px solid ${isDoc ? COL.head : "#db2777"}`,
+                        paddingLeft: 8,
+                        marginBottom: 3,
+                      }}>
+                        <strong>{fmtTimeOnly(n.createdAt) || fmtDateTime(n.createdAt)}</strong>
+                        {" · "}<span style={{ color: isDoc ? COL.head : "#db2777", fontWeight: 600, textTransform: "uppercase", fontSize: 9 }}>
+                          {isDoc ? "DOCTOR" : "NURSING"}
+                        </span>
+                        {n.noteType ? <> · {n.noteType}</> : null}
+                        {!isDoc && n.shift ? <> · {n.shift}</> : null}
+                        {author ? <> · <em>{displayActor(author)}</em></> : null}
+                        {" — "}{n.content || ""}
+                        {vit ? <> <em style={{ color: COL.muted }}>· {vit.toLowerCase()}</em></> : null}
+                      </Para>
+                    );
+                  })}
+                </div>
+              ) : null;
+
+              // ── Orders sub-section ──
+              const ordersBlock = orders.length > 0 ? (
+                <div key={`day-orders-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={{ fontWeight: 700, fontSize: 9.5, color: COL.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 0 2px" }}>
+                    Orders Raised
+                  </Para>
+                  <MiniTable
+                    headers={["Time", "Type", "Order detail", "Status", "Ordered by"]}
+                    rows={orders.map((o) => [
+                      fmtTimeOnly(o.orderedAt || o.createdAt),
+                      o.orderType || "—",
+                      orderDetailLine(o),
+                      o.status || "—",
+                      displayActor(o.orderedBy),
+                    ])}
+                    widths={["10%", "14%", "48%", "12%", "16%"]}
+                  />
+                </div>
+              ) : null;
+
+              // ── MAR sub-section ──
+              const marBlock = marRows.length > 0 ? (() => {
+                const drugMap = new Map();
+                marRows.forEach((m) => {
+                  const key = `${m.drug}|${m.dose}|${m.route}|${m.frequency}`;
+                  if (!drugMap.has(key)) {
+                    drugMap.set(key, {
+                      drug: m.drug, dose: m.dose, route: m.route, frequency: m.frequency,
+                      times: [], by: new Set(),
+                    });
+                  }
+                  const entry = drugMap.get(key);
+                  if (m.givenAt) entry.times.push(fmtTimeOnly(m.givenAt));
+                  if (m.givenBy) entry.by.add(displayActor(m.givenBy));
+                });
+                return (
+                  <div key={`day-mar-${k}`} style={{ marginBottom: 6 }}>
+                    <Para style={{ fontWeight: 700, fontSize: 9.5, color: COL.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 0 2px" }}>
+                      Medication Administration (MAR)
+                    </Para>
+                    <MiniTable
+                      headers={["Drug", "Dose", "Route", "Freq", "Times given", "By"]}
+                      rows={Array.from(drugMap.values()).map((e) => [
+                        <strong>{e.drug || "—"}</strong>,
+                        e.dose || "—",
+                        e.route || "—",
+                        e.frequency || "—",
+                        e.times.join(", ") || "—",
+                        Array.from(e.by).join(", ") || "—",
+                      ])}
+                      widths={["28%", "10%", "10%", "12%", "26%", "14%"]}
+                    />
+                  </div>
+                );
+              })() : null;
+
+              // ── Handovers sub-section ──
+              const handoverBlock = handovrs.length > 0 ? (
+                <div key={`day-handover-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={{ fontWeight: 700, fontSize: 9.5, color: COL.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 0 2px" }}>
+                    Shift Handovers
+                  </Para>
+                  <MiniTable
+                    headers={["Time", "Shift", "Handing", "Receiving", "Summary"]}
+                    rows={handovrs.map((h) => [
+                      fmtTimeOnly(h.at),
+                      h.shift || "—",
+                      displayActor(h.handingBy),
+                      displayActor(h.receivingBy),
+                      h.summary || "—",
+                    ])}
+                    widths={["10%", "10%", "18%", "18%", "44%"]}
+                  />
+                </div>
+              ) : null;
+
+              return (
+                <React.Fragment key={`day-${k}`}>
+                  {banner}
+                  {notesBlock}
+                  {ordersBlock}
+                  {marBlock}
+                  {handoverBlock}
+                </React.Fragment>
+              );
+            })}
+            {orderedKeys.length > showKeys.length ? (
+              <Para style={{ color: COL.muted, fontSize: 9 }}>
+                <em>{orderedKeys.length - showKeys.length} earlier day(s) archived on the patient record.</em>
+              </Para>
+            ) : null}
+            <span style={{display:"none"}}>{Array.from(indexKeys).length}</span>
+          </>
+        );
+      })()}
 
       {/* ════════════════════════════════════════════════════════════
           6. VITAL SIGNS TREND                             [NABH COP.3]
@@ -1592,45 +1675,25 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
       ) : null}
 
       {/* ════════════════════════════════════════════════════════════
-          16. SHIFT HANDOVERS + BED TRANSFERS              [NABH COP.6]
+          16. BED TRANSFERS                                [NABH COP.6]
+          R7fy: Shift handovers moved into Day-wise Clinical Journey
+          (the per-day Handovers sub-block). Bed Transfers kept here
+          as they're usually 1-2 events, not shift-paced.
           ════════════════════════════════════════════════════════════ */}
-      {((f.shiftHandovers || []).length > 0 || (f.bedTransfers || []).length > 0) ? (
+      {(f.bedTransfers || []).length > 0 ? (
         <>
-          <SectionHeader nabh="NABH COP.6">Shift Handovers & Bed Transfers</SectionHeader>
-
-          {(f.shiftHandovers || []).length > 0 ? (
-            <>
-              <SubHeader>Shift Handovers</SubHeader>
-              <MiniTable
-                headers={["Date / Time", "Shift", "Handing nurse", "Receiving nurse", "Summary"]}
-                rows={f.shiftHandovers.map((h) => [
-                  fmtDateTime(h.at),
-                  h.shift || "—",
-                  displayActor(h.handingBy),
-                  displayActor(h.receivingBy),
-                  h.summary || "—",
-                ])}
-                widths={["16%", "10%", "18%", "18%", "38%"]}
-              />
-            </>
-          ) : null}
-
-          {(f.bedTransfers || []).length > 0 ? (
-            <>
-              <SubHeader>Bed Transfers</SubHeader>
-              <MiniTable
-                headers={["Date / Time", "From", "To", "Reason", "By"]}
-                rows={f.bedTransfers.map((t) => [
-                  fmtDateTime(t.at),
-                  t.fromBed || "—",
-                  t.toBed || "—",
-                  t.reason || "—",
-                  displayActor(t.by),
-                ])}
-                widths={["16%", "16%", "16%", "32%", "20%"]}
-              />
-            </>
-          ) : null}
+          <SectionHeader nabh="NABH COP.6">Bed Transfers</SectionHeader>
+          <MiniTable
+            headers={["Date / Time", "From", "To", "Reason", "By"]}
+            rows={f.bedTransfers.map((t) => [
+              fmtDateTime(t.at),
+              t.fromBed || "—",
+              t.toBed || "—",
+              t.reason || "—",
+              displayActor(t.by),
+            ])}
+            widths={["16%", "16%", "16%", "32%", "20%"]}
+          />
         </>
       ) : null}
 
