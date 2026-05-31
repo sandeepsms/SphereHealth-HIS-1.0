@@ -9,6 +9,10 @@ import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 // R7cb-C: settings-driven hospital name in printed nursing record header / footer.
 import useHospitalSettings from "../print/useHospitalSettings";
+// R7ez — Shared unified card renderer (same one used by the doctor timeline).
+// Only the on-screen preview is upgraded — printable HTML in handlePrint()
+// is left untouched so the PDF output keeps its exact layout.
+import TimelineNoteCard from "../notes/TimelineNoteCard";
 
 const API = API_ENDPOINTS.BASE;
 
@@ -406,81 +410,14 @@ export default function NursingPatientReport({ ipdNo, patientName, patientUHID, 
                   </span>
                   <span style={{ fontSize:11, opacity:.8 }}>{dayNotes.length} record(s)</span>
                 </div>
-                {dayNotes.map((note, i) => {
-                  const mData = note.noteData || {};
-                  const mod = MODULE_LABELS[note.noteType] || note.noteType || "General Observation";
-                  const isCrit = note.isCriticalEvent;
-                  const dt = new Date(note.noteDate || note.createdAt);
-                  const shiftC = shiftColors[note.shift] || C.muted;
-                  return (
-                    <div key={note._id || i} style={{
-                      background:"#fff", border:`1.5px solid ${isCrit?"#fca5a5":C.border}`,
-                      borderLeft:`4px solid ${isCrit?"#dc2626":shiftC}`,
-                      borderRadius:8, padding:"12px 16px", marginBottom:10,
-                      boxShadow:"0 1px 4px rgba(0,0,0,.05)",
-                    }}>
-                      {/* Card header */}
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
-                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                          <span style={{ fontWeight:800, fontSize:13, color:C.text }}>{mod}</span>
-                          {isCrit && <span style={{ background:"#fca5a5", color:"#991b1b", fontSize:10, fontWeight:700, padding:"2px 7px", borderRadius:4 }}>⚠ CRITICAL</span>}
-                          {note.tags?.map(t=>(
-                            <span key={t} style={{ background:C.primaryL, color:C.primary, fontSize:10, fontWeight:600, padding:"1px 6px", borderRadius:4 }}>{t}</span>
-                          ))}
-                        </div>
-                        <div style={{ textAlign:"right", fontSize:11, color:C.muted }}>
-                          <div>{dt.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}</div>
-                          <div style={{ color:shiftC, fontWeight:700, textTransform:"capitalize" }}>{note.shift} shift</div>
-                        </div>
-                      </div>
-
-                      {/* Module data */}
-                      {Object.entries(mData).filter(([,v])=>v).map(([k,v]) => (
-                        <ModuleBlock key={k} label={MODULE_LABELS[k] || k} data={v} />
-                      ))}
-
-                      {/* Legacy direct fields */}
-                      {note.vitals && Object.values(note.vitals).some(Boolean) && (
-                        <ModuleBlock label="Vital Signs" data={note.vitals} />
-                      )}
-                      {note.intakeOutput && Object.values(note.intakeOutput).some(v=>v>0) && (
-                        <ModuleBlock label="Intake / Output" data={note.intakeOutput} />
-                      )}
-                      {note.generalCondition && Object.values(note.generalCondition).some(Boolean) && (
-                        <ModuleBlock label="General Condition" data={note.generalCondition} />
-                      )}
-                      {note.remarks && (
-                        <div style={{ marginTop:6, fontSize:11, color:C.text }}>
-                          <b>Remarks: </b>{note.remarks}
-                        </div>
-                      )}
-
-                      {/* Nurse sign-off */}
-                      <div style={{ marginTop:10, paddingTop:7, borderTop:"1px dashed #e2e8f0",
-                        display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                        <div style={{ fontSize:11, color:C.muted }}>
-                          <i className="pi pi-user" style={{ fontSize:10, marginRight:4 }} />
-                          <b>{note.nurseName || "—"}</b>
-                          {note.nurseEmployeeId && <span style={{ color:C.primary }}> ({note.nurseEmployeeId})</span>}
-                          {note.nurseDesignation && <span>, {note.nurseDesignation}</span>}
-                        </div>
-                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                          {note.nurseSignature && (
-                            <img src={note.nurseSignature} alt="sig"
-                              style={{ height:32, maxWidth:90, border:"1px solid #e2e8f0", borderRadius:4, background:"#fff", padding:2 }} />
-                          )}
-                          {note.signature && (
-                            <img src={note.signature} alt="sig"
-                              style={{ height:32, maxWidth:90, border:"1px solid #e2e8f0", borderRadius:4, background:"#fff", padding:2 }} />
-                          )}
-                          {!note.nurseSignature && !note.signature && (
-                            <span style={{ fontSize:10, color:"#94a3b8", fontStyle:"italic" }}>No digital signature</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                {/* R7ez — Unified TimelineNoteCard. Print HTML in handlePrint() is unchanged. */}
+                {dayNotes.map((note, i) => (
+                  <TimelineNoteCard
+                    key={note._id || i}
+                    note={note}
+                    defaultOpen={true}
+                  />
+                ))}
               </div>
             ))}
 
