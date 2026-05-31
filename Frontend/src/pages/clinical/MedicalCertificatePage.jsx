@@ -902,6 +902,40 @@ export default function MedicalCertificatePage() {
     };
   }, [selectedPatient, latestVisit, certType, typeSpecific, diagnosis, icd10, doctorName, doctorReg, counterSign, notes]);
 
+  // R7fu-PREVIEW — open the print preview WITHOUT POSTing to the
+  // server, so the doctor can show the patient the layout and content
+  // before finalising. The payload includes a `previewMode: true`
+  // flag and a placeholder certNumber "PREVIEW · DRAFT" so the
+  // printable can show a "DRAFT" treatment if the template wants to.
+  // No DB write, no audit emit, no counter consumed.
+  const preview = useCallback(() => {
+    if (!selectedPatient) { toast.error("Pick a patient first."); return; }
+    if (!certType) { toast.error("Pick a certificate type."); return; }
+    const draft = {
+      ...buildPayload(),
+      // Denormalise patient identity onto the payload so the
+      // printable's patient strip renders correctly (the save path
+      // adds these server-side; in preview we add them client-side).
+      patientName:    selectedPatient.fullName || selectedPatient.name
+                       || [selectedPatient.firstName, selectedPatient.lastName].filter(Boolean).join(" "),
+      patientUHID:    selectedPatient.UHID || selectedPatient.uhid,
+      gender:         selectedPatient.gender || selectedPatient.sex,
+      age:            selectedPatient.age ? `${selectedPatient.age}Y` : "",
+      mobile:         selectedPatient.mobile || selectedPatient.contactNumber,
+      certNumber:     "PREVIEW · DRAFT",
+      issuedAt:       new Date().toISOString(),
+      status:         "preview",
+      previewMode:    true,
+      hospitalName:   settings.hospitalName,
+      meta: {
+        hospitalName: settings.hospitalName,
+        hospitalRegistrationNo: settings.registrationNo || "",
+      },
+    };
+    try { openPrint("medical-certificate", draft); }
+    catch (e) { toast.error(e?.message || "Could not open preview window."); }
+  }, [selectedPatient, certType, buildPayload, settings.hospitalName, settings.registrationNo]);
+
   const submit = useCallback(async () => {
     if (mciMissing) {
       toast.error("MCI registration number missing on your profile. Update before issuing.");
@@ -1200,9 +1234,18 @@ export default function MedicalCertificatePage() {
               </Row>
             </Card>
 
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginBottom: 24 }}>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginBottom: 24, flexWrap: "wrap" }}>
               <Button ghost icon="pi-refresh" onClick={() => { setCertType(""); setTypeSpecific({}); }}>
                 Cancel
+              </Button>
+              {/* R7fu-PREVIEW — show the print preview WITHOUT
+                  saving, so the doctor can show the patient how
+                  the certificate will look before finalising. */}
+              <Button ghost icon="pi-eye"
+                disabled={!selectedPatient || !certType}
+                onClick={preview}
+                title="Preview the certificate before saving — no DB write, no cert number consumed.">
+                Preview
               </Button>
               <Button icon="pi-check" color={C.success}
                 disabled={saving || mciMissing}

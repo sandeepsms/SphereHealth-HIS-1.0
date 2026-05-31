@@ -671,6 +671,11 @@ const MedicalCertificate = ({ settings = {}, certificate, receipt }) => {
   // Status banner — if revoked, render at the top of the body so a
   // re-printed copy of a revoked cert is unmistakable.
   const isRevoked = c.status === "revoked";
+  // R7fu-PREVIEW — opened from MedicalCertificatePage's "Preview"
+  // button before the cert is saved. Shows a prominent amber banner
+  // so neither the doctor nor the patient mistakes a draft for the
+  // final issued copy.
+  const isPreview = c.previewMode === true || c.status === "preview" || c.certNumber === "PREVIEW · DRAFT";
 
   return (
     <PrintShell
@@ -701,6 +706,12 @@ const MedicalCertificate = ({ settings = {}, certificate, receipt }) => {
         {isRevoked && (
           <div style={BANNER("#b91c1c")}>
             REVOKED — THIS CERTIFICATE IS NO LONGER VALID
+          </div>
+        )}
+
+        {isPreview && !isRevoked && (
+          <div style={BANNER("#d97706")}>
+            PREVIEW · DRAFT — NOT YET ISSUED · NO CERTIFICATE NUMBER ASSIGNED
           </div>
         )}
 
