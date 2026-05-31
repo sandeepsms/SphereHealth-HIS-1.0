@@ -193,11 +193,11 @@ export function normalizeFileData(receipt = {}) {
     })),
 
     consents: toArr(r.consents).map(c => ({
-      name:      toStr(c.name || c.formName),
-      signed:    !!c.signed,
-      signedAt:  toDate(c.signedAt),
-      signedBy:  toStr(c.signedBy),
-      witness:   toStr(c.witness),
+      name:      toStr(c.name || c.formName || c.consentTitle || c.consentType),
+      signed:    !!(c.signed || c.status === "Signed" || c.status === "signed"),
+      signedAt:  toDate(c.signedAt || c.createdAt),
+      signedBy:  toStr(c.signedBy || c.signedByName || c.patientSignature),
+      witness:   toStr(c.witness || c.witnessName),
     })),
 
     discharge: {
@@ -205,7 +205,184 @@ export function normalizeFileData(receipt = {}) {
       advice:       toStr(r.dischargeAdvice),
       followUpDate: toDate(r.followUpDate),
       condition:    toStr(r.dischargeCondition || r.conditionAtDischarge),
+      medications:  toArr(r.dischargeMedications || r.dischargeMeds).map(m => ({
+        name:        toStr(m.name || m.drug || m.medicationName),
+        generic:     toStr(m.generic),
+        dose:        toStr(m.dose || m.strength),
+        frequency:   toStr(m.frequency || m.freq),
+        route:       toStr(m.route),
+        duration:    toStr(m.duration),
+        instructions:toStr(m.instructions || m.notes),
+      })),
     },
+
+    /* R7ft-FIX2 — comprehensive clinical buckets. Themes consume these
+       by canonical key; the raw API shape stays out of theme code. */
+    doctorOrders: toArr(r.doctorOrders).map(o => ({
+      orderedAt:    toDate(o.orderedAt || o.createdAt),
+      orderType:    toStr(o.orderType || o.type),
+      details:      o.orderDetails || o.details || {},
+      displayName:  toStr(o.orderDetails?.displayName || o.orderDetails?.medicineName
+                          || o.orderDetails?.testName || o.orderDetails?.name
+                          || o.displayName || o.name),
+      dose:         toStr(o.orderDetails?.dose || o.dose),
+      route:        toStr(o.orderDetails?.route || o.route),
+      frequency:    toStr(o.orderDetails?.frequency || o.frequency),
+      status:       toStr(o.status),
+      orderedBy:    toStr(o.orderedByName || o.doctorName || o.orderedBy),
+    })),
+
+    mar: toArr(r.mar).map(m => ({
+      createdAt:    toDate(m.createdAt || m.administeredAt),
+      drug:         toStr(m.drug || m.medicineName || m.medicationName || m.name),
+      dose:         toStr(m.dose || m.strength),
+      route:        toStr(m.route),
+      frequency:    toStr(m.frequency || m.freq),
+      givenAt:      toDate(m.givenAt || m.administeredAt || m.createdAt),
+      givenBy:      toStr(m.givenBy || m.administeredBy || m.nurseName),
+      status:       toStr(m.status),
+      administrations: toArr(m.administrations || m.givenDoses),
+    })),
+
+    vitalsTrend: toArr(r.vitalsTrend || r.vitals).map(v => {
+      const bp = typeof v.bp === "object" && v.bp
+        ? `${v.bp.systolic ?? "?"}/${v.bp.diastolic ?? "?"}`
+        : toStr(v.bp);
+      return {
+        at:     toDate(v.recordedAt || v.createdAt || v.at),
+        bp:     bp || toStr(v.bloodPressure),
+        pulse:  toStr(v.pulse || v.hr),
+        temp:   toStr(v.temp || v.temperature),
+        spo2:   toStr(v.spo2 || v.SpO2),
+        rr:     toStr(v.rr || v.respiratoryRate),
+        recordedBy: toStr(v.recordedBy || v.recordedByName || v.nurseName),
+      };
+    }).filter(v => v.at),
+
+    intakeOutput: toArr(r.intakeOutput).map(io => ({
+      at:        toDate(io.ts || io.createdAt),
+      direction: toStr(io.direction),  // "IN" / "OUT"
+      volumeML:  toNum(io.volumeML),
+      fluidType: toStr(io.fluidType || io.label),
+      source:    toStr(io.source),
+    })).filter(io => io.at && io.volumeML != null),
+
+    labReports: toArr(r.labReports).map(rp => ({
+      name:       toStr(rp.testName || rp.reportName || rp.name),
+      reportType: toStr(rp.reportType),
+      date:       toDate(rp.reportDate || rp.createdAt),
+      impression: toStr(rp.impression || rp.findings || rp.result),
+      status:     toStr(rp.status),
+    })),
+
+    labTrends: toArr(r.labTrends).map(t => ({
+      name:     toStr(t.panelName || t.panelType),
+      tests:    toArr(t.tests),
+      dates:    toArr(t.dates),
+      status:   toStr(t.status),
+      createdAt:toDate(t.createdAt),
+    })),
+
+    shiftHandovers: toArr(r.shiftHandovers).map(h => ({
+      at:           toDate(h.createdAt || h.handoverAt),
+      shift:        toStr(h.shift),
+      handingBy:    toStr(h.handingByName || h.handingNurseName || h.fromNurse || h.signedByName),
+      receivingBy:  toStr(h.receivingByName || h.receivingNurseName || h.toNurse),
+      summary:      toStr(h.summary || h.handoverSummary || h.content || h.notes),
+    })),
+
+    nursingAssessments: toArr(r.nursingAssessments).map(a => ({
+      at:        toDate(a.createdAt || a.assessmentDate),
+      type:      toStr(a.assessmentType || a.type),
+      content:   toStr(a.summary || a.content || a.notes),
+      nurseName: toStr(a.nurseName || a.signedByName),
+    })),
+
+    nursingCarePlans: toArr(r.nursingCarePlans).map(p => ({
+      at:        toDate(p.createdAt),
+      diagnosis: toStr(p.nursingDiagnosis || p.diagnosis),
+      goals:     toStr(p.goals),
+      interventions: toStr(p.interventions),
+      evaluation:toStr(p.evaluation),
+      nurseName: toStr(p.nurseName || p.signedByName),
+    })),
+
+    bedTransfers: toArr(r.bedTransfers).map(t => ({
+      at:       toDate(t.createdAt || t.transferDate),
+      fromBed:  toStr(t.fromBed || t.previousBed),
+      toBed:    toStr(t.toBed || t.newBed),
+      reason:   toStr(t.reason),
+      by:       toStr(t.transferredByName || t.by || t.requestedBy),
+      status:   toStr(t.status),
+    })),
+
+    bloodTransfusion: toArr(r.bloodTransfusion).map(b => ({
+      at:        toDate(b.startedAt || b.createdAt),
+      btNumber:  toStr(b.btNumber),
+      component: toStr(b.bagsIssued?.[0]?.productType || b.component),
+      bagNumber: toStr(b.bagsIssued?.[0]?.bagNumber),
+      volumeMl:  toNum(b.bagsIssued?.[0]?.volumeMl),
+      bloodGroup:toStr(b.bloodGroup),
+      preVitals: (() => {
+        const v = b.preTransfusion?.vitals || {};
+        return { bp: toStr(v.bp), pulse: toStr(v.pulse), temp: toStr(v.temp), spo2: toStr(v.spo2) };
+      })(),
+      postVitals: (() => {
+        const v = b.postTransfusion?.vitals || {};
+        return { bp: toStr(v.bp), pulse: toStr(v.pulse), temp: toStr(v.temp), spo2: toStr(v.spo2) };
+      })(),
+      reaction:  !!(b.reaction?.occurred),
+      reactionType: toStr(b.reaction?.type),
+      indication:toStr(b.indication),
+      transfusedBy: toStr(b.transfusedByName),
+      status:    toStr(b.status),
+    })),
+
+    dietPlans: toArr(r.dietPlans).map(d => ({
+      at:           toDate(d.assignedAt || d.createdAt),
+      templateName: toStr(d.plan?.templateName || d.templateName || "Custom"),
+      targetCalories: toNum(d.plan?.targetCalories || d.targetCalories),
+      targetProtein:  toNum(d.plan?.targetProtein || d.targetProtein),
+      restrictions: toStr(d.plan?.restrictions || d.restrictions),
+      assignedBy:   toStr(d.assignedByName || d.dieticianName || d.assignedBy),
+      notes:        toStr(d.notes || d.dietitianNotes),
+      status:       toStr(d.status),
+    })),
+
+    icuBundles: toArr(r.icuBundles).map(b => {
+      const pct = (key) => (b.bundles || []).find(x => x.key === key)?.compliancePct ?? null;
+      return {
+        date:    toStr(b.date),
+        shift:   toStr(b.shift),
+        vapPct:    pct("vap"),
+        cautiPct:  pct("cauti"),
+        clabsiPct: pct("clabsi"),
+        dvtPct:    pct("dvt"),
+        sepsisPct: pct("sepsis"),
+        supPct:    pct("sup"),
+        overallPct:toNum(b.overallCompliancePct),
+        status:    toStr(b.status),
+        finalizedBy: toStr(b.finalizedBy),
+      };
+    }),
+
+    mlc: toArr(r.mlc).map(m => ({
+      at:       toDate(m.createdAt || m.mlcDate),
+      type:     toStr(m.mlcType || m.type),
+      brief:    toStr(m.brief || m.summary || m.description),
+      io:       toStr(m.investigatingOfficer || m.io),
+      station:  toStr(m.policeStation || m.station),
+      signedBy: toStr(m.signedByName || m.signedBy),
+    })),
+
+    activityLog: toArr(r.activityLog).map(a => ({
+      at:      toDate(a.createdAt),
+      module:  toStr(a.module),
+      action:  toStr(a.action),
+      area:    toStr(a.area),
+      summary: toStr(a.summary),
+      userName:toStr(a.userName),
+    })),
 
     signatures: {
       consultant: toStr(r.consultantName || r.attendingDoctor),

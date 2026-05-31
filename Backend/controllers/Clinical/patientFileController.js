@@ -55,6 +55,11 @@ const LabReport          = LabRecordsModels?.LabReport || null;
 // DVT / Sepsis / SUP). Surfaced into the Complete Patient File so the
 // NABH HIC.5 / COP.13 bundles appear in print without a separate API call.
 const ICUBundle          = (() => { try { return require("../../models/Clinical/ICUBundleModel"); } catch { return null; } })();
+// R7ft-FIX2 — Blood transfusion register. Surfaced into the
+// Complete Patient File so the Narrative print can include
+// every transfusion (NABH HIC.4 / MOM.4). Optional require so
+// legacy deployments without the model don't 500 the aggregator.
+const BloodTransfusionRegister = (() => { try { return require("../../models/Compliance/BloodTransfusionRegisterModel"); } catch { return null; } })();
 
 // ── Helper: safe collection fetch — never let a single model failure
 // break the whole aggregator. If a query throws (missing model, schema
@@ -131,7 +136,7 @@ exports.getCompleteFile = async (req, res) => {
       nursingAssessments, nursingCarePlans, shiftHandovers, bedTransfers,
       mar, vitals, mlc,
       investigations, bills, billingTriggers, activityLog,
-      dietPlans, intakeOutput,
+      dietPlans, intakeOutput, bloodTransfusion,
     ] = await Promise.all([
       // Admissions are small (typically 1–3) and the chronology spine — load all.
       safe("admissions",       () => Admission.find({ UHID }).sort({ admissionDate: -1 }).limit(50).lean()),
@@ -178,6 +183,9 @@ exports.getCompleteFile = async (req, res) => {
       // graph showed only the trailing week, not the full admission).
       // PER_SECTION_LIMIT bounds the response.
       safe("intakeOutput",       () => IntakeOutputEntry ? IntakeOutputEntry.find({ UHID, voided: { $ne: true } }).sort({ ts: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
+      // R7ft-FIX2 — blood transfusion register (UHID + reverse-chrono).
+      // Bounded at 50 entries since a single patient seldom exceeds this.
+      safe("bloodTransfusion",   () => BloodTransfusionRegister ? BloodTransfusionRegister.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
     ]);
 
     // Lab-records (manual trend sheets + imaging/micro/histopath reports).
@@ -453,6 +461,8 @@ exports.getCompleteFile = async (req, res) => {
         // every shift sheet for the current admission, with items[] unwrapped
         // for direct print rendering.
         icuBundles,
+        // R7ft-FIX2 — blood transfusion register (NABH HIC.4 / MOM.4).
+        bloodTransfusion,
         timeline,
         completeness,
         pagination,

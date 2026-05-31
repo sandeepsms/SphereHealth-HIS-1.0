@@ -4236,11 +4236,40 @@ export default function CompletePatientFilePage() {
                 procedures:      data.procedures     || [],
                 consents:        data.consents       || [],
 
-                /* discharge */
-                dischargeSummary: data.dischargeSummary?.summary || data.dischargeSummary?.courseOfStay || "",
-                dischargeAdvice:  data.dischargeSummary?.advice  || "",
-                followUpDate:     data.dischargeSummary?.followUpDate,
-                dischargeCondition: data.dischargeSummary?.conditionOnDischarge,
+                /* R7ft-FIX2 — comprehensive clinical record. Every
+                   collection the backend returns is surfaced into the
+                   receipt so the Narrative print is a true "complete
+                   file", not a 1-page brief. dischargeSummary on the
+                   API is often a 50-row array (find().limit(50)), so
+                   we defensively pick the newest entry below. */
+                doctorOrders:        Array.isArray(data.doctorOrders)        ? data.doctorOrders        : [],
+                mar:                 Array.isArray(data.mar)                 ? data.mar                 : [],
+                intakeOutput:        Array.isArray(data.intakeOutput)        ? data.intakeOutput        : [],
+                labReports:          Array.isArray(data.labReports)          ? data.labReports          : [],
+                labTrends:           Array.isArray(data.labTrends)           ? data.labTrends           : [],
+                shiftHandovers:      Array.isArray(data.shiftHandovers)      ? data.shiftHandovers      : [],
+                nursingAssessments:  Array.isArray(data.nursingAssessments)  ? data.nursingAssessments  : [],
+                nursingCarePlans:    Array.isArray(data.nursingCarePlans)    ? data.nursingCarePlans    : [],
+                bedTransfers:        Array.isArray(data.bedTransfers)        ? data.bedTransfers        : [],
+                bloodTransfusion:    Array.isArray(data.bloodTransfusion)    ? data.bloodTransfusion    : [],
+                dietPlans:           Array.isArray(data.dietPlans)           ? data.dietPlans           : [],
+                icuBundles:          Array.isArray(data.icuBundles)          ? data.icuBundles          : [],
+                mlc:                 Array.isArray(data.mlc)                 ? data.mlc                 : [],
+                activityLog:         Array.isArray(data.activityLog)         ? data.activityLog         : [],
+
+                /* discharge — defensive resolve: the API may return
+                   dischargeSummary as either an object (singleton) or
+                   an array (find().limit(50)). Pick the newest. */
+                ...((ds) => {
+                  const head = Array.isArray(ds) ? ds[0] : ds;
+                  return {
+                    dischargeSummary:     head?.summary || head?.courseOfStay || "",
+                    dischargeAdvice:      head?.advice || head?.finalAdvice || "",
+                    dischargeMedications: head?.dischargeMeds || head?.medsOnDischarge || head?.dischargeMedications || [],
+                    followUpDate:         head?.followUpDate,
+                    dischargeCondition:   head?.conditionOnDischarge,
+                  };
+                })(data.dischargeSummary),
 
                 printCount: 1,
                 printedAt:  new Date().toISOString(),
