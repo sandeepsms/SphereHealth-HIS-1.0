@@ -366,6 +366,69 @@ const buildBuilder = (note) => {
 };
 
 /**
+ * R7gd — exported helper: returns ONLY the body HTML (header + per-type
+ * grid + late banner + signature) for a single nurse note. Used by the
+ * Complete Patient File Narrative theme to embed identical per-type
+ * cards inside the day-wise Clinical Journey.
+ */
+export function buildNurseNoteCardHtml(note) {
+  const fmtDate = (d) => d ? new Date(d).toLocaleString("en-IN", {
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  }) : "—";
+  const noteDate = fmtDate(note.noteDate || note.createdAt);
+  const shift = note.shift || "general";
+
+  const TYPE_LABELS = {
+    vitals: "Vital Signs", intake: "Intake / Output", iv: "IV Infusion",
+    pain: "Pain Assessment", wound: "Wound / Dressing", skin: "Skin Assessment",
+    fall: "Fall Risk", neuro: "Neurological Assessment", mews: "MEWS Score",
+    blood: "Blood Transfusion", procedure: "Procedure Note",
+    daily: "Daily Assessment", careplan: "Care Plan",
+    nutrition: "Nutritional Assessment", education: "Patient Education",
+    discharge: "Discharge Planning", initial: "Initial Assessment",
+    general: "General Observation",
+  };
+  const typeLabel = TYPE_LABELS[note.noteType] || (note.noteType || "Nursing Note").toUpperCase();
+
+  const isSigned = (note.status === "submitted" || note.status === "signed");
+  const statusBadge = `<div style="padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:${isSigned ? "#dcfce7" : "#fffbeb"};color:${isSigned ? "#16a34a" : "#d97706"}">${isSigned ? "✓ SIGNED" : "DRAFT"}</div>`;
+  const critical = (note.isCriticalEvent || note.isCritical)
+    ? '<div style="padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:#fef2f2;color:#dc2626">⚠ CRITICAL EVENT</div>'
+    : "";
+
+  const lateBanner = note.lateEntry
+    ? `<div style="margin:8px 0 14px;padding:8px 12px;border:1px solid #fcd34d;background:#fffbeb;border-radius:6px;font-size:11px;color:#92400e;display:flex;gap:8px;align-items:flex-start">
+  <strong style="white-space:nowrap">⚠ LATE ENTRY</strong>
+  <div style="flex:1">${escapeHtml(note.lateEntryReason || "Retrospective entry — NABH HIC.6")}${note.lateEntryAt ? ` · Recorded: ${fmtDate(note.lateEntryAt)}` : ""}</div>
+</div>` : "";
+
+  const builder = buildBuilder(note);
+  const typeBody = builder();
+  const remarks = (note.remarks && note.noteType !== "general")
+    ? `<div style="margin-top:8px;padding:6px 10px;background:#f8fafc;border-left:3px solid #94a3b8;font-size:11.5px;white-space:pre-wrap">${escapeHtml(note.remarks)}</div>` : "";
+  const sigHtml = isSigned
+    ? `<div style="margin-top:14px;padding:8px 12px;border:1px solid #bbf7d0;border-radius:6px;background:#f0fdf4;font-size:11px;color:#166534">
+  <strong style="color:#15803d">✓ SIGNED & SUBMITTED</strong> · By: ${escapeHtml(note.nurseName || note.signedByName || "Nurse")}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}
+</div>`
+    : `<div style="margin-top:14px;padding:6px 12px;border:1px solid #fde68a;border-radius:6px;background:#fffbeb;font-size:11px"><strong style="color:#d97706">DRAFT — Not yet signed</strong></div>`;
+
+  return COMPACT_GRID_CSS + `
+<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin:8px 0;background:#fff;page-break-inside:avoid">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #e2e8f0">
+    <div style="padding:5px 14px;border-radius:6px;font-size:13px;font-weight:800;background:#fce7f3;color:#9d174d">${escapeHtml(typeLabel)}</div>
+    ${statusBadge}
+    ${critical}
+    <div style="margin-left:auto;font-size:12px;color:#64748b">Shift: <strong style="text-transform:capitalize">${escapeHtml(shift)}</strong> · ${noteDate}</div>
+  </div>
+  ${lateBanner}
+  ${typeBody}
+  ${remarks}
+  ${sigHtml}
+</div>`;
+}
+
+/**
  * R7gc — render & open a single nursing note in a print-ready window.
  */
 export function printNurseNote(note, hospitalSettings = {}) {

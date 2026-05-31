@@ -46,6 +46,13 @@
 import React from "react";
 import PrintShell from "@/templates/PrintShell";
 import { fmtDate, fmtTime, fmtDayMonth, pronoun } from "./normalizeData";
+// R7gd — embed identical per-type cards (the ones used in individual note
+// print) inside the Complete File day-wise Clinical Journey so the
+// Death MCCD, ICU bundle, Procedure WHO Timeout, Pre-op Checklist,
+// Vitals/IV/Pain/Wound/Braden/MEWS etc. all show the same structured
+// layout the user saw in the standalone printouts.
+import { buildDoctorNoteCardHtml } from "@/pages/doctor/buildDoctorNoteCardHtml";
+import { buildNurseNoteCardHtml }  from "@/pages/nursing/printNurseNote";
 
 /* =====================================================================
    1. PROSE HELPERS (kept compatible with pre-R7fu Narrative)
@@ -1283,44 +1290,21 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                     Clinical Notes
                   </Para>
                   {notes.map((n, idx) => {
+                    // R7gd — replace the prose summary with the EXACT same
+                    // structured per-type card that renders in the
+                    // individual note print path. Death MCCD, ICU bundle
+                    // table, WHO Safety Checklist, Procedure metadata,
+                    // Vitals/IV/Pain/Wound/Braden/MEWS — every card shape
+                    // the user sees on the doctor- or nurse-notes page now
+                    // appears inline in the Complete File too.
                     const isDoc = n._kind === "doctor";
-                    const author = isDoc ? n.doctorName : n.nurseName;
-                    const vit = !isDoc && n.vitals && typeof n.vitals === "object" ? vitalsSentence(n.vitals) : "";
+                    const html = isDoc ? buildDoctorNoteCardHtml(n) : buildNurseNoteCardHtml(n);
                     return (
-                      <Para key={`day-${k}-n-${idx}`} style={{
-                        borderLeft: `2px solid ${isDoc ? COL.head : "#db2777"}`,
-                        paddingLeft: 8,
-                        marginBottom: 3,
-                      }}>
-                        <strong>{fmtTimeOnly(n.createdAt) || fmtDateTime(n.createdAt)}</strong>
-                        {" · "}<span style={{ color: isDoc ? COL.head : "#db2777", fontWeight: 600, textTransform: "uppercase", fontSize: 9 }}>
-                          {isDoc ? "DOCTOR" : "NURSING"}
-                        </span>
-                        {n.noteType ? <> · {n.noteType}</> : null}
-                        {!isDoc && n.shift ? <> · {n.shift}</> : null}
-                        {author ? <> · <em>{displayActor(author)}</em></> : null}
-                        {" — "}{n.content || ""}
-                        {vit ? <> <em style={{ color: COL.muted }}>· {vit.toLowerCase()}</em></> : null}
-                        {/* R7gb P0-14 — NABH IMS.1 / HIC.6: late-entry
-                            banner. Back-dated notes MUST be visually
-                            flagged so regulators/courts can see the
-                            addendum wasn't recorded at time of care. */}
-                        {n.lateEntry ? (
-                          <div style={{
-                            marginTop: 3,
-                            padding: "2px 6px",
-                            background: "#fef2f2",
-                            borderLeft: "3px solid #b91c1c",
-                            color: "#991b1b",
-                            fontSize: 9,
-                            fontWeight: 600,
-                          }}>
-                            LATE ENTRY
-                            {n.lateEntryAt ? ` · entered ${fmtDateTime(n.lateEntryAt)}` : ""}
-                            {n.lateEntryReason ? ` · reason: ${n.lateEntryReason}` : ""}
-                          </div>
-                        ) : null}
-                      </Para>
+                      <div
+                        key={`day-${k}-n-${idx}`}
+                        style={{ marginBottom: 6 }}
+                        dangerouslySetInnerHTML={{ __html: html }}
+                      />
                     );
                   })}
                 </div>
