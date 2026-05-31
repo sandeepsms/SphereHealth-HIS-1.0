@@ -571,13 +571,20 @@ const proseLine = (label, val) => {
 /* =====================================================================
    9. PRIMARY THEME COMPONENT
    ===================================================================== */
-const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
+const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewerRole = "" }) => {
   const f = file || {};
   const pn = pronoun(f.patient?.gender);
   const subj = pn.subj;
   const subjL = subj.toLowerCase();
   const pos = pn.pos;
   const obj = pn.obj;
+
+  /* R7gb P0-12 — PHI defence-in-depth. Roles cleared to see the
+     Activity Log (which surfaces user-attribution metadata). Falls
+     back to the role embedded in the receipt for older callers that
+     don't pass the prop. */
+  const _role = String(viewerRole || receipt?.viewerRole || "").toLowerCase();
+  const canSeeActivityLog = ["admin", "mrd", "doctor", "accountant"].includes(_role);
 
   /* ── patient strip ──────────────────────────────────────────── */
   const genderAge = [
@@ -1292,6 +1299,25 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
                         {author ? <> · <em>{displayActor(author)}</em></> : null}
                         {" — "}{n.content || ""}
                         {vit ? <> <em style={{ color: COL.muted }}>· {vit.toLowerCase()}</em></> : null}
+                        {/* R7gb P0-14 — NABH IMS.1 / HIC.6: late-entry
+                            banner. Back-dated notes MUST be visually
+                            flagged so regulators/courts can see the
+                            addendum wasn't recorded at time of care. */}
+                        {n.lateEntry ? (
+                          <div style={{
+                            marginTop: 3,
+                            padding: "2px 6px",
+                            background: "#fef2f2",
+                            borderLeft: "3px solid #b91c1c",
+                            color: "#991b1b",
+                            fontSize: 9,
+                            fontWeight: 600,
+                          }}>
+                            LATE ENTRY
+                            {n.lateEntryAt ? ` · entered ${fmtDateTime(n.lateEntryAt)}` : ""}
+                            {n.lateEntryReason ? ` · reason: ${n.lateEntryReason}` : ""}
+                          </div>
+                        ) : null}
                       </Para>
                     );
                   })}
@@ -1858,8 +1884,12 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
 
       {/* ════════════════════════════════════════════════════════════
           19. ACTIVITY LOG                                 [NABH IMS.1]
+          R7gb P0-12 — PHI defence-in-depth: only Admin / MRD / Doctor
+          / Accountant prints expose the audit trail. Nurses,
+          dieticians, lab/pharmacy roles and unauthenticated demo
+          prints get the section collapsed.
           ════════════════════════════════════════════════════════════ */}
-      {(f.activityLog || []).length > 0 ? (
+      {canSeeActivityLog && (f.activityLog || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH IMS.1">Activity Log</SectionHeader>
           <MiniTable

@@ -156,6 +156,16 @@ export function normalizeFileData(receipt = {}) {
       doctorName: toStr(n.doctorName || n.signedByName),
       signedAt:   toDate(n.signedAt),
       signedBy:   toStr(n.signedBy || n.signedByName),
+      // R7gb P0-14 — NABH IMS.1 / HIC.6: late-entry flag MUST survive
+      // normalisation so the print can stamp a "LATE ENTRY" banner
+      // under any back-dated note (regulator + court need the
+      // addendum visible inline, not only in the audit log).
+      lateEntry:       !!(n.lateEntry || n.isLateEntry || n.noteDetails?.lateEntry),
+      lateEntryReason: toStr(n.lateEntryReason || n.lateReason
+                            || n.noteDetails?.lateEntryReason
+                            || n.noteDetails?.lateReason),
+      lateEntryAt:     toDate(n.lateEntryAt || n.lateEnteredAt
+                            || n.noteDetails?.lateEntryAt),
     })).filter(n => n.createdAt && n.content),  // skip empty-body notes
 
     nursingNotes: toArr(r.nursingNotes).map(n => ({
@@ -167,6 +177,13 @@ export function normalizeFileData(receipt = {}) {
       nurseName:  toStr(n.nurseName || n.signedByName),
       shift:      toStr(n.shift),
       signedAt:   toDate(n.signedAt || n.submittedAt),
+      // R7gb P0-14 — late-entry passthrough (see doctor-note mapper above).
+      lateEntry:       !!(n.lateEntry || n.isLateEntry || n.noteData?.lateEntry),
+      lateEntryReason: toStr(n.lateEntryReason || n.lateReason
+                            || n.noteData?.lateEntryReason
+                            || n.noteData?.lateReason),
+      lateEntryAt:     toDate(n.lateEntryAt || n.lateEnteredAt
+                            || n.noteData?.lateEntryAt),
     })).filter(n => n.createdAt && n.content),  // skip empty-body notes
 
     ia: { doctor: iaDoctor, nursing: iaNursing },
@@ -184,12 +201,18 @@ export function normalizeFileData(receipt = {}) {
     })),
 
     procedures: toArr(r.procedures).map(p => ({
-      name:        toStr(p.name || p.procedure),
+      name:        toStr(p.name || p.procedure || p.procedureName),
       date:        toDate(p.date),
       surgeon:     toStr(p.surgeon),
       anaesthetist:toStr(p.anesthesia || p.anesthetist || p.anaesthetist),
       findings:    toStr(p.findings),
       notes:       toStr(p.notes),
+      // R7gb P0-9 — Patch 1 in CompletePatientFilePage.jsx now
+      // synthesises procedures from notes with the keys below.
+      indication:  toStr(p.indication),
+      role:        toStr(p.role),
+      signedBy:    toStr(p.signedBy),
+      signedAt:    toDate(p.signedAt),
     })),
 
     consents: toArr(r.consents).map(c => ({
@@ -382,6 +405,21 @@ export function normalizeFileData(receipt = {}) {
       area:    toStr(a.area),
       summary: toStr(a.summary),
       userName:toStr(a.userName),
+    })),
+
+    // R7gb P0-11 — canonical bills bucket. Field-name aliasing covers
+    // both current ledger shape (billNumber/amount/paidAmount) and the
+    // older legacy shape (number/total/paid).
+    bills: toArr(r.bills).map(b => ({
+      at:          toDate(b.createdAt || b.billDate || b.date),
+      billNumber:  toStr(b.billNumber || b.number || b.invoiceNumber),
+      category:    toStr(b.category || b.type || b.serviceType),
+      description: toStr(b.description || b.particulars || b.summary),
+      amount:      toNum(b.amount ?? b.total ?? b.grossAmount),
+      paid:        toNum(b.paidAmount ?? b.paid ?? b.amountPaid),
+      balance:     toNum(b.balance ?? b.dueAmount ?? b.outstanding),
+      status:      toStr(b.status),
+      raisedBy:    toStr(b.raisedByName || b.raisedBy || b.createdByName),
     })),
 
     signatures: {

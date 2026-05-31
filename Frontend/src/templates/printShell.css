@@ -12,7 +12,72 @@
    All sizes in px (A4 @96dpi = 794×1123).
    ───────────────────────────────────────────────────────────────── */
 
-@page { size: A4; margin: 12mm; }
+/* R7gb P0-13 — NABH IMS.1 / AAC.7 confidentiality: every printed
+   page must carry patient identifiers so loose sheets can never be
+   misattributed. CSS Paged Media @page running headers/footers
+   populate from `string-set` hooks emitted by PrintShell. */
+@page {
+  size: A4;
+  margin: 18mm 12mm 16mm 12mm;
+
+  @top-left {
+    content: string(pf-hospital);
+    font-family: 'DM Sans', 'Segoe UI', sans-serif;
+    font-size: 8pt;
+    color: #4b5563;
+    padding-bottom: 3mm;
+    border-bottom: 0.5pt solid #cbd5e1;
+    vertical-align: bottom;
+  }
+  @top-center {
+    content: string(pf-patient);
+    font-family: 'DM Sans', 'Segoe UI', sans-serif;
+    font-size: 8pt;
+    font-weight: 600;
+    color: #1f2937;
+    padding-bottom: 3mm;
+    border-bottom: 0.5pt solid #cbd5e1;
+    vertical-align: bottom;
+  }
+  @top-right {
+    content: "UHID: " string(pf-uhid);
+    font-family: 'DM Sans', 'Segoe UI', sans-serif;
+    font-size: 8pt;
+    color: #4b5563;
+    padding-bottom: 3mm;
+    border-bottom: 0.5pt solid #cbd5e1;
+    vertical-align: bottom;
+  }
+  @bottom-left {
+    content: string(pf-doc-title);
+    font-family: 'DM Sans', 'Segoe UI', sans-serif;
+    font-size: 7.5pt;
+    color: #6b7280;
+    padding-top: 3mm;
+    border-top: 0.5pt solid #cbd5e1;
+  }
+  @bottom-right {
+    content: "Page " counter(page) " of " counter(pages);
+    font-family: 'DM Sans', 'Segoe UI', sans-serif;
+    font-size: 7.5pt;
+    color: #6b7280;
+    padding-top: 3mm;
+    border-top: 0.5pt solid #cbd5e1;
+  }
+}
+
+/* Hidden source strings the print engine reads via CSS `string-set`.
+   Themes populate by rendering invisible spans with these classes. */
+.pf-page-strings {
+  position: absolute;
+  width: 0; height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+.pf-page-string-hospital { string-set: pf-hospital content(); }
+.pf-page-string-patient  { string-set: pf-patient  content(); }
+.pf-page-string-uhid     { string-set: pf-uhid     content(); }
+.pf-page-string-doctitle { string-set: pf-doc-title content(); }
 
 * { box-sizing: border-box; }
 

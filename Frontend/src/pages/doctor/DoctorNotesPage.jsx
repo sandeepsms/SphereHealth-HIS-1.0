@@ -176,8 +176,10 @@ const MODULES = [
     icon: "pi-refresh",             border: C.tealB,   color: C.teal,   bg: C.tealL   },
   { id: "discharge",   label: "Discharge Summary",     nabh: "COP.21", description: "Final discharge summary",
     icon: "pi-check-square",        border: C.greenB,  color: C.green,  bg: C.greenL  },
-  { id: "operative",   label: "Operative Note",        nabh: "COP.13", description: "OT operative record",
-    icon: "pi-bookmark",            border: C.purpleB, color: C.purple, bg: C.purpleL },
+  // R7gb P0-8 — "operative" tile removed. It duplicated procedure + postop,
+  // had no dedicated form/state/save handler, and exposing it let users
+  // open a non-functional editor. The print builder at
+  // TYPE_BUILDERS.operative is retained for any legacy noteDetails.
 ];
 
 const NOTE_STYLE = {
@@ -1274,11 +1276,51 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
 </style>`;
 
     // Single key-value cell helper for the 2-col grid
+    // R7gb P0-3a — guard against [object Object] when value is a plain
+    // object (e.g. nabh.codeStatus = { value, discussedWith, limitations },
+    // comorbid toggle map, riskAcknowledgement). Extract .value/.text/.name,
+    // flatten arrays, or pretty-print key:val pairs.
     const _kv = (label, value, isFull = false) => {
       if (value === undefined || value === null || value === "") return "";
-      const v = typeof value === "string" && ISO_RX.test(value)
-        ? new Date(value).toLocaleString("en-IN", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" })
-        : String(value);
+      let v;
+      if (typeof value === "string") {
+        v = ISO_RX.test(value)
+          ? new Date(value).toLocaleString("en-IN", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" })
+          : value;
+      } else if (Array.isArray(value)) {
+        const flat = value.map(x => (x && typeof x === "object")
+          ? (x.value || x.text || x.name || x.label || JSON.stringify(x))
+          : String(x)).filter(Boolean);
+        if (!flat.length) return "";
+        v = flat.join(", ");
+      } else if (typeof value === "object") {
+        const scalar = value.value ?? value.text ?? value.name ?? value.label;
+        if (scalar !== undefined && scalar !== null && scalar !== "") {
+          v = String(scalar);
+          const extras = Object.entries(value)
+            .filter(([k, val]) => !["value","text","name","label"].includes(k)
+              && val !== undefined && val !== null && val !== ""
+              && typeof val !== "object")
+            .map(([k, val]) => `${k}: ${val}`);
+          if (extras.length) v += ` (${extras.join("; ")})`;
+        } else {
+          const entries = Object.entries(value)
+            .filter(([, val]) => val !== undefined && val !== null && val !== "" && val !== false)
+            .map(([k, val]) => {
+              if (val === true) return k;
+              if (typeof val === "object") {
+                const inner = val.value ?? val.text ?? val.name ?? val.label;
+                return inner ? `${k}: ${inner}` : k;
+              }
+              return `${k}: ${val}`;
+            });
+          if (!entries.length) return "";
+          v = entries.join("; ");
+        }
+      } else {
+        v = String(value);
+      }
+      if (v === "" || v === "[object Object]") return "";
       return `<div${isFull ? ' class="full"' : ''}><span class="lbl">${escapeHtml(label)}</span><span class="val">${escapeHtml(v)}</span></div>`;
     };
     const _section = (title, color, bodyHtml) => bodyHtml
@@ -1315,6 +1357,10 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
 
       // ─── ICU (COP.5) ───────────────────────────────────────────────
       icu: () => {
+        // R7gb P0-5 — NABH COP.5 Bundle Compliance: all 5 rows MUST
+        // render. Missing or false bundle elements are the precise
+        // audit signal; dropping them hides VAP/DVT/stress-ulcer/
+        // glycaemic gaps from reviewers.
         const bc = nd.bundleCompliance || {};
         const bcRows = [
           ["VAP — HOB Elevated ≥30°", bc.vapHobElevated],
@@ -1322,10 +1368,24 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
           ["DVT Prophylaxis", bc.dvtProphylaxis],
           ["Stress-ulcer Prophylaxis", bc.stressUlcerProphylaxis],
           ["Glycaemic Control", bc.glucoseControl],
-        ].filter(r => r[1]);
-        const bundleTable = bcRows.length
-          ? `<table class="rfx-tbl"><tr><th>NABH COP.5 Bundle Element</th><th>Status / Intervention</th></tr>${bcRows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td><strong>${escapeHtml(String(r[1]))}</strong></td></tr>`).join("")}</table>`
-          : "";
+        ];
+        const bundleTable = `<table class="rfx-tbl"><tr><th>NABH COP.5 Bundle Element</th><th>Status / Intervention</th></tr>${bcRows.map(r => {
+            const raw = r[1];
+            let cellHtml;
+            if (raw === undefined || raw === null || raw === "") {
+              cellHtml = `<strong style="color:#dc2626">✗ NOT DONE</strong>`;
+            } else if (raw === false) {
+              cellHtml = `<strong style="color:#dc2626">✗ NOT DONE</strong>`;
+            } else {
+              const v = String(raw).toLowerCase();
+              if (v === "false" || v.includes("not done") || v.includes("✗")) {
+                cellHtml = `<strong style="color:#dc2626">✗ NOT DONE</strong> ${escapeHtml(String(raw))}`;
+              } else {
+                cellHtml = `<strong>${escapeHtml(String(raw))}</strong>`;
+              }
+            }
+            return `<tr><td>${escapeHtml(r[0])}</td><td>${cellHtml}</td></tr>`;
+          }).join("")}</table>`;
         const icuPanel = _section("ICU Snapshot", "#dc2626", _grid([
           _kv("Ventilator Status", nd.ventilatorStatus),
           _kv("Vasopressors", nd.vasopressors),
@@ -1410,12 +1470,24 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
 
       // ─── DEATH (COP.19) — MCCD chain, NO SOAP ──────────────────────
       death: () => {
+        // R7gb P0-6/P0-7 — death-note compliance: certifier MCI reg always
+        // present in pronouncement; Family Informed + Administrative
+        // sections force-render with "— NOT DOCUMENTED —" red placeholder
+        // so a blank section never silently masks a NABH COP.19 gap.
+        const _kvReq = (label, value, isFull = false) => {
+          const has = value !== undefined && value !== null && value !== "";
+          if (has) return _kv(label, value, isFull);
+          return `<div${isFull ? ' class="full"' : ''}><span class="lbl">${escapeHtml(label)}</span><span class="val" style="color:#b91c1c;font-weight:600">— NOT DOCUMENTED —</span></div>`;
+        };
+        const _sectionReq = (title, color, cells) =>
+          `<div class="rfx-h" style="background:${color}20;color:${color};border-left:3px solid ${color}">${escapeHtml(title)}</div><div class="rfx-grid">${cells.join("")}</div>`;
         const banner = `<div class="rfx-banner" style="background:#fef2f2;color:#991b1b;border:2px solid #dc2626;text-align:center">DEATH SUMMARY · NABH COP.19 · WHO MCCD</div>`;
         const headline = _section("Pronouncement", "#dc2626", _grid([
           _kv("Time of Death", nd.timeOfDeath || nd.dateTime),
           _kv("Mode of Death", nd.modeOfDeath),
           _kv("Place of Death", nd.placeOfDeath),
           _kv("Pronounced By", nd.certifiedBy || note.signedByName),
+          _kv("Certifier Reg No", nd.certifiedByReg || note.signedByReg || note.doctorRegNo),
         ]));
         // MCCD cause-of-death chain
         const mccdRows = [
@@ -1429,19 +1501,23 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
           : "";
         const mccd = _section("Cause of Death (MCCD)", "#dc2626", mccdTable);
         const seq = nd.sequenceOfEvents ? _section("Sequence of Events", "#475569", _narr(nd.sequenceOfEvents)) : "";
-        const family = _section("Family Informed", "#475569", _grid([
-          _kv("Family Member", nd.familyInformed),
-          _kv("Informed By", nd.familyInformedBy),
-          _kv("Informed At", nd.familyInformedTime),
-        ]));
-        const admin = _section("Administrative", "#475569", _grid([
-          _kv("MLC Required", nd.mlcRequired || nd.mlc),
-          _kv("DNR in Place", nd.dnrInPlace),
-          _kv("PM Advised", nd.pmAdvised),
-          _kv("PM Done", nd.postMortemDone),
-          _kv("Certificate No", nd.deathCertificateNumber),
-          _kv("Body Disposition", nd.bodyDisposition, true),
-        ]));
+        // R7gb P0-7 — force-render Family Informed + Administrative with
+        // red placeholders for any missing field. Blank sections were
+        // previously elided entirely, masking NABH COP.19 documentation
+        // gaps as compliance.
+        const family = _sectionReq("Family Informed", "#475569", [
+          _kvReq("Family Member", nd.familyInformed),
+          _kvReq("Informed By", nd.familyInformedBy),
+          _kvReq("Informed At", nd.familyInformedTime),
+        ]);
+        const admin = _sectionReq("Administrative", "#475569", [
+          _kvReq("MLC Required", nd.mlcRequired || nd.mlc),
+          _kvReq("DNR in Place", nd.dnrInPlace),
+          _kvReq("PM Advised", nd.pmAdvised),
+          _kvReq("PM Done", nd.postMortemDone),
+          _kvReq("Certificate No", nd.deathCertificateNumber),
+          _kvReq("Body Disposition", nd.bodyDisposition, true),
+        ]);
         const finalDx = note.finalDiagnosis ? _section("Final Diagnosis", "#0f172a", `<p style="font-size:12px;margin:0">${escapeHtml(note.finalDiagnosis)}${note.icd10Code ? ` · ${escapeHtml(note.icd10Code)}` : ""}</p>`) : "";
         return { bodyHtml: compactGridCss + banner + headline + mccd + seq + finalDx + family + admin, suppressSoap: true, suppressGenericDetails: true };
       },
@@ -1520,7 +1596,10 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
           _kv("Anaesthetist", nd.anaesthetist),
           _kv("Consent Obtained", nd.consentObtained),
         ]));
-        // NON-collapsible WHO checklist tickbox table
+        // NON-collapsible WHO checklist tickbox table — R7gb P0-4: NABH
+        // COP.13 requires ALL rows render unconditionally. false → ✗ NOT
+        // CHECKED (red), null/undefined → — NOT RECORDED — (red).
+        // Dropping unchecked rows masks safety gaps as compliance.
         const ck = nd.preopChecklist || {};
         const checklistRows = [
           ["Patient identity confirmed", ck.identityConfirmed],
@@ -1530,17 +1609,26 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
           ["Blood available (if needed)", ck.bloodAvailable],
           ["Imaging available", ck.imagingAvailable],
           ["Anaesthetist review complete", ck.anaesthetistReview],
-        ].filter(r => r[1]);
-        const checklistTable = checklistRows.length
-          ? `<table class="rfx-tbl"><tr><th style="width:65%">WHO Safety Sign-In Item</th><th style="width:35%">Status</th></tr>${checklistRows.map(r => {
-              const v = String(r[1]).toLowerCase();
-              const icon = v.includes("yes") || v.includes("✓") ? "✓"
-                         : v.includes("no") || v.includes("✗") ? "✗"
-                         : v === "n/a" || v.includes("n/a") ? "N/A" : "✓";
-              const color = icon === "✓" ? "#16a34a" : icon === "✗" ? "#dc2626" : "#475569";
-              return `<tr><td>${escapeHtml(r[0])}</td><td><strong style="color:${color};font-size:13px">${icon}</strong> ${escapeHtml(String(r[1]))}</td></tr>`;
-            }).join("")}</table>`
-          : "";
+        ];
+        const checklistTable = `<table class="rfx-tbl"><tr><th style="width:65%">WHO Safety Sign-In Item</th><th style="width:35%">Status</th></tr>${checklistRows.map(r => {
+            const raw = r[1];
+            let cellHtml;
+            if (raw === undefined || raw === null || raw === "") {
+              cellHtml = `<strong style="color:#dc2626;font-size:13px">— NOT RECORDED —</strong>`;
+            } else if (raw === false) {
+              cellHtml = `<strong style="color:#dc2626;font-size:13px">✗ NOT CHECKED</strong>`;
+            } else {
+              const v = String(raw).toLowerCase();
+              if (v === "false" || v.includes("not done") || v.includes("not checked") || v.includes("✗")) {
+                cellHtml = `<strong style="color:#dc2626;font-size:13px">✗ NOT CHECKED</strong> ${escapeHtml(String(raw))}`;
+              } else if (v === "n/a" || v.includes("n/a")) {
+                cellHtml = `<strong style="color:#475569;font-size:13px">N/A</strong> ${escapeHtml(String(raw))}`;
+              } else {
+                cellHtml = `<strong style="color:#16a34a;font-size:13px">✓</strong> ${escapeHtml(String(raw))}`;
+              }
+            }
+            return `<tr><td>${escapeHtml(r[0])}</td><td>${cellHtml}</td></tr>`;
+          }).join("")}</table>`;
         const checklist = _section("WHO Safety Checklist (Non-collapsible)", "#0891b2", checklistTable);
         const vitals = nd.preopVitals ? _section("Pre-op Vitals", "#475569", _narr(nd.preopVitals)) : vitalsHtml;
         return { bodyHtml: compactGridCss + banner + proc + nbm + anaes + checklist + vitals, suppressSoap: true, suppressGenericDetails: true };
@@ -1570,16 +1658,35 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
         // Honour note.section if present (doctor/nursing/both)
         const docPayload = nd.doctor || nd;       // R7fa split
         const nabh      = docPayload.nabh || {};
-        const allergiesBanner = (docPayload.allergies?.knownAllergies || docPayload.allergies?.list?.length || docPayload.allergies)
-          ? `<div class="rfx-banner" style="background:#fef2f2;color:#991b1b;border:2px solid #dc2626;text-align:center">⚠ ALLERGIES: ${escapeHtml(
-              Array.isArray(docPayload.allergies?.list) ? docPayload.allergies.list.join(", ")
-                : docPayload.allergies?.knownAllergies || String(docPayload.allergies || "")
-            )}</div>` : "";
+        // R7gb P0-3b — allergies banner: form persists docAllergy (string) +
+        // nabh.allergies.list (array). Old code only read
+        // docPayload.allergies which never existed → banner never fired.
+        // Read all known shapes; also surface NKDA confirmation.
+        const allergyText = (() => {
+          if (Array.isArray(nabh.allergies?.list) && nabh.allergies.list.length) {
+            return nabh.allergies.list.map(a => (a && typeof a === "object") ? (a.name || a.value || a.text || JSON.stringify(a)) : String(a)).join(", ");
+          }
+          if (docPayload.docAllergy && String(docPayload.docAllergy).trim()) return String(docPayload.docAllergy);
+          if (Array.isArray(docPayload.allergies?.list) && docPayload.allergies.list.length) {
+            return docPayload.allergies.list.map(a => (a && typeof a === "object") ? (a.name || a.value || a.text || JSON.stringify(a)) : String(a)).join(", ");
+          }
+          if (docPayload.allergies?.knownAllergies) return String(docPayload.allergies.knownAllergies);
+          if (typeof docPayload.allergies === "string" && docPayload.allergies.trim()) return docPayload.allergies;
+          return "";
+        })();
+        const allergyNkda = nabh.allergies?.noKnown || docPayload.allergies?.noKnown;
+        const allergiesBanner = allergyText
+          ? `<div class="rfx-banner" style="background:#fef2f2;color:#991b1b;border:2px solid #dc2626;text-align:center">⚠ ALLERGIES: ${escapeHtml(allergyText)}</div>`
+          : allergyNkda
+          ? `<div class="rfx-banner" style="background:#ecfdf5;color:#065f46;border:2px solid #10b981;text-align:center">✓ NKDA — No Known Drug Allergies</div>`
+          : "";
         const chiefComplaint = _section("Chief Complaint & HPI", "#0d9488", _grid([
-          _kv("Chief Complaint", docPayload.chiefComplaint || docPayload.docCC, true),
-          _kv("Duration", docPayload.duration || docPayload.ccDuration),
+          _kv("Chief Complaint", nabh.chiefComplaint || docPayload.chiefComplaint || docPayload.docCC, true),
+          _kv("Duration", nabh.ccDuration || docPayload.duration || docPayload.ccDuration),
           _kv("Mode of Admission", docPayload.admissionMode || docPayload.modeOfAdmission),
-          _kv("HPI", docPayload.hpi, true),
+          // R7gb P0-1 — form persists `hopi` not `hpi`; also fall back to
+          // top-level historyOfPresentIllness (mirrored at save time)
+          _kv("HPI", docPayload.hpi || docPayload.hopi || note.historyOfPresentIllness, true),
         ]));
         const pmh = _section("Past History", "#475569", _grid([
           _kv("Past Medical", docPayload.pastMedical || docPayload.pmh, true),
@@ -1594,11 +1701,15 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
         ]));
         const dx = _section("Diagnosis & Plan", "#d97706", _grid([
           _kv("Provisional Dx", docPayload.provDx || docPayload.provisionalDx || note.provisionalDiagnosis),
-          _kv("Working Dx", docPayload.workingDx || note.workingDiagnosis),
-          _kv("Differential Dx", docPayload.differentialDx),
+          // R7gb P0-2 — promote nabh.* to PRIMARY lookup. Form persists
+          // working/differential/comorbidities under noteDetails.doctor.nabh.*,
+          // not at docPayload top level. Previous order read docPayload.*
+          // first so these cells stayed blank even when filled.
+          _kv("Working Dx", nabh.workingDx || docPayload.workingDx || note.workingDiagnosis),
+          _kv("Differential Dx", nabh.differentialDx || docPayload.differentialDx),
           _kv("Final Dx", docPayload.finalDx || note.finalDiagnosis),
           _kv("ICD-10", docPayload.icd10 || note.icd10Code),
-          _kv("Comorbidities", docPayload.comorbidities),
+          _kv("Comorbidities", nabh.comorbidities || docPayload.comorbidities),
           _kv("Code Status", nabh.codeStatus || docPayload.codeStatus),
           _kv("Goal of Care", nabh.goalOfCare || docPayload.goalOfCare),
           _kv("ELOS (days)", nabh.elosDays || docPayload.elosDays),

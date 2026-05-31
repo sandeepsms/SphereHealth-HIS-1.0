@@ -71,12 +71,21 @@ const CompleteIPDFile = ({ settings = {}, receipt = {} }) => {
   const file   = normalizeFileData(receipt);
   const events = buildChronologicalEvents(file);
 
+  /* R7gb P0-12 — viewer role propagation. CompletePatientFilePage
+     stuffs the authenticated user's RBAC role into the receipt
+     (`receipt.viewerRole`) before openPrint(). Themes use this for
+     defence-in-depth gating on PHI-heavy sections like Activity Log.
+     Defaults to "" so demo / pop-up flows without a logged-in user
+     see a minimal, PHI-safe print. */
+  const viewerRole = String(receipt?.viewerRole || "").toLowerCase();
+
   return (
     <Theme
       settings={settings}
       receipt={receipt}   // still passed for backward-compat / niche fields
       file={file}
       events={events}
+      viewerRole={viewerRole}
     />
   );
 };

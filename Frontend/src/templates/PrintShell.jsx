@@ -115,8 +115,33 @@ export default function PrintShell(props) {
   const headerColor = hospital.printHeaderColor || "#1e3a8a";
   const styleVars = { "--pf-header-color": headerColor };
 
+  /* R7gb P0-13 — running-header source strings for CSS Paged Media.
+     The @page rules in printShell.css read these via `string-set` so
+     every printed sheet carries hospital + patient + UHID. Hooks pull
+     from opts.patient.runningHeader when caller pre-computed canonical
+     values; otherwise fall back to scanning the patient strip. */
+  const rh = opts.patient?.runningHeader || {};
+  const findKV = (lbl) => {
+    const all = [...(patient.left || []), ...(patient.right || [])];
+    const hit = all.find((kv) => String(kv.label || "").toLowerCase().includes(lbl));
+    return hit ? String(hit.value || "") : "";
+  };
+  const rhHospital = rh.hospital || hospital.name || hospital.hospitalName || "Hospital";
+  const rhPatient  = rh.patient  || findKV("patient") || "";
+  const rhUhid     = rh.uhid     || findKV("uhid")    || "";
+  const rhDocTitle = rh.docTitle || docTitle || "";
+
   return (
     <div className="pf-page" style={styleVars}>
+      {/* R7gb P0-13 — hidden source strings the @page running headers
+          read via CSS `string-set`. Must render BEFORE visible content
+          so the first page gets correct values too. */}
+      <div className="pf-page-strings" aria-hidden="true">
+        <span className="pf-page-string-hospital">{rhHospital}</span>
+        <span className="pf-page-string-patient">{rhPatient}</span>
+        <span className="pf-page-string-uhid">{rhUhid}</span>
+        <span className="pf-page-string-doctitle">{rhDocTitle}</span>
+      </div>
       {/* 1. Triple-zone header */}
       <header className="pf-header">
         <div className="pf-header-left">
@@ -312,6 +337,26 @@ export function buildPrintShellHtml(opts = {}) {
   const headerColor = hospital.printHeaderColor || "#1e3a8a";
   const bodyHtml = opts.bodyHtml || "";
 
+  /* R7gb P0-13 — running-header source strings for the HTML helper.
+     Same contract as the React component above. */
+  const rh = opts.patient?.runningHeader || {};
+  const findKV = (lbl) => {
+    const all = [...(patient.left || []), ...(patient.right || [])];
+    const hit = all.find((kv) => String(kv.label || "").toLowerCase().includes(lbl));
+    return hit ? String(hit.value || "") : "";
+  };
+  const rhHospital = rh.hospital || hospital.name || hospital.hospitalName || "Hospital";
+  const rhPatient  = rh.patient  || findKV("patient") || "";
+  const rhUhid     = rh.uhid     || findKV("uhid")    || "";
+  const rhDocTitle = rh.docTitle || docTitle || "";
+  const pageStrings = `
+    <div class="pf-page-strings" aria-hidden="true">
+      <span class="pf-page-string-hospital">${esc(rhHospital)}</span>
+      <span class="pf-page-string-patient">${esc(rhPatient)}</span>
+      <span class="pf-page-string-uhid">${esc(rhUhid)}</span>
+      <span class="pf-page-string-doctitle">${esc(rhDocTitle)}</span>
+    </div>`;
+
   const headerLeft = `
     <div class="pf-header-left">
       ${hospital.logo ? `<img src="${esc(hospital.logo)}" alt="" class="pf-logo" />` : ""}
@@ -441,6 +486,7 @@ export function buildPrintShellHtml(opts = {}) {
 
   const page = `
     <div class="pf-page" style="--pf-header-color:${esc(headerColor)};">
+      ${pageStrings}
       <header class="pf-header">
         ${headerLeft}
         ${headerCenter}

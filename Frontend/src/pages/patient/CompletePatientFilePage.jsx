@@ -4268,7 +4268,46 @@ export default function CompletePatientFilePage() {
                 doctorNotes:     regularDoctorNotes,
                 nursingNotes:    regularNursingNotes,
                 medications:     data.medications    || data.treatmentChart || [],
-                procedures:      data.procedures     || [],
+                // R7gb P0-9: backend never returns data.procedures;
+                // synthesise from doctor + nurse notes whose noteType
+                // matches the procedure regex used by
+                // ProcedureNotesSection. Include actor/date/payload so
+                // Narrative.procedures can render name + surgeon +
+                // findings instead of "—".
+                procedures: (() => {
+                  const PROC_TYPES = /procedure|operative|preop|postop/i;
+                  const fromDocs = allDoctorNotes
+                    .filter(n => PROC_TYPES.test(n.noteType || ""))
+                    .map(n => ({
+                      name:        n.noteDetails?.procedureName || n.noteType,
+                      date:        n.visitDate || n.createdAt,
+                      surgeon:     n.doctorName || n.signedByName || "",
+                      anaesthetist:n.noteDetails?.anaesthetist || n.noteDetails?.anesthetist || "",
+                      findings:    n.noteDetails?.findings || n.noteDetails?.outcome || "",
+                      notes:       n.noteDetails?.notes || n.remarks || n.note || "",
+                      indication:  n.noteDetails?.indication || n.provisionalDiagnosis || "",
+                      role:        "Doctor",
+                      signedBy:    n.signedByName,
+                      signedAt:    n.signedAt,
+                    }));
+                  const fromNurses = allNursingNotes
+                    .filter(n => PROC_TYPES.test(n.noteType || ""))
+                    .map(n => ({
+                      name:        n.noteData?.procedureName || n.noteType,
+                      date:        n.visitDate || n.noteDate || n.createdAt,
+                      surgeon:     n.nurseName || n.signedByName || "",
+                      anaesthetist:"",
+                      findings:    n.noteData?.findings || n.noteData?.outcome || "",
+                      notes:       n.noteData?.notes || n.remarks || "",
+                      indication:  n.noteData?.indication || "",
+                      role:        "Nurse",
+                      signedBy:    n.signedByName,
+                      signedAt:    n.submittedAt,
+                    }));
+                  return [...fromDocs, ...fromNurses].sort(
+                    (a, b) => new Date(a.date || 0) - new Date(b.date || 0)
+                  );
+                })(),
                 consents:        data.consents       || [],
 
                 /* R7ft-FIX2 — comprehensive clinical record. Every
@@ -4286,11 +4325,39 @@ export default function CompletePatientFilePage() {
                 nursingAssessments:  Array.isArray(data.nursingAssessments)  ? data.nursingAssessments  : [],
                 nursingCarePlans:    Array.isArray(data.nursingCarePlans)    ? data.nursingCarePlans    : [],
                 bedTransfers:        Array.isArray(data.bedTransfers)        ? data.bedTransfers        : [],
-                bloodTransfusion:    Array.isArray(data.bloodTransfusion)    ? data.bloodTransfusion    : [],
+                // R7gb P0-10: on-page Blood Transfusion section also
+                // scans nurse notes via matchBlood(noteData) — many
+                // transfusion events are saved as nurse-note payloads,
+                // not in the dedicated bloodTransfusion collection.
+                // Mirror that scan into the receipt.
+                bloodTransfusion: (() => {
+                  const dedicated = Array.isArray(data.bloodTransfusion) ? data.bloodTransfusion : [];
+                  const fromNurseNotes = allNursingNotes
+                    .filter(n => matchBlood(n.noteData))
+                    .map(n => ({
+                      ...n.noteData,
+                      startedAt:        n.visitDate || n.noteDate || n.createdAt,
+                      createdAt:        n.createdAt,
+                      transfusedByName: n.nurseName || n.signedByName || "",
+                      _source:          "nurseNote",
+                    }));
+                  return [...dedicated, ...fromNurseNotes].sort(
+                    (a, b) => new Date(a.startedAt || a.createdAt || 0) - new Date(b.startedAt || b.createdAt || 0)
+                  );
+                })(),
                 dietPlans:           Array.isArray(data.dietPlans)           ? data.dietPlans           : [],
                 icuBundles:          Array.isArray(data.icuBundles)          ? data.icuBundles          : [],
                 mlc:                 Array.isArray(data.mlc)                 ? data.mlc                 : [],
-                activityLog:         Array.isArray(data.activityLog)         ? data.activityLog         : [],
+                // R7gb P0-11: surface backend bills so the Narrative
+                // bills section is wired.
+                bills:               Array.isArray(data.bills)               ? data.bills               : [],
+                // R7gb P0-12: activity log is operational/PHI-adjacent
+                // — gate to the same roles permitted on-page (line
+                // 2586). Other viewers get an empty array so the
+                // section auto-elides.
+                activityLog:         ["Admin", "Doctor", "MRD", "Accountant"].includes(viewerRole)
+                                       ? (Array.isArray(data.activityLog) ? data.activityLog : [])
+                                       : [],
 
                 /* discharge — defensive resolve: the API may return
                    dischargeSummary as either an object (singleton) or
@@ -4308,6 +4375,12 @@ export default function CompletePatientFilePage() {
 
                 printCount: 1,
                 printedAt:  new Date().toISOString(),
+
+                /* R7gb-P0-12 — viewer role propagation. CompleteIPDFile.jsx
+                   reads receipt.viewerRole and passes it to the theme as a
+                   first-class prop so PHI-heavy sections (Activity Log,
+                   MLC) can gate by role. Lowercase canonical form. */
+                viewerRole: String(viewerRole || "").toLowerCase(),
               };
               return receipt;
             };
