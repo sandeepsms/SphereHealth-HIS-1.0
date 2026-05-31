@@ -4320,26 +4320,21 @@ export default function CompletePatientFilePage() {
               }
             };
             return {
-              // R7fz — Print Complete File now opens the SAME page in a
-              // new window with ?autoprint=1 instead of dispatching to the
-              // separate Narrative / Timeline / Executive theme system.
-              // The themes had diverged from what users see on the page —
-              // user complaint (R7fz feedback): "jaise yaha file hum dekh
-              // paa rhe hai bs inhe ko to ek printable complete file me
-              // render krke adjust krna hai". Solution: the page IS the
-              // print. printMode (see line ~4070) renders the same data
-              // through PrintSection wrappers that share the same body
-              // components (NoteList, OrdersSection, VitalsSection, etc.)
-              // — so what you see on /patient-file/<UHID> is what you
-              // print, no parallel theme to drift from.
-              //
-              // buildReceipt() is still called once to validate data is
-              // loaded (it throws otherwise), giving the same toast UX
-              // when someone hits Print before the fetch lands. The
-              // result is discarded — the printable copy reads its data
-              // from the page's own fetch.
+              // R7ga — REVERTED R7fz. R7fz routed Print through the
+              // page's own ?autoprint=1 path, which printed a literal
+              // mirror of the on-page UI — 36 pages of UI elements,
+              // role tints, sidebars and chip soup. User feedback:
+              // "this not as structered patient file" — they wanted
+              // the Narrative theme's compact structured output.
+              // Back to openPrint("ipd-file", ...) which dispatches
+              // to CompleteIPDFile.jsx → admin-picked theme. R7fy's
+              // day-wise restructure of Narrative.jsx + R7fx-A's
+              // shared improvements remain active because they were
+              // applied INSIDE the theme. fireFallback() stays as
+              // safety net for openPrint throws (pop-up blocker,
+              // sessionStorage full).
               onPrint: () => {
-                try { buildReceipt(); fireFallback(); }
+                try { openPrint("ipd-file", buildReceipt()); }
                 catch (e) { fireFallback(); }
               },
               onPrintReferral: () => {
