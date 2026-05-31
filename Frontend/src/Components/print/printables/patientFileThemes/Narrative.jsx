@@ -270,6 +270,113 @@ const rosSummary = (ros) => {
 };
 
 /* Barthel ADL render — rows + total */
+/* R7ft-FIX3 — catch-all field renderer for IA blocks.
+   The hand-mapped IA sections (Doctor + Nursing) only emit fields
+   whose key matches an alias in our pre-spec'd list. Real-world IA
+   data has many more keys (modeOfAdmit / consciousnessLevel /
+   bandAttached / docAllergy / ros / cvs / rs / abdomen / etc.) that
+   the hand-mapper misses entirely — Badal's printout rendered only
+   3 of 23 Doctor IA fields and 4 of 26 Nursing IA fields. This
+   helper walks every remaining non-empty key and emits it as a
+   labelled Para so nothing in the IA blob ever silently drops out.
+   Caller passes an `alreadyRendered` Set of keys consumed by the
+   hand-mapped pretty-printers so we don't double-render. Empty
+   strings / nulls / empty arrays / empty objects are dropped. */
+const META_KEYS_TO_HIDE = new Set([
+  "_id", "__v", "createdAt", "updatedAt",
+  "patient", "patientUHID", "patientName",
+  "ipdNo", "ipdNumber", "admissionNo", "admissionNumber",
+  "admissionId", "patientId", "doctorId", "nurseId",
+  "signedAt", "signedBy", "signedByName", "signedByReg",
+  "submittedAt", "submittedBy", "assessmentDate", "noteDate",
+  "status", "noteType", "section", "shift",
+  "doctorName", "nurseName", "regNo", "mciRegNo",
+]);
+
+const labelize = (key) => {
+  if (!key) return "";
+  return String(key)
+    .replace(/([A-Z])/g, " $1")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    // Common medical abbreviation polish
+    .replace(/\bBp Sys\b/g, "BP Systolic")
+    .replace(/\bBp Dia\b/g, "BP Diastolic")
+    .replace(/\bHopi\b/g, "HOPI")
+    .replace(/\bPmh\b/g, "Past Medical Hx")
+    .replace(/\bPsh\b/g, "Past Surgical Hx")
+    .replace(/\bFam Hx\b/g, "Family History")
+    .replace(/\bSoc Hx\b/g, "Social History")
+    .replace(/\bCvs\b/g, "CVS")
+    .replace(/\bRs\b/g, "RS (Resp)")
+    .replace(/\bCns\b/g, "CNS")
+    .replace(/\bRos\b/g, "Review of Systems")
+    .replace(/\bDvt\b/g, "DVT")
+    .replace(/\bVte\b/g, "VTE")
+    .replace(/\bAdl\b/g, "ADL")
+    .replace(/\bUhid\b/g, "UHID")
+    .replace(/\bDob\b/g, "DOB")
+    .replace(/\bIo\b/g, "I/O")
+    .replace(/\bBmi\b/g, "BMI");
+};
+
+const valueAsText = (v) => {
+  if (v == null) return "";
+  if (typeof v === "string") return v.trim();
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (v instanceof Date) return fmtDate(v);
+  if (Array.isArray(v)) {
+    return v.map((item) => {
+      if (item == null) return "";
+      if (typeof item === "string" || typeof item === "number") return String(item);
+      if (typeof item === "object") {
+        return Object.entries(item)
+          .filter(([k, vv]) => !META_KEYS_TO_HIDE.has(k) && vv != null && vv !== "")
+          .map(([k, vv]) => `${labelize(k)}: ${valueAsText(vv)}`)
+          .join(", ");
+      }
+      return String(item);
+    }).filter(Boolean).join("; ");
+  }
+  if (typeof v === "object") {
+    return Object.entries(v)
+      .filter(([k, vv]) => !META_KEYS_TO_HIDE.has(k) && vv != null && vv !== "")
+      .map(([k, vv]) => `${labelize(k)}: ${valueAsText(vv)}`)
+      .join(" · ");
+  }
+  return String(v);
+};
+
+const renderAdditionalFields = (obj, alreadyRendered = new Set()) => {
+  if (!obj || typeof obj !== "object") return null;
+  const items = [];
+  for (const [key, val] of Object.entries(obj)) {
+    if (alreadyRendered.has(key)) continue;
+    if (META_KEYS_TO_HIDE.has(key)) continue;
+    if (val == null) continue;
+    if (typeof val === "string" && !val.trim()) continue;
+    if (Array.isArray(val) && val.length === 0) continue;
+    if (typeof val === "object" && !Array.isArray(val) && !(val instanceof Date)) {
+      if (Object.keys(val).length === 0) continue;
+    }
+    const str = valueAsText(val);
+    if (!str) continue;
+    items.push({ key, label: labelize(key), value: str });
+  }
+  if (!items.length) return null;
+  return (
+    <>
+      {items.map(({ key, label, value }) => (
+        <Para key={`xtra-${key}`} style={{ marginBottom: 3 }}>
+          <strong>{label}:</strong> {value}
+        </Para>
+      ))}
+    </>
+  );
+};
+
 const barthelRows = (adl) => {
   if (!adl || typeof adl !== "object") return [];
   const items = [
@@ -635,6 +742,23 @@ const NarrativeTheme = ({ settings = {}, file, events = [] }) => {
                 {diagBlock[2] && diagBlock[2] !== diagBlock[1] ? <span><strong>Final diagnosis:</strong> {diagBlock[2]}</span> : null}
               </Para>
             )}
+            {/* R7ft-FIX3 — any IA field not surfaced by the hand-mapped
+                paragraphs above gets emitted here so a real Doctor IA
+                with 23+ keys doesn't drop to 3 lines on print. */}
+            {renderAdditionalFields(d, new Set([
+              "chiefComplaints", "cc",
+              "hopi", "historyOfPresentingIllness",
+              "pmh", "briefPmh", "pastMedicalHistory",
+              "psh", "surgicalHistory", "pastSurgicalHistory",
+              "famHx", "familyHistory",
+              "socHx", "socialHistory", "personalHistory",
+              "allergies", "docAllergy",
+              "ros", "reviewOfSystems",
+              "genExam", "generalExamination", "examination",
+              "systemic", "systemicExamination",
+              "provisionalDiagnosis", "workingDiagnosis", "finalDiagnosis",
+              "icd10", "icd10Desc",
+            ]))}
             <Para style={{ color: "#475569" }}>
               <em>Signed by: {signedBy || "—"}{signedReg ? ` (Reg: ${signedReg})` : ""}{signedAt ? ` · ${fmtDateTime(signedAt)}` : ""}</em>
             </Para>
@@ -789,6 +913,32 @@ const NarrativeTheme = ({ settings = {}, file, events = [] }) => {
                 ].filter(Boolean).join(" · ")}
               </Para>
             )}
+            {/* R7ft-FIX3 — catch-all for every remaining IA field that
+                doesn't fit one of the named buckets above. Covers the
+                ~22 fields the R7fc nurse IA captures that don't match
+                our pre-spec'd alias names (modeOfAdmit vs
+                modeOfAdmission, consciousnessLevel vs consciousness,
+                bedNo, ward, admitDate, etc.). */}
+            {renderAdditionalFields(n, new Set([
+              "modeOfAdmission", "modeOfAdmit",
+              "consciousness", "consciousnessLevel",
+              "mobility",
+              "chiefComplaint", "chiefComplaints",
+              "identification",
+              "anthropometry",
+              "allergies", "allergy",
+              "languagePreferred", "psychosocial", "familySupport",
+              "adl", "barthel",
+              "painScore", "fallRisk", "pressureUlcer", "nutritionScore",
+              "dvtRisk", "vteRisk",
+              "medicationReconciliation", "homeMedications",
+              "crossCheckAlerts",
+              "educationNeeds", "cognitiveCommunication",
+              "bowelBladder", "sleepPattern",
+              "familyCaregiver",
+              "dischargePlanning",
+              "vitals", // vitals rendered elsewhere
+            ]))}
             <Para style={{ color: "#475569" }}>
               <em>Signed by: {signedBy || "—"}{signedAt ? ` · ${fmtDateTime(signedAt)}` : ""}</em>
             </Para>
