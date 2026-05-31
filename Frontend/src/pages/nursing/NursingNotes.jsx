@@ -20,6 +20,8 @@ import { saveVitalSheet, getVitalSheet } from "../../Services/vital/vitalService
 import NursingPatientReport from "../../Components/nursing/NursingPatientReport";
 // R7cb-C: stop passing literal "SphereHealth Hospital" to NursingPatientReport.
 import useHospitalSettings from "../../Components/print/useHospitalSettings";
+// R7gc — per-type compact print for nursing notes (mirrors R7fx doctor-note pattern)
+import { printNurseNote } from "./printNurseNote";
 // R7bi — shared patient banner (Doctor + Nursing parity). Replaces the
 // inline JSX that lived here pre-R7bi (with R7bg's QR/IPD/age/diagnosis
 // enhancements now promoted into the shared component).
@@ -2371,11 +2373,11 @@ function NursingNotesContent({ selectedPatient }) {
                       <button
                         className="dnp-note__btn"
                         onClick={() => {
-                          const w = window.open('', '_blank');
-                          if (!w) return toast.error('Pop-up blocked');
-                          w.document.write(`<!doctype html><html><head><title>Nursing Note · ${note.noteType}</title><style>body{font-family:sans-serif;padding:20px;max-width:800px;margin:auto}h1{color:#1e3a8a}pre{background:#f1f5f9;padding:12px;border-radius:6px;white-space:pre-wrap}.kv{display:flex;gap:12px;padding:6px 0;border-bottom:1px dotted #cbd5e1}.k{font-weight:600;color:#64748b;min-width:140px}</style></head><body><h1>Nursing Note — ${(note.noteType||'general').toUpperCase()}</h1><div class="kv"><span class="k">Date</span><span>${new Date(note.createdAt).toLocaleString()}</span></div><div class="kv"><span class="k">Shift</span><span>${note.shift||'general'}</span></div><div class="kv"><span class="k">Nurse</span><span>${note.nurseName||'—'}</span></div><div class="kv"><span class="k">Status</span><span>${note.status||'draft'}</span></div><h2>Remarks</h2><pre>${note.remarks||'—'}</pre><h2>Module Data</h2><pre>${JSON.stringify(note.noteData||{}, null, 2)}</pre></body></html>`);
-                          w.document.close();
-                          setTimeout(() => w.print(), 300);
+                          // R7gc — use the new per-type print builder (mirrors
+                          // R7fx for doctor notes). Replaces the previous raw
+                          // JSON.stringify dump.
+                          const ok = printNurseNote(note, hospitalSettings || {});
+                          if (!ok) toast.error("Pop-up blocked");
                         }}
                       >
                         <i className="pi pi-print" style={{ fontSize: 10 }} /> Print

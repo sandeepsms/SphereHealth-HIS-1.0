@@ -1239,7 +1239,9 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
         const indexKeys = new Set(dayIndex.map((d) => d.key));
         const orderedKeys = Array.from(allKeys).sort((a, b) => a.localeCompare(b));
         // Show all days; cap to 30 for safety (large stays).
-        const showKeys = orderedKeys.slice(0, 30);
+        // R7gc — user requirement: NO truncation. Show every day with any
+        // recorded activity, no matter how long the stay.
+        const showKeys = orderedKeys;
         return (
           <>
             <SectionHeader nabh="NABH COP.6 / COP.7 / COP.2 / MOM.4">
@@ -1410,11 +1412,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                 </React.Fragment>
               );
             })}
-            {orderedKeys.length > showKeys.length ? (
-              <Para style={{ color: COL.muted, fontSize: 9 }}>
-                <em>{orderedKeys.length - showKeys.length} earlier day(s) archived on the patient record.</em>
-              </Para>
-            ) : null}
+            {/* R7gc — no truncation; every day with activity prints. */}
             <span style={{display:"none"}}>{Array.from(indexKeys).length}</span>
           </>
         );
@@ -1428,7 +1426,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
           <SectionHeader nabh="NABH COP.3">Vital Signs Trend</SectionHeader>
           <MiniTable
             headers={["Time", "BP", "Pulse", "Temp", "SpO₂", "RR", "Recorded by"]}
-            rows={(f.vitalsTrend || []).slice(-12).map((v) => [
+            // R7gc — user requirement: NO vitals truncation. Print every reading.
+            rows={(f.vitalsTrend || []).map((v) => [
               fmtDateTime(v.at),
               v.bp || "—",
               v.pulse || "—",
@@ -1439,11 +1438,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             ])}
             widths={["18%", "12%", "10%", "10%", "10%", "10%", "30%"]}
           />
-          {(f.vitalsTrend || []).length > 12 ? (
-            <Para style={{ color: COL.muted, fontSize: 9 }}>
-              <em>Showing latest 12 of {f.vitalsTrend.length} readings on file.</em>
-            </Para>
-          ) : null}
+          {/* R7gc — no truncation hint needed; we print every reading. */}
         </>
       ) : null}
 
@@ -1462,7 +1457,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
           if (e.direction === "IN") acc.in += vol;
           else if (e.direction === "OUT") acc.out += vol;
         });
-        const days = Array.from(byDay.entries()).sort((a, b) => a[0].localeCompare(b[0])).slice(-5);
+        // R7gc — user requirement: NO I/O truncation. Show every day on file.
+        const days = Array.from(byDay.entries()).sort((a, b) => a[0].localeCompare(b[0]));
         if (!days.length) return null;
         return (
           <>
@@ -1894,7 +1890,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
           <SectionHeader nabh="NABH IMS.1">Activity Log</SectionHeader>
           <MiniTable
             headers={["Timestamp", "Actor", "Action", "Summary"]}
-            rows={(f.activityLog || []).slice(-20).map((a) => [
+            // R7gc — print all audit log entries (no -20 cap).
+            rows={(f.activityLog || []).map((a) => [
               fmtDateTime(a.at),
               displayActor(a.userName),
               a.action || "—",
@@ -1902,11 +1899,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             ])}
             widths={["18%", "20%", "16%", "46%"]}
           />
-          {f.activityLog.length > 20 ? (
-            <Para style={{ color: COL.muted, fontSize: 9 }}>
-              <em>Showing latest 20 of {f.activityLog.length} entries.</em>
-            </Para>
-          ) : null}
+          {/* R7gc — full audit log, no truncation. */}
         </>
       ) : null}
 
