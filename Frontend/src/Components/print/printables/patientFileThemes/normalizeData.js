@@ -151,8 +151,15 @@ export function normalizeFileData(receipt = {}) {
       // R7ft-FIX1: noteDetails.content / noteDetails.text are common
       // shapes that R7fp-1 introduced for the new save path. Without
       // these the printout shows "Progress:" with no body.
+      // R7gb-VERIFY-FIX1: R7fx structured notes put narrative in
+      // soap.subjective/assessment/plan — fall back to those so
+      // structured death/procedure/icu/etc. notes reach the day-wise
+      // journey. Without this fallback every TYPE_BUILDER-shaped note
+      // was dropped by the .filter(n.content) below and the day-wise
+      // Clinical Journey section silently disappeared.
       content:    toStr(n.content || n.text || n.note || n.noteDetails?.content
-                       || n.noteDetails?.text || n.noteDetails?.note || n.noteDetails?.summary),
+                       || n.noteDetails?.text || n.noteDetails?.note || n.noteDetails?.summary
+                       || n.soap?.subjective || n.soap?.assessment || n.soap?.plan),
       doctorName: toStr(n.doctorName || n.signedByName),
       signedAt:   toDate(n.signedAt),
       signedBy:   toStr(n.signedBy || n.signedByName),
@@ -173,7 +180,9 @@ export function normalizeFileData(receipt = {}) {
       createdAt:  toDate(n.createdAt || n.date || n.noteDate),
       content:    toStr(n.content || n.text || n.note || n.remarks
                        || n.noteData?.content || n.noteData?.text || n.noteData?.note
-                       || n.noteData?.remarks || n.noteData?.summary),
+                       || n.noteData?.remarks || n.noteData?.summary
+                       // R7gb-VERIFY-FIX1 — see doctor mapper above
+                       || n.soap?.subjective || n.soap?.assessment),
       nurseName:  toStr(n.nurseName || n.signedByName),
       shift:      toStr(n.shift),
       signedAt:   toDate(n.signedAt || n.submittedAt),
