@@ -214,6 +214,26 @@ const HospitalSettingsSchema = new mongoose.Schema(
     showQrOnBills:    { type: Boolean, default: false },
     qrPayloadType:    { type: String, enum: ["billUrl","upiLink","none"], default: "billUrl" },
 
+    /* ───────────────────────────────────────────────────────────
+       R7ft: Patient-file print theme — 5 design templates.
+       Admin picks one in Hospital Settings; CompleteIPDFile.jsx
+       delegates rendering to the chosen theme component.
+         • narrative — Apollo/Fortis discharge-letter prose
+         • timeline  — chronological day-diary feed
+         • executive — Max/Tirath 2-col dense brief
+         • audit     — NABH inspector tabular
+         • editorial — Glossy VIP magazine layout
+       All 5 themes consume the same normalized data shape so swapping
+       is just-a-render-difference, never a data-fetch difference.
+       Default is "narrative" — best mix of brand impression + read-
+       ability + page-count for tier-2/3 hospitals.
+       ─────────────────────────────────────────────────────────── */
+    patientFilePrintTheme: {
+      type: String,
+      enum: ["narrative","timeline","executive","audit","editorial"],
+      default: "narrative",
+    },
+
     // Bill footer
     billFooterNote: { type: String, default: "Thank you for choosing our hospital." },
     termsLine1:     { type: String, default: "This is a computer-generated bill and does not require a physical signature." },

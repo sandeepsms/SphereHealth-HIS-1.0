@@ -107,7 +107,18 @@ export const PRINTABLES = {
   // ── Clinical ──────────────────────────────────────────
   "opd-prescription": { component: OPDPrescription,   title: "OPD Prescription (Rx)",     defaultPaper: "a4"      },
   "discharge-summary":{ component: DischargeSummary,  title: "Discharge Summary",         defaultPaper: "a4"      },
-  "ipd-file":         { component: CompleteIPDFile,   title: "Complete IPD File",         defaultPaper: "a4"      },
+  "ipd-file":             { component: CompleteIPDFile, title: "Complete IPD File (uses admin-picked theme)", defaultPaper: "a4" },
+  // R7ft — 5 theme-forced preview slugs for the print gallery.
+  // Each one hardcodes ?theme=<key> via the URL when opened from the
+  // gallery card; CompleteIPDFile.jsx reads the override and ignores
+  // settings.patientFilePrintTheme so admins can compare side-by-side
+  // before picking the default. Each delegates to the SAME router →
+  // SAME data normalizer → only theme renderer changes.
+  "ipd-file-narrative":   { component: CompleteIPDFile, title: "Patient File · Narrative Letter (Apollo/Fortis prose)", defaultPaper: "a4" },
+  "ipd-file-timeline":    { component: CompleteIPDFile, title: "Patient File · Chronological Journal (day-diary)",    defaultPaper: "a4" },
+  "ipd-file-executive":   { component: CompleteIPDFile, title: "Patient File · Executive Brief (Max/Tirath 2-col)",   defaultPaper: "a4" },
+  "ipd-file-audit":       { component: CompleteIPDFile, title: "Patient File · NABH Audit Table (inspector view)",     defaultPaper: "a4" },
+  "ipd-file-editorial":   { component: CompleteIPDFile, title: "Patient File · Editorial Magazine (glossy VIP)",      defaultPaper: "a4" },
   "mar-sheet":        { component: MARSheet,          title: "MAR Sheet · Daily",         defaultPaper: "a4"      },
   "doctor-order":     { component: DoctorOrderSheet,  title: "Doctor's Order Sheet",      defaultPaper: "a4"      },
   "lab-report":       { component: LabReport,         title: "Laboratory Report",         defaultPaper: "a4"      },

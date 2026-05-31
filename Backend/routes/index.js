@@ -103,6 +103,12 @@ router.use("/client-errors",    clientErrorRateLimit, require("./Admin/clientErr
 // layer (60 lookups/min/IP).
 router.use("/pincode", require("./Common/pincodeRoutes"));
 
+// R7fs: hospital-settings GET is PUBLIC (login page + first-paint
+// sidebar/header need hospital name+logo BEFORE the JWT exists).
+// The route file scopes auth itself: GET = open, PUT = local
+// authenticate + requireAction("settings.write").
+router.use("/hospital-settings", hospitalSettingsRoutes);
+
 // ── Everything below requires a valid JWT ────────────────────
 router.use(authenticate);
 
@@ -197,7 +203,9 @@ router.use("/ai", aiRoutes);
 router.use("/mar", marRoutes);
 router.use("/intake-output", intakeOutputRoutes); // R7bq-3 — fluid I/O ledger
 router.use("/nursing-charges", nursingChargesRoutes);
-router.use("/hospital-settings", hospitalSettingsRoutes);
+// R7fs: hospital-settings now mounted above the global authenticate
+// (see line ~107). Do NOT re-mount here — double mount would shadow
+// the public GET with another authenticated copy.
 router.use("/vitalsheet", vitalSheetRoutes);
 
 // ── Patient File — Complete aggregator + activity feed ───────

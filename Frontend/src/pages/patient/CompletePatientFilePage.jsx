@@ -42,6 +42,13 @@ import useHospitalSettings from "../../Components/print/useHospitalSettings";
 // PrintShell now renders the canonical hospital header + footer; keeping
 // both would double-stamp every page.
 import PrintShell from "../../Components/print/PrintShell";
+// R7ft: openPrint dispatches to /print/<slug> which delegates to the
+// admin-picked patient-file theme (Narrative / Timeline / Executive /
+// Audit / Editorial). Pre-R7ft the Print Complete File button opened
+// THIS page in a popup with ?autoprint=1 → 18 pages of chip soup. The
+// new path serves a 5-7-page themed printout via PrintShell + the
+// canonical normalizeFileData() shape.
+import { openPrint } from "../../Components/print/openPrint";
 import "./patient-file.css";
 
 const BASE = API_ENDPOINTS.BASE;
@@ -4086,12 +4093,98 @@ export default function CompletePatientFilePage() {
           role={role}
           onBack={() => navigate(-1)}
           onPrint={() => {
-            const url = `/patient-file/${uhid}?role=${role}&autoprint=1`;
-            const w = window.open(url, "_blank", "noopener,width=1100,height=900");
-            if (!w || w.closed || typeof w.closed === "undefined") {
-              // Pop-up blocked — fall back to same-tab navigation
-              try { toast.warn("Pop-up blocked — opening in same tab. Use Ctrl+P to print."); } catch {}
-              setTimeout(() => { window.location.href = url; }, 500);
+            // R7ft: route the print button through openPrint() →
+            // /print/complete-ipd-file, which delegates to the admin-
+            // picked theme (Narrative / Timeline / Executive / Audit /
+            // Editorial) via CompleteIPDFile.jsx. The legacy
+            // ?autoprint=1 same-page popup is preserved as the fallback
+            // for two cases:
+            //   1) `data` hasn't loaded yet (race on first click — the
+            //      fetched payload is what we need to build the receipt)
+            //   2) openPrint throws (sessionStorage full, popup
+            //      blocker, browser quirk). We toast + fall through.
+            try {
+              if (!data) throw new Error("Patient file not loaded yet");
+              const adm = currentAdmission || data.currentAdmission || {};
+              const iaDoc   = adm.initialAssessment       || data.initialAssessment      || {};
+              const iaNurse = adm.nurseInitialAssessment  || data.nurseInitialAssessment || {};
+              const receipt = {
+                /* identity */
+                patientName: patient?.fullName || patient?.name || [patient?.firstName, patient?.lastName].filter(Boolean).join(" "),
+                uhid:        patient?.UHID || patient?.uhid || uhid,
+                ipdNo:       adm.admissionNumber || adm.ipdNo || "",
+                age:         patient?.age,
+                gender:      patient?.gender || patient?.sex,
+                mobile:      patient?.mobile || patient?.contactNumber,
+                bloodGroup:  patient?.bloodGroup,
+                completeAddress: patient?.completeAddress || patient?.address,
+
+                /* admission */
+                admissionDate:   adm.admissionDate,
+                admissionType:   adm.admissionType,
+                modeOfArrival:   adm.modeOfArrival,
+                referringDoctor: adm.referringDoctor,
+                consultantName:  adm.attendingDoctor || adm.consultantName,
+                department:      adm.department,
+                bedNumber:       adm.bedNumber,
+                wardName:        adm.wardName,
+                reasonForAdmission:   adm.reasonForAdmission || adm.reasonForVisit,
+                provisionalDiagnosis: adm.provisionalDiagnosis,
+                workingDiagnosis:     adm.workingDiagnosis,
+                finalDiagnosis:       adm.finalDiagnosis || data.dischargeSummary?.finalDiagnosis,
+                icd10:           adm.icd10 || data.dischargeSummary?.icd10,
+                icd10Desc:       adm.icd10Desc || data.dischargeSummary?.icd10Desc,
+                dischargeDate:   adm.actualDischargeDate || adm.dischargeDate,
+                totalDays:       adm.lengthOfStay || adm.totalDays,
+
+                /* alerts */
+                allergies:        data.allergies || patient?.allergyList || patient?.allergies || [],
+                isolationFlags:   adm.isolationFlags || [],
+                crossCheckAlerts: iaNurse.crossCheckAlerts || [],
+
+                /* vitals on admission (R7fp-2 surfaced these from
+                   either nurse or doctor IA — use whichever exists) */
+                vitalsOnAdmission: iaNurse.vitals || iaDoc.vitals || data.vitalsOnAdmission || {},
+                vitalsTrend:       data.vitalSheet || data.vitalsTrend || [],
+
+                /* history & exam (pulled from IA blocks since the
+                   backend already structures them there) */
+                chiefComplaints: iaDoc.chiefComplaints || adm.chiefComplaints || "",
+                history:         iaDoc.historyOfPresentingIllness || iaDoc.history || "",
+                medicalHistory:  iaDoc.briefPmh || iaNurse.briefPmh || "",
+                surgicalHistory: iaDoc.surgicalHistory || "",
+                familyHistory:   iaDoc.familyHistory || "",
+                socialHistory:   iaDoc.socialHistory || "",
+                ia: { doctor: iaDoc, nursing: iaNurse },
+
+                /* clinical events */
+                investigations:  data.investigations || [],
+                doctorNotes:     data.doctorNotes    || [],
+                nursingNotes:    data.nursingNotes   || [],
+                medications:     data.medications    || data.treatmentChart || [],
+                procedures:      data.procedures     || [],
+                consents:        data.consents       || [],
+
+                /* discharge */
+                dischargeSummary: data.dischargeSummary?.summary || data.dischargeSummary?.courseOfStay || "",
+                dischargeAdvice:  data.dischargeSummary?.advice  || "",
+                followUpDate:     data.dischargeSummary?.followUpDate,
+                dischargeCondition: data.dischargeSummary?.conditionOnDischarge,
+
+                printCount: 1,
+                printedAt:  new Date().toISOString(),
+              };
+              openPrint("ipd-file", receipt);
+            } catch (e) {
+              // Legacy fallback — same-page popup with ?autoprint=1 so
+              // the user still gets a printable view even if the new
+              // pipeline can't be reached.
+              const url = `/patient-file/${uhid}?role=${role}&autoprint=1`;
+              const w = window.open(url, "_blank", "noopener,width=1100,height=900");
+              if (!w || w.closed || typeof w.closed === "undefined") {
+                try { toast.warn("Pop-up blocked — opening in same tab. Use Ctrl+P to print."); } catch {}
+                setTimeout(() => { window.location.href = url; }, 500);
+              }
             }
           }}
         />

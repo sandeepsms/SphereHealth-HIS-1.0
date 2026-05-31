@@ -1,9 +1,24 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // R7fs-FIX: `@` → /src alias. R7fq/R7fr migration introduced
+  // `@/templates/PrintShell` imports into 9 files (6 printables + 3
+  // pages). Without this alias Vite returned 500 on each, which
+  // cascaded as "Failed to fetch dynamically imported module" on
+  // /print-gallery and any page that lazy-imports them. Convention
+  // matches Vite docs, Vue/Nuxt, most React templates.
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
+    },
+  },
   build: {
     // R7bf-J/A8-CRIT-5: aggressive vendor splitting. Pre-R7bf the
     // catch-all `vendor-misc` ballooned to 857 KB — bootstrap +
