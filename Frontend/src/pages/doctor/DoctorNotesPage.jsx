@@ -161,6 +161,23 @@ const MODULES = [
     icon: "pi-exclamation-triangle",border: "#94a3b8", color: C.slate,  bg: "#f1f5f9", dot: true },
   { id: "amendment",   label: "Amendment",             nabh: "IMS.2", description: "Late entry / correction with witness + original retained",
     icon: "pi-pencil",              border: C.amberB,  color: C.amber,  bg: C.amberL  },
+  // R7fx — print-only label entries so modDef() resolves a correct doc title
+  // for noteTypes that don't show as tile-cards. Without these, every print
+  // header read "Doctor Note — Daily Progress" regardless of type (audit P0).
+  { id: "general",     label: "General Note",          nabh: "IMS.1", description: "Free-text clinical narrative",
+    icon: "pi-file",                border: "#cbd5e1", color: C.slate,  bg: "#f8fafc" },
+  { id: "admission",   label: "Admission Note",        nabh: "AAC.1", description: "Initial in-patient admission note",
+    icon: "pi-sign-in",             border: "#93c5fd", color: C.blue,   bg: C.blueL   },
+  { id: "initial",     label: "Initial Assessment",    nabh: "COP.1", description: "NABH COP.1 first-contact in-patient assessment",
+    icon: "pi-id-card",             border: "#fcd34d", color: C.amber,  bg: C.amberL  },
+  { id: "progress",    label: "Progress Note",         nabh: "COP.1", description: "Mid-shift progress entry",
+    icon: "pi-arrow-right",         border: C.blueB,   color: C.blue,   bg: C.blueL   },
+  { id: "assessment",  label: "Reassessment Note",     nabh: "COP.1", description: "Formal re-assessment with clinical course",
+    icon: "pi-refresh",             border: C.tealB,   color: C.teal,   bg: C.tealL   },
+  { id: "discharge",   label: "Discharge Summary",     nabh: "COP.21", description: "Final discharge summary",
+    icon: "pi-check-square",        border: C.greenB,  color: C.green,  bg: C.greenL  },
+  { id: "operative",   label: "Operative Note",        nabh: "COP.13", description: "OT operative record",
+    icon: "pi-bookmark",            border: C.purpleB, color: C.purple, bg: C.purpleL },
 ];
 
 const NOTE_STYLE = {
@@ -1007,11 +1024,16 @@ ${parts.map(p=>`<div style="margin-bottom:8px;border-left:3px solid ${p[1]};padd
     })();
 
     const diagHtml = (() => {
+      // R7fx — audit P1: was dropping note.workingDiagnosis + note.icd10Code /
+      // icd10Description. Daily progress / assessment notes only carry working
+      // Dx, so the entire diagnosis section was silently missing on print.
       const parts = [];
-      if (note.provisionalDiagnosis) parts.push(`<strong>Provisional:</strong> ${note.provisionalDiagnosis}`);
-      if (note.finalDiagnosis)       parts.push(`<strong>Final:</strong> ${note.finalDiagnosis}`);
+      if (note.provisionalDiagnosis) parts.push(`<strong>Provisional:</strong> ${escapeHtml(note.provisionalDiagnosis)}`);
+      if (note.workingDiagnosis)     parts.push(`<strong>Working:</strong> ${escapeHtml(note.workingDiagnosis)}`);
+      if (note.finalDiagnosis)       parts.push(`<strong>Final:</strong> ${escapeHtml(note.finalDiagnosis)}`);
+      if (note.icd10Code)            parts.push(`<strong>ICD-10:</strong> ${escapeHtml(note.icd10Code)}${note.icd10Description ? " — " + escapeHtml(note.icd10Description) : ""}`);
       if (!parts.length) return "";
-      return `<h4 style="margin:12px 0 6px;color:#1e40af;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Diagnosis</h4><p style="font-size:12px;margin:0">${parts.join(" &nbsp;|&nbsp; ")}</p>`;
+      return `<h4 style="margin:12px 0 6px;color:#1e40af;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Diagnosis</h4><p style="font-size:12px;margin:0;line-height:1.6">${parts.join(" &nbsp;|&nbsp; ")}</p>`;
     })();
 
     const invHtml = note.investigations?.length
@@ -1115,40 +1137,103 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
       // Amendment
       originalNoteId:"Original Note",
       correction:"Correction", witness:"Witness",
+      // R7fx — drift keys surfaced by the 15-agent print audit. Adding these
+      // friendly labels means the seed-driven kv rows stop printing as raw
+      // camelCase ("Mode Of Admission", "Postop Vitals", etc.).
+      // Admission / AAC.1
+      modeOfAdmission:"Mode of Admission", broughtBy:"Brought By", firstContactTime:"First Contact Time",
+      triageCategory:"Triage Category", admittingDept:"Admitting Dept", consultantOnCall:"Consultant On-Call",
+      bedAllocated:"Bed Allocated", riskStratification:"Risk Stratification", infectionStatus:"Infection Status",
+      // Procedure / Operative
+      operator:"Operator", assistants:"Assistants", consentType:"Consent Type",
+      anatomicalSite:"Anatomical Site", asepsisMaintained:"Asepsis Maintained",
+      timeoutPerformed:"Timeout (WHO Sign-In) Performed", initialDrainage:"Initial Drainage",
+      postProcedureVitals:"Post-procedure Vitals", specimens:"Specimens", anaesthetist:"Anaesthetist",
+      // Pre-op
+      plannedProcedure:"Planned Procedure", asaClass:"ASA Class", nbmStatus:"NBM Status",
+      anaesthesiaPlan:"Anaesthesia Plan", preopVitals:"Pre-op Vitals", preopChecklist:"Pre-op Checklist",
+      // Post-op
+      postopVitals:"Post-op Vitals", consciousness:"Consciousness",
+      painScore:"Pain Score", recoveryTime:"Recovery Time", analgesia:"Analgesia",
+      wardTransferTime:"Ward Transfer Time",
+      // ICU / COP.5
+      ventilatorStatus:"Ventilator Status", sedationStatus:"Sedation Status",
+      invasiveLines:"Invasive Lines", goalsOfCare:"Goals of Care",
+      familyMeeting:"Family Meeting", bundleCompliance:"Bundle Compliance",
+      vapHobElevated:"VAP — HOB Elevated", vapOralCare:"VAP — Oral Care",
+      dvtProphylaxis:"DVT Prophylaxis", stressUlcerProphylaxis:"Stress-ulcer Prophylaxis",
+      glucoseControl:"Glucose Control",
+      // Death / COP.19 — MCCD
+      causeDeath1:"Immediate Cause (I·a)", causeDeath2:"Antecedent Cause (I·b)",
+      causeDeath3:"Underlying Cause (I·c)", contributing:"Contributing (II)",
+      sequenceOfEvents:"Sequence of Events", timeOfDeath:"Time of Death",
+      causeOfDeath:"Cause of Death", certifiedBy:"Certified By",
+      bodyDisposition:"Body Disposition", mlcRequired:"MLC Required",
+      // Discharge / COP.21
+      admissionDate:"Admission Date", dischargeDate:"Discharge Date",
+      lengthOfStay:"Length of Stay", outcome:"Outcome", disposition:"Disposition",
+      instructionsGiven:"Instructions Given", certificatesIssued:"Certificates Issued",
+      dischargeMedications:"Discharge Medications",
+      // Amendment / IMS.2
+      amendmentReason:"Amendment Reason", valueChanged:"Value Changed",
+      witnessedBy:"Witnessed By", originalNoteDate:"Original Note Date",
+      originalNoteType:"Original Note Type", complianceNote:"Compliance Note",
+      // Consultation / COP.1
+      consultReason:"Reason for Consult", consultantSeen:"Consultant Seen",
+      recommendationsAccepted:"Recommendations Accepted",
     };
     const humanizeKey = (k) => HUMAN_LBL[k] || k.replace(/([A-Z])/g, " $1").replace(/^./, c => c.toUpperCase()).trim();
     const isEmptyVal = (v) => v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
+    // R7fx — auto-format ISO timestamps so firstContactTime/startTime/endTime/
+    // signedAt no longer print as "2026-05-30T12:30:00.000Z".
+    const ISO_RX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+    const fmtVal = (v) => {
+      const s = String(v);
+      if (ISO_RX.test(s)) {
+        try { return new Date(s).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
+        catch { /* fall through */ }
+      }
+      return s;
+    };
     const renderNoteDetailsAsHtml = (obj, depth = 0) => {
       if (depth > 4 || !obj || typeof obj !== "object") return "";
       const SKIP = new Set(["medicationOrders", "infusionOrders"]); // already rendered above
       const rows = [];
       for (const [k, v] of Object.entries(obj)) {
         if (SKIP.has(k)) continue;
+        if (k.startsWith("DEMO_")) continue;          // R7fx — strip DEMO markers from print
         if (isEmptyVal(v)) continue;
         const lbl = escapeHtml(humanizeKey(k));
         if (typeof v === "boolean") {
           rows.push(`<div class="kv"><span class="lbl">${lbl}</span><span class="val">${v ? "✓ Yes" : "✗ No"}</span></div>`);
         } else if (Array.isArray(v)) {
-          // Array of primitives → join; array of objects → nested details
+          // Array of primitives → join; array of objects → always-open nested block
           if (v.every(x => typeof x !== "object" || x === null)) {
             rows.push(`<div class="kv"><span class="lbl">${lbl}</span><span class="val">${escapeHtml(v.join(", "))}</span></div>`);
           } else {
+            // R7fx-A4 CRITICAL: was <details><summary> — disclosure widget
+            // does NOT unfurl on paper, so allergies.list / medication
+            // reconciliation / nested arrays were HIDDEN in print. Always-
+            // open block now.
             const inner = v.map((x, i) => typeof x === "object" && x !== null
-              ? `<details style="margin:3px 0 3px 12px"><summary style="font-size:11px;cursor:pointer;color:#475569">${escapeHtml(String(i + 1))}</summary>${renderNoteDetailsAsHtml(x, depth + 1)}</details>`
-              : `<div class="kv" style="margin-left:12px"><span class="lbl">${i + 1}</span><span class="val">${escapeHtml(String(x))}</span></div>`
+              ? `<div style="margin:3px 0 3px 12px;padding:4px 6px;background:#fafafa;border-left:2px solid #cbd5e1"><div style="font-size:10px;font-weight:600;color:#475569;margin-bottom:2px">#${i + 1}</div>${renderNoteDetailsAsHtml(x, depth + 1)}</div>`
+              : `<div class="kv" style="margin-left:12px"><span class="lbl">#${i + 1}</span><span class="val">${escapeHtml(fmtVal(x))}</span></div>`
             ).join("");
-            rows.push(`<details style="margin:4px 0"><summary style="font-size:11px;font-weight:600;cursor:pointer;color:#1e40af">${lbl}</summary>${inner}</details>`);
+            rows.push(`<div style="margin:6px 0"><div style="font-size:11px;font-weight:700;color:#1e40af;border-bottom:1px solid #dbeafe;padding-bottom:2px;margin-bottom:3px">${lbl}</div>${inner}</div>`);
           }
         } else if (typeof v === "object") {
           // BP shorthand
           if ("systolic" in v || "diastolic" in v) {
             rows.push(`<div class="kv"><span class="lbl">${lbl}</span><span class="val">${escapeHtml((v.systolic ?? "—") + "/" + (v.diastolic ?? "—"))}</span></div>`);
           } else {
+            // R7fx-A4 CRITICAL: see above. WHO Surgical Safety Checklist
+            // (preopChecklist) and ICU bundle compliance live inside
+            // nested objects — disclosure widget would hide them on paper.
             const nested = renderNoteDetailsAsHtml(v, depth + 1);
-            if (nested) rows.push(`<details style="margin:4px 0"><summary style="font-size:11px;font-weight:600;cursor:pointer;color:#1e40af">${lbl}</summary>${nested}</details>`);
+            if (nested) rows.push(`<div style="margin:6px 0"><div style="font-size:11px;font-weight:700;color:#1e40af;border-bottom:1px solid #dbeafe;padding-bottom:2px;margin-bottom:3px">${lbl}</div>${nested}</div>`);
           }
         } else {
-          rows.push(`<div class="kv"><span class="lbl">${lbl}</span><span class="val">${escapeHtml(String(v))}</span></div>`);
+          rows.push(`<div class="kv"><span class="lbl">${lbl}</span><span class="val">${escapeHtml(fmtVal(v))}</span></div>`);
         }
       }
       return rows.join("");
@@ -1164,11 +1249,374 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
       ? `<div style="margin-top:20px;padding:10px 14px;border:1px solid #bbf7d0;border-radius:8px;background:#f0fdf4;display:flex;align-items:center;gap:10px"><div><strong style="color:#15803d;font-size:12px">✓ SIGNED & SUBMITTED</strong><br/><span style="font-size:11px;color:#166534">By: ${note.doctorName||doctorName} ${note.doctorRegNo ? "· Reg: "+note.doctorRegNo : ""} · ${note.signedAt ? new Date(note.signedAt).toLocaleString("en-IN") : noteDate}</span></div></div>`
       : `<div style="margin-top:20px;padding:8px 12px;border:1px solid #fde68a;border-radius:8px;background:#fffbeb"><strong style="color:#d97706;font-size:12px">DRAFT — Not yet signed</strong></div>`;
 
+    // R7fx — late-entry banner (NABH HIC.6). Every Badal seeded note has
+    // lateEntry:true; the rationale was being buried inside the kv dump.
+    const lateEntryBanner = note.lateEntry
+      ? `<div style="margin:8px 0 14px;padding:8px 12px;border:1px solid #fcd34d;background:#fffbeb;border-radius:6px;font-size:11px;color:#92400e;display:flex;gap:8px;align-items:flex-start">
+  <strong style="white-space:nowrap">⚠ LATE ENTRY</strong>
+  <div style="flex:1">${escapeHtml(note.lateEntryReason || "Retrospective entry — NABH HIC.6 backdated-documentation justification on file")}${note.lateEntryAt ? ` · Recorded: ${new Date(note.lateEntryAt).toLocaleString("en-IN")}` : ""}</div>
+</div>` : "";
+
+    // R7fx-B — compact 2-col KV grid used by every per-type builder. Keeps
+    // page-saving footprint: 11px labels in slate, 12px values in slate-900,
+    // 2 col so a 6-field metadata block fits in 3 rows on ~80mm of width.
+    const compactGridCss = `<style>
+  .rfx-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:11.5px;margin:6px 0 10px}
+  .rfx-grid .lbl{font-weight:600;color:#475569;font-size:10px;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:1px}
+  .rfx-grid .val{color:#0f172a;font-size:11.5px;white-space:pre-wrap}
+  .rfx-grid .full{grid-column:1 / -1}
+  .rfx-h{margin:10px 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:3px 8px;border-radius:4px}
+  .rfx-tbl{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0 8px}
+  .rfx-tbl th{padding:4px 6px;border:1px solid #cbd5e1;background:#f1f5f9;font-size:10px;text-align:left;color:#334155}
+  .rfx-tbl td{padding:4px 6px;border:1px solid #e2e8f0;color:#0f172a}
+  .rfx-narr{margin:6px 0 10px;padding:8px 12px;background:#f8fafc;border-left:3px solid #94a3b8;font-size:11.5px;white-space:pre-wrap;line-height:1.45}
+  .rfx-banner{margin:6px 0 12px;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600}
+</style>`;
+
+    // Single key-value cell helper for the 2-col grid
+    const _kv = (label, value, isFull = false) => {
+      if (value === undefined || value === null || value === "") return "";
+      const v = typeof value === "string" && ISO_RX.test(value)
+        ? new Date(value).toLocaleString("en-IN", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" })
+        : String(value);
+      return `<div${isFull ? ' class="full"' : ''}><span class="lbl">${escapeHtml(label)}</span><span class="val">${escapeHtml(v)}</span></div>`;
+    };
+    const _section = (title, color, bodyHtml) => bodyHtml
+      ? `<div class="rfx-h" style="background:${color}20;color:${color};border-left:3px solid ${color}">${escapeHtml(title)}</div>${bodyHtml}` : "";
+    const _grid = (cells) => cells.filter(Boolean).length
+      ? `<div class="rfx-grid">${cells.filter(Boolean).join("")}</div>` : "";
+    const _narr = (text) => text ? `<div class="rfx-narr">${escapeHtml(String(text))}</div>` : "";
+
+    // ── R7fx-B PER-TYPE COMPACT BUILDERS ──────────────────────────────────
+    // Each builder returns { bodyHtml, suppressSoap, suppressGenericDetails }
+    // — the assembly below uses these flags to skip the generic SOAP +
+    // Additional-Details blocks where the structured builder owns the page.
+    const nd = note.noteDetails || {};
+    const TYPE_BUILDERS = {
+      // ─── ADMISSION (AAC.1) ──────────────────────────────────────────
+      admission: () => {
+        const identityPanel = _section("Admission Identity", "#1d4ed8", _grid([
+          _kv("Mode of Admission", nd.modeOfAdmission),
+          _kv("Brought By", nd.broughtBy),
+          _kv("First Contact", nd.firstContactTime),
+          _kv("Triage Category", nd.triageCategory),
+          _kv("Admitting Dept", nd.admittingDept),
+          _kv("Consultant On-Call", nd.consultantOnCall),
+          _kv("Bed Allocated", nd.bedAllocated),
+          _kv("Risk Stratification", nd.riskStratification),
+          _kv("Infection Status", nd.infectionStatus, true),
+        ]));
+        const cc = note.soap?.subjective ? _section("Chief Complaint / HPI", "#0d9488", _narr(note.soap.subjective)) : "";
+        const exam = note.soap?.objective ? _section("Examination", "#475569", _narr(note.soap.objective)) : "";
+        const ax = note.soap?.assessment ? _section("Assessment", "#d97706", _narr(note.soap.assessment)) : "";
+        const pl = note.soap?.plan ? _section("Initial Plan", "#16a34a", _narr(note.soap.plan)) : "";
+        return { bodyHtml: compactGridCss + identityPanel + diagHtml + cc + exam + ax + pl + vitalsHtml + ordersHtml + medOrdersHtml + infOrdersHtml, suppressSoap: true, suppressGenericDetails: true };
+      },
+
+      // ─── ICU (COP.5) ───────────────────────────────────────────────
+      icu: () => {
+        const bc = nd.bundleCompliance || {};
+        const bcRows = [
+          ["VAP — HOB Elevated ≥30°", bc.vapHobElevated],
+          ["VAP — Oral Care q4h", bc.vapOralCare],
+          ["DVT Prophylaxis", bc.dvtProphylaxis],
+          ["Stress-ulcer Prophylaxis", bc.stressUlcerProphylaxis],
+          ["Glycaemic Control", bc.glucoseControl],
+        ].filter(r => r[1]);
+        const bundleTable = bcRows.length
+          ? `<table class="rfx-tbl"><tr><th>NABH COP.5 Bundle Element</th><th>Status / Intervention</th></tr>${bcRows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td><strong>${escapeHtml(String(r[1]))}</strong></td></tr>`).join("")}</table>`
+          : "";
+        const icuPanel = _section("ICU Snapshot", "#dc2626", _grid([
+          _kv("Ventilator Status", nd.ventilatorStatus),
+          _kv("Vasopressors", nd.vasopressors),
+          _kv("Sedation Status", nd.sedationStatus),
+          _kv("Invasive Lines", nd.invasiveLines, true),
+        ]));
+        const bundlePanel = _section("Bundle Compliance (NABH COP.5)", "#dc2626", bundleTable);
+        const goalsPanel = _section("Goals of Care & Family Meeting", "#475569", _grid([
+          _kv("Goals of Care", nd.goalsOfCare, true),
+          _kv("Family Meeting", nd.familyMeeting, true),
+        ]));
+        return { bodyHtml: compactGridCss + icuPanel + bundlePanel + goalsPanel + vitalsHtml + diagHtml + soapHtml, suppressSoap: true, suppressGenericDetails: true };
+      },
+
+      // ─── PROCEDURE (COP.10) ────────────────────────────────────────
+      procedure: () => {
+        const proc = _section(`Procedure — ${nd.procedureName || "—"}`, "#ea580c", _grid([
+          _kv("Indication", nd.indication, true),
+          _kv("Anatomical Site", nd.anatomicalSite),
+          _kv("Operator", nd.operator || nd.surgeon),
+          _kv("Assistants", nd.assistants || nd.assistant),
+          _kv("Consent", nd.consentType || nd.consentObtained),
+          _kv("Asepsis Maintained", nd.asepsisMaintained),
+          _kv("WHO Timeout Performed", nd.timeoutPerformed),
+        ]));
+        const out = _section("Outcome & Recovery", "#475569", _grid([
+          _kv("Complications", nd.complications, true),
+          _kv("Initial Drainage / Output", nd.initialDrainage),
+          _kv("Specimens", nd.specimens || nd.specimenSent),
+          _kv("Post-procedure Vitals", nd.postProcedureVitals, true),
+        ]));
+        const narr = (note.soap?.objective || note.soap?.assessment)
+          ? _section("Technique & Findings", "#475569", _narr([note.soap.objective, note.soap.assessment].filter(Boolean).join("\n\n")))
+          : "";
+        const postOrders = note.soap?.plan ? _section("Post-procedure Orders", "#16a34a", _narr(note.soap.plan)) : "";
+        return { bodyHtml: compactGridCss + proc + narr + out + postOrders + ordersHtml, suppressSoap: true, suppressGenericDetails: true };
+      },
+
+      // ─── CONSULTATION (COP.1) ──────────────────────────────────────
+      consultation: () => {
+        const masthead = _section("Referral Masthead", "#7c3aed", _grid([
+          _kv("From", nd.referredBy),
+          _kv("To", nd.referredTo || nd.consultantName),
+          _kv("Speciality", nd.speciality),
+          _kv("Consultant Seen", nd.consultantSeen),
+          _kv("Reason for Consult", nd.consultReason || nd.reason, true),
+        ]));
+        const summary = note.soap?.subjective ? _section("Clinical Summary", "#475569", _narr(note.soap.subjective)) : "";
+        const findings = note.soap?.objective ? _section("Findings", "#475569", _narr(note.soap.objective)) : "";
+        const imp = note.soap?.assessment ? _section("Impression", "#d97706", _narr(note.soap.assessment)) : "";
+        const recos = note.soap?.plan ? _section("Recommendations & Follow-up", "#7c3aed", _narr(note.soap.plan)) : "";
+        const loop = nd.recommendationsAccepted ? `<div style="margin-top:8px;padding:6px 10px;background:#ecfeff;border-left:3px solid #06b6d4;font-size:11px"><strong>Loop closure:</strong> ${escapeHtml(String(nd.recommendationsAccepted))}</div>` : "";
+        return { bodyHtml: compactGridCss + masthead + summary + findings + imp + recos + loop + diagHtml, suppressSoap: true, suppressGenericDetails: true };
+      },
+
+      // ─── DISCHARGE (COP.21) — compact builder ──────────────────────
+      discharge: () => {
+        const meta = _section("Discharge Summary", "#16a34a", _grid([
+          _kv("Admission Date", nd.admissionDate),
+          _kv("Discharge Date", nd.dischargeDate),
+          _kv("Length of Stay", nd.lengthOfStay),
+          _kv("Outcome", nd.outcome),
+          _kv("Disposition", nd.disposition, true),
+        ]));
+        const dx = diagHtml; // already includes final + ICD-10
+        const course = note.soap?.subjective || note.soap?.objective || note.soap?.assessment
+          ? _section("Course in Hospital", "#475569", _narr([note.soap?.subjective, note.soap?.objective, note.soap?.assessment].filter(Boolean).join("\n\n")))
+          : "";
+        const meds = nd.dischargeMedications
+          ? _section("Discharge Medications", "#1d4ed8", `<div style="font-size:11.5px;padding:6px 10px;background:#eff6ff;border-radius:4px">${escapeHtml(nd.dischargeMedications)}</div>`)
+          : medOrdersHtml;
+        const fup = Array.isArray(nd.followUp)
+          ? _section("Follow-up Plan", "#0d9488", `<ul style="margin:4px 0;padding-left:18px;font-size:11.5px">${nd.followUp.map(f => `<li>${escapeHtml(f)}</li>`).join("")}</ul>`)
+          : nd.followUp ? _section("Follow-up Plan", "#0d9488", _narr(nd.followUp))
+          : "";
+        const adv = note.soap?.plan ? _section("Discharge Instructions", "#0d9488", _narr(note.soap.plan)) : "";
+        const certs = Array.isArray(nd.certificatesIssued)
+          ? _section("Certificates Issued", "#475569", `<p style="font-size:11px;margin:0">${nd.certificatesIssued.map(escapeHtml).join(" · ")}</p>`) : "";
+        const edu = nd.instructionsGiven ? _section("Education / Counselling", "#475569", _narr(nd.instructionsGiven)) : "";
+        return { bodyHtml: compactGridCss + meta + dx + course + meds + fup + adv + edu + certs, suppressSoap: true, suppressGenericDetails: true };
+      },
+
+      // ─── DEATH (COP.19) — MCCD chain, NO SOAP ──────────────────────
+      death: () => {
+        const banner = `<div class="rfx-banner" style="background:#fef2f2;color:#991b1b;border:2px solid #dc2626;text-align:center">DEATH SUMMARY · NABH COP.19 · WHO MCCD</div>`;
+        const headline = _section("Pronouncement", "#dc2626", _grid([
+          _kv("Time of Death", nd.timeOfDeath || nd.dateTime),
+          _kv("Mode of Death", nd.modeOfDeath),
+          _kv("Place of Death", nd.placeOfDeath),
+          _kv("Pronounced By", nd.certifiedBy || note.signedByName),
+        ]));
+        // MCCD cause-of-death chain
+        const mccdRows = [
+          ["I (a) Immediate Cause", nd.causeDeath1 || nd.causeOfDeath],
+          ["I (b) Antecedent Cause", nd.causeDeath2],
+          ["I (c) Underlying Cause", nd.causeDeath3],
+          ["II Contributing Conditions", nd.contributing],
+        ].filter(r => r[1]);
+        const mccdTable = mccdRows.length
+          ? `<table class="rfx-tbl"><tr><th style="width:35%">WHO MCCD Layer</th><th>Cause</th></tr>${mccdRows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td><strong>${escapeHtml(String(r[1]))}</strong></td></tr>`).join("")}</table>`
+          : "";
+        const mccd = _section("Cause of Death (MCCD)", "#dc2626", mccdTable);
+        const seq = nd.sequenceOfEvents ? _section("Sequence of Events", "#475569", _narr(nd.sequenceOfEvents)) : "";
+        const family = _section("Family Informed", "#475569", _grid([
+          _kv("Family Member", nd.familyInformed),
+          _kv("Informed By", nd.familyInformedBy),
+          _kv("Informed At", nd.familyInformedTime),
+        ]));
+        const admin = _section("Administrative", "#475569", _grid([
+          _kv("MLC Required", nd.mlcRequired || nd.mlc),
+          _kv("DNR in Place", nd.dnrInPlace),
+          _kv("PM Advised", nd.pmAdvised),
+          _kv("PM Done", nd.postMortemDone),
+          _kv("Certificate No", nd.deathCertificateNumber),
+          _kv("Body Disposition", nd.bodyDisposition, true),
+        ]));
+        const finalDx = note.finalDiagnosis ? _section("Final Diagnosis", "#0f172a", `<p style="font-size:12px;margin:0">${escapeHtml(note.finalDiagnosis)}${note.icd10Code ? ` · ${escapeHtml(note.icd10Code)}` : ""}</p>`) : "";
+        return { bodyHtml: compactGridCss + banner + headline + mccd + seq + finalDx + family + admin, suppressSoap: true, suppressGenericDetails: true };
+      },
+
+      // ─── AMENDMENT (IMS.2) — NO SOAP, retain-original banner ───────
+      amendment: () => {
+        const banner = `<div class="rfx-banner" style="background:#fffbeb;color:#92400e;border:2px solid #f59e0b;text-align:center">CLINICAL DOCUMENT AMENDMENT · NABH IMS.2 · ORIGINAL RECORD RETAINED</div>`;
+        const origRef = _section("Original Note Reference", "#94a3b8", _grid([
+          _kv("Original Note Type", nd.originalNoteType),
+          _kv("Original Note Date", nd.originalNoteDate),
+          _kv("Original Note ID", nd.originalNoteId),
+        ]));
+        const reason = nd.amendmentReason
+          ? `<div style="margin:8px 0;padding:10px 14px;background:#fef3c7;border-left:4px solid #f59e0b;font-size:12px"><strong style="display:block;margin-bottom:4px;color:#92400e">Reason for Amendment</strong>${escapeHtml(nd.amendmentReason)}</div>` : "";
+        const changes = nd.valueChanged
+          ? _section("What Changed", "#d97706", `<div style="padding:8px 12px;background:#fff7ed;border:1px dashed #f59e0b;font-size:11.5px;white-space:pre-wrap">${escapeHtml(String(nd.valueChanged))}</div>`)
+          : nd.beforeValue && nd.afterValue
+          ? _section("What Changed", "#d97706", `<table class="rfx-tbl"><tr><th>Before</th><th>After</th></tr><tr><td>${escapeHtml(String(nd.beforeValue))}</td><td>${escapeHtml(String(nd.afterValue))}</td></tr></table>`)
+          : "";
+        const witness = _section("Witness / Co-signature", "#16a34a", _grid([
+          _kv("Witnessed By", nd.witnessedBy),
+          _kv("Compliance Note", nd.complianceNote, true),
+        ]));
+        const narr = note.soap?.assessment ? _section("Clinical Note", "#475569", _narr(note.soap.assessment)) : "";
+        return { bodyHtml: compactGridCss + banner + origRef + reason + changes + witness + narr, suppressSoap: true, suppressGenericDetails: true };
+      },
+
+      // ─── OPERATIVE (COP.13) ────────────────────────────────────────
+      operative: () => {
+        const proc = _section(`Operative Note — ${nd.procedurePerformed || nd.procedureName || "—"}`, "#7c3aed", _grid([
+          _kv("Pre-op Diagnosis", nd.preopDiagnosis),
+          _kv("Post-op Diagnosis", nd.postopDiagnosis),
+          _kv("Surgeon", nd.surgeon || nd.operator),
+          _kv("Assistants", nd.assistants || nd.assistant),
+          _kv("Anaesthetist", nd.anaesthetist),
+          _kv("Anaesthesia Type", nd.anaesthesia),
+          _kv("Start Time", nd.startTime),
+          _kv("End Time", nd.endTime),
+        ]));
+        const findings = nd.operativeFindings ? _section("Operative Findings", "#475569", _narr(nd.operativeFindings)) : "";
+        const technique = nd.technique || note.soap?.objective ? _section("Technique", "#475569", _narr(nd.technique || note.soap.objective)) : "";
+        const intra = _section("Intra-operative", "#475569", _grid([
+          _kv("Blood Loss", nd.bloodLoss),
+          _kv("Transfusion", nd.transfusion),
+          _kv("Fluids Given", nd.fluidsGiven),
+          _kv("Urine Output", nd.urineOutput),
+          _kv("Specimens", nd.specimens || nd.specimenSent, true),
+        ]));
+        const recov = (nd.complications || nd.conditionLeavingOT || nd.recoveryInstructions || nd.postopOrders)
+          ? _section("Recovery & Post-op Orders", "#16a34a", _grid([
+              _kv("Complications", nd.complications, true),
+              _kv("Condition Leaving OT", nd.conditionLeavingOT, true),
+              _kv("Recovery Instructions", nd.recoveryInstructions, true),
+              _kv("Post-op Orders", nd.postopOrders, true),
+            ]))
+          : "";
+        return { bodyHtml: compactGridCss + proc + findings + technique + intra + recov, suppressSoap: true, suppressGenericDetails: true };
+      },
+
+      // ─── PRE-OPERATIVE (COP.13) — WHO Sign-In ──────────────────────
+      preop: () => {
+        const banner = `<div class="rfx-banner" style="background:#ecfeff;color:#155e75;border:2px solid #06b6d4;text-align:center">WHO SURGICAL SAFETY CHECKLIST — SIGN-IN · Pre-operative Assessment · NABH COP.13</div>`;
+        const proc = _section("Planned Procedure", "#0891b2", _grid([
+          _kv("Planned Procedure", nd.plannedProcedure || nd.procedure, true),
+          _kv("Pre-op Diagnosis", nd.preopDiagnosis),
+          _kv("Indication", nd.indication),
+          _kv("ASA Class", nd.asaClass || nd.asaGrade),
+          _kv("Laterality", nd.laterality),
+        ]));
+        const nbm = nd.nbmStatus
+          ? `<div style="margin:8px 0;padding:8px 14px;background:#fef9c3;border:2px solid #ca8a04;border-radius:6px;font-size:13px;text-align:center;font-weight:700;color:#854d0e">NBM STATUS: ${escapeHtml(nd.nbmStatus)}</div>`
+          : "";
+        const anaes = _section("Anaesthesia Plan", "#475569", _grid([
+          _kv("Anaesthesia Plan", nd.anaesthesiaPlan, true),
+          _kv("Surgeon", nd.surgeon),
+          _kv("Anaesthetist", nd.anaesthetist),
+          _kv("Consent Obtained", nd.consentObtained),
+        ]));
+        // NON-collapsible WHO checklist tickbox table
+        const ck = nd.preopChecklist || {};
+        const checklistRows = [
+          ["Patient identity confirmed", ck.identityConfirmed],
+          ["Consent signed", ck.consentSigned],
+          ["Surgical site marked", ck.siteMarked],
+          ["Allergies reviewed", ck.allergiesReviewed],
+          ["Blood available (if needed)", ck.bloodAvailable],
+          ["Imaging available", ck.imagingAvailable],
+          ["Anaesthetist review complete", ck.anaesthetistReview],
+        ].filter(r => r[1]);
+        const checklistTable = checklistRows.length
+          ? `<table class="rfx-tbl"><tr><th style="width:65%">WHO Safety Sign-In Item</th><th style="width:35%">Status</th></tr>${checklistRows.map(r => {
+              const v = String(r[1]).toLowerCase();
+              const icon = v.includes("yes") || v.includes("✓") ? "✓"
+                         : v.includes("no") || v.includes("✗") ? "✗"
+                         : v === "n/a" || v.includes("n/a") ? "N/A" : "✓";
+              const color = icon === "✓" ? "#16a34a" : icon === "✗" ? "#dc2626" : "#475569";
+              return `<tr><td>${escapeHtml(r[0])}</td><td><strong style="color:${color};font-size:13px">${icon}</strong> ${escapeHtml(String(r[1]))}</td></tr>`;
+            }).join("")}</table>`
+          : "";
+        const checklist = _section("WHO Safety Checklist (Non-collapsible)", "#0891b2", checklistTable);
+        const vitals = nd.preopVitals ? _section("Pre-op Vitals", "#475569", _narr(nd.preopVitals)) : vitalsHtml;
+        return { bodyHtml: compactGridCss + banner + proc + nbm + anaes + checklist + vitals, suppressSoap: true, suppressGenericDetails: true };
+      },
+
+      // ─── POST-OPERATIVE (COP.14) ───────────────────────────────────
+      postop: () => {
+        const proc = _section(`Post-operative — ${nd.procedurePerformed || "—"}`, "#16a34a", _grid([
+          _kv("Procedure Performed", nd.procedurePerformed, true),
+          _kv("Post-op Diagnosis", nd.postopDiagnosis, true),
+        ]));
+        const recovery = _section("Recovery Snapshot", "#16a34a", _grid([
+          _kv("Post-op Vitals", nd.postopVitals, true),
+          _kv("Consciousness", nd.consciousness),
+          _kv("Pain Score", nd.painScore),
+          _kv("Complications", nd.complications, true),
+          _kv("Recovery Time", nd.recoveryTime),
+          _kv("Analgesia", nd.analgesia),
+          _kv("Ward Transfer Time", nd.wardTransferTime, true),
+        ]));
+        const orders = note.soap?.plan ? _section("Post-op Orders", "#1d4ed8", _narr(note.soap.plan)) : "";
+        return { bodyHtml: compactGridCss + proc + recovery + orders + ordersHtml, suppressSoap: true, suppressGenericDetails: true };
+      },
+
+      // ─── INITIAL ASSESSMENT (COP.1) — compact ─────────────────────
+      initial: () => {
+        // Honour note.section if present (doctor/nursing/both)
+        const docPayload = nd.doctor || nd;       // R7fa split
+        const nabh      = docPayload.nabh || {};
+        const allergiesBanner = (docPayload.allergies?.knownAllergies || docPayload.allergies?.list?.length || docPayload.allergies)
+          ? `<div class="rfx-banner" style="background:#fef2f2;color:#991b1b;border:2px solid #dc2626;text-align:center">⚠ ALLERGIES: ${escapeHtml(
+              Array.isArray(docPayload.allergies?.list) ? docPayload.allergies.list.join(", ")
+                : docPayload.allergies?.knownAllergies || String(docPayload.allergies || "")
+            )}</div>` : "";
+        const chiefComplaint = _section("Chief Complaint & HPI", "#0d9488", _grid([
+          _kv("Chief Complaint", docPayload.chiefComplaint || docPayload.docCC, true),
+          _kv("Duration", docPayload.duration || docPayload.ccDuration),
+          _kv("Mode of Admission", docPayload.admissionMode || docPayload.modeOfAdmission),
+          _kv("HPI", docPayload.hpi, true),
+        ]));
+        const pmh = _section("Past History", "#475569", _grid([
+          _kv("Past Medical", docPayload.pastMedical || docPayload.pmh, true),
+          _kv("Past Surgical", docPayload.pastSurgical || docPayload.psh, true),
+          _kv("Family Hx", docPayload.familyHistory || docPayload.famHx),
+          _kv("Social Hx", docPayload.socialHistory || docPayload.socHx),
+        ]));
+        const exam = _section("Examination", "#475569", _grid([
+          _kv("General Condition", docPayload.generalCondition),
+          _kv("Built / Nutrition", docPayload.builtNutrition),
+          _kv("Resp / CVS / Abdomen / CNS", [docPayload.resp || docPayload.rs, docPayload.cvs, docPayload.abdomen, docPayload.cns].filter(Boolean).join(" · "), true),
+        ]));
+        const dx = _section("Diagnosis & Plan", "#d97706", _grid([
+          _kv("Provisional Dx", docPayload.provDx || docPayload.provisionalDx || note.provisionalDiagnosis),
+          _kv("Working Dx", docPayload.workingDx || note.workingDiagnosis),
+          _kv("Differential Dx", docPayload.differentialDx),
+          _kv("Final Dx", docPayload.finalDx || note.finalDiagnosis),
+          _kv("ICD-10", docPayload.icd10 || note.icd10Code),
+          _kv("Comorbidities", docPayload.comorbidities),
+          _kv("Code Status", nabh.codeStatus || docPayload.codeStatus),
+          _kv("Goal of Care", nabh.goalOfCare || docPayload.goalOfCare),
+          _kv("ELOS (days)", nabh.elosDays || docPayload.elosDays),
+          _kv("Risk Acknowledgement", nabh.riskAcknowledgement || docPayload.riskAcknowledgement, true),
+        ]));
+        const plan = _section("Initial Treatment Plan", "#16a34a", _narr(docPayload.managementPlan || note.soap?.plan));
+        return { bodyHtml: compactGridCss + allergiesBanner + chiefComplaint + pmh + exam + vitalsHtml + dx + plan + medOrdersHtml + infOrdersHtml, suppressSoap: true, suppressGenericDetails: true };
+      },
+    };
+
+    // R7fx-B — invoke per-type builder when present
+    const builder = TYPE_BUILDERS[note.noteType];
+    const typeSpecific = typeof builder === "function" ? builder() : null;
+
     // R7fq Track C — body block (status pill row + clinical sections).
-    // The hospital header / patient strip / sig zone / footer are now
-    // owned by the shared <PrintShell>; only the medical content lives
-    // here. SOAP grid + vitals + noteDetails recursion from R7fp are
-    // preserved verbatim.
+    // R7fx — per-type compact builder takes precedence over the generic
+    // SOAP + Additional-Details flow. The generic flow stays for SOAP-shaped
+    // types (general, progress, daily, assessment) and as a fallback.
     const noteBodyHtml = `
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
     <div style="padding:5px 14px;border-radius:6px;font-size:13px;font-weight:800;background:#eff6ff;color:#1e40af">${modLabel}</div>
@@ -1176,8 +1624,10 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
     ${note.isCritical ? '<div style="padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:#fef2f2;color:#dc2626">⚠ CRITICAL EVENT</div>' : ""}
     <div style="margin-left:auto;font-size:12px;color:#64748b">Shift: <strong style="text-transform:capitalize">${shift}</strong> · Recorded: ${noteDate}</div>
   </div>
-
-  ${vitalsHtml}${soapHtml}${diagHtml}${invHtml}${ordersHtml}${medOrdersHtml}${infOrdersHtml}${tagsHtml}${noteDetailsHtml}${sigHtml}`;
+  ${lateEntryBanner}
+  ${typeSpecific ? typeSpecific.bodyHtml : `${vitalsHtml}${soapHtml}${diagHtml}${invHtml}${ordersHtml}${medOrdersHtml}${infOrdersHtml}${tagsHtml}${noteDetailsHtml}`}
+  ${tagsHtml && typeSpecific ? tagsHtml : ""}
+  ${sigHtml}`;
 
     // Consultant / Resident split for the signature zone:
     //   - Right = Consultant (note.doctorName or current doctor of record)
