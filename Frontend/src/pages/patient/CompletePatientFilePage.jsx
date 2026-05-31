@@ -109,7 +109,7 @@ function Empty({ icon = "📄", msg = "No records yet" }) {
 }
 
 /* ── Sections ───────────────────────────────────────────────── */
-function IdentityBanner({ patient, currentAdmission, role, onBack, onPrint }) {
+function IdentityBanner({ patient, currentAdmission, role, onBack, onPrint, onPrintReferral }) {
   const initials = (patient?.fullName || patient?.firstName || "P")
     .split(/\s+/).map((s) => s[0]).slice(0, 2).join("").toUpperCase();
   const age = patient?.age || patient?.dateOfBirth
@@ -148,6 +148,18 @@ function IdentityBanner({ patient, currentAdmission, role, onBack, onPrint }) {
         <div className="pf-banner__actions">
           <button className="pf-banner__btn" onClick={onBack}>← Back</button>
           <button className="pf-banner__btn pf-banner__btn--solid" onClick={onPrint}>🖨 Print Complete File</button>
+          {/* R7fv — Condensed handover for a referring physician. Same
+              receipt payload as the Complete File; the renderer subsets
+              it to first+last notes, latest MAR, consents, reports,
+              transfusions and procedures (2–4 pages). */}
+          <button
+            className="pf-banner__btn pf-banner__btn--solid"
+            style={{ marginLeft: 4 }}
+            onClick={onPrintReferral}
+            title="Condensed handover for a referring colleague (2–4 pages)"
+          >
+            🤝 Referral Summary
+          </button>
         </div>
       </div>
     </div>
@@ -4092,7 +4104,7 @@ export default function CompletePatientFilePage() {
           currentAdmission={currentAdmission}
           role={role}
           onBack={() => navigate(-1)}
-          onPrint={() => {
+          {...(() => {
             // R7ft: route the print button through openPrint() →
             // /print/complete-ipd-file, which delegates to the admin-
             // picked theme (Narrative / Timeline / Executive / Audit /
@@ -4103,7 +4115,12 @@ export default function CompletePatientFilePage() {
             //      fetched payload is what we need to build the receipt)
             //   2) openPrint throws (sessionStorage full, popup
             //      blocker, browser quirk). We toast + fall through.
-            try {
+            //
+            // R7fv — same receipt + same fallback for the Referral
+            // Summary button. Only the slug differs: "referral-summary"
+            // instead of "ipd-file". The theme component subsets the
+            // receipt; the receipt itself is identical.
+            const buildReceipt = () => {
               if (!data) throw new Error("Patient file not loaded yet");
               const adm = currentAdmission || data.currentAdmission || {};
               // R7ft-FIX1 — the real Initial Assessment blob lives in
@@ -4274,19 +4291,27 @@ export default function CompletePatientFilePage() {
                 printCount: 1,
                 printedAt:  new Date().toISOString(),
               };
-              openPrint("ipd-file", receipt);
-            } catch (e) {
-              // Legacy fallback — same-page popup with ?autoprint=1 so
-              // the user still gets a printable view even if the new
-              // pipeline can't be reached.
+              return receipt;
+            };
+            const fireFallback = () => {
               const url = `/patient-file/${uhid}?role=${role}&autoprint=1`;
               const w = window.open(url, "_blank", "noopener,width=1100,height=900");
               if (!w || w.closed || typeof w.closed === "undefined") {
                 try { toast.warn("Pop-up blocked — opening in same tab. Use Ctrl+P to print."); } catch {}
                 setTimeout(() => { window.location.href = url; }, 500);
               }
-            }
-          }}
+            };
+            return {
+              onPrint: () => {
+                try { openPrint("ipd-file", buildReceipt()); }
+                catch (e) { fireFallback(); }
+              },
+              onPrintReferral: () => {
+                try { openPrint("referral-summary", buildReceipt()); }
+                catch (e) { fireFallback(); }
+              },
+            };
+          })()}
         />
         {/* R7i: Same-day discharge undo (Admin only). Component
             short-circuits when conditions aren't met. */}

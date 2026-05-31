@@ -7,6 +7,11 @@ import PaymentReceipt    from "./PaymentReceipt";
 import AdvanceReceipt    from "./AdvanceReceipt";
 import FinalBill         from "./FinalBill";
 import CompleteIPDFile   from "./CompleteIPDFile";
+// R7fv — Referral Summary printable. Condensed handover (2-4 pages)
+// containing first+last clinical notes, latest MAR, consents, reports,
+// blood transfusions and procedures so a referring colleague can grasp
+// the patient's condition without the full chronological dump.
+import ReferralSummary   from "./patientFileThemes/ReferralSummary";
 import DischargeSummary  from "./DischargeSummary";
 import CostEstimate      from "./CostEstimate";
 import RefundReceipt     from "./RefundReceipt";
@@ -108,6 +113,12 @@ export const PRINTABLES = {
   "opd-prescription": { component: OPDPrescription,   title: "OPD Prescription (Rx)",     defaultPaper: "a4"      },
   "discharge-summary":{ component: DischargeSummary,  title: "Discharge Summary",         defaultPaper: "a4"      },
   "ipd-file":             { component: CompleteIPDFile, title: "Complete IPD File (uses admin-picked theme)", defaultPaper: "a4" },
+  // R7fv — Condensed handover for a referring physician. Same receipt
+  // payload as ipd-file; only the renderer subsets it down to the
+  // first+last notes, latest MAR, consents, reports, transfusions and
+  // procedures so the colleague gets a 2-4 page brief instead of the
+  // full chronological file.
+  "referral-summary":     { component: ReferralSummary, title: "Referral Summary",                                    defaultPaper: "a4" },
   // R7ft — 5 theme-forced preview slugs for the print gallery.
   // Each one hardcodes ?theme=<key> via the URL when opened from the
   // gallery card; CompleteIPDFile.jsx reads the override and ignores
