@@ -109,9 +109,18 @@ export function normalizeFileData(receipt = {}) {
     },
 
     history: {
-      chief:        toStr(r.chiefComplaints || r.complaints),
-      hopi:         toStr(r.history || r.hopi || r.historyOfPresentingIllness),
-      medical:      toStr(r.medicalHistory || iaDoctor.briefPmh || iaNursing.briefPmh),
+      // R7ft-FIX1: every alias path so the same field renders no
+      // matter which save path produced it (R7fa split IA, R7fb/c
+      // P0 NABH fields, R7fd P1, R7fg P2 — each settled on slightly
+      // different field names).
+      chief:        toStr(r.chiefComplaints || r.complaints || r.cc
+                          || iaDoctor.chiefComplaints || iaDoctor.cc || iaDoctor.complaints),
+      hopi:         toStr(r.history || r.hopi || r.historyOfPresentingIllness
+                          || iaDoctor.hopi || iaDoctor.historyOfPresentingIllness
+                          || iaDoctor.history || iaDoctor.presentingIllness),
+      medical:      toStr(r.medicalHistory || r.pmh || r.briefPmh || r.pastMedicalHistory
+                          || iaDoctor.pmh || iaDoctor.briefPmh || iaDoctor.pastMedicalHistory
+                          || iaNursing.briefPmh || iaNursing.pmh),
       surgical:     toStr(r.surgicalHistory),
       family:       toStr(r.familyHistory),
       social:       toStr(r.socialHistory),
@@ -122,9 +131,11 @@ export function normalizeFileData(receipt = {}) {
     },
 
     exam: {
-      generalExam:  toStr(iaDoctor.generalExamination),
-      systemicExam: toStr(iaDoctor.systemicExamination),
-      ros:          iaDoctor.reviewOfSystems || {},
+      generalExam:  toStr(r.generalExamination || iaDoctor.examination
+                          || iaDoctor.generalExamination || iaDoctor.generalExam),
+      systemicExam: toStr(r.systemicExamination || iaDoctor.systemic
+                          || iaDoctor.systemicExamination || iaDoctor.systemicExam),
+      ros:          iaDoctor.reviewOfSystems || iaDoctor.ros || {},
     },
 
     investigations: toArr(r.investigations).map(inv => ({
@@ -136,21 +147,27 @@ export function normalizeFileData(receipt = {}) {
 
     doctorNotes: toArr(r.doctorNotes).map(n => ({
       noteType:   toStr(n.noteType || n.type || "Progress"),
-      createdAt:  toDate(n.createdAt || n.date || n.noteDate),
-      content:    toStr(n.content || n.text || n.note),
+      createdAt:  toDate(n.createdAt || n.date || n.noteDate || n.visitDate),
+      // R7ft-FIX1: noteDetails.content / noteDetails.text are common
+      // shapes that R7fp-1 introduced for the new save path. Without
+      // these the printout shows "Progress:" with no body.
+      content:    toStr(n.content || n.text || n.note || n.noteDetails?.content
+                       || n.noteDetails?.text || n.noteDetails?.note || n.noteDetails?.summary),
       doctorName: toStr(n.doctorName || n.signedByName),
       signedAt:   toDate(n.signedAt),
       signedBy:   toStr(n.signedBy || n.signedByName),
-    })).filter(n => n.createdAt),
+    })).filter(n => n.createdAt && n.content),  // skip empty-body notes
 
     nursingNotes: toArr(r.nursingNotes).map(n => ({
       noteType:   toStr(n.noteType || n.type || "Care note"),
       createdAt:  toDate(n.createdAt || n.date || n.noteDate),
-      content:    toStr(n.content || n.text || n.note || n.remarks),
+      content:    toStr(n.content || n.text || n.note || n.remarks
+                       || n.noteData?.content || n.noteData?.text || n.noteData?.note
+                       || n.noteData?.remarks || n.noteData?.summary),
       nurseName:  toStr(n.nurseName || n.signedByName),
       shift:      toStr(n.shift),
       signedAt:   toDate(n.signedAt || n.submittedAt),
-    })).filter(n => n.createdAt),
+    })).filter(n => n.createdAt && n.content),  // skip empty-body notes
 
     ia: { doctor: iaDoctor, nursing: iaNursing },
 

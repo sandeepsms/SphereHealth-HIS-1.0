@@ -4106,8 +4106,58 @@ export default function CompletePatientFilePage() {
             try {
               if (!data) throw new Error("Patient file not loaded yet");
               const adm = currentAdmission || data.currentAdmission || {};
-              const iaDoc   = adm.initialAssessment       || data.initialAssessment      || {};
-              const iaNurse = adm.nurseInitialAssessment  || data.nurseInitialAssessment || {};
+              // R7ft-FIX1 — the real Initial Assessment blob lives in
+              // doctorNotes[].noteDetails.doctor / .nursing (R7fa split).
+              // currentAdmission.initialAssessment is only a thin marker.
+              // Find the signed IA note and unpack noteDetails.doctor /
+              // noteDetails.nursing — that's where hopi / chiefComplaints
+              // / pmh / vitals / examination actually live.
+              const allDoctorNotes  = Array.isArray(data.doctorNotes)  ? data.doctorNotes  : [];
+              const allNursingNotes = Array.isArray(data.nursingNotes) ? data.nursingNotes : [];
+              const iaDocNote   = allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.doctor) ||
+                                  allDoctorNotes.find(n => n.noteType === "initial");
+              const iaNurseNote = allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.nursing) ||
+                                  allNursingNotes.find(n => n.noteType === "initial");
+              const iaDoc   = iaDocNote?.noteDetails?.doctor
+                              || adm.initialAssessment
+                              || data.initialAssessment
+                              || {};
+              const iaNurse = iaNurseNote?.noteDetails?.nursing
+                              || iaNurseNote?.noteData?.nursing
+                              || adm.nurseInitialAssessment
+                              || data.nurseInitialAssessment
+                              || {};
+              // Filter the loud "Doctor — initial" / "Nurse — initial"
+              // entries out of the regular notes timeline — the IA is its
+              // own dedicated print section, so leaving them in produces
+              // the "Day 2: initial. initial. initial." garbage line the
+              // user reported.
+              const regularDoctorNotes  = allDoctorNotes.filter(n  => n.noteType !== "initial");
+              const regularNursingNotes = allNursingNotes.filter(n => n.noteType !== "initial");
+              // Normalize the IA vitals object. R7fc nurse IA stores vitals
+              // as flat { bpSys, bpDia, pulse, temp, spo2, rr, weight,
+              // height } — NOT a nested {bp:{systolic,diastolic}} object
+              // like the original spec assumed. Handle BOTH shapes so the
+              // adapter is forward-compatible.
+              const rawVitals = iaNurse.vitals || iaDoc.vitals || {};
+              const bpObj = rawVitals.bp;
+              const bpFromObj  = bpObj && typeof bpObj === "object"
+                                 ? `${bpObj.systolic ?? bpObj.sys ?? "?"}/${bpObj.diastolic ?? bpObj.dia ?? "?"}`
+                                 : "";
+              const bpFromStr  = typeof bpObj === "string" ? bpObj : "";
+              const bpFromFlat = (rawVitals.bpSys || rawVitals.bpDia)
+                                 ? `${rawVitals.bpSys ?? "?"}/${rawVitals.bpDia ?? "?"}`
+                                 : "";
+              const flatVitals = {
+                bp:     bpFromStr || bpFromObj || bpFromFlat,
+                pulse:  rawVitals.pulse,
+                temp:   rawVitals.temp,
+                spo2:   rawVitals.spo2,
+                rr:     rawVitals.rr,
+                weight: rawVitals.weight || iaNurse.anthropometry?.weightKg || iaDoc.anthropometry?.weightKg,
+                height: rawVitals.height || iaNurse.anthropometry?.heightCm || iaDoc.anthropometry?.heightCm,
+                bmi:    rawVitals.bmi    || iaNurse.anthropometry?.bmi      || iaDoc.anthropometry?.bmi,
+              };
               const receipt = {
                 /* identity */
                 patientName: patient?.fullName || patient?.name || [patient?.firstName, patient?.lastName].filter(Boolean).join(" "),
@@ -4138,29 +4188,50 @@ export default function CompletePatientFilePage() {
                 totalDays:       adm.lengthOfStay || adm.totalDays,
 
                 /* alerts */
-                allergies:        data.allergies || patient?.allergyList || patient?.allergies || [],
-                isolationFlags:   adm.isolationFlags || [],
-                crossCheckAlerts: iaNurse.crossCheckAlerts || [],
+                allergies:        data.allergies || iaDoc.allergies?.list || iaNurse.allergies?.list
+                                  || patient?.allergyList || patient?.allergies || [],
+                isolationFlags:   adm.isolationFlags || iaDoc.isolationFlags || [],
+                crossCheckAlerts: iaNurse.crossCheckAlerts || iaDoc.crossCheckAlerts || [],
 
-                /* vitals on admission (R7fp-2 surfaced these from
-                   either nurse or doctor IA — use whichever exists) */
-                vitalsOnAdmission: iaNurse.vitals || iaDoc.vitals || data.vitalsOnAdmission || {},
+                /* vitals on admission — flattened above; bp is now a
+                   "120/80" string, not a {systolic,diastolic} object. */
+                vitalsOnAdmission: flatVitals,
                 vitalsTrend:       data.vitalSheet || data.vitalsTrend || [],
 
-                /* history & exam (pulled from IA blocks since the
-                   backend already structures them there) */
-                chiefComplaints: iaDoc.chiefComplaints || adm.chiefComplaints || "",
-                history:         iaDoc.historyOfPresentingIllness || iaDoc.history || "",
-                medicalHistory:  iaDoc.briefPmh || iaNurse.briefPmh || "",
-                surgicalHistory: iaDoc.surgicalHistory || "",
-                familyHistory:   iaDoc.familyHistory || "",
-                socialHistory:   iaDoc.socialHistory || "",
+                /* history & exam — every alias path the R7fa/R7fb/R7fc
+                   IA forms can land in. The doctor IA's hopi field is
+                   the primary HOPI bucket; nurse's chiefComplaint is a
+                   common fallback when the doctor signed IA without
+                   filling the field (real-world data gap). Real R7fc
+                   field names: famHx, socHx, genExam (NOT
+                   familyHistory / generalExamination). */
+                chiefComplaints: iaDoc.chiefComplaints || iaDoc.cc || iaDoc.complaints
+                                 || iaNurse.chiefComplaint || iaNurse.cc
+                                 || adm.chiefComplaints || adm.reasonForAdmission || "",
+                history:         iaDoc.hopi || iaDoc.historyOfPresentingIllness || iaDoc.history
+                                 || iaDoc.presentingIllness
+                                 || iaNurse.hopi || iaNurse.chiefComplaint || "",
+                medicalHistory:  iaDoc.pmh || iaDoc.briefPmh || iaDoc.pastMedicalHistory
+                                 || iaNurse.briefPmh || iaNurse.pmh || iaNurse.pastMedicalHistory || "",
+                surgicalHistory: iaDoc.psh || iaDoc.surgicalHistory || iaDoc.pastSurgicalHistory || "",
+                familyHistory:   iaDoc.famHx || iaDoc.familyHistory || "",
+                socialHistory:   iaDoc.socHx || iaDoc.socialHistory || iaDoc.personalHistory || "",
                 ia: { doctor: iaDoc, nursing: iaNurse },
+                generalExamination:  iaDoc.genExam || iaDoc.examination || iaDoc.generalExamination || "",
+                systemicExamination: [
+                  iaDoc.cvs     ? `CVS: ${iaDoc.cvs}` : "",
+                  iaDoc.rs      ? `RS: ${iaDoc.rs}`   : "",
+                  iaDoc.abdomen ? `P/A: ${iaDoc.abdomen}` : "",
+                  iaDoc.cns     ? `CNS: ${iaDoc.cns}` : "",
+                  iaDoc.systemic || iaDoc.systemicExamination || "",
+                ].filter(Boolean).join(" · "),
 
-                /* clinical events */
+                /* clinical events — initial-assessment notes filtered
+                   out so the Day-by-Day course doesn't spam "initial."
+                   for each of them. The IA renders in its own section. */
                 investigations:  data.investigations || [],
-                doctorNotes:     data.doctorNotes    || [],
-                nursingNotes:    data.nursingNotes   || [],
+                doctorNotes:     regularDoctorNotes,
+                nursingNotes:    regularNursingNotes,
                 medications:     data.medications    || data.treatmentChart || [],
                 procedures:      data.procedures     || [],
                 consents:        data.consents       || [],
