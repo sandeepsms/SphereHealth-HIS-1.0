@@ -1,56 +1,47 @@
-// R7fu Theme 1 — Narrative Letter (DAY-FIRST stance)
+// R7ft-FIX6 Theme 1 — Narrative Letter (PAGE-MIRROR stance)
 //
-// Re-organises the whole patient file around DAYS of stay rather than
-// 25 flat sections. A consultant handover letter at heart, but the
-// "Course of Stay" *is* the spine: Day 1 is the admission package
-// (IA, first orders, first notes), Day 2 is the next clinical day,
-// and so on. Discharge gets its own block at the tail. Everything
-// that was a stand-alone section pre-R7fu (Doctor IA, Doctor Orders,
-// MAR, Vitals trend, Notes, Consents) gets folded into the day it
-// belongs to, with one rule: a fact appears ONCE.
+// Re-organises the Complete Patient File print to mirror, section-by-
+// section, the Patient File PAGE (CompletePatientFilePage.jsx). The
+// user's complaint: "jaise hume iss page pr jitni details patient
+// file me dikh rhi hai ye sabhi Print patient file me bhi dikhai de
+// wo bhi hmare selected template me" — i.e., the print must look
+// like the page, in the Narrative letter style.
 //
-// Why day-first:
-//   • A doctor reading a stranger's IPD file reconstructs the
-//     timeline in their head anyway. Print the timeline directly.
-//   • Eliminates the dedupe problem — Brief, IA, Course no longer
-//     restate the same chief-complaint line.
-//   • False-flag dumps and rubric sub-scores collapse to a single
-//     line each, freeing two pages on a typical admission.
-//
-// Layout:
-//   1. Salutation
-//   2. ENCOUNTER AT A GLANCE         — 8 hard facts, no prose
-//   3. ALLERGY / ISOLATION ALERTS    — red + amber callouts
-//   4. ADMISSION SNAPSHOT (Day 1)    — HOPI, exam, vitals, dx,
-//                                       Doctor IA + Nursing IA folded
-//                                       in as annotations, home meds,
-//                                       risk scores, care plan
-//   5. DAY 2, DAY 3 …                — clinical decisions of that
-//                                       day, drug starts/stops,
-//                                       observations, vitals trend
-//                                       snapshot, notes prose, MAR
-//                                       compact
-//   6. INVESTIGATIONS                — abnormal first, then table
-//   7. PROCEDURES / OT / TRANSFUSION — if any
-//   8. CONSENTS                      — table
-//   9. DISCHARGE BLOCK (last day)    — fitness, final dx, condition,
-//                                       discharge meds table, advice
-//                                       list, follow-up
-//   10. Closing
+// 21 sections in order:
+//   1.  Admission Summary                          [NABH AAC.1]
+//   2.  Initial Assessment (Doctor + Nursing)      [NABH AAC.4 / AAC.5]
+//   3.  Doctor Notes                               [NABH COP.7]
+//   4.  Nurse Notes                                [NABH COP.2]
+//   5.  Orders + MAR                               [NABH MOM.2 / MOM.4]
+//   6.  Vital Signs Trend                          [NABH COP.3]
+//   7.  Intake / Output Sheet                      [NABH COP.3]
+//   8.  Procedure Notes                            [NABH COP.13]
+//   9.  Investigations & Reports                   [NABH AAC.7 / AAC.8]
+//   10. Consent Forms                              [NABH PRE.1]
+//   11. Dietetic Care                              [NABH COP.4]
+//   12. Nursing Care Plans                         [NABH COP.2]
+//   13. Nursing Re-assessments                     [NABH COP.2]
+//   14. Blood Transfusion                          [NABH HIC.4 / MOM.4]
+//   15. Medico-Legal Records                       [NABH ROM.4]
+//   16. Shift Handovers + Bed Transfers            [NABH COP.6]
+//   17. Discharge Summary                          [NABH AAC.11]
+//   18. Billing Summary                            [—]
+//   19. Activity Log                               [NABH IMS.1]
+//   20. Scoring Trends                             [NABH COP.3]
+//   21. Complete Chronological Timeline            [NABH IMS.1]
 //
 // Hard requirements honoured:
-//   * Only true booleans render (active-only rule).
-//   * ObjectId hashes → "signed digitally".
+//   * Only true booleans render (active-only rule via FlagLine).
+//   * ObjectId hashes → "signed digitally" via displayActor().
 //   * Risk scores → one line each (total + band only) unless
-//     ?expandScores=1 in URL.
-//   * Empty groups disappear entirely (no heading, no margin).
-//   * Bold = key fact a doctor would underline. Italic = clinical
-//     quote / "no abnormality detected".
-//   * Two-level hierarchy: major section vs minor sub-heading.
+//     ?expandScores=1 in URL (RiskLine).
+//   * Empty sections collapse entirely (no heading, no margin).
+//   * Bold = drug names, diagnoses, key facts. Italic = clinical
+//     observations, risk-band labels, "no abnormality detected".
+//   * Two-level hierarchy: SectionHeader (major) vs SubHeader (minor).
 //   * NABH chips right-aligned as pills.
-//   * Receipt fallbacks: nurse chief → HOPI; f.medications → discharge
-//     meds when discharge meds empty.
-//   * English only. No emojis. Authoritative referring-physician tone.
+//   * Tables (pr-table) for grid data.
+//   * English only. No emojis.
 
 import React from "react";
 import PrintShell from "@/templates/PrintShell";
@@ -180,6 +171,8 @@ const dayHeading = (d) => {
   } catch { return String(d); }
 };
 
+const dayLabel = dayHeading;  // alias for clarity
+
 /* Returns the day-of-stay number (1-based) for a given timestamp,
    anchored to admission date. Returns null if either is missing. */
 const dayNumber = (eventDate, admissionDate) => {
@@ -187,8 +180,6 @@ const dayNumber = (eventDate, admissionDate) => {
   const a = new Date(admissionDate);
   const e = new Date(eventDate);
   if (Number.isNaN(a.getTime()) || Number.isNaN(e.getTime())) return null;
-  // Anchor on calendar dates (ignore time-of-day) so a 23:00 admission
-  // and a 06:00 next-morning event count as Day 1 → Day 2 not Day 1 → Day 1.
   const start = new Date(a.getFullYear(), a.getMonth(), a.getDate());
   const end   = new Date(e.getFullYear(), e.getMonth(), e.getDate());
   return Math.max(1, Math.floor((end - start) / 86_400_000) + 1);
@@ -211,6 +202,7 @@ const COL = {
   abN:     "#b91c1c",  // abnormal red
   ok:      "#15803d",
 };
+const ACCENT = COL.accent;  // alias for legacy refs
 
 const SH = {                       // section header (major, 12pt)
   fontFamily: "'DM Sans', Georgia, serif",
@@ -313,7 +305,7 @@ const DayLabel = ({ n, date, totalDays }) => (
   </div>
 );
 
-const Table = ({ headers, rows, widths }) => (
+const MiniTable = ({ headers, rows, widths }) => (
   <table
     className="pr-table"
     style={{
@@ -342,6 +334,9 @@ const Table = ({ headers, rows, widths }) => (
     </tbody>
   </table>
 );
+
+// Alias kept for any legacy reference inside helpers.
+const Table = MiniTable;
 
 const Callout = ({ tone = "red", title, children }) => {
   const palette = tone === "amber"
@@ -383,10 +378,6 @@ const Callout = ({ tone = "red", title, children }) => {
    5. ACTIVE-ONLY rule — boolean flag printers
    ===================================================================== */
 
-/* Given an object whose values are mostly booleans (comorbidities,
-   devices, code-status), render only the TRUE ones in bold; the
-   rest collapses to a single muted "All other items: not applicable"
-   sentence. NEVER prints "false". */
 const activeFlags = (obj, labelMap, opts = {}) => {
   if (!obj || typeof obj !== "object") return { active: [], total: 0 };
   const active = [];
@@ -394,13 +385,10 @@ const activeFlags = (obj, labelMap, opts = {}) => {
   for (const [key, label] of Object.entries(labelMap)) {
     total += 1;
     const v = obj[key];
-    // truthy means: boolean true, "yes"/"y"/"true"/"present" string,
-    // non-zero number. Anything else is treated as absent.
     if (v === true) { active.push(label); continue; }
     if (typeof v === "string") {
       const s = v.toLowerCase().trim();
       if (s === "yes" || s === "y" || s === "true" || s === "present") active.push(label);
-      // (ignore "no"/"false"/"absent"/empty)
     } else if (typeof v === "number" && v !== 0 && !Number.isNaN(v)) {
       active.push(label);
     }
@@ -438,8 +426,6 @@ const FlagLine = ({ obj, labelMap, label, allDescription }) => {
    6. COMPACT RISK SCORE LINE
    ===================================================================== */
 
-/* One-liner risk score: "Morse Fall Risk: 0/125 — *No risk*"
-   When ?expandScores=1 the sub-scores get appended in mute.        */
 const expandScoresFlag = () => {
   try {
     const u = new URL(window.location.href);
@@ -447,7 +433,6 @@ const expandScoresFlag = () => {
   } catch { return false; }
 };
 
-/* riskBand("Morse Fall Risk", 0, 125, "No risk") */
 const RiskLine = ({ label, value, max, band, sub }) => {
   if (value == null || value === "") return null;
   return (
@@ -461,7 +446,6 @@ const RiskLine = ({ label, value, max, band, sub }) => {
   );
 };
 
-/* Pick the first score value from a list of common aliases. */
 const pick = (obj, ...keys) => {
   if (!obj) return null;
   for (const k of keys) {
@@ -471,7 +455,6 @@ const pick = (obj, ...keys) => {
   return null;
 };
 
-/* Best-effort band classifier when the backend didn't ship one. */
 const morseBand = (v) => {
   const n = Number(v); if (!Number.isFinite(n)) return null;
   if (n === 0) return "No risk";
@@ -505,9 +488,6 @@ const nutritionBand = (v) => {
    7. GROUPING UTILITIES
    ===================================================================== */
 
-/* Group an array of rows into Map<dayKey, items[]> using a getter
-   for each row's timestamp. Days the patient isn't on the ward
-   never enter the map. */
 const groupByDay = (rows, getAt) => {
   const map = new Map();
   (rows || []).forEach((r) => {
@@ -520,15 +500,10 @@ const groupByDay = (rows, getAt) => {
   return map;
 };
 
-/* Build the canonical day index — every dayKey from admission date
-   through discharge date (or last clinical event). Each entry has
-   { n, date, key } so day-bucketed sections can look up labels
-   without recomputing day-numbers everywhere. */
 const buildDayIndex = (file, events) => {
   const adm = file.admission?.date;
   const dis = file.admission?.dischargeDate;
   if (!adm) return [];
-  // Find latest date among admission, discharge, and any event.
   let last = dis || adm;
   (events || []).forEach((e) => {
     if (e.at && (new Date(e.at).getTime() > new Date(last).getTime())) last = e.at;
@@ -540,7 +515,7 @@ const buildDayIndex = (file, events) => {
   const days = [];
   let cursor = startUtc.getTime();
   let n = 1;
-  const cap = 30; // safety: 30-day max enumeration
+  const cap = 30;
   while (cursor <= endUtc.getTime() && n <= cap) {
     const d = new Date(cursor);
     days.push({ n, date: d, key: dayKey(d) });
@@ -573,6 +548,24 @@ const barthelTotal = (adl) => {
     if (Number.isFinite(v)) { sum += v; any = true; }
   }
   return any ? sum : null;
+};
+
+/* Safe scalar — avoids React "objects are not valid as a child" crashes
+   when an IA field carries a nested object instead of a primitive. */
+const scalarOrNum = (v) => (v != null && (typeof v === "number" || typeof v === "string")) ? v : null;
+
+/* Lightweight prose summariser for free-form text fields. */
+const proseLine = (label, val) => {
+  if (val == null) return null;
+  if (typeof val === "object") {
+    const inner = Object.entries(val)
+      .filter(([, v]) => v != null && v !== "" && typeof v !== "object")
+      .map(([k, v]) => `${k}: ${v}`).join("; ");
+    if (!inner) return null;
+    return <Para><strong>{label}:</strong> {inner}.</Para>;
+  }
+  if (String(val).trim() === "") return null;
+  return <Para><strong>{label}:</strong> {String(val).trim()}.</Para>;
 };
 
 /* =====================================================================
@@ -623,7 +616,6 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
   const ageGender = ageGenderPhrase(f.patient?.age, f.patient?.gender);
 
   /* ── HOPI with fallback to nurse chief-complaint ──────────── */
-  // Rule L: if doctor HOPI is missing, promote nurse chiefComplaint.
   let hopiText = stripDot(f.history?.hopi || "");
   const chief = stripDot(f.history?.chief || f.ia?.nursing?.chiefComplaint || "");
   if (!hopiText) {
@@ -631,10 +623,9 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
     if (nurseChief) hopiText = nurseChief;
   }
 
-  /* ── Discharge meds with fallback (Rule M) ──────────────────── */
+  /* ── Discharge meds with fallback ───────────────────────────── */
   let dischargeMeds = Array.isArray(f.discharge?.medications) ? f.discharge.medications : [];
   if (!dischargeMeds.length && Array.isArray(f.medications)) {
-    // Fallback: medications active at discharge time
     const disAt = f.admission?.dischargeDate ? new Date(f.admission.dischargeDate).getTime() : null;
     const fallback = f.medications.filter((m) => {
       if (!m.endDate && !m.startDate) return false;
@@ -657,37 +648,12 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
   const dayIndex = buildDayIndex(f, events);
   const totalDays = f.admission?.totalDays || dayIndex.length;
 
-  /* ── Index events by day ────────────────────────────────────── */
-  // Track which structured rows have been pulled into a day so we
-  // don't double-render them when the "leftover" tables run later.
-  const eventsByDay = new Map();
-  (events || []).forEach((e) => {
-    const k = dayKey(e.at);
-    if (!k) return;
-    if (!eventsByDay.has(k)) eventsByDay.set(k, []);
-    eventsByDay.get(k).push(e);
-  });
-
-  /* ── Index doctor/nursing notes by day ──────────────────────── */
-  const doctorNotesByDay = groupByDay(f.doctorNotes, (n) => n.createdAt);
-  const nursingNotesByDay = groupByDay(f.nursingNotes, (n) => n.createdAt);
-
-  /* ── Index orders, MAR, vitals, I/O by day ──────────────────── */
-  const ordersByDay = groupByDay(f.doctorOrders, (o) => o.orderedAt);
-  const marByDay    = groupByDay(f.mar,          (m) => m.givenAt || m.createdAt);
-  const vitalsByDay = groupByDay(f.vitalsTrend,  (v) => v.at);
-  const ioByDay     = groupByDay(f.intakeOutput, (io) => io.at);
-  const handoversByDay = groupByDay(f.shiftHandovers, (h) => h.at);
-  const transfusionByDay = groupByDay(f.bloodTransfusion, (b) => b.at);
-  const bedTransfersByDay = groupByDay(f.bedTransfers, (t) => t.at);
-
-  /* ── Procedures and consents — typically Day 1 but day-indexed ── */
-  const proceduresByDay = groupByDay(f.procedures, (p) => p.date);
-  const consentsByDay = groupByDay(f.consents, (c) => c.signedAt);
+  /* ── Per-day groupings (used by MAR) ────────────────────────── */
+  const marByDay = groupByDay(f.mar, (m) => m.givenAt || m.createdAt);
 
   /* ── Diagnosis triplet ──────────────────────────────────────── */
-  const dxProv = f.admission?.provisionalDiagnosis || f.ia?.doctor?.provisionalDiagnosis || "";
-  const dxWork = f.admission?.workingDiagnosis || f.ia?.doctor?.workingDiagnosis || "";
+  const dxProv  = f.admission?.provisionalDiagnosis || f.ia?.doctor?.provisionalDiagnosis || "";
+  const dxWork  = f.admission?.workingDiagnosis || f.ia?.doctor?.workingDiagnosis || "";
   const dxFinal = f.admission?.finalDiagnosis || f.ia?.doctor?.finalDiagnosis || "";
 
   /* ── Investigations split ───────────────────────────────────── */
@@ -761,13 +727,27 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
             || receipt.skin
             || null;
 
-  /* ── Code Status (single field, not flags) ─────────────────── */
+  /* ── Code Status ────────────────────────────────────────────── */
   const codeStatus = f.ia?.doctor?.codeStatus
                   || f.ia?.nursing?.codeStatus
                   || receipt.codeStatus
                   || "";
 
-  /* ── Home meds (already in f.history.homeMeds) ─────────────── */
+  /* ── Risk acknowledgement (flag map) ────────────────────────── */
+  const riskAckLabels = {
+    fallRiskExplained: "Fall risk explained",
+    pressureUlcerRiskExplained: "Pressure-ulcer risk explained",
+    bloodTransfusionRiskExplained: "Transfusion risk explained",
+    surgeryRiskExplained: "Surgical risk explained",
+    procedureRiskExplained: "Procedure risk explained",
+    dnaCprDiscussed: "Code-status discussed",
+  };
+  const riskAck = f.ia?.doctor?.riskAcknowledgement
+              || f.ia?.nursing?.riskAcknowledgement
+              || receipt.riskAcknowledgement
+              || null;
+
+  /* ── Home meds ─────────────────────────────────────────────── */
   const homeMeds = Array.isArray(f.history?.homeMeds) ? f.history.homeMeds : [];
 
   /* ── Care plan (text or list) ───────────────────────────────── */
@@ -781,15 +761,6 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
   const n = f.ia?.nursing || {};
   const d = f.ia?.doctor || {};
 
-  // R7ft-FIX4-PATCH — pick() previously listed bare object names ("morse",
-  // "braden", "pain", "nutri", "vte", "dvt") in the alias list. When R7fc
-  // saves the nurse IA, those keys are NESTED OBJECTS like
-  // { scores:{…}, total:0, risk:"No Risk" } — pick() returned the OBJECT
-  // which then crashed React with "Objects are not valid as a React child
-  // (found: object with keys {scores, total, risk})". Now we look for the
-  // scalar fields first and explicitly drill into .total / .score / .risk
-  // for the nested shapes, never the bare object.
-  const scalarOrNum = (v) => (v != null && (typeof v === "number" || typeof v === "string")) ? v : null;
   const morseVal   = pick(n, "fallRisk", "morseTotal", "morseScore") ?? scalarOrNum(n.morse?.total);
   const bradenVal  = pick(n, "pressureUlcer", "bradenTotal", "bradenScore") ?? scalarOrNum(n.braden?.total);
   const painVal    = pick(n, "painScore", "vasPain") ?? scalarOrNum(n.pain?.score) ?? scalarOrNum(n.pain?.total);
@@ -797,8 +768,6 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
   const vteVal     = pick(n, "vteRisk", "padua") ?? scalarOrNum(n.vte?.total) ?? scalarOrNum(d.vte?.total) ?? pick(d, "vteRisk", "padua");
   const dvtVal     = pick(n, "dvtRisk") ?? scalarOrNum(n.dvt?.total) ?? pick(d, "dvtRisk");
   const gcsVal     = pick(d, "gcs", "GCS") ?? scalarOrNum(d.gcs?.total) ?? pick(n, "gcs", "GCS");
-  // Risk-band strings (override the heuristic banders when the IA carries
-  // an explicit `.risk` label like "No Risk" / "Lowest Risk").
   const morseRisk  = (typeof n.morse?.risk === "string") ? n.morse.risk : null;
   const bradenRisk = (typeof n.braden?.risk === "string") ? n.braden.risk : null;
   const nutriRisk  = (typeof n.nutri?.risk === "string") ? n.nutri.risk : (typeof n.nutrition?.risk === "string" ? n.nutrition.risk : null);
@@ -854,25 +823,14 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
     return det || "—";
   };
 
-  /* ── Course-of-stay event summariser per day. Returns a single
-        natural-language sentence weaving the day's clinical events,
-        drug starts/stops, lab reports, etc. */
-  const courseSentenceForDay = (k) => {
-    const dayEvents = eventsByDay.get(k) || [];
-    // Filter out per-day repetitive kinds we render in tables (lab-order
-    // and lab-report show up in the Investigations section instead).
-    const KEEP = new Set(["doctor-note", "med-start", "med-stop", "procedure", "ia-doctor", "ia-nursing", "lab-report", "admission", "discharge"]);
-    const bits = dayEvents.filter((e) => KEEP.has(e.kind)).map((e) => {
-      if (e.kind === "doctor-note" && e.detail) return stripDot(e.detail);
-      return stripDot(e.summary || "");
-    }).filter(Boolean);
-    if (!bits.length) return "";
-    return cleanSentence(bits.join(". "));
-  };
+  /* ── Bills fallback (canonical doesn't normalise yet) ───────── */
+  const bills = Array.isArray(f.bills) ? f.bills
+              : Array.isArray(receipt?.bills) ? receipt.bills : [];
 
-  /* ── Helpers for Day 1 callouts: did doctor IA get signed? ─── */
-  const day1Key = dayIndex[0]?.key || "";
-  const lastDayKey = dayIndex[dayIndex.length - 1]?.key || "";
+  /* ── Scoring trends — derive from vitals/MAR series ─────────── */
+  const painSeries = (f.vitalsTrend || [])
+    .map((v) => ({ at: v.at, val: Number(v.painScore) }))
+    .filter((p) => Number.isFinite(p.val));
 
   /* ====================================================================
      CHILDREN
@@ -915,14 +873,13 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
         treatment order, medication administration, vital sign reading,
         intake / output entry, investigation, lab report, consent, dietetic
         plan, ICU care-bundle compliance, blood transfusion, bed transfer
-        and discharge summary on file for this admission. Each day section
-        bundles the clinical decisions, drugs started or stopped, and
-        observations recorded on that day; discrete cross-day data is
-        tabled at the end.
+        and discharge summary on file for this admission. The sections
+        below mirror, in order, the Patient File page used by the
+        treating team.
       </Para>
 
       {/* ════════════════════════════════════════════════════════════
-          1. ENCOUNTER AT A GLANCE — eight hard facts, no prose.
+          ENCOUNTER AT A GLANCE — compact 6-row scannable header
           ════════════════════════════════════════════════════════════ */}
       <SectionHeader>Encounter at a Glance</SectionHeader>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, marginBottom: 4 }}>
@@ -966,13 +923,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
               <td style={{ padding: "2px 6px", color: COL.body }}><strong>{dxProv}</strong></td>
             </tr>
           ) : null}
-          {dxWork && dxWork !== dxProv ? (
-            <tr>
-              <td style={{ padding: "2px 6px", color: COL.muted }}>Working</td>
-              <td style={{ padding: "2px 6px", color: COL.body }}><strong>{dxWork}</strong></td>
-            </tr>
-          ) : null}
-          {dxFinal && dxFinal !== dxWork ? (
+          {dxFinal && dxFinal !== dxProv ? (
             <tr>
               <td style={{ padding: "2px 6px", color: COL.muted }}>Final diagnosis</td>
               <td style={{ padding: "2px 6px", color: COL.body }}>
@@ -981,17 +932,11 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
               </td>
             </tr>
           ) : null}
-          {chief ? (
-            <tr>
-              <td style={{ padding: "2px 6px", color: COL.muted }}>Chief complaint</td>
-              <td style={{ padding: "2px 6px", color: COL.body }}>{chief}.</td>
-            </tr>
-          ) : null}
         </tbody>
       </table>
 
       {/* ════════════════════════════════════════════════════════════
-          2. ALERTS — allergies (red), isolation (amber)
+          ALERTS — allergies (red), isolation (amber)
           ════════════════════════════════════════════════════════════ */}
       {allergies.length > 0 && (
         <Callout tone="red" title="Allergy alert">
@@ -1008,547 +953,546 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
       )}
 
       {/* ════════════════════════════════════════════════════════════
-          3. CLINICAL TIMELINE — Day-by-day account
+          1. ADMISSION SUMMARY                            [NABH AAC.1]
           ════════════════════════════════════════════════════════════ */}
-      <SectionHeader>Clinical Timeline — Day by Day</SectionHeader>
-
-      {dayIndex.length === 0 ? (
-        <Para style={{ color: COL.muted, fontStyle: "italic" }}>
-          Admission date is missing; chronological day buckets could
-          not be constructed.
-        </Para>
+      {(f.admission?.date || f.admission?.consultant || f.admission?.bed) ? (
+        <>
+          <SectionHeader nabh="NABH AAC.1">Admission Summary</SectionHeader>
+          <Para>
+            {fullName} was <strong>admitted on {fmtDate(f.admission?.date, true)}</strong>
+            {f.admission?.modeOfArrival ? <> via {f.admission.modeOfArrival.toLowerCase()}</> : null}
+            {f.admission?.referringDoctor ? <> from <strong>{f.admission.referringDoctor}</strong></> : null}
+            {f.admission?.consultant ? <> under the care of <strong>{f.admission.consultant}</strong></> : null}
+            {(f.admission?.department || f.admission?.bed || f.admission?.ward) ? (
+              <> (
+                {[
+                  f.admission?.department,
+                  f.admission?.bed ? `bed ${f.admission.bed}` : null,
+                  f.admission?.ward,
+                ].filter(Boolean).join(", ")}
+              )</>
+            ) : null}.
+            {f.admission?.type ? <> Admission type: <strong>{f.admission.type}</strong>.</> : null}
+            {f.admission?.reasonForAdmission ? <> Reason for admission: <em>{stripDot(f.admission.reasonForAdmission)}</em>.</> : null}
+          </Para>
+          {(dxProv || dxWork || dxFinal) ? (
+            <Para>
+              {dxProv ? <>Provisional diagnosis: <strong>{dxProv}</strong>. </> : null}
+              {dxWork && dxWork !== dxProv ? <>Working diagnosis: <strong>{dxWork}</strong>. </> : null}
+              {dxFinal && dxFinal !== dxWork ? <>Final diagnosis: <strong>{dxFinal}</strong>. </> : null}
+              {f.admission?.icd10 ? <>ICD-10: {f.admission.icd10}{f.admission.icd10Desc ? ` — ${f.admission.icd10Desc}` : ""}. </> : null}
+              {f.admission?.totalDays ? <><strong>{f.admission.totalDays}-day stay</strong>.</> : null}
+            </Para>
+          ) : null}
+        </>
       ) : null}
 
-      {dayIndex.map((day) => {
-        const k = day.key;
-        const isDay1 = k === day1Key;
-        const isLastDay = k === lastDayKey;
-        const dayDocNotes = doctorNotesByDay.get(k) || [];
-        const dayNurseNotes = nursingNotesByDay.get(k) || [];
-        const dayOrders = ordersByDay.get(k) || [];
-        const dayMar = marByDay.get(k) || [];
-        const dayVitals = vitalsByDay.get(k) || [];
-        const dayIO = ioByDay.get(k) || [];
-        const dayHandovers = handoversByDay.get(k) || [];
-        const dayTransfusion = transfusionByDay.get(k) || [];
-        const dayBedTransfers = bedTransfersByDay.get(k) || [];
-        const dayProcedures = proceduresByDay.get(k) || [];
-        const dayConsents = consentsByDay.get(k) || [];
-        const courseSent = courseSentenceForDay(k);
+      {/* ════════════════════════════════════════════════════════════
+          2. INITIAL ASSESSMENT (Doctor + Nursing)        [NABH AAC.4/5]
+          ════════════════════════════════════════════════════════════ */}
+      {(Object.keys(d).length > 0 || Object.keys(n).length > 0
+        || hopiText || chief || pastLine || famSocLine
+        || examLines.length > 0 || rosLine) ? (
+        <>
+          <SectionHeader nabh="NABH AAC.4 / AAC.5">Initial Assessment</SectionHeader>
 
-        // Decide whether this day has ANY content. If it doesn't AND
-        // it isn't Day 1 / last day, skip entirely.
-        const hasAny = (
-          isDay1 ||
-          isLastDay ||
-          dayDocNotes.length ||
-          dayNurseNotes.length ||
-          dayOrders.length ||
-          dayMar.length ||
-          dayVitals.length ||
-          dayIO.length ||
-          dayHandovers.length ||
-          dayTransfusion.length ||
-          dayBedTransfers.length ||
-          dayProcedures.length ||
-          dayConsents.length ||
-          !!courseSent
-        );
-        if (!hasAny) return null;
-
-        return (
-          <div key={`day-${k}`} className="pr-section" style={{ pageBreakInside: "auto" }}>
-            <DayLabel n={day.n} date={day.date} totalDays={totalDays} />
-
-            {/* ───── DAY 1: Admission narrative + IA folded in ───── */}
-            {isDay1 ? (
-              <>
-                {/* Day-1 opening line */}
+          {/* ── Doctor IA ───────────────────────────────────────── */}
+          {(Object.keys(d).length > 0 || hopiText || chief || pastLine
+            || famSocLine || examLines.length > 0 || rosLine
+            || comorbidities || codeStatus || riskAck) ? (
+            <>
+              <SubHeader>Doctor Initial Assessment</SubHeader>
+              {chief ? (
+                <Para><strong>Chief complaint:</strong> {chief}.</Para>
+              ) : null}
+              {hopiText ? (
+                <>
+                  {hopiText.split(/\n+/).map((t, i) =>
+                    t.trim() ? <Para key={`hopi-${i}`}>{cleanSentence(t)}</Para> : null
+                  )}
+                </>
+              ) : null}
+              {pastLine ? <Para>{pastLine}</Para> : null}
+              {famSocLine ? <Para>{famSocLine}</Para> : null}
+              {(f.alerts?.allergies || []).length > 0 ? (
+                <Para><strong>Allergies on record:</strong> {oxford(allergies)}.</Para>
+              ) : null}
+              {rosLine ? (
+                <Para><strong>Review of systems:</strong> {rosLine}.</Para>
+              ) : null}
+              {examLines.length > 0 ? (
+                <>
+                  {examLines.map((t, i) => <Para key={`ex-${i}`}>{t}</Para>)}
+                </>
+              ) : null}
+              {comorbidities ? (
+                <FlagLine
+                  obj={comorbidities}
+                  labelMap={comorbiditiesLabels}
+                  label="Significant comorbidities"
+                  allDescription="screened — none reported."
+                />
+              ) : null}
+              {codeStatus ? (
+                <Para><strong>Code status:</strong> <strong>{codeStatus}</strong> documented at admission.</Para>
+              ) : null}
+              {riskAck ? (
+                <FlagLine
+                  obj={riskAck}
+                  labelMap={riskAckLabels}
+                  label="Risk acknowledgement (explained to patient / family)"
+                  allDescription="explanation not documented."
+                />
+              ) : null}
+              {(dxProv || dxWork || dxFinal) ? (
                 <Para>
-                  {fullName} was <strong>admitted</strong> on{" "}
-                  <strong>{fmtDate(f.admission?.date, true)}</strong>
-                  {f.admission?.modeOfArrival ? <> via {f.admission.modeOfArrival.toLowerCase()}</> : null}
-                  {f.admission?.consultant ? <> under the care of <strong>{f.admission.consultant}</strong></> : null}
-                  {f.admission?.bed ? <> to bed {f.admission.bed}</> : null}
-                  {f.admission?.ward ? <>, {f.admission.ward}</> : null}.
-                  {chief ? <> Chief complaints at presentation were <strong>{chief}</strong>.</> : null}
+                  {dxProv ? <><strong>Provisional diagnosis:</strong> {dxProv}. </> : null}
+                  {dxWork && dxWork !== dxProv ? <><strong>Working diagnosis:</strong> {dxWork}. </> : null}
+                  {dxFinal && dxFinal !== dxWork ? <><strong>Final diagnosis:</strong> {dxFinal}.</> : null}
                 </Para>
+              ) : null}
+              {Object.keys(d).length > 0 ? (
+                <Para style={{ color: COL.muted, fontSize: 10 }}>
+                  <em>
+                    Doctor IA signed by {dIASigner}
+                    {dIAReg ? ` (Reg ${dIAReg})` : ""}
+                    {dIAAt ? ` · ${fmtDateTime(dIAAt)}` : ""}.
+                  </em>
+                </Para>
+              ) : null}
+            </>
+          ) : null}
 
-                {/* HOPI */}
-                {hopiText ? (
-                  <>
-                    <SubHeader>History of Presenting Illness</SubHeader>
-                    {hopiText.split(/\n+/).map((t, i) =>
-                      t.trim() ? <Para key={`hopi-${i}`}>{cleanSentence(t)}</Para> : null
-                    )}
-                  </>
-                ) : null}
+          {/* ── Nursing IA ──────────────────────────────────────── */}
+          {Object.keys(n).length > 0 ? (
+            <>
+              <SubHeader>Nursing Initial Assessment</SubHeader>
+              {n.modeOfAdmission ? (
+                <Para><strong>Mode of admission:</strong> {n.modeOfAdmission}.</Para>
+              ) : null}
+              {n.identification ? proseLine("Identification", n.identification) : null}
+              {n.anthropometry ? proseLine("Anthropometry", n.anthropometry) : null}
+              {(f.alerts?.allergies || []).length > 0 ? (
+                <Para><strong>Allergies:</strong> {oxford(allergies)}.</Para>
+              ) : null}
+              {n.language ? <Para><strong>Preferred language:</strong> {n.language}.</Para> : null}
+              {n.psychosocial ? proseLine("Psycho-social", n.psychosocial) : null}
+              {n.familySupport ? proseLine("Family support", n.familySupport) : null}
 
-                {/* Past, family, social */}
-                {(pastLine || famSocLine) ? (
-                  <>
-                    <SubHeader>Past · Family · Social History</SubHeader>
-                    {pastLine ? <Para>{pastLine}</Para> : null}
-                    {famSocLine ? <Para>{famSocLine}</Para> : null}
-                  </>
-                ) : null}
+              {/* Risk scores — compact one-liners */}
+              {(morseVal != null || bradenVal != null || painVal != null
+                || nutriVal != null || vteVal != null || dvtVal != null
+                || gcsVal != null) ? (
+                <>
+                  <RiskLine label="Morse Fall Risk"            value={morseVal}  max={125} band={morseRisk  || morseBand(morseVal)}  sub="see expanded scoring" />
+                  <RiskLine label="Braden Pressure-ulcer Risk" value={bradenVal} max={23}  band={bradenRisk || bradenBand(bradenVal)} sub="see expanded scoring" />
+                  <RiskLine label="Pain (numeric rating)"      value={painVal}   max={10}  band={painBand(painVal)} />
+                  <RiskLine label="Nutritional risk (MUST)"    value={nutriVal}  max={6}   band={nutriRisk  || nutritionBand(nutriVal)} />
+                  <RiskLine label="DVT risk"                   value={dvtVal}    max={null} band={null} />
+                  <RiskLine label="VTE risk (Padua)"           value={vteVal}    max={null} band={vteRisk} />
+                  <RiskLine label="Glasgow Coma Scale"         value={gcsVal}    max={15}  band={null} />
+                </>
+              ) : null}
 
-                {/* Home medications */}
-                {homeMeds.length > 0 ? (
+              {/* ADL (Barthel) */}
+              {(() => {
+                const adl = n.adl || n.barthel || {};
+                const total = barthelTotal(adl);
+                if (total == null) return null;
+                const rows = [];
+                const keys = ["feeding","bathing","grooming","dressing","bowels","bladder","toilet","transfer","mobility","stairs"];
+                keys.forEach((k) => {
+                  if (adl[k] != null) rows.push([k.charAt(0).toUpperCase() + k.slice(1), String(adl[k])]);
+                });
+                return (
                   <>
-                    <SubHeader>Home Medications</SubHeader>
+                    <SubHeader>Activities of Daily Living (Barthel)</SubHeader>
+                    {rows.length > 0 ? (
+                      <MiniTable headers={["Item", "Score"]} rows={rows} widths={["70%", "30%"]} />
+                    ) : null}
                     <Para>
-                      {subj} reports being on{" "}
-                      <strong>
-                        {oxford(homeMeds.map((m) =>
-                          typeof m === "string" ? m
-                            : [m.drug || m.name, m.dose, m.frequency].filter(Boolean).join(" ")))}
-                      </strong>{" "}
-                      at home.
+                      Barthel total <strong>{total}/100</strong>
+                      {BARTHEL_TOTAL_BAND(total) ? <> — <em>{BARTHEL_TOTAL_BAND(total)}</em></> : null}.
                     </Para>
                   </>
-                ) : null}
+                );
+              })()}
 
-                {/* Examination & vitals */}
-                {examLines.length > 0 ? (
-                  <>
-                    <SubHeader>Examination on Admission</SubHeader>
-                    {examLines.map((t, i) => <Para key={`ex-${i}`}>{t}</Para>)}
-                    {rosLine ? <Para><strong>Review of systems:</strong> {rosLine}.</Para> : null}
-                  </>
-                ) : null}
-
-                {/* Comorbidities — active only (active-only rule) */}
-                {comorbidities ? (
-                  <>
-                    <SubHeader>Comorbidities</SubHeader>
-                    <FlagLine
-                      obj={comorbidities}
-                      labelMap={comorbiditiesLabels}
-                      label="Significant comorbidities"
-                      allDescription="screened — none reported."
-                    />
-                  </>
-                ) : null}
-
-                {/* Devices on admission */}
-                {devices ? (
-                  <>
-                    <SubHeader>Devices in situ</SubHeader>
-                    <FlagLine
-                      obj={devices}
-                      labelMap={devicesLabels}
-                      label="Devices present"
-                      allDescription="none in situ at admission."
-                    />
-                  </>
-                ) : null}
-
-                {/* Skin */}
-                {skin ? (
-                  <>
-                    <SubHeader>Skin / pressure-area survey</SubHeader>
-                    <FlagLine
-                      obj={skin}
-                      labelMap={skinLabels}
-                      label="Skin findings"
-                      allDescription="no abnormality detected."
-                    />
-                  </>
-                ) : null}
-
-                {/* Risk scores — compact one-liners */}
-                {(morseVal != null || bradenVal != null || painVal != null || nutriVal != null || vteVal != null || dvtVal != null || gcsVal != null) ? (
-                  <>
-                    <SubHeader>Risk-screening Scores</SubHeader>
-                    <RiskLine label="Morse Fall Risk" value={morseVal} max={125} band={morseRisk || morseBand(morseVal)} sub="see expanded scoring" />
-                    <RiskLine label="Braden Pressure-ulcer Risk" value={bradenVal} max={23} band={bradenRisk || bradenBand(bradenVal)} sub="see expanded scoring" />
-                    <RiskLine label="Pain (numeric rating)" value={painVal} max={10} band={painBand(painVal)} />
-                    <RiskLine label="Nutritional risk (MUST)" value={nutriVal} max={6} band={nutriRisk || nutritionBand(nutriVal)} />
-                    <RiskLine label="DVT risk" value={dvtVal} max={null} band={null} />
-                    <RiskLine label="VTE risk (Padua)" value={vteVal} max={null} band={vteRisk} />
-                    <RiskLine label="Glasgow Coma Scale" value={gcsVal} max={15} band={null} />
-                  </>
-                ) : null}
-
-                {/* ADL (Barthel) — table only when at least one item recorded */}
-                {(() => {
-                  const adl = n.adl || n.barthel || {};
-                  const total = barthelTotal(adl);
-                  if (total == null) return null;
-                  return (
-                    <>
-                      <SubHeader>Activities of Daily Living (Barthel)</SubHeader>
-                      <Para>
-                        Barthel total <strong>{total}/100</strong>
-                        {BARTHEL_TOTAL_BAND(total) ? <> — <em>{BARTHEL_TOTAL_BAND(total)}</em></> : null}.
-                      </Para>
-                    </>
-                  );
-                })()}
-
-                {/* Code status */}
-                {codeStatus ? (
-                  <>
-                    <SubHeader>Code status</SubHeader>
-                    <Para><strong>{codeStatus}</strong> documented at admission.</Para>
-                  </>
-                ) : null}
-
-                {/* Care plan */}
-                {carePlan ? (
-                  <>
-                    <SubHeader>Initial care plan</SubHeader>
-                    <Para>{cleanSentence(carePlan)}</Para>
-                  </>
-                ) : null}
-
-                {/* Working diagnosis at admission */}
-                {(dxProv || dxWork) ? (
-                  <Para>
-                    {dxProv ? <><strong>Provisional diagnosis:</strong> {dxProv}.</> : null}
-                    {dxWork && dxWork !== dxProv ? <> <strong>Working diagnosis:</strong> {dxWork}.</> : null}
-                  </Para>
-                ) : null}
-
-                {/* IA actors / signatures — minor */}
-                {Object.keys(d).length > 0 ? (
-                  <Para style={{ color: COL.muted, fontSize: 10, marginBottom: 2 }}>
-                    <em>
-                      Doctor initial assessment signed by {dIASigner}
-                      {dIAReg ? ` (Reg ${dIAReg})` : ""}
-                      {dIAAt ? ` · ${fmtDateTime(dIAAt)}` : ""}.
-                    </em>
-                  </Para>
-                ) : null}
-                {Object.keys(n).length > 0 ? (
-                  <Para style={{ color: COL.muted, fontSize: 10, marginBottom: 4 }}>
-                    <em>
-                      Nursing initial assessment signed by {nIASigner}
-                      {nIAAt ? ` · ${fmtDateTime(nIAAt)}` : ""}.
-                    </em>
-                  </Para>
-                ) : null}
-              </>
-            ) : null}
-
-            {/* ───── Procedures performed today ───── */}
-            {dayProcedures.length > 0 ? (
-              <>
-                <SubHeader>Procedures performed</SubHeader>
-                {dayProcedures.map((p, i) => (
-                  <Para key={`proc-${k}-${i}`}>
-                    <strong>{p.name}</strong>
-                    {p.surgeon ? <> by <strong>{displayActor(p.surgeon)}</strong></> : null}
-                    {p.anaesthetist ? <> (anaesthetist: {displayActor(p.anaesthetist)})</> : null}.
-                    {p.findings ? <> <em>Operative findings: {stripDot(p.findings)}.</em></> : null}
-                    {p.notes ? <> {cleanSentence(p.notes)}</> : null}
-                  </Para>
-                ))}
-              </>
-            ) : null}
-
-            {/* ───── Transfusion today ───── */}
-            {dayTransfusion.length > 0 ? (
-              <>
-                <SubHeader>Blood transfusion</SubHeader>
-                <Table
-                  headers={["Time", "Component", "Bag", "Vol", "Pre BP/P", "Post BP/P", "Reaction", "Tx by"]}
-                  rows={dayTransfusion.map((b) => [
-                    fmtTimeOnly(b.at),
-                    b.component || "—",
-                    b.bagNumber || "—",
-                    b.volumeMl != null ? `${b.volumeMl} mL` : "—",
-                    `${b.preVitals?.bp || "—"} / ${b.preVitals?.pulse || "—"}`,
-                    `${b.postVitals?.bp || "—"} / ${b.postVitals?.pulse || "—"}`,
-                    <span style={{ color: b.reaction ? COL.abN : COL.body, fontWeight: b.reaction ? 700 : 400 }}>
-                      {b.reaction ? `Yes${b.reactionType ? ` — ${b.reactionType}` : ""}` : "No"}
-                    </span>,
-                    displayActor(b.transfusedBy),
-                  ])}
-                  widths={["10%", "12%", "10%", "8%", "12%", "12%", "16%", "20%"]}
-                />
-              </>
-            ) : null}
-
-            {/* ───── Consents signed today ───── */}
-            {dayConsents.length > 0 ? (
-              <>
-                <SubHeader>Consents signed</SubHeader>
-                <Table
-                  headers={["Form", "Signed by", "Witness", "Time"]}
-                  rows={dayConsents.map((c) => [
-                    c.name || "—",
-                    displayActor(c.signedBy),
-                    displayActor(c.witness),
-                    c.signedAt ? fmtTimeOnly(c.signedAt) : "—",
-                  ])}
-                  widths={["44%", "22%", "20%", "14%"]}
-                />
-              </>
-            ) : null}
-
-            {/* ───── Bed transfers today ───── */}
-            {dayBedTransfers.length > 0 ? (
-              <>
-                <SubHeader>Bed transfers</SubHeader>
-                {dayBedTransfers.map((t, i) => (
-                  <Para key={`bt-${k}-${i}`}>
-                    Moved from <strong>{t.fromBed || "—"}</strong> to{" "}
-                    <strong>{t.toBed || "—"}</strong>
-                    {t.reason ? <> — {t.reason.toLowerCase()}</> : null}
-                    {t.by ? <> by {displayActor(t.by)}</> : null} at {fmtTimeOnly(t.at)}.
-                  </Para>
-                ))}
-              </>
-            ) : null}
-
-            {/* ───── Course narrative for the day (event prose) ───── */}
-            {courseSent && !isDay1 ? (
-              <>
-                <SubHeader>Clinical events</SubHeader>
-                <Para>{courseSent}</Para>
-              </>
-            ) : null}
-            {courseSent && isDay1 ? (
-              // For Day 1, only print the course sentence if it adds
-              // *new* information not already in the admission line.
-              <Para style={{ marginTop: 4 }}>{courseSent}</Para>
-            ) : null}
-
-            {/* ───── Doctor notes today (verbatim, bold header) ───── */}
-            {dayDocNotes.length > 0 ? (
-              <>
-                <SubHeader>Doctor's notes</SubHeader>
-                {dayDocNotes.map((dn, i) => (
-                  <Para key={`dn-${k}-${i}`}>
-                    <strong>
-                      {fmtTimeOnly(dn.createdAt)} · {dn.noteType || "Progress"}
-                      {dn.doctorName ? ` · ${displayActor(dn.doctorName)}` : ""}:
-                    </strong>{" "}
-                    {dn.content}
-                  </Para>
-                ))}
-              </>
-            ) : null}
-
-            {/* ───── Doctor orders today (compact table) ───── */}
-            {dayOrders.length > 0 ? (
-              <>
-                <SubHeader>Orders placed</SubHeader>
-                <Table
-                  headers={["Time", "Type", "Order", "Status", "By"]}
-                  rows={dayOrders.map((o) => [
-                    fmtTimeOnly(o.orderedAt),
-                    o.orderType || "—",
-                    orderDetailLine(o),
-                    o.status || "—",
-                    displayActor(o.orderedBy),
-                  ])}
-                  widths={["10%", "14%", "48%", "12%", "16%"]}
-                />
-              </>
-            ) : null}
-
-            {/* ───── Nursing notes today ───── */}
-            {dayNurseNotes.length > 0 ? (
-              <>
-                <SubHeader>Nursing notes</SubHeader>
-                {dayNurseNotes.map((nn, i) => (
-                  <Para key={`nn-${k}-${i}`}>
-                    <strong>
-                      {fmtTimeOnly(nn.createdAt)}
-                      {nn.shift ? ` · ${nn.shift} shift` : ""}
-                      {nn.nurseName ? ` · ${displayActor(nn.nurseName)}` : ""}:
-                    </strong>{" "}
-                    {nn.content}
-                  </Para>
-                ))}
-              </>
-            ) : null}
-
-            {/* ───── Shift handovers today ───── */}
-            {dayHandovers.length > 0 ? (
-              <>
-                <SubHeader>Shift handovers</SubHeader>
-                <Table
-                  headers={["Shift", "Handing", "Receiving", "Summary"]}
-                  rows={dayHandovers.map((h) => [
-                    h.shift || "—",
-                    displayActor(h.handingBy),
-                    displayActor(h.receivingBy),
-                    h.summary || "—",
-                  ])}
-                  widths={["10%", "18%", "18%", "54%"]}
-                />
-              </>
-            ) : null}
-
-            {/* ───── Vitals readings today (compact) ───── */}
-            {dayVitals.length > 0 ? (
-              <>
-                <SubHeader>Vitals — readings today</SubHeader>
-                <Table
-                  headers={["Time", "BP", "Pulse", "Temp", "SpO₂", "RR", "By"]}
-                  rows={dayVitals.slice(0, 8).map((v) => [
-                    fmtTimeOnly(v.at),
-                    v.bp || "—",
-                    v.pulse || "—",
-                    v.temp || "—",
-                    v.spo2 || "—",
-                    v.rr || "—",
-                    displayActor(v.recordedBy),
-                  ])}
-                  widths={["12%", "14%", "11%", "11%", "11%", "11%", "30%"]}
-                />
-                {dayVitals.length > 8 ? (
-                  <Para style={{ color: COL.muted, fontSize: 9, marginTop: -3 }}>
-                    <em>{dayVitals.length - 8} additional reading(s) on file.</em>
-                  </Para>
-                ) : null}
-              </>
-            ) : null}
-
-            {/* ───── I/O totals today (single row) ───── */}
-            {dayIO.length > 0 ? (() => {
-              const inTotal  = dayIO.filter((e) => e.direction === "IN").reduce((s, e) => s + (Number(e.volumeML) || 0), 0);
-              const outTotal = dayIO.filter((e) => e.direction === "OUT").reduce((s, e) => s + (Number(e.volumeML) || 0), 0);
-              const net = inTotal - outTotal;
-              const netStr = `${net > 0 ? "+" : ""}${net} mL`;
-              return (
-                <Para>
-                  <strong>I/O:</strong>{" "}
-                  intake <strong>{inTotal} mL</strong>,{" "}
-                  output <strong>{outTotal} mL</strong>,{" "}
-                  net balance <strong>{netStr}</strong>.
-                </Para>
-              );
-            })() : null}
-
-            {/* ───── MAR — compact summary per drug ───── */}
-            {dayMar.length > 0 ? (() => {
-              const drugMap = new Map();
-              dayMar.forEach((m) => {
-                const key = `${m.drug}|${m.dose}|${m.route}|${m.frequency}`;
-                if (!drugMap.has(key)) {
-                  drugMap.set(key, {
-                    drug: m.drug, dose: m.dose, route: m.route, frequency: m.frequency,
-                    times: [], by: new Set(),
-                  });
-                }
-                const entry = drugMap.get(key);
-                if (m.givenAt) entry.times.push(fmtTimeOnly(m.givenAt));
-                if (m.givenBy) entry.by.add(displayActor(m.givenBy));
-              });
-              return (
+              {/* Home medications */}
+              {homeMeds.length > 0 ? (
                 <>
-                  <SubHeader>Medication administration record</SubHeader>
-                  <Table
-                    headers={["Drug", "Dose", "Route", "Freq", "Times given", "By"]}
-                    rows={Array.from(drugMap.values()).map((e) => [
-                      <strong>{e.drug || "—"}</strong>,
-                      e.dose || "—",
-                      e.route || "—",
-                      e.frequency || "—",
-                      e.times.join(", ") || "—",
-                      Array.from(e.by).join(", ") || "—",
-                    ])}
-                    widths={["28%", "10%", "10%", "12%", "26%", "14%"]}
+                  <SubHeader>Home Medications</SubHeader>
+                  <MiniTable
+                    headers={["Drug", "Dose", "Frequency", "Duration"]}
+                    rows={homeMeds.map((m) => typeof m === "string"
+                      ? [<strong>{m}</strong>, "—", "—", "—"]
+                      : [
+                          <strong>{m.drug || m.name || "—"}</strong>,
+                          m.dose || "—",
+                          m.frequency || "—",
+                          m.duration || m.since || "—",
+                        ])}
+                    widths={["40%", "20%", "20%", "20%"]}
                   />
                 </>
-              );
-            })() : null}
+              ) : null}
 
-            {/* ───── Last day: discharge marker (full discharge block
-                    rendered later, this is just an anchor sentence). ── */}
-            {isLastDay && f.admission?.dischargeDate ? (
-              <Para style={{ marginTop: 6 }}>
-                <strong>Discharged</strong> on{" "}
-                <strong>{fmtDate(f.admission.dischargeDate, true)}</strong>
-                {f.discharge?.condition ? <> in <strong>{f.discharge.condition.toLowerCase()}</strong> condition</> : null}.
-                See discharge block below for medications, advice and
-                follow-up.
+              {/* Cross-check alerts */}
+              {(f.alerts?.crossCheckAlerts || []).length > 0 ? (
+                <>
+                  <SubHeader>Cross-check Alerts</SubHeader>
+                  <MiniTable
+                    headers={["Alert", "Detail"]}
+                    rows={(f.alerts.crossCheckAlerts || []).map((a) => {
+                      if (typeof a === "string") return [a, "—"];
+                      return [a.label || a.type || "—", a.detail || a.value || "—"];
+                    })}
+                    widths={["35%", "65%"]}
+                  />
+                </>
+              ) : null}
+
+              {/* Devices in situ */}
+              {devices ? (
+                <FlagLine
+                  obj={devices}
+                  labelMap={devicesLabels}
+                  label="Devices present"
+                  allDescription="none in situ at admission."
+                />
+              ) : null}
+
+              {/* Skin survey */}
+              {skin ? (
+                <FlagLine
+                  obj={skin}
+                  labelMap={skinLabels}
+                  label="Skin findings"
+                  allDescription="no abnormality detected."
+                />
+              ) : null}
+
+              {/* Misc nursing IA fields — render only when present */}
+              {n.educationNeeds ? proseLine("Education needs", n.educationNeeds) : null}
+              {n.cognitive ? proseLine("Cognitive", n.cognitive) : null}
+              {n.bowelBladder ? proseLine("Bowel / bladder", n.bowelBladder) : null}
+              {n.sleep ? proseLine("Sleep pattern", n.sleep) : null}
+              {n.caregiver ? proseLine("Family caregiver", n.caregiver) : null}
+              {n.dischargePlanning ? proseLine("Discharge planning", n.dischargePlanning) : null}
+
+              {carePlan ? (
+                <Para><strong>Initial care plan:</strong> <em>{cleanSentence(carePlan)}</em></Para>
+              ) : null}
+
+              <Para style={{ color: COL.muted, fontSize: 10 }}>
+                <em>
+                  Nursing IA signed by {nIASigner}
+                  {nIAAt ? ` · ${fmtDateTime(nIAAt)}` : ""}.
+                </em>
               </Para>
-            ) : null}
-          </div>
+            </>
+          ) : null}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          3. DOCTOR NOTES                                  [NABH COP.7]
+          ════════════════════════════════════════════════════════════ */}
+      {(f.doctorNotes || []).length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH COP.7">Doctor Notes</SectionHeader>
+          {f.doctorNotes.map((dn, i) => (
+            <Para key={`dn-${i}`}>
+              <strong>{fmtDateTime(dn.createdAt)}</strong>
+              {dn.noteType ? <> · {dn.noteType}</> : null}
+              {dn.doctorName ? <> · <em>{displayActor(dn.doctorName)}</em></> : null}
+              {" — "}{dn.content}
+            </Para>
+          ))}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          4. NURSE NOTES                                   [NABH COP.2]
+          ════════════════════════════════════════════════════════════ */}
+      {(f.nursingNotes || []).length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH COP.2">Nurse Notes</SectionHeader>
+          {f.nursingNotes.map((nn, i) => {
+            const vit = nn.vitals && typeof nn.vitals === "object" ? vitalsSentence(nn.vitals) : "";
+            return (
+              <Para key={`nn-${i}`}>
+                <strong>{fmtDateTime(nn.createdAt)}</strong>
+                {nn.noteType ? <> · {nn.noteType}</> : null}
+                {nn.shift ? <> · {nn.shift} shift</> : null}
+                {nn.nurseName ? <> · <em>{displayActor(nn.nurseName)}</em></> : null}
+                {" — "}{nn.content}
+                {vit ? <> <em style={{ color: COL.muted }}>· {vit.toLowerCase()}</em></> : null}
+              </Para>
+            );
+          })}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          5. ORDERS + MAR                            [NABH MOM.2/MOM.4]
+          ════════════════════════════════════════════════════════════ */}
+      {((f.doctorOrders || []).length > 0 || (f.mar || []).length > 0) ? (
+        <>
+          <SectionHeader nabh="NABH MOM.2 / MOM.4">Orders & Medication Administration</SectionHeader>
+
+          {(f.doctorOrders || []).length > 0 ? (
+            <>
+              <SubHeader>Doctor Orders</SubHeader>
+              <MiniTable
+                headers={["Date / Time", "Type", "Order detail", "Status", "Ordered by"]}
+                rows={f.doctorOrders.map((o) => [
+                  fmtDateTime(o.orderedAt),
+                  o.orderType || "—",
+                  orderDetailLine(o),
+                  o.status || "—",
+                  displayActor(o.orderedBy),
+                ])}
+                widths={["16%", "14%", "44%", "12%", "14%"]}
+              />
+            </>
+          ) : null}
+
+          {(f.mar || []).length > 0 ? (() => {
+            // Group MAR by calendar day; show last 3 days max to keep print tight.
+            const sortedDays = Array.from(marByDay.keys()).sort();
+            const showDays = sortedDays.slice(-3);
+            return (
+              <>
+                <SubHeader>Medication Administration Record (last {showDays.length} day{showDays.length === 1 ? "" : "s"})</SubHeader>
+                {showDays.map((k) => {
+                  const day = marByDay.get(k) || [];
+                  const drugMap = new Map();
+                  day.forEach((m) => {
+                    const key = `${m.drug}|${m.dose}|${m.route}|${m.frequency}`;
+                    if (!drugMap.has(key)) {
+                      drugMap.set(key, {
+                        drug: m.drug, dose: m.dose, route: m.route, frequency: m.frequency,
+                        times: [], by: new Set(),
+                      });
+                    }
+                    const entry = drugMap.get(key);
+                    if (m.givenAt) entry.times.push(fmtTimeOnly(m.givenAt));
+                    if (m.givenBy) entry.by.add(displayActor(m.givenBy));
+                  });
+                  return (
+                    <div key={`mar-${k}`} style={{ marginBottom: 6 }}>
+                      <Para style={{ fontWeight: 600, marginBottom: 2 }}>
+                        {dayHeading(day[0]?.givenAt || day[0]?.createdAt || k)}
+                      </Para>
+                      <MiniTable
+                        headers={["Drug", "Dose", "Route", "Frequency", "Times given", "By"]}
+                        rows={Array.from(drugMap.values()).map((e) => [
+                          <strong>{e.drug || "—"}</strong>,
+                          e.dose || "—",
+                          e.route || "—",
+                          e.frequency || "—",
+                          e.times.join(", ") || "—",
+                          Array.from(e.by).join(", ") || "—",
+                        ])}
+                        widths={["28%", "10%", "10%", "12%", "26%", "14%"]}
+                      />
+                    </div>
+                  );
+                })}
+                {sortedDays.length > showDays.length ? (
+                  <Para style={{ color: COL.muted, fontSize: 9 }}>
+                    <em>{sortedDays.length - showDays.length} earlier day(s) of MAR archived on the patient record.</em>
+                  </Para>
+                ) : null}
+              </>
+            );
+          })() : null}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          6. VITAL SIGNS TREND                             [NABH COP.3]
+          ════════════════════════════════════════════════════════════ */}
+      {(f.vitalsTrend || []).length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH COP.3">Vital Signs Trend</SectionHeader>
+          <MiniTable
+            headers={["Time", "BP", "Pulse", "Temp", "SpO₂", "RR", "Recorded by"]}
+            rows={(f.vitalsTrend || []).slice(-12).map((v) => [
+              fmtDateTime(v.at),
+              v.bp || "—",
+              v.pulse || "—",
+              v.temp || "—",
+              v.spo2 || "—",
+              v.rr || "—",
+              displayActor(v.recordedBy),
+            ])}
+            widths={["18%", "12%", "10%", "10%", "10%", "10%", "30%"]}
+          />
+          {(f.vitalsTrend || []).length > 12 ? (
+            <Para style={{ color: COL.muted, fontSize: 9 }}>
+              <em>Showing latest 12 of {f.vitalsTrend.length} readings on file.</em>
+            </Para>
+          ) : null}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          7. INTAKE / OUTPUT SHEET                          [NABH COP.3]
+          ════════════════════════════════════════════════════════════ */}
+      {(f.intakeOutput || []).length > 0 ? (() => {
+        // Aggregate to daily totals.
+        const byDay = new Map();
+        (f.intakeOutput || []).forEach((e) => {
+          const k = dayKey(e.at);
+          if (!k) return;
+          if (!byDay.has(k)) byDay.set(k, { in: 0, out: 0, date: e.at });
+          const acc = byDay.get(k);
+          const vol = Number(e.volumeML) || 0;
+          if (e.direction === "IN") acc.in += vol;
+          else if (e.direction === "OUT") acc.out += vol;
+        });
+        const days = Array.from(byDay.entries()).sort((a, b) => a[0].localeCompare(b[0])).slice(-5);
+        if (!days.length) return null;
+        return (
+          <>
+            <SectionHeader nabh="NABH COP.3">Intake / Output Sheet</SectionHeader>
+            <MiniTable
+              headers={["Date", "Intake (mL)", "Output (mL)", "Net balance"]}
+              rows={days.map(([, v]) => {
+                const net = v.in - v.out;
+                const netStr = `${net > 0 ? "+" : ""}${net} mL`;
+                return [
+                  dayHeading(v.date),
+                  v.in.toString(),
+                  v.out.toString(),
+                  <strong style={{ color: net < 0 ? COL.abN : COL.body }}>{netStr}</strong>,
+                ];
+              })}
+              widths={["34%", "22%", "22%", "22%"]}
+            />
+          </>
         );
-      })}
+      })() : null}
 
       {/* ════════════════════════════════════════════════════════════
-          4. INVESTIGATIONS — abnormal first, then table
+          8. PROCEDURE NOTES                              [NABH COP.13]
           ════════════════════════════════════════════════════════════ */}
-      {invs.length > 0 ? (
+      {(f.procedures || []).length > 0 ? (
         <>
-          <SectionHeader nabh="NABH AAC.7">Investigations</SectionHeader>
-          {abnormalInvs.length > 0 ? (
-            <Para>
-              Significant findings:{" "}
-              {abnormalInvs.map((i, idx) => {
-                const sep = idx === 0
-                  ? null
-                  : idx === abnormalInvs.length - 1
-                    ? " and "
-                    : ", ";
-                return (
-                  <span key={`ab-${i.name}-${idx}`}>
-                    {sep}
-                    <strong>{i.name}</strong>
-                    {i.result ? <> — {stripDot(i.result)}</> : null}
-                  </span>
-                );
-              })}.
+          <SectionHeader nabh="NABH COP.13">Procedure Notes</SectionHeader>
+          {f.procedures.map((p, i) => (
+            <Para key={`proc-${i}`}>
+              <strong>{p.date ? fmtDate(p.date, true) : "—"}</strong>{" "}
+              · <strong>{p.name || "—"}</strong>
+              {p.surgeon ? <> — surgeon <em>{displayActor(p.surgeon)}</em></> : null}
+              {p.anaesthetist ? <>, anaesthetist <em>{displayActor(p.anaesthetist)}</em></> : null}.
+              {p.findings ? <> <em>Operative findings: {stripDot(p.findings)}.</em></> : null}
+              {p.notes ? <> {cleanSentence(p.notes)}</> : null}
             </Para>
+          ))}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          9. INVESTIGATIONS & REPORTS               [NABH AAC.7 / AAC.8]
+          ════════════════════════════════════════════════════════════ */}
+      {(invs.length > 0 || (f.labReports || []).length > 0) ? (
+        <>
+          <SectionHeader nabh="NABH AAC.7 / AAC.8">Investigations & Reports</SectionHeader>
+
+          {invs.length > 0 ? (
+            <>
+              <SubHeader>Investigations</SubHeader>
+              {abnormalInvs.length > 0 ? (
+                <Para>
+                  Significant findings:{" "}
+                  {abnormalInvs.map((iv, idx) => {
+                    const sep = idx === 0
+                      ? null
+                      : idx === abnormalInvs.length - 1
+                        ? " and "
+                        : ", ";
+                    return (
+                      <span key={`ab-${iv.name}-${idx}`}>
+                        {sep}
+                        <strong>{iv.name}</strong>
+                        {iv.result ? <> — {stripDot(iv.result)}</> : null}
+                      </span>
+                    );
+                  })}.
+                </Para>
+              ) : null}
+              {normalInvs.length > 0 ? (
+                <Para>
+                  <em>
+                    {abnormalInvs.length > 0 ? "Other tests" : "Tests performed"}{" "}
+                    — {oxford(normalInvs.map((iv) => iv.name))} — were within normal limits or unremarkable.
+                  </em>
+                </Para>
+              ) : null}
+              <MiniTable
+                headers={["Test", "Ordered", "Reported", "Result"]}
+                rows={invs.map((iv) => [
+                  <strong>{iv.name || "—"}</strong>,
+                  iv.orderedAt  ? fmtDate(iv.orderedAt)  : "—",
+                  iv.reportedAt ? fmtDate(iv.reportedAt) : "—",
+                  iv.result ? (isResultAbnormal(iv.result)
+                    ? <span style={{ color: COL.abN, fontWeight: 600 }}>{iv.result}</span>
+                    : <em>{iv.result}</em>) : "—",
+                ])}
+                widths={["28%", "16%", "16%", "40%"]}
+              />
+            </>
           ) : null}
-          {normalInvs.length > 0 ? (
-            <Para>
-              <em>
-                {abnormalInvs.length > 0 ? "Other tests" : "Tests performed"}{" "}
-                — {oxford(normalInvs.map((i) => i.name))} — were within normal limits or unremarkable.
-              </em>
-            </Para>
+
+          {(f.labReports || []).length > 0 ? (
+            <>
+              <SubHeader>Lab & Imaging Reports</SubHeader>
+              <MiniTable
+                headers={["Report", "Date", "Key findings / impression"]}
+                rows={f.labReports.map((r) => [
+                  <strong>{r.name || "—"}</strong>,
+                  fmtDate(r.date),
+                  r.impression || "—",
+                ])}
+                widths={["28%", "16%", "56%"]}
+              />
+            </>
           ) : null}
-          <Table
-            headers={["Test", "Ordered", "Reported", "Result"]}
-            rows={invs.map((i) => [
-              <strong>{i.name || "—"}</strong>,
-              i.orderedAt ? fmtDate(i.orderedAt) : "—",
-              i.reportedAt ? fmtDate(i.reportedAt) : "—",
-              i.result ? (isResultAbnormal(i.result)
-                ? <span style={{ color: COL.abN, fontWeight: 600 }}>{i.result}</span>
-                : <span><em>{i.result}</em></span>) : "—",
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          10. CONSENT FORMS                                [NABH PRE.1]
+          ════════════════════════════════════════════════════════════ */}
+      {(f.consents || []).length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH PRE.1">Consent Forms</SectionHeader>
+          <MiniTable
+            headers={["Form", "Signed", "Signed by", "Witness", "Signed at"]}
+            rows={f.consents.map((c) => [
+              c.name || "—",
+              c.signed
+                ? <span style={{ color: COL.ok, fontWeight: 600 }}>Yes</span>
+                : <em style={{ color: COL.abN }}>Pending — to be obtained</em>,
+              displayActor(c.signedBy),
+              displayActor(c.witness),
+              c.signedAt ? fmtDateTime(c.signedAt) : "—",
             ])}
-            widths={["28%", "16%", "16%", "40%"]}
+            widths={["32%", "12%", "20%", "20%", "16%"]}
           />
         </>
       ) : null}
 
       {/* ════════════════════════════════════════════════════════════
-          5. LAB REPORTS (if backend ships separate radiology / lab
-          report objects with an `impression`)
-          ════════════════════════════════════════════════════════════ */}
-      {(f.labReports || []).length > 0 ? (
-        <>
-          <SectionHeader nabh="NABH AAC.8">Lab & Imaging Reports</SectionHeader>
-          <Table
-            headers={["Report", "Type", "Date", "Impression"]}
-            rows={f.labReports.map((r) => [
-              <strong>{r.name || "—"}</strong>,
-              r.reportType || "—",
-              fmtDate(r.date),
-              r.impression || "—",
-            ])}
-            widths={["26%", "14%", "16%", "44%"]}
-          />
-        </>
-      ) : null}
-
-      {/* ════════════════════════════════════════════════════════════
-          6. DIET PLANS (if any)
+          11. DIETETIC CARE                                [NABH COP.4]
           ════════════════════════════════════════════════════════════ */}
       {(f.dietPlans || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH COP.4">Dietetic Care</SectionHeader>
-          <Table
+          <MiniTable
             headers={["Date", "Diet", "Kcal", "Restrictions", "Assigned by"]}
             rows={f.dietPlans.map((dp) => [
               fmtDate(dp.at),
@@ -1568,59 +1512,137 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
       ) : null}
 
       {/* ════════════════════════════════════════════════════════════
-          7. ICU CARE BUNDLES — only if any data
+          12. NURSING CARE PLANS                           [NABH COP.2]
           ════════════════════════════════════════════════════════════ */}
-      {(f.icuBundles || []).length > 0 ? (
+      {(f.nursingCarePlans || []).length > 0 ? (
         <>
-          <SectionHeader nabh="NABH HIC.6 / IPSG.6">ICU Care-bundle Compliance</SectionHeader>
-          <Table
-            headers={["Date", "Shift", "VAP", "CAUTI", "CLABSI", "DVT", "Sepsis", "SUP", "Overall"]}
-            rows={(f.icuBundles || []).map((b) => [
-              b.date || "—",
-              b.shift || "—",
-              b.vapPct != null ? `${b.vapPct}%` : "—",
-              b.cautiPct != null ? `${b.cautiPct}%` : "—",
-              b.clabsiPct != null ? `${b.clabsiPct}%` : "—",
-              b.dvtPct != null ? `${b.dvtPct}%` : "—",
-              b.sepsisPct != null ? `${b.sepsisPct}%` : "—",
-              b.supPct != null ? `${b.supPct}%` : "—",
-              b.overallPct != null
-                ? <span style={{ color: b.overallPct >= 80 ? COL.ok : COL.abN, fontWeight: 600 }}>{b.overallPct}%</span>
-                : "—",
+          <SectionHeader nabh="NABH COP.2">Nursing Care Plans</SectionHeader>
+          {f.nursingCarePlans.map((p, i) => (
+            <Para key={`ncp-${i}`}>
+              <strong>{p.at ? fmtDate(p.at, true) : "—"}</strong>
+              {p.diagnosis ? <> — diagnosis: <strong>{p.diagnosis}</strong></> : null}.
+              {p.goals ? <> Goal: {stripDot(p.goals)}.</> : null}
+              {p.interventions ? <> Interventions: {stripDot(p.interventions)}.</> : null}
+              {p.evaluation ? <> <em>Outcome: {stripDot(p.evaluation)}.</em></> : null}
+              {p.nurseName ? <> <em style={{ color: COL.muted }}>— {displayActor(p.nurseName)}</em></> : null}
+            </Para>
+          ))}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          13. NURSING RE-ASSESSMENTS                       [NABH COP.2]
+          ════════════════════════════════════════════════════════════ */}
+      {(f.nursingAssessments || []).length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH COP.2">Nursing Re-assessments</SectionHeader>
+          {f.nursingAssessments.map((a, i) => (
+            <Para key={`nra-${i}`}>
+              <strong>{a.at ? fmtDateTime(a.at) : "—"}</strong>
+              {a.type ? <> · {a.type}</> : null}
+              {" — "}{a.content || "—"}
+              {a.nurseName ? <> <em style={{ color: COL.muted }}>· {displayActor(a.nurseName)}</em></> : null}
+            </Para>
+          ))}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          14. BLOOD TRANSFUSION                       [NABH HIC.4/MOM.4]
+          ════════════════════════════════════════════════════════════ */}
+      {(f.bloodTransfusion || []).length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH HIC.4 / MOM.4">Blood Transfusion</SectionHeader>
+          <MiniTable
+            headers={["Date / Time", "Component", "Bag no", "Vol", "Pre (BP/P)", "Post (BP/P)", "Reaction", "Given by"]}
+            rows={f.bloodTransfusion.map((b) => [
+              fmtDateTime(b.at),
+              b.component || "—",
+              b.bagNumber || "—",
+              b.volumeMl != null ? `${b.volumeMl} mL` : "—",
+              `${b.preVitals?.bp || "—"} / ${b.preVitals?.pulse || "—"}`,
+              `${b.postVitals?.bp || "—"} / ${b.postVitals?.pulse || "—"}`,
+              <span style={{ color: b.reaction ? COL.abN : COL.body, fontWeight: b.reaction ? 700 : 400, fontStyle: b.reaction ? "italic" : "normal" }}>
+                {b.reaction ? `Yes${b.reactionType ? ` — ${b.reactionType}` : ""}` : "No"}
+              </span>,
+              displayActor(b.transfusedBy),
             ])}
-            widths={["12%", "10%", "10%", "10%", "10%", "10%", "10%", "10%", "18%"]}
+            widths={["14%", "12%", "10%", "8%", "12%", "12%", "14%", "18%"]}
           />
         </>
       ) : null}
 
       {/* ════════════════════════════════════════════════════════════
-          8. MLC / MEDICO-LEGAL (rare; render only if present)
+          15. MEDICO-LEGAL RECORDS                         [NABH ROM.4]
           ════════════════════════════════════════════════════════════ */}
       {(f.mlc || []).length > 0 ? (
         <>
-          <SectionHeader nabh="NABH ROM.4">Medico-legal Entries</SectionHeader>
-          <Table
-            headers={["Date", "Type", "Brief", "IO / Station", "Signed by"]}
-            rows={f.mlc.map((m) => [
-              fmtDateTime(m.at),
-              m.type || "—",
-              m.brief || "—",
-              [m.io, m.station].filter(Boolean).join(" · ") || "—",
-              displayActor(m.signedBy),
-            ])}
-            widths={["16%", "12%", "36%", "22%", "14%"]}
-          />
+          <SectionHeader nabh="NABH ROM.4">Medico-legal Records</SectionHeader>
+          {f.mlc.map((m, i) => (
+            <Para key={`mlc-${i}`}>
+              <strong>{m.at ? fmtDateTime(m.at) : "—"}</strong>
+              {m.type ? <> · {m.type}</> : null}
+              {m.io ? <> · IO <em>{m.io}</em></> : null}
+              {m.station ? <> ({m.station})</> : null}.
+              {m.brief ? <> Brief: {stripDot(m.brief)}.</> : null}
+              {m.signedBy ? <> <em style={{ color: COL.muted }}>Signed by {displayActor(m.signedBy)}.</em></> : null}
+            </Para>
+          ))}
         </>
       ) : null}
 
       {/* ════════════════════════════════════════════════════════════
-          9. DISCHARGE BLOCK
+          16. SHIFT HANDOVERS + BED TRANSFERS              [NABH COP.6]
           ════════════════════════════════════════════════════════════ */}
-      {(f.admission?.dischargeDate || dischargeMeds.length > 0 || f.discharge?.advice || f.discharge?.followUpDate) ? (
-        <div className="pr-page-break" style={{ pageBreakBefore: "auto" }}>
-          <SectionHeader nabh="NABH AAC.11">Discharge</SectionHeader>
+      {((f.shiftHandovers || []).length > 0 || (f.bedTransfers || []).length > 0) ? (
+        <>
+          <SectionHeader nabh="NABH COP.6">Shift Handovers & Bed Transfers</SectionHeader>
 
-          {/* Discharge narrative block (1-2 short paragraphs) */}
+          {(f.shiftHandovers || []).length > 0 ? (
+            <>
+              <SubHeader>Shift Handovers</SubHeader>
+              <MiniTable
+                headers={["Date / Time", "Shift", "Handing nurse", "Receiving nurse", "Summary"]}
+                rows={f.shiftHandovers.map((h) => [
+                  fmtDateTime(h.at),
+                  h.shift || "—",
+                  displayActor(h.handingBy),
+                  displayActor(h.receivingBy),
+                  h.summary || "—",
+                ])}
+                widths={["16%", "10%", "18%", "18%", "38%"]}
+              />
+            </>
+          ) : null}
+
+          {(f.bedTransfers || []).length > 0 ? (
+            <>
+              <SubHeader>Bed Transfers</SubHeader>
+              <MiniTable
+                headers={["Date / Time", "From", "To", "Reason", "By"]}
+                rows={f.bedTransfers.map((t) => [
+                  fmtDateTime(t.at),
+                  t.fromBed || "—",
+                  t.toBed || "—",
+                  t.reason || "—",
+                  displayActor(t.by),
+                ])}
+                widths={["16%", "16%", "16%", "32%", "20%"]}
+              />
+            </>
+          ) : null}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          17. DISCHARGE SUMMARY                           [NABH AAC.11]
+          ════════════════════════════════════════════════════════════ */}
+      {(f.admission?.dischargeDate || dischargeMeds.length > 0
+        || f.discharge?.advice || f.discharge?.followUpDate
+        || f.discharge?.summary) ? (
+        <>
+          <SectionHeader nabh="NABH AAC.11">Discharge Summary</SectionHeader>
+
           {f.discharge?.summary ? (
             <Para>{cleanSentence(f.discharge.summary)}</Para>
           ) : null}
@@ -1632,10 +1654,9 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
             {dxFinal ? <> Final diagnosis: <strong>{dxFinal}</strong>{f.admission?.icd10 ? <> (ICD-10 {f.admission.icd10})</> : null}.</> : null}
           </Para>
 
-          {/* Discharge medications (tight chemist-photocopy table) */}
           {dischargeMeds.length > 0 ? (
             <>
-              <SubHeader>Medications on discharge</SubHeader>
+              <SubHeader>Discharge Medications</SubHeader>
               <table
                 className="pr-table"
                 style={{
@@ -1648,22 +1669,22 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
               >
                 <thead>
                   <tr>
-                    <th style={{ ...CELL_TH, width: "32%" }}>Drug</th>
-                    <th style={{ ...CELL_TH, width: "32%" }}>Dose · Route · Frequency</th>
-                    <th style={{ ...CELL_TH }}>Duration / Instructions</th>
+                    <th style={{ ...CELL_TH, width: "30%" }}>Drug</th>
+                    <th style={{ ...CELL_TH, width: "12%" }}>Dose</th>
+                    <th style={{ ...CELL_TH, width: "12%" }}>Frequency</th>
+                    <th style={{ ...CELL_TH, width: "10%" }}>Route</th>
+                    <th style={{ ...CELL_TH, width: "14%" }}>Duration</th>
+                    <th style={{ ...CELL_TH }}>Instructions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {dischargeMeds.map((m, i) => {
                     const drugName = m.name || m.drug || "—";
-                    const doseLine = [m.dose, m.route, m.frequency].filter(Boolean).join(" · ");
                     const duration = m.duration
                       ? m.duration
                       : m.endDate
                         ? `Until ${fmtDate(m.endDate)}`
-                        : m.indication
-                          ? m.indication
-                          : "Continued";
+                        : "Continued";
                     return (
                       <tr key={`dm-${i}`} className="bill-line-row">
                         <td style={CELL_TD}>
@@ -1672,14 +1693,14 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
                             <div style={{ fontSize: 9, color: COL.muted }}>{m.generic}</div>
                           ) : null}
                         </td>
-                        <td style={CELL_TD}>{doseLine || "—"}</td>
+                        <td style={CELL_TD}>{m.dose || "—"}</td>
+                        <td style={CELL_TD}>{m.frequency || "—"}</td>
+                        <td style={CELL_TD}>{m.route || "—"}</td>
+                        <td style={CELL_TD}>{duration}</td>
                         <td style={CELL_TD}>
-                          <div>{duration}</div>
-                          {(m.instructions || m.indication) && duration !== (m.instructions || m.indication) ? (
-                            <div style={{ fontSize: 9, color: COL.muted }}>
-                              <em>{m.instructions || m.indication}</em>
-                            </div>
-                          ) : null}
+                          {(m.instructions || m.indication) ? (
+                            <em>{m.instructions || m.indication}</em>
+                          ) : "—"}
                         </td>
                       </tr>
                     );
@@ -1689,7 +1710,6 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
             </>
           ) : null}
 
-          {/* Advice — ordered list with key phrases bolded */}
           {(() => {
             const a = f.discharge?.advice;
             if (!a) return null;
@@ -1700,34 +1720,32 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
             if (!lines.length) return null;
             return (
               <>
-                <SubHeader>Advice on discharge</SubHeader>
+                <SubHeader>Advice on Discharge</SubHeader>
                 <ol style={{ fontSize: 10.5, lineHeight: 1.4, color: COL.body, margin: "2px 0 6px 22px", padding: 0 }}>
-                  {lines.map((t, i) => (
-                    <li key={`adv-${i}`} style={{ marginBottom: 2 }}>{t}</li>
+                  {lines.map((t, idx) => (
+                    <li key={`adv-${idx}`} style={{ marginBottom: 2 }}>{t}</li>
                   ))}
                 </ol>
               </>
             );
           })()}
 
-          {/* Follow-up */}
           {(f.discharge?.followUpDate || f.admission?.consultant) ? (
             <>
               <SubHeader>Follow-up</SubHeader>
               <Para>
-                Review in the out-patient department on{" "}
+                {subj} is to follow up with{" "}
+                {f.admission?.consultant ? <><strong>{f.admission.consultant}</strong></> : <>the treating consultant</>}
+                {" "}on{" "}
                 <strong>
                   {f.discharge?.followUpDate ? fmtDate(f.discharge.followUpDate) : "the advised date"}
-                </strong>
-                {f.admission?.consultant ? <> with <strong>{f.admission.consultant}</strong></> : null}.{" "}
-                The hospital remains available round-the-clock for any
+                </strong>. The hospital remains available round-the-clock for any
                 urgent concerns. {pos.charAt(0).toUpperCase() + pos.slice(1)} general
                 practitioner may be contacted in the interim.
               </Para>
             </>
           ) : null}
 
-          {/* Discharge fitness statement */}
           <Para style={{ marginTop: 6 }}>
             <em>
               In our clinical judgment, {subjL} is <strong>fit for discharge</strong> on the
@@ -1736,7 +1754,138 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
               attending physician.
             </em>
           </Para>
-        </div>
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          18. BILLING SUMMARY                                     [—]
+          ════════════════════════════════════════════════════════════ */}
+      {bills.length > 0 ? (() => {
+        let totBilled = 0, totPaid = 0, totBal = 0;
+        const rows = bills.map((b) => {
+          const tot  = Number(b.total ?? b.grandTotal ?? b.amount) || 0;
+          const paid = Number(b.paid  ?? b.amountPaid)             || 0;
+          const bal  = Number(b.balance ?? (tot - paid))           || 0;
+          totBilled += tot; totPaid += paid; totBal += bal;
+          return [
+            b.billNo || b.invoiceNo || b.number || "—",
+            b.date || b.createdAt ? fmtDate(b.date || b.createdAt) : "—",
+            b.type || b.billType || "—",
+            `INR ${tot.toLocaleString("en-IN")}`,
+            `INR ${paid.toLocaleString("en-IN")}`,
+            <strong style={{ color: bal > 0 ? COL.abN : COL.body }}>INR {bal.toLocaleString("en-IN")}</strong>,
+          ];
+        });
+        return (
+          <>
+            <SectionHeader>Billing Summary</SectionHeader>
+            <MiniTable
+              headers={["Bill no", "Date", "Type", "Total", "Paid", "Balance"]}
+              rows={rows}
+              widths={["18%", "14%", "18%", "16%", "16%", "18%"]}
+            />
+            <Para>
+              Total billed <strong>INR {totBilled.toLocaleString("en-IN")}</strong>,
+              paid <strong>INR {totPaid.toLocaleString("en-IN")}</strong>,
+              outstanding <strong style={{ color: totBal > 0 ? COL.abN : COL.body }}>INR {totBal.toLocaleString("en-IN")}</strong>.
+            </Para>
+          </>
+        );
+      })() : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          19. ACTIVITY LOG                                 [NABH IMS.1]
+          ════════════════════════════════════════════════════════════ */}
+      {(f.activityLog || []).length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH IMS.1">Activity Log</SectionHeader>
+          <MiniTable
+            headers={["Timestamp", "Actor", "Action", "Summary"]}
+            rows={(f.activityLog || []).slice(-20).map((a) => [
+              fmtDateTime(a.at),
+              displayActor(a.userName),
+              a.action || "—",
+              a.summary || a.area || "—",
+            ])}
+            widths={["18%", "20%", "16%", "46%"]}
+          />
+          {f.activityLog.length > 20 ? (
+            <Para style={{ color: COL.muted, fontSize: 9 }}>
+              <em>Showing latest 20 of {f.activityLog.length} entries.</em>
+            </Para>
+          ) : null}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          20. SCORING TRENDS                               [NABH COP.3]
+          ════════════════════════════════════════════════════════════ */}
+      {(() => {
+        const lines = [];
+        if (painSeries.length > 1) {
+          const vals = painSeries.map((p) => p.val);
+          const min = Math.min(...vals), max = Math.max(...vals);
+          const peak = painSeries.find((p) => p.val === max);
+          lines.push(
+            <Para key="pain-trend">
+              <strong>Pain scores:</strong> ranged from <strong>{min}</strong> to <strong>{max}</strong>{" "}
+              over {painSeries.length} readings
+              {peak?.at ? <> · peak <strong>{max}</strong> on {fmtDate(peak.at, true)}</> : null}.
+            </Para>
+          );
+        }
+        if (morseVal != null) {
+          lines.push(
+            <Para key="morse-trend">
+              <strong>Morse Fall Risk at admission:</strong> {morseVal}/125 — <em>{morseRisk || morseBand(morseVal)}</em>.
+            </Para>
+          );
+        }
+        if (bradenVal != null) {
+          lines.push(
+            <Para key="braden-trend">
+              <strong>Braden score at admission:</strong> {bradenVal}/23 — <em>{bradenRisk || bradenBand(bradenVal)}</em>.
+            </Para>
+          );
+        }
+        if (nutriVal != null) {
+          lines.push(
+            <Para key="nutri-trend">
+              <strong>Nutritional risk (MUST):</strong> {nutriVal}/6 — <em>{nutriRisk || nutritionBand(nutriVal)}</em>.
+            </Para>
+          );
+        }
+        if (lines.length === 0) return null;
+        return (
+          <>
+            <SectionHeader nabh="NABH COP.3">Scoring Trends</SectionHeader>
+            {lines}
+          </>
+        );
+      })()}
+
+      {/* ════════════════════════════════════════════════════════════
+          21. COMPLETE CHRONOLOGICAL TIMELINE              [NABH IMS.1]
+          ════════════════════════════════════════════════════════════ */}
+      {(events || []).length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH IMS.1">Complete Chronological Timeline</SectionHeader>
+          <MiniTable
+            headers={["Timestamp", "Kind", "Actor", "Summary"]}
+            rows={(events || []).slice(0, 100).map((e) => [
+              fmtDateTime(e.at),
+              e.kind || "—",
+              displayActor(e.actor),
+              e.summary || "—",
+            ])}
+            widths={["18%", "14%", "20%", "48%"]}
+          />
+          {events.length > 100 ? (
+            <Para style={{ color: COL.muted, fontSize: 9 }}>
+              <em>… plus {events.length - 100} more events archived.</em>
+            </Para>
+          ) : null}
+        </>
       ) : null}
 
       {/* ════════════════════════════════════════════════════════════
