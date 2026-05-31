@@ -225,6 +225,8 @@ const DoctorAssessmentPage = lazy(() => import("./pages/doctor/DoctorAssessmentP
 const OPDAssessmentPage = lazy(() => import("./pages/doctor/OPDAssessmentPage"));
 const DoctorPatientPanel = lazy(() => import("./pages/doctor/DoctorPatientPanel"));
 const DoctorNotesPage = lazy(() => import("./pages/doctor/DoctorNotesPage"));
+// R7fu — Medical Certificates builder (12 cert types).
+const MedicalCertificatePage = lazy(() => import("./pages/clinical/MedicalCertificatePage"));
 const MLCPage = lazy(() => import("./pages/mlc/MLCPage"));
 
 const BillPrintPage = lazy(() => import("./pages/billing/BillPrintPage"));
@@ -821,6 +823,13 @@ function AppLayout({ collapsed, setCollapsed }) {
               <RoleGuard action="patient-file.read"><DoctorPatientPanel /></RoleGuard>
             } />
             <Route path="/doctor-notes" element={<DoctorNotesPage />} />
+            {/* R7fu — Medical Certificate builder. Backend gates on
+                patient.write-clinical (Admin/Doctor/Nurse); same gate
+                here so a Receptionist clicking through doesn't see the
+                page just to get 403 toasts on save. */}
+            <Route path="/medical-certificates" element={
+              <RoleGuard action="patient.write-clinical"><MedicalCertificatePage /></RoleGuard>
+            } />
             {/* R7bb-E/D5-HIGH-2 — Nursing assessment writes gated by mar.write. */}
             <Route path="/nursing-care-plan" element={
               <RoleGuard action="mar.write"><NursingCarePlanPage /></RoleGuard>

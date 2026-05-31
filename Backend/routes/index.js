@@ -194,6 +194,10 @@ router.use("/investigation-orders", investigationOrderRoutes);
 // Phase 1: NABH Paperless Modules
 router.use("/discharge-summary", dischargeSummaryRoutes);
 router.use("/consent-forms", consentFormRoutes);
+// R7fu — Medical Certificate surface (12 cert types: fitness, sick-leave,
+// discharge-fitness, disability, vaccination, pre-employment, insurance-claim,
+// sterilization, bedridden, medico-legal, cause-of-death, birth-notification).
+router.use("/medical-certificates", require("./Clinical/medicalCertificateRoutes"));
 router.use("/nursing-care-plans", nursingCarePlanRoutes);
 router.use("/nursing-assessments", nursingAssessmentsRoutes);
 // R7bn-5 / D6-fix: twice-daily compliance read API (used by the

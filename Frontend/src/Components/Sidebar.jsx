@@ -185,6 +185,9 @@ const NAV = [
       { label: "Patient Panel",  icon: "pi-id-card",   path: "/doctor-patient-panel", roles: [ADMIN, DR] },
       { label: "OPD Assessment", icon: "pi-file-edit", path: "/doctor-opd-panel",     roles: [ADMIN, DR], nabh: true },
       { label: "Doctor Notes",   icon: "pi-book",      path: "/doctor-notes",         roles: [ADMIN, DR], nabh: true },
+      // R7fu — Medical Certificate builder. 12 NABH-compliant cert types
+      // (fitness / sick-leave / disability / vaccination / cause-of-death etc.)
+      { label: "Medical Certificates", icon: "pi-id-card", path: "/medical-certificates", roles: [ADMIN, DR], badge: "NEW" },
     ],
   },
 
