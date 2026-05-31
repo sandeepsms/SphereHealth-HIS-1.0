@@ -156,6 +156,12 @@ const DoctorNotesSchema = new mongoose.Schema(
     signature:    { type: String, maxlength: [200000, "signature too large (max 200,000 chars ≈ 150KB)"] },
     signedByName: { type: String },
     signedByReg:  { type: String },
+    // R7fw-FIX1 — handover-sign provenance. Set when the signer is not the
+    // original author (consultant signing a resident's draft, admin
+    // signing a doctor's stale draft, etc.). The print signature row
+    // reads "Signed by Dr. X (Reg …) on behalf of Dr. Y" so the
+    // delegation is unambiguous in court / NABH audit review.
+    handoverFromName: { type: String, default: "" },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },

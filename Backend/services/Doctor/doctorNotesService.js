@@ -258,11 +258,6 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
     error.statusCode = 400;
     throw error;
   }
-  if (noteDraft.doctor && doctorUserId && noteDraft.doctor.toString() !== doctorUserId.toString()) {
-    const error = new Error("Not authorised to sign this note");
-    error.statusCode = 403;
-    throw error;
-  }
   if (!noteDraft.doctor && !doctorUserId) {
     const error = new Error("Cannot sign — no doctor user context");
     error.statusCode = 401;
@@ -287,6 +282,49 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
       const User = require("../../models/User/userModel");
       actorUser = await User.findById(doctorUserId).lean();
     } catch (_) { /* surface as missing-reg below */ }
+  }
+
+  // R7fw-FIX1 — Handover-sign policy. Pre-fix only the EXACT note author
+  // could sign; this 403'd consultants signing a resident's draft, or
+  // admins overriding a stale draft after a doctor's shift ended.
+  // Real-world rule: anyone with clinical-write privilege should be able
+  // to sign a colleague's draft AS LONG AS we record the original author
+  // and the signer separately on the doc + emit a richer audit entry.
+  //
+  // Allowed signers (in priority order):
+  //   1. The original author              (same person — straight-through)
+  //   2. Admin role                       (administrative override)
+  //   3. Any Doctor with a valid MCI reg  (peer hand-over / consultant
+  //                                        signing for a resident)
+  //
+  // Anyone else still gets 403. The MCI-reg requirement below in the
+  // Doctor-role block applies uniformly to authors AND handover-signers
+  // — no shortcut around R7bx Reg 1.4.2.
+  const isAuthor = !!noteDraft.doctor && !!doctorUserId
+                   && noteDraft.doctor.toString() === doctorUserId.toString();
+  const canHandoverSign = !isAuthor && actorUser
+                          && (actorUser.role === "Admin" || actorUser.role === "Doctor");
+  if (noteDraft.doctor && doctorUserId && !isAuthor && !canHandoverSign) {
+    const error = new Error("Not authorised to sign this note");
+    error.statusCode = 403;
+    throw error;
+  }
+  // When a different signer takes over, capture the original author's
+  // name so the print signature row reads
+  //   "Signed by Dr. X (Reg …) on behalf of Dr. Y"
+  // (the front-end's signature renderer keys off `handoverFromName`).
+  let handoverFromName = "";
+  if (canHandoverSign && noteDraft.doctor) {
+    try {
+      const User = require("../../models/User/userModel");
+      const origAuthor = await User.findById(noteDraft.doctor).lean();
+      if (origAuthor) {
+        handoverFromName = origAuthor.fullName
+                           || [origAuthor.firstName, origAuthor.lastName].filter(Boolean).join(" ")
+                           || noteDraft.signedByName
+                           || "";
+      }
+    } catch (_) { /* non-fatal — fall back to blank */ }
   }
   if (actorUser?.role === "Doctor") {
     // R7fp — MCI reg-no can live in several places depending on how the
@@ -351,6 +389,13 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
   };
   if (!noteDraft.doctor && doctorUserId) signFields.doctor = doctorUserId;
   if (signaturePayload.signature) signFields.signature = signaturePayload.signature;
+  // R7fw-FIX1 — when this is a handover-sign, record the original author's
+  // name so the print signature row and the audit trail both make the
+  // delegation explicit. Stamped flat (handoverFromName) so legacy code
+  // that reads .signedByName keeps working.
+  if (canHandoverSign && handoverFromName) {
+    signFields.handoverFromName = handoverFromName;
+  }
 
   const note = await DoctorNotes.findOneAndUpdate(
     { _id: noteId, status: "draft" },
