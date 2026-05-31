@@ -2417,6 +2417,13 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther, viewe
         <OrdersSection orders={doctorOrders} />
       </PrintSection>
 
+      {/* R7fz — page parity: Intake / Output sheet was on-page only
+          (Section id="io-sheet"). Now mirrored to print so the
+          printed file matches the on-screen view 1:1. */}
+      <PrintSection title="6c. Intake / Output Sheet">
+        <IOSheetSection nurseNotes={nurseNotes} currentAdmission={currentAdmission} />
+      </PrintSection>
+
       {/* R7l: Day-by-day NABH MOM.3 treatment chart. For each day of
           the stay, every active medication (+IV/oxygen) shows its
           scheduled doses with a green ✓ when administered, the
@@ -2561,6 +2568,17 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther, viewe
 
       <PrintSection title="14. Billing Summary">
         <BillingSection bills={bills} />
+      </PrintSection>
+
+      {/* R7fz — page parity: Scoring Trends + Complete Timeline +
+          Unified Timeline existed on-page only. Now mirrored to
+          print so the printed file matches the on-screen view 1:1. */}
+      <PrintSection title="14a. Scoring Trends">
+        <ScoringTrendsSection nurseNotes={nurseNotes} doctorNotes={doctorNotes} currentAdmission={currentAdmission} />
+      </PrintSection>
+
+      <PrintSection title="14b. Complete Timeline">
+        <TimelineSection data={data} />
       </PrintSection>
 
       {/* R7g: Activity Log restricted to audit-eligible roles in print
@@ -4302,8 +4320,26 @@ export default function CompletePatientFilePage() {
               }
             };
             return {
+              // R7fz — Print Complete File now opens the SAME page in a
+              // new window with ?autoprint=1 instead of dispatching to the
+              // separate Narrative / Timeline / Executive theme system.
+              // The themes had diverged from what users see on the page —
+              // user complaint (R7fz feedback): "jaise yaha file hum dekh
+              // paa rhe hai bs inhe ko to ek printable complete file me
+              // render krke adjust krna hai". Solution: the page IS the
+              // print. printMode (see line ~4070) renders the same data
+              // through PrintSection wrappers that share the same body
+              // components (NoteList, OrdersSection, VitalsSection, etc.)
+              // — so what you see on /patient-file/<UHID> is what you
+              // print, no parallel theme to drift from.
+              //
+              // buildReceipt() is still called once to validate data is
+              // loaded (it throws otherwise), giving the same toast UX
+              // when someone hits Print before the fetch lands. The
+              // result is discarded — the printable copy reads its data
+              // from the page's own fetch.
               onPrint: () => {
-                try { openPrint("ipd-file", buildReceipt()); }
+                try { buildReceipt(); fireFallback(); }
                 catch (e) { fireFallback(); }
               },
               onPrintReferral: () => {
