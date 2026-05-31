@@ -880,8 +880,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
   return (
     <PrintShell
       hospital={settings}
-      docTitle="Patient Case Summary"
-      docSubtitle="Confidential clinical record — day-by-day account for the referring physician"
+      docTitle="Complete Patient File"
+      docSubtitle="Confidential medical record — full chronological account of the in-patient stay"
       patient={{ left: patientLeft, right: patientRight }}
       signatures={signatures}
       banners={{ emergency24x7: true }}
@@ -909,11 +909,16 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {} }) => {
       </p>
 
       <Para>
-        The following is a day-by-day account of {fullName}'s in-patient
-        stay, presented in chronological order. Each day section bundles
-        the clinical decisions, drugs started or stopped, observations
-        and notes for that day. Discrete data (investigations,
-        consents, discharge medications) are tabled at the end.
+        This is the <strong>complete patient file</strong> for {fullName} —
+        a full chronological record of the in-patient stay, including the
+        Doctor and Nursing Initial Assessments, every progress note,
+        treatment order, medication administration, vital sign reading,
+        intake / output entry, investigation, lab report, consent, dietetic
+        plan, ICU care-bundle compliance, blood transfusion, bed transfer
+        and discharge summary on file for this admission. Each day section
+        bundles the clinical decisions, drugs started or stopped, and
+        observations recorded on that day; discrete cross-day data is
+        tabled at the end.
       </Para>
 
       {/* ════════════════════════════════════════════════════════════
