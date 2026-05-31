@@ -4148,7 +4148,17 @@ export default function CompletePatientFilePage() {
               // noteDetails.nursing — that's where hopi / chiefComplaints
               // / pmh / vitals / examination actually live.
               const allDoctorNotes  = Array.isArray(data.doctorNotes)  ? data.doctorNotes  : [];
-              const allNursingNotes = Array.isArray(data.nursingNotes) ? data.nursingNotes : [];
+              // R7gb-VERIFY-FIX2 — backend returns data.nurseNotes (singular,
+              // matching the on-page Section id="nurse-notes" reader). The
+              // older receipt read data.nursingNotes which never existed →
+              // the receipt's nursingNotes array was always empty → Narrative
+              // day-wise Clinical Journey + dedicated nurse-notes section both
+              // rendered blank no matter how many nurse notes were on file.
+              // Read nurseNotes first, fall back to nursingNotes for any
+              // future renames.
+              const allNursingNotes = Array.isArray(data.nurseNotes) ? data.nurseNotes
+                                    : Array.isArray(data.nursingNotes) ? data.nursingNotes
+                                    : [];
               const iaDocNote   = allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.doctor) ||
                                   allDoctorNotes.find(n => n.noteType === "initial");
               const iaNurseNote = allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.nursing) ||
