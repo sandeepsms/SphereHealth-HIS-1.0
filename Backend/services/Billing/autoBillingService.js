@@ -1033,6 +1033,78 @@ async function onDoctorNoteSaved(noteDoc) {
   const visit = resolveDoctorVisitCode(noteType, noteDoc.shift, { isRepeatToday });
   if (!visit) return; // procedure notes etc. bill via their own path
 
+  // R7gl — Daily auto-bill cap on doctor visits.
+  //
+  // Business rule from the hospital owner: in IPD a doctor's routine
+  // visit charge should auto-add at most TWICE per day (morning round
+  // + evening round). Any further visit the same day MUST be entered
+  // by hand from the IPD Live Ledger "Manual Charge" button so a
+  // human stops to confirm the third+ event is genuinely billable
+  // (could be a courtesy round, family-meeting, or a re-explained
+  // procedure already covered by another code) instead of letting a
+  // back-dated nursing note or a late evening progress entry quietly
+  // billowing a 3rd, 4th, 5th visit fee.
+  //
+  // Applies to the routine-round / ICU / emergency-after-hours codes.
+  // DOC-ADMISSION, DOC-DISCHARGE, DOC-CONSULT are independent
+  // milestones — they bypass the cap (admission is a one-shot,
+  // discharge is a one-shot, consult is a separate consultant whose
+  // fee is independently negotiated and only fires once via
+  // dedupByDoctor).
+  const VISIT_CAP_CODES = new Set([
+    "DOC-MORN-ROUND", "DOC-EVE-ROUND", "DOC-NIGHT-ROUND",
+    "DOC-ICU-VISIT", "DOC-EMERGENCY-VISIT",
+  ]);
+  if (VISIT_CAP_CODES.has(visit.code)) {
+    try {
+      const dateKeyToday = getDateKey();
+      const activeVisitsToday = await BillingTrigger.countDocuments({
+        admissionId, dateKey: dateKeyToday,
+        serviceCode: { $in: Array.from(VISIT_CAP_CODES) },
+        status: { $nin: ["voided", "cancelled", "skipped"] },
+      });
+      if (activeVisitsToday >= 2) {
+        // Cap hit — do NOT createTrigger. Drop a paper-trail trigger
+        // tagged `status: "skipped"` so the audit tab shows that an
+        // auto-bill attempt happened and was blocked. Operator can
+        // then add the extra visit manually from the ledger.
+        await _emitTrigger({
+          admissionId,
+          patientId:   noteDoc.patientId,
+          UHID:        noteDoc.UHID || noteDoc.patientUHID,
+          patientType: "IPD",
+          serviceCode: visit.code,
+          serviceName: visit.name,
+          quantity:    1,
+          unitPrice:   0,
+          totalAmount: 0,
+          sourceType:  "DoctorNote",
+          sourceDocumentId:    noteDoc._id,
+          sourceDocumentModel: "DoctorNote",
+          orderedBy:   doctorName,
+          orderedById: doctorId,
+          orderedByRole: "Doctor",
+          completedBy: doctorName,
+          completedById: doctorId,
+          completedByRole: "Doctor",
+          status: "skipped",
+          autoCharged: true,
+          isDailyCharge: false,
+          dateKey: dateKeyToday,
+          shift: noteDoc.shift,
+          completionNotes: `Auto-bill skipped — IPD doctor visit cap (2/day) already reached. ` +
+                           `Add manually from IPD Live Ledger if this 3rd+ visit is billable.`,
+        }, { name: doctorName, role: "Doctor" });
+        return;
+      }
+    } catch (e) {
+      // If the count lookup fails we'd rather under-bill than double-bill,
+      // so log + fall through (the existing dailyDedup on the trigger
+      // itself still protects against a same-code same-day duplicate).
+      console.warn("[AutoBilling] doctor-visit cap lookup failed:", e.message);
+    }
+  }
+
   try {
     await createTrigger({
       admissionId,
