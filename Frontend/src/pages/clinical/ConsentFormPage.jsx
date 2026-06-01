@@ -882,25 +882,50 @@ function ConsentPrintView({ data, type, onClose }) {
             </div>
           ) : (
             /* PRE-CAPTURE state — show paper-style placeholders so a
-               draft preview before the ceremony still looks meaningful. */
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginTop: 20, marginBottom: 12 }}>
-              {[
-                { label: "Patient Signature / Thumb Impression", sub: `Name: ${data.patientName || "—"}` },
-                {
-                  label: data.consentBy !== "SELF" ? `Guardian / Relative Signature` : "Guardian / Relative (if applicable)",
-                  sub: data.guardianName ? `Name: ${data.guardianName}\nRelation: ${data.guardianRelation}` : "Name:\nRelation:",
-                },
-                { label: "Witness Signature", sub: `Name: ${data.witnessName || "—"}\nRelation: ${data.witnessRelation || "—"}` },
-              ].map(({ label, sub }) => (
-                <div key={label} style={{ borderTop: `2px solid ${C.text}`, paddingTop: 6 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 2 }}>{label}</div>
-                  <div style={{ fontSize: 10, color: C.muted, whiteSpace: "pre-line", lineHeight: 1.5 }}>{sub}</div>
+               draft preview before the ceremony still looks meaningful.
+               R7gj-VERIFY: keep the original Patient / Guardian / Witness
+               row AND restore the Explained-By-Doctor + Hospital Stamp
+               row that the first R7gj cut had silently dropped. */
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginTop: 20, marginBottom: 12 }}>
+                {[
+                  { label: "Patient Signature / Thumb Impression", sub: `Name: ${data.patientName || "—"}` },
+                  {
+                    label: data.consentBy !== "SELF" ? `Guardian / Relative Signature` : "Guardian / Relative (if applicable)",
+                    sub: data.guardianName ? `Name: ${data.guardianName}\nRelation: ${data.guardianRelation}` : "Name:\nRelation:",
+                  },
+                  { label: "Witness Signature", sub: `Name: ${data.witnessName || "—"}\nRelation: ${data.witnessRelation || "—"}` },
+                ].map(({ label, sub }) => (
+                  <div key={label} style={{ borderTop: `2px solid ${C.text}`, paddingTop: 6 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 2 }}>{label}</div>
+                    <div style={{ fontSize: 10, color: C.muted, whiteSpace: "pre-line", lineHeight: 1.5 }}>{sub}</div>
+                    <div style={{ marginTop: 28, borderTop: `1px solid ${C.border}`, paddingTop: 4, fontSize: 10, color: C.muted }}>
+                      Awaiting digital fingerprint capture
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Doctor sign-off + Hospital Stamp row — kept from original
+                  paper template so a PENDING preview still shows the
+                  doctor who'll explain + a place for the round stamp. */}
+              <div style={{ borderTop: `1.5px solid ${C.border}`, paddingTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+                <div style={{ borderTop: `2px solid ${C.text}`, paddingTop: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.text }}>Explained By (Doctor)</div>
+                  <div style={{ fontSize: 10, color: C.muted }}>Name: {data.doctorName || "—"}</div>
+                  <div style={{ fontSize: 10, color: C.muted }}>Reg. No.: {data.doctorRegNo || "—"}</div>
                   <div style={{ marginTop: 28, borderTop: `1px solid ${C.border}`, paddingTop: 4, fontSize: 10, color: C.muted }}>
-                    Awaiting digital fingerprint capture
+                    Will e-sign at the time of capture
                   </div>
                 </div>
-              ))}
-            </div>
+                <div>
+                  <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.6 }}>
+                    <strong>Hospital Stamp</strong><br />
+                    <div style={{ width: 120, height: 60, border: `1px dashed ${C.border}`, borderRadius: 6, marginTop: 4 }} />
+                  </div>
+                </div>
+              </div>
+            </>
           )}
 
           <div style={{ marginTop: 10, fontSize: 10, color: C.muted, textAlign: "center", lineHeight: 1.55 }}>
