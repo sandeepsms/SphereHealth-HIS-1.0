@@ -1413,6 +1413,33 @@ async function onInvestigationResulted(orderDoc) {
  */
 async function onEquipmentCharged(chargeEntry, billItemId) {
   if (!chargeEntry) return;
+  // R7gg — Idempotency guard. One Badal admission had 36,925 duplicate
+  // BillingTrigger rows pointing to a SINGLE NursingChargeEntry (Foley
+  // Catheter ₹300 × 1) because this hook was being re-fired by a
+  // backfill / cron / retry path with no dedupe check. ₹110 lakh
+  // appeared under "EQUIP" in the IPD Live Ledger as a result, the
+  // category response timed out the renderer (32k+ items shipped),
+  // and the receptionist's Billing Counter also froze loading the
+  // same payload. Before creating yet another trigger for this
+  // chargeEntry, look up whether one already exists; bail out if so.
+  if (chargeEntry?._id) {
+    try {
+      const existing = await BillingTrigger.findOne({
+        sourceDocumentId: chargeEntry._id,
+        sourceDocumentModel: "NursingChargeEntry",
+      }).select("_id").lean();
+      if (existing) {
+        // Already billed — nothing to do. Don't even log; the cron may
+        // poll us many times per minute and noise would drown real errors.
+        return;
+      }
+    } catch (e) {
+      console.error("[AutoBilling] onEquipmentCharged idempotency check failed:", e.message);
+      // Fall through and try to create — losing a charge is worse than
+      // creating one duplicate (the same guard on the next call will
+      // catch it once Mongo is healthy again).
+    }
+  }
   if (billItemId) {
     // Already manually billed elsewhere — leave a paper-trail trigger and
     // exit, so we don't double-add to the bill.
@@ -3371,14 +3398,26 @@ async function getIPDLedger(admissionId, user = {}) {
 
   // Category-grouped — for the "Category" tab on the UI. Sums totals so
   // the section header can show "Bed Charges — ₹4,500 (3 lines)".
+  // R7gg — Cap the per-category `items` array at 200 rows so a polluted
+  // category (we hit 36k EQUIP rows on Badal) can't ship a 16 MB payload
+  // that freezes the renderer. count + total stay accurate (computed
+  // from ALL active triggers); only the items list is truncated, with
+  // a sentinel `truncated:true` and `truncatedAt:N` for the UI to show
+  // a "showing first 200 of N" hint when needed.
+  const ITEMS_PER_CATEGORY_CAP = 200;
   const byCategory = {};
   for (const t of decorated) {
     if (t.status === "voided" || t.status === "cancelled" || t.status === "skipped") continue;
     const cat = t.serviceCode?.split("-")[0] || "OTHER";
-    if (!byCategory[cat]) byCategory[cat] = { category: cat, count: 0, total: 0, items: [] };
+    if (!byCategory[cat]) byCategory[cat] = { category: cat, count: 0, total: 0, items: [], truncated: false, truncatedAt: 0 };
     byCategory[cat].count += 1;
     byCategory[cat].total += Number(t.totalAmount || 0);
-    byCategory[cat].items.push(t);
+    if (byCategory[cat].items.length < ITEMS_PER_CATEGORY_CAP) {
+      byCategory[cat].items.push(t);
+    } else if (!byCategory[cat].truncated) {
+      byCategory[cat].truncated = true;
+      byCategory[cat].truncatedAt = ITEMS_PER_CATEGORY_CAP;
+    }
   }
 
   // Day-grouped — for the "Daily breakdown" tab. Uses dateKey (YYYY-MM-DD,
