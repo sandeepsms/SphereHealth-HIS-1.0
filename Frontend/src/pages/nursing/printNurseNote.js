@@ -55,14 +55,18 @@ const fmtVal = (v) => {
   return String(v);
 };
 
-// 2-col grid CSS used by every builder
+// 2-col grid CSS used by every builder. R7gf — tables keep
+// page-break-inside:avoid so Braden / MEWS / Morse stay intact;
+// card-level avoid is dropped (see wrapper below) so a tiny Vital
+// Signs card can pack onto the previous page instead of getting
+// pushed to a near-empty new page.
 const COMPACT_GRID_CSS = `<style>
   .nfx-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:11.5px;margin:6px 0 10px}
   .nfx-grid .lbl{font-weight:600;color:#475569;font-size:10px;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:1px}
   .nfx-grid .val{color:#0f172a;font-size:11.5px;white-space:pre-wrap}
   .nfx-grid .full{grid-column:1 / -1}
   .nfx-h{margin:10px 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:3px 8px;border-radius:4px}
-  .nfx-tbl{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0 8px}
+  .nfx-tbl{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0 8px;page-break-inside:avoid;break-inside:avoid}
   .nfx-tbl th{padding:4px 6px;border:1px solid #cbd5e1;background:#f1f5f9;font-size:10px;text-align:left;color:#334155}
   .nfx-tbl td{padding:4px 6px;border:1px solid #e2e8f0;color:#0f172a}
   .nfx-narr{margin:6px 0 10px;padding:8px 12px;background:#f8fafc;border-left:3px solid #94a3b8;font-size:11.5px;white-space:pre-wrap;line-height:1.45}
@@ -438,7 +442,7 @@ export function buildNurseNoteCardHtml(note) {
     : `<div style="margin-top:14px;padding:6px 12px;border:1px solid #fde68a;border-radius:6px;background:#fffbeb;font-size:11px"><strong style="color:#d97706">DRAFT — Not yet signed</strong></div>`;
 
   return COMPACT_GRID_CSS + `
-<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin:8px 0;background:#fff;page-break-inside:avoid">
+<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin:8px 0;background:#fff">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #e2e8f0">
     <div style="padding:5px 14px;border-radius:6px;font-size:13px;font-weight:800;background:#fce7f3;color:#9d174d">${escapeHtml(typeLabel)}</div>
     ${statusBadge}

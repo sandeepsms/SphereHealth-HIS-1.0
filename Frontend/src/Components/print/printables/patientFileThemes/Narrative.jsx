@@ -663,18 +663,28 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   const totalDays = f.admission?.totalDays || dayIndex.length;
 
   /* ── Per-day groupings — R7fy day-wise restructure ──────────── */
+  // R7gf — Use CLINICAL date (n.noteDate / shift time) as primary day
+  // key, falling back to createdAt only when noteDate is missing.
+  // Late-entry notes recorded on 31 May but documenting a 30 May
+  // clinical event must appear under the 30 May day-block, not the
+  // 31 May save-date block. Same rule for nursing notes whose shift
+  // time is the truthful clinical date.
   const marByDay      = groupByDay(f.mar,            (m) => m.givenAt   || m.createdAt);
-  const docNotesByDay = groupByDay(f.doctorNotes,    (n) => n.createdAt);
-  const nurNotesByDay = groupByDay(f.nursingNotes,   (n) => n.createdAt);
+  const docNotesByDay = groupByDay(f.doctorNotes,    (n) => n.noteDate || n.visitDate || n.createdAt);
+  const nurNotesByDay = groupByDay(f.nursingNotes,   (n) => n.noteDate || n.createdAt);
   const ordersByDay   = groupByDay(f.doctorOrders,   (o) => o.orderedAt || o.createdAt);
   const handoverByDay = groupByDay(f.shiftHandovers, (h) => h.at);
   // Merge doctor + nursing notes for a given day into a single chronological
   // stream so the printout reads like a real clinical timeline (R7fy).
+  // R7gf — Sort within a day by clinical timestamp (noteDate), not the
+  // save timestamp, so 8 am notes appear before 8 pm notes regardless
+  // of which one was filed first.
   const notesForDay = (dayKeyStr) => {
     const docs  = (docNotesByDay.get(dayKeyStr) || []).map((n) => ({ ...n, _kind: "doctor"  }));
     const nurs  = (nurNotesByDay.get(dayKeyStr) || []).map((n) => ({ ...n, _kind: "nursing" }));
     return [...docs, ...nurs].sort((a, b) =>
-      new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
+      new Date(a.noteDate || a.createdAt || 0).getTime()
+      - new Date(b.noteDate || b.createdAt || 0).getTime()
     );
   };
 
@@ -1244,7 +1254,14 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
         });
         if (allKeys.size === 0) return null;
         const indexKeys = new Set(dayIndex.map((d) => d.key));
-        const orderedKeys = Array.from(allKeys).sort((a, b) => a.localeCompare(b));
+        // R7gf — Drop any day-key BEFORE the admission anchor: the user
+        // does not want orphan "Mon, 25 May" pre-admission orders or
+        // OPD residue polluting the day-wise IPD journey. Keys on/after
+        // admission date pass through (including discharge & post-dis).
+        const admKey = dayKey(f.admission?.date);
+        const orderedKeys = Array.from(allKeys)
+          .filter((k) => !admKey || k >= admKey)
+          .sort((a, b) => a.localeCompare(b));
         // Show all days; cap to 30 for safety (large stays).
         // R7gc — user requirement: NO truncation. Show every day with any
         // recorded activity, no matter how long the stay.
@@ -1264,7 +1281,14 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               if (!notes.length && !orders.length && !marRows.length && !handovrs.length) return null;
 
               const dayMatch = dayIndex.find((d) => d.key === k);
-              const dayLabel = dayMatch ? `Day ${dayMatch.n} — ${dayHeading(dayMatch.date)}` : dayHeading(notes[0]?.createdAt || orders[0]?.orderedAt || marRows[0]?.givenAt || k);
+              // R7gf — Always derive the heading from the day-key itself
+              // (YYYY-MM-DD) instead of the first item's createdAt — the
+              // latter would mis-render when a note was late-entered on
+              // a different calendar date. `k` IS the clinical day, so
+              // it stays the source of truth for the banner.
+              const dayLabel = dayMatch
+                ? `Day ${dayMatch.n} — ${dayHeading(dayMatch.date)}`
+                : dayHeading(k);
 
               // ── Day banner ──
               const banner = (
