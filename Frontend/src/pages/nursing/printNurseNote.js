@@ -120,16 +120,40 @@ const buildBuilder = (note) => {
     },
 
     // ─── INTAKE / OUTPUT ─────────────────────────────────────────────
+    // R7ge — Field names corrected to match the live nursing schema
+    // (oral/ivFluids/ivMedFluids/urineOutput/...) and totals/netBalance
+    // are computed on the fly so the card never shows phantom labels.
     intake: () => {
       const io = get("intakeOutput");
+      const oral = Number(io.oral) || 0;
+      const ivFluids = Number(io.ivFluids) || 0;
+      const ivMedFluids = Number(io.ivMedFluids) || 0;
+      const bloodProducts = Number(io.bloodProducts) || 0;
+      const totalIntake = oral + ivFluids + ivMedFluids + bloodProducts;
+      const urine = Number(io.urineOutput) || 0;
+      const ng = Number(io.nasogastricOutput) || 0;
+      const drain = Number(io.drainOutput) || 0;
+      const bloodLoss = Number(io.bloodLoss) || 0;
+      const emesis = Number(io.emesis) || 0;
+      const otherOut = Number(io.otherOutput) || 0;
+      const totalOutput = urine + ng + drain + bloodLoss + emesis + otherOut;
+      const net = totalIntake - totalOutput;
+      const has = io && Object.keys(io).length > 0;
+      if (!has) return "";
       return _section("Intake / Output", "#0ea5e9", _grid([
-        _kv("Oral Fluid", io.oralFluid != null ? `${io.oralFluid} ml` : null),
-        _kv("IV Fluid", io.ivFluid != null ? `${io.ivFluid} ml` : null),
-        _kv("Total Intake", io.totalIntake != null ? `${io.totalIntake} ml` : null),
-        _kv("Urine Output", io.urineOutput != null ? `${io.urineOutput} ml` : null),
-        _kv("Other Output", io.otherOutput != null ? `${io.otherOutput} ml` : null),
-        _kv("Total Output", io.totalOutput != null ? `${io.totalOutput} ml` : null),
-        _kv("Net Balance", io.netBalance != null ? `${io.netBalance > 0 ? "+" : ""}${io.netBalance} ml` : null, true),
+        _kv("Oral", oral ? `${oral} ml` : null),
+        _kv("IV Fluids", ivFluids ? `${ivFluids} ml` : null),
+        _kv("IV Med Fluids", ivMedFluids ? `${ivMedFluids} ml` : null),
+        _kv("Blood Products", bloodProducts ? `${bloodProducts} ml` : null),
+        _kv("Total Intake", `${totalIntake} ml`),
+        _kv("Urine Output", urine ? `${urine} ml` : null),
+        _kv("NG Output", ng ? `${ng} ml` : null),
+        _kv("Drain Output", drain ? `${drain} ml` : null),
+        _kv("Blood Loss", bloodLoss ? `${bloodLoss} ml` : null),
+        _kv("Emesis", emesis ? `${emesis} ml` : null),
+        _kv("Other Output", otherOut ? `${otherOut} ml` : null),
+        _kv("Total Output", `${totalOutput} ml`),
+        _kv("Net Balance", `${net > 0 ? "+" : ""}${net} ml`, true),
       ]));
     },
 

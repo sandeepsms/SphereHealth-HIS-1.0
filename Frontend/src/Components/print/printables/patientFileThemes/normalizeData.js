@@ -146,6 +146,14 @@ export function normalizeFileData(receipt = {}) {
     })),
 
     doctorNotes: toArr(r.doctorNotes).map(n => ({
+      // R7ge — Spread ORIGINAL note first so per-type structured fields
+      // (noteDetails.*, soap.*, deathSummary, icuBundle, whoChecklist,
+      // procedureNote, amendment etc.) survive normalisation and the
+      // R7fx TYPE_BUILDERS can still read their nested paths when the
+      // builder is invoked from Narrative day-wise journey. Without
+      // this spread, only the few aliases below were preserved and the
+      // R7gd embedded per-type cards rendered as empty "DRAFT" headers.
+      ...n,
       noteType:   toStr(n.noteType || n.type || "Progress"),
       createdAt:  toDate(n.createdAt || n.date || n.noteDate || n.visitDate),
       // R7ft-FIX1: noteDetails.content / noteDetails.text are common
@@ -176,6 +184,18 @@ export function normalizeFileData(receipt = {}) {
     })).filter(n => n.createdAt && n.content),  // skip empty-body notes
 
     nursingNotes: toArr(r.nursingNotes).map(n => ({
+      // R7ge — Spread ORIGINAL note first so per-type structured fields
+      // (painAssessment, intakeOutput, vitals, ivLine, noteData.ivInfusion,
+      // noteData.woundCare, noteData.skinAssessment, noteData.fallRisk,
+      // noteData.mewsScore, noteData.neuroAssessment, noteData.procedure,
+      // noteData.bloodTransfusion, noteData.dailyAssessment, noteData.carePlan,
+      // noteData.nutritionalAssessment, noteData.patientEducation,
+      // noteData.discharge etc.) survive normalisation and the per-type
+      // builder in buildNurseNoteCardHtml can still read its nested paths
+      // when invoked from Narrative day-wise journey. Without this spread,
+      // only the few aliases below were preserved so the R7gd embedded
+      // per-type cards rendered as empty "DRAFT — Not yet signed".
+      ...n,
       noteType:   toStr(n.noteType || n.type || "Care note"),
       createdAt:  toDate(n.createdAt || n.date || n.noteDate),
       content:    toStr(n.content || n.text || n.note || n.remarks
@@ -193,7 +213,21 @@ export function normalizeFileData(receipt = {}) {
                             || n.noteData?.lateReason),
       lateEntryAt:     toDate(n.lateEntryAt || n.lateEnteredAt
                             || n.noteData?.lateEntryAt),
-    })).filter(n => n.createdAt && n.content),  // skip empty-body notes
+    })).filter(n => {
+      // R7ge — Pass any nursing note that has at least one structured
+      // field, even when free-text content is empty. R7fx per-type
+      // notes (vitals, pain, intake, iv, wound, skin, fall, mews,
+      // neuro, procedure, blood, daily, careplan, nutrition,
+      // education, discharge) store data in nested objects — without
+      // this relax they were silently dropped by the old content-only
+      // gate and never reached the day-wise journey.
+      if (!n.createdAt) return false;
+      if (n.content) return true;
+      const hasStructured =
+        n.vitals || n.painAssessment || n.intakeOutput || n.ivLine ||
+        (n.noteData && Object.keys(n.noteData).some(k => k !== "patient"));
+      return !!hasStructured;
+    }),
 
     ia: { doctor: iaDoctor, nursing: iaNursing },
 
