@@ -788,6 +788,32 @@ export function ConsentFormPageContent({ selectedPatient }) {
   const token = (sessionStorage.getItem("his_token"));
   const headers = { Authorization: `Bearer ${token}` };
 
+  // R7ez-FIX2 — small helpers so both load paths share the same
+  // age/gender/department/doctor extraction. Age falls back to a DOB
+  // compute when the patient record only carries a date-of-birth.
+  const _calcAge = (dob) => {
+    if (!dob) return "";
+    try {
+      const d = new Date(dob); if (isNaN(d.getTime())) return "";
+      const diffMs = Date.now() - d.getTime();
+      const a = new Date(diffMs).getUTCFullYear() - 1970;
+      return a > 0 && a < 130 ? a : "";
+    } catch { return ""; }
+  };
+  const _ageFromFound = (found) =>
+    found?.age ||
+    found?.patientId?.age ||
+    found?.patient?.age ||
+    _calcAge(found?.patientId?.dateOfBirth || found?.patient?.dateOfBirth || found?.dateOfBirth);
+  const _genderFromFound = (found) =>
+    found?.gender || found?.patientId?.gender || found?.patient?.gender || "";
+  const _deptFromFound = (found) =>
+    found?.department || found?.departmentName ||
+    found?.wardId?.department || found?.specialty || "";
+  const _doctorFromFound = (found) =>
+    found?.attendingDoctor || found?.attendingDoctorName ||
+    found?.consultantName || found?.consultant?.fullName || "";
+
   // Auto-fill when patient selected from AdmittedPatientPanel
   useEffect(() => {
     if (!selectedPatient) return;
@@ -798,6 +824,14 @@ export function ConsentFormPageContent({ selectedPatient }) {
       ...p,
       UHID: found.UHID || "",
       patientName: found.patientName || found.patientId?.fullName || "",
+      // R7ez-FIX2 — age / gender / department were silently empty on
+      // the consent form even when the loaded admission carried them.
+      age:        String(_ageFromFound(found) || ""),
+      gender:     _genderFromFound(found),
+      department: _deptFromFound(found),
+      // Pre-fill the consultant name for "Explained By (Doctor)" unless
+      // the staff has already typed something else manually.
+      doctorName: p.doctorName || _doctorFromFound(found),
       ipdNo: found.admissionNumber || "",
       wardBed: `${found.wardId?.wardName || found.wardName || ""} / ${found.bedNumber || ""}`.replace(/^\s*\/\s*$/, ""),
       admissionDate: found.admissionDate ? new Date(found.admissionDate).toLocaleDateString("en-IN") : "",
@@ -836,6 +870,13 @@ export function ConsentFormPageContent({ selectedPatient }) {
           ...p,
           UHID: found.UHID,
           patientName: found.patientName || found.patientId?.fullName || "",
+          // R7ez-FIX2 — same age/gender/department/doctor backfill as
+          // the panel-pick path so a UHID-typed lookup behaves the
+          // same as a click on the admitted-patients list.
+          age:        String(_ageFromFound(found) || ""),
+          gender:     _genderFromFound(found),
+          department: _deptFromFound(found),
+          doctorName: p.doctorName || _doctorFromFound(found),
           ipdNo: found.admissionNumber || "",
           wardBed: `${found.wardId?.wardName || ""} / ${found.bedNumber || ""}`,
           admissionDate: found.admissionDate ? new Date(found.admissionDate).toLocaleDateString("en-IN") : "",
