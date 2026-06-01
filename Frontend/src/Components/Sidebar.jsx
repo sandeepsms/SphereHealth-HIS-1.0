@@ -152,15 +152,19 @@ const NAV = [
       { label: "Room Categories",    icon: "pi-th-large",  path: "/roomcategory",   roles: [ADMIN] },
       { label: "Floors",             icon: "pi-arrows-v",  path: "/floors",         roles: [ADMIN] },
       { label: "Buildings",          icon: "pi-building",  path: "/buildings",      roles: [ADMIN] },
+      // ── R7gk — Maintenance + Equipment Tracker reinstated.
+      // R7bb-E had removed the standalone "Maintenance" section because
+      // the "MT" role was phantom (no backend ACL). The pages and routes
+      // (/maintenance + /equipment) were always alive — only the sidebar
+      // entry point disappeared. Per the removal comment's own
+      // recommendation, surfacing them here as Admin-only entries inside
+      // Bed Management's facility-admin group, which is the correct home
+      // until a dedicated Facilities-Manager role exists in the backend.
+      { label: "Maintenance",        icon: "pi-wrench",    path: "/maintenance",    roles: [ADMIN] },
+      { label: "Equipment Tracker",  icon: "pi-cog",       path: "/equipment",      roles: [ADMIN] },
     ],
   },
 
-  /* R7bb-E/D1-CRIT-2, D6-CRIT-1 — Maintenance section deleted.
-     "Maintenance" was a phantom role with no backend ACL backing; nothing
-     under /maintenance or /equipment was reachable by the (non-existent)
-     MT user. Housekeeping uses HOUSEKEEPING_NAV; equipment + maintenance
-     dashboards can be reinstated as admin-only tiles inside Bed Management
-     when there's real backend support behind them. */
 
   /* ── Clinical — Doctor ────────────────────────────────
      R7av — slim sidebar to 3 core entries. Emergency Assessment,
