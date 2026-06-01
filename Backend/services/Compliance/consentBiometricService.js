@@ -47,6 +47,74 @@ const ORIGIN_FALLBACK = process.env.WEBAUTHN_ORIGIN || "http://localhost:5173";
 // without rushing.
 const CHALLENGE_TTL_MS = 3 * 60 * 1000;
 
+// R7gh — Hardware-only enforcement.
+//
+// Without this allowlist a malicious user could spawn a virtual
+// authenticator (Chrome DevTools → WebAuthn tab → "Add authenticator")
+// or run a software-only Windows Hello (no TPM) and the existing
+// `attestationType: "none"` flow would happily accept it. Either case
+// would NOT prove a real fingerprint touched a real scanner — exactly
+// the assurance the hospital needs for NABH PRE.4 + IT-Act 3A.
+//
+// Source of AAGUIDs: FIDO MDS (Metadata Service) + vendor docs.
+//   https://fidoalliance.org/metadata/
+// To add new ones in field, set HARDWARE_AAGUID_EXTRA env var:
+//   HARDWARE_AAGUID_EXTRA="aaguid1,aaguid2"
+const HARDWARE_AAGUIDS = new Map([
+  // Windows Hello — TPM-backed (the one users will hit on laptops)
+  ["9ddd1817-af5a-4672-a2b9-3e3dd95000a9", "Windows Hello Hardware Authenticator (TPM)"],
+  ["6028b017-b1d4-4c02-b4b3-afcdafc96bb2", "Windows Hello VBS (Virtualization-Based Security)"],
+  // Apple — Secure Enclave-backed
+  ["dd4ec289-e01d-41c9-bb89-70fa845d4bf2", "Apple Touch ID / Face ID (Secure Enclave)"],
+  ["fbfc3007-154e-4ecc-8c0b-6e020557d7bd", "Apple Touch ID / Face ID (iCloud Keychain)"],
+  ["bada5566-a7aa-401f-bd96-45619a55120d", "Apple Platform Authenticator"],
+  // Android — StrongBox/TEE-backed
+  ["b93fd961-f2e6-462f-b122-82002247de78", "Android Authenticator (StrongBox/TEE)"],
+  // ChromeOS — TPM-backed
+  ["771b48fd-d3d4-4f74-9232-fc157ab0507a", "ChromeOS Authenticator (TPM)"],
+]);
+
+// Known software / virtual / sketchy AAGUIDs we should ACTIVELY reject
+// with a clear error so the operator knows why. Anything not in the
+// hardware allowlist falls through to the generic "unknown" reject too,
+// but these get a friendlier message.
+const REJECTED_AAGUIDS = new Map([
+  ["00000000-0000-0000-0000-000000000000", "Virtual / null AAGUID — not a real hardware scanner"],
+  ["08987058-cadc-4b81-b6e1-30de50dcbe96", "Windows Hello Software (no TPM) — needs hardware scanner"],
+  // Chrome's WebAuthn DevTools virtual authenticator — Bluink Inc.
+  ["6e96969e-a5cf-4aab-9b08-aab6bc4f96bf", "Chrome DevTools Virtual Authenticator — testing only, refused"],
+]);
+
+const _extraHwAaguids = String(process.env.HARDWARE_AAGUID_EXTRA || "")
+  .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+_extraHwAaguids.forEach(a => HARDWARE_AAGUIDS.set(a, "Operator-approved hardware authenticator (env)"));
+
+// Toggle for dev/test workstations that genuinely lack a fingerprint
+// scanner. NEVER set this in production.
+const STRICT_HARDWARE = (process.env.STRICT_HARDWARE_BIOMETRIC || "true").toLowerCase() === "true";
+
+function classifyAaguid(aaguidRaw) {
+  const aaguid = String(aaguidRaw || "").trim().toLowerCase();
+  if (!aaguid) {
+    return { isHardware: false, vendor: "", rejectReason: "Missing AAGUID — authenticator did not identify itself" };
+  }
+  const rejectMsg = REJECTED_AAGUIDS.get(aaguid);
+  if (rejectMsg) {
+    return { isHardware: false, vendor: "", rejectReason: rejectMsg };
+  }
+  const vendor = HARDWARE_AAGUIDS.get(aaguid);
+  if (vendor) {
+    return { isHardware: true, vendor, rejectReason: "" };
+  }
+  return {
+    isHardware: false,
+    vendor: "",
+    rejectReason: `Unknown authenticator AAGUID ${aaguid} — not on the approved hardware list. ` +
+                  "Use the laptop's built-in fingerprint scanner (Windows Hello / Touch ID), " +
+                  "or ask the admin to add this device to HARDWARE_AAGUID_EXTRA after vetting.",
+  };
+}
+
 /**
  * Generate a registration ceremony options object.
  *
@@ -140,6 +208,21 @@ async function verifyRegistrationResponse(response, expectedChallenge, originHin
   const fmt = info.fmt || "";
   const aaguid = info.aaguid || cred.aaguid || "";
 
+  // R7gh — Classify the authenticator BEFORE telling the caller it's
+  // verified. The cryptographic verification only proves the signature
+  // matched; it does NOT prove the signer was a real hardware scanner.
+  // Hardware enforcement is what makes this attestation NABH-grade
+  // evidence rather than "user clicked a button on a virtual key".
+  const cls = classifyAaguid(aaguid);
+  if (STRICT_HARDWARE && !cls.isHardware) {
+    return {
+      verified: false,
+      hardwareRejected: true,
+      rejectReason: cls.rejectReason,
+      aaguid,
+    };
+  }
+
   return {
     verified: true,
     credentialId: credentialIdRaw ? Buffer.from(credentialIdRaw).toString("base64url") : "",
@@ -147,11 +230,19 @@ async function verifyRegistrationResponse(response, expectedChallenge, originHin
     counter,
     attestationFmt: fmt,
     aaguid,
+    // R7gh — pass hardware classification up so the controller can
+    // persist it on the ConsentForm doc + surface it in the response.
+    isHardwareBacked: cls.isHardware,
+    authenticatorVendor: cls.vendor,
   };
 }
 
 module.exports = {
   makeRegistrationOptions,
   verifyRegistrationResponse,
+  classifyAaguid,
+  HARDWARE_AAGUIDS,
+  REJECTED_AAGUIDS,
+  STRICT_HARDWARE,
   CHALLENGE_TTL_MS,
 };

@@ -162,6 +162,14 @@ const ConsentFormSchema = new mongoose.Schema(
       counter:         { type: Number, default: 0 },
       attestationFmt:  { type: String, default: "" },     // none / packed / fido-u2f / apple / tpm
       aaguid:          { type: String, default: "" },     // authenticator type id
+      // R7gh — Hardware-backed flag. True only when the AAGUID matches
+      // an approved TPM/Secure-Enclave/StrongBox authenticator. False
+      // would mean a software/virtual authenticator slipped past the
+      // verifier (only possible if STRICT_HARDWARE_BIOMETRIC was off).
+      // The /sign endpoint MUST refuse to flip PENDING→SIGNED when
+      // this is false, unless the admin has lodged a bypass.
+      isHardwareBacked:     { type: Boolean, default: false },
+      authenticatorVendor:  { type: String, default: "" },  // e.g. "Windows Hello Hardware (TPM)"
       // Server-stamped at verify time (cannot be forged by client).
       capturedAt:      { type: Date },
       capturedFromIp:  { type: String, default: "" },

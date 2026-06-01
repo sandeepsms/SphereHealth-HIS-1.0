@@ -112,6 +112,21 @@ class ConsentFormController {
     const hasBio    = !!(draft.biometric?.captured && draft.biometric?.capturedAt);
     const hasStaff  = !!(draft.staffSignature?.signatureImage && draft.staffSignature?.signedAt);
     const hasBypass = !!(draft.bypass?.authorisedAt && draft.bypass?.reason);
+    // R7gh — Even when a biometric capture is recorded, refuse to flip
+    // PENDING → SIGNED unless it was HARDWARE-backed. This blocks a
+    // legacy / pre-R7gh / virtual-authenticator record from sneaking
+    // through. Admin bypass is still the documented escape valve.
+    const hwBacked  = !!(draft.biometric?.isHardwareBacked);
+    if (!hasBypass && hasBio && !hwBacked) {
+      return res.status(412).json({
+        success: false,
+        code: "BIOMETRIC_NOT_HARDWARE",
+        message:
+          "Cannot sign — captured biometric is not from a hardware-backed scanner " +
+          "(software / virtual / legacy authenticator). Re-capture using the laptop's " +
+          "built-in fingerprint reader, or use admin bypass with reason.",
+      });
+    }
     if (!hasBypass && (!hasBio || !hasStaff)) {
       return res.status(412).json({
         success: false,
@@ -305,6 +320,23 @@ class ConsentFormController {
       return res.status(400).json({ success: false, code: "WEBAUTHN_VERIFY_FAILED",
         message: e.message });
     }
+    // R7gh — Hardware enforcement. The service returns
+    // hardwareRejected:true when the cryptographic verify passed BUT
+    // the AAGUID belongs to a software / virtual / unknown
+    // authenticator. Surface this as a clear, actionable error instead
+    // of pretending verification failed for unknown reasons.
+    if (!verification.verified && verification.hardwareRejected) {
+      // Audit the rejection so a forensic reviewer can see what was
+      // attempted (e.g. someone probing with a virtual authenticator).
+      form.auditTrail.push(auditEntry(req, "REJECTED", `biometric:hw-reject ${verification.aaguid}`));
+      await form.save();
+      return res.status(400).json({
+        success: false,
+        code: "HARDWARE_REQUIRED",
+        message: verification.rejectReason,
+        aaguid: verification.aaguid,
+      });
+    }
     if (!verification.verified) {
       return res.status(400).json({ success: false, code: "WEBAUTHN_VERIFY_FAILED",
         message: "Attestation could not be verified" });
@@ -318,6 +350,9 @@ class ConsentFormController {
       counter: verification.counter,
       attestationFmt: verification.attestationFmt,
       aaguid: verification.aaguid,
+      // R7gh — persist the hardware classification.
+      isHardwareBacked: !!verification.isHardwareBacked,
+      authenticatorVendor: verification.authenticatorVendor || "",
       capturedAt: new Date(),
       capturedFromIp: ip,
       capturedUserAgent: (req.headers["user-agent"] || "").slice(0, 200),
@@ -325,12 +360,15 @@ class ConsentFormController {
       pendingChallenge: "",
       pendingChallengeExpiresAt: null,
     };
-    form.auditTrail.push(auditEntry(req, "UPDATED", "biometric:captured"));
+    form.auditTrail.push(auditEntry(req, "UPDATED",
+      `biometric:captured hw=${verification.isHardwareBacked ? "yes" : "no"} vendor=${verification.authenticatorVendor || "—"}`));
     await form.save();
     return res.json({ success: true, data: {
       captured: true,
       capturedAt: form.biometric.capturedAt,
       method: form.biometric.method,
+      isHardwareBacked: !!verification.isHardwareBacked,
+      authenticatorVendor: verification.authenticatorVendor || "",
       // Public-safe summary — never leak the raw publicKey to the UI.
       credentialFingerprint: (verification.credentialId || "").slice(0, 16) + "…",
     } });

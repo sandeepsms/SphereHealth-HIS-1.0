@@ -160,17 +160,33 @@ export default function BiometricConsentPanel({
         method: "WEBAUTHN",
         capturedAt: verify.data?.data?.capturedAt || new Date().toISOString(),
         credentialFingerprint: verify.data?.data?.credentialFingerprint || "",
+        // R7gh — show vendor name so the staff visibly confirms the
+        // capture came from a real hardware scanner.
+        isHardwareBacked:    !!verify.data?.data?.isHardwareBacked,
+        authenticatorVendor: verify.data?.data?.authenticatorVendor || "",
       });
-      toast.success("Biometric captured ✓");
+      const vendor = verify.data?.data?.authenticatorVendor;
+      toast.success(vendor ? `Biometric captured ✓ ${vendor}` : "Biometric captured ✓");
       onUpdated?.();
     } catch (err) {
+      // R7gh — Hardware-required is a server-side reject (status 400,
+      // code HARDWARE_REQUIRED). Show the server's explanatory message
+      // verbatim so the staff knows it was a virtual / software
+      // authenticator and to retry with the laptop's real scanner.
+      const serverCode = err.response?.data?.code;
+      const serverMsg  = err.response?.data?.message;
+      if (serverCode === "HARDWARE_REQUIRED") {
+        setBiometricError(serverMsg || "Hardware fingerprint scanner required — virtual / software authenticators are blocked");
+        toast.error("Hardware scanner required");
+        return;
+      }
       // WebAuthn errors come as DOMException with .name describing the
       // cause (NotAllowedError = user cancelled, SecurityError = wrong
       // origin, InvalidStateError = no scanner). Show a helpful hint.
       const msg = err.name === "NotAllowedError" ? "Capture cancelled — patient did not touch the scanner in time"
                 : err.name === "InvalidStateError" ? "No biometric scanner found on this device — try a different laptop or use admin bypass"
                 : err.name === "NotSupportedError" ? "This authenticator does not support fingerprint capture"
-                : err.response?.data?.message || err.message || "Biometric capture failed";
+                : serverMsg || err.message || "Biometric capture failed";
       setBiometricError(msg);
       toast.error(msg);
     } finally {
@@ -296,7 +312,22 @@ export default function BiometricConsentPanel({
             padding: "10px 12px", fontSize: 12, color: C.ok,
           }}>
             <i className="pi pi-check-circle" style={{ marginRight: 6 }} />
-            Captured via Windows Hello · {fmtDt(biometric.capturedAt)}
+            Captured · {fmtDt(biometric.capturedAt)}
+            {/* R7gh — surface vendor + hardware badge so the staff
+                visibly confirms a REAL scanner was used. */}
+            {biometric.authenticatorVendor && (
+              <div style={{ fontSize: 11, color: C.text, marginTop: 4, fontWeight: 600 }}>
+                {biometric.authenticatorVendor}
+                {biometric.isHardwareBacked && (
+                  <span style={{
+                    marginLeft: 8, padding: "2px 7px", background: "#0f766e", color: "white",
+                    borderRadius: 4, fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px",
+                  }}>
+                    HARDWARE
+                  </span>
+                )}
+              </div>
+            )}
             {biometric.credentialFingerprint && (
               <div style={{ fontSize: 10, color: C.muted, marginTop: 4, fontFamily: "monospace" }}>
                 Credential fingerprint: {biometric.credentialFingerprint}
