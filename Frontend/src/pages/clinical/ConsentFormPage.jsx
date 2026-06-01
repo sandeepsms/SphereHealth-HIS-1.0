@@ -697,46 +697,219 @@ function ConsentPrintView({ data, type, onClose }) {
             {data.interpreterName && ` An interpreter (${data.interpreterName}) was used.`}
           </div>
 
-          {/* Signature grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginTop: 20, marginBottom: 12 }}>
-            {[
-              { label: "Patient Signature / Thumb Impression", sub: `Name: ${data.patientName || "—"}` },
-              {
-                label: data.consentBy !== "SELF" ? `Guardian / Relative Signature` : "Guardian / Relative (if applicable)",
-                sub: data.guardianName ? `Name: ${data.guardianName}\nRelation: ${data.guardianRelation}` : "Name:\nRelation:",
-              },
-              { label: "Witness Signature", sub: `Name: ${data.witnessName || "—"}\nRelation: ${data.witnessRelation || "—"}` },
-            ].map(({ label, sub }) => (
-              <div key={label} style={{ borderTop: `2px solid ${C.text}`, paddingTop: 6 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 2 }}>{label}</div>
-                <div style={{ fontSize: 10, color: C.muted, whiteSpace: "pre-line", lineHeight: 1.5 }}>{sub}</div>
-                <div style={{ marginTop: 28, borderTop: `1px solid ${C.border}`, paddingTop: 4, fontSize: 10, color: C.muted }}>
-                  Date: _____________ Time: _____________
+          {/* R7gj — Digital biometric ceremony footer.
+              Replaces the paper "Patient Signature / Thumb Impression
+              + blank Date/Time lines + Hospital Stamp" placeholders
+              with the actual electronic record: who placed the finger,
+              on which hardware scanner, when, and which staff member
+              countersigned. Falls back to paper-style placeholders
+              ONLY when the consent has not been signed yet (PENDING
+              with no biometric capture). */}
+          {(data.biometric?.captured || data.bypass?.authorisedAt) ? (
+            <div style={{
+              border: `1.5px solid ${C.ok}`, borderRadius: 10,
+              padding: "14px 16px", marginTop: 20, background: "#f0fdf4",
+            }}>
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8, marginBottom: 10,
+                paddingBottom: 8, borderBottom: `1px dashed ${C.okB}`,
+              }}>
+                <i className="pi pi-id-card" style={{ fontSize: 18, color: C.ok }} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
+                    Digital Authentication · Paperless Consent
+                  </div>
+                  <div style={{ fontSize: 10, color: C.muted }}>
+                    NABH PRE.4 · IT-Act 2000 Sec. 3A · Electronic signature equivalent
+                  </div>
                 </div>
+                {data.status === "SIGNED" && (
+                  <span style={{
+                    marginLeft: "auto", padding: "3px 10px", background: C.ok, color: "white",
+                    borderRadius: 6, fontSize: 10, fontWeight: 800, letterSpacing: ".3px",
+                  }}>
+                    ✓ SIGNED & LOCKED
+                  </span>
+                )}
               </div>
-            ))}
-          </div>
 
-          {/* Doctor sign-off */}
-          <div style={{ borderTop: `1.5px solid ${C.border}`, paddingTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-            <div style={{ borderTop: `2px solid ${C.text}`, paddingTop: 6 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.text }}>Explained By (Doctor)</div>
-              <div style={{ fontSize: 10, color: C.muted }}>Name: {data.doctorName || "—"}</div>
-              <div style={{ fontSize: 10, color: C.muted }}>Reg. No.: {data.doctorRegNo || "—"}</div>
-              <div style={{ marginTop: 28, borderTop: `1px solid ${C.border}`, paddingTop: 4, fontSize: 10, color: C.muted }}>
-                Date: _____________ Time: _____________
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, fontSize: 11 }}>
+                {/* Fingerprint placed by */}
+                <div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                    Fingerprint placed by
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+                    {data.consentingParty?.name || data.patientName || "—"}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.muted, lineHeight: 1.5 }}>
+                    Relation: <strong>{data.consentingParty?.relation || "SELF"}</strong>
+                    {data.consentingParty?.contactNumber && (
+                      <> · {data.consentingParty.contactNumber}</>
+                    )}
+                    {data.consentingParty?.idProofType && data.consentingParty?.idProofNumber && (
+                      <div>ID: {data.consentingParty.idProofType} ending …{String(data.consentingParty.idProofNumber).slice(-4)}</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Scanner used */}
+                <div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                    Hardware Scanner
+                  </div>
+                  {data.bypass?.authorisedAt ? (
+                    <div style={{ fontSize: 11.5, color: C.warn }}>
+                      <i className="pi pi-exclamation-triangle" style={{ marginRight: 4 }} />
+                      Biometric bypassed by admin
+                      <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
+                        Reason: <em>{data.bypass.reason}</em>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: C.text, display: "flex", alignItems: "center", gap: 6 }}>
+                        {data.biometric?.authenticatorVendor || "Platform authenticator"}
+                        {data.biometric?.isHardwareBacked && (
+                          <span style={{
+                            padding: "1px 6px", background: "#0f766e", color: "white",
+                            borderRadius: 4, fontSize: 8.5, fontWeight: 800, letterSpacing: ".3px",
+                          }}>HARDWARE</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 9.5, color: C.muted, fontFamily: "monospace", marginTop: 2 }}>
+                        AAGUID {data.biometric?.aaguid || "—"}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* When captured */}
+                <div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                    Captured At
+                  </div>
+                  <div style={{ fontSize: 11.5, color: C.text, fontWeight: 600 }}>
+                    {data.biometric?.capturedAt
+                      ? new Date(data.biometric.capturedAt).toLocaleString("en-IN", {
+                          day: "2-digit", month: "short", year: "numeric",
+                          hour: "2-digit", minute: "2-digit", second: "2-digit",
+                        })
+                      : "—"}
+                  </div>
+                  <div style={{ fontSize: 9.5, color: C.muted, marginTop: 1 }}>
+                    Server-stamped — cannot be forged
+                  </div>
+                </div>
+
+                {/* Device / network */}
+                <div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                    Captured From
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.text, fontFamily: "monospace" }}>
+                    IP {data.biometric?.capturedFromIp || "—"}
+                  </div>
+                  {data.biometric?.capturedUserAgent && (
+                    <div style={{ fontSize: 9, color: C.muted, fontFamily: "monospace", lineHeight: 1.3, marginTop: 1 }}>
+                      {String(data.biometric.capturedUserAgent).slice(0, 100)}
+                    </div>
+                  )}
+                </div>
+
+                {/* Credential ID */}
+                {data.biometric?.credentialId && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                      Credential Fingerprint (cryptographic proof)
+                    </div>
+                    <div style={{ fontSize: 10, color: C.text, fontFamily: "monospace", wordBreak: "break-all" }}>
+                      {String(data.biometric.credentialId).slice(0, 36)}…
+                    </div>
+                    <div style={{ fontSize: 9.5, color: C.muted, fontStyle: "italic", marginTop: 2 }}>
+                      Actual fingerprint template stayed inside the device TPM and was never transmitted or stored — privacy preserved per IT-Act DPDP Sensitive Personal Data provisions.
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Staff facilitator + signature */}
+              <div style={{
+                marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${C.okB}`,
+                display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14,
+              }}>
+                <div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                    Explained By / Staff Facilitator
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+                    {data.staffSignature?.userName || data.doctorName || "—"}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.muted }}>
+                    {data.staffSignature?.userRole || data.doctorRegNo || "—"}
+                  </div>
+                  {data.staffSignature?.signedAt && (
+                    <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
+                      E-signed at {new Date(data.staffSignature.signedAt).toLocaleString("en-IN", {
+                        day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+                      })}
+                    </div>
+                  )}
+                </div>
+                {data.staffSignature?.signatureImage ? (
+                  <div>
+                    <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                      Staff Signature
+                    </div>
+                    <img
+                      src={data.staffSignature.signatureImage}
+                      alt="Staff signature"
+                      style={{ height: 50, maxWidth: 220, border: `1px solid ${C.border}`, borderRadius: 4, padding: 3, background: "white" }}
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                      Status
+                    </div>
+                    <div style={{ fontSize: 11, color: C.warn }}>
+                      <i className="pi pi-clock" style={{ marginRight: 4 }} />
+                      Awaiting staff e-signature
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-            <div>
-              <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.6 }}>
-                <strong>Hospital Stamp</strong><br />
-                <div style={{ width: 120, height: 60, border: `1px dashed ${C.border}`, borderRadius: 6, marginTop: 4 }} />
-              </div>
+          ) : (
+            /* PRE-CAPTURE state — show paper-style placeholders so a
+               draft preview before the ceremony still looks meaningful. */
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginTop: 20, marginBottom: 12 }}>
+              {[
+                { label: "Patient Signature / Thumb Impression", sub: `Name: ${data.patientName || "—"}` },
+                {
+                  label: data.consentBy !== "SELF" ? `Guardian / Relative Signature` : "Guardian / Relative (if applicable)",
+                  sub: data.guardianName ? `Name: ${data.guardianName}\nRelation: ${data.guardianRelation}` : "Name:\nRelation:",
+                },
+                { label: "Witness Signature", sub: `Name: ${data.witnessName || "—"}\nRelation: ${data.witnessRelation || "—"}` },
+              ].map(({ label, sub }) => (
+                <div key={label} style={{ borderTop: `2px solid ${C.text}`, paddingTop: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 2 }}>{label}</div>
+                  <div style={{ fontSize: 10, color: C.muted, whiteSpace: "pre-line", lineHeight: 1.5 }}>{sub}</div>
+                  <div style={{ marginTop: 28, borderTop: `1px solid ${C.border}`, paddingTop: 4, fontSize: 10, color: C.muted }}>
+                    Awaiting digital fingerprint capture
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
+          )}
 
-          <div style={{ marginTop: 10, fontSize: 10, color: C.muted, textAlign: "center" }}>
-            This consent form is valid as per NABH Standards ({type?.nabh}) | Generated · {settings.hospitalName || "Hospital"} | {new Date().toLocaleDateString("en-IN")}
+          <div style={{ marginTop: 10, fontSize: 10, color: C.muted, textAlign: "center", lineHeight: 1.55 }}>
+            This consent form is valid as per NABH Standards ({type?.nabh}) ·{" "}
+            {data.biometric?.captured
+              ? "Authenticated electronically per IT-Act 2000 Sec. 3A — paper signature not required"
+              : "Pending digital authentication"}{" "}
+            · {settings.hospitalName || "Hospital"} ·{" "}
+            {new Date().toLocaleDateString("en-IN")}
           </div>
         </div>
       </div>
@@ -1044,6 +1217,18 @@ export function ConsentFormPageContent({ selectedPatient }) {
       benefits,
       alternatives,
       consentTitle: consentData.consentTitle,
+      // R7gj — surface the live PENDING/SIGNED consent's biometric +
+      // staff signature blocks into the preview so the footer shows
+      // the actual digital ceremony (fingerprint vendor, timestamp,
+      // staff e-sign) instead of paper-style blank lines.
+      biometric:        activeConsent?.biometric || consentData.biometric,
+      staffSignature:   activeConsent?.staffSignature || consentData.staffSignature,
+      consentingParty:  activeConsent?.consentingParty || consentData.consentingParty,
+      bypass:           activeConsent?.bypass || consentData.bypass,
+      status:           activeConsent?.status,
+      signedAt:         activeConsent?.signedAt,
+      signedByName:     activeConsent?.signedByName,
+      signedByRole:     activeConsent?.signedByRole,
     });
     setPreviewType(selectedType);
   };
