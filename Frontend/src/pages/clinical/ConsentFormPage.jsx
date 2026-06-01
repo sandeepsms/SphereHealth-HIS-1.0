@@ -882,10 +882,27 @@ export function ConsentFormPageContent({ selectedPatient }) {
 
   const handleSave = async () => {
     if (!consentData.UHID) { toast.warn("Please load a patient first"); return; }
+    // R7ez-VERIFY-FIX — backend ConsentFormModel requires `patient`
+    // ObjectId (and prefers `admission` ObjectId for linkage). The
+    // form was sending only the UHID string, so save failed with
+    // Mongoose "Path `patient` is required". Resolve from the loaded
+    // admission record before posting.
+    const patientObjectId =
+      patInfo?.patientId?._id ||
+      (typeof patInfo?.patientId === "string" ? patInfo.patientId : null) ||
+      patInfo?.patient?._id ||
+      (typeof patInfo?.patient === "string" ? patInfo.patient : null);
+    if (!patientObjectId) {
+      toast.error("Cannot save: patient record not loaded. Re-pick the patient from the list.");
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
         ...consentData,
+        patient:    patientObjectId,
+        admission:  patInfo?._id || patInfo?.admissionId || undefined,
+        uhid:       consentData.UHID,
         consentType: selectedType?.key,
         consentTitle: consentData.consentTitle,
         procedureDescription: body,
