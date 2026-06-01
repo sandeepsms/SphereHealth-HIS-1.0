@@ -1022,6 +1022,32 @@ export function ConsentFormPageContent({ selectedPatient }) {
     found?.attendingDoctor || found?.attendingDoctorName ||
     found?.consultantName || found?.consultant?.fullName || "";
 
+  // R7gm — URL-param prefill: when the consent module is launched from a
+  // patient panel (Doctor/Nurse), the launcher passes `?uhid=UHID`. Read it
+  // once on mount, populate the search box, and trigger the lookup so the
+  // page lands on the right admission without the staff retyping.
+  const [urlPrefillUhid, setUrlPrefillUhid] = useState(null);
+  useEffect(() => {
+    try {
+      const u = new URLSearchParams(window.location.search).get("uhid");
+      if (u && !uhid) {
+        const trimmed = u.trim();
+        setUhid(trimmed);
+        setUrlPrefillUhid(trimmed);
+      }
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Trigger the actual fetch only after the controlled input state has caught
+  // up to the URL value — searchPatient() reads `uhid` via closure.
+  useEffect(() => {
+    if (urlPrefillUhid && uhid === urlPrefillUhid && !patInfo && !searching) {
+      searchPatient();
+      setUrlPrefillUhid(null); // one-shot
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlPrefillUhid, uhid]);
+
   // Auto-fill when patient selected from AdmittedPatientPanel
   useEffect(() => {
     if (!selectedPatient) return;

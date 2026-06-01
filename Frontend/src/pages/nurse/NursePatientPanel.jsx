@@ -48,25 +48,32 @@ const C = {
   card:"#ffffff",    bg:"#f8fafc",       border:"#e2e8f0",
 };
 
+// R7gm — Mirrors DoctorPatientPanel.TABS exactly so the patient panel pill
+// strip is consistent across both roles. Role-aware enforcement still happens
+// inside each module (e.g. discharge-summary write is gated by
+// ipd.discharge-summary on the backend; medical-certificates by
+// patient.write-clinical). Hiding tabs would prevent nurses from
+// VIEWING / printing — that is not the desired behaviour.
 const TABS = [
-  // Same tab order as DoctorPatientPanel — "nursing patient panel = doctor
-  // patient panel" per the user's spec. Role-specific actions (initiate
-  // bed-transfer vs write handover notes) are gated inside each tab, not
-  // by hiding tabs.
-  { id:"overview",   label:"📋 Overview"             },
-  { id:"initial",    label:"🩺 Initial Assessment"   },
-  { id:"mlc",        label:"⚖ MLC / Doctor Notes"   },
-  { id:"nursing",    label:"📝 Nursing Notes"        },
-  { id:"vitals",     label:"📈 Vital Chart"          },
-  { id:"io",         label:"💧 Intake / Output"      },
-  { id:"blood",      label:"🩸 Blood Transfusion"    },
-  { id:"rbs",        label:"🩸 RBS Monitoring"       },
-  { id:"handover",   label:"🔄 Handover Notes"       },
-  { id:"orders",     label:"📋 Doctor Orders"        },
-  { id:"meds",       label:"💊 Medications"          },
-  { id:"medrecon",   label:"⚖ Med Reconciliation"   },
-  { id:"billing",    label:"💰 Billing"              },
-  { id:"emergency",  label:"🚨 Emergency"            },
+  { id:"overview",    label:"📋 Overview"             },
+  { id:"initial",     label:"🩺 Initial Assessment"   },
+  { id:"consent",     label:"📜 Consent Forms"        },
+  { id:"mlc",         label:"⚖ MLC / Doctor Notes"   },
+  { id:"nursing",     label:"📝 Nursing Notes"        },
+  { id:"vitals",      label:"📈 Vital Chart"          },
+  { id:"io",          label:"💧 Intake / Output"      },
+  { id:"blood",       label:"🩸 Blood Transfusion"    },
+  { id:"rbs",         label:"🩸 RBS Monitoring"       },
+  { id:"handover",    label:"🔄 Handover Notes"       },
+  { id:"icubundles",  label:"🛡 ICU Bundles"         },
+  { id:"orders",      label:"📋 Doctor Orders"        },
+  { id:"meds",        label:"💊 Medications"          },
+  { id:"medrecon",    label:"⚖ Med Reconciliation"   },
+  { id:"discharge",   label:"🚪 Discharge Summary"    },
+  { id:"medcerts",    label:"📑 Medical Certificates" },
+  { id:"billing",     label:"💰 Billing"              },
+  { id:"emergency",   label:"🚨 Emergency"            },
+  { id:"patientfile", label:"📁 Complete File"        },
 ];
 
 /* ── Helpers ── */
@@ -2043,6 +2050,66 @@ function NursePatientPanelContent({ selectedAdmission }) {
   const patName = patient?.fullName||patient?.patientName||admission?.patientName||"—";
   const uhidDisplay = patient?.UHID||patient?.uhid||admission?.UHID||uhidInput||"—";
 
+  // R7gm — Shared launcher card for deep-linked modules (same UX as
+  // DoctorPatientPanel). Pre-builds the URL with the current patient's
+  // UHID so the destination page lands on the right patient. Opens in a
+  // new tab so the nurse doesn't lose her place in the panel.
+  const renderLauncher = (cfg) => {
+    const uhid = patient?.UHID || patient?.uhid || admission?.UHID || uhidInput || "";
+    const aid  = admission?._id || "";
+    const url  = typeof cfg.url === "function" ? cfg.url({ uhid, admissionId: aid }) : cfg.url;
+    const accent = cfg.color || C.primary;
+    return (
+      <div style={{ padding: 32, display:"flex", justifyContent:"center" }}>
+        <div style={{
+          background: "#fff",
+          border: `2px solid ${accent}`,
+          borderRadius: 16,
+          padding: 36,
+          maxWidth: 640,
+          width: "100%",
+          textAlign: "center",
+          boxShadow: "0 8px 28px rgba(15,23,42,.08)",
+        }}>
+          <div style={{ fontSize: 64, marginBottom: 12, lineHeight: 1 }}>{cfg.icon}</div>
+          <h2 style={{ color: accent, margin: "0 0 8px", fontSize: 22 }}>{cfg.title}</h2>
+          <p style={{ color: C.muted, margin: "0 0 24px", lineHeight: 1.55 }}>{cfg.description}</p>
+          {cfg.nabh && (
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 18, letterSpacing: ".5px" }}>
+              {cfg.nabh}
+            </div>
+          )}
+          <button
+            onClick={() => {
+              try { audit?.nav?.(`launch.${cfg.id}`, { admissionId: aid, area: cfg.title }); } catch {}
+              window.open(url, "_blank", "noopener,noreferrer");
+            }}
+            disabled={!uhid && cfg.requiresPatient !== false}
+            style={{
+              background: !uhid && cfg.requiresPatient !== false ? "#cbd5e1" : accent,
+              color: "#fff",
+              border: "none",
+              borderRadius: 8,
+              padding: "12px 28px",
+              fontSize: 15,
+              fontWeight: 600,
+              cursor: !uhid && cfg.requiresPatient !== false ? "not-allowed" : "pointer",
+              boxShadow: "0 4px 12px rgba(0,0,0,.12)",
+            }}
+            title={!uhid && cfg.requiresPatient !== false ? "Load a patient first" : "Opens in a new tab"}
+          >
+            {cfg.cta || "Open Module ↗"}
+          </button>
+          {cfg.note && (
+            <div style={{ marginTop: 18, fontSize: 12, color: C.muted, fontStyle: "italic" }}>
+              {cfg.note}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // ── Tab dispatch
   const renderTab = (id) => {
     switch (id) {
@@ -2060,6 +2127,53 @@ function NursePatientPanelContent({ selectedAdmission }) {
       case "medrecon":   return <MedReconciliationTab admission={admission} patient={patient}/>;
       case "billing":    return <BillingTab billing={billing}/>;
       case "emergency":  return <EmergencyTab emergency={emergency}/>;
+
+      // R7gm — Deep-link tabs. Nurse role can VIEW + initiate (e.g. raise
+      // consent, view discharge summary, fill ICU bundle daily checklist).
+      // Backend gating decides what writes are allowed.
+      case "consent":    return renderLauncher({
+        id: "consent", icon: "📜", color: C.teal,
+        title: "Consent Forms",
+        description: "Witness, capture or print NABH PRE.3 / PRE.4 informed consents with TPM-backed fingerprint biometric + staff e-signature.",
+        nabh: "NABH PRE.3 · PRE.4 · IT-Act 2000 §3A",
+        url: ({ uhid }) => `/consent-forms?uhid=${encodeURIComponent(uhid)}`,
+        cta: "Open Consent Module ↗",
+        note: "Opens in a new tab so you don't lose your place here.",
+      });
+      case "icubundles": return renderLauncher({
+        id: "icubundles", icon: "🛡", color: "#0ea5e9",
+        title: "Bundles of Care — ICU",
+        description: "Daily VAP / CLABSI / CAUTI / DVT prophylaxis bundle compliance checklist with auto-emit to Infection Control (HIC.5) register.",
+        nabh: "NABH HIC.5 · ICU Care Bundles",
+        url: ({ uhid }) => `/icu-bundles?uhid=${encodeURIComponent(uhid)}`,
+        cta: "Open ICU Bundles ↗",
+        note: "Nurse can chart daily compliance; doctor signs off.",
+      });
+      case "discharge":  return renderLauncher({
+        id: "discharge", icon: "🚪", color: "#dc2626",
+        title: "Discharge Summary",
+        description: "View / print the discharge summary built by the treating doctor. Nurse cannot finalise but can read and print after sign-off.",
+        nabh: "NABH AAC.7 · COP-7 · Discharge Documentation",
+        url: ({ uhid }) => `/discharge-summary?uhid=${encodeURIComponent(uhid)}`,
+        cta: "Open Discharge Summary ↗",
+      });
+      case "medcerts":   return renderLauncher({
+        id: "medcerts", icon: "📑", color: "#7c3aed",
+        title: "Medical Certificates",
+        description: "Fitness, sickness, MTP, disability, death certificates. Nurse can view; doctor issues + signs.",
+        nabh: "NABH PRE.5 / Legal documentation",
+        url: ({ uhid }) => `/medical-certificates?uhid=${encodeURIComponent(uhid)}`,
+        cta: "Open Certificates ↗",
+      });
+      case "patientfile":return renderLauncher({
+        id: "patientfile", icon: "📁", color: "#0f172a",
+        title: "Complete Patient File",
+        description: "Chronological full file — every assessment, doctor + nursing note, vitals, I/O, transfusion, RBS, treatment chart, billing audit — printable.",
+        nabh: "NABH MOM (Medico-legal) · Complete File View",
+        url: ({ uhid }) => `/patient-file/${encodeURIComponent(uhid)}`,
+        cta: "Open Complete File ↗",
+      });
+
       default:           return null;
     }
   };
