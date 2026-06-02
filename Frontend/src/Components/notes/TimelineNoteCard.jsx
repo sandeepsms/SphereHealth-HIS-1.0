@@ -21,6 +21,12 @@
  * ───────────────────────────────────────────────────────────────────────── */
 
 import React, { useState } from "react";
+// R7gv — Same per-type card HTML the printed Complete File renders.
+// TimelineNoteCard keeps its own outer shell + action toolbar but the
+// body now mirrors the print exactly, including the SIGNED footer with
+// Emp ID + digital signature image (R7go / R7gu).
+import { buildDoctorNoteCardHtml } from "../../pages/doctor/buildDoctorNoteCardHtml";
+import { buildNurseNoteCardHtml }  from "../../pages/nursing/printNurseNote";
 
 /* ── Note-type accent colour palette ────────────────────────────────── */
 const ACCENT = {
@@ -839,21 +845,24 @@ function BodyFreeNote({ note }) {
 
 /* Body renderer dispatcher ------------------------------------------- */
 function BodyFor({ note }) {
-  const t = (note.noteType || "general").toLowerCase();
-  if (t === "daily" || t === "progress" || t === "general") return <BodyDailyProgress note={note} />;
-  if (t === "initial" || t === "assessment" || t === "admission" || t === "initial-assessment") return <BodyInitialAssessment note={note} />;
-  if (t === "procedure" || t === "operative" || t === "op-note") return <BodyProcedure note={note} />;
-  if (t === "preop" || t === "pre-op" || t === "pre-operative") return <BodyPreop note={note} />;
-  if (t === "postop" || t === "post-op" || t === "post-operative") return <BodyPostop note={note} />;
-  if (t === "consultation" || t === "consult-reply" || t === "specialist-opinion") return <BodyConsult note={note} />;
-  if (t === "emergency" || t === "er-triage" || t === "emergency-triage") return <BodyEmergency note={note} />;
-  if (t === "discharge" || t === "discharge-note") return <BodyDischarge note={note} />;
-  if (t === "referral" || t === "referral-note") return <BodyReferral note={note} />;
-  if (t === "death" || t === "death-summary") return <BodyDeath note={note} />;
-  if (t === "icu") return <BodyICU note={note} />;
-  if (t === "amendment") return <BodyAmendment note={note} />;
-  if (NURSING_TYPES.has(note.noteType)) return <BodyNursing note={note} />;
-  return <BodyFreeNote note={note} />;
+  // R7gv — Single source of truth for the body artwork: the same per-type
+  // card builder Complete File / patient panel pills use. Renders the
+  // structured card (Vitals/SOAP/Diagnosis/Med Rec/etc.) + the SIGNED
+  // footer carrying Emp ID, Reg, date, and the captured signature image.
+  // The legacy Body* React renderers below remain in this file as dead
+  // code — they're no longer invoked, kept only as a safety net in case
+  // a follow-up needs to revive a renderer-specific branch.
+  const html = NURSING_TYPES.has(note.noteType)
+    ? buildNurseNoteCardHtml(note)
+    : buildDoctorNoteCardHtml(note);
+  return (
+    <div
+      className="tnc-body-embed"
+      style={{ margin: 0 }}
+      // eslint-disable-next-line react/no-danger
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
 }
 
 /* ════════════════════════════════════════════════════════════════════
