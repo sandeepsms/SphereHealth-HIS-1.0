@@ -49,6 +49,14 @@ import PrintShell from "../../Components/print/PrintShell";
 // new path serves a 5-7-page themed printout via PrintShell + the
 // canonical normalizeFileData() shape.
 import { openPrint } from "../../Components/print/openPrint";
+// R7gr — Render the printed Narrative theme directly on-screen so
+// /patient-file/:uhid mirrors the printed Complete File 1:1. Default
+// view; user can flip to the legacy interactive layout via toolbar.
+import NarrativeTheme from "../../Components/print/printables/patientFileThemes/Narrative";
+import {
+  normalizeFileData,
+  buildChronologicalEvents,
+} from "../../Components/print/printables/patientFileThemes/normalizeData";
 import "./patient-file.css";
 
 const BASE = API_ENDPOINTS.BASE;
@@ -4054,6 +4062,201 @@ export default function CompletePatientFilePage() {
   const hasNurseSectionIA = Boolean(latestNurseIA)
     || nurseInitial.length > 0
     || docInitialAll.some((n) => n.section === "nursing" || n.noteDetails?.nursing);
+
+  /* ── R7gr — buildPrintReceipt ─────────────────────────────────
+     Lifted from the bottom-of-page print toolbar so the mirror view
+     can call it before the interactive layout renders. Same exact
+     fields as the print path — Narrative reads via normalizeFileData
+     so the two views are identical by construction. */
+  const buildPrintReceipt = () => {
+    const adm = currentAdmission || data.currentAdmission || {};
+    const allDoctorNotes  = Array.isArray(data.doctorNotes)  ? data.doctorNotes  : [];
+    const allNursingNotes = Array.isArray(data.nurseNotes) ? data.nurseNotes
+                          : Array.isArray(data.nursingNotes) ? data.nursingNotes
+                          : [];
+    const iaDocNote   = allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.doctor) ||
+                        allDoctorNotes.find(n => n.noteType === "initial");
+    const iaNurseNote = allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.nursing) ||
+                        allNursingNotes.find(n => n.noteType === "initial");
+    const iaDoc   = iaDocNote?.noteDetails?.doctor || adm.initialAssessment || data.initialAssessment || {};
+    const iaNurse = iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing
+                    || adm.nurseInitialAssessment || data.nurseInitialAssessment || {};
+    const regularDoctorNotes  = allDoctorNotes.filter(n  => n.noteType !== "initial");
+    const regularNursingNotes = allNursingNotes.filter(n => n.noteType !== "initial");
+    const rawVitals = iaNurse.vitals || iaDoc.vitals || {};
+    const bpObj = rawVitals.bp;
+    const bpFromObj  = bpObj && typeof bpObj === "object"
+                       ? `${bpObj.systolic ?? bpObj.sys ?? "?"}/${bpObj.diastolic ?? bpObj.dia ?? "?"}` : "";
+    const bpFromStr  = typeof bpObj === "string" ? bpObj : "";
+    const bpFromFlat = (rawVitals.bpSys || rawVitals.bpDia)
+                       ? `${rawVitals.bpSys ?? "?"}/${rawVitals.bpDia ?? "?"}` : "";
+    const flatVitals = {
+      bp: bpFromStr || bpFromObj || bpFromFlat,
+      pulse: rawVitals.pulse, temp: rawVitals.temp,
+      spo2: rawVitals.spo2, rr: rawVitals.rr,
+      weight: rawVitals.weight || iaNurse.anthropometry?.weightKg || iaDoc.anthropometry?.weightKg,
+      height: rawVitals.height || iaNurse.anthropometry?.heightCm || iaDoc.anthropometry?.heightCm,
+      bmi:    rawVitals.bmi    || iaNurse.anthropometry?.bmi      || iaDoc.anthropometry?.bmi,
+    };
+    return {
+      patientName: patient?.fullName || patient?.name || [patient?.firstName, patient?.lastName].filter(Boolean).join(" "),
+      uhid: patient?.UHID || patient?.uhid || uhid,
+      ipdNo: adm.admissionNumber || adm.ipdNo || "",
+      age: patient?.age, gender: patient?.gender || patient?.sex,
+      mobile: patient?.mobile || patient?.contactNumber, bloodGroup: patient?.bloodGroup,
+      completeAddress: patient?.completeAddress || patient?.address,
+      admissionDate: adm.admissionDate, admissionType: adm.admissionType,
+      modeOfArrival: adm.modeOfArrival, referringDoctor: adm.referringDoctor,
+      consultantName: adm.attendingDoctor || adm.consultantName,
+      department: adm.department, bedNumber: adm.bedNumber, wardName: adm.wardName,
+      reasonForAdmission: adm.reasonForAdmission || adm.reasonForVisit,
+      provisionalDiagnosis: adm.provisionalDiagnosis, workingDiagnosis: adm.workingDiagnosis,
+      finalDiagnosis: adm.finalDiagnosis || data.dischargeSummary?.finalDiagnosis,
+      icd10: adm.icd10 || data.dischargeSummary?.icd10,
+      icd10Desc: adm.icd10Desc || data.dischargeSummary?.icd10Desc,
+      dischargeDate: adm.actualDischargeDate || adm.dischargeDate,
+      totalDays: adm.lengthOfStay || adm.totalDays,
+      allergies: data.allergies || iaDoc.allergies?.list || iaNurse.allergies?.list || patient?.allergyList || patient?.allergies || [],
+      isolationFlags: adm.isolationFlags || iaDoc.isolationFlags || [],
+      crossCheckAlerts: iaNurse.crossCheckAlerts || iaDoc.crossCheckAlerts || [],
+      vitalsOnAdmission: flatVitals, vitalsTrend: data.vitalSheet || data.vitalsTrend || [],
+      chiefComplaints: iaDoc.chiefComplaints || iaDoc.cc || iaDoc.complaints
+                       || iaNurse.chiefComplaint || iaNurse.cc || adm.chiefComplaints || adm.reasonForAdmission || "",
+      history: iaDoc.hopi || iaDoc.historyOfPresentingIllness || iaDoc.history || iaDoc.presentingIllness
+               || iaNurse.hopi || iaNurse.chiefComplaint || "",
+      medicalHistory: iaDoc.pmh || iaDoc.briefPmh || iaDoc.pastMedicalHistory
+                      || iaNurse.briefPmh || iaNurse.pmh || iaNurse.pastMedicalHistory || "",
+      surgicalHistory: iaDoc.psh || iaDoc.surgicalHistory || iaDoc.pastSurgicalHistory || "",
+      familyHistory: iaDoc.famHx || iaDoc.familyHistory || "",
+      socialHistory: iaDoc.socHx || iaDoc.socialHistory || iaDoc.personalHistory || "",
+      ia: { doctor: iaDoc, nursing: iaNurse },
+      generalExamination: iaDoc.genExam || iaDoc.examination || iaDoc.generalExamination || "",
+      systemicExamination: [
+        iaDoc.cvs     ? `CVS: ${iaDoc.cvs}` : "",
+        iaDoc.rs      ? `RS: ${iaDoc.rs}`   : "",
+        iaDoc.abdomen ? `P/A: ${iaDoc.abdomen}` : "",
+        iaDoc.cns     ? `CNS: ${iaDoc.cns}` : "",
+        iaDoc.systemic || iaDoc.systemicExamination || "",
+      ].filter(Boolean).join(" · "),
+      investigations: data.investigations || [],
+      doctorNotes: regularDoctorNotes, nursingNotes: regularNursingNotes,
+      medications: data.medications || data.treatmentChart || [],
+      procedures: (() => {
+        const PROC_TYPES = /procedure|operative|preop|postop/i;
+        const fromDocs = allDoctorNotes.filter(n => PROC_TYPES.test(n.noteType || "")).map(n => ({
+          name: n.noteDetails?.procedureName || n.noteType, date: n.visitDate || n.createdAt,
+          surgeon: n.doctorName || n.signedByName || "",
+          anaesthetist: n.noteDetails?.anaesthetist || n.noteDetails?.anesthetist || "",
+          findings: n.noteDetails?.findings || n.noteDetails?.outcome || "",
+          notes: n.noteDetails?.notes || n.remarks || n.note || "",
+          indication: n.noteDetails?.indication || n.provisionalDiagnosis || "",
+          role: "Doctor", signedBy: n.signedByName, signedAt: n.signedAt,
+        }));
+        const fromNurses = allNursingNotes.filter(n => PROC_TYPES.test(n.noteType || "")).map(n => ({
+          name: n.noteData?.procedureName || n.noteType,
+          date: n.visitDate || n.noteDate || n.createdAt,
+          surgeon: n.nurseName || n.signedByName || "",
+          anaesthetist: "", findings: n.noteData?.findings || n.noteData?.outcome || "",
+          notes: n.noteData?.notes || n.remarks || "",
+          indication: n.noteData?.indication || "", role: "Nurse",
+          signedBy: n.signedByName, signedAt: n.submittedAt,
+        }));
+        return [...fromDocs, ...fromNurses].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+      })(),
+      consents: data.consents || [],
+      doctorOrders: Array.isArray(data.doctorOrders) ? data.doctorOrders : [],
+      mar: Array.isArray(data.mar) ? data.mar : [],
+      intakeOutput: Array.isArray(data.intakeOutput) ? data.intakeOutput : [],
+      labReports: Array.isArray(data.labReports) ? data.labReports : [],
+      labTrends: Array.isArray(data.labTrends) ? data.labTrends : [],
+      shiftHandovers: Array.isArray(data.shiftHandovers) ? data.shiftHandovers : [],
+      nursingAssessments: Array.isArray(data.nursingAssessments) ? data.nursingAssessments : [],
+      nursingCarePlans: Array.isArray(data.nursingCarePlans) ? data.nursingCarePlans : [],
+      bedTransfers: Array.isArray(data.bedTransfers) ? data.bedTransfers : [],
+      bloodTransfusion: (() => {
+        const dedicated = Array.isArray(data.bloodTransfusion) ? data.bloodTransfusion : [];
+        const fromNurseNotes = allNursingNotes.filter(n => matchBlood(n.noteData)).map(n => ({
+          ...n.noteData, startedAt: n.visitDate || n.noteDate || n.createdAt,
+          createdAt: n.createdAt, transfusedByName: n.nurseName || n.signedByName || "",
+          _source: "nurseNote",
+        }));
+        return [...dedicated, ...fromNurseNotes].sort((a, b) => new Date(a.startedAt || a.createdAt || 0) - new Date(b.startedAt || b.createdAt || 0));
+      })(),
+      dietPlans: Array.isArray(data.dietPlans) ? data.dietPlans : [],
+      icuBundles: Array.isArray(data.icuBundles) ? data.icuBundles : [],
+      mlc: Array.isArray(data.mlc) ? data.mlc : [],
+      bills: Array.isArray(data.bills) ? data.bills : [],
+      activityLog: ["Admin", "Doctor", "MRD", "Accountant"].includes(viewerRole)
+        ? (Array.isArray(data.activityLog) ? data.activityLog : []) : [],
+      ...((ds) => {
+        const head = Array.isArray(ds) ? ds[0] : ds;
+        return {
+          dischargeSummary: head?.summary || head?.courseOfStay || "",
+          dischargeAdvice: head?.advice || head?.finalAdvice || "",
+          dischargeMedications: head?.dischargeMeds || head?.medsOnDischarge || head?.dischargeMedications || [],
+          followUpDate: head?.followUpDate, dischargeCondition: head?.conditionOnDischarge,
+        };
+      })(data.dischargeSummary),
+      printCount: 1, printedAt: new Date().toISOString(),
+      viewerRole: String(viewerRole || "").toLowerCase(),
+    };
+  };
+
+  /* ── R7gr — Mirror View (default) ─────────────────────────────
+     Renders the NarrativeTheme component directly so the page looks
+     identical to the printed Complete File. ?view=interactive flips
+     to the legacy chip-grid layout. */
+  const view = (search.get("view") || "narrative").toLowerCase();
+  if (view === "narrative" && data) {
+    const receipt = buildPrintReceipt();
+    const file   = normalizeFileData(receipt);
+    const events = buildChronologicalEvents(file);
+    return (
+      <div className="pf-page pf-page--mirror" style={{ background: "#f8fafc", minHeight: "100vh" }}>
+        <div style={{
+          position: "sticky", top: 0, zIndex: 30, background: "#fff",
+          borderBottom: "1px solid #e2e8f0", padding: "10px 22px",
+          display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
+        }}>
+          <button onClick={() => navigate(-1)} style={{
+            border: "1px solid #e2e8f0", background: "#fff", padding: "6px 14px",
+            borderRadius: 7, cursor: "pointer", fontSize: 13,
+          }}>← Back</button>
+          <div style={{ fontWeight: 700, fontSize: 15, color: "#0f172a" }}>
+            Patient File · Print-Mirror View
+          </div>
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={() => navigate(`/patient-file/${uhid}?view=interactive${role !== "doctor" ? `&role=${role}` : ""}`)}
+            style={{
+              border: "1px solid #c4b5fd", background: "#f5f3ff", color: "#5b21b6",
+              padding: "6px 14px", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 600,
+            }}
+            title="Switch to the legacy interactive layout with sticky nav + chip grid"
+          >Switch to Interactive →</button>
+          <button
+            onClick={() => { try { openPrint("ipd-file", receipt); } catch { window.print(); } }}
+            style={{
+              border: "none", background: "linear-gradient(90deg,#7c3aed,#4c1d95)", color: "#fff",
+              padding: "7px 18px", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 700,
+              boxShadow: "0 2px 8px rgba(124,58,237,.28)",
+            }}
+          >🖨 Print Complete File</button>
+        </div>
+        <div style={{ maxWidth: 980, margin: "16px auto 64px", background: "#fff",
+          boxShadow: "0 4px 20px rgba(15,23,42,.06)", padding: "30px 36px", borderRadius: 8,
+        }}>
+          <NarrativeTheme
+            settings={hospitalSettings || {}}
+            receipt={receipt}
+            file={file}
+            events={events}
+            viewerRole={String(viewerRole || "").toLowerCase()}
+          />
+        </div>
+      </div>
+    );
+  }
 
   const navItems = [
     { id: "admission",     label: "Admission",          icon: "🛏", count: data.admissions?.length },
