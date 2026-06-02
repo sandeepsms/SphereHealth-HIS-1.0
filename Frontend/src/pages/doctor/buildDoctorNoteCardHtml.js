@@ -301,9 +301,24 @@ const buildBuilder = (note) => {
       // KeyValueAll dump the rest as raw JSON). Renders every NABH P0+P1
       // sub-block as a tidy grid / table so the panel mirrors the printed
       // R7fh discharge / Complete File layout.
+      //
+      // R7gp-FIX — When the doctor IA was saved before the doctor side
+      // was filled (drafts, early sign-by-admin), noteDetails has only
+      // `nursing` + `nursingNabh` + `crossCheckAlerts` and no `doctor`
+      // key. Fall back through nursingNabh so the card still surfaces
+      // the patient's PMH / allergies / home meds / anthropometry that
+      // the nurse intake captured — those fields are clinically shared
+      // and the empty doctor card was misleading.
       const docPayload = nd.doctor || nd;
       const nabh = docPayload.nabh || nd.nabh || {};
       const nursing = nd.nursing || {};
+      const nNabh   = nd.nursingNabh || {};
+      // Map nurse home medications onto the doctor's medicationReconciliation
+      // shape so the same table builder works for either source.
+      const fallbackMedRec = (nNabh.homeMedications || []).map(m => ({
+        drug: m.drug, dose: m.dose, frequency: m.frequency,
+        lastTaken: m.lastTaken, continueOnAdmit: m.continueOnAdmit || "(from nurse intake)",
+      }));
 
       // Cross-check alerts (R7ff) — banner at top so doctor sees nurse↔doctor
       // mismatches before reading the rest.
@@ -323,22 +338,28 @@ const buildBuilder = (note) => {
         _kv("HoPI", docPayload.hopi || docPayload.hpi || note.historyOfPresentIllness, true),
       ]));
 
-      // History (PMH/PSH/Family/Social/Allergy)
-      const allergyList = nabh.allergies?.list || [];
+      // History (PMH/PSH/Family/Social/Allergy) — fall back to
+      // nursingNabh when the doctor side wasn't filled. Allergy list
+      // prefers doctor's own list; otherwise pulls the nurse's IPSG.3
+      // table (clinical allergens are shared, no need to retype).
+      const allergyList = (nabh.allergies?.list && nabh.allergies.list.length)
+        ? nabh.allergies.list
+        : (nNabh.allergies?.list || []);
       const allergyText = allergyList.length
         ? allergyList.map(a => `${a.agent || "—"} (${a.severity || "?"}${a.reaction ? " — " + a.reaction : ""})`).join("; ")
-        : (nabh.allergies?.noKnown ? "No known allergies" : "");
+        : ((nabh.allergies?.noKnown || nNabh.allergies?.noKnown) ? "No known allergies" : "");
       const history = _section("History", "#1d4ed8", _grid([
-        _kv("PMH", docPayload.pmh, true),
+        _kv("PMH", docPayload.pmh || nNabh.briefPmh, true),
         _kv("PSH", docPayload.psh, true),
         _kv("Family Hx", docPayload.famHx, true),
         _kv("Social Hx", docPayload.socHx, true),
         _kv("Allergies", allergyText || docPayload.docAllergy, true),
       ]));
 
-      // Vitals + Anthropometry
+      // Vitals + Anthropometry — anthropometry falls back to nurse side
+      // (same numbers; nurse measured at intake).
       const v = nursing.vitals || {};
-      const anthro = nabh.anthropometry || {};
+      const anthro = nabh.anthropometry || nNabh.anthropometry || {};
       const vitalCells = [
         ["BP",   v.bpSys && v.bpDia ? `${v.bpSys}/${v.bpDia} mmHg` : ""],
         ["Pulse", v.pulse ? `${v.pulse} /min` : ""],
@@ -364,11 +385,14 @@ const buildBuilder = (note) => {
         _kv("Local Exam", nabh.localExamination, true),
       ]));
 
-      // Medication Reconciliation (NABH MOM.5 / COP.2)
-      const medRec = Array.isArray(nabh.medicationReconciliation) ? nabh.medicationReconciliation : [];
-      const medRecHtml = medRec.length
+      // Medication Reconciliation (NABH MOM.5 / COP.2) — falls back to
+      // nurse-side homeMedications list mapped onto the same shape.
+      const medRecSource = Array.isArray(nabh.medicationReconciliation) && nabh.medicationReconciliation.length
+        ? nabh.medicationReconciliation
+        : fallbackMedRec;
+      const medRecHtml = medRecSource.length
         ? _section("Medication Reconciliation", "#7c3aed",
-            `<table class="dfx-tbl"><tr><th>Drug</th><th>Dose</th><th>Frequency</th><th>Last Taken</th><th>On Admit</th></tr>${medRec.map(m =>
+            `<table class="dfx-tbl"><tr><th>Drug</th><th>Dose</th><th>Frequency</th><th>Last Taken</th><th>On Admit</th></tr>${medRecSource.map(m =>
               `<tr><td>${escapeHtml(m.drug || "—")}</td><td>${escapeHtml(m.dose || "—")}</td><td>${escapeHtml(m.frequency || "—")}</td><td>${escapeHtml(m.lastTaken || "—")}</td><td>${escapeHtml(m.continueOnAdmit || "—")}</td></tr>`
             ).join("")}</table>`)
         : "";
@@ -513,12 +537,17 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
       })()
     : "";
 
-  // Diagnosis line
+  // Diagnosis line — skipped for note types whose per-type builder
+  // already renders a Diagnosis section, else we'd get the same data
+  // twice (R7gp-FIX: was showing on Initial Doctor Assessment).
+  const builderRendersDiagnosis = new Set(["initial", "initialAssessment", "admission", "discharge", "consultation"]);
   const diagParts = [];
-  if (note.provisionalDiagnosis) diagParts.push(`<strong>Provisional:</strong> ${escapeHtml(note.provisionalDiagnosis)}`);
-  if (note.workingDiagnosis)     diagParts.push(`<strong>Working:</strong> ${escapeHtml(note.workingDiagnosis)}`);
-  if (note.finalDiagnosis)       diagParts.push(`<strong>Final:</strong> ${escapeHtml(note.finalDiagnosis)}`);
-  if (note.icd10Code)            diagParts.push(`<strong>ICD-10:</strong> ${escapeHtml(note.icd10Code)}${note.icd10Description ? " — " + escapeHtml(note.icd10Description) : ""}`);
+  if (!builderRendersDiagnosis.has(note.noteType)) {
+    if (note.provisionalDiagnosis) diagParts.push(`<strong>Provisional:</strong> ${escapeHtml(note.provisionalDiagnosis)}`);
+    if (note.workingDiagnosis)     diagParts.push(`<strong>Working:</strong> ${escapeHtml(note.workingDiagnosis)}`);
+    if (note.finalDiagnosis)       diagParts.push(`<strong>Final:</strong> ${escapeHtml(note.finalDiagnosis)}`);
+    if (note.icd10Code)            diagParts.push(`<strong>ICD-10:</strong> ${escapeHtml(note.icd10Code)}${note.icd10Description ? " — " + escapeHtml(note.icd10Description) : ""}`);
+  }
   const diagHtml = diagParts.length
     ? `<div style="font-size:11px;font-weight:700;color:#1e40af;text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">Diagnosis</div><p style="font-size:12px;margin:0;line-height:1.6">${diagParts.join(" &nbsp;|&nbsp; ")}</p>`
     : "";
