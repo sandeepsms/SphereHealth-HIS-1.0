@@ -95,6 +95,26 @@ const createNurseNote = async (data, nurseUserId) => {
     nurse = await NurseStaff.findOne({ staffId: data.nurseEmployeeId }).catch(() => null);
   }
 
+  // R7go — Resolve the actor's User record so we can stamp the canonical
+  // hospital employee ID (User.employeeId, e.g. NUR-26-00001 / ADM-26-00001)
+  // on every signed note. Surfaced next to the signer's name in the patient
+  // panel + Complete File print. NurseStaff.staffId stays as the nursing-
+  // service-internal identifier; User.employeeId is the cross-role canonical
+  // one the user wants on every audit row.
+  let actorUserEmpId = "";
+  let actorUserName  = "";
+  if (nurseUserId && mongoose.isValidObjectId(String(nurseUserId))) {
+    try {
+      const User = require("../../models/User/userModel");
+      const userDoc = await User.findById(nurseUserId).select("employeeId fullName firstName lastName").lean();
+      if (userDoc) {
+        actorUserEmpId = userDoc.employeeId || "";
+        actorUserName  = userDoc.fullName ||
+          `${userDoc.firstName || ""} ${userDoc.lastName || ""}`.trim();
+      }
+    } catch (_) { /* non-fatal */ }
+  }
+
   // R7bv — Resolve the patient's active admission and stamp the
   // admission-derived ipdNo (admissionNumber) when the caller didn't pass
   // one. Pre-R7bv the fallback chain fell THROUGH to data.patientUHID /
@@ -128,9 +148,12 @@ const createNurseNote = async (data, nurseUserId) => {
     noteDate: noteDate || new Date(),
     shift: shift || "general",
     nurse: nurse?._id || undefined,
-    nurseName: data.nurseName || nurse?.personalInfo?.fullName || nurse?.nurseName || "",
+    nurseName: data.nurseName || nurse?.personalInfo?.fullName || nurse?.nurseName || actorUserName || "",
     nurseStaffId: nurse?.staffId || "",
-    nurseEmployeeId: data.nurseEmployeeId || "",
+    // R7go — Prefer User.employeeId (canonical hospital ID) over the
+    // request-supplied value or NurseStaff.staffId. Falls back through the
+    // legacy chain so older callers still work.
+    nurseEmployeeId: actorUserEmpId || data.nurseEmployeeId || nurse?.staffId || "",
     nurseDesignation: data.nurseDesignation || nurse?.professional?.designation || "",
     doctor: doctorId || patient?.doctor || null,
     department: patient?.department || null,
@@ -147,7 +170,12 @@ const createNurseNote = async (data, nurseUserId) => {
     tags: tags || [],
     isCriticalEvent: isCriticalEvent || false,
     signature: signature || undefined,
-    signedByName: signedByName || "",
+    signedByName: signedByName || actorUserName || "",
+    // R7go — Persist the signer's User.employeeId so the panel + print
+    // can show "Emp ID: NUR-26-00001" without a User join. When admin/
+    // charge-nurse signs another nurse's note this captures the actual
+    // pen-holder (not the original author).
+    signedByEmpId: actorUserEmpId || "",
     remarks: remarks || "",
     status: noteStatus,
     submittedAt: noteStatus === "submitted" ? new Date() : undefined,

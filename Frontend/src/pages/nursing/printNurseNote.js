@@ -435,9 +435,14 @@ export function buildNurseNoteCardHtml(note) {
   const typeBody = builder();
   const remarks = (note.remarks && note.noteType !== "general")
     ? `<div style="margin-top:8px;padding:6px 10px;background:#f8fafc;border-left:3px solid #94a3b8;font-size:11.5px;white-space:pre-wrap">${escapeHtml(note.remarks)}</div>` : "";
+  // R7go — Surface hospital employee ID next to the signer's name so
+  // every signed nursing note is traceable to a specific staff record.
+  // Prefer signedByEmpId (captured at sign time, may be admin/charge-nurse
+  // co-sign) then nurseEmployeeId (original author).
+  const nurseEmpIdShown = note.signedByEmpId || note.nurseEmployeeId || "";
   const sigHtml = isSigned
     ? `<div style="margin-top:14px;padding:8px 12px;border:1px solid #bbf7d0;border-radius:6px;background:#f0fdf4;font-size:11px;color:#166534">
-  <strong style="color:#15803d">✓ SIGNED & SUBMITTED</strong> · By: ${escapeHtml(note.nurseName || note.signedByName || "Nurse")}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}
+  <strong style="color:#15803d">✓ SIGNED & SUBMITTED</strong> · By: ${escapeHtml(note.nurseName || note.signedByName || "Nurse")}${nurseEmpIdShown ? ` · Emp ID: ${escapeHtml(nurseEmpIdShown)}` : ""}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}
 </div>`
     : `<div style="margin-top:14px;padding:6px 12px;border:1px solid #fde68a;border-radius:6px;background:#fffbeb;font-size:11px"><strong style="color:#d97706">DRAFT — Not yet signed</strong></div>`;
 
@@ -503,10 +508,13 @@ export function printNurseNote(note, hospitalSettings = {}) {
     ? `<div style="margin-top:8px;padding:6px 10px;background:#f8fafc;border-left:3px solid #94a3b8;font-size:11.5px;white-space:pre-wrap">${escapeHtml(note.remarks)}</div>` : "";
 
   // Signature footer
+  // R7go — Surface employee ID alongside name on the standalone nurse-note
+  // print too (same field precedence as buildNurseNoteCardHtml).
+  const nurseEmpIdShownStandalone = note.signedByEmpId || note.nurseEmployeeId || "";
   const sigHtml = isSigned
     ? `<div style="margin-top:20px;padding:10px 14px;border:1px solid #bbf7d0;border-radius:8px;background:#f0fdf4">
   <strong style="color:#15803d;font-size:12px">✓ SIGNED & SUBMITTED</strong><br/>
-  <span style="font-size:11px;color:#166534">By: ${escapeHtml(note.nurseName || note.signedByName || "Nurse")}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}</span>
+  <span style="font-size:11px;color:#166534">By: ${escapeHtml(note.nurseName || note.signedByName || "Nurse")}${nurseEmpIdShownStandalone ? ` · Emp ID: ${escapeHtml(nurseEmpIdShownStandalone)}` : ""}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}</span>
 </div>`
     : `<div style="margin-top:20px;padding:8px 12px;border:1px solid #fde68a;border-radius:8px;background:#fffbeb">
   <strong style="color:#d97706;font-size:12px">DRAFT — Not yet signed</strong>

@@ -167,6 +167,11 @@ const NurseNotesSchema = new mongoose.Schema(
     // R7az-D2-MED-7: cap signature payload (~150KB).
     signature: { type: String, maxlength: [200000, "signature too large (max 200,000 chars ≈ 150KB)"] },
     signedByName: { type: String },
+    // R7go — Hospital employee ID of the signer (User.employeeId, e.g.
+    // NUR-26-00001). Surfaced next to the name in patient panel + printed
+    // Complete File. May differ from nurseEmployeeId when an admin or
+    // charge nurse co-signs another nurse's note.
+    signedByEmpId: { type: String },
 
     // R7az-D2-MED-8: append-only nurse confirmation history for the
     // "doctor's order confirmed by nurse" flow on this note. Each

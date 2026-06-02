@@ -398,9 +398,15 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
   const typeBody = builder ? builder() : "";
 
   // Signature footer
+  // R7go — Render the signer's hospital employee ID next to name + MCI reg
+  // so every signed note is traceable to a specific staff record without
+  // opening the User collection. signedByEmpId is preferred (captured at
+  // sign time); doctorEmpId is the original author's ID and shown when no
+  // explicit signer-emp-id was stored (older notes / handover scenarios).
+  const empIdShown = note.signedByEmpId || note.doctorEmpId || "";
   const sigHtml = isSigned
     ? `<div style="margin-top:14px;padding:8px 12px;border:1px solid #bbf7d0;border-radius:6px;background:#f0fdf4;font-size:11px;color:#166534">
-  <strong style="color:#15803d">✓ SIGNED & SUBMITTED</strong> · By: ${escapeHtml(note.doctorName || note.signedByName || "Doctor")}${note.doctorRegNo || note.signedByReg ? ` · Reg: ${escapeHtml(note.doctorRegNo || note.signedByReg)}` : ""}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}
+  <strong style="color:#15803d">✓ SIGNED & SUBMITTED</strong> · By: ${escapeHtml(note.doctorName || note.signedByName || "Doctor")}${empIdShown ? ` · Emp ID: ${escapeHtml(empIdShown)}` : ""}${note.doctorRegNo || note.signedByReg ? ` · Reg: ${escapeHtml(note.doctorRegNo || note.signedByReg)}` : ""}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}
 </div>`
     : `<div style="margin-top:14px;padding:6px 12px;border:1px solid #fde68a;border-radius:6px;background:#fffbeb;font-size:11px"><strong style="color:#d97706">DRAFT — Not yet signed</strong></div>`;
 

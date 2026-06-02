@@ -86,6 +86,7 @@ const createDoctorNote = async (data, doctorUserId) => {
   // Resolve doctor info from User model (app uses User, not old Doctor model)
   let doctorName = dn || "";
   let doctorRegNo = drn || "";
+  let doctorEmpId = "";
   let doctorObjectId = null;
   try {
     const User = require("../../models/User/userModel");
@@ -93,6 +94,10 @@ const createDoctorNote = async (data, doctorUserId) => {
     if (userDoc) {
       doctorName = userDoc.fullName || `${userDoc.firstName || ""} ${userDoc.lastName || ""}`.trim() || dn || "";
       doctorRegNo = userDoc.doctorDetails?.registrationNumber || drn || "";
+      // R7go — Denormalize employeeId so every signed note is traceable to
+      // a specific staff record without a User join. Surfaced in the
+      // patient panel + Complete File signature footer.
+      doctorEmpId = userDoc.employeeId || "";
       doctorObjectId = userDoc._id;
     }
   } catch (_) { /* use data sent from frontend */ }
@@ -138,6 +143,7 @@ const createDoctorNote = async (data, doctorUserId) => {
     doctor: doctorObjectId || doctorUserId || undefined,
     doctorName,
     doctorRegNo,
+    doctorEmpId,
     soap,
     vitals,
     investigations: investigations || [],
@@ -276,6 +282,9 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
   // the reg-no belongs — illegal under MCI 1.4.2.
   let signedByName = signaturePayload.signedByName || noteDraft.signedByName || "";
   let signedByReg  = signaturePayload.signedByReg  || noteDraft.signedByReg  || "";
+  // R7go — Capture the signer's hospital employee ID for the audit trail.
+  // Resolved server-side from actorUser below; never trust a client value.
+  let signedByEmpId = "";
   let actorUser = null;
   if (doctorUserId) {
     try {
@@ -366,11 +375,17 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
     signedByReg  = regNo;
     signedByName = signedByName || actorUser.fullName ||
       `${actorUser.firstName || ""} ${actorUser.lastName || ""}`.trim();
+    signedByEmpId = actorUser.employeeId || "";
   } else if (actorUser && (!signedByName || !signedByReg)) {
     // Non-doctor actor or pre-existing missing fields — best-effort fallback.
     signedByName = signedByName || actorUser.fullName ||
       `${actorUser.firstName || ""} ${actorUser.lastName || ""}`.trim();
     signedByReg  = signedByReg  || actorUser.doctorDetails?.registrationNumber || "";
+    signedByEmpId = signedByEmpId || actorUser.employeeId || "";
+  } else if (actorUser) {
+    // Author flow that already had name+reg pre-populated — still capture
+    // employeeId server-side for traceability.
+    signedByEmpId = actorUser.employeeId || "";
   }
 
   // R7bn-2 / D10-fix: status-guarded atomic transition. The `status:
@@ -385,6 +400,9 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
     signedAt: new Date(),
     signedByName,
     signedByReg,
+    // R7go — Persisted on the note so the panel + print can render
+    // "Emp ID: DOC-26-00001" without a User collection lookup.
+    signedByEmpId,
     updatedBy: doctorUserId,
   };
   if (!noteDraft.doctor && doctorUserId) signFields.doctor = doctorUserId;

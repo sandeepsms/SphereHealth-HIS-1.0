@@ -1257,6 +1257,14 @@ function NoteSignature({ note, role }) {
   const isImg = typeof sig === "string" && (sig.startsWith("data:image/") || sig.startsWith("/uploads/") || /^https?:\/\//.test(sig));
   const signedByName = note.signedByName || (role === "Nurse" ? note.nurseName : note.doctorName) || "";
   const signedByReg  = note.signedByReg  || note.doctorRegNo || "";
+  // R7go — Hospital employee ID surfaced next to the name + reg no. Same
+  // field precedence used by the HTML builders so panel + print stay in
+  // sync. signedByEmpId is captured at sign time; doctorEmpId /
+  // nurseEmployeeId are the original author's IDs and shown when nothing
+  // explicit was recorded at sign time (older notes).
+  const signedByEmpId = note.signedByEmpId
+    || (role === "Nurse" ? note.nurseEmployeeId : note.doctorEmpId)
+    || "";
   const signedAt     = note.signedAt;
 
   if (!sig && !signedByName && !signedAt) return null;
@@ -1273,6 +1281,7 @@ function NoteSignature({ note, role }) {
       </div>
       <div className="ppt-sig-meta">
         <strong>{signedByName || `${role} (unsigned)`}</strong>
+        {signedByEmpId && <span className="ppt-emp-id">Emp ID {signedByEmpId}</span>}
         {signedByReg && <span className="ppt-reg">Reg {signedByReg}</span>}
         {signedAt && <span>· {fmtDateTime(signedAt)}</span>}
         {role && <span className="ppt-sig-role">· {role}</span>}
