@@ -4076,11 +4076,40 @@ export default function CompletePatientFilePage() {
                           : [];
     const iaDocNote   = allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.doctor) ||
                         allDoctorNotes.find(n => n.noteType === "initial");
-    const iaNurseNote = allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.nursing) ||
-                        allNursingNotes.find(n => n.noteType === "initial");
-    const iaDoc   = iaDocNote?.noteDetails?.doctor || adm.initialAssessment || data.initialAssessment || {};
-    const iaNurse = iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing
-                    || adm.nurseInitialAssessment || data.nurseInitialAssessment || {};
+    /* R7gu-FIX — Prefer an actual nurse note for the Nursing IA lookup,
+       and only fall back to a doctor note that happens to carry the
+       nested noteDetails.nursing payload. Pre-fix the doctor-note path
+       won, which then exposed the DOCTOR's signedByEmpId on the nurse
+       IA signature pill. */
+    const iaNurseNote = allNursingNotes.find(n => n.noteType === "initial") ||
+                        allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.nursing);
+    const iaDocRaw   = iaDocNote?.noteDetails?.doctor || adm.initialAssessment || data.initialAssessment || {};
+    const iaNurseRaw = iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing
+                       || adm.nurseInitialAssessment || data.nurseInitialAssessment || {};
+    /* R7gu-FIX — lift signer fields from the parent IA note onto the
+       nested noteDetails payload so the IA signature pill in Narrative
+       can show name + Emp ID + Reg + sign image instead of falling back
+       to "signed digitally". The parent note carries signedByName /
+       signedByEmpId / signedByReg / signedAt / signature; the nested
+       payload (noteDetails.doctor / noteDetails.nursing) historically
+       only carries the clinical fields, so we merge them here. */
+    const iaDoc   = {
+      ...iaDocRaw,
+      signedByName:  iaDocRaw.signedByName  || iaDocNote?.signedByName || iaDocNote?.doctorName,
+      signedByReg:   iaDocRaw.signedByReg   || iaDocNote?.signedByReg  || iaDocNote?.doctorRegNo,
+      signedByEmpId: iaDocRaw.signedByEmpId || iaDocNote?.signedByEmpId || iaDocNote?.doctorEmpId,
+      signedAt:      iaDocRaw.signedAt      || iaDocNote?.signedAt,
+      signature:     iaDocRaw.signature     || iaDocNote?.signature,
+    };
+    const iaNurse = {
+      ...iaNurseRaw,
+      nurseName:     iaNurseRaw.nurseName     || iaNurseNote?.nurseName,
+      signedByName:  iaNurseRaw.signedByName  || iaNurseNote?.signedByName || iaNurseNote?.nurseName,
+      signedByReg:   iaNurseRaw.signedByReg   || iaNurseNote?.signedByReg,
+      signedByEmpId: iaNurseRaw.signedByEmpId || iaNurseNote?.signedByEmpId || iaNurseNote?.nurseEmployeeId,
+      signedAt:      iaNurseRaw.signedAt      || iaNurseNote?.signedAt || iaNurseNote?.submittedAt,
+      signature:     iaNurseRaw.signature     || iaNurseNote?.signature,
+    };
     const regularDoctorNotes  = allDoctorNotes.filter(n  => n.noteType !== "initial");
     const regularNursingNotes = allNursingNotes.filter(n => n.noteType !== "initial");
     const rawVitals = iaNurse.vitals || iaDoc.vitals || {};
