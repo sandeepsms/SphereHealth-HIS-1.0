@@ -21,12 +21,84 @@ import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import "./patient-panel-tabs.css";
+// R7gn — Reuse the SAME per-type card builders that the Complete File
+// (Narrative.jsx) prints. The patient panel was showing a generic
+// expanded-note skeleton; the user wants the live panel to mirror the
+// Complete File 1:1 — same admission/ICU/procedure/discharge/consult
+// templates, same headers, same vitals tables.
+import { buildDoctorNoteCardHtml } from "../../pages/doctor/buildDoctorNoteCardHtml";
+import { buildNurseNoteCardHtml }  from "../../pages/nursing/printNurseNote";
 
 /* ──────────────────────── Formatters ───────────────────────── */
 const fmtDateTime = (d) =>
   d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+
+// R7gn — Day-bucket helpers (same shape as Narrative.jsx so the panel
+// view and the printed Complete File group identically).
+const dayKey = (d) => {
+  if (!d) return "";
+  try { return new Date(d).toISOString().slice(0, 10); } catch { return ""; }
+};
+const dayHeading = (d) => {
+  if (!d) return "—";
+  try {
+    return new Date(d).toLocaleDateString("en-IN", {
+      day: "2-digit", month: "short", year: "numeric", weekday: "short",
+    });
+  } catch { return String(d); }
+};
+const dayNumber = (eventDate, admissionDate) => {
+  if (!eventDate || !admissionDate) return null;
+  const a = new Date(admissionDate);
+  const e = new Date(eventDate);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(e.getTime())) return null;
+  const diff = Math.floor((dayKeyToMidnight(e) - dayKeyToMidnight(a)) / 86_400_000);
+  return diff >= 0 ? diff + 1 : null;
+};
+const dayKeyToMidnight = (d) => {
+  const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime();
+};
+
+/* R7gn — Wraps the Complete File per-type card HTML so the patient
+   panel and the printed file show identical artwork. The builder
+   returns a self-contained HTML string with its own inline styles
+   (.dfx-* / .nfx-* classes) — safe to drop in via dangerouslySetInnerHTML.
+*/
+function NoteCardEmbed({ note, role }) {
+  const html = role === "nurse"
+    ? buildNurseNoteCardHtml(note)
+    : buildDoctorNoteCardHtml(note);
+  return (
+    <div
+      className={`ppt-embed-card ppt-embed-card--${role}`}
+      // eslint-disable-next-line react/no-danger
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+/* R7gn — Group notes by calendar day; entries inside a day are kept
+   in chronological order (oldest-first) — matches Complete File.
+   Day buckets themselves are ordered most-recent-day-first so the
+   doctor on rounds sees today's notes at the top. */
+function groupByDayChrono(notes, getAt) {
+  const map = new Map();
+  (notes || []).forEach((n) => {
+    const at = getAt(n);
+    const k = dayKey(at);
+    if (!k) return;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(n);
+  });
+  // Oldest-first within each day
+  for (const arr of map.values()) {
+    arr.sort((a, b) => new Date(getAt(a)) - new Date(getAt(b)));
+  }
+  // Most-recent day first
+  return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
+}
 
 /* ────────────────────────────────────────────────────────────────
    1. InitialAssessmentTab
@@ -106,7 +178,7 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
    link to the full MLC page). Otherwise → show doctor notes timeline
    fully expanded.
 */
-export function MLCOrDoctorNotesTab({ patient, doctorNotes = [] }) {
+export function MLCOrDoctorNotesTab({ patient, doctorNotes = [], admission }) {
   const [mlcList, setMlcList]   = useState([]);
   const [loading, setLoading]   = useState(false);
   const uhid = patient?.UHID;
@@ -130,6 +202,13 @@ export function MLCOrDoctorNotesTab({ patient, doctorNotes = [] }) {
     (n) => n.noteType !== "initial" && n.noteType !== "initialAssessment",
   );
 
+  // R7gn — Day-wise group, same shape as Complete File Narrative theme.
+  const admissionDate = admission?.admissionDate || admission?.date;
+  const daysByDate = useMemo(
+    () => groupByDayChrono(nonInitialDocNotes, (n) => n.noteDate || n.visitDate || n.createdAt),
+    [nonInitialDocNotes],
+  );
+
   return (
     <div className="ppt-tab">
       <div className="ppt-tab-header">
@@ -139,7 +218,7 @@ export function MLCOrDoctorNotesTab({ patient, doctorNotes = [] }) {
         <p className="ppt-tab-sub">
           {hasMLC
             ? "This patient has one or more medico-legal cases on file. Doctor notes follow."
-            : "Doctor's clinical notes — daily progress, ICU, procedure, consultation, pre/post-op, etc."}
+            : "Doctor's clinical notes — admission, daily progress, ICU, procedure, consultation, pre/post-op, etc. Same per-type cards as the printed Complete File."}
         </p>
       </div>
 
@@ -156,9 +235,19 @@ export function MLCOrDoctorNotesTab({ patient, doctorNotes = [] }) {
         {nonInitialDocNotes.length === 0 ? (
           <div className="ppt-empty">No further doctor notes yet.</div>
         ) : (
-          nonInitialDocNotes
-            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-            .map((n) => <DoctorNoteExpanded key={n._id} note={n} />)
+          daysByDate.map(([k, notes]) => {
+            const dn = dayNumber(k, admissionDate);
+            return (
+              <div key={k} className="ppt-day-block">
+                <div className="ppt-day-heading">
+                  {dn ? <span className="ppt-day-num">Day {dn}</span> : null}
+                  <span className="ppt-day-date">{dayHeading(k)}</span>
+                  <span className="ppt-day-count">{notes.length} note{notes.length === 1 ? "" : "s"}</span>
+                </div>
+                {notes.map((n) => <NoteCardEmbed key={n._id} note={n} role="doctor" />)}
+              </div>
+            );
+          })
         )}
       </div>
     </div>
@@ -173,75 +262,72 @@ export function MLCOrDoctorNotesTab({ patient, doctorNotes = [] }) {
    Output, IV Infusion, Blood Transfusion, Wound, Skin, Fall Risk,
    Procedure, Discharge/SBAR, MEWS.
 */
-export function NursingNotesExpandedTab({ nursingNotes = [] }) {
-  const grouped = useMemo(() => {
+export function NursingNotesExpandedTab({ nursingNotes = [], admission }) {
+  // R7gn — Layout matches Complete File: day-wise blocks, each entry
+  // rendered with the SAME per-type card builder Narrative.jsx uses for
+  // print. The previous "group by type" layout buried the timeline; the
+  // user wants chronological journey parity with the printed file.
+  const filtered = useMemo(
+    () => (nursingNotes || []).filter((n) => n.noteType !== "initial" && n.noteType !== "initialAssessment"),
+    [nursingNotes],
+  );
+  const admissionDate = admission?.admissionDate || admission?.date;
+  const daysByDate = useMemo(
+    () => groupByDayChrono(filtered, (n) => n.noteDate || n.createdAt),
+    [filtered],
+  );
+
+  // Type-count chips at the top — quick scan of what's been written.
+  const typeCounts = useMemo(() => {
     const m = {};
-    nursingNotes
-      .filter((n) => n.noteType !== "initial" && n.noteType !== "initialAssessment")
-      .forEach((n) => {
-        const t = n.noteType || "general";
-        (m[t] ||= []).push(n);
-      });
+    filtered.forEach((n) => { const t = n.noteType || "general"; m[t] = (m[t] || 0) + 1; });
     return m;
-  }, [nursingNotes]);
-
-  const ORDER = [
-    ["general",    "📋 General Nursing Notes"],
-    ["vitals",     "📈 Vital Signs"],
-    ["pain",       "😣 Pain Assessment"],
-    ["neuro",      "🧠 Neuro / GCS"],
-    ["intake",     "💧 Intake / Output"],
-    ["iv",         "🩸 IV Infusion"],
-    ["blood",      "🩸 Blood Transfusion"],
-    ["wound",      "🩹 Wound / Dressing"],
-    ["skin",       "🌡️ Skin / Pressure"],
-    ["fall",       "⚠️ Fall Risk (Morse)"],
-    ["procedure",  "⚙️ Procedure / Intervention"],
-    ["discharge",  "📤 Discharge / SBAR"],
-    ["mews",       "📊 MEWS Score"],
-    ["daily",      "🗓️ Daily Assessment"],
-    ["careplan",   "💚 Care Plan"],
-    ["nutrition",  "🍎 Nutritional Assessment"],
-    ["education",  "📚 Patient Education"],
-  ];
-
-  // Anything in `grouped` whose noteType isn't in ORDER (legacy / future
-  // categories) gets rendered under a generic "Other" bucket so it
-  // never silently disappears.
-  const KNOWN = new Set(ORDER.map(([k]) => k));
-  const otherKeys = Object.keys(grouped).filter((k) => !KNOWN.has(k));
-  if (otherKeys.length > 0) {
-    ORDER.push(["__other__", "🗂 Other Nursing Notes"]);
-    grouped.__other__ = otherKeys.flatMap((k) => grouped[k]);
-  }
-
-  const totalShown = ORDER.reduce((acc, [k]) => acc + (grouped[k]?.length || 0), 0);
+  }, [filtered]);
+  const TYPE_LABEL = {
+    general: "📋 General", vitals: "📈 Vitals", pain: "😣 Pain", neuro: "🧠 Neuro/GCS",
+    intake: "💧 I/O", iv: "🩸 IV", blood: "🩸 Blood Transfusion", wound: "🩹 Wound",
+    skin: "🌡️ Skin", fall: "⚠️ Fall", procedure: "⚙️ Procedure", discharge: "📤 Discharge/SBAR",
+    mews: "📊 MEWS", daily: "🗓️ Daily", careplan: "💚 Care Plan", nutrition: "🍎 Nutrition",
+    education: "📚 Education",
+  };
 
   return (
     <div className="ppt-tab">
       <div className="ppt-tab-header">
-        <h2 className="ppt-tab-title">📝 Nursing Notes — All Categories</h2>
-        <p className="ppt-tab-sub">All nursing records fully expanded for review and printing · {totalShown} record(s)</p>
+        <h2 className="ppt-tab-title">📝 Nursing Notes — Chronological Journey</h2>
+        <p className="ppt-tab-sub">
+          Day-wise, ordered the same way as the printed Complete File · {filtered.length} record(s)
+        </p>
       </div>
 
-      {ORDER.map(([key, label]) => {
-        const items = grouped[key] || [];
-        if (!items.length) return null;
-        return (
-          <div key={key} className="ppt-card">
-            <div className="ppt-section-title">
-              {label}
-              <span className="ppt-badge ppt-badge--info">{items.length}</span>
-            </div>
-            {items
-              .sort((a, b) => new Date(b.noteDate || b.createdAt) - new Date(a.noteDate || a.createdAt))
-              .map((n) => <NurseNoteExpanded key={n._id} note={n} />)}
-          </div>
-        );
-      })}
+      {Object.keys(typeCounts).length > 0 && (
+        <div className="ppt-chip-list" style={{ marginBottom: 12 }}>
+          {Object.entries(typeCounts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([t, n]) => (
+              <span key={t} className="ppt-chip ppt-chip--info">
+                {TYPE_LABEL[t] || t} · {n}
+              </span>
+            ))}
+        </div>
+      )}
 
-      {totalShown === 0 && (
+      {filtered.length === 0 ? (
         <div className="ppt-empty">No nursing notes recorded yet.</div>
+      ) : (
+        daysByDate.map(([k, notes]) => {
+          const dn = dayNumber(k, admissionDate);
+          return (
+            <div key={k} className="ppt-day-block">
+              <div className="ppt-day-heading">
+                {dn ? <span className="ppt-day-num">Day {dn}</span> : null}
+                <span className="ppt-day-date">{dayHeading(k)}</span>
+                <span className="ppt-day-count">{notes.length} note{notes.length === 1 ? "" : "s"}</span>
+              </div>
+              {notes.map((n) => <NoteCardEmbed key={n._id} note={n} role="nurse" />)}
+            </div>
+          );
+        })
       )}
     </div>
   );

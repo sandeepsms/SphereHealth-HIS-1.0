@@ -2115,8 +2115,8 @@ function NursePatientPanelContent({ selectedAdmission }) {
     switch (id) {
       case "overview":   return <OverviewTab patient={patient} admission={admission} nursingNotes={nursingNotes} billing={billing} doctorNotes={doctorNotes}/>;
       case "initial":    return <InitialAssessmentTab doctorNotes={doctorNotes} nursingNotes={nursingNotes} admission={admission}/>;
-      case "mlc":        return <MLCOrDoctorNotesTab patient={patient} doctorNotes={doctorNotes}/>;
-      case "nursing":    return <NursingNotesExpandedTab nursingNotes={nursingNotes}/>;
+      case "mlc":        return <MLCOrDoctorNotesTab patient={patient} doctorNotes={doctorNotes} admission={admission}/>;
+      case "nursing":    return <NursingNotesExpandedTab nursingNotes={nursingNotes} admission={admission}/>;
       case "vitals":     return <VitalChartTab nursingNotes={nursingNotes} vitalSheet={vitalSheet}/>;
       case "io":         return <IntakeOutputChartTab nursingNotes={nursingNotes}/>;
       case "blood":      return <BloodTransfusionRecordsTab nursingNotes={nursingNotes}/>;

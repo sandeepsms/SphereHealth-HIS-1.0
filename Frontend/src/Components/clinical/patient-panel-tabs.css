@@ -515,8 +515,59 @@
 .ppt-mlc-injuries { margin-top: 12px; }
 .ppt-table--inj  { font-size: 12px; }
 
+/* ─── R7gn — Day-wise journey blocks (parity with Complete File) ── */
+.ppt-day-block {
+  margin: 14px 0 22px;
+}
+.ppt-day-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  margin: 0 0 8px;
+  background: linear-gradient(90deg, #ede9fe 0%, #f5f3ff 100%);
+  border-left: 4px solid #7c3aed;
+  border-radius: 6px;
+  font-weight: 700;
+  color: #4c1d95;
+  font-size: 14px;
+  letter-spacing: .2px;
+}
+.ppt-day-num {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .5px;
+}
+.ppt-day-date { flex: 1; }
+.ppt-day-count {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 500;
+  letter-spacing: .3px;
+}
+/* Embedded per-type card from buildDoctorNoteCardHtml /
+   buildNurseNoteCardHtml. The HTML carries its own .dfx-* / .nfx-* styles
+   inline (style block at the top of the returned string); we only need a
+   thin wrapper for vertical rhythm + an accent border to keep the
+   doctor/nurse visual distinction the panel had before R7gn. */
+.ppt-embed-card { margin-bottom: 8px; }
+.ppt-embed-card--nurse  > div { border-left: 3px solid #db2777 !important; }
+.ppt-embed-card--doctor > div { border-left: 3px solid #7c3aed !important; }
+
 /* ─── Print rules ─────────────────────────────────────────────── */
 @media print {
+  .ppt-day-heading {
+    background: #f5f3ff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  .ppt-embed-card { page-break-inside: avoid; break-inside: avoid; }
   .ppt-tab { padding: 0; }
   .ppt-card,
   .ppt-note,
