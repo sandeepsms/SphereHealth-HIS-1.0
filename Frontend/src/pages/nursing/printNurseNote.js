@@ -575,10 +575,21 @@ export function buildNurseNoteCardHtml(note) {
   // every signed nursing note is traceable to a specific staff record.
   // Prefer signedByEmpId (captured at sign time, may be admin/charge-nurse
   // co-sign) then nurseEmployeeId (original author).
+  // R7gu — Embed the digital signature image when present (data: URL,
+  // /uploads/ path or http(s) image) so the printed Complete File looks
+  // like a real signed document.
   const nurseEmpIdShown = note.signedByEmpId || note.nurseEmployeeId || "";
+  const nSigSrc = note.signature || note.signatureImage || "";
+  const nSigImgHtml = (isSigned && nSigSrc && typeof nSigSrc === "string"
+                      && (nSigSrc.startsWith("data:image/")
+                          || nSigSrc.startsWith("/uploads/")
+                          || /^https?:\/\//.test(nSigSrc)))
+    ? `<div style="margin-top:6px"><img src="${escapeHtml(nSigSrc)}" alt="Signature" style="max-height:40px;max-width:200px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/></div>`
+    : "";
   const sigHtml = isSigned
     ? `<div style="margin-top:14px;padding:8px 12px;border:1px solid #bbf7d0;border-radius:6px;background:#f0fdf4;font-size:11px;color:#166534">
   <strong style="color:#15803d">✓ SIGNED & SUBMITTED</strong> · By: ${escapeHtml(note.nurseName || note.signedByName || "Nurse")}${nurseEmpIdShown ? ` · Emp ID: ${escapeHtml(nurseEmpIdShown)}` : ""}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}
+  ${nSigImgHtml}
 </div>`
     : `<div style="margin-top:14px;padding:6px 12px;border:1px solid #fde68a;border-radius:6px;background:#fffbeb;font-size:11px"><strong style="color:#d97706">DRAFT — Not yet signed</strong></div>`;
 
@@ -646,11 +657,19 @@ export function printNurseNote(note, hospitalSettings = {}) {
   // Signature footer
   // R7go — Surface employee ID alongside name on the standalone nurse-note
   // print too (same field precedence as buildNurseNoteCardHtml).
+  // R7gu — Embed signature image on the standalone print as well.
   const nurseEmpIdShownStandalone = note.signedByEmpId || note.nurseEmployeeId || "";
+  const nSigSrcStandalone = note.signature || note.signatureImage || "";
+  const nSigImgStandalone = (isSigned && nSigSrcStandalone && typeof nSigSrcStandalone === "string"
+                             && (nSigSrcStandalone.startsWith("data:image/")
+                                 || nSigSrcStandalone.startsWith("/uploads/")
+                                 || /^https?:\/\//.test(nSigSrcStandalone)))
+    ? `<br/><img src="${escapeHtml(nSigSrcStandalone)}" alt="Signature" style="max-height:42px;max-width:220px;margin-top:6px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/>`
+    : "";
   const sigHtml = isSigned
     ? `<div style="margin-top:20px;padding:10px 14px;border:1px solid #bbf7d0;border-radius:8px;background:#f0fdf4">
   <strong style="color:#15803d;font-size:12px">✓ SIGNED & SUBMITTED</strong><br/>
-  <span style="font-size:11px;color:#166534">By: ${escapeHtml(note.nurseName || note.signedByName || "Nurse")}${nurseEmpIdShownStandalone ? ` · Emp ID: ${escapeHtml(nurseEmpIdShownStandalone)}` : ""}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}</span>
+  <span style="font-size:11px;color:#166534">By: ${escapeHtml(note.nurseName || note.signedByName || "Nurse")}${nurseEmpIdShownStandalone ? ` · Emp ID: ${escapeHtml(nurseEmpIdShownStandalone)}` : ""}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}${nSigImgStandalone}</span>
 </div>`
     : `<div style="margin-top:20px;padding:8px 12px;border:1px solid #fde68a;border-radius:8px;background:#fffbeb">
   <strong style="color:#d97706;font-size:12px">DRAFT — Not yet signed</strong>

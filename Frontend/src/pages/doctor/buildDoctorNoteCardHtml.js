@@ -562,10 +562,21 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
   // opening the User collection. signedByEmpId is preferred (captured at
   // sign time); doctorEmpId is the original author's ID and shown when no
   // explicit signer-emp-id was stored (older notes / handover scenarios).
+  // R7gu — Embed the actual digital signature image (data: URL or
+  // /uploads/ path) inside the footer when present, so the printed copy
+  // looks like a real signed document, not just a text claim.
   const empIdShown = note.signedByEmpId || note.doctorEmpId || "";
+  const sigSrc = note.signature || note.signatureImage || "";
+  const sigImgHtml = (isSigned && sigSrc && typeof sigSrc === "string"
+                     && (sigSrc.startsWith("data:image/")
+                         || sigSrc.startsWith("/uploads/")
+                         || /^https?:\/\//.test(sigSrc)))
+    ? `<div style="margin-top:6px"><img src="${escapeHtml(sigSrc)}" alt="Signature" style="max-height:40px;max-width:200px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/></div>`
+    : "";
   const sigHtml = isSigned
     ? `<div style="margin-top:14px;padding:8px 12px;border:1px solid #bbf7d0;border-radius:6px;background:#f0fdf4;font-size:11px;color:#166534">
   <strong style="color:#15803d">✓ SIGNED & SUBMITTED</strong> · By: ${escapeHtml(note.doctorName || note.signedByName || "Doctor")}${empIdShown ? ` · Emp ID: ${escapeHtml(empIdShown)}` : ""}${note.doctorRegNo || note.signedByReg ? ` · Reg: ${escapeHtml(note.doctorRegNo || note.signedByReg)}` : ""}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}
+  ${sigImgHtml}
 </div>`
     : `<div style="margin-top:14px;padding:6px 12px;border:1px solid #fde68a;border-radius:6px;background:#fffbeb;font-size:11px"><strong style="color:#d97706">DRAFT — Not yet signed</strong></div>`;
 

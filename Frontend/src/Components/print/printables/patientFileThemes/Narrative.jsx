@@ -830,8 +830,13 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   /* ── Doctor / Nursing IA actor lines ────────────────────────── */
   const dIASigner = displayActor(d.signedByName || d.signedBy, "signed digitally");
   const dIAReg    = displayActor(d.signedByReg || d.mciRegNo, "");
+  const dIAEmpId  = displayActor(d.signedByEmpId || d.doctorEmpId, "");
+  const dIASig    = d.signature || d.signatureImage || "";
   const dIAAt     = d.signedAt || d.assessmentDate;
   const nIASigner = displayActor(n.nurseName || n.signedByName || n.signedBy, "signed digitally");
+  const nIAReg    = displayActor(n.signedByReg || n.nurseRegNo, "");
+  const nIAEmpId  = displayActor(n.signedByEmpId || n.nurseEmployeeId, "");
+  const nIASig    = n.signature || n.signatureImage || "";
   const nIAAt     = n.signedAt || n.submittedAt;
 
   /* ── Past history + family + social one-liner ───────────────── */
@@ -1106,13 +1111,23 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                 </Para>
               ) : null}
               {Object.keys(d).length > 0 ? (
-                <Para style={{ color: COL.muted, fontSize: 10 }}>
-                  <em>
-                    Doctor IA signed by {dIASigner}
-                    {dIAReg ? ` (Reg ${dIAReg})` : ""}
-                    {dIAAt ? ` · ${fmtDateTime(dIAAt)}` : ""}.
-                  </em>
-                </Para>
+                /* R7gu — Show signer's name + Emp ID + Reg + digital
+                   signature image (when captured) on the IA summary
+                   line so the print matches NABH AAC.7 traceability
+                   and matches the day-wise per-note footers. */
+                <div style={{ marginTop: 4, padding: "6px 10px", border: `1px solid ${COL.head}33`, background: "#f5f3ff", borderRadius: 4, fontSize: 10, color: COL.head }}>
+                  <strong style={{ color: COL.head }}>✓ DOCTOR IA SIGNED</strong>
+                  {" · By: "}<strong>{dIASigner}</strong>
+                  {dIAEmpId ? <> · Emp ID: <strong>{dIAEmpId}</strong></> : null}
+                  {dIAReg ? <> · Reg: <strong>{dIAReg}</strong></> : null}
+                  {dIAAt ? <> · {fmtDateTime(dIAAt)}</> : null}
+                  {dIASig && typeof dIASig === "string" && (dIASig.startsWith("data:image/") || dIASig.startsWith("/uploads/") || /^https?:\/\//.test(dIASig)) ? (
+                    <div style={{ marginTop: 4 }}>
+                      <img src={dIASig} alt="Doctor signature"
+                        style={{ maxHeight: 36, maxWidth: 180, border: "1px solid #e2e8f0", background: "#fff", padding: 2, borderRadius: 3 }} />
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
             </>
           ) : null}
@@ -1238,12 +1253,21 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                 <Para><strong>Initial care plan:</strong> <em>{cleanSentence(carePlan)}</em></Para>
               ) : null}
 
-              <Para style={{ color: COL.muted, fontSize: 10 }}>
-                <em>
-                  Nursing IA signed by {nIASigner}
-                  {nIAAt ? ` · ${fmtDateTime(nIAAt)}` : ""}.
-                </em>
-              </Para>
+              {/* R7gu — Match the doctor IA signature block: name +
+                  Emp ID + (any) reg no + digital signature image. */}
+              <div style={{ marginTop: 4, padding: "6px 10px", border: "1px solid #fbcfe833", background: "#fdf2f8", borderRadius: 4, fontSize: 10, color: "#9d174d" }}>
+                <strong style={{ color: "#9d174d" }}>✓ NURSING IA SIGNED</strong>
+                {" · By: "}<strong>{nIASigner}</strong>
+                {nIAEmpId ? <> · Emp ID: <strong>{nIAEmpId}</strong></> : null}
+                {nIAReg ? <> · Reg: <strong>{nIAReg}</strong></> : null}
+                {nIAAt ? <> · {fmtDateTime(nIAAt)}</> : null}
+                {nIASig && typeof nIASig === "string" && (nIASig.startsWith("data:image/") || nIASig.startsWith("/uploads/") || /^https?:\/\//.test(nIASig)) ? (
+                  <div style={{ marginTop: 4 }}>
+                    <img src={nIASig} alt="Nurse signature"
+                      style={{ maxHeight: 36, maxWidth: 180, border: "1px solid #e2e8f0", background: "#fff", padding: 2, borderRadius: 3 }} />
+                  </div>
+                ) : null}
+              </div>
             </>
           ) : null}
         </>
