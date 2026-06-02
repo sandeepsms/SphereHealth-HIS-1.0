@@ -374,6 +374,142 @@ const buildBuilder = (note) => {
       ]));
     },
 
+    // R7gp — INITIAL ASSESSMENT (NABH IPSG.6) — full per-type card so the
+    // nurse Initial Assessment card mirrors the printed Complete File
+    // instead of dumping noteData.nursingNabh as raw JSON.
+    initial: () => {
+      const nrs = nd.nursing || {};
+      const nNabh = nd.nursingNabh || {};
+      const v = nrs.vitals || {};
+      const anthro = nNabh.anthropometry || {};
+
+      // Admission identity strip
+      const admit = _section("Admission Identity", "#1d4ed8", _grid([
+        _kv("Admit Date", nrs.admitDate),
+        _kv("Admit Time", nrs.admitTime),
+        _kv("IPD No.", nrs.ipdNo),
+        _kv("Ward", nrs.ward),
+        _kv("Bed No.", nrs.bedNo),
+        _kv("Mode of Admit", nrs.modeOfAdmit),
+        _kv("Consciousness", nrs.consciousnessLevel),
+        _kv("Mobility", nrs.mobility),
+      ]));
+
+      // NABH IPSG.1 identification verification
+      const ident = nNabh.identification || {};
+      const idChips = [
+        ["Band Attached", ident.bandAttached],
+        ["Name Verified", ident.nameVerified],
+        ["UHID Verified", ident.uhidVerified],
+        ["DOB Verified", ident.dobVerified],
+      ].filter(c => c[1]);
+      const identHtml = (idChips.length || ident.verifiedBy)
+        ? _section("Identification (NABH IPSG.1)", "#16a34a",
+            `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${idChips.map(c => `<span style="padding:3px 10px;border-radius:999px;background:#dcfce7;color:#15803d;font-size:11px;font-weight:600">✓ ${escapeHtml(c[0])}</span>`).join("")}${ident.verifiedBy ? `<span style="font-size:11px;color:#475569;margin-left:6px">Verified by: <strong>${escapeHtml(ident.verifiedBy)}</strong></span>` : ""}</div>`)
+        : "";
+
+      // Allergies (NABH IPSG.3)
+      const allergies = nNabh.allergies?.list || [];
+      const allergyHtml = allergies.length
+        ? _section("Allergies (NABH IPSG.3)", "#dc2626",
+            `<table class="nfx-tbl"><tr><th>Type</th><th>Agent</th><th>Severity</th><th>Reaction</th></tr>${allergies.map(a => `<tr><td>${escapeHtml(a.type || "—")}</td><td><strong>${escapeHtml(a.agent || "—")}</strong></td><td style="color:#dc2626;font-weight:600">${escapeHtml(a.severity || "—")}</td><td>${escapeHtml(a.reaction || "—")}</td></tr>`).join("")}</table>`)
+        : (nNabh.allergies?.noKnown ? _section("Allergies (NABH IPSG.3)", "#16a34a",
+            `<div style="padding:6px 10px;background:#dcfce7;color:#15803d;border-radius:4px;font-size:11px;font-weight:600">No known allergies</div>`) : "");
+
+      // Vitals on admission
+      const vitalCells = [
+        ["BP",   v.bpSys && v.bpDia ? `${v.bpSys}/${v.bpDia} mmHg` : ""],
+        ["Pulse", v.pulse ? `${v.pulse} /min` : ""],
+        ["Temp",  v.temp ? `${v.temp} °C` : ""],
+        ["SpO₂", v.spo2 ? `${v.spo2}%` : ""],
+        ["RR",   v.rr ? `${v.rr} /min` : ""],
+        ["Wt",   v.weight ? `${v.weight} kg` : (anthro.weightKg ? `${anthro.weightKg} kg` : "")],
+        ["Ht",   v.height ? `${v.height} cm` : (anthro.heightCm ? `${anthro.heightCm} cm` : "")],
+        ["BMI",  anthro.bmi || ""],
+      ].filter(c => c[1]);
+      const vitalsHtml = vitalCells.length
+        ? _section("Vitals on Admission", "#dc2626",
+            `<table class="nfx-tbl"><tr>${vitalCells.map(c => `<th>${escapeHtml(c[0])}</th>`).join("")}</tr><tr>${vitalCells.map(c => `<td>${escapeHtml(c[1])}</td>`).join("")}</tr></table>`)
+        : "";
+
+      // Brief PMH + Home Medications (Medication reconciliation IPSG.6)
+      const meds = nNabh.homeMedications || [];
+      const pmhMedsHtml = (nNabh.briefPmh || meds.length)
+        ? _section("History & Home Medications", "#7c3aed",
+            (nNabh.briefPmh ? `<div style="font-size:11.5px;margin:0 0 8px"><strong>Brief PMH:</strong> ${escapeHtml(nNabh.briefPmh)}</div>` : "") +
+            (meds.length ? `<table class="nfx-tbl"><tr><th>Drug</th><th>Dose</th><th>Frequency</th><th>Last Taken</th></tr>${meds.map(m => `<tr><td>${escapeHtml(m.drug || "—")}</td><td>${escapeHtml(m.dose || "—")}</td><td>${escapeHtml(m.frequency || "—")}</td><td>${escapeHtml(m.lastTaken || "—")}</td></tr>`).join("")}</table>` : ""))
+        : "";
+
+      // Chief Complaint + Pain
+      const ccPain = _section("Chief Complaint & Pain", "#0d9488", _grid([
+        _kv("Chief Complaint", nrs.chiefComplaint, true),
+        _kv("Pain Present", nrs.painPresent ? "Yes" : (nrs.painPresent === false ? "No" : null)),
+        _kv("Pain Score", nrs.painScore),
+        _kv("Pain Location", nrs.painLocation),
+        _kv("Pain Character", nrs.painCharacter, true),
+      ]));
+
+      // Psychosocial + Educational
+      const ps = nNabh.psychosocial || {};
+      const edu = nNabh.educationNeeds || {};
+      const psSection = (ps.emotionalState || edu.preferredLanguage)
+        ? _section("Psychosocial & Education", "#d97706", _grid([
+            _kv("Emotional State", ps.emotionalState),
+            _kv("Family Support", ps.familySupport),
+            _kv("Preferred Language", ps.languagePreferred || edu.preferredLanguage),
+            _kv("Learning Style", edu.learningStyle),
+            _kv("Can Read", edu.canRead ? "Yes" : ""),
+            _kv("Can Write", edu.canWrite ? "Yes" : ""),
+            _kv("Barriers to Learning", edu.barriersToLearning),
+            _kv("Notes", ps.notes, true),
+          ]))
+        : "";
+
+      // ADL Barthel
+      const adl = nNabh.adlBarthel || {};
+      const adlHtml = adl.total != null
+        ? _section("ADL — Barthel Index", "#0891b2",
+            `<div style="font-size:11.5px"><strong>Total Score:</strong> ${escapeHtml(String(adl.total))} / 100 (${adl.total >= 80 ? "Independent" : adl.total >= 60 ? "Mild dependency" : adl.total >= 40 ? "Moderate" : "Severe / Total dependency"})</div>`)
+        : "";
+
+      // Family & Caregiver
+      const fc = nNabh.familyCaregiver || {};
+      const fcHtml = (fc.primaryName || fc.escalationName)
+        ? _section("Family & Caregiver", "#7c3aed", _grid([
+            _kv("Primary Caregiver", fc.primaryName),
+            _kv("Relation", fc.primaryRelation),
+            _kv("Primary Contact", fc.primaryContact),
+            _kv("Escalation Name", fc.escalationName),
+            _kv("Escalation Relation", fc.escalationRelation),
+            _kv("Escalation Contact", fc.escalationContact),
+            _kv("Lives with Patient", fc.lives_with_patient ? "Yes" : null),
+          ]))
+        : "";
+
+      // Discharge planning
+      const dp = nNabh.dischargePlanning || {};
+      const dpHtml = (dp.homeSupport || dp.primaryCaregiver || dp.transportNeed)
+        ? _section("Discharge Planning", "#16a34a", _grid([
+            _kv("Home Support", dp.homeSupport),
+            _kv("Primary Caregiver", dp.primaryCaregiver),
+            _kv("Transport Need", dp.transportNeed),
+            _kv("Anticipated Barriers", dp.anticipatedBarriers, true),
+          ]))
+        : "";
+
+      // Nursing diagnosis / problems / goals / notes (narrative)
+      const narrHtml = (nrs.nursingProblems || nrs.nursingGoals || nrs.nursingNotes)
+        ? _section("Nursing Diagnosis & Plan", "#475569", _grid([
+            _kv("Problems Identified", nrs.nursingProblems, true),
+            _kv("Goals", nrs.nursingGoals, true),
+            _kv("Nursing Plan", nrs.nursingNotes, true),
+          ]))
+        : "";
+
+      return admit + identHtml + allergyHtml + vitalsHtml + pmhMedsHtml + ccPain + psSection + adlHtml + fcHtml + dpHtml + narrHtml;
+    },
+    initialAssessment: function() { return BUILDERS.initial(); },
+
     // ─── GENERAL / FREE-FORM ─────────────────────────────────────────
     general: () => {
       // Bare narrative — read remarks / content / freeform

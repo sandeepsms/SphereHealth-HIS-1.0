@@ -132,7 +132,10 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
         </div>
       )}
 
-      {/* Doctor initial assessment */}
+      {/* R7gp — Doctor + Nurse initial assessments now use the same
+          per-type card builders the printed Complete File uses. Replaces
+          the legacy DoctorNoteExpanded/NurseNoteExpanded fallback that
+          rendered noteDetails.nabh as raw stringified JSON. */}
       <div className="ppt-card ppt-card--doctor">
         <div className="ppt-section-title">
           <span className="ppt-section-icon">👨‍⚕️</span>
@@ -146,11 +149,15 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
             ⚠️ Doctor's initial assessment is mandatory before any further documentation. NABH COP.2.
           </div>
         ) : (
-          docInitial.map((n) => <DoctorNoteExpanded key={n._id} note={n} />)
+          // Latest first — Initial Assessment is usually one record but
+          // amendments / re-sign attempts can produce extras; show newest
+          // at top so the most current sign is the first thing read.
+          [...docInitial]
+            .sort((a, b) => new Date(b.visitDate || b.createdAt) - new Date(a.visitDate || a.createdAt))
+            .map((n) => <NoteCardEmbed key={n._id} note={n} role="doctor" />)
         )}
       </div>
 
-      {/* Nurse initial assessment */}
       <div className="ppt-card ppt-card--nurse">
         <div className="ppt-section-title">
           <span className="ppt-section-icon">👩‍⚕️</span>
@@ -164,7 +171,9 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
             ⚠️ Nursing initial assessment pending. NABH IPSG.6.
           </div>
         ) : (
-          nurseInitial.map((n) => <NurseNoteExpanded key={n._id} note={n} />)
+          [...nurseInitial]
+            .sort((a, b) => new Date(b.noteDate || b.createdAt) - new Date(a.noteDate || a.createdAt))
+            .map((n) => <NoteCardEmbed key={n._id} note={n} role="nurse" />)
         )}
       </div>
     </div>

@@ -296,21 +296,151 @@ const buildBuilder = (note) => {
     },
 
     initial: () => {
+      // R7gp — full per-type Initial Assessment card. Replaces the prior
+      // skeleton (which only emitted Chief Complaint + Diagnosis and let
+      // KeyValueAll dump the rest as raw JSON). Renders every NABH P0+P1
+      // sub-block as a tidy grid / table so the panel mirrors the printed
+      // R7fh discharge / Complete File layout.
       const docPayload = nd.doctor || nd;
-      const nabh = docPayload.nabh || {};
+      const nabh = docPayload.nabh || nd.nabh || {};
+      const nursing = nd.nursing || {};
+
+      // Cross-check alerts (R7ff) — banner at top so doctor sees nurse↔doctor
+      // mismatches before reading the rest.
+      const alerts = Array.isArray(nd.crossCheckAlerts) ? nd.crossCheckAlerts : [];
+      const alertBanner = alerts.length
+        ? `<div class="dfx-banner" style="background:#fef2f2;color:#991b1b;border:2px solid #dc2626">
+  <strong>⚠ Cross-Check Alerts (${alerts.length})</strong>
+  <ul style="margin:6px 0 0;padding-left:18px;font-weight:400;font-size:11px">
+    ${alerts.map(a => `<li><strong>${escapeHtml(a.severity || "")}</strong> · ${escapeHtml(a.category || "")} — ${escapeHtml(a.message || "")}</li>`).join("")}
+  </ul>
+</div>` : "";
+
+      // Chief Complaint & HPI (P0)
       const cc = _section("Chief Complaint & HPI", "#0d9488", _grid([
-        _kv("Chief Complaint", nabh.chiefComplaint || docPayload.chiefComplaint || docPayload.docCC, true),
+        _kv("Chief Complaint", nabh.chiefComplaint || docPayload.chiefComplaint || nursing.chiefComplaint, true),
         _kv("Duration", nabh.ccDuration || docPayload.duration),
-        _kv("HPI", docPayload.hpi || docPayload.hopi || note.historyOfPresentIllness, true),
+        _kv("HoPI", docPayload.hopi || docPayload.hpi || note.historyOfPresentIllness, true),
       ]));
-      const dx = _section("Diagnosis & Plan", "#d97706", _grid([
+
+      // History (PMH/PSH/Family/Social/Allergy)
+      const allergyList = nabh.allergies?.list || [];
+      const allergyText = allergyList.length
+        ? allergyList.map(a => `${a.agent || "—"} (${a.severity || "?"}${a.reaction ? " — " + a.reaction : ""})`).join("; ")
+        : (nabh.allergies?.noKnown ? "No known allergies" : "");
+      const history = _section("History", "#1d4ed8", _grid([
+        _kv("PMH", docPayload.pmh, true),
+        _kv("PSH", docPayload.psh, true),
+        _kv("Family Hx", docPayload.famHx, true),
+        _kv("Social Hx", docPayload.socHx, true),
+        _kv("Allergies", allergyText || docPayload.docAllergy, true),
+      ]));
+
+      // Vitals + Anthropometry
+      const v = nursing.vitals || {};
+      const anthro = nabh.anthropometry || {};
+      const vitalCells = [
+        ["BP",   v.bpSys && v.bpDia ? `${v.bpSys}/${v.bpDia} mmHg` : ""],
+        ["Pulse", v.pulse ? `${v.pulse} /min` : ""],
+        ["Temp",  v.temp ? `${v.temp} °C` : ""],
+        ["SpO₂", v.spo2 ? `${v.spo2}%` : ""],
+        ["RR",   v.rr ? `${v.rr} /min` : ""],
+        ["Wt",   v.weight || anthro.weightKg ? `${v.weight || anthro.weightKg} kg` : ""],
+        ["Ht",   v.height || anthro.heightCm ? `${v.height || anthro.heightCm} cm` : ""],
+        ["BMI",  anthro.bmi || ""],
+      ].filter(c => c[1]);
+      const vitalsHtml = vitalCells.length
+        ? _section("Vitals on Admission", "#dc2626",
+            `<table class="dfx-tbl"><tr>${vitalCells.map(c => `<th>${escapeHtml(c[0])}</th>`).join("")}</tr><tr>${vitalCells.map(c => `<td>${escapeHtml(c[1])}</td>`).join("")}</tr></table>`)
+        : "";
+
+      // Examination findings
+      const exam = _section("Examination Findings", "#475569", _grid([
+        _kv("General", docPayload.genExam, true),
+        _kv("CVS", docPayload.cvs),
+        _kv("RS", docPayload.rs),
+        _kv("Abdomen", docPayload.abdomen),
+        _kv("CNS", docPayload.cns),
+        _kv("Local Exam", nabh.localExamination, true),
+      ]));
+
+      // Medication Reconciliation (NABH MOM.5 / COP.2)
+      const medRec = Array.isArray(nabh.medicationReconciliation) ? nabh.medicationReconciliation : [];
+      const medRecHtml = medRec.length
+        ? _section("Medication Reconciliation", "#7c3aed",
+            `<table class="dfx-tbl"><tr><th>Drug</th><th>Dose</th><th>Frequency</th><th>Last Taken</th><th>On Admit</th></tr>${medRec.map(m =>
+              `<tr><td>${escapeHtml(m.drug || "—")}</td><td>${escapeHtml(m.dose || "—")}</td><td>${escapeHtml(m.frequency || "—")}</td><td>${escapeHtml(m.lastTaken || "—")}</td><td>${escapeHtml(m.continueOnAdmit || "—")}</td></tr>`
+            ).join("")}</table>`)
+        : "";
+
+      // Comorbidities — only show TRUE ones
+      const cm = nabh.comorbidities || {};
+      const cmList = Object.entries(cm).filter(([k, v]) => v === true).map(([k]) => k);
+      if (cm.other) cmList.push(cm.other);
+      const cmHtml = cmList.length
+        ? _section("Active Comorbidities", "#d97706",
+            `<div style="display:flex;flex-wrap:wrap;gap:5px">${cmList.map(c => `<span style="padding:3px 10px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:600;text-transform:capitalize">${escapeHtml(c)}</span>`).join("")}</div>`)
+        : "";
+
+      // Code Status + Goals of Care + Prognosis
+      const cs = nabh.codeStatus || {};
+      const prog = nabh.prognosis || {};
+      const codeSection = (cs.value || prog.discussedWith || nabh.goalOfCare)
+        ? _section("Code Status & Goals of Care", "#0891b2", _grid([
+            _kv("Code Status", cs.value && cs.value.replace(/_/g, " ")),
+            _kv("Discussed With (code)", cs.discussedWith),
+            _kv("Limitations", cs.limitations, true),
+            _kv("Goal of Care", nabh.goalOfCare, true),
+            _kv("ELOS (days)", nabh.elosDays),
+            _kv("Prognosis Discussed With", prog.discussedWith),
+            _kv("Language Used", prog.languageUsed),
+            _kv("Prognosis Summary", prog.summary, true),
+          ]))
+        : "";
+
+      // Risk Acknowledgement (P0) — only show acknowledged
+      const ra = nabh.riskAcknowledgement || {};
+      const ackedRisks = Object.entries(ra).filter(([_, v]) => v?.acknowledged);
+      const riskHtml = ackedRisks.length
+        ? _section("Risk Acknowledgement (NABH IPSG)", "#dc2626",
+            `<table class="dfx-tbl"><tr><th>Risk</th><th>Score</th><th>Plan</th></tr>${ackedRisks.map(([k, v]) =>
+              `<tr><td style="text-transform:uppercase;font-weight:600">${escapeHtml(k)}</td><td>${escapeHtml(v.score || "—")}</td><td>${escapeHtml(v.plan || "—")}</td></tr>`
+            ).join("")}</table>`)
+        : "";
+
+      // Consent Required — only TRUE ones
+      const consent = nabh.consentRequired || {};
+      const consentList = Object.entries(consent).filter(([_, v]) => v === true).map(([k]) => k);
+      const consentHtml = consentList.length
+        ? _section("Consent Required", "#7c3aed",
+            `<div style="display:flex;flex-wrap:wrap;gap:5px">${consentList.map(c => `<span style="padding:3px 10px;border-radius:999px;background:#ede9fe;color:#5b21b6;font-size:11px;font-weight:600;text-transform:uppercase">${escapeHtml(c)}</span>`).join("")}</div>`)
+        : "";
+
+      // Diagnosis & Plan
+      const dx = _section("Diagnosis", "#d97706", _grid([
         _kv("Provisional", docPayload.provDx || note.provisionalDiagnosis),
         _kv("Working", nabh.workingDx || docPayload.workingDx || note.workingDiagnosis),
+        _kv("Differential", nabh.differentialDx, true),
         _kv("Final", docPayload.finalDx || note.finalDiagnosis),
         _kv("ICD-10", docPayload.icd10 || note.icd10Code),
       ]));
-      return cc + dx;
+
+      // Investigations + Plan + Advice
+      const planSection = (docPayload.investigations || docPayload.treatmentPlan || docPayload.followupNotes || docPayload.dietAdvice || docPayload.activityAdvice)
+        ? _section("Investigations & Plan", "#16a34a", _grid([
+            _kv("Investigations", docPayload.investigations, true),
+            _kv("Treatment Plan", docPayload.treatmentPlan, true),
+            _kv("Follow-up Notes", docPayload.followupNotes, true),
+            _kv("Diet Advice", docPayload.dietAdvice, true),
+            _kv("Activity Advice", docPayload.activityAdvice, true),
+          ]))
+        : "";
+
+      return alertBanner + cc + history + vitalsHtml + exam + medRecHtml + cmHtml + codeSection + riskHtml + consentHtml + dx + planSection;
     },
+    // R7gp — initialAssessment is the alias the frontend sends from the
+    // IPD Initial Assessment doctor form; route it to the same builder.
+    initialAssessment: function() { return BUILDERS.initial(); },
   };
 
   return BUILDERS[note.noteType] || null;
