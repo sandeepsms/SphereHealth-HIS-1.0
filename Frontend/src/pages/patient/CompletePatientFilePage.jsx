@@ -4202,12 +4202,14 @@ export default function CompletePatientFilePage() {
     };
   };
 
-  /* ── R7gr — Mirror View (default) ─────────────────────────────
-     Renders the NarrativeTheme component directly so the page looks
-     identical to the printed Complete File. ?view=interactive flips
-     to the legacy chip-grid layout. */
-  const view = (search.get("view") || "narrative").toLowerCase();
-  if (view === "narrative" && data) {
+  /* ── R7gr / R7gs — Narrative is the ONLY view ─────────────────
+     R7gr added an opt-in print-mirror render. R7gs (user feedback:
+     "is page ki UI mujhe bhot preshan krti hai") makes it the only
+     view — the legacy chip-grid interactive layout below this block
+     is permanently bypassed. `?view=interactive` is intentionally
+     ignored so deep links from the old UI still land on the clean
+     Narrative copy. */
+  if (data) {
     const receipt = buildPrintReceipt();
     const file   = normalizeFileData(receipt);
     const events = buildChronologicalEvents(file);
@@ -4223,17 +4225,9 @@ export default function CompletePatientFilePage() {
             borderRadius: 7, cursor: "pointer", fontSize: 13,
           }}>← Back</button>
           <div style={{ fontWeight: 700, fontSize: 15, color: "#0f172a" }}>
-            Patient File · Print-Mirror View
+            Complete Patient File
           </div>
           <div style={{ flex: 1 }} />
-          <button
-            onClick={() => navigate(`/patient-file/${uhid}?view=interactive${role !== "doctor" ? `&role=${role}` : ""}`)}
-            style={{
-              border: "1px solid #c4b5fd", background: "#f5f3ff", color: "#5b21b6",
-              padding: "6px 14px", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 600,
-            }}
-            title="Switch to the legacy interactive layout with sticky nav + chip grid"
-          >Switch to Interactive →</button>
           <button
             onClick={() => { try { openPrint("ipd-file", receipt); } catch { window.print(); } }}
             style={{
