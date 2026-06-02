@@ -15,15 +15,15 @@ const handle = (fn) => async (req, res) => {
 class NurseNotesController {
   // POST /api/nurse-notes
   createNote = handle(async (req, res) => {
-    // nurseId: body se lo, ya header se, ya JWT token se
-    const nurseUserId =
-      req.body.nurseId || req.headers["x-user-id"] ||
-      (req.user?._id || req.user?.id || req.user);
-    if (!nurseUserId)
-      return res.status(400).json({
+    // nurseId comes ONLY from JWT — body/header overrides are forbidden
+    const nurseUserId = req.user?.id || req.user?._id;
+    if (!nurseUserId) {
+      return res.status(401).json({
         success: false,
-        message: "nurseId is required (send in body, X-User-Id header, or login token)",
+        code: "AUTH_REQUIRED",
+        message: "Authenticated nurse identity required",
       });
+    }
 
     const data = { ...req.body, nurseId: nurseUserId };
     const note = await nurseNotesService.createNurseNote(data, nurseUserId);
@@ -71,8 +71,14 @@ class NurseNotesController {
 
   // PUT /api/nurse-notes/:id
   updateNote = handle(async (req, res) => {
-    const nurseUserId =
-      req.body.nurseId || req.headers["x-user-id"] || req.user;
+    const nurseUserId = req.user?.id || req.user?._id;
+    if (!nurseUserId) {
+      return res.status(401).json({
+        success: false,
+        code: "AUTH_REQUIRED",
+        message: "Authenticated nurse identity required",
+      });
+    }
     const note = await nurseNotesService.updateNurseNote(
       req.params.id,
       req.body,
@@ -83,8 +89,14 @@ class NurseNotesController {
 
   // PATCH /api/nurse-notes/:id/confirm-order
   confirmOrder = handle(async (req, res) => {
-    const nurseUserId =
-      req.body.nurseId || req.headers["x-user-id"] || req.user;
+    const nurseUserId = req.user?.id || req.user?._id;
+    if (!nurseUserId) {
+      return res.status(401).json({
+        success: false,
+        code: "AUTH_REQUIRED",
+        message: "Authenticated nurse identity required",
+      });
+    }
     const result = await nurseNotesService.confirmSingleOrder(
       req.body,
       nurseUserId,
@@ -142,8 +154,14 @@ class NurseNotesController {
 
   // DELETE /api/nurse-notes/:id
   deleteNote = handle(async (req, res) => {
-    const nurseUserId =
-      req.body.nurseId || req.headers["x-user-id"] || req.user;
+    const nurseUserId = req.user?.id || req.user?._id;
+    if (!nurseUserId) {
+      return res.status(401).json({
+        success: false,
+        code: "AUTH_REQUIRED",
+        message: "Authenticated nurse identity required",
+      });
+    }
     await nurseNotesService.deleteNurseNote(req.params.id, nurseUserId);
     return res.json({ success: true, message: "Note deleted" });
   });

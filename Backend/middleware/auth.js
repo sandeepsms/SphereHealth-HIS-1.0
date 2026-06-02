@@ -240,6 +240,10 @@ const requireAction = (action) => (req, res, next) => {
    on endpoints that want to APPLY role-based filtering when a doctor is
    logged in, but still serve broader data to reception/admin. */
 const attemptAuth = (req, _res, next) => {
+  // R7gw-B1-T06 — once global authenticate has populated req.user with DB-fresh
+  // phone / fullName / mustChangePassword / wards, attemptAuth must NOT clobber.
+  // OPDRoutes.js removed attemptAuth entirely for this reason (R7bb-B/D4-CRIT-S1).
+  if (req.user) return next();
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) return next();
   try {
@@ -247,6 +251,30 @@ const attemptAuth = (req, _res, next) => {
     req.user = { ..._decoded, _id: _decoded.id };  // R7ar-P0-1: expose both id + _id
   } catch (e) { /* ignore — leave req.user undefined */ }
   next();
+};
+
+/* ── R7gw-B1-T07: requirePasswordRotated ──
+   authenticate() above stashes req.user.mustChangePassword from a fresh DB
+   read (line ~113 / ~159) for defense-in-depth, but until now no callsite
+   actually enforced it. A user whose admin reset their password could bypass
+   the frontend "change password" modal via devtools / a raw axios call and
+   continue writing.
+   This gate sits right after the global authenticate mount and rejects any
+   mutating verb (POST/PUT/PATCH/DELETE) from a user with mustChangePassword
+   still true. GETs stay open so the app shell can boot. The change-password
+   endpoint itself is allow-listed so the user has a way OUT of the lockout. */
+const WRITE_METHODS_FOR_PWD = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const requirePasswordRotated = (req, res, next) => {
+  if (!req.user) return next(); // attemptAuth-style routes
+  if (!req.user.mustChangePassword) return next();
+  if (!WRITE_METHODS_FOR_PWD.has(req.method)) return next();
+  // Allow the password-change endpoint itself
+  if (req.path.startsWith('/auth/change-password') || req.path.startsWith('/auth/password')) return next();
+  return res.status(403).json({
+    success: false,
+    code: 'PASSWORD_RESET_REQUIRED',
+    message: 'Password rotation pending. Change your password before performing writes.',
+  });
 };
 
 /* ── Resolve the doctor profile for the logged-in user ──
@@ -514,6 +542,7 @@ module.exports = {
   adminOnly,
   requireAction,
   attemptAuth,
+  requirePasswordRotated,
   attachDoctorProfile,
   restrictToOwnDoctorPatients,
   restrictToOwnNurseWard,

@@ -75,29 +75,58 @@ class MedicalCertificateController {
     }
 
     // ── Doctor identity + MCI reg gate (R7bx invariant) ───────
-    let doctorName = _trim(body.doctorName) || req.user?.fullName || "";
-    let doctorReg  = _trim(body.doctorReg)  || "";
+    // B1-T03 — Forgery-guard. Three branches, no falling through:
+    //   • Doctor  → ALWAYS use the looked-up profile. Body name/reg ignored
+    //               so a logged-in doctor cannot post-as another clinician.
+    //   • Admin   → may issue on behalf of a doctor, but MUST supply
+    //               overrideReason (>= 20 chars). Issuance is audited.
+    //   • Anyone else (Nurse, etc.) → 403. Nurses may post fitness/sick-leave
+    //               flavoured paperwork through other endpoints, but cannot
+    //               sign legal medical certificates as a Doctor.
+    const role = req.user?.role || "";
+    let doctorName = "";
+    let doctorReg  = "";
     let issuedBy   = null;
+    let overrideMeta = null;
 
-    // Prefer the looked-up Doctor profile for the logged-in user.
-    if (req.user?.id) {
+    if (role === "Doctor") {
+      if (!req.user?.id) {
+        return res.status(401).json({ success: false, code: "AUTH_REQUIRED",
+          message: "Authenticated doctor session is required to issue a certificate." });
+      }
       const doc = await Doctor.findOne({ loginUserId: req.user.id })
         .select("_id personalInfo.fullName personalInfo.firstName personalInfo.lastName professional.registrationNumber")
         .lean();
-      if (doc) {
-        issuedBy   = doc._id;
-        doctorName = doctorName
-          || doc.personalInfo?.fullName
-          || [doc.personalInfo?.firstName, doc.personalInfo?.lastName].filter(Boolean).join(" ");
-        doctorReg  = doctorReg || doc.professional?.registrationNumber || "";
+      if (!doc) {
+        return res.status(412).json({ success: false, code: "DOCTOR_PROFILE_MISSING",
+          message: "No Doctor profile linked to this login. Contact Admin to link your account." });
       }
-    }
-    // Allow explicit override (Admin issuing on behalf of a doctor) so
-    // long as both name + reg are present in the body.
-    if (!doctorReg) {
-      return res.status(412).json({ success: false, code: "DOCTOR_MCI_REQUIRED",
-        message: "Cannot issue a medical certificate without an MCI registration " +
-                 "number. Update My Profile (registrationNumber) before issuing." });
+      issuedBy   = doc._id;
+      doctorName = doc.personalInfo?.fullName
+        || [doc.personalInfo?.firstName, doc.personalInfo?.lastName].filter(Boolean).join(" ")
+        || "";
+      doctorReg  = doc.professional?.registrationNumber || "";
+      if (!doctorReg) {
+        return res.status(412).json({ success: false, code: "DOCTOR_MCI_REQUIRED",
+          message: "Cannot issue a medical certificate without an MCI registration " +
+                   "number. Update My Profile (registrationNumber) before issuing." });
+      }
+    } else if (role === "Admin") {
+      const overrideReason = _trim(body.overrideReason) || "";
+      if (overrideReason.length < 20) {
+        return res.status(412).json({ success: false, code: "OVERRIDE_REASON_REQUIRED",
+          message: "Admin override requires a written justification (overrideReason) of at least 20 characters." });
+      }
+      doctorName = _trim(body.doctorName) || "";
+      doctorReg  = _trim(body.doctorReg)  || "";
+      if (!doctorName || !doctorReg) {
+        return res.status(412).json({ success: false, code: "DOCTOR_MCI_REQUIRED",
+          message: "Admin override must supply both doctorName and doctorReg of the issuing clinician." });
+      }
+      overrideMeta = { overrideReason, name: doctorName, reg: doctorReg };
+    } else {
+      return res.status(403).json({ success: false, code: "CERT_DOCTOR_IDENTITY_FORBIDDEN",
+        message: "Only a Doctor (or an Admin issuing with a written override) may sign a medical certificate." });
     }
 
     // ── Counter-sign requirement (disability + sterilization) ─
@@ -205,6 +234,32 @@ class MedicalCertificateController {
         },
       });
     } catch (_) { /* silent */ }
+
+    // ── B1-T03 — Admin-override audit (long-retention floor) ──
+    // Emitted in addition to the issue audit above so a reviewer can
+    // pull all override issuances in a single event-typed query.
+    if (overrideMeta) {
+      try {
+        await emitClinicalAudit({
+          req,
+          event: "MEDICAL_CERTIFICATE_OVERRIDE_ISSUED",
+          UHID: cert.patientUHID,
+          patientId: cert.patient,
+          patientName: cert.patientName,
+          targetType: "MedicalCertificate",
+          targetId: cert._id,
+          reason: overrideMeta.overrideReason,
+          after: {
+            kind: "medical-certificate-override",
+            certType: cert.certType,
+            certNumber: cert.certNumber,
+            actorId: req.user?.id || null,
+            onBehalfOf: { name: overrideMeta.name, reg: overrideMeta.reg },
+            overrideReason: overrideMeta.overrideReason,
+          },
+        });
+      } catch (_) { /* silent */ }
+    }
 
     return res.status(201).json({ success: true, data: cert });
   });

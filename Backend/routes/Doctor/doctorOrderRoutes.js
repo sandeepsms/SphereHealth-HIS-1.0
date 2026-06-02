@@ -1,9 +1,15 @@
 const router   = require("express").Router();
 const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
+const User = require("../../models/User/userModel");
 // R7m: Apply role-based action gates to every write route. Reads stay
 // open (any authenticated clinician can view orders). Writes are
 // scoped to the appropriate role per Backend/config/permissions.js.
 const { requireAction, adminOnly } = require("../../middleware/auth");
+// B1-T08: doctor-order writes (create/bulk/restart/doctor-action) are
+// licensed clinical acts under NMC Regulations 2002 + NABH HRD.3 — block on
+// missing/expired NMC_REG. Mounted AFTER requireAction so the role gate
+// runs first.
+const { credentialExpiryBlocker } = require("../../middleware/credentialExpiryBlocker");
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 /* ─────────────────────────────────────────────────────
@@ -67,7 +73,7 @@ function dateAtMidnightOffset(base, nDays) {
 ═══════════════════════════════════════════════════ */
 
 // POST / — create single order (Doctor / Admin only)
-router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
+router.post("/", requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
   try {
     const body = req.body;
     // Auto-set HAM flags
@@ -425,7 +431,7 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
 // when only 3 actually inserted, and the missing 2 quietly disappeared.
 // Now we report inserted + failed counts with reasons so the UI can flag
 // the bad rows.
-router.post("/bulk", requireAction("doctor-orders.write"), async (req, res) => {
+router.post("/bulk", requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
   try {
     const { orders } = req.body;
     if (!Array.isArray(orders) || !orders.length)
@@ -737,7 +743,7 @@ router.post("/:id/step", validateObjectIdParam("id"), requireAction("order.ackno
    Body: { restartedBy?: string }
    Returns: { ok: true, data: <new order>, parentId: <original> }
 ═══════════════════════════════════════════════════ */
-router.post("/:id/restart", validateObjectIdParam("id"), requireAction("doctor-orders.write"), async (req, res) => {
+router.post("/:id/restart", validateObjectIdParam("id"), requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
   try {
     const original = await DoctorOrder.findById(req.params.id);
     if (!original) return res.status(404).json({ ok: false, message: "Original order not found" });
@@ -830,6 +836,24 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
     // Validate HAM 2-nurse check
     if (order.twoNurseRequired && status === "given" && !verifiedBy)
       return res.status(422).json({ ok: false, message: "HAM order requires second nurse verification (verifiedBy)" });
+
+    // B1-T05: When a witness (verifiedBy) is supplied — for HAM, controlled
+    // substances, or voluntary co-sign — verify the actor is a real Nurse
+    // (ISMP two-nurse rule, NABH MOM.3) AND is not the same person doing
+    // the administration. Previously we only checked presence — any user id
+    // (or none) passed. Hardens against forged witness on HAM doses.
+    if (verifiedBy) {
+      const wUser = await User.findById(verifiedBy).select("role employeeId fullName").lean();
+      if (!wUser) {
+        return res.status(400).json({ success: false, code: "VERIFIER_NOT_FOUND", message: "verifiedBy user not found" });
+      }
+      if (wUser.role !== "Nurse") {
+        return res.status(400).json({ success: false, code: "VERIFIER_NOT_NURSE", message: "Witness must be a Nurse (ISMP)" });
+      }
+      if (String(wUser._id) === String(req.user.id)) {
+        return res.status(400).json({ success: false, code: "VERIFIER_SAME_USER", message: "Witness must be different from acting nurse" });
+      }
+    }
 
     // Validate 5 Rights for given status
     if (status === "given" && !fiveRightsChecked)
@@ -1035,6 +1059,23 @@ router.post("/:id/infusion-rate", validateObjectIdParam("id"), requireAction("ma
     if (order.twoNurseRequired && !verifiedBy)
       return res.status(422).json({ ok: false, message: "HAM infusion rate change requires second nurse verification" });
 
+    // B1-T05: When a witness (verifiedBy) is supplied — for HAM infusion
+    // rate change — verify the actor is a real Nurse (ISMP two-nurse rule)
+    // AND is not the same person changing the rate. Previously we only
+    // checked presence — any user id (or none) passed.
+    if (verifiedBy) {
+      const wUser = await User.findById(verifiedBy).select("role employeeId fullName").lean();
+      if (!wUser) {
+        return res.status(400).json({ success: false, code: "VERIFIER_NOT_FOUND", message: "verifiedBy user not found" });
+      }
+      if (wUser.role !== "Nurse") {
+        return res.status(400).json({ success: false, code: "VERIFIER_NOT_NURSE", message: "Witness must be a Nurse (ISMP)" });
+      }
+      if (String(wUser._id) === String(req.user.id)) {
+        return res.status(400).json({ success: false, code: "VERIFIER_SAME_USER", message: "Witness must be different from acting nurse" });
+      }
+    }
+
     // R7bn-4 / D7-2-fix: doctorInformed defaults to true whenever a
     // doctorName is supplied AND the change is non-emergency. The audit
     // surfaced this flag as "exists but never set" — nurses adjusted
@@ -1116,7 +1157,7 @@ router.post("/:id/infusion-monitor", validateObjectIdParam("id"), requireAction(
  *   }
  * }
  */
-router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("order.stop"), async (req, res) => {
+router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("order.stop"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
   try {
     const { type, doneBy, reason, reasonDetail, holdUntil, orderDetails, substituteWith } = req.body;
     if (!type || !doneBy)

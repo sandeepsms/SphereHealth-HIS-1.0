@@ -76,6 +76,7 @@ const intakeOutputRoutes = require("./Clinical/intakeOutputRoutes"); // R7bq-3 �
 // still demand specific roles via `authorize(...)`.
 const {
   authenticate,
+  requirePasswordRotated,
   blockReadOnlyRoleWrites,
   blockNonClinicalForDoctorNurse,
   enforceActivePatientForClinicalWrites,
@@ -111,6 +112,14 @@ router.use("/hospital-settings", hospitalSettingsRoutes);
 
 // ── Everything below requires a valid JWT ────────────────────
 router.use(authenticate);
+
+// ── R7gw-B1-T07: forced password-rotation gate ───────────────
+// authenticate() above already loads req.user.mustChangePassword from a
+// fresh DB read (defense-in-depth). This mount turns that flag into actual
+// enforcement: any POST/PUT/PATCH/DELETE from a user with the flag set
+// returns 403 PASSWORD_RESET_REQUIRED. GETs and the /auth/change-password
+// + /auth/password endpoints stay open so the lockout has an exit ramp.
+router.use(requirePasswordRotated);
 
 // ── R7i: Read-only role write-blocker ────────────────────────
 // Defense-in-depth for the MRD role. Rejects POST/PUT/PATCH/DELETE

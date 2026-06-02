@@ -56,6 +56,8 @@ const LONG_RETENTION_EVENTS = new Set([
   "ICU_BUNDLE_SHIFT_FINALIZED",
   "ICU_BUNDLE_VAP_NON_COMPLIANT",
   "ICU_BUNDLE_CLABSI_NON_COMPLIANT",
+  // B1-T03 — Medical Certificate override audit (legal instrument, 7y floor).
+  "MEDICAL_CERTIFICATE_OVERRIDE_ISSUED",
 ]);
 
 function computeRetainUntil(event) {

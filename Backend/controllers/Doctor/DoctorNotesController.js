@@ -22,21 +22,14 @@ const handle = (fn) => async (req, res) => {
 class DoctorNotesController {
   // POST /api/doctor-notes
   createNote = handle(async (req, res) => {
-    // ✅ doctorId: body se lo, ya header se, ya req.user se
-    // R7g-FIX: when no doctorId is sent in body/header, fall back to the
-    // authenticated user's id — NOT the whole `req.user` object (which is
-    // the JWT-decoded blob including role, jti, iat, exp). Casting the
-    // full object to ObjectId fails with BSONError, which is why
-    // `Sign & Submit` was silently failing 400.
-    const doctorUserId =
-      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user?.id;
-    if (!doctorUserId)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "doctorId is required (send in body or X-User-Id header)",
-        });
+    // B1-T01 (security): the signer/actor identity MUST come from the
+    // JWT-authenticated user. Never trust req.body.doctorId or the
+    // X-User-Id header — a malicious client could otherwise impersonate
+    // any clinician for legal-grade entries.
+    const doctorUserId = req.user?.id;
+    if (!doctorUserId) {
+      return res.status(401).json({ success: false, code: "AUTH_REQUIRED", message: "Authenticated doctor identity required" });
+    }
 
     const note = await doctorNotesService.createDoctorNote(
       req.body,
@@ -102,13 +95,12 @@ class DoctorNotesController {
 
   // PUT /api/doctor-notes/:id
   updateNote = handle(async (req, res) => {
-    // R7g-FIX: when no doctorId is sent in body/header, fall back to the
-    // authenticated user's id — NOT the whole `req.user` object (which is
-    // the JWT-decoded blob including role, jti, iat, exp). Casting the
-    // full object to ObjectId fails with BSONError, which is why
-    // `Sign & Submit` was silently failing 400.
-    const doctorUserId =
-      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user?.id;
+    // B1-T01 (security): actor identity comes only from the JWT — never
+    // from the request body / X-User-Id header.
+    const doctorUserId = req.user?.id;
+    if (!doctorUserId) {
+      return res.status(401).json({ success: false, code: "AUTH_REQUIRED", message: "Authenticated doctor identity required" });
+    }
     const note = await doctorNotesService.updateDoctorNote(
       req.params.id,
       req.body,
@@ -119,13 +111,14 @@ class DoctorNotesController {
 
   // PATCH /api/doctor-notes/:id/sign
   signNote = handle(async (req, res) => {
-    // R7g-FIX: when no doctorId is sent in body/header, fall back to the
-    // authenticated user's id — NOT the whole `req.user` object (which is
-    // the JWT-decoded blob including role, jti, iat, exp). Casting the
-    // full object to ObjectId fails with BSONError, which is why
-    // `Sign & Submit` was silently failing 400.
-    const doctorUserId =
-      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user?.id;
+    // B1-T01 (security): the signer's identity is the JWT-authenticated
+    // user — never overridable via req.body.doctorId or X-User-Id. The
+    // service's handover-sign branch records the original author
+    // separately when a different user attests a colleague's draft.
+    const doctorUserId = req.user?.id;
+    if (!doctorUserId) {
+      return res.status(401).json({ success: false, code: "AUTH_REQUIRED", message: "Authenticated doctor identity required" });
+    }
     // Allow the frontend signature pad to push a base64 PNG + display name
     // through at sign-time so we can stamp it on the note.
     const { signature, signedByName, signedByReg } = req.body || {};
@@ -155,13 +148,11 @@ class DoctorNotesController {
 
   // DELETE /api/doctor-notes/:id
   deleteNote = handle(async (req, res) => {
-    // R7g-FIX: when no doctorId is sent in body/header, fall back to the
-    // authenticated user's id — NOT the whole `req.user` object (which is
-    // the JWT-decoded blob including role, jti, iat, exp). Casting the
-    // full object to ObjectId fails with BSONError, which is why
-    // `Sign & Submit` was silently failing 400.
-    const doctorUserId =
-      req.body.doctorId || req.body.doctor || req.headers["x-user-id"] || req.user?.id;
+    // B1-T01 (security): actor identity must come from the JWT.
+    const doctorUserId = req.user?.id;
+    if (!doctorUserId) {
+      return res.status(401).json({ success: false, code: "AUTH_REQUIRED", message: "Authenticated doctor identity required" });
+    }
     await doctorNotesService.deleteDoctorNote(req.params.id, doctorUserId);
     return res.json({ success: true, message: "Note deleted" });
   });

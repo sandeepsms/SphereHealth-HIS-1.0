@@ -99,6 +99,13 @@ const ClinicalAuditSchema = new mongoose.Schema(
         "ICU_BUNDLE_SHIFT_FINALIZED",
         "ICU_BUNDLE_VAP_NON_COMPLIANT",
         "ICU_BUNDLE_CLABSI_NON_COMPLIANT",
+
+        // B1-T03 — Medical Certificate forgery guard. Admins may issue
+        // a certificate on behalf of a doctor with a written justification;
+        // every such issuance is permanently logged on the long-retention
+        // floor because the cert is a legal instrument (MCI + Indian
+        // Medical Records Act 1956 §3).
+        "MEDICAL_CERTIFICATE_OVERRIDE_ISSUED",
       ],
       index: true,
     },
