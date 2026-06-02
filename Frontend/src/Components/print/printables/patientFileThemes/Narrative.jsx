@@ -674,6 +674,23 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   const nurNotesByDay = groupByDay(f.nursingNotes,   (n) => n.noteDate || n.createdAt);
   const ordersByDay   = groupByDay(f.doctorOrders,   (o) => o.orderedAt || o.createdAt);
   const handoverByDay = groupByDay(f.shiftHandovers, (h) => h.at);
+  /* R7gt — Extend the day-wise journey to absorb the remaining time-
+     stamped streams the user expects to read day-by-day: vital signs,
+     intake/output, investigations, blood transfusion, nursing care
+     plans, nursing reassessments, consents (per-day signing), ICU
+     bundles, bed transfers, MLC entries. Each stream gets its own
+     by-day map; the day loop below renders whichever ones have rows. */
+  const vitalsByDay   = groupByDay(f.vitalsTrend || [], (v) => v.at || v.recordedAt || v.createdAt);
+  const ioByDay       = groupByDay(f.intakeOutput || [], (r) => r.at || r.recordedAt || r.createdAt);
+  const invsByDay     = groupByDay((f.investigations || []).filter((i) => i.name),
+                                   (i) => i.reportedAt || i.orderedAt || i.createdAt);
+  const bloodByDay    = groupByDay(f.bloodTransfusion || [], (b) => b.startedAt || b.createdAt);
+  const carePlanByDay = groupByDay(f.nursingCarePlans || [], (p) => p.assessmentDate || p.createdAt);
+  const nurAssByDay   = groupByDay(f.nursingAssessments || [], (a) => a.assessmentDate || a.createdAt);
+  const consentByDay  = groupByDay(f.consents || [], (c) => c.signedAt || c.createdAt);
+  const icuByDay      = groupByDay(f.icuBundles || [], (b) => b.bundleDate || b.createdAt);
+  const xferByDay     = groupByDay(f.bedTransfers || [], (t) => t.transferredAt || t.at || t.createdAt);
+  const mlcByDay      = groupByDay(f.mlc || [], (m) => m.incidentDate || m.createdAt);
   // Merge doctor + nursing notes for a given day into a single chronological
   // stream so the printout reads like a real clinical timeline (R7fy).
   // R7gf — Sort within a day by clinical timestamp (noteDate), not the
@@ -1249,7 +1266,13 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
         // (out-of-band orders) on a day before/after the index also
         // surface.
         const allKeys = new Set();
-        [docNotesByDay, nurNotesByDay, ordersByDay, marByDay, handoverByDay].forEach((m) => {
+        // R7gt — added vitals/IO/investigations/blood/care plan/nursing
+        // reassessment/consent/ICU bundle/bed transfer/MLC streams so a
+        // day that recorded only a vital sign or a single transfusion
+        // still surfaces as its own block.
+        [docNotesByDay, nurNotesByDay, ordersByDay, marByDay, handoverByDay,
+         vitalsByDay, ioByDay, invsByDay, bloodByDay, carePlanByDay,
+         nurAssByDay, consentByDay, icuByDay, xferByDay, mlcByDay].forEach((m) => {
           for (const k of m.keys()) allKeys.add(k);
         });
         if (allKeys.size === 0) return null;
@@ -1410,13 +1433,198 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                 </div>
               ) : null;
 
+              /* R7gt — Additional per-day streams folded into the journey
+                 so the day-by-day flow really is everything-on-that-day.
+                 Each sub-section appears only when there's at least one
+                 row for the day. Tiny sub-header style mirrors the
+                 existing "Clinical Notes / Orders Raised / MAR / Shift
+                 Handovers" labels so the visual hierarchy stays flat. */
+              const subHeadStyle = { fontWeight: 700, fontSize: 9.5, color: COL.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 0 2px" };
+
+              const vitals  = (vitalsByDay.get(k)   || []).slice().sort((a,b) =>
+                new Date(a.at || a.recordedAt || a.createdAt || 0) - new Date(b.at || b.recordedAt || b.createdAt || 0));
+              const ios     = (ioByDay.get(k)       || []).slice().sort((a,b) =>
+                new Date(a.at || a.recordedAt || a.createdAt || 0) - new Date(b.at || b.recordedAt || b.createdAt || 0));
+              const invs    = (invsByDay.get(k)     || []).slice().sort((a,b) =>
+                new Date(a.reportedAt || a.orderedAt || a.createdAt || 0) - new Date(b.reportedAt || b.orderedAt || b.createdAt || 0));
+              const bloods  = (bloodByDay.get(k)    || []).slice().sort((a,b) =>
+                new Date(a.startedAt || a.createdAt || 0) - new Date(b.startedAt || b.createdAt || 0));
+              const cplans  = (carePlanByDay.get(k) || []);
+              const nasses  = (nurAssByDay.get(k)   || []);
+              const csents  = (consentByDay.get(k)  || []);
+              const icus    = (icuByDay.get(k)      || []);
+              const xfers   = (xferByDay.get(k)     || []);
+              const mlcs    = (mlcByDay.get(k)      || []);
+
+              const vitalsBlock = vitals.length > 0 ? (
+                <div key={`day-vit-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={subHeadStyle}>Vital Signs</Para>
+                  <MiniTable
+                    headers={["Time", "BP", "P", "T", "SpO₂", "RR", "By"]}
+                    rows={vitals.map((v) => [
+                      fmtTimeOnly(v.at || v.recordedAt || v.createdAt),
+                      v.bp || v.bloodPressure || "—",
+                      v.pulse != null ? String(v.pulse) : "—",
+                      v.temp != null ? String(v.temp) : "—",
+                      v.spo2 != null ? String(v.spo2) : "—",
+                      v.rr   != null ? String(v.rr)   : "—",
+                      displayActor(v.recordedBy || v.by) || "—",
+                    ])}
+                    widths={["12%", "16%", "10%", "10%", "12%", "10%", "30%"]}
+                  />
+                </div>
+              ) : null;
+
+              const ioBlock = ios.length > 0 ? (
+                <div key={`day-io-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={subHeadStyle}>Intake / Output</Para>
+                  <MiniTable
+                    headers={["Time", "Type", "Route / Source", "Amount", "By"]}
+                    rows={ios.map((r) => [
+                      fmtTimeOnly(r.at || r.recordedAt || r.createdAt),
+                      r.type || (r.intakeMl != null ? "Intake" : r.outputMl != null ? "Output" : "—"),
+                      r.route || r.source || r.fluidType || "—",
+                      r.amount != null ? `${r.amount} ml`
+                        : r.intakeMl != null ? `${r.intakeMl} ml`
+                        : r.outputMl != null ? `${r.outputMl} ml` : "—",
+                      displayActor(r.recordedBy || r.by) || "—",
+                    ])}
+                    widths={["12%", "14%", "26%", "18%", "30%"]}
+                  />
+                </div>
+              ) : null;
+
+              const invsBlock = invs.length > 0 ? (
+                <div key={`day-inv-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={subHeadStyle}>Investigations</Para>
+                  <MiniTable
+                    headers={["Time", "Test", "Result", "Status"]}
+                    rows={invs.map((i) => [
+                      fmtTimeOnly(i.reportedAt || i.orderedAt || i.createdAt),
+                      i.name || i.testName || "—",
+                      i.result || i.value || "—",
+                      i.status || "—",
+                    ])}
+                    widths={["12%", "34%", "38%", "16%"]}
+                  />
+                </div>
+              ) : null;
+
+              const bloodBlock = bloods.length > 0 ? (
+                <div key={`day-blood-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={subHeadStyle}>Blood Transfusion</Para>
+                  <MiniTable
+                    headers={["Time", "Component", "Unit", "Group", "Reactions", "By"]}
+                    rows={bloods.map((b) => [
+                      fmtTimeOnly(b.startedAt || b.createdAt),
+                      b.component || b.product || "—",
+                      b.unitNumber || b.unit || "—",
+                      b.bloodGroup || "—",
+                      b.reactions || b.adverseReaction || "—",
+                      displayActor(b.transfusedByName || b.administeredBy) || "—",
+                    ])}
+                    widths={["12%", "20%", "14%", "10%", "20%", "24%"]}
+                  />
+                </div>
+              ) : null;
+
+              const cplanBlock = cplans.length > 0 ? (
+                <div key={`day-cp-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={subHeadStyle}>Nursing Care Plan</Para>
+                  {cplans.map((p, i) => (
+                    <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
+                      {p.problem ? <strong>{p.problem}</strong> : null}
+                      {p.goal ? <> · Goal: {p.goal}</> : null}
+                      {p.interventions ? <> · Intv: {p.interventions}</> : null}
+                      {p.evaluation ? <> · Eval: {p.evaluation}</> : null}
+                    </Para>
+                  ))}
+                </div>
+              ) : null;
+
+              const nassBlock = nasses.length > 0 ? (
+                <div key={`day-nass-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={subHeadStyle}>Nursing Reassessment</Para>
+                  {nasses.map((a, i) => (
+                    <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
+                      {a.type ? <strong>{a.type}</strong> : null}
+                      {a.score != null ? <> · Score: {a.score}</> : null}
+                      {a.summary ? <> · {a.summary}</> : null}
+                    </Para>
+                  ))}
+                </div>
+              ) : null;
+
+              const csentBlock = csents.length > 0 ? (
+                <div key={`day-csent-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={subHeadStyle}>Consent Signed</Para>
+                  <MiniTable
+                    headers={["Time", "Type", "Signed by", "Witness"]}
+                    rows={csents.map((c) => [
+                      fmtTimeOnly(c.signedAt || c.createdAt),
+                      c.consentType || c.type || "—",
+                      c.signedByName || c.consentingParty?.name || "—",
+                      c.witnessName || "—",
+                    ])}
+                    widths={["12%", "32%", "30%", "26%"]}
+                  />
+                </div>
+              ) : null;
+
+              const icuBlock = icus.length > 0 ? (
+                <div key={`day-icu-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={subHeadStyle}>ICU Care Bundles (HIC.5)</Para>
+                  {icus.map((b, i) => (
+                    <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
+                      {(b.bundleType || "Bundle")}: {b.completed ? "✓ Complete" : "Partial"}
+                      {b.bundleScore != null ? <> · Score {b.bundleScore}</> : null}
+                    </Para>
+                  ))}
+                </div>
+              ) : null;
+
+              const xferBlock = xfers.length > 0 ? (
+                <div key={`day-xfer-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={subHeadStyle}>Bed Transfer</Para>
+                  {xfers.map((t, i) => (
+                    <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
+                      {fmtTimeOnly(t.transferredAt || t.at || t.createdAt)} · {t.fromBed || "—"} → {t.toBed || "—"}
+                      {t.reason ? <> · {t.reason}</> : null}
+                    </Para>
+                  ))}
+                </div>
+              ) : null;
+
+              const mlcBlock = mlcs.length > 0 ? (
+                <div key={`day-mlc-${k}`} style={{ marginBottom: 6 }}>
+                  <Para style={{ ...subHeadStyle, color: "#dc2626" }}>Medico-Legal Case Entry</Para>
+                  {mlcs.map((m, i) => (
+                    <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
+                      <strong>{m.mlcNumber || "MLC"}</strong> · {m.natureOfCase || m.allegedType || "—"}
+                      {m.policeStation ? <> · PS: {m.policeStation}</> : null}
+                      {m.fir ? <> · FIR: {m.fir}</> : null}
+                    </Para>
+                  ))}
+                </div>
+              ) : null;
+
               return (
                 <React.Fragment key={`day-${k}`}>
                   {banner}
                   {notesBlock}
+                  {vitalsBlock}
+                  {ioBlock}
+                  {invsBlock}
                   {ordersBlock}
                   {marBlock}
+                  {bloodBlock}
+                  {csentBlock}
+                  {icuBlock}
+                  {nassBlock}
+                  {cplanBlock}
+                  {xferBlock}
                   {handoverBlock}
+                  {mlcBlock}
                 </React.Fragment>
               );
             })}
@@ -1428,8 +1636,12 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
 
       {/* ════════════════════════════════════════════════════════════
           6. VITAL SIGNS TREND                             [NABH COP.3]
+          R7gt — Suppressed; vital signs now render inline per-day in
+          the Day-wise Clinical Journey. The flat tail-section is kept
+          as dead JSX in case a future change reinstates a longitudinal
+          trend view (e.g. for graphical export).
           ════════════════════════════════════════════════════════════ */}
-      {(f.vitalsTrend || []).length > 0 ? (
+      {false && (f.vitalsTrend || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH COP.3">Vital Signs Trend</SectionHeader>
           <MiniTable
@@ -1452,8 +1664,9 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
 
       {/* ════════════════════════════════════════════════════════════
           7. INTAKE / OUTPUT SHEET                          [NABH COP.3]
+          R7gt — Suppressed; I/O totals now render per day inline.
           ════════════════════════════════════════════════════════════ */}
-      {(f.intakeOutput || []).length > 0 ? (() => {
+      {false && (f.intakeOutput || []).length > 0 ? (() => {
         // Aggregate to daily totals.
         const byDay = new Map();
         (f.intakeOutput || []).forEach((e) => {
@@ -1627,7 +1840,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       {/* ════════════════════════════════════════════════════════════
           12. NURSING CARE PLANS                           [NABH COP.2]
           ════════════════════════════════════════════════════════════ */}
-      {(f.nursingCarePlans || []).length > 0 ? (
+      {/* R7gt — Suppressed; care plans render per-day inline. */}
+      {false && (f.nursingCarePlans || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH COP.2">Nursing Care Plans</SectionHeader>
           {f.nursingCarePlans.map((p, i) => (
@@ -1646,7 +1860,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       {/* ════════════════════════════════════════════════════════════
           13. NURSING RE-ASSESSMENTS                       [NABH COP.2]
           ════════════════════════════════════════════════════════════ */}
-      {(f.nursingAssessments || []).length > 0 ? (
+      {/* R7gt — Suppressed; nursing reassessments render per-day inline. */}
+      {false && (f.nursingAssessments || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH COP.2">Nursing Re-assessments</SectionHeader>
           {f.nursingAssessments.map((a, i) => (
@@ -1663,7 +1878,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       {/* ════════════════════════════════════════════════════════════
           14. BLOOD TRANSFUSION                       [NABH HIC.4/MOM.4]
           ════════════════════════════════════════════════════════════ */}
-      {(f.bloodTransfusion || []).length > 0 ? (
+      {/* R7gt — Suppressed; blood transfusions render per-day inline. */}
+      {false && (f.bloodTransfusion || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH HIC.4 / MOM.4">Blood Transfusion</SectionHeader>
           <MiniTable
@@ -1688,7 +1904,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       {/* ════════════════════════════════════════════════════════════
           15. MEDICO-LEGAL RECORDS                         [NABH ROM.4]
           ════════════════════════════════════════════════════════════ */}
-      {(f.mlc || []).length > 0 ? (
+      {/* R7gt — Suppressed; MLC entries render per-day inline. */}
+      {false && (f.mlc || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH ROM.4">Medico-legal Records</SectionHeader>
           {f.mlc.map((m, i) => (
@@ -1710,7 +1927,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
           (the per-day Handovers sub-block). Bed Transfers kept here
           as they're usually 1-2 events, not shift-paced.
           ════════════════════════════════════════════════════════════ */}
-      {(f.bedTransfers || []).length > 0 ? (
+      {/* R7gt — Suppressed; bed transfers render per-day inline. */}
+      {false && (f.bedTransfers || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH COP.6">Bed Transfers</SectionHeader>
           <MiniTable
