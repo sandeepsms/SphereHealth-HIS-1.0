@@ -2109,30 +2109,12 @@ export default function OPDAssessmentPage() {
                   placeholder="Treatment plan, medications, follow-up…" rows={4} />
               </Field>
             </div>
-            {/* R7bt-OPD-PRINT-23: Advice / Follow-up / Doctor Notes — the
-                OPD prescription printable already had slots for these but
-                no UI existed to author them, so they printed blank every
-                time. Inputs bind to the same soap.* keys the print payload
-                forwards. Layout matches the SOAP grid above (2-col on top,
-                full-width Doctor Notes underneath) so the card height stays
-                manageable on a typical 13" laptop screen. */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 14 }}>
-              <Field label="General Advice">
-                <Textarea value={soap.advice} onChange={v => setSoap(p => ({ ...p, advice: v }))}
-                  placeholder="Lifestyle / diet / activity advice, warning signs to watch for…" rows={3} />
-              </Field>
-              <Field label="Follow-up Date">
-                <input type="date" value={soap.followUpDate}
-                  onChange={e => setSoap(p => ({ ...p, followUpDate: e.target.value }))}
-                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 13, color: C.dark, background: C.card, boxSizing: "border-box", outline: "none", fontFamily: "inherit" }} />
-              </Field>
-            </div>
-            <div style={{ marginTop: 14 }}>
-              <Field label="Doctor Notes (Follow-up / Misc)">
-                <Textarea value={soap.doctorNotes} onChange={v => setSoap(p => ({ ...p, doctorNotes: v }))}
-                  placeholder="Private notes for next visit, special instructions for the patient…" rows={3} />
-              </Field>
-            </div>
+            {/* R7hk — Advice / Follow-up / Doctor Notes were moved out
+                of the SOAP card to their own "Advice & Follow-up" card
+                right after Clinical Examination — they apply to every
+                visit regardless of whether the doctor uses SOAP. State
+                still lives on soap.* and the print payload mapping is
+                unchanged. */}
           </Card>
 
           {/* ─── Clinical Examination (structured) ─────────────────
@@ -2411,6 +2393,32 @@ export default function OPDAssessmentPage() {
                   onChange={v => setSoap(p => ({ ...p, systemicExamination: v }))}
                   placeholder="Anything not covered by the CVS / RS / CNS / P-A blocks above"
                   rows={2} />
+              </Field>
+            </div>
+          </Card>
+
+          {/* R7hk — Advice & Follow-up. Lifted out of the SOAP card so
+              these always-relevant workflow fields stay visible even
+              when SOAP is collapsed (default since R7hj). State still
+              lives on soap.advice / soap.followUpDate / soap.doctorNotes
+              and the save payload + print template mappings already
+              forward them — purely a layout move. */}
+          <Card title="Advice & Follow-up" icon="pi-calendar-plus" color="#0d9488">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <Field label="General Advice">
+                <Textarea value={soap.advice} onChange={v => setSoap(p => ({ ...p, advice: v }))}
+                  placeholder="Lifestyle / diet / activity advice, warning signs to watch for…" rows={3} />
+              </Field>
+              <Field label="Follow-up Date">
+                <input type="date" value={soap.followUpDate}
+                  onChange={e => setSoap(p => ({ ...p, followUpDate: e.target.value }))}
+                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 13, color: C.dark, background: C.card, boxSizing: "border-box", outline: "none", fontFamily: "inherit" }} />
+              </Field>
+            </div>
+            <div style={{ marginTop: 14 }}>
+              <Field label="Doctor Notes (Follow-up / Misc)">
+                <Textarea value={soap.doctorNotes} onChange={v => setSoap(p => ({ ...p, doctorNotes: v }))}
+                  placeholder="Private notes for next visit, special instructions for the patient…" rows={3} />
               </Field>
             </div>
           </Card>
