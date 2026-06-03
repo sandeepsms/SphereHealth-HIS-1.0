@@ -31,6 +31,7 @@
 "use strict";
 
 const mongoose = require("mongoose");
+const crypto = require("crypto");
 const RestraintRegister = require("../../models/Compliance/RestraintRegisterModel");
 const Patient = require("../../models/Patient/patientModel");
 const Admission = require("../../models/Patient/admissionModel");
@@ -54,6 +55,7 @@ const _actor = (req) => ({
 exports.create = async (req, res) => {
   try {
     const body = req.body || {};
+    const sourceRef = req.body.sourceRef || crypto.randomUUID();
     const UHID = String(body.UHID || "").trim().toUpperCase();
     if (!UHID) return res.status(400).json({ success: false, message: "UHID is required" });
     if (!body.restraintType) return res.status(400).json({ success: false, message: "restraintType is required (physical/chemical/both)" });
@@ -90,9 +92,11 @@ exports.create = async (req, res) => {
       consentObtained: !!body.consentObtained,
       consentFrom: body.consentFrom || "",
       sourceType: "NurseEntry",
-      // sourceRef intentionally omitted — no upstream doc id; idempotency
-      // therefore relies on the caller not double-clicking the submit
-      // button (mirrors the other manual-entry register endpoints).
+      // R7gv / B6-T09-A — sourceRef now always present (client-supplied or
+      // server-generated UUID). emitRestraint dedups on (sourceType,
+      // sourceRef) so double-submits from a flaky network or an over-eager
+      // submit button no longer create duplicate Active rows.
+      sourceRef,
     };
 
     const row = await emitRestraint({

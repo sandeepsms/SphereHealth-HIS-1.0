@@ -191,7 +191,7 @@ router.post("/backfill-registration", requireAction("billing.refund"), ctrl.back
 // Preview is a safe read — any authenticated user can call it. Attach
 // and Detach change ledger state, so gated to billing.refund tier
 // (Accountant / Admin / Receptionist with elevated permission).
-router.post("/packages/preview", ctrl.previewPackageMatch);
+router.post("/packages/preview", requireAction("billing.read"), ctrl.previewPackageMatch);
 router.post("/admissions/:admissionId/attach-package",
   requireAction("billing.refund"), ctrl.attachPackageToAdmission);
 router.post("/admissions/:admissionId/detach-package",

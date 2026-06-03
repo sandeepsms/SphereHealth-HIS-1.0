@@ -11,6 +11,8 @@ const Patient = require("../../models/Patient/patientModel");
 const TreatmentChart = require("../../models/Doctor/treatmentChartModel");
 // R7az-D10 hash-chained audit for amend / addendum rows.
 const activityLogger = require("../Clinical/activityLogger");
+// B6-T04 — ClinicalAudit emit on lifecycle (create / submit / amend / delete).
+const { emitClinicalAudit } = require("../Compliance/clinicalAuditService");
 
 /* ─────────────────────────────────────────────────────────────
    Create / Submit nurse note
@@ -190,6 +192,67 @@ const createNurseNote = async (data, nurseUserId) => {
     lateEntryBy:     data.lateEntry ? (data.lateEntryBy || data.nurseName || nurse?.personalInfo?.fullName || "") : undefined,
     lateEntryByRole: data.lateEntry ? (data.lateEntryByRole || data.nurseDesignation || "Nurse") : undefined,
   });
+
+  // B6-T04 — ClinicalAudit emit on creation. Fires regardless of status so
+  // the NABH AAC.7 trail captures both Draft saves AND in-one-go submits.
+  // Wrapped in try/catch — audit failures must never bubble up and break
+  // the underlying nurse-note save.
+  try {
+    emitClinicalAudit({
+      event: "NURSE_NOTE_CREATED",
+      UHID: note.patientUHID || finalUHID || "",
+      admissionId: admForLinkage?._id || null,
+      patientId: note.patient || finalPatientId || null,
+      patientName: note.patientName || "",
+      targetType: "NurseNote",
+      targetId: note._id,
+      after: {
+        noteType: note.noteType,
+        shift: note.shift,
+        status: note.status,
+        ipdNo: note.ipdNo,
+        isSigned: !!note.signature,
+        signedByEmpId: note.signedByEmpId || "",
+      },
+      actor: {
+        _id: nurseUserId || null,
+        fullName: actorUserName || note.nurseName || "",
+        role: "Nurse",
+      },
+    });
+  } catch (_) { /* silent — audit emit is non-blocking */ }
+
+  // B6-T04 — When the create-path also submits in one shot (the common
+  // shift-end save flow), emit the Draft → Submitted attestation event
+  // too. Mirrors DOCTOR_NOTE_SIGNED legal-attestation semantics; gets the
+  // 7-year retention floor in LONG_RETENTION_EVENTS.
+  if (note.status === "submitted") {
+    try {
+      emitClinicalAudit({
+        event: "NURSE_NOTE_SUBMITTED",
+        UHID: note.patientUHID || finalUHID || "",
+        admissionId: admForLinkage?._id || null,
+        patientId: note.patient || finalPatientId || null,
+        patientName: note.patientName || "",
+        targetType: "NurseNote",
+        targetId: note._id,
+        after: {
+          noteType: note.noteType,
+          shift: note.shift,
+          status: note.status,
+          submittedAt: note.submittedAt,
+          isSigned: !!note.signature,
+          signedByEmpId: note.signedByEmpId || "",
+          signedByName: note.signedByName || "",
+        },
+        actor: {
+          _id: nurseUserId || null,
+          fullName: actorUserName || note.signedByName || note.nurseName || "",
+          role: "Nurse",
+        },
+      });
+    } catch (_) { /* silent — audit emit is non-blocking */ }
+  }
 
   // Update TreatmentChart executions
   if (note.status === "submitted" && ordersExecuted?.length && nurse) {
@@ -379,6 +442,43 @@ const updateNurseNote = async (id, data, nurseUserId) => {
       after:  { _id: addendum._id, supersedesNoteId: note._id, originalNoteId: addendum.originalNoteId, status: "draft" },
     }).catch((e) => console.error("[nurseNotes] amend audit failed:", e.message));
 
+    // B6-T04 — ClinicalAudit emit on amendment. Mirror DOCTOR_NOTE_AMENDED:
+    // post-submit mutations are NABH IMS.2 reportable and need the long
+    // retention floor. Wrapped in try/catch — emit failure must never
+    // sink the addendum write.
+    try {
+      emitClinicalAudit({
+        event: "NURSE_NOTE_AMENDED",
+        UHID: note.patientUHID || "",
+        admissionId: null,
+        patientId: note.patient || null,
+        patientName: note.patientName || "",
+        targetType: "NurseNote",
+        targetId: addendum._id,
+        before: {
+          _id: note._id,
+          status: note.status,
+          noteType: note.noteType,
+          shift: note.shift,
+          isSigned: !!note.signature,
+          signedByEmpId: note.signedByEmpId || "",
+        },
+        after: {
+          _id: addendum._id,
+          status: addendum.status,
+          isAddendum: addendum.isAddendum,
+          originalNoteId: addendum.originalNoteId,
+          supersedesNoteId: addendum.supersedesNoteId,
+          noteType: addendum.noteType,
+          shift: addendum.shift,
+          isSigned: !!addendum.signature,
+          signedByEmpId: addendum.signedByEmpId || "",
+        },
+        reason: "Submitted note amended via addendum (NABH HIC.7)",
+        actor: { _id: nurseUserId || null, fullName: "", role: "Nurse" },
+      });
+    } catch (_) { /* silent — audit emit is non-blocking */ }
+
     return addendum;
   }
 
@@ -509,7 +609,49 @@ const deleteNurseNote = async (id, nurseUserId) => {
     e.statusCode = 403;
     throw e;
   }
+
+  // B6-T04 — Snapshot identifying fields BEFORE the doc evaporates so the
+  // audit row can carry meaningful before-state.
+  const snapshot = {
+    _id: note._id,
+    UHID: note.patientUHID || "",
+    patientId: note.patient || null,
+    patientName: note.patientName || "",
+    ipdNo: note.ipdNo || "",
+    noteType: note.noteType,
+    shift: note.shift,
+    status: note.status,
+    isSigned: !!note.signature,
+    signedByEmpId: note.signedByEmpId || "",
+  };
+
   await note.deleteOne();
+
+  // B6-T04 — ClinicalAudit emit on delete. Only draft notes reach this
+  // point (submitted notes are blocked above), but the row is permanent
+  // on the 7y NABH IPSG.6 retention floor so future surveyors can see
+  // "draft X existed and was discarded by nurse Y at time Z".
+  try {
+    emitClinicalAudit({
+      event: "NURSE_NOTE_DELETED",
+      UHID: snapshot.UHID,
+      admissionId: null,
+      patientId: snapshot.patientId,
+      patientName: snapshot.patientName,
+      targetType: "NurseNote",
+      targetId: snapshot._id,
+      before: {
+        noteType: snapshot.noteType,
+        shift: snapshot.shift,
+        status: snapshot.status,
+        ipdNo: snapshot.ipdNo,
+        isSigned: snapshot.isSigned,
+        signedByEmpId: snapshot.signedByEmpId,
+      },
+      actor: { _id: nurseUserId || null, fullName: "", role: "Nurse" },
+    });
+  } catch (_) { /* silent — audit emit is non-blocking */ }
+
   return true;
 };
 

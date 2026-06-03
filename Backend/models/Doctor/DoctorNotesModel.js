@@ -229,6 +229,7 @@ DoctorNotesSchema.pre("validate", function (next) {
 });
 
 DoctorNotesSchema.index({ patient: 1, visitDate: -1 });
+DoctorNotesSchema.index({ patientUHID: 1, visitDate: -1 });
 DoctorNotesSchema.index({ ipdNo: 1, visitDate: -1 });
 DoctorNotesSchema.index({ doctor: 1, visitDate: -1 });
 DoctorNotesSchema.index({ "orders.nurseStatus": 1 });

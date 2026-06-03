@@ -37,10 +37,19 @@ const ClinicalAuditSchema = new mongoose.Schema(
         "DOCTOR_NOTE_DELETED",
         "DOCTOR_NOTE_AMENDED",          // post-sign amendment (NABH IMS.2)
 
-        // Nurse Notes
+        // Nurse Notes (NABH MOM.1 — nursing records: long retention floor)
         "NURSE_NOTE_CREATED",
         "NURSE_NOTE_UPDATED",
+        "NURSE_NOTE_SUBMITTED",
+        "NURSE_NOTE_AMENDED",
         "NURSE_NOTE_DELETED",
+
+        // Pharmacy (NABH MOM.4 + HAM drug trail — long retention floor)
+        "PHARMACY_DISPENSED",
+        "PHARMACY_SALE_CANCELLED",
+        "PHARMACY_RETURNED",
+        "PHARMACY_ITEMS_ADDED",
+        "PHARMACY_CREDIT_COLLECTED",
 
         // Initial Assessment gate (NABH COP.1 / COP.2)
         "INITIAL_ASSESSMENT_DOCTOR_SIGNED",

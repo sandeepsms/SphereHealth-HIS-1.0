@@ -206,6 +206,10 @@ class ConsentFormController {
   // PATCH /api/consent-forms/:id/refuse
   refuse = handle(async (req, res) => {
     const { refusalReason } = req.body;
+    // B6-T06 — capture prior status before the update so we can record
+    // prevStatus → newStatus in the cross-patient ClinicalAudit row below.
+    const before = await ConsentForm.findById(req.params.id).select("status").lean();
+    const prevStatus = before?.status || null;
     const form = await ConsentForm.findByIdAndUpdate(
       req.params.id,
       {
@@ -220,12 +224,38 @@ class ConsentFormController {
       { new: true }
     );
     if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
+
+    // B6-T06 — cross-patient ClinicalAudit emit (CONSENT_REFUSED is on
+    // LONG_RETENTION_EVENTS so the row is retained for 7y per NABH PRE.4).
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      await emitClinicalAudit({
+        req,
+        event: "CONSENT_REFUSED",
+        UHID: form.UHID,
+        admissionId: form.admissionId,
+        patientId: form.patientId,
+        patientName: form.patientName,
+        targetType: "ConsentForm",
+        targetId: form._id,
+        reason: refusalReason || "",
+        before: { status: prevStatus },
+        after: { status: form.status, consentType: form.consentType, refusedAt: form.refusedAt },
+      });
+    } catch (e) {
+      console.warn("[consent-audit] emit failed (non-fatal):", e.message);
+    }
+
     return res.json({ success: true, data: form, message: "Consent refusal recorded" });
   });
 
   // PATCH /api/consent-forms/:id/revoke
   revoke = handle(async (req, res) => {
     const { revokedReason } = req.body;
+    // B6-T06 — capture prior status before the update so we can record
+    // prevStatus → newStatus in the cross-patient ClinicalAudit row below.
+    const before = await ConsentForm.findById(req.params.id).select("status").lean();
+    const prevStatus = before?.status || null;
     const form = await ConsentForm.findByIdAndUpdate(
       req.params.id,
       {
@@ -240,6 +270,28 @@ class ConsentFormController {
       { new: true }
     );
     if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
+
+    // B6-T06 — cross-patient ClinicalAudit emit (CONSENT_REVOKED is on
+    // LONG_RETENTION_EVENTS so the row is retained for 7y per NABH PRE.4).
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      await emitClinicalAudit({
+        req,
+        event: "CONSENT_REVOKED",
+        UHID: form.UHID,
+        admissionId: form.admissionId,
+        patientId: form.patientId,
+        patientName: form.patientName,
+        targetType: "ConsentForm",
+        targetId: form._id,
+        reason: revokedReason || "",
+        before: { status: prevStatus },
+        after: { status: form.status, consentType: form.consentType, revokedAt: form.revokedAt },
+      });
+    } catch (e) {
+      console.warn("[consent-audit] emit failed (non-fatal):", e.message);
+    }
+
     return res.json({ success: true, data: form, message: "Consent revoked" });
   });
 

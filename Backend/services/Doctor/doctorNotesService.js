@@ -825,7 +825,7 @@ const updateDiagnosis = async (id, data, actor = {}) => {
 // ─────────────────────────────────────────────────────────────
 // Delete draft note
 // ─────────────────────────────────────────────────────────────
-const deleteDoctorNote = async (id, doctorUserId) => {
+const deleteDoctorNote = async (id, doctorUserId, opts = {}) => {
   const note = await DoctorNotes.findById(id);
   if (!note) {
     const error = new Error("Note not found");
@@ -842,7 +842,39 @@ const deleteDoctorNote = async (id, doctorUserId) => {
     error.statusCode = 403;
     throw error;
   }
+
+  // B6-T07: capture a snapshot BEFORE deleteOne() so the ClinicalAudit row
+  // retains enough detail to reconstruct what was deleted (NABH AAC.7 trail).
+  // DOCTOR_NOTE_DELETED is on the LONG_RETENTION_EVENTS list — 7y floor.
+  const snapshot = {
+    noteType:     note.noteType,
+    signedByName: note.signedByName,
+    doctorEmpId:  note.doctorEmpId,
+    visitDate:    note.visitDate,
+    contentLen:   JSON.stringify(note.noteDetails || {}).length,
+  };
+
   await note.deleteOne();
+
+  try {
+    const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+    await emitClinicalAudit({
+      req: opts.req,
+      event: "DOCTOR_NOTE_DELETED",
+      UHID: note.patientUHID || note.UHID,
+      admissionId: note.admissionId,
+      patientId: note.patientId,
+      patientName: note.patientName,
+      targetType: "DoctorNote",
+      targetId: note._id,
+      before: snapshot,
+      reason: opts.reason || "unspecified",
+      actor: opts.req ? undefined : { _id: doctorUserId, role: "Doctor" },
+    });
+  } catch (e) {
+    console.warn("[doctor-note-delete-audit] emit failed:", e.message);
+  }
+
   return true;
 };
 

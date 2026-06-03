@@ -153,7 +153,7 @@ class DoctorNotesController {
     if (!doctorUserId) {
       return res.status(401).json({ success: false, code: "AUTH_REQUIRED", message: "Authenticated doctor identity required" });
     }
-    await doctorNotesService.deleteDoctorNote(req.params.id, doctorUserId);
+    await doctorNotesService.deleteDoctorNote(req.params.id, doctorUserId, { req, reason: req.body?.reason });
     return res.json({ success: true, message: "Note deleted" });
   });
 }

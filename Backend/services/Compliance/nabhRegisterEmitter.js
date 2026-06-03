@@ -350,6 +350,29 @@ async function emitBloodTransfusion(args = {}) {
     const actorMeta = _actor(actor);
     // R7bw — resolve canonical active admission for accurate NABH MOM.4 linkage.
     const canonicalAdmissionId = await _resolveCanonicalAdmissionId(patient.UHID, admission?._id || null);
+
+    // R7gv / B6-T09-B — Verify that the claimed consentFormId actually
+    // resolves to a Signed/Biometric-Verified ConsentForm before we stamp
+    // consentSigned=true on the BT row. Pre-fix the flag was trusted blind,
+    // so a frontend bug or a hand-rolled API call could record a transfusion
+    // as consented without a real signed consent document.
+    const preTransfusion = order?.preTransfusion;
+    if (preTransfusion?.consentSigned === true && preTransfusion?.consentFormId) {
+      try {
+        const ConsentForm = require('../../models/Clinical/ConsentFormModel');
+        const cf = await ConsentForm.findById(preTransfusion.consentFormId).select('_id status').lean();
+        if (!cf || !['Signed', 'Biometric-Verified'].includes(cf.status)) {
+          const err = new Error('BT_CONSENT_NOT_FOUND or unsigned: consentFormId did not resolve to a Signed/Biometric-Verified ConsentForm');
+          err.code = 'BT_CONSENT_NOT_FOUND';
+          throw err;
+        }
+      } catch (e) {
+        if (e.code === 'BT_CONSENT_NOT_FOUND') throw e;
+        // model lookup error — log and continue (defensive)
+        console.warn('[emitBloodTransfusion] consent verify lookup failed (non-fatal):', e.message);
+      }
+    }
+
     const row = await BloodTransfusionRegister.create({
       btNumber,
       patientId: patient._id,

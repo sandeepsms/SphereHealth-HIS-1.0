@@ -33,11 +33,28 @@ const LONG_RETENTION_EVENTS = new Set([
   "DOCTOR_NOTE_SIGNED",
   "DOCTOR_NOTE_DELETED",
   "DOCTOR_NOTE_AMENDED",
+  // B6-T04 / B6-T08 — All nurse-note lifecycle events get the 7y NABH
+  // MOM.1 floor. Nurse notes are part of the permanent clinical record;
+  // even draft creates/updates must be retrievable for retrospective
+  // chart audits (NABH IPSG.6 + Indian Medical Records Act 1956 §3).
+  "NURSE_NOTE_CREATED",
+  "NURSE_NOTE_UPDATED",
+  "NURSE_NOTE_SUBMITTED",
+  "NURSE_NOTE_AMENDED",
   "NURSE_NOTE_DELETED",
   "INITIAL_ASSESSMENT_DOCTOR_SIGNED",
   "INITIAL_ASSESSMENT_NURSE_SIGNED",
   "CONSENT_SIGNED",
+  "CONSENT_REFUSED",     // B6-T08 — refusal is legally significant; 7y floor.
   "CONSENT_REVOKED",
+  // B6-T08 — Pharmacy events: every dispense / cancel / return / add /
+  // credit-collect touches the HAM drug trail and must survive 7y for
+  // NABH MOM.4 + drug-control inspections.
+  "PHARMACY_DISPENSED",
+  "PHARMACY_SALE_CANCELLED",
+  "PHARMACY_RETURNED",
+  "PHARMACY_ITEMS_ADDED",
+  "PHARMACY_CREDIT_COLLECTED",
   "MLC_CREATED",
   "MLC_FINALIZED",
   "MLC_CLOSED",
