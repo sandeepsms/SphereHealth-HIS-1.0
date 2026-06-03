@@ -67,7 +67,7 @@ const TABS = [
   { id:"handover",    label:"🔄 Handover Notes"       },
   { id:"icubundles",  label:"🛡 ICU Bundles"         },
   { id:"orders",      label:"📋 Doctor Orders"        },
-  { id:"meds",        label:"💊 Medications"          },
+  // R7gx-UI — Medications pill removed (mirror of Doctor panel cleanup).
   { id:"medrecon",    label:"⚖ Med Reconciliation"   },
   { id:"discharge",   label:"🚪 Discharge Summary"    },
   { id:"medcerts",    label:"📑 Medical Certificates" },
@@ -2123,7 +2123,7 @@ function NursePatientPanelContent({ selectedAdmission }) {
       case "rbs":        return <RBSMonitoringTab nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>;
       case "handover":   return <HandoverNotesTab patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>;
       case "orders":     return <DoctorOrdersTab doctorNotes={doctorNotes}/>;
-      case "meds":       return <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>;
+      // R7gx-UI — "meds" tab removed.
       case "medrecon":   return <MedReconciliationTab admission={admission} patient={patient}/>;
       case "billing":    return <BillingTab billing={billing}/>;
       case "emergency":  return <EmergencyTab emergency={emergency}/>;

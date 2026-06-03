@@ -81,7 +81,10 @@ const TABS = [
   { id:"icubundles",  label:"🛡 ICU Bundles"         },
   { id:"treatment",   label:"💉 Treatment Chart"      },
   { id:"orders",      label:"📋 Orders"               },
-  { id:"meds",        label:"💊 Medications"          },
+  // R7gx-UI — Medications pill removed per user request. Treatment Chart is
+  // the canonical view; the standalone Medications tab was a duplicate slice
+  // of the same MAR data. MedicationsTab function retained as dead code below
+  // (no callers); safe to delete in a follow-up sweep.
   { id:"medrecon",    label:"⚖ Med Reconciliation"   },
   { id:"discharge",   label:"🚪 Discharge Summary"    },
   { id:"medcerts",    label:"📑 Medical Certificates" },
@@ -2220,7 +2223,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       case "blood":      return <BloodTransfusionRecordsTab nursingNotes={nursingNotes}/>;
       case "rbs":        return <RBSMonitoringTab nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>;
       case "handover":   return <HandoverNotesTab patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>;
-      case "meds":       return <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>;
+      // R7gx-UI — "meds" tab removed; Treatment Chart covers the surface.
       case "medrecon":   return <MedReconciliationTab admission={admission} patient={patient}/>;
       case "treatment":  return <TreatmentChartTab doctorOrders={doctorOrders} doctorNotes={doctorNotes}/>;
       case "orders":     return <OrdersTab doctorNotes={doctorNotes}/>;
