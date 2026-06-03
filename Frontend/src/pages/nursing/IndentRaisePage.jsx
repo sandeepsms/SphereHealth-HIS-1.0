@@ -158,9 +158,20 @@ export default function IndentRaisePage() {
       setAdmission(adm);
 
       // Now query doctor-orders by the admission's actual identifiers.
-      // ACTIVE_STATUSES is the set of orders the nurse can still indent
-      // against — completed / cancelled / stopped doses are excluded.
-      const ACTIVE_STATUSES = "Pending,Acknowledged,InProgress,Held,OnHold";
+      //
+      // R7gx-FIX — Status semantic drift: per R7bq-K, DoctorOrder.status
+      // flips to "Completed" the moment the FIRST dose is administered,
+      // NOT when the course finishes. So an order on q4h or BD schedule
+      // spends most of its life flagged "Completed" while still being
+      // dispensed daily. For indent eligibility we want every order
+      // that's still being given to the patient — i.e. everything
+      // EXCEPT Cancelled / Stopped (true terminal states).
+      //
+      // Previously this list was Pending,Acknowledged,InProgress,Held,
+      // OnHold only — which hid every order that had been administered
+      // at least once. That's why the "From Prescription" tab kept
+      // showing 0 even on admissions with active MAR rows.
+      const ACTIVE_STATUSES = "Pending,Acknowledged,InProgress,Held,OnHold,Completed";
       const visitId = adm?.admissionNumber || adm?.ipdNo || "";
       const uhid    = adm?.UHID || "";
       let list = [];
