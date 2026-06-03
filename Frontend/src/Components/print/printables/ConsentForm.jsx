@@ -142,6 +142,165 @@ const ConsentForm = ({ settings, receipt = {} }) => {
         </div>
       </div>
 
+      {/* R7gi — Biometric Authentication block. Surface every captured
+          forensic fact about the biometric ceremony: who placed the
+          finger, on which hardware, when, from which IP, and which
+          staff member countersigned. The actual fingerprint template
+          stays in the TPM (privacy invariant) — but everything around
+          it is fair game and is what makes this NABH-grade evidence. */}
+      {(r.biometric?.captured || r.biometric?.bypass?.authorisedAt) && (
+        <div className="pr-section" style={{ pageBreakInside: "avoid" }}>
+          <div className="pr-section__title">Biometric Authentication · NABH PRE.4 · IT-Act 3A</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, marginTop: 4 }}>
+            <tbody>
+              {/* Who placed the finger */}
+              {r.consentingParty?.name && (
+                <tr>
+                  <td style={{ padding: "4px 8px", width: "26%", fontWeight: 700, color: "#475569", background: "#f8fafc" }}>
+                    Fingerprint placed by
+                  </td>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #e2e8f0" }}>
+                    <strong>{r.consentingParty.name}</strong>
+                    {r.consentingParty.relation && (
+                      <span style={{ color: "#64748b" }}> · Relation to patient: <strong>{r.consentingParty.relation}</strong></span>
+                    )}
+                    {r.consentingParty.contactNumber && (
+                      <div style={{ fontSize: 10.5, color: "#64748b", marginTop: 1 }}>
+                        Contact: {r.consentingParty.contactNumber}
+                      </div>
+                    )}
+                    {r.consentingParty.idProofType && r.consentingParty.idProofNumber && (
+                      <div style={{ fontSize: 10.5, color: "#64748b" }}>
+                        ID: {r.consentingParty.idProofType} ending …{String(r.consentingParty.idProofNumber).slice(-4)}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              )}
+
+              {/* Hardware that read the finger */}
+              {r.biometric?.captured && (
+                <tr>
+                  <td style={{ padding: "4px 8px", fontWeight: 700, color: "#475569", background: "#f8fafc" }}>
+                    Scanner
+                  </td>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #e2e8f0" }}>
+                    <strong>{r.biometric.authenticatorVendor || "Platform authenticator"}</strong>
+                    {r.biometric.isHardwareBacked && (
+                      <span style={{
+                        marginLeft: 8, padding: "1px 7px", background: "#0f766e", color: "white",
+                        borderRadius: 4, fontSize: 9, fontWeight: 800, letterSpacing: ".3px",
+                      }}>HARDWARE</span>
+                    )}
+                    <div style={{ fontSize: 10, color: "#64748b", marginTop: 1, fontFamily: "monospace" }}>
+                      AAGUID: {r.biometric.aaguid || "—"}
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {/* When */}
+              {r.biometric?.capturedAt && (
+                <tr>
+                  <td style={{ padding: "4px 8px", fontWeight: 700, color: "#475569", background: "#f8fafc" }}>
+                    Captured at
+                  </td>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #e2e8f0" }}>
+                    <strong>
+                      {new Date(r.biometric.capturedAt).toLocaleString("en-IN", {
+                        day: "2-digit", month: "short", year: "numeric",
+                        hour: "2-digit", minute: "2-digit", second: "2-digit",
+                      })}
+                    </strong>
+                    <span style={{ color: "#64748b", fontSize: 10.5, marginLeft: 6 }}>
+                      (server-stamped, cannot be forged)
+                    </span>
+                  </td>
+                </tr>
+              )}
+
+              {/* Where (IP + UA) */}
+              {r.biometric?.captured && (
+                <tr>
+                  <td style={{ padding: "4px 8px", fontWeight: 700, color: "#475569", background: "#f8fafc" }}>
+                    Device / network
+                  </td>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #e2e8f0", fontSize: 10.5 }}>
+                    From IP <code>{r.biometric.capturedFromIp || "—"}</code>
+                    {r.biometric.capturedUserAgent && (
+                      <div style={{ color: "#64748b", marginTop: 2, fontFamily: "monospace", fontSize: 9.5 }}>
+                        {String(r.biometric.capturedUserAgent).slice(0, 140)}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              )}
+
+              {/* Cryptographic credential fingerprint (NOT the finger image) */}
+              {r.biometric?.credentialId && (
+                <tr>
+                  <td style={{ padding: "4px 8px", fontWeight: 700, color: "#475569", background: "#f8fafc" }}>
+                    Credential ID
+                  </td>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #e2e8f0", fontFamily: "monospace", fontSize: 10 }}>
+                    {String(r.biometric.credentialId).slice(0, 24)}…
+                    <div style={{ fontSize: 9.5, color: "#64748b", marginTop: 2, fontFamily: "inherit" }}>
+                      One-time cryptographic proof generated by the scanner. The actual fingerprint
+                      template stays inside the device TPM and is never transmitted or stored.
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {/* Bypass — when admin overrode (not a real capture) */}
+              {r.biometric?.bypass?.authorisedAt && (
+                <tr>
+                  <td style={{ padding: "4px 8px", fontWeight: 700, color: "#b45309", background: "#fef3c7" }}>
+                    Biometric bypassed
+                  </td>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #fde68a", color: "#b45309" }}>
+                    Authorised by <strong>{r.biometric.bypass.authorisedByName || "Admin"}</strong> at{" "}
+                    {new Date(r.biometric.bypass.authorisedAt).toLocaleString("en-IN", {
+                      day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+                    })}
+                    <div style={{ marginTop: 2 }}>
+                      Reason: <em>{r.biometric.bypass.reason}</em>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {/* Staff e-signature audit */}
+              {r.staffSignature?.signedAt && (
+                <tr>
+                  <td style={{ padding: "4px 8px", fontWeight: 700, color: "#475569", background: "#f8fafc" }}>
+                    Staff facilitator
+                  </td>
+                  <td style={{ padding: "4px 8px" }}>
+                    <strong>{r.staffSignature.userName || "—"}</strong>
+                    {r.staffSignature.userRole && (
+                      <span style={{ color: "#64748b" }}> · {r.staffSignature.userRole}</span>
+                    )}
+                    <div style={{ fontSize: 10.5, color: "#64748b", marginTop: 1 }}>
+                      Signed at {new Date(r.staffSignature.signedAt).toLocaleString("en-IN", {
+                        day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+                      })}
+                    </div>
+                    {r.staffSignature.signatureImage && (
+                      <img
+                        src={r.staffSignature.signatureImage}
+                        alt="Staff signature"
+                        style={{ height: 38, maxWidth: 180, marginTop: 4, border: "1px solid #e2e8f0", borderRadius: 4, padding: 2 }}
+                      />
+                    )}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="pr-section">
         <div className="pr-section__title">Signatures &amp; Witness</div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>

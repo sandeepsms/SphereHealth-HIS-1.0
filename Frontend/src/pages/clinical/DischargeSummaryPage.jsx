@@ -652,6 +652,12 @@ function PrintModal({ data, dept, onClose }) {
   /* Wired to the unified print system — picks up the hospital
    * header/footer + paper-size selector automatically. */
   const handlePrint = () => {
+    // R7eo-B — Pattern B caller payload gap fix: form uses
+    // `doctorName` / `courseInHospital` / `specialInstructions` but the
+    // previous payload mapped to `consultantName` / `courseOfStay` /
+    // `dischargeAdvice` — 20+ dept-specific fields were silently
+    // dropped. Realign the names and spread through the dept-specific
+    // fields so the template (once Pattern C lands) can render them.
     openPrint("discharge-summary", {
       summaryNo:           data.summaryNumber,
       patientName:         data.patientName,
@@ -662,7 +668,8 @@ function PrintModal({ data, dept, onClose }) {
       admissionDate:       data.admissionDate,
       dischargeDate:       data.dischargeDate || new Date().toISOString(),
       totalDays:           data.totalDays,
-      consultantName:      data.consultantName,
+      consultantName:      data.doctorName || data.consultantName || "",
+      consultantReg:       data.doctorRegNo || "",
       bedNumber:           data.bedNumber,
       wardName:            data.wardName,
       dischargeType:       data.dischargeType || "Normal",
@@ -671,16 +678,45 @@ function PrintModal({ data, dept, onClose }) {
       icd10Desc:           data.icd10Desc,
       secondaryDiagnoses:  data.secondaryDiagnoses,
       chiefComplaints:     data.chiefComplaints,
-      courseOfStay:        data.courseOfStay || data.hospitalCourse,
+      courseOfStay:        data.courseInHospital || data.courseOfStay || data.hospitalCourse || "",
       proceduresDone:      data.procedures || data.proceduresDone,
       investigationsSummary: data.investigationsSummary || data.keyInvestigations,
       conditionOnDischarge: data.conditionOnDischarge,
       dischargeMeds:       data.dischargeMeds || data.medications || [],
-      advice:              data.dischargeAdvice ? String(data.dischargeAdvice).split("\n").filter(Boolean) : [],
+      advice:              [data.specialInstructions, data.activityAdvice].filter(Boolean).flatMap(s => String(s).split("\n").filter(Boolean)),
+      bloodGroup:          data.bloodGroup || data.patient?.bloodGroup,
+      allergies:           data.allergies  || data.patient?.allergies,
       dietAdvice:          data.dietAdvice,
       followUpDate:        data.followUpDate,
-      followUpDoctor:      data.followUpDoctor || data.consultantName,
+      followUpDoctor:      data.followUpDoctor || data.doctorName || data.consultantName,
+      followUpInstructions: data.followUpInstructions,
+      followUpDepartment:  data.followUpDepartment,
       warningSigns:        data.warningSigns,
+      // Pattern B passthrough — dept-specific fields the form
+      // already captures; will be rendered by the DischargeSummary
+      // template after Pattern C lands.
+      activityAdvice:       data.activityAdvice,
+      emergencyWarnings:    data.emergencyWarnings,
+      specialInstructions:  data.specialInstructions,
+      woundCare:            data.woundCare,
+      operativeProcedure:   data.operativeProcedure,
+      operativeFindings:    data.operativeFindings,
+      anaesthesiaType:      data.anaesthesiaType,
+      implantDetails:       data.implantDetails,
+      physiotherapyAdvice:  data.physiotherapyAdvice,
+      deliveryType:         data.deliveryType,
+      babyDetails:          data.babyDetails,
+      neonatalNotes:        data.neonatalNotes,
+      growthPercentile:     data.growthPercentile,
+      immunisationGiven:    data.immunisationGiven,
+      echoEF:               data.echoEF,
+      ecgOnDischarge:       data.ecgOnDischarge,
+      tumorStage:           data.tumorStage,
+      nextChemoDate:        data.nextChemoDate,
+      strokeType:           data.strokeType,
+      nihssOnDischarge:     data.nihssOnDischarge,
+      comorbidities:        data.comorbidities,
+      historyOfPresentIllness: data.historyOfPresentIllness,
       // R7bh-F1 / META-1: PrintAudit anchor — the DischargeSummary
       // document drives the printCount on its source row. NABH COP.7
       // + IMS.5 require the reprint trail.
@@ -1042,6 +1078,70 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
                           || p.doctorRegNo,
           admittingDiagnosis: found.provisionalDiagnosis || p.admittingDiagnosis,
         }));
+
+        /* ══ R7fj-HIGH-3 · Prefill from IPD Initial Assessment ══════
+           Pull the most recent signed IPD_INITIAL DoctorNote for this
+           IPD number and prefill the matching discharge fields so the
+           doctor doesn't retype chief complaint / HPI / co-morbidities
+           / allergies / diagnosis. Failure is non-fatal — discharge
+           summary still loads if the assessment was never signed. */
+        try {
+          if (found.admissionNumber) {
+            const r = await axios.get(
+              `${API_ENDPOINTS.BASE}/doctor-notes/ipd/${encodeURIComponent(found.admissionNumber)}`,
+              { headers },
+            );
+            const list = Array.isArray(r?.data?.data) ? r.data.data : (Array.isArray(r?.data) ? r.data : []);
+            const ia = list.find(n =>
+              n.visitType === "IPD_INITIAL" ||
+              (n.noteType || "").toLowerCase() === "initial"
+            );
+            if (ia) {
+              const nabh = ia?.noteDetails?.doctor?.nabh || {};
+              const nrsg = ia?.noteDetails?.nursing || {};
+              const dr   = ia?.noteDetails?.doctor || {};
+
+              // Build a comorbidity string from the structured checklist
+              const cmbObj = nabh.comorbidities || {};
+              const cmbList = Object.entries(cmbObj)
+                .filter(([k, v]) => v === true)
+                .map(([k]) => k.replace(/([A-Z])/g, " $1").replace(/^./, c => c.toUpperCase()));
+              if (cmbObj.other) cmbList.push(cmbObj.other);
+              const comorbidities = cmbList.join(", ");
+
+              // Allergies — prefer doctor's structured list, fall back to nurse, then to text
+              const docAllergies = nabh.allergies?.list || [];
+              const nrsAllergies = ia?.noteDetails?.nursingNabh?.allergies?.list || [];
+              const allergyText =
+                docAllergies.length
+                  ? docAllergies.map(a => `${a.agent} (${a.severity})${a.reaction ? " — " + a.reaction : ""}`).join("; ")
+                  : nrsAllergies.length
+                    ? nrsAllergies.map(a => `${a.agent} (${a.severity})${a.reaction ? " — " + a.reaction : ""}`).join("; ")
+                    : (nabh.allergies?.noKnown || ia?.noteDetails?.nursingNabh?.allergies?.noKnown
+                      ? "NKDA — No Known Drug Allergies"
+                      : (dr.docAllergy || nrsg.allergy || ""));
+
+              setForm(p => ({
+                ...p,
+                // Only prefill if not already set (user may have typed before patient load)
+                chiefComplaints:           p.chiefComplaints           || nabh.chiefComplaint || nrsg.chiefComplaint || "",
+                historyOfPresentIllness:   p.historyOfPresentIllness   || dr.hopi || "",
+                pastMedicalHistory:        p.pastMedicalHistory        || dr.pmh || "",
+                pastSurgicalHistory:       p.pastSurgicalHistory       || dr.psh || "",
+                familyHistory:             p.familyHistory             || dr.famHx || "",
+                socialHistory:             p.socialHistory             || dr.socHx || "",
+                comorbidities:             p.comorbidities             || comorbidities,
+                allergies:                 p.allergies                 || allergyText,
+                physicalExamination:       p.physicalExamination       || [dr.genExam, dr.cvs, dr.rs, dr.abdomen, dr.cns].filter(Boolean).join(" · "),
+                admittingDiagnosis:        p.admittingDiagnosis        || nabh.workingDx || dr.provDx || found.provisionalDiagnosis || "",
+                finalDiagnosis:            p.finalDiagnosis            || dr.finalDx || nabh.workingDx || "",
+                icdCode:                   p.icdCode                   || dr.icd10 || "",
+              }));
+              toast.info("Discharge fields prefilled from Initial Assessment");
+            }
+          }
+        } catch (_) { /* assessment not found / endpoint missing — silently skip */ }
+
         // Restore auto-save draft if available
         const dKey = `sphere_draft_discharge_${found._id}`;
         const raw = localStorage.getItem(dKey);

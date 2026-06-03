@@ -22,14 +22,14 @@ const { validateObjectIdParam } = require("../../utils/queryGuards");
 router.get   ("/",                  requireAction("equipment.read"), ctrl.list);
 router.get   ("/stats",             requireAction("equipment.read"), ctrl.stats);
 router.get   ("/service-due",       requireAction("equipment.read"), ctrl.serviceDue);
-router.get   ("/:id",               requireAction("equipment.read"), ctrl.getOne);
+router.get   ("/:id",               validateObjectIdParam("id"), requireAction("equipment.read"), ctrl.getOne);
 // Writes — Admin / Ward Boy / Nurse can create / assign / return /
 // service. Retire still elevated to ward.admin (Admin only).
 router.post  ("/",                  requireAction("equipment.write"), ctrl.create);
-router.put   ("/:id",               requireAction("equipment.write"), ctrl.update);
-router.post  ("/:id/assign",        requireAction("equipment.write"), ctrl.assign);
-router.post  ("/:id/return",        requireAction("equipment.write"), ctrl.return);
-router.post  ("/:id/service",       requireAction("equipment.write"), ctrl.logService);
+router.put   ("/:id",               validateObjectIdParam("id"), requireAction("equipment.write"), ctrl.update);
+router.post  ("/:id/assign",        validateObjectIdParam("id"), requireAction("equipment.write"), ctrl.assign);
+router.post  ("/:id/return",        validateObjectIdParam("id"), requireAction("equipment.write"), ctrl.return);
+router.post  ("/:id/service",       validateObjectIdParam("id"), requireAction("equipment.write"), ctrl.logService);
 router.delete("/:id",               validateObjectIdParam("id"), requireAction("ward.admin"),      ctrl.retire);
 
 module.exports = router;

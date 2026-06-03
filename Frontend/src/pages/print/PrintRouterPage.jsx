@@ -459,8 +459,16 @@ const PrintRouterPage = () => {
     if (q) {
       try { return JSON.parse(atob(q)); } catch { /* ignore */ }
     }
-    // 3) demo fallback when preview mode is requested
-    if (search.get("demo") === "1") return DEMO[slug] || {};
+    // 3) demo fallback when preview mode is requested.
+    // R7ft: theme-suffixed slugs like ipd-file-narrative reuse the
+    // base slug's DEMO payload. The theme is detected from the URL by
+    // CompleteIPDFile.jsx, not from a separate demo bucket.
+    if (search.get("demo") === "1") {
+      if (DEMO[slug]) return DEMO[slug];
+      const baseSlug = slug.replace(/-(narrative|timeline|executive|audit|editorial)$/i, "");
+      if (DEMO[baseSlug]) return DEMO[baseSlug];
+      return {};
+    }
     return null;
   }, [slug, search]);
 

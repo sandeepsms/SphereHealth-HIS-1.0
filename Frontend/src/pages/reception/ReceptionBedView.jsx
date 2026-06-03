@@ -320,7 +320,8 @@ function BedDetailModal({ bed, onClose, navigate }) {
                   {adm.admissionDate && <div>Admitted: <strong>{fmtDate(adm.admissionDate)}</strong></div>}
                   {adm.expectedDischargeDate && <div>Expected Discharge: <strong>{fmtDate(adm.expectedDischargeDate)}</strong></div>}
                   {adm.admissionDate && <div>Day: <strong>{daysBetween(adm.admissionDate) || 1}</strong></div>}
-                  {adm.consultantDoctor?.fullName && <div>Doctor: <strong>{adm.consultantDoctor.fullName}</strong></div>}
+                  {/* R7ey-F39: read canonical attendingDoctor first; consultantDoctor was phantom */}
+                  {(adm.attendingDoctor || adm.consultantDoctor?.fullName) && <div>Doctor: <strong>{adm.attendingDoctor || adm.consultantDoctor?.fullName}</strong></div>}
                   {adm.diagnosis && <div className="rx-grid-full-row">Diagnosis: <strong>{adm.diagnosis}</strong></div>}
                 </div>
               </div>

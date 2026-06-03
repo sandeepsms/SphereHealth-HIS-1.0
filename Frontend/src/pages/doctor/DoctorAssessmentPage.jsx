@@ -661,11 +661,13 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                 {[
                   { label: "ID",          value: patient.uhid || patient.UHID || search },
                   { label: "Age / Sex",   value: `${patient.age || patient.patient?.age || "?"}Y / ${(patient.gender || patient.patient?.gender || "M").charAt(0).toUpperCase()}` },
-                  { label: "Ward / Bed",  value: `${patient.wardName || "ICU"} — Bed ${patient.bedNumber || "—"}` },
+                  // R7ey-F41: fix phantom-path reads. wardName/bedNumber are denormalized
+                  // strings on admission (R7bi-1); consultant is `attendingDoctor`.
+                  { label: "Ward / Bed",  value: `${patient.wardName || patient.wardId?.wardName || patient.department || "—"} — Bed ${patient.bedNumber || patient.bedId?.bedNumber || "—"}` },
                   { label: "Admit Date",  value: patient.admissionDate ? new Date(patient.admissionDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—" },
                   { label: "Day",         value: patient.admissionDate ? `D${Math.max(1, Math.ceil((Date.now() - new Date(patient.admissionDate)) / 86400000))}` : "D1" },
-                  { label: "Diagnosis",   value: patient.diagnosis || patient.admittingDiagnosis || "—" },
-                  { label: "Consultant",  value: patient.doctorName || patient.consultantName || "—" },
+                  { label: "Diagnosis",   value: patient.diagnosis || patient.admittingDiagnosis || patient.provisionalDiagnosis || "—" },
+                  { label: "Consultant",  value: patient.attendingDoctor || patient.doctorName || patient.consultantName || "—" },
                 ].map(f => (
                   <div key={f.label}>
                     <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".9px", color: "#64748b" }}>{f.label}</div>

@@ -94,11 +94,28 @@ const FinalBill = ({ settings, receipt = {} }) => {
   const viewMode  = receipt.viewMode || "category";
   const isAudit   = viewMode === "audit";
   const isDaily   = viewMode === "day";
+  // R7eo-A — Pattern A fix: the discharge title hardcoded "/ IPD",
+  // so Daycare + Emergency discharges printed under the wrong banner.
+  // Read receipt.visitType (or admissionType as a fallback) and slot
+  // the right label into both the GST and non-GST variants. Legacy
+  // callers that pass neither field keep the original "IPD" string.
+  const visitTypeRaw = String(
+    receipt.visitType || receipt.admissionType || "IPD"
+  ).toUpperCase();
+  const visitLabel =
+      visitTypeRaw === "DAYCARE"   ? "Daycare"
+    : visitTypeRaw === "DAY CARE"  ? "Daycare"
+    : visitTypeRaw === "EMERGENCY" ? "Emergency"
+    : visitTypeRaw === "ER"        ? "Emergency"
+    : visitTypeRaw === "OPD"       ? "OPD"
+                                   : "IPD";
   const docTitle  = isAudit
     ? `Bill Audit Trail — Day ${receipt.totalDays || "?"}`
     : isInterim
     ? `Interim Bill${isDaily ? " (Daily Breakdown)" : ""} — Day ${receipt.totalDays || "?"}`
-    : (hasGstFields ? "Tax Invoice (Final / IPD)" : "Final Bill (Discharge / IPD)");
+    : (hasGstFields
+        ? `Tax Invoice (Final / ${visitLabel})`
+        : `Final Bill (Discharge / ${visitLabel})`);
   const dischargeLabel = isInterim || isAudit ? "Discharge (planned)" : "Discharged";
   // R7bf-F / A4-HIGH-9: IPD interim bill must carry "as on dd-mmm hh:mm"
   // banner so the patient can tell it's a snapshot, not the final bill.
@@ -141,7 +158,7 @@ const FinalBill = ({ settings, receipt = {} }) => {
         infoItems={[
           { label: "Patient",       value: receipt.patientName },
           { label: "UHID",          value: receipt.uhid },
-          { label: "IPD No",        value: receipt.ipdNo },
+          { label: visitTypeRaw === "IPD" ? "IPD No" : "Admission No", value: receipt.ipdNo },
           { label: "Age / Sex",     value: [receipt.age && `${receipt.age}Y`, receipt.gender].filter(Boolean).join(" / ") },
           { label: "Admitted",      value: receipt.admissionDate
               ? new Date(receipt.admissionDate).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—" },

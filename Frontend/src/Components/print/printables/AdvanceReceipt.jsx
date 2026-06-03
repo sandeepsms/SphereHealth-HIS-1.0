@@ -1,79 +1,132 @@
 // Components/print/printables/AdvanceReceipt.jsx
 // Advance / Deposit receipt — money taken at admission, before billing
 // starts. Will be adjusted against the final bill.
+//
+// R7fq Track A: refactored onto the new shared <PrintShell> contract.
+// Hospital logo + name + address now live entirely in the shell.
+//
+// Patient-strip mapping (per Track-A contract):
+//   left:  Receipt No · UMID · Patient Name · Gender/Age · Contact · Address
+//   right: Receipt Date · IP No · Admission Date · Payer · Doctor · Specialization
+//
+// R7bh-F7 / R7bg-7-HIGH-1: 2026 GST circular — advances ≥ ₹50,000 must
+// capture the customer's GSTIN on the receipt (B2B threshold). The
+// hospital's GSTIN prints in the shell header from settings.
 
 import React from "react";
-import PrintShell from "../PrintShell";
+import PrintShell from "@/templates/PrintShell";
 import { fmtINR } from "../amountWords";
 import { numberToIndianWords, toNum } from "../../../utils/printUtils";
+
+const fmtDate = (d) =>
+  d
+    ? new Date(d).toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+      })
+    : "—";
+const fmtDateTime = (d) =>
+  d
+    ? new Date(d).toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      })
+    : "—";
 
 const AdvanceReceipt = ({ settings = {}, receipt = {} }) => {
   const amount = toNum(receipt.amount);
   const printCount = toNum(receipt.printCount);
-  // R7bh-F7 / R7bg-7-HIGH-1: 2026 GST circular — advances ≥ ₹50,000 must
-  // capture the customer's GSTIN on the receipt (B2B threshold). The
-  // hospital's GSTIN already prints in PrintShell's header from settings.
+  // 2026 GST circular — advances ≥ ₹50,000 must capture customer GSTIN.
   const HIGH_VALUE_GST_THRESHOLD = 50000;
   const customerGstin = receipt.customerGstin || receipt.gstin;
   const requiresGstin = amount >= HIGH_VALUE_GST_THRESHOLD;
   const missingGstinForHighValue = requiresGstin && !customerGstin;
+
+  const receiptNo = receipt.receiptNo || "—";
+  const genderAge = [receipt.gender, receipt.age && `${receipt.age}Y`]
+    .filter(Boolean).join(" ");
+
+  const patientLeft = [
+    { label: "Receipt No",   value: receiptNo },
+    { label: "UMID",         value: receipt.uhid || "—" },
+    { label: "Patient Name", value: receipt.patientName || "—" },
+    { label: "Gender/Age",   value: genderAge || "—" },
+    { label: "Contact",      value: receipt.contactNumber || receipt.mobile || "—" },
+    { label: "Address",      value: receipt.completeAddress || receipt.address || "—" },
+  ];
+  const patientRight = [
+    { label: "Receipt Date",   value: fmtDateTime(receipt.date || new Date().toISOString()) },
+    { label: "IP No",          value: receipt.ipdNo || "—" },
+    { label: "Admission Date", value: fmtDate(receipt.admissionDate) },
+    { label: "Payer",          value: receipt.payer || "Self" },
+    { label: "Doctor",         value: receipt.doctor || "—" },
+    { label: "Specialization", value: receipt.department || "—" },
+  ];
+
   return (
     <PrintShell
-      settings={settings}
-      // R7bf-F / A4-HIGH-4: title was "Tax Invoice" pre-R7bf because
-      // the advance template inherited bill chrome. Explicit override
-      // so customers can tell apart a deposit slip from a tax invoice.
-      documentTitle="Advance Receipt"
-      serialNo={receipt.receiptNo}
-      printCount={printCount}
-      infoItems={[
-        { label: "Patient",    value: receipt.patientName },
-        { label: "UHID",       value: receipt.uhid },
-        { label: "IPD No",     value: receipt.ipdNo },
-        { label: "Admission",  value: receipt.admissionDate
-            ? new Date(receipt.admissionDate).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
-            : "—" },
-        { label: "Bed / Ward", value: receipt.bedNumber
-            ? `${receipt.bedNumber}${receipt.wardName ? " · " + receipt.wardName : ""}`
-            : (receipt.wardName || "—") },
-        { label: "Receipt Date", value: receipt.date
-            ? new Date(receipt.date).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
-            : new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
-        // R7bh-F7 / R7bg-7-HIGH-1: hospital + customer GSTIN visible on
-        // the deposit receipt so corporate / TPA accounts can later claim
-        // input tax credit when the advance is adjusted on the final bill.
-        { label: "Hospital GSTIN", value: settings.gstin || "—" },
-        { label: "Customer GSTIN", value: customerGstin || (requiresGstin ? "MISSING — required for ≥ ₹50,000" : "—") },
-      ]}
-      signatureLabels={["Authorised Cashier", "Depositor / Patient"]}
+      hospital={settings}
+      // R7bf-F / A4-HIGH-4: explicit override so customers can tell apart
+      // a deposit slip from a tax invoice.
+      docTitle="Advance Receipt"
+      patient={{ left: patientLeft, right: patientRight }}
+      signatures={{
+        type: "prepared-by",
+        preparedBy: { name: receipt.preparedBy || receipt.cashier || "Cashier", role: "Cashier" },
+        showAttestedStamp: true,
+      }}
+      banners={{ emergency24x7: true }}
+      meta={{
+        docNumber: receiptNo,
+        pageOf: "1 of 1",
+        printCount,
+      }}
     >
-      <div style={{
-        background: "linear-gradient(135deg, #fef9c3, #fde68a)",
-        border: "2px solid #facc15",
-        borderRadius: 8, padding: "16px 18px",
-        textAlign: "center", marginBottom: 14,
-      }}>
-        <div style={{ fontSize: 11, color: "#92400e", fontWeight: 700, letterSpacing: ".6px", textTransform: "uppercase" }}>
-          Advance Received
-        </div>
-        <div style={{ fontSize: 32, fontWeight: 800, color: "#713f12", lineHeight: 1, marginTop: 4 }}>
-          {fmtINR(amount)}
-        </div>
-        {receipt.method && (
-          <div style={{ marginTop: 10 }}>
-            <span className={`pr-paymethod pr-paymethod--${String(receipt.method).toLowerCase()}`}>
-              {String(receipt.method).toUpperCase()}
-            </span>
-            {receipt.refNo && (
-              <span style={{ marginLeft: 10, fontSize: 11, color: "#92400e" }}>Ref: {receipt.refNo}</span>
-            )}
-          </div>
-        )}
+      {/* Body: bordered single-row table — Particulars · Amount (₹) */}
+      <table className="pr-table" style={{ marginBottom: 12 }}>
+        <thead>
+          <tr>
+            <th>Particulars</th>
+            <th className="right" style={{ width: 140 }}>Amount (₹)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="bill-line-row">
+            <td>
+              <div style={{ fontWeight: 600 }}>Advance Deposit</div>
+              {receipt.depositPurpose && (
+                <div className="muted" style={{ fontSize: 10 }}>{receipt.depositPurpose}</div>
+              )}
+            </td>
+            <td className="right">{toNum(amount).toLocaleString("en-IN")}</td>
+          </tr>
+          <tr>
+            <td className="right" style={{ fontWeight: 700 }}>Total Amount</td>
+            <td className="right" style={{ fontWeight: 800 }}>{fmtINR(amount)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="pr-amount-words" style={{ fontStyle: "italic" }}>
+        Received an amount of (Rs.) {numberToIndianWords(amount)} only
       </div>
 
-      <div className="pr-amount-words">
-        <strong>In words:</strong> {numberToIndianWords(amount)}
+      {/* Track-A contract: Note line for AdvanceReceipt */}
+      <div style={{ marginTop: 8, marginBottom: 10, fontSize: 11, fontWeight: 600 }}>
+        Note: This Receipt is required to be produced at the time of discharge at Billing Counter.
       </div>
+
+      {/* Payment method chip */}
+      {receipt.method && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, fontSize: 11 }}>
+          <span style={{ color: "#475569", fontWeight: 700 }}>Paid via:</span>
+          <span className={`pr-paymethod pr-paymethod--${String(receipt.method).toLowerCase()}`}>
+            {String(receipt.method).toUpperCase()}
+          </span>
+          {receipt.refNo && (
+            <span style={{ color: "#64748b", fontSize: 10.5 }}>Ref: {receipt.refNo}</span>
+          )}
+        </div>
+      )}
 
       {missingGstinForHighValue && (
         <div style={{
@@ -81,7 +134,7 @@ const AdvanceReceipt = ({ settings = {}, receipt = {} }) => {
           padding: "8px 14px", borderRadius: 6, marginBottom: 12,
           fontSize: 11, fontWeight: 700,
         }}>
-          ⚠ GST COMPLIANCE — Advances of ₹50,000 or more require the depositor's GSTIN
+          GST COMPLIANCE — Advances of Rs.50,000 or more require the depositor's GSTIN
           (2026 GST circular). Please capture the customer's GSTIN before printing.
         </div>
       )}

@@ -14,6 +14,8 @@ import { buildingService } from "../../Services/buildingService";
 import { floorService } from "../../Services/floorService";
 import patientService from "../../Services/patient/patientService";
 import { doctorService } from "../../Services/doctors/doctorService";
+// R7er — per-room daily charge chip needs the matrix from /admin/room-charges.
+import roomCategoryChargesService from "../../Services/roomCategoryChargesService";
 import useBedEvents from "../../hooks/useBedEvents";
 import authFetch    from "../../utils/authFetch";
 import { API_ENDPOINTS } from "../../config/api";
@@ -253,6 +255,11 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   const [rooms, setRooms] = useState([]);
   const [allFloorsList, setAllFloorsList] = useState([]);
   const [allRoomsList, setAllRoomsList] = useState([]);
+  // R7er — keyed by uppercase categoryCode → matrix row { charges:{…},
+  // chargingRule, totalDailyCharge }. Built once at fetchAll() so each
+  // room card can read its category code from the populated subdoc and
+  // render "₹X/day · CODE" without an extra round-trip.
+  const [chargesByCode, setChargesByCode] = useState({});
   const [allPatients, setAllPats] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [doctorsMap, setDoctorsMap] = useState({});
@@ -416,19 +423,31 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   const fetchAll = async () => {
     setBusy(true);
     try {
-      const [b, bl, pts, docs, allF, allR] = await Promise.all([
+      const [b, bl, pts, docs, allF, allR, charges] = await Promise.all([
         bedService.getAllBeds(),
         buildingService.getAllBuildings(),
         patientService.getAllPatients({ limit: 1000 }),
         doctorService.getAllDoctors().catch(() => []),
         floorService.getAllFloors(),
         roomService.getAllRooms(),
+        // R7er — Room Category Charges matrix. Soft-fail so a misconfigured
+        // /admin/room-charges doesn't block the bed grid from rendering.
+        roomCategoryChargesService.list().catch(() => null),
       ]);
       setBeds(Array.isArray(b) ? b : b?.data || []);
       setBldgs(Array.isArray(bl) ? bl : bl?.data || []);
       setAllFloorsList(Array.isArray(allF) ? allF : allF?.data || []);
       setAllRoomsList(Array.isArray(allR) ? allR : allR?.data || []);
       setAllPats(Array.isArray(pts) ? pts : pts?.data || pts?.patients || []);
+      // Build a code-keyed lookup so per-room cards can resolve their
+      // matrix row in O(1) without touching the network again.
+      const chargeRows = Array.isArray(charges?.data) ? charges.data : [];
+      const codeMap = {};
+      for (const row of chargeRows) {
+        const code = String(row.categoryCode || "").toUpperCase();
+        if (code) codeMap[code] = row;
+      }
+      setChargesByCode(codeMap);
 
       let rawDocs = Array.isArray(docs)
         ? docs
@@ -1666,6 +1685,76 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                               <div style={{ fontSize: 10.5, color: TINT.text, fontWeight: 700, marginTop: 2, letterSpacing: ".3px" }}>
                                 {total} bed{total !== 1 ? "s" : ""} · {avail} available · {occ} occupied
                               </div>
+                              {/* R7er — per-room daily-charge chip.
+                                  Resolves: bed.room → allRoomsList → room.roomCategory.categoryCode
+                                  → chargesByCode[CODE] → sum of 8 line items.
+                                  Renders:
+                                    • "₹X/day · CODE"  when a matrix row exists
+                                    • "⚠ No tariff set"  with deep link to /room-charges
+                                      when the room has a category but no matrix row
+                                    • nothing  when the room itself has no category
+                                  Stays dynamic — any future RoomCategoryModel entry
+                                  surfaces here automatically once its matrix row exists. */}
+                              {(() => {
+                                const firstBed = grp.beds[0];
+                                const roomId = getId(firstBed?.room);
+                                const roomObj = allRoomsList.find(
+                                  (r) => getId(r._id) === roomId,
+                                );
+                                const cat = roomObj?.roomCategory;
+                                const code = (typeof cat === "object" && cat)
+                                  ? String(cat.categoryCode || "").toUpperCase()
+                                  : "";
+                                if (!code) return null;
+                                const row = chargesByCode[code];
+                                if (!row) {
+                                  return (
+                                    <a href="/room-charges" title="Set per-day charges for this category"
+                                       style={{
+                                         display: "inline-block", marginTop: 4,
+                                         fontSize: 10.5, fontWeight: 800,
+                                         background: "#fef2f2", color: "#b91c1c",
+                                         border: "1px solid #fecaca", borderRadius: 999,
+                                         padding: "2px 8px", textDecoration: "none",
+                                       }}>
+                                      ⚠ No tariff set · {code}
+                                    </a>
+                                  );
+                                }
+                                const c = row.charges || {};
+                                const total = Number(c.bedRent || 0)
+                                            + Number(c.nursingCharge || 0)
+                                            + Number(c.doctorVisitCharge || 0)
+                                            + Number(c.rmoCharge || 0)
+                                            + Number(c.monitoringCharge || 0)
+                                            + Number(c.dieteticsCharge || 0)
+                                            + Number(c.housekeepingCharge || 0)
+                                            + Number(c.linenCharge || 0);
+                                if (!Number.isFinite(total) || total <= 0) return null;
+                                return (
+                                  <span title={
+                                      `Bed ₹${Number(c.bedRent||0).toLocaleString("en-IN")} · `+
+                                      `Nursing ₹${Number(c.nursingCharge||0).toLocaleString("en-IN")} · `+
+                                      `Dr.Visit ₹${Number(c.doctorVisitCharge||0).toLocaleString("en-IN")} · `+
+                                      `RMO ₹${Number(c.rmoCharge||0).toLocaleString("en-IN")} · `+
+                                      `Monitor ₹${Number(c.monitoringCharge||0).toLocaleString("en-IN")} · `+
+                                      `Diet ₹${Number(c.dieteticsCharge||0).toLocaleString("en-IN")} · `+
+                                      `Housekeeping ₹${Number(c.housekeepingCharge||0).toLocaleString("en-IN")} · `+
+                                      `Linen ₹${Number(c.linenCharge||0).toLocaleString("en-IN")}`
+                                    }
+                                    style={{
+                                      display: "inline-block", marginTop: 4,
+                                      fontSize: 10.5, fontWeight: 800,
+                                      background: `${TINT.stripe}12`,
+                                      color: TINT.stripe,
+                                      border: `1px solid ${TINT.stripe}33`,
+                                      borderRadius: 999, padding: "2px 8px",
+                                      fontFamily: "'DM Mono', monospace",
+                                    }}>
+                                    ₹{total.toLocaleString("en-IN")}/day · {code}
+                                  </span>
+                                );
+                              })()}
                             </div>
                           </div>
 

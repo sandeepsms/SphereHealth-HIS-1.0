@@ -16,6 +16,8 @@ import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
+// R7ez — paperless consent capture panel (WebAuthn + staff e-sign + bypass).
+import BiometricConsentPanel from "../../Components/consent/BiometricConsentPanel";
 
 const API = `${API_ENDPOINTS.BASE}/consent-forms`;
 
@@ -548,6 +550,16 @@ function ConsentPrintView({ data, type, onClose }) {
       signatoryName:    data.signedBy,
       signatoryRelation:data.relationToPatient,
       witnessName:      data.witnessName,
+      // R7gi — Pass the biometric + consenting-party + staff-signature
+      // blocks through to the print template so the printed consent
+      // becomes a self-contained forensic artefact: who placed the
+      // finger, on which scanner (vendor + HARDWARE badge + AAGUID),
+      // when (server-stamped), from which IP/UA, and which staff
+      // member countersigned. Without these, a printed consent looks
+      // identical whether it was hardware-signed or admin-bypassed.
+      biometric:        data.biometric,
+      consentingParty:  data.consentingParty,
+      staffSignature:   data.staffSignature,
       // R7bh-F1 / META-1: PrintAudit anchor — informed consent reprint
       // trail is NABH PRE.2 / MOI.7 critical. ConsentForm maps to its
       // own collection in ENTITY_MODEL.
@@ -685,46 +697,244 @@ function ConsentPrintView({ data, type, onClose }) {
             {data.interpreterName && ` An interpreter (${data.interpreterName}) was used.`}
           </div>
 
-          {/* Signature grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginTop: 20, marginBottom: 12 }}>
-            {[
-              { label: "Patient Signature / Thumb Impression", sub: `Name: ${data.patientName || "—"}` },
-              {
-                label: data.consentBy !== "SELF" ? `Guardian / Relative Signature` : "Guardian / Relative (if applicable)",
-                sub: data.guardianName ? `Name: ${data.guardianName}\nRelation: ${data.guardianRelation}` : "Name:\nRelation:",
-              },
-              { label: "Witness Signature", sub: `Name: ${data.witnessName || "—"}\nRelation: ${data.witnessRelation || "—"}` },
-            ].map(({ label, sub }) => (
-              <div key={label} style={{ borderTop: `2px solid ${C.text}`, paddingTop: 6 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 2 }}>{label}</div>
-                <div style={{ fontSize: 10, color: C.muted, whiteSpace: "pre-line", lineHeight: 1.5 }}>{sub}</div>
-                <div style={{ marginTop: 28, borderTop: `1px solid ${C.border}`, paddingTop: 4, fontSize: 10, color: C.muted }}>
-                  Date: _____________ Time: _____________
+          {/* R7gj — Digital biometric ceremony footer.
+              Replaces the paper "Patient Signature / Thumb Impression
+              + blank Date/Time lines + Hospital Stamp" placeholders
+              with the actual electronic record: who placed the finger,
+              on which hardware scanner, when, and which staff member
+              countersigned. Falls back to paper-style placeholders
+              ONLY when the consent has not been signed yet (PENDING
+              with no biometric capture). */}
+          {(data.biometric?.captured || data.bypass?.authorisedAt) ? (
+            <div style={{
+              border: `1.5px solid ${C.ok}`, borderRadius: 10,
+              padding: "14px 16px", marginTop: 20, background: "#f0fdf4",
+            }}>
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8, marginBottom: 10,
+                paddingBottom: 8, borderBottom: `1px dashed ${C.okB}`,
+              }}>
+                <i className="pi pi-id-card" style={{ fontSize: 18, color: C.ok }} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
+                    Digital Authentication · Paperless Consent
+                  </div>
+                  <div style={{ fontSize: 10, color: C.muted }}>
+                    NABH PRE.4 · IT-Act 2000 Sec. 3A · Electronic signature equivalent
+                  </div>
+                </div>
+                {data.status === "SIGNED" && (
+                  <span style={{
+                    marginLeft: "auto", padding: "3px 10px", background: C.ok, color: "white",
+                    borderRadius: 6, fontSize: 10, fontWeight: 800, letterSpacing: ".3px",
+                  }}>
+                    ✓ SIGNED & LOCKED
+                  </span>
+                )}
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, fontSize: 11 }}>
+                {/* Fingerprint placed by */}
+                <div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                    Fingerprint placed by
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+                    {data.consentingParty?.name || data.patientName || "—"}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.muted, lineHeight: 1.5 }}>
+                    Relation: <strong>{data.consentingParty?.relation || "SELF"}</strong>
+                    {data.consentingParty?.contactNumber && (
+                      <> · {data.consentingParty.contactNumber}</>
+                    )}
+                    {data.consentingParty?.idProofType && data.consentingParty?.idProofNumber && (
+                      <div>ID: {data.consentingParty.idProofType} ending …{String(data.consentingParty.idProofNumber).slice(-4)}</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Scanner used */}
+                <div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                    Hardware Scanner
+                  </div>
+                  {data.bypass?.authorisedAt ? (
+                    <div style={{ fontSize: 11.5, color: C.warn }}>
+                      <i className="pi pi-exclamation-triangle" style={{ marginRight: 4 }} />
+                      Biometric bypassed by admin
+                      <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
+                        Reason: <em>{data.bypass.reason}</em>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: C.text, display: "flex", alignItems: "center", gap: 6 }}>
+                        {data.biometric?.authenticatorVendor || "Platform authenticator"}
+                        {data.biometric?.isHardwareBacked && (
+                          <span style={{
+                            padding: "1px 6px", background: "#0f766e", color: "white",
+                            borderRadius: 4, fontSize: 8.5, fontWeight: 800, letterSpacing: ".3px",
+                          }}>HARDWARE</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 9.5, color: C.muted, fontFamily: "monospace", marginTop: 2 }}>
+                        AAGUID {data.biometric?.aaguid || "—"}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* When captured */}
+                <div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                    Captured At
+                  </div>
+                  <div style={{ fontSize: 11.5, color: C.text, fontWeight: 600 }}>
+                    {data.biometric?.capturedAt
+                      ? new Date(data.biometric.capturedAt).toLocaleString("en-IN", {
+                          day: "2-digit", month: "short", year: "numeric",
+                          hour: "2-digit", minute: "2-digit", second: "2-digit",
+                        })
+                      : "—"}
+                  </div>
+                  <div style={{ fontSize: 9.5, color: C.muted, marginTop: 1 }}>
+                    Server-stamped — cannot be forged
+                  </div>
+                </div>
+
+                {/* Device / network */}
+                <div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                    Captured From
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.text, fontFamily: "monospace" }}>
+                    IP {data.biometric?.capturedFromIp || "—"}
+                  </div>
+                  {data.biometric?.capturedUserAgent && (
+                    <div style={{ fontSize: 9, color: C.muted, fontFamily: "monospace", lineHeight: 1.3, marginTop: 1 }}>
+                      {String(data.biometric.capturedUserAgent).slice(0, 100)}
+                    </div>
+                  )}
+                </div>
+
+                {/* Credential ID */}
+                {data.biometric?.credentialId && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                      Credential Fingerprint (cryptographic proof)
+                    </div>
+                    <div style={{ fontSize: 10, color: C.text, fontFamily: "monospace", wordBreak: "break-all" }}>
+                      {String(data.biometric.credentialId).slice(0, 36)}…
+                    </div>
+                    <div style={{ fontSize: 9.5, color: C.muted, fontStyle: "italic", marginTop: 2 }}>
+                      Actual fingerprint template stayed inside the device TPM and was never transmitted or stored — privacy preserved per IT-Act DPDP Sensitive Personal Data provisions.
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Staff facilitator + signature */}
+              <div style={{
+                marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${C.okB}`,
+                display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14,
+              }}>
+                <div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                    Explained By / Staff Facilitator
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+                    {data.staffSignature?.userName || data.doctorName || "—"}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.muted }}>
+                    {data.staffSignature?.userRole || data.doctorRegNo || "—"}
+                  </div>
+                  {data.staffSignature?.signedAt && (
+                    <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
+                      E-signed at {new Date(data.staffSignature.signedAt).toLocaleString("en-IN", {
+                        day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+                      })}
+                    </div>
+                  )}
+                </div>
+                {data.staffSignature?.signatureImage ? (
+                  <div>
+                    <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                      Staff Signature
+                    </div>
+                    <img
+                      src={data.staffSignature.signatureImage}
+                      alt="Staff signature"
+                      style={{ height: 50, maxWidth: 220, border: `1px solid ${C.border}`, borderRadius: 4, padding: 3, background: "white" }}
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 3 }}>
+                      Status
+                    </div>
+                    <div style={{ fontSize: 11, color: C.warn }}>
+                      <i className="pi pi-clock" style={{ marginRight: 4 }} />
+                      Awaiting staff e-signature
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* PRE-CAPTURE state — show paper-style placeholders so a
+               draft preview before the ceremony still looks meaningful.
+               R7gj-VERIFY: keep the original Patient / Guardian / Witness
+               row AND restore the Explained-By-Doctor + Hospital Stamp
+               row that the first R7gj cut had silently dropped. */
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginTop: 20, marginBottom: 12 }}>
+                {[
+                  { label: "Patient Signature / Thumb Impression", sub: `Name: ${data.patientName || "—"}` },
+                  {
+                    label: data.consentBy !== "SELF" ? `Guardian / Relative Signature` : "Guardian / Relative (if applicable)",
+                    sub: data.guardianName ? `Name: ${data.guardianName}\nRelation: ${data.guardianRelation}` : "Name:\nRelation:",
+                  },
+                  { label: "Witness Signature", sub: `Name: ${data.witnessName || "—"}\nRelation: ${data.witnessRelation || "—"}` },
+                ].map(({ label, sub }) => (
+                  <div key={label} style={{ borderTop: `2px solid ${C.text}`, paddingTop: 6 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 2 }}>{label}</div>
+                    <div style={{ fontSize: 10, color: C.muted, whiteSpace: "pre-line", lineHeight: 1.5 }}>{sub}</div>
+                    <div style={{ marginTop: 28, borderTop: `1px solid ${C.border}`, paddingTop: 4, fontSize: 10, color: C.muted }}>
+                      Awaiting digital fingerprint capture
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Doctor sign-off + Hospital Stamp row — kept from original
+                  paper template so a PENDING preview still shows the
+                  doctor who'll explain + a place for the round stamp. */}
+              <div style={{ borderTop: `1.5px solid ${C.border}`, paddingTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+                <div style={{ borderTop: `2px solid ${C.text}`, paddingTop: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.text }}>Explained By (Doctor)</div>
+                  <div style={{ fontSize: 10, color: C.muted }}>Name: {data.doctorName || "—"}</div>
+                  <div style={{ fontSize: 10, color: C.muted }}>Reg. No.: {data.doctorRegNo || "—"}</div>
+                  <div style={{ marginTop: 28, borderTop: `1px solid ${C.border}`, paddingTop: 4, fontSize: 10, color: C.muted }}>
+                    Will e-sign at the time of capture
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.6 }}>
+                    <strong>Hospital Stamp</strong><br />
+                    <div style={{ width: 120, height: 60, border: `1px dashed ${C.border}`, borderRadius: 6, marginTop: 4 }} />
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
+            </>
+          )}
 
-          {/* Doctor sign-off */}
-          <div style={{ borderTop: `1.5px solid ${C.border}`, paddingTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-            <div style={{ borderTop: `2px solid ${C.text}`, paddingTop: 6 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.text }}>Explained By (Doctor)</div>
-              <div style={{ fontSize: 10, color: C.muted }}>Name: {data.doctorName || "—"}</div>
-              <div style={{ fontSize: 10, color: C.muted }}>Reg. No.: {data.doctorRegNo || "—"}</div>
-              <div style={{ marginTop: 28, borderTop: `1px solid ${C.border}`, paddingTop: 4, fontSize: 10, color: C.muted }}>
-                Date: _____________ Time: _____________
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.6 }}>
-                <strong>Hospital Stamp</strong><br />
-                <div style={{ width: 120, height: 60, border: `1px dashed ${C.border}`, borderRadius: 6, marginTop: 4 }} />
-              </div>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 10, fontSize: 10, color: C.muted, textAlign: "center" }}>
-            This consent form is valid as per NABH Standards ({type?.nabh}) | Generated · {settings.hospitalName || "Hospital"} | {new Date().toLocaleDateString("en-IN")}
+          <div style={{ marginTop: 10, fontSize: 10, color: C.muted, textAlign: "center", lineHeight: 1.55 }}>
+            This consent form is valid as per NABH Standards ({type?.nabh}) ·{" "}
+            {data.biometric?.captured
+              ? "Authenticated electronically per IT-Act 2000 Sec. 3A — paper signature not required"
+              : "Pending digital authentication"}{" "}
+            · {settings.hospitalName || "Hospital"} ·{" "}
+            {new Date().toLocaleDateString("en-IN")}
           </div>
         </div>
       </div>
@@ -775,8 +985,68 @@ export function ConsentFormPageContent({ selectedPatient }) {
   const [previewData, setPreviewData] = useState(null);
   const [previewType, setPreviewType] = useState(null);
 
+  // R7ez — paperless consent state. After Save Draft the API returns the
+  // new PENDING ConsentForm; we hold the doc here so the BiometricConsentPanel
+  // can target /:id/biometric/options and /:id/staff-sign. Sign-and-Lock
+  // (the final PATCH /:id/sign) is gated until all three sub-steps green.
+  const [activeConsent, setActiveConsent] = useState(null); // { _id, biometric, staffSignature, consentingParty, bypass, status }
+  const [biometricReady, setBiometricReady] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+
   const token = (sessionStorage.getItem("his_token"));
   const headers = { Authorization: `Bearer ${token}` };
+
+  // R7ez-FIX2 — small helpers so both load paths share the same
+  // age/gender/department/doctor extraction. Age falls back to a DOB
+  // compute when the patient record only carries a date-of-birth.
+  const _calcAge = (dob) => {
+    if (!dob) return "";
+    try {
+      const d = new Date(dob); if (isNaN(d.getTime())) return "";
+      const diffMs = Date.now() - d.getTime();
+      const a = new Date(diffMs).getUTCFullYear() - 1970;
+      return a > 0 && a < 130 ? a : "";
+    } catch { return ""; }
+  };
+  const _ageFromFound = (found) =>
+    found?.age ||
+    found?.patientId?.age ||
+    found?.patient?.age ||
+    _calcAge(found?.patientId?.dateOfBirth || found?.patient?.dateOfBirth || found?.dateOfBirth);
+  const _genderFromFound = (found) =>
+    found?.gender || found?.patientId?.gender || found?.patient?.gender || "";
+  const _deptFromFound = (found) =>
+    found?.department || found?.departmentName ||
+    found?.wardId?.department || found?.specialty || "";
+  const _doctorFromFound = (found) =>
+    found?.attendingDoctor || found?.attendingDoctorName ||
+    found?.consultantName || found?.consultant?.fullName || "";
+
+  // R7gm — URL-param prefill: when the consent module is launched from a
+  // patient panel (Doctor/Nurse), the launcher passes `?uhid=UHID`. Read it
+  // once on mount, populate the search box, and trigger the lookup so the
+  // page lands on the right admission without the staff retyping.
+  const [urlPrefillUhid, setUrlPrefillUhid] = useState(null);
+  useEffect(() => {
+    try {
+      const u = new URLSearchParams(window.location.search).get("uhid");
+      if (u && !uhid) {
+        const trimmed = u.trim();
+        setUhid(trimmed);
+        setUrlPrefillUhid(trimmed);
+      }
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Trigger the actual fetch only after the controlled input state has caught
+  // up to the URL value — searchPatient() reads `uhid` via closure.
+  useEffect(() => {
+    if (urlPrefillUhid && uhid === urlPrefillUhid && !patInfo && !searching) {
+      searchPatient();
+      setUrlPrefillUhid(null); // one-shot
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlPrefillUhid, uhid]);
 
   // Auto-fill when patient selected from AdmittedPatientPanel
   useEffect(() => {
@@ -788,6 +1058,14 @@ export function ConsentFormPageContent({ selectedPatient }) {
       ...p,
       UHID: found.UHID || "",
       patientName: found.patientName || found.patientId?.fullName || "",
+      // R7ez-FIX2 — age / gender / department were silently empty on
+      // the consent form even when the loaded admission carried them.
+      age:        String(_ageFromFound(found) || ""),
+      gender:     _genderFromFound(found),
+      department: _deptFromFound(found),
+      // Pre-fill the consultant name for "Explained By (Doctor)" unless
+      // the staff has already typed something else manually.
+      doctorName: p.doctorName || _doctorFromFound(found),
       ipdNo: found.admissionNumber || "",
       wardBed: `${found.wardId?.wardName || found.wardName || ""} / ${found.bedNumber || ""}`.replace(/^\s*\/\s*$/, ""),
       admissionDate: found.admissionDate ? new Date(found.admissionDate).toLocaleDateString("en-IN") : "",
@@ -826,6 +1104,13 @@ export function ConsentFormPageContent({ selectedPatient }) {
           ...p,
           UHID: found.UHID,
           patientName: found.patientName || found.patientId?.fullName || "",
+          // R7ez-FIX2 — same age/gender/department/doctor backfill as
+          // the panel-pick path so a UHID-typed lookup behaves the
+          // same as a click on the admitted-patients list.
+          age:        String(_ageFromFound(found) || ""),
+          gender:     _genderFromFound(found),
+          department: _deptFromFound(found),
+          doctorName: p.doctorName || _doctorFromFound(found),
           ipdNo: found.admissionNumber || "",
           wardBed: `${found.wardId?.wardName || ""} / ${found.bedNumber || ""}`,
           admissionDate: found.admissionDate ? new Date(found.admissionDate).toLocaleDateString("en-IN") : "",
@@ -872,10 +1157,27 @@ export function ConsentFormPageContent({ selectedPatient }) {
 
   const handleSave = async () => {
     if (!consentData.UHID) { toast.warn("Please load a patient first"); return; }
+    // R7ez-VERIFY-FIX — backend ConsentFormModel requires `patient`
+    // ObjectId (and prefers `admission` ObjectId for linkage). The
+    // form was sending only the UHID string, so save failed with
+    // Mongoose "Path `patient` is required". Resolve from the loaded
+    // admission record before posting.
+    const patientObjectId =
+      patInfo?.patientId?._id ||
+      (typeof patInfo?.patientId === "string" ? patInfo.patientId : null) ||
+      patInfo?.patient?._id ||
+      (typeof patInfo?.patient === "string" ? patInfo.patient : null);
+    if (!patientObjectId) {
+      toast.error("Cannot save: patient record not loaded. Re-pick the patient from the list.");
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
         ...consentData,
+        patient:    patientObjectId,
+        admission:  patInfo?._id || patInfo?.admissionId || undefined,
+        uhid:       consentData.UHID,
         consentType: selectedType?.key,
         consentTitle: consentData.consentTitle,
         procedureDescription: body,
@@ -894,11 +1196,20 @@ export function ConsentFormPageContent({ selectedPatient }) {
         additionalNotes: consentData.additionalNotes,
         status: "PENDING",
       };
-      await axios.post(API, payload, { headers });
-      toast.success("Consent form saved");
+      const res = await axios.post(API, payload, { headers });
+      // R7ez — keep the new PENDING form in state so the biometric/staff
+      // sign panel below can target it. Do NOT auto-open print preview yet
+      // — that would skip the paperless ceremony.
+      const created = res.data?.data;
+      if (created?._id) {
+        setActiveConsent(created);
+        setBiometricReady(false);
+        toast.success("Draft saved — now capture biometric + staff signature to lock");
+      } else {
+        toast.success("Consent form saved");
+      }
       clearDraft();
       fetchSavedForms();
-      openPreview();
     } catch (err) {
       // FIX (audit P18-B4): the legacy 404-swallow lied to the user
       // about a successful save when the backend route was misrouted /
@@ -906,6 +1217,46 @@ export function ConsentFormPageContent({ selectedPatient }) {
       toast.error(err.response?.data?.message || `Save failed (${err.response?.status || "network"})`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  // R7ez — finalize: PATCH /:id/sign with the body that was already on
+  // the form. Backend re-validates biometric + staff sign + consenting
+  // party before flipping PENDING → SIGNED. Once signed, the print
+  // preview opens automatically so the staff can hand a copy to the
+  // patient / file it.
+  const finalizeConsent = async () => {
+    if (!activeConsent?._id) return;
+    if (!biometricReady) {
+      return toast.warn("Complete biometric + staff signature first");
+    }
+    setFinalizing(true);
+    try {
+      const res = await axios.patch(`${API}/${activeConsent._id}/sign`, {
+        guardianName: consentData.guardianName,
+        guardianRelation: consentData.guardianRelation,
+        witnessName: consentData.witnessName,
+      }, { headers });
+      toast.success("Consent signed & locked ✓");
+      setActiveConsent(null);
+      setBiometricReady(false);
+      fetchSavedForms();
+      openPreview();
+      // Reset back to catalogue after a short delay so the user sees the toast.
+      setTimeout(() => setView("catalogue"), 600);
+    } catch (err) {
+      const code = err.response?.data?.code;
+      const msg = err.response?.data?.message || err.message || "Sign failed";
+      if (code === "CONSENT_INCOMPLETE") {
+        toast.error(`Cannot sign: ${msg}`);
+      } else if (code === "CONSENT_STATE_CHANGED") {
+        toast.warn(msg);
+        setActiveConsent(null);
+      } else {
+        toast.error(msg);
+      }
+    } finally {
+      setFinalizing(false);
     }
   };
 
@@ -917,6 +1268,18 @@ export function ConsentFormPageContent({ selectedPatient }) {
       benefits,
       alternatives,
       consentTitle: consentData.consentTitle,
+      // R7gj — surface the live PENDING/SIGNED consent's biometric +
+      // staff signature blocks into the preview so the footer shows
+      // the actual digital ceremony (fingerprint vendor, timestamp,
+      // staff e-sign) instead of paper-style blank lines.
+      biometric:        activeConsent?.biometric || consentData.biometric,
+      staffSignature:   activeConsent?.staffSignature || consentData.staffSignature,
+      consentingParty:  activeConsent?.consentingParty || consentData.consentingParty,
+      bypass:           activeConsent?.bypass || consentData.bypass,
+      status:           activeConsent?.status,
+      signedAt:         activeConsent?.signedAt,
+      signedByName:     activeConsent?.signedByName,
+      signedByRole:     activeConsent?.signedByRole,
     });
     setPreviewType(selectedType);
   };
@@ -1318,15 +1681,61 @@ export function ConsentFormPageContent({ selectedPatient }) {
             }}>
               <i className="pi pi-eye" style={{ marginRight: 6 }} />Preview
             </button>
-            <button onClick={handleSave} disabled={saving} style={{
+            <button onClick={handleSave} disabled={saving || !!activeConsent} style={{
               padding: "9px 24px", borderRadius: 8, border: "none",
               background: saving ? C.muted : selectedType.color,
               color: "white", fontWeight: 700, fontSize: 13,
-              cursor: saving ? "not-allowed" : "pointer",
+              cursor: (saving || activeConsent) ? "not-allowed" : "pointer",
+              opacity: activeConsent ? 0.55 : 1,
             }}>
-              {saving ? "Saving…" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Save & Print</>}
+              {saving ? "Saving…" : activeConsent ? "Draft saved · capture biometric below" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Save Draft & Begin Sign</>}
             </button>
           </div>
+
+          {/* R7ez — Paperless authentication block: consenting party form,
+              Windows Hello biometric capture, staff e-signature. The whole
+              card stays hidden until handleSave creates the PENDING draft.
+              The Sign-and-Lock button below the card only enables once all
+              three sub-steps are green. */}
+          {activeConsent && (
+            <>
+              <BiometricConsentPanel
+                consentId={activeConsent._id}
+                initialConsentingParty={activeConsent.consentingParty}
+                initialBiometric={activeConsent.biometric}
+                initialStaffSignature={activeConsent.staffSignature}
+                initialBypass={activeConsent.bypass}
+                onUpdated={(doc) => doc && setActiveConsent((prev) => ({ ...(prev || {}), ...doc }))}
+                onAllComplete={() => setBiometricReady(true)}
+                disabled={finalizing}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
+                <button
+                  onClick={() => { if (window.confirm("Discard this draft? The form will need to be saved again.")) { setActiveConsent(null); setBiometricReady(false); } }}
+                  style={{
+                    padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${C.muted}`,
+                    background: "white", color: C.muted, fontWeight: 600, fontSize: 12, cursor: "pointer",
+                  }}
+                >
+                  Discard draft
+                </button>
+                <button
+                  onClick={finalizeConsent}
+                  disabled={!biometricReady || finalizing}
+                  style={{
+                    padding: "10px 28px", borderRadius: 8, border: "none",
+                    background: (!biometricReady || finalizing) ? C.muted : "#16a34a",
+                    color: "white", fontWeight: 800, fontSize: 13,
+                    cursor: (!biometricReady || finalizing) ? "not-allowed" : "pointer",
+                    boxShadow: biometricReady ? "0 4px 14px #16a34a40" : "none",
+                  }}
+                >
+                  <i className="pi pi-check-circle" style={{ marginRight: 6 }} />
+                  {finalizing ? "Signing…" : biometricReady ? "Sign & Lock Consent" : "Complete biometric + e-sign first"}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
       {showSetup && (

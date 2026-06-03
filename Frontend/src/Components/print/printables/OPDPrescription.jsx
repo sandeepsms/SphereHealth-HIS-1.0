@@ -118,10 +118,24 @@ const OPDPrescription = ({ settings, receipt = {} }) => {
     (receipt.printCount && (receipt.printCount.$numberDecimal ?? receipt.printCount)) || 0
   ) || 0;
 
+  // R7eo-A — Pattern A fix: hardcoded "OPD Prescription · Rx" was
+  // misleading on Emergency / Daycare / IPD visits which reuse this
+  // template. Derive from receipt.visitType so the document title
+  // reflects the actual setting. Legacy OPD callers (no visitType)
+  // keep the original label.
+  const visitTypeRaw = receipt.visitType ? String(receipt.visitType).toUpperCase() : "";
+  const docTitle =
+      visitTypeRaw === "IPD"        ? "IPD Prescription · Rx"
+    : visitTypeRaw === "EMERGENCY"  ? "Emergency Prescription · Rx"
+    : visitTypeRaw === "ER"         ? "Emergency Prescription · Rx"
+    : visitTypeRaw === "DAYCARE"    ? "Daycare Prescription · Rx"
+    : visitTypeRaw === "DAY CARE"   ? "Daycare Prescription · Rx"
+                                    : "OPD Prescription · Rx";
+
   return (
     <PrintShell
       settings={settings}
-      documentTitle="OPD Prescription · Rx"
+      documentTitle={docTitle}
       serialNo={receipt.rxNo || receipt.visitNo}
       printCount={printCount}
       /* OPD-PRINT-AUDIT Item 6: a prescription is not a bill — hide the

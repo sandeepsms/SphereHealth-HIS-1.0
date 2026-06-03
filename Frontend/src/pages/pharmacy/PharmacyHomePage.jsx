@@ -647,17 +647,31 @@ function InventoryTab() {
 }
 
 /* ════════════════════════════════════════════════════════════════
-   GRN TAB — record goods receipt
+   GRN TAB — record goods receipt (R7du: user-friendly redesign)
+   Sections: help banner + Drug/Supplier + Batch/Expiry + Pricing/Invoice
+   Smart: today defaults · sale-price auto-suggest · live margin + batch
+   value · expiry shelf-life hint · MRP guard · datalist drug search ·
+   Save-and-add-another for multi-line invoices.
 ══════════════════════════════════════════════════════════════════ */
 function GRNTab() {
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const blankForm = () => ({
+    drugId: "", supplierId: "", batchNo: "", mfgDate: "", expiryDate: "",
+    quantityIn: "", purchaseRate: "", mrp: "", salePrice: "",
+    invoiceNo: "", invoiceDate: todayISO,
+  });
+
   const [drugs, setDrugs] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
-  const [form, setForm] = useState({
-    drugId: "", supplierId: "", batchNo: "", mfgDate: "", expiryDate: "",
-    quantityIn: 0, purchaseRate: 0, mrp: 0, salePrice: 0,
-    invoiceNo: "", invoiceDate: "",
-  });
+  const [form, setForm] = useState(blankForm());
+  const [drugQuery, setDrugQuery] = useState("");
   const [saving, setSaving] = useState(false);
+  const [lastGRN, setLastGRN] = useState(null);
+  // Track whether sale price has been user-edited. While true, MRP keeps
+  // pushing live updates so multi-digit typing (1 → 15 → 150) tracks
+  // properly. Flips to false the moment the user types in salePrice
+  // directly, so we never overwrite their explicit choice.
+  const [autoSalePrice, setAutoSalePrice] = useState(true);
 
   useEffect(() => {
     (async () => {
@@ -668,64 +682,280 @@ function GRNTab() {
     })();
   }, []);
 
+  // Datalist label → drug. Tries exact label match first; falls back to a
+  // case-insensitive prefix match so partial typing still resolves.
+  const drugLabel = (d) => `${d.name}${d.strength ? " · " + d.strength : ""}`;
+  const selectedDrug = useMemo(() => {
+    const q = drugQuery.trim();
+    if (!q) return null;
+    const ql = q.toLowerCase();
+    return drugs.find(d => drugLabel(d).toLowerCase() === ql)
+        || drugs.find(d => drugLabel(d).toLowerCase().startsWith(ql))
+        || null;
+  }, [drugQuery, drugs]);
+
+  useEffect(() => {
+    setForm(p => {
+      const next = selectedDrug?._id || "";
+      return p.drugId === next ? p : { ...p, drugId: next };
+    });
+  }, [selectedDrug]);
+
   const upd = (k) => (e) => setForm(p => ({ ...p, [k]: e.target.value }));
-  const submit = async () => {
-    if (!form.drugId || !form.batchNo || !form.expiryDate || !form.quantityIn) {
-      toast.warn("Drug, batch, expiry, and quantity are required");
-      return;
-    }
+
+  // MRP entered → keep sale price live-tracked at MRP -10% until user
+  // overrides. This makes typing "150" → 1 → 15 → 150 update salePrice
+  // through 0.9 → 13.5 → 135 instead of locking at 0.9 forever.
+  const onMrpChange = (e) => {
+    const val = e.target.value;
+    setForm(p => {
+      const next = { ...p, mrp: val };
+      if (autoSalePrice && Number(val) > 0) {
+        next.salePrice = (Math.round(Number(val) * 0.9 * 100) / 100).toString();
+      } else if (autoSalePrice && val === "") {
+        next.salePrice = "";
+      }
+      return next;
+    });
+  };
+
+  // User typed in sale price → stop auto-tracking from MRP. Clearing
+  // the field re-enables auto-suggest from MRP.
+  const onSalePriceChange = (e) => {
+    const val = e.target.value;
+    setAutoSalePrice(val === "");
+    setForm(p => ({ ...p, salePrice: val }));
+  };
+
+  // Derived metrics
+  const qty   = Number(form.quantityIn)   || 0;
+  const pRate = Number(form.purchaseRate) || 0;
+  const mrp   = Number(form.mrp)          || 0;
+  const sale  = Number(form.salePrice)    || 0;
+  const batchValue = qty * pRate;
+  const marginAbs  = sale - pRate;
+  const marginPct  = pRate > 0 ? Math.round((marginAbs / pRate) * 100) : 0;
+
+  // Expiry shelf-life hint
+  let expiryHint = null;
+  if (form.expiryDate) {
+    const days = Math.floor((new Date(form.expiryDate) - new Date()) / 86400000);
+    if (days < 0)        expiryHint = { color: C.red,    text: `Already expired ${-days} day(s) ago` };
+    else if (days < 180) expiryHint = { color: C.amber,  text: `Short shelf life — ${days} day(s) remaining` };
+    else                 expiryHint = { color: C.green,  text: `${Math.round(days / 30)} months shelf life ✓` };
+  }
+
+  // Mfg-after-expiry guard
+  const mfgAfterExpiry = form.mfgDate && form.expiryDate && form.mfgDate > form.expiryDate;
+  // Sale > MRP is illegal in India
+  const saleAboveMrp = mrp > 0 && sale > mrp;
+
+  const submit = async (addAnother) => {
+    if (!form.drugId)       { toast.warn("Select a drug from the list");     return; }
+    if (!form.batchNo)      { toast.warn("Batch number is required");        return; }
+    if (!form.expiryDate)   { toast.warn("Expiry date is required");         return; }
+    if (qty <= 0)           { toast.warn("Quantity must be greater than 0"); return; }
+    if (mfgAfterExpiry)     { toast.warn("Mfg date cannot be after expiry"); return; }
+    if (saleAboveMrp)       { toast.warn("Sale price cannot exceed MRP");    return; }
     setSaving(true);
     try {
       const supplier = suppliers.find(s => s._id === form.supplierId);
       const r = await recordGRN({
         ...form,
         supplierName: supplier?.name || "",
-        quantityIn:   Number(form.quantityIn),
-        purchaseRate: Number(form.purchaseRate),
-        mrp:          Number(form.mrp),
-        salePrice:    Number(form.salePrice),
+        quantityIn:   qty,
+        purchaseRate: pRate,
+        mrp:          mrp,
+        salePrice:    sale,
       });
       toast.success(`GRN ${r.grnNumber} recorded`);
-      setForm({
-        drugId: "", supplierId: "", batchNo: "", mfgDate: "", expiryDate: "",
-        quantityIn: 0, purchaseRate: 0, mrp: 0, salePrice: 0, invoiceNo: "", invoiceDate: "",
-      });
+      setLastGRN({ number: r.grnNumber, drug: drugLabel(selectedDrug || {}) || "—", supplier: supplier?.name || "—", qty });
+      if (addAnother) {
+        // Keep supplier + invoice context — typical multi-line invoice
+        setForm(p => ({
+          ...blankForm(),
+          supplierId: p.supplierId,
+          invoiceNo:  p.invoiceNo,
+          invoiceDate: p.invoiceDate,
+        }));
+      } else {
+        setForm(blankForm());
+      }
+      setDrugQuery("");
+      setAutoSalePrice(true);
     } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   };
 
+  const Req  = () => <span style={{ color: C.red, fontWeight: 800, marginLeft: 2 }}>*</span>;
+  const hint = (color, text) => <div style={{ fontSize: 11, color, marginTop: 4, fontWeight: 600 }}>{text}</div>;
+
   return (
-    <Card title="Record Goods Receipt (GRN)" color={C.purple} icon="pi-download">
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Field label="Drug *">
-          <select className="his-select" value={form.drugId} onChange={upd("drugId")}>
-            <option value="">Select drug…</option>
-            {drugs.map(d => <option key={d._id} value={d._id}>{d.name} {d.strength && `· ${d.strength}`}</option>)}
-          </select>
-        </Field>
-        <Field label="Supplier">
-          <select className="his-select" value={form.supplierId} onChange={upd("supplierId")}>
-            <option value="">Select supplier…</option>
-            {suppliers.map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
-          </select>
-        </Field>
-        <Field label="Batch number *"><input className="his-field" value={form.batchNo} onChange={upd("batchNo")} placeholder="ABC123" /></Field>
-        <Field label="Mfg date"><input type="date" className="his-field" value={form.mfgDate} onChange={upd("mfgDate")} /></Field>
-        <Field label="Expiry date *"><input type="date" className="his-field" value={form.expiryDate} onChange={upd("expiryDate")} /></Field>
-        <Field label="Quantity received *"><input type="number" className="his-field" value={form.quantityIn} onChange={upd("quantityIn")} /></Field>
-        <Field label="Purchase rate ₹"><input type="number" className="his-field" value={form.purchaseRate} onChange={upd("purchaseRate")} /></Field>
-        <Field label="MRP ₹"><input type="number" className="his-field" value={form.mrp} onChange={upd("mrp")} /></Field>
-        <Field label="Sale price ₹"><input type="number" className="his-field" value={form.salePrice} onChange={upd("salePrice")} /></Field>
-        <Field label="Invoice no."><input className="his-field" value={form.invoiceNo} onChange={upd("invoiceNo")} /></Field>
-        <Field label="Invoice date"><input type="date" className="his-field" value={form.invoiceDate} onChange={upd("invoiceDate")} /></Field>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Help banner — answers "what is GRN, why am I filling this?" */}
+      <div style={{ background: C.purpleL, border: `1px solid ${C.purple}33`, borderRadius: 10, padding: "11px 14px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+        <i className="pi pi-info-circle" style={{ color: C.purple, fontSize: 18, marginTop: 1 }} />
+        <div style={{ fontSize: 12, color: C.text, lineHeight: 1.55 }}>
+          <strong style={{ color: C.purple }}>GRN — Goods Receipt Note.</strong>{" "}
+          Record every batch you receive from a supplier here. Required for D&amp;C Rules §65, NABH MOM.4 audit trail, and GST input-tax credit. Each entry creates a stock batch consumed FEFO (first-expiry-first-out) when you dispense.
+        </div>
       </div>
-      <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
-        <button onClick={submit} disabled={saving}
-          style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: saving ? "#94a3b8" : C.purple, color: "#fff", fontWeight: 800, fontSize: 13, cursor: saving ? "not-allowed" : "pointer" }}>
-          {saving ? "Recording…" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Record GRN</>}
-        </button>
-      </div>
-    </Card>
+
+      {/* Success ribbon — confirms what just happened */}
+      {lastGRN && (
+        <div style={{ background: C.greenL, border: `1px solid ${C.green}55`, borderRadius: 10, padding: "9px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 12, color: C.green, fontWeight: 700 }}>
+            <i className="pi pi-check-circle" style={{ marginRight: 6 }} />
+            GRN <span style={{ fontFamily: "DM Mono, monospace" }}>{lastGRN.number}</span> recorded — {lastGRN.drug} ({lastGRN.qty} units) from {lastGRN.supplier}
+          </div>
+          <button onClick={() => setLastGRN(null)} title="Dismiss"
+            style={{ background: "transparent", border: "none", color: C.green, cursor: "pointer", fontSize: 13 }}>
+            <i className="pi pi-times" />
+          </button>
+        </div>
+      )}
+
+      <Card title="Record Goods Receipt (GRN)" color={C.purple} icon="pi-download">
+        {/* ── Section 1: Drug & Supplier ─────────────────────────── */}
+        <GRNSection icon="pi-tag" text="Drug & Supplier" />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
+          <Field label={<>Drug<Req /></>}>
+            <input
+              className="his-field"
+              list="grn-drugs-list"
+              placeholder="Type drug name to search…"
+              value={drugQuery}
+              onChange={(e) => setDrugQuery(e.target.value)}
+              autoComplete="off"
+            />
+            <datalist id="grn-drugs-list">
+              {drugs.map(d => <option key={d._id} value={drugLabel(d)} />)}
+            </datalist>
+            {selectedDrug
+              ? hint(C.green, `✓ ${drugLabel(selectedDrug)}${selectedDrug.form ? " · " + selectedDrug.form : ""}${selectedDrug.category ? " · " + selectedDrug.category : ""}`)
+              : hint(C.muted, drugQuery ? "No drug matched — refine search or add via Drug Master" : "Start typing — autocomplete suggests from drug master")
+            }
+          </Field>
+
+          <Field label="Supplier">
+            <select className="his-select" value={form.supplierId} onChange={upd("supplierId")}>
+              <option value="">Select supplier…</option>
+              {suppliers.map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+            </select>
+            {hint(C.muted, "Optional — links batch to purchase register & supplier ledger")}
+          </Field>
+        </div>
+
+        {/* ── Section 2: Batch & Expiry ──────────────────────────── */}
+        <GRNSection icon="pi-box" text="Batch & Expiry" />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 18 }}>
+          <Field label={<>Batch number<Req /></>}>
+            <input className="his-field" value={form.batchNo} onChange={upd("batchNo")} placeholder="e.g. ABC123" />
+            {hint(C.muted, "Printed on the strip / vial")}
+          </Field>
+          <Field label="Manufacturing date">
+            <input type="date" className="his-field" max={todayISO}
+              value={form.mfgDate} onChange={upd("mfgDate")} />
+            {mfgAfterExpiry && hint(C.red, "Mfg date is after expiry — please check")}
+          </Field>
+          <Field label={<>Expiry date<Req /></>}>
+            <input type="date" className="his-field" min={todayISO}
+              value={form.expiryDate} onChange={upd("expiryDate")} />
+            {expiryHint && hint(expiryHint.color, expiryHint.text)}
+          </Field>
+        </div>
+
+        {/* ── Section 3: Pricing & Invoice ───────────────────────── */}
+        <GRNSection icon="pi-receipt" text="Pricing & Invoice" />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
+          <Field label={<>Quantity received<Req /></>}>
+            <input type="number" min="1" className="his-field"
+              value={form.quantityIn} onChange={upd("quantityIn")} placeholder="e.g. 100" />
+          </Field>
+          <Field label="Purchase rate ₹ / unit">
+            <input type="number" min="0" step="0.01" className="his-field"
+              value={form.purchaseRate} onChange={upd("purchaseRate")} placeholder="0.00" />
+          </Field>
+          <Field label="MRP ₹ / unit">
+            <input type="number" min="0" step="0.01" className="his-field"
+              value={form.mrp} onChange={onMrpChange} placeholder="0.00" />
+            {mrp > 0 && hint(C.muted, "Sale price auto-suggested at MRP −10%")}
+          </Field>
+          <Field label="Sale price ₹ / unit">
+            <input type="number" min="0" step="0.01" className="his-field"
+              value={form.salePrice} onChange={onSalePriceChange} placeholder="auto from MRP" />
+            {saleAboveMrp && hint(C.red, "Sale price cannot exceed MRP")}
+            {!autoSalePrice && hint(C.muted, "Manual override — clear field to re-link to MRP")}
+          </Field>
+          <Field label="Invoice number">
+            <input className="his-field" value={form.invoiceNo} onChange={upd("invoiceNo")} placeholder="e.g. INV-2026-001" />
+          </Field>
+          <Field label="Invoice date">
+            <input type="date" className="his-field" max={todayISO}
+              value={form.invoiceDate} onChange={upd("invoiceDate")} />
+          </Field>
+          <div />
+          <div />
+        </div>
+
+        {/* Live metrics — only when there's something to show */}
+        {(qty > 0 || pRate > 0 || sale > 0) && (
+          <div style={{ marginTop: 14, padding: "11px 16px", background: C.subtle, border: `1px solid ${C.border}`, borderRadius: 10, display: "flex", gap: 32, flexWrap: "wrap", alignItems: "center" }}>
+            <div>
+              <div style={{ color: C.muted, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700 }}>Batch value</div>
+              <div style={{ color: C.text, fontWeight: 800, fontSize: 15, marginTop: 3 }}>{fmtINR(batchValue)}</div>
+            </div>
+            <div>
+              <div style={{ color: C.muted, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700 }}>Margin / unit</div>
+              <div style={{ color: marginAbs >= 0 ? C.green : C.red, fontWeight: 800, fontSize: 15, marginTop: 3 }}>
+                {fmtINR(marginAbs)}{pRate > 0 && <span style={{ fontWeight: 600, fontSize: 12, marginLeft: 4 }}>({marginPct}%)</span>}
+              </div>
+            </div>
+            {qty > 0 && sale > 0 && (
+              <div>
+                <div style={{ color: C.muted, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700 }}>Potential revenue</div>
+                <div style={{ color: C.purple, fontWeight: 800, fontSize: 15, marginTop: 3 }}>{fmtINR(qty * sale)}</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Footer actions */}
+        <div style={{ marginTop: 18, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 11, color: C.muted }}>
+            <i className="pi pi-info-circle" style={{ marginRight: 4 }} />
+            Fields marked <span style={{ color: C.red, fontWeight: 800 }}>*</span> are required
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => { setForm(blankForm()); setDrugQuery(""); setAutoSalePrice(true); }} disabled={saving}
+              style={{ padding: "9px 16px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12, cursor: saving ? "not-allowed" : "pointer" }}>
+              <i className="pi pi-refresh" style={{ marginRight: 6 }} />Reset
+            </button>
+            <button onClick={() => submit(true)} disabled={saving}
+              title="Save this batch and start another — keeps supplier + invoice"
+              style={{ padding: "9px 18px", borderRadius: 8, border: `1.5px solid ${C.purple}`, background: "#fff", color: C.purple, fontWeight: 800, fontSize: 12, cursor: saving ? "not-allowed" : "pointer" }}>
+              <i className="pi pi-plus" style={{ marginRight: 6 }} />Save &amp; add another
+            </button>
+            <button onClick={() => submit(false)} disabled={saving}
+              style={{ padding: "10px 22px", borderRadius: 8, border: "none", background: saving ? "#94a3b8" : C.purple, color: "#fff", fontWeight: 800, fontSize: 13, cursor: saving ? "not-allowed" : "pointer" }}>
+              {saving ? "Recording…" : <><i className="pi pi-save" style={{ marginRight: 6 }} />Record GRN</>}
+            </button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// Small section divider used inside GRN tab — purple icon + uppercase
+// label with a dashed underline. Keeps the three field groups visually
+// distinct without inflating the card to multiple Cards.
+function GRNSection({ icon, text }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, paddingBottom: 6, borderBottom: `1px dashed ${C.border}` }}>
+      <i className={`pi ${icon}`} style={{ color: C.purple, fontSize: 12 }} />
+      <span style={{ fontWeight: 800, fontSize: 11.5, color: C.purple, textTransform: "uppercase", letterSpacing: ".5px" }}>{text}</span>
+    </div>
   );
 }
 
@@ -857,11 +1087,22 @@ function DispenseTab() {
       // Pharmacy settings travel with the payload so the bill renders
       // the right header/footer (hospital vs outsourced).
       const phSet = await getCachedPhSettings();
+      // R7eo-B — Pattern B caller payload gap fix: derive billLabel +
+      // forward customer GST identity so the pharmacy template can title
+      // it Cash Memo / Tax Invoice / Pharmacy Bill and render the B2B
+      // GSTIN block when set.
       openPrint("pharmacy-bill", {
         ...r.data,
         template:     phSet?.billTemplate || 1,
         defaultPaper: phSet?.defaultPaper || "half-a4",
         pharmacySettings: phSet,
+        billLabel:        r.data.saleType === "Walk-in" ? "Cash Memo" : r.data.customerGstin ? "Tax Invoice" : "Pharmacy Bill",
+        customerGstin:    r.data.customerGstin     || null,
+        customerLegalName:r.data.customerLegalName || null,
+        customerAddress:  r.data.customerAddress   || null,
+        customerState:    r.data.customerState     || null,
+        placeOfSupply:    r.data.placeOfSupply     || null,
+        saleType:         r.data.saleType          || null,
         // R7bh-F1 / META-1: PrintAudit anchor — PharmacyBill maps to
         // PharmacySale in ENTITY_MODEL. Bumps printCount + writes
         // DUPLICATE watermark on reprints (GST §35 / D&C audit trail).
@@ -1136,11 +1377,21 @@ function SalesTab() {
                 <RowAction icon="pi-print" color={C.blue}
                   onClick={async () => {
                     const phSet = await getCachedPhSettings();
+                    // R7eo-B — Pattern B caller payload gap fix: forward
+                    // billLabel + B2B GST identity so the reprint shows
+                    // the same title and GST block as the original.
                     openPrint("pharmacy-bill", {
                       ...s,
                       template:      phSet?.billTemplate || 1,
                       defaultPaper:  phSet?.defaultPaper || "half-a4",
                       pharmacySettings: phSet,
+                      billLabel:         s.saleType === "Walk-in" ? "Cash Memo" : s.customerGstin ? "Tax Invoice" : "Pharmacy Bill",
+                      customerGstin:     s.customerGstin     || null,
+                      customerLegalName: s.customerLegalName || null,
+                      customerAddress:   s.customerAddress   || null,
+                      customerState:     s.customerState     || null,
+                      placeOfSupply:     s.placeOfSupply     || null,
+                      saleType:          s.saleType          || null,
                       // R7bh-F1 / META-1: PrintAudit anchor — reprint
                       // from the sales register bumps printCount on
                       // the PharmacySale so DUPLICATE watermark fires.
@@ -1278,6 +1529,10 @@ function ReturnModal({ sale, onClose, onDone }) {
       // Auto-open the revised tax invoice right after — caller can keep
       // both windows side-by-side.
       setTimeout(() => {
+        // R7eo-B — Pattern B caller payload gap fix: forward B2B GST
+        // identity onto the revised invoice so the reprint matches the
+        // original tax invoice format. billLabel stays "REVISED TAX
+        // INVOICE" — this is the post-return reprint variant.
         openPrint("pharmacy-bill", {
           ...updated,
           template:     phSet?.billTemplate || 1,
@@ -1285,6 +1540,12 @@ function ReturnModal({ sale, onClose, onDone }) {
           pharmacySettings: phSet,
           // header overlay so the bill is clearly labelled as REVISED
           billLabel: "REVISED TAX INVOICE", revisionNote: `${updated.returns?.length || 1} return event(s) applied · latest ${rec.refundSlipNumber}`,
+          customerGstin:     updated.customerGstin     || null,
+          customerLegalName: updated.customerLegalName || null,
+          customerAddress:   updated.customerAddress   || null,
+          customerState:     updated.customerState     || null,
+          placeOfSupply:     updated.placeOfSupply     || null,
+          saleType:          updated.saleType          || null,
           // R7bh-F1 / META-1: PrintAudit anchor — revised invoice
           // reprint after a return event.
           printAudit: {
@@ -1495,6 +1756,10 @@ function AddItemsModal({ sale, onClose, onDone }) {
       // Auto-print revised tax invoice — patient + pharmacy each need a copy
       const phSet = await getCachedPhSettings();
       setTimeout(() => {
+        // R7eo-B — Pattern B caller payload gap fix: forward B2B GST
+        // identity onto the supplementary reprint so the debit-note
+        // matches the original tax invoice. billLabel stays "REVISED
+        // TAX INVOICE" — this is the post-addendum reprint variant.
         openPrint("pharmacy-bill", {
           ...updated,
           template:     phSet?.billTemplate || 1,
@@ -1502,6 +1767,12 @@ function AddItemsModal({ sale, onClose, onDone }) {
           pharmacySettings: phSet,
           billLabel: "REVISED TAX INVOICE",
           revisionNote: `Supplementary slip ${rec.supplementSlipNumber} · ${fmtINR(rec.addedTotal)} added`,
+          customerGstin:     updated.customerGstin     || null,
+          customerLegalName: updated.customerLegalName || null,
+          customerAddress:   updated.customerAddress   || null,
+          customerState:     updated.customerState     || null,
+          placeOfSupply:     updated.placeOfSupply     || null,
+          saleType:          updated.saleType          || null,
           // R7bh-F1 / META-1: PrintAudit anchor — supplementary
           // (debit-note) reprint tracked against the parent sale.
           printAudit: {
@@ -2926,6 +3197,18 @@ function OPDRxTab() {
   const [qdFefoBatch, setQdFefoBatch] = useState(null);
   const [qdBatchLoading, setQdBatchLoading] = useState(false);
 
+  // R7dv — "Dispense All" state. One click on a visit auto-matches every
+  // prescribed medicine against inventory, computes the needed quantity
+  // from frequency × duration, caps it at the FEFO batch's remaining
+  // stock, then opens a preview modal where the pharmacist confirms /
+  // tweaks before a SINGLE multi-item dispense() POST hits the wire.
+  const [daOpen, setDaOpen]             = useState(false);
+  const [daVisit, setDaVisit]           = useState(null);
+  const [daItems, setDaItems]           = useState([]); // [{med, drug, batch, needed, qty, unitPrice, status, note}]
+  const [daPaymentMode, setDaPaymentMode] = useState("Cash");
+  const [daSaving, setDaSaving]         = useState(false);
+  const [daPreparing, setDaPreparing]   = useState(false);
+
   const today = new Date().toLocaleDateString("en-IN", {
     weekday: "long", day: "2-digit", month: "long", year: "numeric",
   });
@@ -3122,6 +3405,193 @@ function OPDRxTab() {
     }
   };
 
+  /* ── R7dv — Dispense All (one-click) ──────────────────────────────
+     Auto-matches every prescribed medicine against the inventory drug
+     master + FEFO batch, computes needed qty, caps at stock, opens a
+     preview modal where the pharmacist can tweak qty before a SINGLE
+     multi-item dispense() POST. No per-row clicks needed.
+  ──────────────────────────────────────────────────────────────── */
+
+  // Strip "Tab/Cap/Syp/Inj/Cream/Oint/Drops" form prefix so the
+  // inventory search hits the molecule name. e.g. "Tab Paracetamol
+  // 500mg" → "Paracetamol 500mg".
+  const stripFormPrefix = (name) =>
+    String(name || "").replace(/^(tab\.?|cap\.?|syp\.?|inj\.?|cream|oint\.?|drop[s]?)\s+/i, "").trim();
+
+  // Frequency → doses/day. Covers the abbreviations our doctors use.
+  const parseFrequency = (f) => {
+    const x = String(f || "").toUpperCase();
+    if (/Q4H|6\s*[×x]/.test(x)) return 6;
+    if (/QID|Q6H/.test(x)) return 4;
+    if (/TDS|TID|Q8H/.test(x)) return 3;
+    if (/BD|BID|Q12H/.test(x)) return 2;
+    if (/OD|QD|HS|MORN|EVE|NIGHT/.test(x)) return 1;
+    if (/SOS|PRN/.test(x)) return 1;
+    return 1;
+  };
+
+  // Duration → days. "5 days" / "x 5 days" / "5d" all → 5. Default 5.
+  const parseDuration = (d) => {
+    const m = String(d || "").match(/(\d+)/);
+    return m ? Math.max(1, Number(m[1])) : 5;
+  };
+
+  // Best-match: search inventory for the medicine name (form prefix
+  // stripped) and pick the candidate whose normalised name most
+  // closely matches the prescription.
+  const matchInventoryDrug = async (medicineName) => {
+    const q = stripFormPrefix(medicineName);
+    if (q.length < 2) return null;
+    try {
+      const r = await listDrugs({ q, limit: 5 });
+      const list = Array.isArray(r) ? r : (r?.data || []);
+      if (!list.length) return null;
+      const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const targetN = norm(q);
+      // Score by: exact match > startsWith > includes > first
+      const scored = list.map(d => {
+        const candidate = norm(d.brandName || d.genericName || d.name);
+        if (candidate === targetN) return { d, s: 100 };
+        if (candidate.startsWith(targetN) || targetN.startsWith(candidate)) return { d, s: 80 };
+        if (candidate.includes(targetN) || targetN.includes(candidate)) return { d, s: 60 };
+        return { d, s: 0 };
+      }).sort((a, b) => b.s - a.s);
+      return scored[0]?.d || list[0];
+    } catch (_) { return null; }
+  };
+
+  // Pull the FEFO batch: in-stock + earliest expiry not yet expired.
+  // Returns null if no batch available.
+  const findFefoBatch = async (drugId) => {
+    try {
+      const r = await listBatches({ drugId });
+      const list = Array.isArray(r) ? r : (r?.data || []);
+      const now = Date.now();
+      return list
+        .filter(b => {
+          const rem = Number(b.remaining ?? b.qtyRemaining ?? b.qty ?? 0);
+          const exp = b.expiryDate ? new Date(b.expiryDate).getTime() : Infinity;
+          return rem > 0 && exp > now;
+        })
+        .sort((a, b) => {
+          const ea = a.expiryDate ? new Date(a.expiryDate).getTime() : Infinity;
+          const eb = b.expiryDate ? new Date(b.expiryDate).getTime() : Infinity;
+          return ea - eb;
+        })[0] || null;
+    } catch (_) { return null; }
+  };
+
+  // One-click trigger: open the modal, then resolve every prescribed
+  // medicine in parallel. Each row shows real-time status while
+  // resolving (matching → batch → ready / out-of-stock / no-match).
+  const openDispenseAll = async (visit) => {
+    const meds = Array.isArray(visit.prescribedMedications) ? visit.prescribedMedications : [];
+    if (meds.length === 0) { toast.info("No prescribed medicines in this visit"); return; }
+    setDaVisit(visit);
+    setDaItems(meds.map((med, i) => ({
+      _id: i, med, drug: null, batch: null,
+      needed: 0, qty: 0, unitPrice: 0,
+      status: "matching", note: "",
+    })));
+    setDaPaymentMode("Cash");
+    setDaOpen(true);
+    setDaPreparing(true);
+
+    // Resolve all in parallel — usually <500ms total.
+    const resolved = await Promise.all(meds.map(async (med) => {
+      const needed = parseFrequency(med.frequency) * parseDuration(med.duration);
+      const drug = await matchInventoryDrug(med.medicineName);
+      if (!drug) {
+        return { med, drug: null, batch: null, needed, qty: 0, unitPrice: 0,
+                 status: "no-match", note: `No inventory match for "${stripFormPrefix(med.medicineName)}"` };
+      }
+      const batch = await findFefoBatch(drug._id);
+      if (!batch) {
+        const fallbackPrice = Number(drug.sellPrice || drug.mrp || drug.unitPrice || 0);
+        return { med, drug, batch: null, needed, qty: 0, unitPrice: fallbackPrice,
+                 status: "out-of-stock", note: "No in-stock batch — GRN required" };
+      }
+      const stock = Number(batch.remaining ?? batch.qtyRemaining ?? 0);
+      const qty   = Math.min(needed, stock);                              // cap at stock
+      const price = Number(batch.salePrice ?? batch.sellPrice ?? batch.mrp ?? 0);
+      const isShort = qty < needed;
+      return { med, drug, batch, needed, qty, unitPrice: price,
+               status: isShort ? "short" : "ready",
+               note: isShort ? `Only ${stock} in stock (need ${needed})` : "" };
+    }));
+
+    setDaItems(resolved.map((r, i) => ({ ...r, _id: i })));
+    setDaPreparing(false);
+  };
+
+  const updateDaQty = (id, raw) => {
+    setDaItems(prev => prev.map(it => {
+      if (it._id !== id) return it;
+      const stock = Number(it.batch?.remaining ?? it.batch?.qtyRemaining ?? 0);
+      const n = Math.max(0, Number(raw) || 0);
+      // Don't let the user dispense more than stock — backend would 400 anyway.
+      const capped = stock > 0 ? Math.min(n, stock) : n;
+      return { ...it, qty: capped };
+    }));
+  };
+
+  const removeDaRow = (id) => {
+    setDaItems(prev => prev.filter(it => it._id !== id));
+  };
+
+  const daSellable = daItems.filter(it => it.drug && it.qty > 0 && it.batch);
+  const daTotal    = daSellable.reduce((s, it) => s + (Number(it.qty) * Number(it.unitPrice || 0)), 0);
+  const daSkipped  = daItems.length - daSellable.length;
+
+  const submitDispenseAll = async () => {
+    if (daSellable.length === 0) { toast.warn("Nothing to dispense — every row is skipped"); return; }
+    const visit = daVisit || {};
+    const docName = visit.consultantName ||
+      (visit.doctorId?.personalInfo
+        ? `Dr. ${visit.doctorId.personalInfo.firstName || ""} ${visit.doctorId.personalInfo.lastName || ""}`.trim()
+        : "");
+    const rxRef = visit.visitNumber || "";
+    setDaSaving(true);
+    try {
+      const r = await dispense({
+        patientUHID:     searchedUhid,
+        patientName:     patient?.fullName || visit.patientName || "",
+        age:             patient?.age || "",
+        gender:          patient?.gender || "",
+        contactNumber:   patient?.contactNumber || "",
+        doctorName:      docName,
+        prescriptionRef: rxRef,
+        saleType:        "OPD",
+        paymentMode:     daPaymentMode,
+        items: daSellable.map(it => ({
+          drugId:          it.drug._id,
+          drugName:        it.drug.brandName || it.drug.genericName || it.drug.name,
+          quantity:        Number(it.qty),
+          unitPrice:       Number(it.unitPrice),
+          gstRate:         Number(it.drug.gstRate || it.drug.taxPercentage || 0),
+          discountPercent: 0,
+          prescriptionRef: rxRef,
+          prescriberName:  docName,
+        })),
+        sourceContext: {
+          source:      "OPD-Rx-DispenseAll",
+          visitNumber: rxRef,
+          itemCount:   daSellable.length,
+        },
+      });
+      const billNo = r?.data?.billNumber || r?.data?.data?.billNumber || "";
+      toast.success(`Dispensed ${daSellable.length} item${daSellable.length === 1 ? "" : "s"} — Bill ${billNo}`);
+      setDaOpen(false);
+      setDaVisit(null);
+      setDaItems([]);
+    } catch (e) {
+      const msg = e?.response?.data?.message || e.message || "Dispense failed";
+      toast.error(msg);
+    } finally {
+      setDaSaving(false);
+    }
+  };
+
   return (
     <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
       {/* Header row — UHID input + Load + Clear */}
@@ -3286,13 +3756,30 @@ function OPDRxTab() {
               </span>
               <span style={{ fontSize: 12, color: C.muted }}>· {deptName}</span>
               <span style={{ fontSize: 12, fontWeight: 700, color: C.orange }}>· {doctorName}</span>
-              {v.status && (
-                <span style={{ marginLeft: "auto", padding: "2px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700,
-                  background: v.status === "Completed" ? "#dcfce7" : "#dbeafe",
-                  color:      v.status === "Completed" ? "#15803d" : "#1d4ed8",
-                  textTransform: "uppercase", letterSpacing: ".4px",
-                }}>{v.status}</span>
-              )}
+              {/* Right-aligned cluster: status pill + R7dv one-click Dispense-All */}
+              <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+                {v.status && (
+                  <span style={{ padding: "2px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700,
+                    background: v.status === "Completed" ? "#dcfce7" : "#dbeafe",
+                    color:      v.status === "Completed" ? "#15803d" : "#1d4ed8",
+                    textTransform: "uppercase", letterSpacing: ".4px",
+                  }}>{v.status}</span>
+                )}
+                {meds.length > 0 && (
+                  <button
+                    onClick={() => openDispenseAll(v)}
+                    style={{
+                      padding: "5px 14px", background: C.orange, color: "#fff", border: "none",
+                      borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: "pointer",
+                      boxShadow: "0 1px 3px rgba(234,88,12,.3)",
+                    }}
+                    title="Auto-match all prescribed medicines against inventory, cap quantities at stock, and confirm in one shot"
+                  >
+                    <i className="pi pi-bolt" style={{ marginRight: 5, fontSize: 11 }} />
+                    Dispense All ({meds.length})
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Complaint + diagnosis */}
@@ -3512,6 +3999,198 @@ function OPDRxTab() {
                 }}>
                   <i className={`pi ${qdSaving ? "pi-spin pi-spinner" : "pi-check"}`} style={{ marginRight: 5 }} />
                   {qdSaving ? "Dispensing…" : "Confirm & Sell"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* R7dv — Dispense-All Modal: bulk sale of every prescribed med. */}
+      {daOpen && (
+        <div onClick={() => !daSaving && setDaOpen(false)} style={{
+          position: "fixed", inset: 0, background: "rgba(15,23,42,.55)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10001,
+        }}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            width: 940, maxWidth: "96vw", maxHeight: "90vh", background: "#fff", borderRadius: 14,
+            boxShadow: "0 20px 50px rgba(0,0,0,.3)", display: "flex", flexDirection: "column",
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: "14px 22px", borderBottom: `1px solid ${C.border}`,
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              background: `linear-gradient(135deg, ${C.orange}, ${C.orange}cc)`, color: "#fff",
+            }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 800 }}>
+                  <i className="pi pi-bolt" style={{ marginRight: 8 }} />
+                  Dispense All — Bulk Sale
+                </div>
+                <div style={{ fontSize: 11, opacity: 0.95, marginTop: 2 }}>
+                  {daVisit?.visitNumber || ""} · {patient?.fullName || ""} ({searchedUhid})
+                  {daVisit?.consultantName && <> · {daVisit.consultantName}</>}
+                </div>
+              </div>
+              <button onClick={() => !daSaving && setDaOpen(false)} disabled={daSaving} style={{
+                width: 30, height: 30, borderRadius: 7, border: "none",
+                background: "rgba(255,255,255,.2)", color: "#fff",
+                cursor: daSaving ? "not-allowed" : "pointer", fontSize: 16,
+              }}>×</button>
+            </div>
+
+            {/* Help banner */}
+            <div style={{ padding: "10px 22px", background: "#fff7ed", borderBottom: `1px solid ${C.border}`, fontSize: 11.5, color: "#9a3412", display: "flex", alignItems: "center", gap: 8 }}>
+              <i className="pi pi-info-circle" style={{ fontSize: 14 }} />
+              <span>
+                Each prescribed medicine auto-matched against inventory + FEFO batch. Qty is computed from frequency × duration and capped at available stock. Edit any qty inline, then confirm to fire a single multi-item sale.
+              </span>
+            </div>
+
+            {/* Table */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "12px 22px" }}>
+              {daPreparing ? (
+                <div style={{ padding: 40, textAlign: "center", color: C.muted, fontSize: 13 }}>
+                  <i className="pi pi-spin pi-spinner" style={{ fontSize: 24, marginBottom: 10, display: "block" }} />
+                  Auto-matching {daItems.length} medicine{daItems.length === 1 ? "" : "s"} against inventory…
+                </div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: "#f1f5f9", borderBottom: `2px solid ${C.border}` }}>
+                      <th style={{ padding: "8px 8px", textAlign: "left",  fontSize: 10, color: C.muted, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px" }}>Prescribed</th>
+                      <th style={{ padding: "8px 8px", textAlign: "left",  fontSize: 10, color: C.muted, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px" }}>Matched (FEFO Batch)</th>
+                      <th style={{ padding: "8px 6px", textAlign: "center",fontSize: 10, color: C.muted, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", width: 70 }}>Stock</th>
+                      <th style={{ padding: "8px 6px", textAlign: "center",fontSize: 10, color: C.muted, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", width: 70 }}>Need</th>
+                      <th style={{ padding: "8px 6px", textAlign: "center",fontSize: 10, color: C.muted, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", width: 100 }}>Dispense</th>
+                      <th style={{ padding: "8px 6px", textAlign: "right", fontSize: 10, color: C.muted, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", width: 80 }}>Rate</th>
+                      <th style={{ padding: "8px 6px", textAlign: "right", fontSize: 10, color: C.muted, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", width: 90 }}>Line ₹</th>
+                      <th style={{ padding: "8px 4px", width: 32 }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {daItems.map((it) => {
+                      const stock = Number(it.batch?.remaining ?? it.batch?.qtyRemaining ?? 0);
+                      const isReady    = it.status === "ready";
+                      const isShort    = it.status === "short";
+                      const isOOS      = it.status === "out-of-stock";
+                      const isNoMatch  = it.status === "no-match";
+                      const rowBg = isNoMatch || isOOS ? "#fef2f2" : isShort ? "#fefce8" : "#fff";
+                      const lineTotal = Number(it.qty) * Number(it.unitPrice || 0);
+                      return (
+                        <tr key={it._id} style={{ borderBottom: `1px solid ${C.border}`, background: rowBg }}>
+                          <td style={{ padding: "9px 8px", verticalAlign: "top" }}>
+                            <div style={{ fontWeight: 700, color: C.text, fontSize: 12 }}>{it.med?.medicineName || "—"}</div>
+                            <div style={{ fontSize: 10.5, color: C.muted, marginTop: 1 }}>
+                              {[it.med?.dosage, it.med?.frequency, it.med?.duration].filter(Boolean).join(" · ")}
+                            </div>
+                          </td>
+                          <td style={{ padding: "9px 8px", verticalAlign: "top" }}>
+                            {isNoMatch ? (
+                              <span style={{ color: C.red, fontWeight: 700, fontSize: 11 }}>
+                                <i className="pi pi-times-circle" style={{ marginRight: 4 }} />No inventory match
+                              </span>
+                            ) : isOOS ? (
+                              <span style={{ color: C.red, fontWeight: 700, fontSize: 11 }}>
+                                <i className="pi pi-exclamation-triangle" style={{ marginRight: 4 }} />
+                                {it.drug?.brandName || it.drug?.genericName || it.drug?.name} — out of stock
+                              </span>
+                            ) : (
+                              <>
+                                <div style={{ fontWeight: 700, color: C.text, fontSize: 11.5 }}>
+                                  {it.drug?.brandName || it.drug?.genericName || it.drug?.name}
+                                </div>
+                                <div style={{ fontSize: 10, color: C.muted, marginTop: 1, fontFamily: "DM Mono, monospace" }}>
+                                  {it.batch?.batchNo}{it.batch?.expiryDate && <> · exp {new Date(it.batch.expiryDate).toLocaleDateString("en-IN", { month: "short", year: "2-digit" })}</>}
+                                </div>
+                              </>
+                            )}
+                          </td>
+                          <td style={{ padding: "9px 6px", textAlign: "center", fontWeight: 700, color: isOOS || isNoMatch ? C.muted : (stock < it.needed ? C.amber : C.green) }}>
+                            {isNoMatch ? "—" : stock}
+                          </td>
+                          <td style={{ padding: "9px 6px", textAlign: "center", color: C.muted, fontWeight: 600 }}>
+                            {it.needed}
+                          </td>
+                          <td style={{ padding: "9px 6px", textAlign: "center" }}>
+                            <input
+                              type="number" min="0" max={stock || undefined}
+                              value={it.qty}
+                              disabled={isNoMatch || isOOS}
+                              onChange={(e) => updateDaQty(it._id, e.target.value)}
+                              style={{
+                                width: 70, padding: "4px 6px", textAlign: "center",
+                                border: `1.5px solid ${C.border}`, borderRadius: 6, fontSize: 12, fontWeight: 700,
+                                color: isNoMatch || isOOS ? C.muted : C.text,
+                                background: isNoMatch || isOOS ? "#f8fafc" : "#fff",
+                              }}
+                            />
+                          </td>
+                          <td style={{ padding: "9px 6px", textAlign: "right", color: C.muted, fontWeight: 600 }}>
+                            {it.unitPrice > 0 ? `₹${Number(it.unitPrice).toFixed(2)}` : "—"}
+                          </td>
+                          <td style={{ padding: "9px 6px", textAlign: "right", fontWeight: 800, color: lineTotal > 0 ? C.text : C.muted }}>
+                            {lineTotal > 0 ? fmtINR(lineTotal) : "—"}
+                          </td>
+                          <td style={{ padding: "9px 4px", textAlign: "center" }}>
+                            <button onClick={() => removeDaRow(it._id)} title="Skip this medicine" style={{
+                              width: 24, height: 24, padding: 0, borderRadius: 5,
+                              border: `1px solid ${C.border}`, background: "#fff", color: C.muted,
+                              fontSize: 11, cursor: "pointer",
+                            }}>
+                              <i className="pi pi-times" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {daItems.length === 0 && (
+                      <tr><td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted, fontStyle: "italic" }}>No items left — all skipped.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{
+              padding: "14px 22px", borderTop: `1px solid ${C.border}`, background: "#f8fafc",
+              display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap",
+            }}>
+              <div style={{ display: "flex", gap: 24, alignItems: "center", fontSize: 12 }}>
+                <div>
+                  <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>Items</div>
+                  <div style={{ color: C.text, fontWeight: 800, fontSize: 15, marginTop: 1 }}>
+                    {daSellable.length}<span style={{ color: C.muted, fontSize: 11, fontWeight: 600 }}> / {daItems.length}</span>
+                    {daSkipped > 0 && <span style={{ marginLeft: 8, fontSize: 10.5, color: C.amber, fontWeight: 700 }}>({daSkipped} skipped)</span>}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>Total</div>
+                  <div style={{ color: C.orange, fontWeight: 800, fontSize: 17, marginTop: 1 }}>{fmtINR(daTotal)}</div>
+                </div>
+                <div>
+                  <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase", marginBottom: 3 }}>Payment</div>
+                  <select className="his-select" value={daPaymentMode} onChange={(e) => setDaPaymentMode(e.target.value)}
+                    style={{ fontSize: 12, padding: "5px 8px", minWidth: 100 }}>
+                    {(PAYMENT_MODES || ["Cash", "Card", "UPI"]).map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => !daSaving && setDaOpen(false)} disabled={daSaving} style={{
+                  padding: "9px 18px", background: "#fff", color: C.muted, border: `1.5px solid ${C.border}`,
+                  borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: daSaving ? "not-allowed" : "pointer",
+                }}>Cancel</button>
+                <button onClick={submitDispenseAll} disabled={daSaving || daPreparing || daSellable.length === 0} style={{
+                  padding: "10px 22px",
+                  background: (daSaving || daPreparing || daSellable.length === 0) ? "#94a3b8" : C.orange,
+                  color: "#fff", border: "none", borderRadius: 8, fontWeight: 800, fontSize: 13,
+                  cursor: (daSaving || daPreparing || daSellable.length === 0) ? "not-allowed" : "pointer",
+                  boxShadow: "0 2px 5px rgba(234,88,12,.3)",
+                }}>
+                  <i className={`pi ${daSaving ? "pi-spin pi-spinner" : "pi-check-circle"}`} style={{ marginRight: 6 }} />
+                  {daSaving ? "Dispensing…" : `Confirm & Sell ${daSellable.length} item${daSellable.length === 1 ? "" : "s"}`}
                 </button>
               </div>
             </div>
@@ -3907,8 +4586,9 @@ function IPDCreditTab() {
                     {openAdm.admission.patientId?.contactNumber && <> · <i className="pi pi-phone" style={{ fontSize: 9 }} /> {openAdm.admission.patientId.contactNumber}</>}
                   </div>
                   <div style={{ color: C.muted, marginTop: 2 }}>
-                    Bed {openAdm.admission.bedId?.bedNumber || "—"} · {openAdm.admission.bedId?.wardName || openAdm.admission.wardName || openAdm.admission.department || "—"}
-                    {openAdm.admission.primaryConsultant && <> · {openAdm.admission.primaryConsultant}</>}
+                    Bed {openAdm.admission.bedId?.bedNumber || openAdm.admission.bedNumber || "—"} · {openAdm.admission.bedId?.wardName || openAdm.admission.wardName || openAdm.admission.department || "—"}
+                    {/* R7ey-F39: attendingDoctor is canonical; primaryConsultant was phantom */}
+                    {(openAdm.admission.attendingDoctor || openAdm.admission.primaryConsultant) && <> · {openAdm.admission.attendingDoctor || openAdm.admission.primaryConsultant}</>}
                   </div>
                 </div>
 

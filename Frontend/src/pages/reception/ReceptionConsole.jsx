@@ -15,7 +15,7 @@
  * All styling via ReceptionConsole.css — no inline JS styles.
  */
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "react-toastify";
 import axios from "axios";
@@ -108,6 +108,10 @@ const emptyOPD = {
   chiefComplaint: "",
   consultationFee: 500,
   hasAppointment: false,
+  // R7dp — Auto-fee hints (UI-only; stripped before backend submit).
+  // feeType ∈ "opdFirst" | "opdFollowup" | "emergency" | "mlc" | ""
+  feeType: "",
+  feeTypeNote: "",
 };
 
 const emptyIPD = {
@@ -187,6 +191,7 @@ export default function ReceptionConsole() {
   /* ── UI state ── */
   const [serviceSearch, setServiceSearch] = useState("");
   const [pincodeLookup, setPincodeLookup] = useState({ loading: false, ok: false, error: "" });
+  const [pincodeRetryNonce, setPincodeRetryNonce] = useState(0);
   const pincodeTimerRef = useRef(null);
   const [serviceDropdownOpen, setServiceDropdownOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -241,6 +246,11 @@ export default function ReceptionConsole() {
             (typeof d.department === "object" && d.department !== null)
               ? String(d.department._id || d.department)
               : (d.department ? String(d.department) : ""),
+          // R7dp — Per-doctor fee schedule, needed for the no-patient-yet
+          // fast path (brand-new registration) and ER/MLC overrides where
+          // we don't need a backend roundtrip. Shape:
+          // { opd, opdFirst, opdFollowup, emergency, mlc, ipdCrossConsult }
+          consultationFee: d.consultationFee || {},
         })));
 
         if (tpaRes?.success) {
@@ -298,47 +308,217 @@ export default function ReceptionConsole() {
     return doctors.filter(d => String(d.department) === String(dept));
   }, [doctors, opd.department, ipd.department, dayCare.department, visitType]);
 
-  /* ─── Pincode auto-lookup (India Post free API) ─── */
-  // When user enters a 6-digit Indian pincode, fetch district + city + state
-  // and auto-fill the address fields. Receptionist only needs to ask the
-  // patient for their local street/landmark (verbal input).
+  /* ─── Pincode auto-lookup (R7dn — backend endpoint with multi-source cache) ─── */
+  // When user enters a 6-digit Indian pincode, hit our backend's
+  // /api/pincode/:pin endpoint. The backend tries postalpincode.in,
+  // Nominatim/OSM, and zippopotam.us in sequence and caches every
+  // successful lookup in MongoDB forever — so the second-ever hit
+  // for a given pincode is instant for every receptionist.
+  //
+  // Client-side layers retained:
+  //   1. localStorage cache — extra speed-up so repeat visits in the
+  //      same browser don't even need to hit our backend
+  //   2. AbortController 10s timeout — generous since backend does
+  //      all the multi-source chasing for us
+  //   3. Manual retry button — clears cache + bumps nonce
   useEffect(() => {
     const pin = patient.address.pincode;
     if (!pin || pin.length !== 6) {
       setPincodeLookup({ loading: false, ok: false, error: "" });
       return;
     }
+
+    // 1. localStorage cache — instant fill, no network at all.
+    //    R7do — Direct assignment (no `||` fallback) so a new pincode
+    //    ALWAYS overwrites the prior auto-filled fields. Otherwise
+    //    stale data persists when switching from e.g. 110001 (Delhi)
+    //    to 282001 (Agra).
+    try {
+      const cached = JSON.parse(localStorage.getItem(`pincode:${pin}`) || "null");
+      if (cached?.city && cached?.state) {
+        setPatient(p => ({
+          ...p,
+          address: {
+            ...p.address,
+            city:     cached.city     || "",
+            district: cached.district || "",
+            state:    cached.state    || "",
+          },
+        }));
+        setPincodeLookup({ loading: false, ok: true, error: "" });
+        return;
+      }
+    } catch (_) { /* cache miss / parse fail — fall through */ }
+
     if (pincodeTimerRef.current) clearTimeout(pincodeTimerRef.current);
+    const ctrl = new AbortController();
     pincodeTimerRef.current = setTimeout(async () => {
       setPincodeLookup({ loading: true, ok: false, error: "" });
+      const timer = setTimeout(() => ctrl.abort(), 10000); // 10s — backend chases 3 sources
+
       try {
-        // India Post Pincode API — free, no auth, returns city/district/state
-        const res = await fetch(`https://api.postalpincode.in/pincode/${pin}`);
-        const data = await res.json();
-        const entry = Array.isArray(data) ? data[0] : null;
-        if (entry?.Status === "Success" && entry.PostOffice?.length) {
-          const po = entry.PostOffice[0];
+        const res = await fetch(`${API_ENDPOINTS.BASE}/pincode/${pin}`, {
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) {
+          setPincodeLookup({
+            loading: false, ok: false,
+            error: res.status === 404 ? "Pincode not found — fill manually" : "Lookup failed — fill manually",
+          });
+          return;
+        }
+        const json = await res.json();
+        const data = json?.data;
+        if (data && (data.city || data.state)) {
+          // R7do — Always overwrite all 3 fields (no `||` fallback).
+          // A new pincode means a new location; stale district/city/state
+          // from a previous pincode must NOT persist.
           setPatient(p => ({
             ...p,
             address: {
               ...p.address,
-              // Don't overwrite user's manual entries unless empty
-              city:     po.Block || po.Division || po.Name || p.address.city,
-              district: po.District || p.address.district,
-              state:    po.State    || p.address.state,
+              city:     data.city     || "",
+              district: data.district || "",
+              state:    data.state    || "",
             },
           }));
+          try {
+            localStorage.setItem(`pincode:${pin}`, JSON.stringify({
+              city: data.city, district: data.district, state: data.state,
+            }));
+          } catch (_) { /* quota / private — non-fatal */ }
           setPincodeLookup({ loading: false, ok: true, error: "" });
-        } else {
-          setPincodeLookup({ loading: false, ok: false, error: "Pincode not found" });
+          return;
         }
+        setPincodeLookup({ loading: false, ok: false, error: "Pincode not found — fill manually" });
       } catch (e) {
-        setPincodeLookup({ loading: false, ok: false, error: "Lookup failed" });
+        clearTimeout(timer);
+        setPincodeLookup({
+          loading: false, ok: false,
+          error: ctrl.signal.aborted ? "Lookup timed out — try again or fill manually" : "Lookup failed — fill manually",
+        });
       }
     }, 400);
-    return () => pincodeTimerRef.current && clearTimeout(pincodeTimerRef.current);
+    return () => {
+      if (pincodeTimerRef.current) clearTimeout(pincodeTimerRef.current);
+      ctrl.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient.address.pincode, pincodeRetryNonce]);
+
+  // Manual retry — clears cache for this pincode + bumps the nonce so the
+  // useEffect re-fires even though the pincode string is unchanged.
+  const retryPincodeLookup = useCallback(() => {
+    const pin = patient.address.pincode;
+    if (!pin || pin.length !== 6) return;
+    try { localStorage.removeItem(`pincode:${pin}`); } catch (_) {}
+    setPincodeRetryNonce(n => n + 1);
   }, [patient.address.pincode]);
+
+  /* ─── R7dp · OPD auto-fee (first-visit vs follow-up) ────────────────
+     When the receptionist picks (Department →) Doctor for an OPD visit,
+     we figure out the right consultation fee automatically:
+       • Existing patient (UHID resolved via search): backend tells us
+         whether this patient has ever seen THIS doctor before, returns
+         opdFollowup if yes, opdFirst if no.
+       • Brand-new patient (no _id yet): can't be a follow-up — fill in
+         opdFirst from the cached doctor record (no roundtrip needed).
+     The receptionist can still type any number over the auto-filled
+     fee; we only pre-fill, the input stays editable. The fee-type pill
+     above the input surfaces why we picked the rate so it's auditable
+     ("First visit with this doctor" / "Follow-up — last seen 03/04/26").
+     feeType / feeTypeNote are UI-only — stripped before the OPD POST. */
+  useEffect(() => {
+    if (visitType !== "OPD") return;
+    const doctorId = opd.doctor;
+    if (!doctorId) {
+      // Doctor cleared (e.g. department change wipes doctor) — drop pill.
+      setOpd(p => (p.feeTypeNote ? { ...p, feeType: "", feeTypeNote: "" } : p));
+      return;
+    }
+    const patientId = patient._id;
+    if (!patientId) {
+      // Brand-new patient — no history possible. Fill opdFirst from the
+      // doctor record we cached in the doctors[] array (no API call).
+      const doc = doctors.find(d => d.value === doctorId);
+      if (doc) {
+        const fee = Number(doc.consultationFee?.opdFirst || doc.consultationFee?.opd || 0);
+        setOpd(p => ({
+          ...p,
+          consultationFee: fee || p.consultationFee,
+          feeType: "opdFirst",
+          feeTypeNote: "First visit (new patient)",
+        }));
+      }
+      return;
+    }
+    // Existing patient — ask backend to decide first vs follow-up based
+    // on patient ↔ doctor history.
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await axios.get(
+          `${API_ENDPOINTS.BASE}/doctors/${doctorId}/first-visit-status/${patientId}`
+        );
+        if (cancelled) return;
+        const d = r.data?.data;
+        if (!d) return;
+        setOpd(p => ({
+          ...p,
+          consultationFee: Number(d.suggestedFee) || p.consultationFee,
+          feeType: d.feeType,
+          feeTypeNote: d.isFirstVisit
+            ? "First visit with this doctor"
+            : `Follow-up · last seen ${
+                d.lastVisitWithThisDoctor
+                  ? new Date(d.lastVisitWithThisDoctor).toLocaleDateString("en-IN")
+                  : "—"
+              }`,
+        }));
+      } catch (_) {
+        // Backend down / 404 → fall back to whatever's already in the
+        // input. Receptionist can still type a fee manually.
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opd.doctor, patient._id, visitType, doctors]);
+
+  /* ─── R7dp · ER auto-fee + MLC override ─────────────────────────────
+     Emergency uses a separate state slice (`er.attendingDoctor`) but
+     the actual consult fee still rides on `opd.consultationFee` because
+     receiptTotal / printReceipt / saveAndProcess all read from there
+     for non-IPD visits. We keep that pipeline and just pick the right
+     rate: emergency by default, mlc when the MLC checkbox is flipped. */
+  useEffect(() => {
+    if (visitType !== "Emergency") return;
+    const doctorId = er.attendingDoctor;
+    if (!doctorId) {
+      setOpd(p => (p.feeTypeNote ? { ...p, feeType: "", feeTypeNote: "" } : p));
+      return;
+    }
+    const doc = doctors.find(d => d.value === doctorId);
+    if (!doc) return;
+    if (er.isMLC) {
+      const fee = Number(doc.consultationFee?.mlc || doc.consultationFee?.emergency || doc.consultationFee?.opd || 0);
+      setOpd(p => ({
+        ...p,
+        consultationFee: fee || p.consultationFee,
+        feeType: "mlc",
+        feeTypeNote: "MLC rate (police case)",
+      }));
+    } else {
+      const fee = Number(doc.consultationFee?.emergency || doc.consultationFee?.opd || 0);
+      setOpd(p => ({
+        ...p,
+        consultationFee: fee || p.consultationFee,
+        feeType: "emergency",
+        feeTypeNote: "ER consultation rate",
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [er.attendingDoctor, er.isMLC, visitType, doctors]);
 
   /* ─── Debounced patient search ─── */
   useEffect(() => {
@@ -711,6 +891,10 @@ export default function ReceptionConsole() {
 
             // Fire the AdvanceReceipt print via sessionStorage handoff
             // (matches ReceptionBilling printAdvanceReceipt helper).
+            // R7en-2: receipt now shows Department + Doctor in the slots
+            // previously occupied by Hospital/Customer GSTIN. Read them
+            // from the admission record (server canonical) with a fallback
+            // to admissionPayload (what we just sent).
             const advPayload = {
               receiptNo:     adv.receiptNumber || null,
               patientName:   [patient.title, patient.fullName].filter(Boolean).join(" "),
@@ -718,7 +902,9 @@ export default function ReceptionConsole() {
               ipdNo:         createdAdm.admissionNumber || null,
               admissionDate: createdAdm.admissionDate || new Date().toISOString(),
               bedNumber:     bedData.bedNumber || null,
-              wardName:      null, // bedData only carries IDs — name shown on visit receipt
+              wardName:      bedData.wardName || createdAdm.wardName || null,
+              department:    createdAdm.department || admissionPayload.department || null,
+              doctor:        createdAdm.attendingDoctor || admissionPayload.attendingDoctor || null,
               date:          adv.paidAt || adv.createdAt || new Date().toISOString(),
               amount:        toMoney(adv.amount) || advAmt,
               method:        adv.paymentMode || "CASH",
@@ -1179,7 +1365,23 @@ export default function ReceptionConsole() {
                     Pincode
                     {pincodeLookup.loading && <span className="rc-pin-status rc-pin-status--loading">⏳ looking up…</span>}
                     {pincodeLookup.ok      && <span className="rc-pin-status rc-pin-status--ok">✓ found</span>}
-                    {pincodeLookup.error   && <span className="rc-pin-status rc-pin-status--err">⚠ {pincodeLookup.error}</span>}
+                    {pincodeLookup.error   && (
+                      <>
+                        <span className="rc-pin-status rc-pin-status--err">⚠ {pincodeLookup.error}</span>
+                        <button
+                          type="button"
+                          onClick={retryPincodeLookup}
+                          style={{
+                            marginLeft: 8, padding: "2px 8px", fontSize: 10, fontWeight: 700,
+                            background: "#fff", color: "#1e40af",
+                            border: "1.5px solid #c7d2fe", borderRadius: 6, cursor: "pointer",
+                            textTransform: "uppercase", letterSpacing: ".4px",
+                          }}
+                        >
+                          ↻ Retry
+                        </button>
+                      </>
+                    )}
                   </label>
                   <input
                     className={`his-field ${pincodeLookup.ok ? "his-field--ok" : pincodeLookup.error ? "his-field--err" : ""}`}
@@ -1293,6 +1495,17 @@ export default function ReceptionConsole() {
                   </div>
                   <div className="his-field-group">
                     <label className="his-label">Consultation Fee</label>
+                    {opd.feeTypeNote && (
+                      <div style={{
+                        fontSize: 11,
+                        color: opd.feeType === "opdFollowup" ? "#15803d" : "#1e40af",
+                        background: opd.feeType === "opdFollowup" ? "#dcfce7" : "#dbeafe",
+                        padding: "2px 10px", borderRadius: 10, display: "inline-block",
+                        marginBottom: 4, fontWeight: 700, letterSpacing: ".3px",
+                      }}>
+                        {opd.feeType === "opdFollowup" ? "FOLLOW-UP RATE" : "FIRST VISIT RATE"} · {opd.feeTypeNote}
+                      </div>
+                    )}
                     <input className="his-field" type="number" value={opd.consultationFee}
                       onChange={e => setOpd(p => ({ ...p, consultationFee: e.target.value }))} />
                   </div>

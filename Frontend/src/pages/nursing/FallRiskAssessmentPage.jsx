@@ -103,6 +103,9 @@ function FallRiskContent({ patient }) {
     try {
       await axios.post(`${API}/nursing-assessments/fall-risk`, {
         patientId: patient._id,
+        UHID: patient.UHID,
+        admissionId: patient.currentAdmissionId || patient.admissionId,
+        patientName: patient.fullName || patient.name,
         ...entry,
         nurseEmployeeId: user?.employeeId || "",
         nurseSignature: signature || undefined,

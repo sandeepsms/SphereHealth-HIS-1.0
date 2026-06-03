@@ -173,6 +173,13 @@ function getCarePlan(score) {
   return [...base, "Standard preventive skin care","Educate on importance of mobility"];
 }
 
+// R7em-1: Ulcer schema (NABH HIC.4 / NPUAP) — these fields are required by
+// PressureUlcerRegisterModel so the emit row carries the full sentinel-event
+// picture. Stages match the model enum.
+const ULCER_STAGES = ["I", "II", "III", "IV", "Unstageable", "DTI"];
+const ULCER_SITES  = ["Sacrum", "Coccyx", "Ischium", "Heel", "Trochanter", "Scapula", "Elbow", "Occiput", "Other"];
+const DRESSING_TYPES = ["Hydrocolloid", "Hydrogel", "Foam", "Alginate", "Silver/Antimicrobial", "Transparent Film", "Gauze", "None"];
+
 function PressureAreaContent({ patient }) {
   const { user } = useAuth();
   const [scores, setScores] = useState(Object.fromEntries(BRADEN_SCALES.map(s => [s.key, null])));
@@ -181,9 +188,22 @@ function PressureAreaContent({ patient }) {
   const [history, setHistory] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // R7em-1: ulcer-specific NABH register fields. ulcerPresent gates the
+  // ulcer details (stage/site/size/dressing) reveal; hospitalAcquired is
+  // tracked independently because HAPU≥III is a sentinel event.
+  const [ulcerPresent, setUlcerPresent] = useState(false);
+  const [ulcerStage, setUlcerStage] = useState("");
+  const [ulcerSite, setUlcerSite] = useState("");
+  const [ulcerSize, setUlcerSize] = useState("");
+  const [hospitalAcquired, setHospitalAcquired] = useState(false);
+  const [dressingType, setDressingType] = useState("");
 
   const draftKey = patient?._id ? `sphere_draft_pressure_${patient._id}` : null;
-  const { savedAt, hasDraft, clearDraft } = useAutoSave(draftKey, { scores, pressurePoints, woundLog }, 2000);
+  const { savedAt, hasDraft, clearDraft } = useAutoSave(
+    draftKey,
+    { scores, pressurePoints, woundLog, ulcerPresent, ulcerStage, ulcerSite, ulcerSize, hospitalAcquired, dressingType },
+    2000
+  );
   const { signature, showSetup, setShowSetup, saveSignature } = useDigitalSignature();
 
   useEffect(() => {
@@ -202,10 +222,21 @@ function PressureAreaContent({ patient }) {
     try {
       const raw = localStorage.getItem(dKey);
       if (raw) {
-        const { scores: ds, pressurePoints: dp, woundLog: dw } = JSON.parse(raw);
+        const {
+          scores: ds, pressurePoints: dp, woundLog: dw,
+          ulcerPresent: dup, ulcerStage: dust, ulcerSite: dusi, ulcerSize: dusz,
+          hospitalAcquired: dha, dressingType: ddt,
+        } = JSON.parse(raw);
         if (ds) setScores(s => ({ ...s, ...ds }));
         if (dp) setPressurePoints(dp);
         if (dw) setWoundLog(dw);
+        // R7em-1: restore ulcer-specific fields from draft
+        if (dup != null) setUlcerPresent(!!dup);
+        if (dust) setUlcerStage(dust);
+        if (dusi) setUlcerSite(dusi);
+        if (dusz) setUlcerSize(dusz);
+        if (dha != null) setHospitalAcquired(!!dha);
+        if (ddt) setDressingType(ddt);
       }
     } catch {}
   }, [patient]);
@@ -236,7 +267,23 @@ function PressureAreaContent({ patient }) {
     };
     try {
       await axios.post(`${API}/nursing-assessments/pressure-area`, {
-        patientId: patient._id, ...entry, woundLog, pressurePoints,
+        patientId: patient._id,
+        // B3-T03: UHID + admissionId + patientName required by
+        // PressureUlcerRegisterModel (UHID required=true at schema level).
+        // Without these the register row cannot persist even if emit runs.
+        UHID: patient.UHID,
+        admissionId: patient.currentAdmissionId || patient.admissionId || patient.activeAdmissionId || undefined,
+        patientName: patient.fullName || `${patient.firstName || ""} ${patient.lastName || ""}`.trim(),
+        ...entry, woundLog, pressurePoints,
+        // R7em-1: NABH HIC.4 ulcer surveillance fields. ulcerStage/site/size
+        // /dressingType only carry data when ulcerPresent=true; otherwise
+        // they're empty strings (matches PressureUlcerRegisterModel enum "").
+        ulcerPresent,
+        ulcerStage: ulcerPresent ? ulcerStage : "",
+        ulcerSite:  ulcerPresent ? ulcerSite  : "",
+        ulcerSize:  ulcerPresent ? ulcerSize  : "",
+        dressingType: ulcerPresent ? dressingType : "",
+        hospitalAcquired,
         nurseName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
         nurseEmployeeId: user?.employeeId || "",
         nurseSignature: signature || undefined,
@@ -323,6 +370,76 @@ function PressureAreaContent({ patient }) {
           </div>
         </Section>
       )}
+
+      {/* R7em-1: NABH HIC.4 — existing pressure ulcer surveillance. These
+          fields flow to PressureUlcerRegisterModel; HAPU stage III+ is a
+          sentinel event. Stage/site/size/dressing reveal only when an ulcer
+          is actually present; hospitalAcquired stays visible as a separate
+          checkbox so post-admission skin breakdown is captured even before
+          the nurse has staged it. */}
+      <Section title="Existing Pressure Ulcer" icon="pi-exclamation-circle" color={C.red}>
+        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+          <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer" }}>
+            <input
+              type="checkbox"
+              checked={ulcerPresent}
+              onChange={e => { setUlcerPresent(e.target.checked); setSaved(false); }}
+              style={{ width:18, height:18, cursor:"pointer", accentColor:C.red }}
+            />
+            <span style={{ fontSize:13, fontWeight:700, color:C.text }}>
+              Pressure ulcer present at this assessment
+            </span>
+          </label>
+
+          <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer" }}>
+            <input
+              type="checkbox"
+              checked={hospitalAcquired}
+              onChange={e => { setHospitalAcquired(e.target.checked); setSaved(false); }}
+              style={{ width:18, height:18, cursor:"pointer", accentColor:C.orange }}
+            />
+            <span style={{ fontSize:13, fontWeight:700, color:C.text }}>
+              Hospital-acquired (HAPU)
+              <span style={{ fontSize:11, fontWeight:500, color:C.muted, marginLeft:6 }}>
+                — Stage III+ HAPU is a NABH sentinel event
+              </span>
+            </span>
+          </label>
+
+          {ulcerPresent && (
+            <div style={{ background:C.redL, border:`1.5px solid ${C.redB}`, borderRadius:10, padding:"14px 16px" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
+                <Field label="Stage (NPUAP)">
+                  <select className="his-select" value={ulcerStage} onChange={e => { setUlcerStage(e.target.value); setSaved(false); }}>
+                    <option value="">Select stage</option>
+                    {ULCER_STAGES.map(s => <option key={s} value={s}>Stage {s}</option>)}
+                  </select>
+                </Field>
+                <Field label="Site / Location">
+                  <select className="his-select" value={ulcerSite} onChange={e => { setUlcerSite(e.target.value); setSaved(false); }}>
+                    <option value="">Select site</option>
+                    {ULCER_SITES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </Field>
+                <Field label="Size (L × W × D cm)">
+                  <input
+                    className="his-field"
+                    value={ulcerSize}
+                    onChange={e => { setUlcerSize(e.target.value); setSaved(false); }}
+                    placeholder="e.g. 3 × 2 × 0.5"
+                  />
+                </Field>
+                <Field label="Dressing Type">
+                  <select className="his-select" value={dressingType} onChange={e => { setDressingType(e.target.value); setSaved(false); }}>
+                    <option value="">Select dressing</option>
+                    {DRESSING_TYPES.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </Field>
+              </div>
+            </div>
+          )}
+        </div>
+      </Section>
 
       <Section title="Body Map — Pressure Points" icon="pi-map-marker" color={C.blue}>
         <div style={{ fontSize:12, color:C.muted, marginBottom:12 }}>Click a site to mark it as "At Risk". Unmarked = Intact.</div>

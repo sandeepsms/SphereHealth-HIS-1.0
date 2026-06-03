@@ -55,6 +55,12 @@ const BillingAuditSchema = new mongoose.Schema(
         "ORDER_CANCELLED",           // onOrderCancelled cascade summary
         "TRIGGER_DEDUPED",           // dailyDedup or pre-dedup skip
         "TRIGGER_PENDING_REVIEW",    // stuck trigger flagged for manual review
+        // B4-T08: STUCK_TRIGGER_RETRIED is fired by the /triggers/:id/retry
+        // endpoint whenever a pending-review trigger is manually re-fired.
+        // The row's `after` captures the new status (applied or pending-review)
+        // and the new reviewReason if the retry didn't clear it, so an
+        // accountant can replay every retry attempt without spelunking logs.
+        "STUCK_TRIGGER_RETRIED",     // /triggers/:id/retry — Stuck Triggers tile re-fire
         // R7ar-P1-20/D6-aq-04: cashier shift lifecycle. The shift table
         // is the audit anchor for variance/handover; pre-R7ar opens and
         // closes left no chronological trace in BillingAudit, so the
@@ -169,6 +175,9 @@ const _FINANCIAL_EVENTS = new Set([
   "TRIGGER_VOIDED",
   "ORDER_CANCELLED",
   "TRIGGER_PENDING_REVIEW",
+  // B4-T08: STUCK_TRIGGER_RETRIED rides 7y retention — a successful retry
+  // materially changes the bill (line item added) so GST Act §35 applies.
+  "STUCK_TRIGGER_RETRIED",
 ]);
 const _ADMIN_EVENTS = new Set([
   "SHIFT_OPENED",

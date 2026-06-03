@@ -21,17 +21,18 @@ import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
 import "primeflex/primeflex.css";
 
-// ── Critical paths (eager) — login + dashboard + main ───────────
+// ── Critical paths (eager) — login + dashboard ──────────────────
 import LoginPage from "./pages/auth/LoginPage";
-import MainPage from "./pages/mainPage/MainPage";
 import Dashboard1 from "./pages/patient/Dashboard";
 
 // ── Lazy-loaded pages (downloaded on-demand) ────────────────────
 // PatientsTable deleted 2026-05-17 — superseded by PatientLookupPage's
 // "directory" view. The /allpatient route now mounts PatientLookupPage.
-const Servicebtn = lazy(() => import("./Components/Servicebtn"));
 const OPDPrint = lazy(() => import("./pages/OPD/OPDPrint"));
-const ServiceAlldata = lazy(() => import("./Components/ServiceAlldata"));
+// B8-T07 — /ServiceAlldata route + ServiceAlldata lazy import removed.
+// ServiceAlldata.jsx was a TreeTable scaffold with hardcoded test data
+// ("sahil/Rahul/Kabir"), never linked from any sidebar/menu and not
+// referenced by any other page. File deleted alongside this import.
 const DepartmentManagement = lazy(() => import("../src/pages/Department/DepartmentManagement"));
 
 // Bed Management
@@ -80,6 +81,13 @@ const EditHospitalCharges = lazy(() => import("./pages/charges/EditHospitalCharg
 // were dropped in favour of /reception-billing + /billing/ipd.
 
 const ServiceMasterManager = lazy(() => import("./Components/ServiceMaster/ServiceMasterManager"));
+// R7dp — Bulk doctor-charges editor (per-doctor OPD First / Follow-up / ER /
+// MLC / IPD cross-consult). Admin + Accountant only.
+const DoctorChargesPage = lazy(() => import("./pages/admin/DoctorChargesPage"));
+// R7en — Per-room-category daily-charges matrix (bed rent, nursing,
+// doctor visit, RMO, monitoring, dietetics, housekeeping, linen).
+// Source of truth for the daily auto-billing cron. Admin + Accountant only.
+const RoomChargesPage = lazy(() => import("./pages/admin/RoomChargesPage"));
 const ChargeableServices = lazy(() => import("./pages/services/ChargeableServices"));
 // BillingIntelligencePage removed — receptionist Billing Counter is now
 // the single billing surface; AI suggestions are no longer auto-applied.
@@ -178,6 +186,68 @@ const ADRReportsPage = lazy(() => import("./pages/quality/ADRReportsPage"));
 const FireDrillRegisterPage = lazy(() => import("./pages/compliance/FireDrillRegisterPage"));
 // R7bo — NABH Inspection Dashboard (RBS / Emergency / Blood Transfusion).
 const NABHRegistersDashboard = lazy(() => import("./pages/compliance/NABHRegistersDashboard"));
+// R7ek — Inspection Dashboard split out as its own page (was a tab inside
+// NABHRegistersDashboard); shows KPI strip + register-status table.
+const InspectionDashboardPage = lazy(() => import("./pages/compliance/InspectionDashboardPage"));
+// R7en — ECG Register (NABH AAC.4 / IPSG.2 / COP.7). Lives under
+// /compliance/nabh-registers#ecg via the consolidated landing page, but
+// also gets a direct deep-link route for quick access.
+const ECGRegisterPage               = lazy(() => import("./pages/compliance/ECGRegisterPage"));
+// R7gw-B9-T01 — NABH Sentinel-Event Register (AAC.7 + MOM.4). Auto-emitted
+// from HAPU stage III+ and fall-with-major-injury; manual entries allowed.
+const SentinelEventRegisterPage     = lazy(() => import("./pages/compliance/SentinelEventRegisterPage"));
+// R7gw-B9-B9-T06 — NABH Hand Hygiene Compliance Register (HIC.3). IC-officer
+// driven WHO 5-Moments observation log; mobile-friendly tap-to-record UI.
+const HandHygieneRegisterPage       = lazy(() => import("./pages/compliance/HandHygieneRegisterPage"));
+// R7gw-B10-T02 — NABH MSO Session Log Register (PRE.1). Medical Social
+// Officer log of counseling / financial-aid / discharge-planning /
+// bereavement / grievance / vulnerable-patient-care sessions.
+const MSOLogRegisterPage            = lazy(() => import("./pages/compliance/MSOLogRegisterPage"));
+// R7gw-B10-T07 — NABH Statutory Compliance Register (AAC.16). Living register
+// of statutory licences (Hospital, Pharmacy, Blood-Bank, Fire-NOC, PCB, BMW,
+// Atomic Energy, PNDT, etc.) with issued / expiry / renewal status tracking.
+const StatutoryComplianceRegisterPage = lazy(() => import("./pages/compliance/StatutoryComplianceRegisterPage"));
+// R7gw-B10-T01 — NABH Antibiogram Register (HIC.6). Periodic cumulative
+// susceptibility — organism × ward × sample × period — feeding the AMSC's
+// empiric first-/second-line recommendation tables.
+const AntibiogramRegisterPage       = lazy(() => import("./pages/compliance/AntibiogramRegisterPage"));
+// R7gw-B10-T03 — NABH ESG Compliance Register (6th-ed Environment).
+// Monthly facility ESG report — energy / water / diesel / waste / carbon +
+// green-initiatives + audit findings. Manual-entry only.
+const ESGComplianceRegisterPage     = lazy(() => import("./pages/compliance/ESGComplianceRegisterPage"));
+// R7gw-B10-T04 — NABH Staff Wellness Programme Register (HRM.6). Manual
+// register of staff-wellness sessions — annual health checks, vaccination
+// drives, stress management, yoga, nutrition, mindfulness. HR / Wellness
+// committee files each session row with attendance + feedback score.
+const WellnessProgramRegisterPage   = lazy(() => import("./pages/compliance/WellnessProgramRegisterPage"));
+// R7gw-B9-T02 — NABH Near-Miss Event Register (QPS.5). Manual-entry log
+// of intercepted wrong-meds, prevented falls, caught equipment failures.
+const NearMissEventRegisterPage     = lazy(() => import("./pages/compliance/NearMissEventRegisterPage"));
+// R7gw-B9-T04 — NABH Medication Error Register (MOM.4). NCC-MERP-classified
+// medication errors with phase/dose/route mismatch. Severity E-I auto-emits
+// Sentinel Event via backend chain; auto-populated from MAR nurseError=true.
+const MedicationErrorRegisterPage   = lazy(() => import("./pages/compliance/MedicationErrorRegisterPage"));
+// R7gw-B9-B9-T07 — NABH LAMA / DAMA Register (AAC.4). Auto-emit when a
+// discharge is finalised with disposition === "LAMA"; manual entries for
+// Compliance / MRD backfill.
+const LAMARegisterPage              = lazy(() => import("./pages/compliance/LAMARegisterPage"));
+// R7gw-B9-B9-T03 — NABH Root Cause Analysis Register (QPS.1 + AAC.7).
+// Auto-pre-created from sentinel events (linkedSentinelId set, status
+// Initiated). QPS chair files manual entries for serious near-miss or
+// recurrent-deviation triggers.
+const RCARegisterPage               = lazy(() => import("./pages/compliance/RCARegisterPage"));
+// R7gw-B9-T05 — NABH HAI Surveillance Register (HIC.4). Auto-emitted from
+// the ICU bundle finalize path when CAUTI compliance <100, Foley dwell>3d,
+// positive UTI culture; manual entries for SSI / CDI / MRSA-bacteremia.
+const HAISurveillanceRegisterPage   = lazy(() => import("./pages/compliance/HAISurveillanceRegisterPage"));
+// R7gw-B10-T06 — NABH Facilities & Equipment Maintenance Log (FMS.5). PPM /
+// Corrective / AMC log for BMS, DG, Fire-system, Lift, Biomedical, HVAC,
+// Medical-Gas, UPS, Steam-Boiler. Manual entry by engineering / biomedical.
+const FacilitiesMaintenanceLogRegisterPage = lazy(() => import("./pages/compliance/FacilitiesMaintenanceLogRegisterPage"));
+// R7gw-B10-T05 — NABH PROM / PREM register (PRE.4 6th-ed). PRO officer or
+// floor nurse files each survey administration (PROMIS / SF-36 / EQ-5D /
+// HCAHPS / NHS-FFT / Custom-PREM) with domain scores + comments.
+const PROMPREMRegRegisterPage       = lazy(() => import("./pages/compliance/PROMPREMRegRegisterPage"));
 // R7bx — six new surveyor-facing NABH registers (COP.10/13/16/17/18 + MOM.7).
 const OTRegisterPage                = lazy(() => import("./pages/nabh/OTRegisterPage"));
 const ASARegisterPage               = lazy(() => import("./pages/nabh/ASARegisterPage"));
@@ -185,11 +255,20 @@ const ReadmissionRegisterPage       = lazy(() => import("./pages/nabh/Readmissio
 const MortalityRegisterPage         = lazy(() => import("./pages/nabh/MortalityRegisterPage"));
 const RestraintRegisterPage         = lazy(() => import("./pages/nabh/RestraintRegisterPage"));
 const AntimicrobialUseRegisterPage  = lazy(() => import("./pages/nabh/AntimicrobialUseRegisterPage"));
+// R7eg — NABH HIC.5 Infection Control register. Aggregates ICU care-bundle
+// compliance (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP) over time so the
+// IC officer can answer surveyor questions like "VAP trend last 3 months".
+const HIC5InfectionControlPage      = lazy(() => import("./pages/compliance/HIC5InfectionControlPage"));
 // R7bq — DVT/VTE Caprini assessment (auto-pops DVT register).
 const CapriniDVTAssessmentPage = lazy(() => import("./pages/nursing/CapriniDVTAssessmentPage"));
+// R7du — Restraint Register entry page (NABH COP.17). Nurse-side write
+// surface; surveyor-facing read view stays at /compliance/nabh/restraint-register.
+const RestraintEntryPage = lazy(() => import("./pages/nursing/RestraintEntryPage"));
 const CredentialingPage = lazy(() => import("./pages/hr/CredentialingPage"));
 const MARPage = lazy(() => import("./pages/clinical/MARPage"));
 const DiabeticChartPage = lazy(() => import("./pages/clinical/DiabeticChartPage"));
+// R7eg — ICU Bundles of Care (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP)
+const ICUBundlesPage = lazy(() => import("./pages/clinical/ICUBundlesPage"));
 const MaintenanceDashboardPage = lazy(() => import("./pages/maintenance/MaintenanceDashboardPage"));
 const EquipmentDashboardPage   = lazy(() => import("./pages/maintenance/EquipmentDashboardPage"));
 const PharmacyHomePage         = lazy(() => import("./pages/pharmacy/PharmacyHomePage"));
@@ -202,6 +281,8 @@ const DoctorAssessmentPage = lazy(() => import("./pages/doctor/DoctorAssessmentP
 const OPDAssessmentPage = lazy(() => import("./pages/doctor/OPDAssessmentPage"));
 const DoctorPatientPanel = lazy(() => import("./pages/doctor/DoctorPatientPanel"));
 const DoctorNotesPage = lazy(() => import("./pages/doctor/DoctorNotesPage"));
+// R7fu — Medical Certificates builder (12 cert types).
+const MedicalCertificatePage = lazy(() => import("./pages/clinical/MedicalCertificatePage"));
 const MLCPage = lazy(() => import("./pages/mlc/MLCPage"));
 
 const BillPrintPage = lazy(() => import("./pages/billing/BillPrintPage"));
@@ -213,6 +294,11 @@ const HospitalConfigWizard = lazy(() => import("./pages/admin/HospitalConfigWiza
 // R7bz — read-only System Health diagnostics page (DB / crons / errors /
 // activity / integrity / server).  Admin-only.
 const SystemHealthPage = lazy(() => import("./pages/admin/SystemHealthPage"));
+// R7dw — NABH Signage Generator. Bilingual (English + Hindi) generator
+// for all 88 NABH-mandated hospital signages. Embedded base64 logo,
+// printable templates. Admin-only — used for one-off signage printing
+// during accreditation prep.
+const NABHSignagePage = lazy(() => import("./pages/admin/NABHSignagePage"));
 const UserManagementPage = lazy(() => import("./pages/admin/UserManagementPage"));
 const RolesPage          = lazy(() => import("./pages/admin/RolesPage"));
 const RoleDashboardPage  = lazy(() => import("./pages/RoleDashboardPage"));
@@ -350,8 +436,8 @@ function AppLayout({ collapsed, setCollapsed }) {
         <Suspense fallback={<RouteLoader />}>
           <Routes>
             {/* ── Dashboard ─────────────────────────────────────── */}
-            <Route path="/dashboard1" element={<Dashboard1 />} />
-            <Route path="/dash" element={<Dashboard1 />} />
+            <Route path="/dashboard1" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dash"       element={<Navigate to="/dashboard" replace />} />
 
             {/* Patient Registration moved to /reception (see below) */}
             {/* /allpatient → unified PatientLookupPage in "directory" mode.
@@ -440,9 +526,9 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/addtpa" element={
               <RoleGuard action="tpa.pre-auth"><AddTpa /></RoleGuard>
             } />
-            <Route path="/ServiceAlldata" element={
-              <RoleGuard action="billing.read"><ServiceAlldata /></RoleGuard>
-            } />
+            {/* B8-T07 — /ServiceAlldata orphan route removed (was a
+                TreeTable test scaffold with hardcoded sample data, never
+                linked from anywhere). Component file deleted. */}
 
             {/* ── Department ──────────────────────────────────────
                 Anyone may read (departments.read); writes happen inside the
@@ -494,6 +580,20 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/chargeable-services" element={
               <RoleGuard action="billing.read"><ChargeableServices /></RoleGuard>
+            } />
+            {/* R7dp — Per-doctor consultation-fee editor. The page itself
+                gates by role (Admin / Accountant); the RoleGuard mirrors
+                that so a Doctor / Receptionist hitting the URL bounces
+                off here instead of loading the page and seeing it
+                self-deny. */}
+            <Route path="/doctor-charges" element={
+              <RoleGuard allow={["Admin", "Accountant"]}><DoctorChargesPage /></RoleGuard>
+            } />
+            {/* R7en — Per-room-category daily-charges matrix. Mirrors
+                /doctor-charges; same auth gate. The daily auto-billing
+                cron sources every line item from this grid. */}
+            <Route path="/room-charges" element={
+              <RoleGuard allow={["Admin", "Accountant"]}><RoomChargesPage /></RoleGuard>
             } />
 
             {/* /billing-intelligence routes removed — receptionist Billing
@@ -596,6 +696,10 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/compliance/nabh-registers" element={
               <RoleGuard action="compliance.read"><NABHRegistersDashboard /></RoleGuard>
             } />
+            {/* R7ek — Inspection Dashboard (separate page; was a tab). */}
+            <Route path="/compliance/inspection-dashboard" element={
+              <RoleGuard action="compliance.read"><InspectionDashboardPage /></RoleGuard>
+            } />
             {/* R7bx — six surveyor-facing NABH registers, each one a
                 filterable + printable + CSV-exportable chronological log.
                 Auto-populated from existing clinical save paths. */}
@@ -617,10 +721,128 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/compliance/nabh/antimicrobial-register" element={
               <RoleGuard action="compliance.read"><AntimicrobialUseRegisterPage /></RoleGuard>
             } />
+            {/* R7en — ECG Register (NABH AAC.4 / IPSG.2 / COP.7). Standalone
+                deep-link mount; also reachable from the consolidated NABH
+                Registers landing page via #ecg hash. */}
+            <Route path="/compliance/nabh/ecg-register" element={
+              <RoleGuard action="compliance.read"><ECGRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-T01 — Sentinel-Event Register (NABH AAC.7 + MOM.4).
+                Auto-emitted from HAPU stage III+ and fall-with-major-injury;
+                Quality / Compliance officers log other sentinels manually. */}
+            <Route path="/compliance/nabh-registers/sentinelevent" element={
+              <RoleGuard action="compliance.nabh.read"><SentinelEventRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-B9-T06 — Hand Hygiene Register (NABH HIC.3). IC-officer
+                driven WHO 5-Moments observation log; mobile-friendly tap-to-
+                record UI for compliance % reporting per ward / role / moment. */}
+            <Route path="/compliance/nabh-registers/handhygiene" element={
+              <RoleGuard action="compliance.nabh.read"><HandHygieneRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T02 — MSO Session Log Register (NABH PRE.1). MSO
+                manual entry of counseling / financial-aid / discharge-
+                planning / bereavement / grievance / vulnerable-patient
+                care sessions for psychosocial-support evidence trail. */}
+            <Route path="/compliance/nabh-registers/mso-log" element={
+              <RoleGuard action="compliance.nabh.read"><MSOLogRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T07 — Statutory Compliance Register (NABH AAC.16).
+                Living register of statutory licences (Hospital / Pharmacy /
+                Blood-Bank / Fire-NOC / PCB-Consent / BMW-Authorisation /
+                Atomic-Energy / PNDT / CTL / PRA / Drug-Licence / Lift-
+                Inspection) with issued + expiry + renewal status tracking. */}
+            <Route path="/compliance/nabh-registers/statutory" element={
+              <RoleGuard action="compliance.nabh.read"><StatutoryComplianceRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T01 — Antibiogram Register (NABH HIC.6). Periodic
+                cumulative susceptibility per organism × ward × sample-type
+                × period, with sensitivityProfile Map (antibiotic → S/I/R)
+                + AMSC first-/second-line empiric recommendations. */}
+            <Route path="/compliance/nabh-registers/antibiogram" element={
+              <RoleGuard action="compliance.nabh.read"><AntibiogramRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T03 — ESG Compliance Register (NABH 6th-ed Environment).
+                Monthly facility Environmental / Social / Governance report —
+                energy / water / diesel / waste / carbon-equivalent + green-
+                initiatives + ESG-audit findings. Manual-entry only. */}
+            <Route path="/compliance/nabh-registers/esg-compliance" element={
+              <RoleGuard action="compliance.nabh.read"><ESGComplianceRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T04 — Staff Wellness Programme Register (NABH HRM.6).
+                Manual log of staff wellness sessions — annual health checks,
+                vaccination drives, stress management, yoga, nutrition,
+                mindfulness — with attendance + feedback score per session. */}
+            <Route path="/compliance/nabh-registers/wellness" element={
+              <RoleGuard action="compliance.nabh.read"><WellnessProgramRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-T02 — Near-Miss Event Register (NABH QPS.5). Manual-
+                entry log of intercepted wrong-med / wrong-patient / wrong-
+                site / extravasation / fall / equipment-failure events. */}
+            <Route path="/compliance/nabh-registers/nearmissevent" element={
+              <RoleGuard action="compliance.nabh.read"><NearMissEventRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-T04 — Medication Error Register (NABH MOM.4). NCC-MERP
+                classified medication errors per phase (Prescribing → Monitoring),
+                dose / route mismatch, harm class. Severity E-I auto-emits
+                Sentinel via backend chain. */}
+            <Route path="/compliance/nabh-registers/medicationerror" element={
+              <RoleGuard action="compliance.nabh.read"><MedicationErrorRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-B9-T07 — LAMA / DAMA Register (NABH AAC.4). Auto-emit
+                when a discharge is finalised with disposition === "LAMA";
+                manual POST for compliance / MRD backfill. */}
+            <Route path="/compliance/nabh-registers/lama" element={
+              <RoleGuard action="compliance.nabh.read"><LAMARegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-B9-T03 — Root Cause Analysis Register (NABH QPS.1).
+                Auto-pre-created from sentinel events; QPS chair / Quality
+                committee can also file manual RCAs for serious near-miss
+                or recurrent-deviation triggers. */}
+            <Route path="/compliance/nabh-registers/rca" element={
+              <RoleGuard action="compliance.nabh.read"><RCARegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-T05 — HAI Surveillance Register (NABH HIC.4). Auto-
+                emitted from the ICU bundle finalize path when CAUTI compli-
+                ance <100, Foley dwell>3d, positive UTI culture; manual
+                entries for SSI / CDI / MRSA-bacteremia events surfaced
+                from the lab feed. */}
+            <Route path="/compliance/nabh-registers/haisurveillance" element={
+              <RoleGuard action="compliance.nabh.read"><HAISurveillanceRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T06 — Facilities & Equipment Maintenance Log (NABH FMS.5).
+                Engineering / Biomedical / Facilities team logs PPM, Corrective,
+                AMC and Breakdown jobs for BMS, DG-set, Fire-system, Lift,
+                Biomedical, HVAC, Medical-Gas, UPS and Steam-Boiler. */}
+            <Route path="/compliance/nabh-registers/facilities-maintenance" element={
+              <RoleGuard action="compliance.nabh.read"><FacilitiesMaintenanceLogRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T05 — PROM / PREM Register (NABH PRE.4 6th-ed). PRO officer
+                or floor nurse files each survey administration (PROMIS / SF-36 /
+                EQ-5D / HCAHPS / NHS-FFT / Custom-PREM) with domain scores +
+                comments at discharge or follow-up. */}
+            <Route path="/compliance/nabh-registers/prom-prem" element={
+              <RoleGuard action="compliance.nabh.read"><PROMPREMRegRegisterPage /></RoleGuard>
+            } />
+            {/* R7eg — NABH HIC.5 Infection Control register: ICU care-bundle
+                compliance aggregated over time (VAP / CAUTI / CLABSI / DVT
+                / Sepsis / SUP). Backed by /api/clinical-audit/icu-bundles. */}
+            <Route path="/compliance/hic5-infection-control" element={
+              <RoleGuard action="compliance.read"><HIC5InfectionControlPage /></RoleGuard>
+            } />
             {/* R7bq — Caprini DVT assessment. POST to /api/nursing-assessments/dvt
                 auto-populates the NABH DVT register (MOM.7 + AAC.4). */}
             <Route path="/nursing/caprini-dvt" element={
               <RoleGuard action="vitals.write"><CapriniDVTAssessmentPage /></RoleGuard>
+            } />
+            {/* R7du — Restraint Register entry (NABH COP.17). Nurse-side
+                write surface. POST to /api/restraints calls emitRestraint
+                inside the backend, populating the surveyor-facing register
+                read view at /compliance/nabh/restraint-register. */}
+            <Route path="/nursing/restraints" element={
+              <RoleGuard action="mar.write"><RestraintEntryPage /></RoleGuard>
+            } />
+            <Route path="/nursing/restraints/:uhid" element={
+              <RoleGuard action="mar.write"><RestraintEntryPage /></RoleGuard>
             } />
             <Route path="/credentials" element={
               <RoleGuard action="hr.credential.read"><CredentialingPage /></RoleGuard>
@@ -684,6 +906,13 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/mar" element={<MARPage />} />
             <Route path="/diabetic-chart" element={<DiabeticChartPage />} />
+            {/* R7eg — ICU Bundles of Care. R7ei: gate promoted to the new
+                `icu-bundle.write` action so intensivists (Doctor role) can
+                chart bundles in addition to Admin/Nurse. Mirrors the
+                backend route gate at /api/icu-bundles. */}
+            <Route path="/icu-bundles" element={
+              <RoleGuard action="icu-bundle.write"><ICUBundlesPage /></RoleGuard>
+            } />
             <Route path="/maintenance"    element={<MaintenanceDashboardPage />} />
             <Route path="/equipment"      element={<EquipmentDashboardPage />} />
             <Route path="/pharmacy"       element={
@@ -706,15 +935,21 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/nurse-initial-assessment" element={
               <RoleGuard action="mar.write"><NurseInitialAssessmentPage /></RoleGuard>
             } />
+            {/* R7fn-FIX — IPD Initial Assessment is filled by BOTH doctor
+                and nurse (R7fa split design). The old `mar.write` gate
+                (Admin/Nurse only) blocked Doctor with "Access denied" —
+                the entire doctor side of the form was unreachable. Switch
+                to `patient.write-clinical` (Admin/Doctor/Nurse) which is
+                the correct gate for clinical-write surfaces. */}
             <Route path="/ipd-initial-assessment" element={
-              <RoleGuard action="mar.write"><IPDInitialAssessmentPage /></RoleGuard>
+              <RoleGuard action="patient.write-clinical"><IPDInitialAssessmentPage /></RoleGuard>
             } />
             {/* Alias — many pages link to /ipd-assessment which is the same flow */}
             <Route path="/ipd-assessment" element={
-              <RoleGuard action="mar.write"><IPDInitialAssessmentPage /></RoleGuard>
+              <RoleGuard action="patient.write-clinical"><IPDInitialAssessmentPage /></RoleGuard>
             } />
             <Route path="/ipd-assessment/:uhid" element={
-              <RoleGuard action="mar.write"><IPDInitialAssessmentPage /></RoleGuard>
+              <RoleGuard action="patient.write-clinical"><IPDInitialAssessmentPage /></RoleGuard>
             } />
 
             {/* Investigation / Lab — used by Lab Tech, Radiologist, Doctor */}
@@ -740,6 +975,13 @@ function AppLayout({ collapsed, setCollapsed }) {
               <RoleGuard action="patient-file.read"><DoctorPatientPanel /></RoleGuard>
             } />
             <Route path="/doctor-notes" element={<DoctorNotesPage />} />
+            {/* R7fu — Medical Certificate builder. Backend gates on
+                patient.write-clinical (Admin/Doctor/Nurse); same gate
+                here so a Receptionist clicking through doesn't see the
+                page just to get 403 toasts on save. */}
+            <Route path="/medical-certificates" element={
+              <RoleGuard action="patient.write-clinical"><MedicalCertificatePage /></RoleGuard>
+            } />
             {/* R7bb-E/D5-HIGH-2 — Nursing assessment writes gated by mar.write. */}
             <Route path="/nursing-care-plan" element={
               <RoleGuard action="mar.write"><NursingCarePlanPage /></RoleGuard>
@@ -786,6 +1028,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/admin/roles" element={
               <RoleGuard allow={["Admin"]}><RolesPage /></RoleGuard>
+            } />
+            {/* R7dw — NABH Signage Generator (Admin only). 88 bilingual
+                signage templates for accreditation. */}
+            <Route path="/admin/nabh-signage" element={
+              <RoleGuard allow={["Admin"]}><NABHSignagePage /></RoleGuard>
             } />
 
             {/* ── Accountant workspace — Day Book / GST / Outstanding / Refunds ─ */}

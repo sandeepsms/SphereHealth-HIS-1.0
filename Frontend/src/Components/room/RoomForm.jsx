@@ -13,6 +13,12 @@ import { buildingService } from "../../Services/buildingService";
 import { floorService } from "../../Services/floorService";
 import { wardService } from "../../Services/wardService";
 import { roomCategoryService } from "../../Services/roomCategoryService";
+// R7er — decorate the category dropdown labels with the resolved per-day
+// tariff so the admin sees ₹X/day at the moment they pick a category,
+// and a "⚠ no tariff" pill when the picked category has no matrix row
+// (deep-link target: /room-charges). Keeps the loop dynamic — any new
+// RoomCategoryModel entry surfaces here as either ₹X/day or the warning.
+import roomCategoryChargesService from "../../Services/roomCategoryChargesService";
 
 const genRoomCode = (roomNumber = "") => {
   const base = roomNumber ? roomNumber.toUpperCase().replace(/\s+/g, "-") : "";
@@ -72,6 +78,8 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
   const [filtFloors, setFiltFloors] = useState([]);
   const [filtWards, setFiltWards] = useState([]);
   const [categories, setCategories] = useState([]);
+  // R7er — keyed by uppercase categoryCode → matrix row.
+  const [chargesByCode, setChargesByCode] = useState({});
   const [loading, setLoading] = useState(false);
   const [bulkProg, setBulkProg] = useState(null);
 
@@ -125,16 +133,26 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [b, f, w, c] = await Promise.all([
+      const [b, f, w, c, charges] = await Promise.all([
         buildingService.getAllBuildings(),
         floorService.getAllFloors(),
         wardService.getAllWards(),
         roomCategoryService.getAllCategories(),
+        roomCategoryChargesService.list().catch(() => null),
       ]);
       setBuildings(b || []);
       setAllFloors(f || []);
       setAllWards(w || []);
       setCategories(c || []);
+      // R7er — build a code-keyed lookup so the dropdown render reads
+      // matrix rows in O(1) without a per-option network call.
+      const chargeRows = Array.isArray(charges?.data) ? charges.data : [];
+      const codeMap = {};
+      for (const row of chargeRows) {
+        const code = String(row.categoryCode || "").toUpperCase();
+        if (code) codeMap[code] = row;
+      }
+      setChargesByCode(codeMap);
     } catch {
       showToast("error", "Error", "Failed to load data");
     } finally {
@@ -357,10 +375,32 @@ const RoomForm = ({ visible, onHide, room, onSave }) => {
         <label>Room Category *</label>
         <Dropdown
           value={formData.roomCategory}
-          options={categories.map((c) => ({
-            label: c.categoryName,
-            value: c._id,
-          }))}
+          options={categories.map((c) => {
+            // R7er — append "₹X/day" or "⚠ no tariff" suffix so the admin
+            // sees the resolved per-day rate the moment they pick a
+            // category. Loop stays dynamic: any future RoomCategoryModel
+            // entry shows up here, and its label updates as soon as its
+            // matrix row is configured at /room-charges.
+            const code = String(c.categoryCode || "").toUpperCase();
+            const row = code ? chargesByCode[code] : null;
+            let suffix = "";
+            if (row && row.charges) {
+              const cc = row.charges;
+              const total = Number(cc.bedRent||0) + Number(cc.nursingCharge||0)
+                          + Number(cc.doctorVisitCharge||0) + Number(cc.rmoCharge||0)
+                          + Number(cc.monitoringCharge||0) + Number(cc.dieteticsCharge||0)
+                          + Number(cc.housekeepingCharge||0) + Number(cc.linenCharge||0);
+              if (Number.isFinite(total) && total > 0) {
+                suffix = `  —  ₹${total.toLocaleString("en-IN")}/day`;
+              }
+            } else if (code) {
+              suffix = "  —  ⚠ no tariff set";
+            }
+            return {
+              label: `${c.categoryName}${suffix}`,
+              value: c._id,
+            };
+          })}
           onChange={(e) => setFormData({ ...formData, roomCategory: e.value })}
           placeholder="Select Category"
           disabled={loading}

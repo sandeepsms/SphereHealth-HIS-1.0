@@ -86,6 +86,7 @@ const createDoctorNote = async (data, doctorUserId) => {
   // Resolve doctor info from User model (app uses User, not old Doctor model)
   let doctorName = dn || "";
   let doctorRegNo = drn || "";
+  let doctorEmpId = "";
   let doctorObjectId = null;
   try {
     const User = require("../../models/User/userModel");
@@ -93,6 +94,10 @@ const createDoctorNote = async (data, doctorUserId) => {
     if (userDoc) {
       doctorName = userDoc.fullName || `${userDoc.firstName || ""} ${userDoc.lastName || ""}`.trim() || dn || "";
       doctorRegNo = userDoc.doctorDetails?.registrationNumber || drn || "";
+      // R7go — Denormalize employeeId so every signed note is traceable to
+      // a specific staff record without a User join. Surfaced in the
+      // patient panel + Complete File signature footer.
+      doctorEmpId = userDoc.employeeId || "";
       doctorObjectId = userDoc._id;
     }
   } catch (_) { /* use data sent from frontend */ }
@@ -138,6 +143,7 @@ const createDoctorNote = async (data, doctorUserId) => {
     doctor: doctorObjectId || doctorUserId || undefined,
     doctorName,
     doctorRegNo,
+    doctorEmpId,
     soap,
     vitals,
     investigations: investigations || [],
@@ -202,6 +208,39 @@ const createDoctorNote = async (data, doctorUserId) => {
     }
   }
 
+  // R7em-7 — Auto-populate NABH COP.18 Mortality Register when a death
+  // note is saved. emitMortality is idempotent on admissionId (unique
+  // index in the model), so a draft-then-sign sequence won't double-emit.
+  // Death-note fields live in noteDetails (Mixed schema), so we lift
+  // them onto the deathNote shim — the emitter reads dateTime,
+  // causeDeath1, modeOfDeath, etc. directly (R7em-7 aliases).
+  if (note && note.noteType === "death") {
+    try {
+      const { emitMortality } = require("../Compliance/nabhRegisterEmitter");
+      const Patient = require("../../models/Patient/patientModel");
+      const Admission = require("../../models/Patient/admissionModel");
+      const deathNoteForEmit = {
+        ...note.toObject(),
+        ...(noteDetails || {}),
+        admissionId: note.admissionId,
+      };
+      const patient = note.patient
+        ? await Patient.findById(note.patient).select("_id UHID fullName name age gender sex").lean()
+        : null;
+      const admission = note.admissionId
+        ? await Admission.findById(note.admissionId).select("_id admissionNumber admissionDate attendingDoctor attendingDoctorId isMLC mlcNumber").lean()
+        : null;
+      emitMortality({
+        deathNote: deathNoteForEmit,
+        patient: patient || { _id: note.patient, UHID: note.patientUHID, fullName: note.patientName },
+        admission,
+        actor: { _id: doctorObjectId || doctorUserId, fullName: doctorName, role: "Doctor" },
+      }).catch((e) => console.error("[doctorNotes] emitMortality error:", e?.message));
+    } catch (e) {
+      console.error("[doctorNotes] Mortality emit wiring failed:", e?.message);
+    }
+  }
+
   return note;
 };
 
@@ -225,11 +264,6 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
     error.statusCode = 400;
     throw error;
   }
-  if (noteDraft.doctor && doctorUserId && noteDraft.doctor.toString() !== doctorUserId.toString()) {
-    const error = new Error("Not authorised to sign this note");
-    error.statusCode = 403;
-    throw error;
-  }
   if (!noteDraft.doctor && !doctorUserId) {
     const error = new Error("Cannot sign — no doctor user context");
     error.statusCode = 401;
@@ -248,6 +282,9 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
   // the reg-no belongs — illegal under MCI 1.4.2.
   let signedByName = signaturePayload.signedByName || noteDraft.signedByName || "";
   let signedByReg  = signaturePayload.signedByReg  || noteDraft.signedByReg  || "";
+  // R7go — Capture the signer's hospital employee ID for the audit trail.
+  // Resolved server-side from actorUser below; never trust a client value.
+  let signedByEmpId = "";
   let actorUser = null;
   if (doctorUserId) {
     try {
@@ -255,8 +292,76 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
       actorUser = await User.findById(doctorUserId).lean();
     } catch (_) { /* surface as missing-reg below */ }
   }
+
+  // R7fw-FIX1 — Handover-sign policy. Pre-fix only the EXACT note author
+  // could sign; this 403'd consultants signing a resident's draft, or
+  // admins overriding a stale draft after a doctor's shift ended.
+  // Real-world rule: anyone with clinical-write privilege should be able
+  // to sign a colleague's draft AS LONG AS we record the original author
+  // and the signer separately on the doc + emit a richer audit entry.
+  //
+  // Allowed signers (in priority order):
+  //   1. The original author              (same person — straight-through)
+  //   2. Admin role                       (administrative override)
+  //   3. Any Doctor with a valid MCI reg  (peer hand-over / consultant
+  //                                        signing for a resident)
+  //
+  // Anyone else still gets 403. The MCI-reg requirement below in the
+  // Doctor-role block applies uniformly to authors AND handover-signers
+  // — no shortcut around R7bx Reg 1.4.2.
+  const isAuthor = !!noteDraft.doctor && !!doctorUserId
+                   && noteDraft.doctor.toString() === doctorUserId.toString();
+  const canHandoverSign = !isAuthor && actorUser
+                          && (actorUser.role === "Admin" || actorUser.role === "Doctor");
+  if (noteDraft.doctor && doctorUserId && !isAuthor && !canHandoverSign) {
+    const error = new Error("Not authorised to sign this note");
+    error.statusCode = 403;
+    throw error;
+  }
+  // When a different signer takes over, capture the original author's
+  // name so the print signature row reads
+  //   "Signed by Dr. X (Reg …) on behalf of Dr. Y"
+  // (the front-end's signature renderer keys off `handoverFromName`).
+  let handoverFromName = "";
+  if (canHandoverSign && noteDraft.doctor) {
+    try {
+      const User = require("../../models/User/userModel");
+      const origAuthor = await User.findById(noteDraft.doctor).lean();
+      if (origAuthor) {
+        handoverFromName = origAuthor.fullName
+                           || [origAuthor.firstName, origAuthor.lastName].filter(Boolean).join(" ")
+                           || noteDraft.signedByName
+                           || "";
+      }
+    } catch (_) { /* non-fatal — fall back to blank */ }
+  }
   if (actorUser?.role === "Doctor") {
-    const regNo = String(actorUser.doctorDetails?.registrationNumber || "").trim();
+    // R7fp — MCI reg-no can live in several places depending on how the
+    // user was provisioned. Pre-fix we only checked `doctorDetails.
+    // registrationNumber` and false-positive blocked doctors whose
+    // reg-no was on the linked Doctor profile or a sibling field. Accept
+    // any of: User.doctorDetails.registrationNumber, User.medicalRegNo,
+    // User.registrationNumber, or Doctor.professional.registrationNumber
+    // (looked up by Doctor.user → actorUser._id).
+    let regNo = String(
+      actorUser.doctorDetails?.registrationNumber ||
+      actorUser.medicalRegNo ||
+      actorUser.registrationNumber ||
+      "",
+    ).trim();
+    if (!regNo) {
+      try {
+        const Doctor = require("../../models/Doctor/doctorModel");
+        const docProfile = await Doctor.findOne({ user: actorUser._id })
+          .select("professional.registrationNumber regNo")
+          .lean();
+        regNo = String(
+          docProfile?.professional?.registrationNumber ||
+          docProfile?.regNo ||
+          "",
+        ).trim();
+      } catch (_) { /* fall through to missing-reg error */ }
+    }
     if (!regNo) {
       const err = new Error(
         "Doctor's MCI registration number is missing. Add it in Settings → Doctor Profile before signing.",
@@ -270,11 +375,17 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
     signedByReg  = regNo;
     signedByName = signedByName || actorUser.fullName ||
       `${actorUser.firstName || ""} ${actorUser.lastName || ""}`.trim();
+    signedByEmpId = actorUser.employeeId || "";
   } else if (actorUser && (!signedByName || !signedByReg)) {
     // Non-doctor actor or pre-existing missing fields — best-effort fallback.
     signedByName = signedByName || actorUser.fullName ||
       `${actorUser.firstName || ""} ${actorUser.lastName || ""}`.trim();
     signedByReg  = signedByReg  || actorUser.doctorDetails?.registrationNumber || "";
+    signedByEmpId = signedByEmpId || actorUser.employeeId || "";
+  } else if (actorUser) {
+    // Author flow that already had name+reg pre-populated — still capture
+    // employeeId server-side for traceability.
+    signedByEmpId = actorUser.employeeId || "";
   }
 
   // R7bn-2 / D10-fix: status-guarded atomic transition. The `status:
@@ -289,10 +400,20 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
     signedAt: new Date(),
     signedByName,
     signedByReg,
+    // R7go — Persisted on the note so the panel + print can render
+    // "Emp ID: DOC-26-00001" without a User collection lookup.
+    signedByEmpId,
     updatedBy: doctorUserId,
   };
   if (!noteDraft.doctor && doctorUserId) signFields.doctor = doctorUserId;
   if (signaturePayload.signature) signFields.signature = signaturePayload.signature;
+  // R7fw-FIX1 — when this is a handover-sign, record the original author's
+  // name so the print signature row and the audit trail both make the
+  // delegation explicit. Stamped flat (handoverFromName) so legacy code
+  // that reads .signedByName keeps working.
+  if (canHandoverSign && handoverFromName) {
+    signFields.handoverFromName = handoverFromName;
+  }
 
   const note = await DoctorNotes.findOneAndUpdate(
     { _id: noteId, status: "draft" },
@@ -363,6 +484,39 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
         actor: req?.user || { _id: doctorUserId, name: signedByName },
       }).catch(() => {});
     } catch (_) { /* silent */ }
+  }
+
+  // R7em-7 — Mortality emit on sign-later flow. Death notes are often
+  // created as drafts during the resuscitation and signed once the
+  // attending verifies the clinical sequence. The create-path emit
+  // (above) handles save-and-sign-in-one-go; this branch covers the
+  // draft-then-sign sequence. emitMortality is idempotent on admissionId
+  // so the second call returns the existing row without duplicating.
+  if (note.noteType === "death") {
+    try {
+      const { emitMortality } = require("../Compliance/nabhRegisterEmitter");
+      const Patient = require("../../models/Patient/patientModel");
+      const Admission = require("../../models/Patient/admissionModel");
+      const deathNoteForEmit = {
+        ...note.toObject(),
+        ...(note.noteDetails || {}),
+        admissionId: note.admissionId,
+      };
+      const patient = note.patient
+        ? await Patient.findById(note.patient).select("_id UHID fullName name age gender sex").lean()
+        : null;
+      const admission = note.admissionId
+        ? await Admission.findById(note.admissionId).select("_id admissionNumber admissionDate attendingDoctor attendingDoctorId isMLC mlcNumber").lean()
+        : null;
+      emitMortality({
+        deathNote: deathNoteForEmit,
+        patient: patient || { _id: note.patient, UHID: note.patientUHID, fullName: note.patientName },
+        admission,
+        actor: req?.user || { _id: doctorUserId, fullName: signedByName, role: "Doctor" },
+      }).catch((e) => console.error("[doctorNotes] emitMortality (sign) error:", e?.message));
+    } catch (e) {
+      console.error("[doctorNotes] Mortality emit wiring (sign) failed:", e?.message);
+    }
   }
 
   return note;
@@ -671,7 +825,7 @@ const updateDiagnosis = async (id, data, actor = {}) => {
 // ─────────────────────────────────────────────────────────────
 // Delete draft note
 // ─────────────────────────────────────────────────────────────
-const deleteDoctorNote = async (id, doctorUserId) => {
+const deleteDoctorNote = async (id, doctorUserId, opts = {}) => {
   const note = await DoctorNotes.findById(id);
   if (!note) {
     const error = new Error("Note not found");
@@ -688,7 +842,39 @@ const deleteDoctorNote = async (id, doctorUserId) => {
     error.statusCode = 403;
     throw error;
   }
+
+  // B6-T07: capture a snapshot BEFORE deleteOne() so the ClinicalAudit row
+  // retains enough detail to reconstruct what was deleted (NABH AAC.7 trail).
+  // DOCTOR_NOTE_DELETED is on the LONG_RETENTION_EVENTS list — 7y floor.
+  const snapshot = {
+    noteType:     note.noteType,
+    signedByName: note.signedByName,
+    doctorEmpId:  note.doctorEmpId,
+    visitDate:    note.visitDate,
+    contentLen:   JSON.stringify(note.noteDetails || {}).length,
+  };
+
   await note.deleteOne();
+
+  try {
+    const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+    await emitClinicalAudit({
+      req: opts.req,
+      event: "DOCTOR_NOTE_DELETED",
+      UHID: note.patientUHID || note.UHID,
+      admissionId: note.admissionId,
+      patientId: note.patientId,
+      patientName: note.patientName,
+      targetType: "DoctorNote",
+      targetId: note._id,
+      before: snapshot,
+      reason: opts.reason || "unspecified",
+      actor: opts.req ? undefined : { _id: doctorUserId, role: "Doctor" },
+    });
+  } catch (e) {
+    console.warn("[doctor-note-delete-audit] emit failed:", e.message);
+  }
+
   return true;
 };
 

@@ -51,10 +51,21 @@ const OrderExecutionSchema = new mongoose.Schema(
 // Patient-safety audit 2026-05-17 A-04.
 const IOSchema = new mongoose.Schema(
   {
-    oral:        { type: Number, default: 0, min: 0, max: 20000 },
-    ivFluids:    { type: Number, default: 0, min: 0, max: 20000 },
-    urineOutput: { type: Number, default: 0, min: 0, max: 20000 },
-    otherOutput: { type: Number, default: 0, min: 0, max: 20000 },
+    oral:             { type: Number, default: 0, min: 0, max: 20000 },
+    ivFluids:         { type: Number, default: 0, min: 0, max: 20000 },
+    urineOutput:      { type: Number, default: 0, min: 0, max: 20000 },
+    otherOutput:      { type: Number, default: 0, min: 0, max: 20000 },
+    // R7fp — additional I/O channels the nursing UI was already sending
+    // but the schema silently dropped (Mongoose strips unknown fields).
+    // NG-tube output, IV med-fluids, surgical drain, blood loss/products,
+    // emesis must persist so the 24-hour I/O totalisation and the print
+    // sheet show the true balance.
+    nasogastricOutput:{ type: Number, default: 0, min: 0, max: 20000 },
+    ivMedFluids:      { type: Number, default: 0, min: 0, max: 20000 },
+    drainOutput:      { type: Number, default: 0, min: 0, max: 20000 },
+    bloodLoss:        { type: Number, default: 0, min: 0, max: 20000 },
+    bloodProducts:    { type: Number, default: 0, min: 0, max: 20000 },
+    emesis:           { type: Number, default: 0, min: 0, max: 20000 },
     notes: { type: String },
   },
   { _id: false },
@@ -103,7 +114,17 @@ const NurseNotesSchema = new mongoose.Schema(
 
     vitals: NurseVitalsSchema,
     painScore: { type: Number, min: 0, max: 10, default: 0 },
-    painAssessment: { type: String },
+    // R7fp — painAssessment is BOTH a structured payload from the
+    // pain-assessment page (PQRST + interventions) AND a free-text
+    // narrative from the daily note form. String type rejected the
+    // structured payload on save; promote to Mixed so either shape
+    // round-trips intact.
+    painAssessment: { type: mongoose.Schema.Types.Mixed },
+
+    // R7fp — IV infusion payload (rate / fluid / additives / site swap)
+    // sent by the IV-infusion subform. Previously dropped because the
+    // schema had no field for it.
+    ivInfusion: { type: mongoose.Schema.Types.Mixed },
 
     ivLine: {
       site: { type: String },
@@ -146,6 +167,11 @@ const NurseNotesSchema = new mongoose.Schema(
     // R7az-D2-MED-7: cap signature payload (~150KB).
     signature: { type: String, maxlength: [200000, "signature too large (max 200,000 chars ≈ 150KB)"] },
     signedByName: { type: String },
+    // R7go — Hospital employee ID of the signer (User.employeeId, e.g.
+    // NUR-26-00001). Surfaced next to the name in patient panel + printed
+    // Complete File. May differ from nurseEmployeeId when an admin or
+    // charge nurse co-signs another nurse's note.
+    signedByEmpId: { type: String },
 
     // R7az-D2-MED-8: append-only nurse confirmation history for the
     // "doctor's order confirmed by nurse" flow on this note. Each

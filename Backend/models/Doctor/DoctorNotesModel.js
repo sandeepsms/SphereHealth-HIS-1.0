@@ -82,6 +82,12 @@ const DoctorNotesSchema = new mongoose.Schema(
     doctorName: { type: String },
     doctorId: { type: String },
     doctorRegNo: { type: String },
+    // R7go — Hospital employee ID (User.employeeId, e.g. DOC-26-00001).
+    // Surfaced next to the doctor's name in the patient panel + printed
+    // Complete File so every signed note is traceable to a specific
+    // staff record without joining back to the User collection. NABH AAC.7
+    // audit-trail requirement; kept denormalized for print speed.
+    doctorEmpId: { type: String },
     consultantName: { type: String },
 
     department: { type: mongoose.Schema.Types.ObjectId, ref: "Department" },
@@ -156,6 +162,16 @@ const DoctorNotesSchema = new mongoose.Schema(
     signature:    { type: String, maxlength: [200000, "signature too large (max 200,000 chars ≈ 150KB)"] },
     signedByName: { type: String },
     signedByReg:  { type: String },
+    // R7go — Hospital employee ID of the signer (may differ from doctorEmpId
+    // when an admin or consultant signs on behalf of a resident). Surfaced
+    // in the SIGNED & SUBMITTED footer alongside the name.
+    signedByEmpId: { type: String },
+    // R7fw-FIX1 — handover-sign provenance. Set when the signer is not the
+    // original author (consultant signing a resident's draft, admin
+    // signing a doctor's stale draft, etc.). The print signature row
+    // reads "Signed by Dr. X (Reg …) on behalf of Dr. Y" so the
+    // delegation is unambiguous in court / NABH audit review.
+    handoverFromName: { type: String, default: "" },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -213,6 +229,7 @@ DoctorNotesSchema.pre("validate", function (next) {
 });
 
 DoctorNotesSchema.index({ patient: 1, visitDate: -1 });
+DoctorNotesSchema.index({ patientUHID: 1, visitDate: -1 });
 DoctorNotesSchema.index({ ipdNo: 1, visitDate: -1 });
 DoctorNotesSchema.index({ doctor: 1, visitDate: -1 });
 DoctorNotesSchema.index({ "orders.nurseStatus": 1 });

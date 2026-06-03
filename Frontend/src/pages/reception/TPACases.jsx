@@ -40,9 +40,18 @@ const STATUS_CLASS = {
 function printTPAAuth(bill) {
   const p = bill.patientId || {};
   const a = bill.admissionId || {};
+  // R7eo-B — Pattern B caller payload gap fix: pass stage + approval
+  // metadata so the TPAAuthorization template (Pattern A4) can render
+  // the request / approval / denial variant with the right header,
+  // approval number, sanctioned amount, validity and co-pay block.
   openPrint("tpa-authorization", {
     requestNo:           bill.tpaClaimNumber || bill.billNumber,
     date:                bill.tpaSubmittedAt || new Date().toISOString(),
+    stage:               bill.tpaClaimStatus === "APPROVED" ? "approved" : bill.tpaClaimStatus === "DENIED" ? "denied" : "request",
+    approvalNumber:      bill.tpaApprovalNumber,
+    approvedAmount:      bill.tpaApprovedAmount,
+    validTill:           bill.tpaValidTill,
+    coPayPercent:        bill.tpaCoPayPercent,
     patientName:         p.fullName || bill.patientName,
     uhid:                p.UHID || bill.UHID,
     ipdNo:               a.ipdNo || bill.ipdNo,

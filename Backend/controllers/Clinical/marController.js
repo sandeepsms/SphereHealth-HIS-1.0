@@ -213,11 +213,19 @@ class MARController {
         if (!wUser) {
           return res.status(400).json({ success: false, code: "HAM_WITNESS_NOT_FOUND", message: "Witness user not found" });
         }
-        if (!roleCan(wUser.role, "mar.write")) {
+        // ISMP independent-double-check: second witness must be a Nurse, never the same nurse, never Admin.
+        if (wUser.role !== "Nurse") {
           return res.status(400).json({
             success: false,
-            code: "HAM_WITNESS_NOT_AUTHORIZED",
-            message: `Witness '${wUser.fullName}' (role: ${wUser.role}) does not hold mar.write — choose another nurse.`,
+            code: "HAM_WITNESS_NOT_NURSE",
+            message: "High-Alert Medication dual-witness must be a Nurse (ISMP). Admin/Doctor cannot witness.",
+          });
+        }
+        if (String(wUser._id) === String(req.user.id)) {
+          return res.status(400).json({
+            success: false,
+            code: "HAM_WITNESS_SAME_NURSE",
+            message: "Witness nurse must be different from the administering nurse.",
           });
         }
         hamWitness = {

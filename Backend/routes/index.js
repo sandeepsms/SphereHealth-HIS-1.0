@@ -76,6 +76,7 @@ const intakeOutputRoutes = require("./Clinical/intakeOutputRoutes"); // R7bq-3 �
 // still demand specific roles via `authorize(...)`.
 const {
   authenticate,
+  requirePasswordRotated,
   blockReadOnlyRoleWrites,
   blockNonClinicalForDoctorNurse,
   enforceActivePatientForClinicalWrites,
@@ -96,8 +97,29 @@ router.use("/auth", authRoutes);
 const { clientErrorRateLimit } = require("../middleware/rateLimitAuth");
 router.use("/client-errors",    clientErrorRateLimit, require("./Admin/clientErrorRoutes"));
 
+// ── R7dn: Pincode lookup (anonymous-allowed, rate-limited) ──
+// Just postal data, not PHI. Mounted ABOVE the global authenticate
+// gate so the reception registration form can fetch it before the
+// receptionist has even saved the draft. Rate-limited at the route
+// layer (60 lookups/min/IP).
+router.use("/pincode", require("./Common/pincodeRoutes"));
+
+// R7fs: hospital-settings GET is PUBLIC (login page + first-paint
+// sidebar/header need hospital name+logo BEFORE the JWT exists).
+// The route file scopes auth itself: GET = open, PUT = local
+// authenticate + requireAction("settings.write").
+router.use("/hospital-settings", hospitalSettingsRoutes);
+
 // ── Everything below requires a valid JWT ────────────────────
 router.use(authenticate);
+
+// ── R7gw-B1-T07: forced password-rotation gate ───────────────
+// authenticate() above already loads req.user.mustChangePassword from a
+// fresh DB read (defense-in-depth). This mount turns that flag into actual
+// enforcement: any POST/PUT/PATCH/DELETE from a user with the flag set
+// returns 403 PASSWORD_RESET_REQUIRED. GETs and the /auth/change-password
+// + /auth/password endpoints stay open so the lockout has an exit ramp.
+router.use(requirePasswordRotated);
 
 // ── R7i: Read-only role write-blocker ────────────────────────
 // Defense-in-depth for the MRD role. Rejects POST/PUT/PATCH/DELETE
@@ -181,6 +203,10 @@ router.use("/investigation-orders", investigationOrderRoutes);
 // Phase 1: NABH Paperless Modules
 router.use("/discharge-summary", dischargeSummaryRoutes);
 router.use("/consent-forms", consentFormRoutes);
+// R7fu — Medical Certificate surface (12 cert types: fitness, sick-leave,
+// discharge-fitness, disability, vaccination, pre-employment, insurance-claim,
+// sterilization, bedridden, medico-legal, cause-of-death, birth-notification).
+router.use("/medical-certificates", require("./Clinical/medicalCertificateRoutes"));
 router.use("/nursing-care-plans", nursingCarePlanRoutes);
 router.use("/nursing-assessments", nursingAssessmentsRoutes);
 // R7bn-5 / D6-fix: twice-daily compliance read API (used by the
@@ -190,7 +216,9 @@ router.use("/ai", aiRoutes);
 router.use("/mar", marRoutes);
 router.use("/intake-output", intakeOutputRoutes); // R7bq-3 — fluid I/O ledger
 router.use("/nursing-charges", nursingChargesRoutes);
-router.use("/hospital-settings", hospitalSettingsRoutes);
+// R7fs: hospital-settings now mounted above the global authenticate
+// (see line ~107). Do NOT re-mount here — double mount would shadow
+// the public GET with another authenticated copy.
 router.use("/vitalsheet", vitalSheetRoutes);
 
 // ── Patient File — Complete aggregator + activity feed ───────
@@ -235,6 +263,13 @@ router.use("/admin-dashboard",  require("./Admin/adminDashboardRoutes"));
 // endpoint, admin-only. Backs Frontend/src/pages/admin/SystemHealthPage.jsx.
 router.use("/admin",            require("./Admin/systemHealthRoutes"));
 
+// R7en — Per-room-category daily-charges matrix. Mirrors R7dp's
+// DoctorCharges pattern (one row per category, eight line items,
+// half-day proration rule). The daily auto-billing cron resolves
+// against this matrix instead of the legacy ServiceMaster BED-* /
+// NURSING-* rows. Reads gated on billing.read, writes on doctors.write.
+router.use("/admin/room-charges", require("./Admin/roomCategoryChargesRoutes"));
+
 // (client-errors is mounted ABOVE the global authenticate — see top of file)
 
 // R7bf-H: reports + dashboards surface (A6-CRIT + A6-HIGH coverage).
@@ -246,6 +281,11 @@ router.use("/reports",          require("./Reports/reportsRoutes"));
 
 // Diabetic chart — RBS readings + sliding-scale insulin per admission
 router.use("/diabetic-chart",   require("./Clinical/diabeticChartRoutes"));
+
+// R7eg — ICU Bundles of Care (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP).
+// One sheet per (admissionId, date, shift). Auto-feeds the NABH HIC.5
+// Infection-Control register via ClinicalAudit emit on finalize.
+router.use("/icu-bundles",      require("./Clinical/icuBundleRoutes"));
 
 // Equipment inventory + homecare loan tracker + service history
 router.use("/equipment",        require("./Equipment/equipmentRoutes"));
@@ -312,6 +352,177 @@ router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
 // Surveyors ask for these as chronological audit-grade logs; the registers
 // are auto-populated from existing clinical flows via nabhRegisterEmitter.
 router.use("/registers/nabh",        require("./Compliance/nabhRegisterRoutes"));
+// R7gw-B9-T01 — NABH sentinel-event register (AAC.7 + MOM.4). Auto-emitted
+// from HAPU stage III+ and fall-with-major-injury; manual entries allowed.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/sentinel-events", require("./Compliance/nabhRegisters/sentineleventRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] sentinel-events mount failed:", e.message);
+  }
+}
+// R7gw-B9-B9-T06 — NABH Hand Hygiene Compliance register (HIC.3). IC-officer
+// driven observation log (WHO 5-Moments × role × technique). Manual-entry only.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/handhygiene", require("./Compliance/nabhRegisters/handhygieneRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] handhygiene mount failed:", e.message);
+  }
+}
+// R7gw-B9-T02 — NABH Near-Miss Event register (QPS.5). Manual-entry log
+// of intercepted wrong-meds, prevented falls, caught equipment failures
+// etc. Powers the QPS Committee's safety-culture trend chart.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/near-miss-events", require("./Compliance/nabhRegisters/nearmisseventRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] near-miss-events mount failed:", e.message);
+  }
+}
+// R7gw-B9-T04 — NABH Medication Error register (MOM.4). Auto-emit from
+// MAR.administrationRecord.nurseError=true; severity E-I additionally
+// chains to emitSentinelEvent. Manual entries allowed for compliance officer.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/medicationerror", require("./Compliance/nabhRegisters/medicationerrorRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] medicationerror mount failed:", e.message);
+  }
+}
+// R7gw-B9-B9-T07 — NABH LAMA / DAMA register (AAC.4). Auto-emit when a
+// discharge is finalised with disposition === "LAMA"; manual POST for
+// Compliance / MRD backfill.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/lama", require("./Compliance/nabhRegisters/lamaRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] lama mount failed:", e.message);
+  }
+}
+// R7gw-B9-B9-T03 — NABH Root Cause Analysis register (QPS.1 + AAC.7).
+// Auto-pre-created from emitSentinelEvent (linkedSentinelId set, status
+// Initiated). QPS chair / Quality Committee can POST a manual RCA for
+// serious near-miss or recurrent-deviation triggers.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/rca-register", require("./Compliance/nabhRegisters/rcaRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] rca-register mount failed:", e.message);
+  }
+}
+// R7gw-B9-T05 — NABH HAI Surveillance register (HIC.4). Auto-emitted from
+// the ICU-bundle finalize path when CAUTI compliance <100, Foley dwell>3d
+// and a positive UTI culture is present; manual POST for SSI / CDI /
+// MRSA-bacteremia events surfaced from the lab feed.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/hai-surveillance", require("./Compliance/nabhRegisters/haisurveillanceRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] hai-surveillance mount failed:", e.message);
+  }
+}
+// R7gw-B10-T06 — NABH Facilities & Equipment Maintenance Log (FMS.5).
+// Engineering / Biomedical / Facilities staff log PPM jobs, corrective
+// tickets and AMC visits across BMS / Generator / Fire / Lift / Biomedical
+// / HVAC / MedGas / UPS / Steam-Boiler. Manual entry only.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/facilities-maintenance", require("./Compliance/nabhRegisters/facilities-maintenanceRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] facilities-maintenance mount failed:", e.message);
+  }
+}
+// R7gw-B10-T02 — NABH MSO Session Log register (PRE.1). Manual-entry log
+// of Medical Social Officer sessions (counseling / financial-aid /
+// discharge-planning / bereavement / grievance / vulnerable-patient care).
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/mso-log", require("./Compliance/nabhRegisters/mso-logRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] mso-log mount failed:", e.message);
+  }
+}
+// R7gw-B10-T07 — NABH Statutory Compliance register (AAC.16). Manual register
+// of statutory licences (Hospital / Pharmacy / BloodBank / Fire-NOC /
+// PCB-Consent / BMW-Authorisation / Atomic-Energy / PNDT / CTL / PRA /
+// Drug-Licence / Lift-Inspection) with issue + expiry + renewal status.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/statutory", require("./Compliance/nabhRegisters/statutoryRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] statutory mount failed:", e.message);
+  }
+}
+// R7gw-B10-T03 — NABH ESG Compliance register (6th-ed Environment). Monthly
+// facility Environmental / Social / Governance report — energy / water /
+// diesel / waste / carbon-equivalent + green-initiatives + audit findings.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/esg-compliance", require("./Compliance/nabhRegisters/esg-complianceRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] esg-compliance mount failed:", e.message);
+  }
+}
+// R7gw-B10-T01 — NABH Antibiogram register (HIC.6). Periodic facility-level
+// cumulative susceptibility report (organism × ward × sample-type × period)
+// derived from microbiology isolates; powers the AMSC's empiric first-/
+// second-line recommendation tables. Manual-entry by AMSC / IC officer.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/antibiogram", require("./Compliance/nabhRegisters/antibiogramRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] antibiogram mount failed:", e.message);
+  }
+}
+// R7gw-B10-T04 — NABH Staff Wellness Programme register (HRM.6). Manual
+// register of staff-wellness sessions — annual health checks, vaccination
+// drives, stress-management workshops, yoga / mindfulness, nutrition. HR /
+// Wellness committee files each session row from the page UI.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/wellness", require("./Compliance/nabhRegisters/wellnessRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] wellness mount failed:", e.message);
+  }
+}
+// R7gw-B10-T05 — NABH PROM / PREM register (PRE.4 6th-ed). PRO officer
+// or floor nurse files each survey administration (PROMIS / SF-36 / EQ-5D /
+// HCAHPS / NHS-FFT / Custom-PREM) with domain scores + comments. Defaults
+// to dischargeContext=true; can be flagged false for follow-up visits.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/prom-prem", require("./Compliance/nabhRegisters/prom-premRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] prom-prem mount failed:", e.message);
+  }
+}
+// R7en — ECG Register (NABH AAC.4 + IPSG.2 + COP.7). Manual + auto-emit
+// from DoctorOrder (Investigation/ECG). Surveyor reads via dashboard-summary
+// above; this mount is the write surface (entry + report + cardio review).
+router.use("/ecg-register",          require("./Compliance/ecgRegisterRoutes"));
+// R7du — Restraint Register write surface (NABH COP.17). Surveyor reads
+// are served by /registers/nabh/restraint-register above; this surface
+// is the nurse-side write path (POST + remove + monitor).
+router.use("/restraints",            require("./Compliance/restraintRoutes"));
+// R7eg — Clinical-audit roll-ups (NABH HIC.5 ICU bundle compliance, etc.).
+// Aggregates ICUBundle + ClinicalAudit collections for the IC officer's
+// register page (HIC5InfectionControlPage). Read-only, gated compliance.read.
+router.use("/clinical-audit",        require("./Compliance/clinicalAuditRoutes"));
 
 // ── R7bh-F6 — Accountant regulatory ────────────────────────────
 // GSTR-1/3B exporter + Form 16A workflow. Both gated by tax.returns.*
@@ -397,6 +608,20 @@ try {
 } catch (e) {
   if (!/Cannot find module/i.test(e.message || "")) {
     console.warn("[routes] sharps-injury mount failed:", e.message);
+  }
+}
+
+// NABH COP.10 — Procedure notes (post-op completion for OT-bound orders).
+// Saving a note transitions the linked OTRegister row Scheduled → Completed
+// so surveyors get evidence (actual procedure, complications, blood loss,
+// specimens) for every completed surgery. Wrapped in try/catch to match the
+// surrounding pattern — keeps boot clean even if a partial deploy lands.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/procedure-notes", require("./Clinical/procedureNoteRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] procedure-notes mount failed:", e.message);
   }
 }
 

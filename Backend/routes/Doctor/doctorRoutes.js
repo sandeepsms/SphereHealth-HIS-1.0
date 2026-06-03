@@ -2,6 +2,9 @@ const express = require("express");
 const router = express.Router();
 const doctorController = require("../../controllers/Doctor/doctorController");
 const { authenticate, requireAction } = require("../../middleware/auth");
+// R7bm-F9 / B7-T07: 400 on a malformed :doctorId / :patientId before
+// findById throws CastError -> 500.
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // ─── Reads — Admin / Receptionist / Doctor / Nurse (per ACTIONS) ─
 router.get("/",                                requireAction("doctors.read"), doctorController.getAllDoctors);
@@ -20,8 +23,8 @@ router.get("/department/:department",          requireAction("doctors.read"), do
 router.get("/specialization/:specialization",  requireAction("doctors.read"), doctorController.getDoctorsBySpecialization);
 router.get("/experience",                      requireAction("doctors.read"), doctorController.getDoctorsByExperience);
 router.get("/dashboard/queues",                requireAction("doctors.read"), doctorController.getDashboardQueues);
-router.get("/:doctorId",                       requireAction("doctors.read"), doctorController.getDoctorById);
-router.get("/:doctorId/stats",                 requireAction("doctors.read"), doctorController.getDoctorStats);
+router.get("/:doctorId",                       validateObjectIdParam("doctorId"), requireAction("doctors.read"), doctorController.getDoctorById);
+router.get("/:doctorId/stats",                 validateObjectIdParam("doctorId"), requireAction("doctors.read"), doctorController.getDoctorStats);
 
 // ─── Doctor-self availability (Doctor can update own state) ────
 // Controller already validates that the caller owns this doctor record.
@@ -30,13 +33,17 @@ router.get("/:doctorId/stats",                 requireAction("doctors.read"), do
 // availability or skip the queue. Now gated on doctor.self.write
 // (Admin/Doctor). Controller still enforces "this is my record" so a
 // Doctor can't flip someone else's availability.
-router.patch("/:doctorId/availability", requireAction("doctor.self.write"), doctorController.setAvailability);
-router.post ("/:doctorId/serve-next",   requireAction("doctor.self.write"), doctorController.serveNextToken);
+router.patch("/:doctorId/availability", validateObjectIdParam("doctorId"), requireAction("doctor.self.write"), doctorController.setAvailability);
+router.post ("/:doctorId/serve-next",   validateObjectIdParam("doctorId"), requireAction("doctor.self.write"), doctorController.serveNextToken);
 
 // ─── Writes (master data) — Admin only ─────────────────────────
 router.post("/",                               requireAction("doctors.write"), doctorController.createDoctor);
-router.put("/:doctorId",                       requireAction("doctors.write"), doctorController.updateDoctor);
-router.delete("/:doctorId",                    requireAction("doctors.write"), doctorController.deleteDoctor);
-router.put("/:doctorId/consultation-fee",      requireAction("doctors.write"), doctorController.updateConsultationFee);
+router.put("/:doctorId",                       validateObjectIdParam("doctorId"), requireAction("doctors.write"), doctorController.updateDoctor);
+router.delete("/:doctorId",                    validateObjectIdParam("doctorId"), requireAction("doctors.write"), doctorController.deleteDoctor);
+router.put("/:doctorId/consultation-fee",      validateObjectIdParam("doctorId"), requireAction("doctors.write"), doctorController.updateConsultationFee);
+// R7dp — First-visit detection for OPD billing (receptionist auto-fee).
+// Returns whether the patient has ever seen THIS specific doctor before
+// + suggested fee (opdFirst vs opdFollowup) + the full fee schedule.
+router.get("/:doctorId/first-visit-status/:patientId", validateObjectIdParam("doctorId"), validateObjectIdParam("patientId"), requireAction("doctors.read"), doctorController.getFirstVisitStatus);
 
 module.exports = router;

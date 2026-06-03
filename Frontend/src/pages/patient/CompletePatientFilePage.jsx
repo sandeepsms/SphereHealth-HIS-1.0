@@ -30,9 +30,33 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
+import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import useHospitalSettings from "../../Components/print/useHospitalSettings";
+// R7fq Track D: shared SGRH/Max-style print shell for header/footer
+// consistency across every printable in the HIS. The Patient File can
+// span 8–15 pages — the shell's @page running header/footer + per-page
+// terms keep every page self-identifying for NABH AAC.7 traceability.
+// PrintLetterhead + PrintFooter (R7eo) are RETIRED in print mode because
+// PrintShell now renders the canonical hospital header + footer; keeping
+// both would double-stamp every page.
+import PrintShell from "../../Components/print/PrintShell";
+// R7ft: openPrint dispatches to /print/<slug> which delegates to the
+// admin-picked patient-file theme (Narrative / Timeline / Executive /
+// Audit / Editorial). Pre-R7ft the Print Complete File button opened
+// THIS page in a popup with ?autoprint=1 → 18 pages of chip soup. The
+// new path serves a 5-7-page themed printout via PrintShell + the
+// canonical normalizeFileData() shape.
+import { openPrint } from "../../Components/print/openPrint";
+// R7gr — Render the printed Narrative theme directly on-screen so
+// /patient-file/:uhid mirrors the printed Complete File 1:1. Default
+// view; user can flip to the legacy interactive layout via toolbar.
+import NarrativeTheme from "../../Components/print/printables/patientFileThemes/Narrative";
+import {
+  normalizeFileData,
+  buildChronologicalEvents,
+} from "../../Components/print/printables/patientFileThemes/normalizeData";
 import "./patient-file.css";
 
 const BASE = API_ENDPOINTS.BASE;
@@ -93,7 +117,7 @@ function Empty({ icon = "📄", msg = "No records yet" }) {
 }
 
 /* ── Sections ───────────────────────────────────────────────── */
-function IdentityBanner({ patient, currentAdmission, role, onBack, onPrint }) {
+function IdentityBanner({ patient, currentAdmission, role, onBack, onPrint, onPrintReferral }) {
   const initials = (patient?.fullName || patient?.firstName || "P")
     .split(/\s+/).map((s) => s[0]).slice(0, 2).join("").toUpperCase();
   const age = patient?.age || patient?.dateOfBirth
@@ -132,6 +156,18 @@ function IdentityBanner({ patient, currentAdmission, role, onBack, onPrint }) {
         <div className="pf-banner__actions">
           <button className="pf-banner__btn" onClick={onBack}>← Back</button>
           <button className="pf-banner__btn pf-banner__btn--solid" onClick={onPrint}>🖨 Print Complete File</button>
+          {/* R7fv — Condensed handover for a referring physician. Same
+              receipt payload as the Complete File; the renderer subsets
+              it to first+last notes, latest MAR, consents, reports,
+              transfusions and procedures (2–4 pages). */}
+          <button
+            className="pf-banner__btn pf-banner__btn--solid"
+            style={{ marginLeft: 4 }}
+            onClick={onPrintReferral}
+            title="Condensed handover for a referring colleague (2–4 pages)"
+          >
+            🤝 Referral Summary
+          </button>
         </div>
       </div>
     </div>
@@ -1759,47 +1795,85 @@ function OrdersSection({ orders }) {
   );
 }
 
-function VitalsSection({ vitals, nurseNotes }) {
+function VitalsSection({ vitals, nurseNotes, doctorNotes, currentAdmission }) {
   // Merge dedicated VitalSheet rows + vitals embedded inside nurse notes,
-  // dedupe on (timestamp minute, BP, pulse).
+  // doctor notes, and the admission-level nurse IA payload. Dedupe on
+  // (timestamp minute, BP, pulse).
+  //
+  // R7g: previously this was VitalSheet+NurseNote only. Doctor notes,
+  // admission-level IA, and noteDetails.systemic.* readings were silently
+  // missing from the trend table — the printed file showed only nursing-
+  // recorded vitals, not the doctor's clinical observations.
   const merged = useMemo(() => {
     const rows = [];
-    vitals.forEach((v) => rows.push({
-      when: v.recordedAt || v.createdAt,
-      by: v.recordedBy || v.nurseName || "—",
-      bp: v.bp ? `${v.bp.systolic || "—"}/${v.bp.diastolic || "—"}` : "—",
-      pulse: v.pulse || "—", temp: v.temperature || v.temp || "—",
-      rr: v.rr || v.respiratoryRate || "—", spo2: v.spo2 || "—",
-      bsl: v.bsl || v.bloodSugar || "—", gcs: v.gcs || "—",
-    }));
-    nurseNotes.forEach((n) => {
-      if (!n.vitals) return;
+    const fmtBp = (bp) => {
+      if (!bp) return "—";
+      if (typeof bp === "string") return bp || "—";
+      const sys = bp.systolic ?? bp.sys ?? bp.bp_sys;
+      const dia = bp.diastolic ?? bp.dia ?? bp.bp_dia;
+      return `${sys ?? "—"}/${dia ?? "—"}`;
+    };
+    const pushFrom = (v, when, by, source) => {
+      if (!v) return;
+      const bpRaw = v.bp || (v.bp_sys ? { systolic: v.bp_sys, diastolic: v.bp_dia } : null);
+      if (!bpRaw && !v.pulse && !v.temp && !v.temperature && !v.spo2 && !v.rr && !v.respiratoryRate) return;
       rows.push({
-        when: n.createdAt,
-        by: n.nurseName || "—",
-        bp: n.vitals.bp ? `${n.vitals.bp.systolic || "—"}/${n.vitals.bp.diastolic || "—"}` : "—",
-        pulse: n.vitals.pulse || "—", temp: n.vitals.temp || "—",
-        rr: n.vitals.rr || "—", spo2: n.vitals.spo2 || "—",
-        bsl: n.vitals.bsl || "—", gcs: n.vitals.gcs || "—",
+        when, by, source,
+        bp: fmtBp(bpRaw),
+        pulse: v.pulse || "—",
+        temp: v.temperature || v.temp || "—",
+        rr: v.rr || v.respiratoryRate || "—",
+        spo2: v.spo2 || "—",
+        bsl: v.bsl || v.bloodSugar || "—",
+        gcs: v.gcs || "—",
       });
+    };
+    (vitals || []).forEach((v) =>
+      pushFrom(v, v.recordedAt || v.createdAt, v.recordedBy || v.nurseName || "—", "VitalSheet"));
+    (nurseNotes || []).forEach((n) =>
+      pushFrom(n.vitals, n.noteDate || n.createdAt, n.nurseName || "—", "NurseNote"));
+    (doctorNotes || []).forEach((n) => {
+      pushFrom(n.vitals, n.visitDate || n.createdAt, n.doctorName || n.signedBy || "—", "DoctorNote");
+      // Some doctor notes carry vitals inside noteDetails.systemic.* (per-system exam block)
+      const sys = n.noteDetails?.systemic;
+      if (sys && typeof sys === "object") {
+        Object.values(sys).forEach((blk) => {
+          if (blk && typeof blk === "object" && (blk.bp || blk.pulse || blk.spo2 || blk.rr || blk.temp)) {
+            pushFrom(blk, n.visitDate || n.createdAt, n.doctorName || n.signedBy || "—", "DoctorNote (systemic)");
+          }
+        });
+      }
     });
+    if (currentAdmission?.nurseInitialAssessment?.vitals) {
+      pushFrom(currentAdmission.nurseInitialAssessment.vitals,
+        currentAdmission.admissionDate || currentAdmission.createdAt,
+        currentAdmission.nurseInitialAssessment.assessedBy || "Admission IA",
+        "IA");
+    }
+    if (currentAdmission?.initialAssessment?.vitals) {
+      pushFrom(currentAdmission.initialAssessment.vitals,
+        currentAdmission.admissionDate || currentAdmission.createdAt,
+        currentAdmission.initialAssessment.assessedBy || "Doctor IA",
+        "IA (Doctor)");
+    }
     rows.sort((a, b) => new Date(b.when) - new Date(a.when));
     // Dedupe by minute precision
     const seen = new Set();
     return rows.filter((r) => {
+      if (!r.when) return false;
       const key = `${new Date(r.when).toISOString().slice(0, 16)}|${r.bp}|${r.pulse}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-  }, [vitals, nurseNotes]);
+  }, [vitals, nurseNotes, doctorNotes, currentAdmission]);
 
   if (!merged.length) return <Empty icon="📈" msg="No vitals captured" />;
   return (
     <table className="pf-table pf-table--compact">
       <thead>
         <tr>
-          <th>When</th><th>By</th><th>BP</th><th>Pulse</th>
+          <th>When</th><th>By</th><th>Source</th><th>BP</th><th>Pulse</th>
           <th>Temp</th><th>RR</th><th>SpO₂</th><th>BSL</th><th>GCS</th>
         </tr>
       </thead>
@@ -1809,6 +1883,7 @@ function VitalsSection({ vitals, nurseNotes }) {
           // breaking reconciliation when new vitals were inserted mid-stream.
           <tr key={`${r.when || ""}|${r.bp}|${r.pulse}|${i}`}>
             <td>{fmtDT(r.when)}</td><td>{r.by}</td>
+            <td style={{ fontSize: 11, color: "#64748b" }}>{r.source || "—"}</td>
             <td>{r.bp}</td><td>{r.pulse}</td><td>{r.temp}</td>
             <td>{r.rr}</td><td>{r.spo2}</td><td>{r.bsl}</td><td>{r.gcs}</td>
           </tr>
@@ -2181,13 +2256,21 @@ function PrintLetterhead({ patient, currentAdmission, role, hs = {} }) {
   );
 }
 
-function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
+function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther, viewerRole,
+  // R7fq Track D: PrintShell needs the same identity/admission props the
+  // retired PrintLetterhead used to consume, plus the live hospital
+  // settings + the viewer's display name/role for the signed-by stamp.
+  patient = {}, hospitalSettings = {}, viewerName = "", role = "doctor", uhid = "" }) {
   // dietPlans was missing from this destructure — PrintSection 9a was
   // reading a free variable that didn't exist, crashing the print popup.
   // (Audit finding HIGH-3.)
+  // icuBundles surfaces every per-shift VAP/CAUTI/CLABSI/DVT/Sepsis/SUP
+  // sheet for the current admission so NABH surveyors see them in the
+  // printable file (HIC.5 + COP.13 + IPSG.5).
   const { currentAdmission, doctorOrders, vitals, nurseNotes, doctorNotes,
     consents, investigations, mlc, dischargeSummary, bills, activityLog,
-    bedTransfers, shiftHandovers, dietPlans, nursingAssessments, nursingCarePlans, timeline } = data;
+    bedTransfers, shiftHandovers, dietPlans, nursingAssessments, nursingCarePlans, timeline,
+    icuBundles = [] } = data;
 
   // R7k: NABH-compliant chronological clinical narrative.
   // Previously this print rendered "4. Doctor Notes" then "5. Nursing
@@ -2238,18 +2321,83 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
     [nurseNotes],
   );
 
+  // R7fq Track D: assemble the patient-info strip the shell renders
+  // under the title bar. Two logical columns flattened into one ordered
+  // list — PrintShell.css uses column-count:2 so they paginate as a
+  // side-by-side grid, matching the SGRH/Max print layout.
+  const infoItems = currentAdmission
+    ? [
+        { label: "UHID",        value: patient.UHID },
+        { label: "Patient Name",value: patient.fullName },
+        { label: "Age",         value: patient.age },
+        { label: "Sex",         value: patient.gender },
+        { label: "Blood Group", value: patient.bloodGroup || "—" },
+        { label: "Contact",     value: patient.contactNumber },
+        { label: "IP No",       value: currentAdmission.admissionNumber },
+        { label: "Admit Date",  value: fmtDate(currentAdmission.admissionDate) },
+        { label: "Status",      value: currentAdmission.status },
+        { label: "Ward/Bed",    value: `${currentAdmission.wardName || ""}/${currentAdmission.bedNumber || ""}` },
+        { label: "Consultant",  value: currentAdmission.attendingDoctor || "—" },
+        { label: "Diagnosis",   value: currentAdmission.provisionalDiagnosis || "—" },
+      ]
+    : [
+        { label: "UHID",        value: patient.UHID },
+        { label: "Patient Name",value: patient.fullName },
+        { label: "Age",         value: patient.age },
+        { label: "Sex",         value: patient.gender },
+        { label: "Blood Group", value: patient.bloodGroup || "—" },
+        { label: "Contact",     value: patient.contactNumber },
+        { label: "Type",        value: "OPD History" },
+        { label: "Total OPD Visits", value: patient.totalOPDVisits || 0 },
+        { label: "Total IPD Visits", value: patient.totalIPDVisits || 0 },
+        { label: "Last Visit",  value: fmtDate(patient.lastVisitDate) },
+      ];
+  const docTitle = "Complete Patient File";
+  const docSubtitle = currentAdmission
+    ? `IPD ${currentAdmission.admissionNumber || "—"} — ${currentAdmission.wardName || ""}`
+    : "OPD History";
+  // Subtitle is appended into the document title (the shell exposes one
+  // title slot + one serial slot). The shell's serial slot takes the
+  // IP/UHID so each printed page carries the doc number on its title bar.
+  const fullTitle = `${docTitle} · ${docSubtitle}`;
+  const serialNo  = currentAdmission?.admissionNumber || patient.UHID || "";
+  // Override the signed-by stamp the shell footer renders so a
+  // doctor-view print shows "Consultant", a nurse-view print shows
+  // "Senior Nurse" — instead of falling back to whichever user happens
+  // to be on that browser tab.
+  const signedBy = {
+    name: viewerName || "Treating Team",
+    role: role === "nurse" ? "Senior Nurse" : "Consultant",
+  };
+
   return (
-    <main className="pf-print-body">
+    <PrintShell
+      settings={hospitalSettings}
+      documentTitle={fullTitle}
+      serialNo={serialNo}
+      infoItems={infoItems}
+      signedBy={signedBy}
+      showBank={false}
+      showSignatures={true}
+      showTerms={true}
+    >
+    <main className="pf-print-body" data-uhid={uhid}>
       <PrintSection title="1. Admission Summary">
         <AdmissionSection admission={currentAdmission} />
       </PrintSection>
 
       <PrintSection title="2. Initial Assessment — Doctor">
-        <NoteList notes={docInitial} kind="doctor" emptyMsg="Doctor initial assessment not recorded" />
+        <div style={{ marginBottom: 8, fontSize: 11, color: "#78350f", fontStyle: "italic" }}>
+          Showing latest signed version. Full amendment history visible in Activity Log.
+        </div>
+        <NoteList notes={docInitial.filter((n) => n.section === "doctor" || (!n.section && n.noteDetails?.doctor) || (!n.section && !n.noteDetails?.nursing))} kind="doctor" emptyMsg="Doctor initial assessment not recorded" />
       </PrintSection>
 
       <PrintSection title="3. Initial Assessment — Nursing">
-        <NoteList notes={nurseInitial} kind="nurse" emptyMsg="Nursing initial assessment not recorded" />
+        <NoteList notes={[
+          ...docInitial.filter((n) => n.section === "nursing" || n.noteDetails?.nursing),
+          ...nurseInitial,
+        ]} kind="nurse" emptyMsg="Nursing initial assessment not recorded" />
       </PrintSection>
 
       {/* R7k: ONE chronological progress-notes section instead of two
@@ -2277,20 +2425,42 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
         <OrdersSection orders={doctorOrders} />
       </PrintSection>
 
+      {/* R7fz — page parity: Intake / Output sheet was on-page only
+          (Section id="io-sheet"). Now mirrored to print so the
+          printed file matches the on-screen view 1:1. */}
+      <PrintSection title="6c. Intake / Output Sheet">
+        <IOSheetSection nurseNotes={nurseNotes} currentAdmission={currentAdmission} />
+      </PrintSection>
+
       {/* R7l: Day-by-day NABH MOM.3 treatment chart. For each day of
           the stay, every active medication (+IV/oxygen) shows its
           scheduled doses with a green ✓ when administered, the
           nurse's name, and the actual administration time. Pages
-          break between days (pageBreakInside: avoid). */}
+          break between days (pageBreakInside: avoid).
+          NEW (R7eg2): per-day footer summarises ICU care bundles
+          finalized on that day so the bedside MAR + bundle compliance
+          are side-by-side. */}
       <PrintSection title="6a. Treatment Chart — Day-wise (NABH MOM.3)">
         <TreatmentChartPrintSection
           doctorOrders={doctorOrders}
           currentAdmission={currentAdmission}
+          icuBundles={icuBundles}
         />
       </PrintSection>
 
+      {/* R7eg2: ICU Care Bundles (NABH HIC.5 / COP.13 / IPSG.5). One block
+          per (date, shift) sheet — VAP / CAUTI / CLABSI / DVT / Sepsis /
+          SUP each with their checklist items (✓ / ✗ / N/A), per-bundle
+          compliance %, and the nurse who signed. Page-break between days
+          so a long ICU stay paginates cleanly. */}
+      {(icuBundles?.length || 0) > 0 && (
+        <PrintSection title="6b. ICU Care Bundles (NABH HIC.5 / COP.13)">
+          <ICUBundlesPrintSection bundles={icuBundles} />
+        </PrintSection>
+      )}
+
       <PrintSection title="7. Vital Trends">
-        <VitalsSection vitals={vitals} nurseNotes={nurseNotes} />
+        <VitalsSection vitals={vitals} nurseNotes={nurseNotes} doctorNotes={doctorNotes} currentAdmission={currentAdmission} />
       </PrintSection>
 
       {/* R7k: Dedicated Blood Transfusion Records (NABH MOM.7).
@@ -2408,10 +2578,26 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther }) {
         <BillingSection bills={bills} />
       </PrintSection>
 
-      <PrintSection title="15. Activity / Audit Trail (latest 50)">
-        <ActivityFeed activityLog={(activityLog || []).slice(0, 50)} />
+      {/* R7fz — page parity: Scoring Trends + Complete Timeline +
+          Unified Timeline existed on-page only. Now mirrored to
+          print so the printed file matches the on-screen view 1:1. */}
+      <PrintSection title="14a. Scoring Trends">
+        <ScoringTrendsSection nurseNotes={nurseNotes} doctorNotes={doctorNotes} currentAdmission={currentAdmission} />
       </PrintSection>
+
+      <PrintSection title="14b. Complete Timeline">
+        <TimelineSection data={data} />
+      </PrintSection>
+
+      {/* R7g: Activity Log restricted to audit-eligible roles in print
+          (matches interactive view NABH AAC.7). */}
+      {["Admin", "Doctor", "MRD", "Accountant"].includes(viewerRole) && (
+        <PrintSection title="15. Activity / Audit Trail (latest 50)">
+          <ActivityFeed activityLog={(activityLog || []).slice(0, 50)} />
+        </PrintSection>
+      )}
     </main>
+    </PrintShell>
   );
 }
 
@@ -3181,7 +3367,44 @@ function NursingAssessmentsSection({ assessments = [] }) {
    inside each day every medication shows its scheduled doses with a
    green ✓ when administered + the nurse name + actual time.
 ─────────────────────────────────────────────────────────────── */
-function TreatmentChartPrintSection({ doctorOrders = [], currentAdmission }) {
+function TreatmentChartPrintSection({ doctorOrders = [], currentAdmission, icuBundles = [] }) {
+  // R7eg2 — Per-day ICU bundle summary lookup: groups all bundle sheets
+  // by their date string (YYYY-MM-DD) and, for each date, lists which
+  // bundle/shift combinations were FINALIZED. The day-wise treatment
+  // chart renders a footer per day showing e.g. "VAP: ✓ M,E · CAUTI: ✓ M".
+  // Built once per re-render and indexed via dateKey for O(1) lookup.
+  const bundlesByDate = useMemo(() => {
+    const SHIFT_ABBR = { Morning: "M", Evening: "E", Night: "N" };
+    const BUNDLE_KEYS = ["vap", "cauti", "clabsi", "dvt", "sepsis", "sup"];
+    const out = {};
+    for (const sheet of icuBundles || []) {
+      if (!sheet?.date) continue;
+      if (sheet.status !== "finalized") continue; // only count signed sheets
+      const day = (out[sheet.date] = out[sheet.date] || {});
+      // sheet.bundles is the unwrapped array we built in the backend; fall
+      // back to the legacy flat keys (vap/cauti/...) if a future caller
+      // sends the model shape instead.
+      const arr = Array.isArray(sheet.bundles)
+        ? sheet.bundles
+        : BUNDLE_KEYS.map((k) => ({ key: k, ...(sheet[k] || {}) }));
+      for (const b of arr) {
+        if (!b?.key) continue;
+        if (b.applicable === false) continue;
+        const bucket = (day[b.key] = day[b.key] || { shifts: [], applicable: true });
+        const ab = SHIFT_ABBR[sheet.shift] || sheet.shift?.[0] || "?";
+        if (!bucket.shifts.includes(ab)) bucket.shifts.push(ab);
+      }
+    }
+    // Sort shifts canonically M → E → N within each (date, bundle).
+    const ORDER = { M: 0, E: 1, N: 2 };
+    for (const day of Object.values(out)) {
+      for (const b of Object.values(day)) {
+        b.shifts.sort((x, y) => (ORDER[x] ?? 9) - (ORDER[y] ?? 9));
+      }
+    }
+    return out;
+  }, [icuBundles]);
+
   const data = useMemo(() => {
     // Pull only Medication / IV-Fluid / Blood orders — those are what
     // populate the MAR. Other orderTypes (Lab / Radiology / Procedure)
@@ -3412,9 +3635,274 @@ function TreatmentChartPrintSection({ doctorOrders = [], currentAdmission }) {
                 })}
               </tbody>
             </table>
+            {/* R7eg2 — ICU Bundles Compliance footer for THIS day. One row
+                per applicable bundle, listing the shifts (M / E / N) that
+                were finalized. A bullet "–" means no finalized sheet for
+                that bundle today. Footer is hidden entirely when no
+                bundles exist for any day (non-ICU patient). */}
+            {Object.keys(bundlesByDate).length > 0 && (() => {
+              const dayKey = `${day.date.getFullYear()}-${String(day.date.getMonth() + 1).padStart(2, "0")}-${String(day.date.getDate()).padStart(2, "0")}`;
+              const today = bundlesByDate[dayKey] || {};
+              const BUNDLE_LABELS = [
+                ["vap",    "VAP"],
+                ["cauti",  "CAUTI"],
+                ["clabsi", "CLABSI"],
+                ["dvt",    "DVT"],
+                ["sepsis", "Sepsis"],
+                ["sup",    "SUP"],
+              ];
+              const haveAny = BUNDLE_LABELS.some(([k]) => today[k]?.shifts?.length);
+              if (!haveAny) return null;
+              return (
+                <div style={{
+                  padding: "6px 12px",
+                  background: "#f8fafc",
+                  borderTop: "1px dashed #cbd5e1",
+                  fontSize: 10.5, color: "#0f172a",
+                  display: "flex", flexWrap: "wrap", gap: "4px 10px", alignItems: "center",
+                }}>
+                  <span style={{ fontWeight: 800, color: "#3730a3", letterSpacing: 0.3, fontSize: 9.5, textTransform: "uppercase" }}>
+                    ICU Bundles
+                  </span>
+                  {BUNDLE_LABELS.map(([k, label]) => {
+                    const b = today[k];
+                    const shifts = b?.shifts || [];
+                    const ok = shifts.length > 0;
+                    return (
+                      <span key={k} style={{
+                        padding: "1px 8px", borderRadius: 4,
+                        background: ok ? "#dcfce7" : "#f1f5f9",
+                        color: ok ? "#166534" : "#64748b",
+                        border: `1px solid ${ok ? "#86efac" : "#cbd5e1"}`,
+                        fontWeight: 700, fontSize: 10,
+                      }}>
+                        {label}: {ok ? `✓ ${shifts.join(",")}` : "–"}
+                      </span>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────
+   R7eg2 — ICU Care Bundles printable section.
+   Renders one block per (date, shift) sheet. Inside each block,
+   every APPLICABLE bundle (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP)
+   shows its checklist items with ✓ / ✗ / N/A markers, the bundle
+   compliance %, and the nurse who signed off. Sheets that are
+   not yet finalized still render but are visually flagged "DRAFT".
+
+   The sheets are pre-sorted (date asc, then shift M→E→N) by the
+   backend's listByAdmission / patient-file aggregator, so we just
+   iterate. We also insert a `pf-page-break` before each new day so
+   long ICU stays paginate cleanly. NABH HIC.5 / COP.13 / IPSG.5.
+─────────────────────────────────────────────────────────────── */
+function ICUBundlesPrintSection({ bundles = [] }) {
+  if (!Array.isArray(bundles) || bundles.length === 0) {
+    return <Empty icon="🛡️" msg="No ICU care bundles recorded" />;
+  }
+
+  const fmtTime = (when) => when
+    ? new Date(when).toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      })
+    : "—";
+  const fmtDate = (dStr) => {
+    if (!dStr) return "—";
+    try {
+      const [y, m, d] = dStr.split("-").map((n) => parseInt(n, 10));
+      const dt = new Date(y, (m || 1) - 1, d || 1);
+      return dt.toLocaleDateString("en-IN", {
+        weekday: "long", day: "2-digit", month: "long", year: "numeric",
+      });
+    } catch { return dStr; }
+  };
+
+  // Mark item with ✓ / ✗ / N/A. N/A only applies when the bundle itself
+  // is flagged not-applicable — individual items don't carry a
+  // tri-state, just checked/unchecked.
+  const renderItemMark = (checked, applicable) => {
+    if (!applicable) {
+      return <span style={{ color: "#64748b", fontWeight: 800 }}>N/A</span>;
+    }
+    return checked
+      ? <span style={{ color: "#16a34a", fontWeight: 900, fontSize: 13 }}>✓</span>
+      : <span style={{ color: "#b91c1c", fontWeight: 900, fontSize: 13 }}>✗</span>;
+  };
+
+  // Group sheets by date so we can insert a date header + page-break per day.
+  const byDate = useMemo(() => {
+    const map = new Map();
+    for (const s of bundles) {
+      if (!map.has(s.date)) map.set(s.date, []);
+      map.get(s.date).push(s);
+    }
+    // Already sorted by backend but enforce here for safety.
+    return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  }, [bundles]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ fontSize: 11, color: "var(--pf-muted)", marginBottom: -6 }}>
+        NABH HIC.5 (HAI prevention bundles) · COP.13 (ICU care standards) ·
+        IPSG.5 (reduce HAI risk). Each shift sheet shows VAP / CAUTI / CLABSI /
+        DVT / Sepsis / SUP with per-item compliance, signed by the bedside nurse.
+      </div>
+
+      {byDate.map(([dateStr, sheets], dayIdx) => (
+        <div
+          key={dateStr}
+          style={{
+            // First day breaks naturally; subsequent days insert a page
+            // break before the date header so each ICU day starts on a
+            // fresh page when printed.
+            pageBreakBefore: dayIdx > 0 ? "always" : "auto",
+            breakInside: "avoid-page",
+          }}
+        >
+          <div style={{
+            padding: "5px 12px",
+            background: "linear-gradient(90deg, #ecfeff 0%, #fff 60%)",
+            border: "1px solid #a5f3fc",
+            borderLeft: "4px solid #0891b2",
+            borderRadius: 6,
+            marginBottom: 8,
+            fontSize: 12.5, fontWeight: 800, color: "#0e7490",
+          }}>
+            📅 {fmtDate(dateStr)} — {sheets.length} shift sheet{sheets.length === 1 ? "" : "s"}
+          </div>
+
+          {sheets.map((sheet) => {
+            return (
+              <div
+                key={sheet._id}
+                style={{
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 6,
+                  marginBottom: 10,
+                  pageBreakInside: "avoid",
+                  breakInside: "avoid",
+                  overflow: "hidden",
+                }}
+              >
+                <div style={{
+                  padding: "5px 12px",
+                  background: "#f8fafc",
+                  borderBottom: "1px solid #e2e8f0",
+                  display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                }}>
+                  <span style={{ fontWeight: 800, color: "#0f172a", fontSize: 12 }}>
+                    {sheet.shift} shift
+                  </span>
+                  <span style={{
+                    padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 800,
+                    background: sheet.status === "finalized" ? "#dcfce7" : "#fef3c7",
+                    color: sheet.status === "finalized" ? "#166534" : "#92400e",
+                    border: `1px solid ${sheet.status === "finalized" ? "#86efac" : "#fcd34d"}`,
+                    textTransform: "uppercase",
+                  }}>
+                    {sheet.status}
+                  </span>
+                  <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 800, background: "#dbeafe", color: "#1e40af" }}>
+                    Overall: {sheet.overallCompliancePct ?? 0}%
+                  </span>
+                  <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--pf-muted)" }}>
+                    {sheet.finalizedBy ? `Signed by ${sheet.finalizedBy} · ` : ""}
+                    {fmtTime(sheet.finalizedAt)}
+                  </span>
+                </div>
+
+                {(sheet.bundles || []).map((b) => (
+                  <div
+                    key={b.key}
+                    style={{
+                      padding: "6px 12px",
+                      borderBottom: "1px dashed #e2e8f0",
+                      breakInside: "avoid",
+                    }}
+                  >
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                      marginBottom: 4,
+                    }}>
+                      <span style={{ fontWeight: 800, fontSize: 11.5, color: "#0f172a" }}>
+                        {b.title}
+                      </span>
+                      {!b.applicable && (
+                        <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 800, background: "#f1f5f9", color: "#475569", border: "1px solid #cbd5e1" }}>
+                          NOT APPLICABLE
+                        </span>
+                      )}
+                      {b.applicable && (
+                        <span style={{
+                          padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 800,
+                          background: b.compliancePct === 100 ? "#dcfce7"
+                                    : b.compliancePct >= 80 ? "#fef3c7"
+                                    : "#fee2e2",
+                          color:      b.compliancePct === 100 ? "#166534"
+                                    : b.compliancePct >= 80 ? "#92400e"
+                                    : "#b91c1c",
+                        }}>
+                          {b.compliancePct}%
+                        </span>
+                      )}
+                      {b.nurseName && (
+                        <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--pf-muted)" }}>
+                          {b.nurseName}{b.signedAt ? ` · ${fmtTime(b.signedAt)}` : ""}
+                        </span>
+                      )}
+                    </div>
+
+                    {(b.items || []).length > 0 && (
+                      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 2 }}>
+                        <tbody>
+                          {b.items.map((it, i) => (
+                            <tr key={i}>
+                              <td style={{
+                                width: 30, textAlign: "center", verticalAlign: "top",
+                                padding: "2px 4px", fontSize: 11,
+                              }}>
+                                {renderItemMark(!!it.checked, b.applicable)}
+                              </td>
+                              <td style={{
+                                padding: "2px 6px", fontSize: 10.5,
+                                color: b.applicable ? "#0f172a" : "#94a3b8",
+                              }}>
+                                {it.label}
+                                {it.notes && (
+                                  <span style={{ display: "block", fontSize: 9.5, color: "var(--pf-muted)", fontStyle: "italic", marginTop: 1 }}>
+                                    {it.notes}
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                ))}
+
+                {sheet.notes && (
+                  <div style={{
+                    padding: "5px 12px", fontSize: 10.5, fontStyle: "italic",
+                    background: "#fffbeb", color: "#78350f",
+                  }}>
+                    <b>Shift notes:</b> {sheet.notes}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }
@@ -3454,17 +3942,31 @@ export default function CompletePatientFilePage() {
     return () => { cancelled = true; };
   }, [uhid]);
 
-  // Fire the browser print dialog once the data is rendered. We delay a beat
-  // so React commits the DOM + any signature <img> tags get a chance to
-  // start loading. afterprint closes the popup (no-op if it's the main tab).
+  // Fire the browser print dialog once the data is rendered AND all images
+  // (letterhead, signatures, logos) have decoded. R7g: previously this was a
+  // blind 500ms setTimeout which often fired before signature <img> tags
+  // finished loading, so the print preview had blank signature blocks.
+  // afterprint closes the popup (no-op if it's the main tab).
   useEffect(() => {
     if (!autoprint || !data) return;
-    const handle = setTimeout(() => {
-      window.print();
-      const close = () => { try { window.close(); } catch {} };
-      window.addEventListener("afterprint", close, { once: true });
-    }, 500);
-    return () => clearTimeout(handle);
+    let cancelled = false;
+    const close = () => { try { window.close(); } catch {} };
+    const imgs = Array.from(document.images);
+    Promise.all(imgs.map((img) =>
+      img.complete
+        ? Promise.resolve()
+        : (img.decode ? img.decode().catch(() => {}) : new Promise((r) => {
+            img.addEventListener("load", r, { once: true });
+            img.addEventListener("error", r, { once: true });
+          }))
+    )).then(() => {
+      if (cancelled) return;
+      setTimeout(() => {
+        window.print();
+        window.addEventListener("afterprint", close, { once: true });
+      }, 200);
+    });
+    return () => { cancelled = true; };
   }, [autoprint, data]);
 
   /* Scroll-spy for the sticky nav */
@@ -3524,10 +4026,260 @@ export default function CompletePatientFilePage() {
   const RELOCATED_NURSE_TYPES = /^(intake|procedure|operative|preop|postop)$/i;
   const RELOCATED_DOC_TYPES   = /^(procedure|operative|preop|postop)$/i;
 
-  const docInitial   = doctorNotes.filter((n) =>  /initial/i.test(n.noteType || ""));
+  const docInitialAll = doctorNotes.filter((n) =>  /initial/i.test(n.noteType || ""));
   const nurseInitial = nurseNotes.filter((n)  =>  /initial/i.test(n.noteType || ""));
   const docOther     = doctorNotes.filter((n) => !/initial/i.test(n.noteType || "") && !RELOCATED_DOC_TYPES.test(n.noteType || ""));
   const nurseOther   = nurseNotes.filter((n)  => !/initial/i.test(n.noteType || "") && !RELOCATED_NURSE_TYPES.test(n.noteType || ""));
+
+  // R7g (Print bloat fix): collapse Initial-Assessment records to the latest
+  // signed version per section (doctor / nursing). The patient may have 3
+  // signed + 2 amended + 1 submitted IA rows — rendering all of them with
+  // full NABH P0/P1/P2 trees produces 20-40 pages of duplicate output.
+  // Activity Log still shows the full amendment history.
+  const pickLatestIA = (arr, section) => arr
+    .filter((n) => n.section === section || (!n.section && n.noteDetails?.[section]))
+    .sort((a, b) => {
+      const rank = (s) => s === "signed" ? 0 : s === "amended" ? 1 : 2;
+      return rank(a.status) - rank(b.status)
+        || new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt);
+    })[0];
+  const latestDocIA   = pickLatestIA(docInitialAll, "doctor");
+  const latestNurseIA = pickLatestIA(docInitialAll, "nursing");
+  // If the per-section filter yields nothing (older rows without section
+  // tags), fall back to the most-recent signed/amended/any IA so the
+  // section never goes blank when records actually exist.
+  const fallbackDocIA = !latestDocIA && docInitialAll.length
+    ? [...docInitialAll].sort((a, b) => {
+        const rank = (s) => s === "signed" ? 0 : s === "amended" ? 1 : 2;
+        return rank(a.status) - rank(b.status)
+          || new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt);
+      })[0]
+    : null;
+  const docInitial = [latestDocIA || fallbackDocIA, latestNurseIA].filter(Boolean);
+  // Has any nurse-section IA been captured as a DoctorNote? If so the
+  // admission-level nurseInitialAssessment fallback below is a duplicate
+  // (7th dump) — skip it.
+  const hasNurseSectionIA = Boolean(latestNurseIA)
+    || nurseInitial.length > 0
+    || docInitialAll.some((n) => n.section === "nursing" || n.noteDetails?.nursing);
+
+  /* ── R7gr — buildPrintReceipt ─────────────────────────────────
+     Lifted from the bottom-of-page print toolbar so the mirror view
+     can call it before the interactive layout renders. Same exact
+     fields as the print path — Narrative reads via normalizeFileData
+     so the two views are identical by construction. */
+  const buildPrintReceipt = () => {
+    const adm = currentAdmission || data.currentAdmission || {};
+    const allDoctorNotes  = Array.isArray(data.doctorNotes)  ? data.doctorNotes  : [];
+    const allNursingNotes = Array.isArray(data.nurseNotes) ? data.nurseNotes
+                          : Array.isArray(data.nursingNotes) ? data.nursingNotes
+                          : [];
+    const iaDocNote   = allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.doctor) ||
+                        allDoctorNotes.find(n => n.noteType === "initial");
+    /* R7gu-FIX — Prefer an actual nurse note for the Nursing IA lookup,
+       and only fall back to a doctor note that happens to carry the
+       nested noteDetails.nursing payload. Pre-fix the doctor-note path
+       won, which then exposed the DOCTOR's signedByEmpId on the nurse
+       IA signature pill. */
+    const iaNurseNote = allNursingNotes.find(n => n.noteType === "initial") ||
+                        allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.nursing);
+    const iaDocRaw   = iaDocNote?.noteDetails?.doctor || adm.initialAssessment || data.initialAssessment || {};
+    const iaNurseRaw = iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing
+                       || adm.nurseInitialAssessment || data.nurseInitialAssessment || {};
+    /* R7gu-FIX — lift signer fields from the parent IA note onto the
+       nested noteDetails payload so the IA signature pill in Narrative
+       can show name + Emp ID + Reg + sign image instead of falling back
+       to "signed digitally". The parent note carries signedByName /
+       signedByEmpId / signedByReg / signedAt / signature; the nested
+       payload (noteDetails.doctor / noteDetails.nursing) historically
+       only carries the clinical fields, so we merge them here. */
+    const iaDoc   = {
+      ...iaDocRaw,
+      signedByName:  iaDocRaw.signedByName  || iaDocNote?.signedByName || iaDocNote?.doctorName,
+      signedByReg:   iaDocRaw.signedByReg   || iaDocNote?.signedByReg  || iaDocNote?.doctorRegNo,
+      signedByEmpId: iaDocRaw.signedByEmpId || iaDocNote?.signedByEmpId || iaDocNote?.doctorEmpId,
+      signedAt:      iaDocRaw.signedAt      || iaDocNote?.signedAt,
+      signature:     iaDocRaw.signature     || iaDocNote?.signature,
+    };
+    const iaNurse = {
+      ...iaNurseRaw,
+      nurseName:     iaNurseRaw.nurseName     || iaNurseNote?.nurseName,
+      signedByName:  iaNurseRaw.signedByName  || iaNurseNote?.signedByName || iaNurseNote?.nurseName,
+      signedByReg:   iaNurseRaw.signedByReg   || iaNurseNote?.signedByReg,
+      signedByEmpId: iaNurseRaw.signedByEmpId || iaNurseNote?.signedByEmpId || iaNurseNote?.nurseEmployeeId,
+      signedAt:      iaNurseRaw.signedAt      || iaNurseNote?.signedAt || iaNurseNote?.submittedAt,
+      signature:     iaNurseRaw.signature     || iaNurseNote?.signature,
+    };
+    const regularDoctorNotes  = allDoctorNotes.filter(n  => n.noteType !== "initial");
+    const regularNursingNotes = allNursingNotes.filter(n => n.noteType !== "initial");
+    const rawVitals = iaNurse.vitals || iaDoc.vitals || {};
+    const bpObj = rawVitals.bp;
+    const bpFromObj  = bpObj && typeof bpObj === "object"
+                       ? `${bpObj.systolic ?? bpObj.sys ?? "?"}/${bpObj.diastolic ?? bpObj.dia ?? "?"}` : "";
+    const bpFromStr  = typeof bpObj === "string" ? bpObj : "";
+    const bpFromFlat = (rawVitals.bpSys || rawVitals.bpDia)
+                       ? `${rawVitals.bpSys ?? "?"}/${rawVitals.bpDia ?? "?"}` : "";
+    const flatVitals = {
+      bp: bpFromStr || bpFromObj || bpFromFlat,
+      pulse: rawVitals.pulse, temp: rawVitals.temp,
+      spo2: rawVitals.spo2, rr: rawVitals.rr,
+      weight: rawVitals.weight || iaNurse.anthropometry?.weightKg || iaDoc.anthropometry?.weightKg,
+      height: rawVitals.height || iaNurse.anthropometry?.heightCm || iaDoc.anthropometry?.heightCm,
+      bmi:    rawVitals.bmi    || iaNurse.anthropometry?.bmi      || iaDoc.anthropometry?.bmi,
+    };
+    return {
+      patientName: patient?.fullName || patient?.name || [patient?.firstName, patient?.lastName].filter(Boolean).join(" "),
+      uhid: patient?.UHID || patient?.uhid || uhid,
+      ipdNo: adm.admissionNumber || adm.ipdNo || "",
+      age: patient?.age, gender: patient?.gender || patient?.sex,
+      mobile: patient?.mobile || patient?.contactNumber, bloodGroup: patient?.bloodGroup,
+      completeAddress: patient?.completeAddress || patient?.address,
+      admissionDate: adm.admissionDate, admissionType: adm.admissionType,
+      modeOfArrival: adm.modeOfArrival, referringDoctor: adm.referringDoctor,
+      consultantName: adm.attendingDoctor || adm.consultantName,
+      department: adm.department, bedNumber: adm.bedNumber, wardName: adm.wardName,
+      reasonForAdmission: adm.reasonForAdmission || adm.reasonForVisit,
+      provisionalDiagnosis: adm.provisionalDiagnosis, workingDiagnosis: adm.workingDiagnosis,
+      finalDiagnosis: adm.finalDiagnosis || data.dischargeSummary?.finalDiagnosis,
+      icd10: adm.icd10 || data.dischargeSummary?.icd10,
+      icd10Desc: adm.icd10Desc || data.dischargeSummary?.icd10Desc,
+      dischargeDate: adm.actualDischargeDate || adm.dischargeDate,
+      totalDays: adm.lengthOfStay || adm.totalDays,
+      allergies: data.allergies || iaDoc.allergies?.list || iaNurse.allergies?.list || patient?.allergyList || patient?.allergies || [],
+      isolationFlags: adm.isolationFlags || iaDoc.isolationFlags || [],
+      crossCheckAlerts: iaNurse.crossCheckAlerts || iaDoc.crossCheckAlerts || [],
+      vitalsOnAdmission: flatVitals, vitalsTrend: data.vitalSheet || data.vitalsTrend || [],
+      chiefComplaints: iaDoc.chiefComplaints || iaDoc.cc || iaDoc.complaints
+                       || iaNurse.chiefComplaint || iaNurse.cc || adm.chiefComplaints || adm.reasonForAdmission || "",
+      history: iaDoc.hopi || iaDoc.historyOfPresentingIllness || iaDoc.history || iaDoc.presentingIllness
+               || iaNurse.hopi || iaNurse.chiefComplaint || "",
+      medicalHistory: iaDoc.pmh || iaDoc.briefPmh || iaDoc.pastMedicalHistory
+                      || iaNurse.briefPmh || iaNurse.pmh || iaNurse.pastMedicalHistory || "",
+      surgicalHistory: iaDoc.psh || iaDoc.surgicalHistory || iaDoc.pastSurgicalHistory || "",
+      familyHistory: iaDoc.famHx || iaDoc.familyHistory || "",
+      socialHistory: iaDoc.socHx || iaDoc.socialHistory || iaDoc.personalHistory || "",
+      ia: { doctor: iaDoc, nursing: iaNurse },
+      generalExamination: iaDoc.genExam || iaDoc.examination || iaDoc.generalExamination || "",
+      systemicExamination: [
+        iaDoc.cvs     ? `CVS: ${iaDoc.cvs}` : "",
+        iaDoc.rs      ? `RS: ${iaDoc.rs}`   : "",
+        iaDoc.abdomen ? `P/A: ${iaDoc.abdomen}` : "",
+        iaDoc.cns     ? `CNS: ${iaDoc.cns}` : "",
+        iaDoc.systemic || iaDoc.systemicExamination || "",
+      ].filter(Boolean).join(" · "),
+      investigations: data.investigations || [],
+      doctorNotes: regularDoctorNotes, nursingNotes: regularNursingNotes,
+      medications: data.medications || data.treatmentChart || [],
+      procedures: (() => {
+        const PROC_TYPES = /procedure|operative|preop|postop/i;
+        const fromDocs = allDoctorNotes.filter(n => PROC_TYPES.test(n.noteType || "")).map(n => ({
+          name: n.noteDetails?.procedureName || n.noteType, date: n.visitDate || n.createdAt,
+          surgeon: n.doctorName || n.signedByName || "",
+          anaesthetist: n.noteDetails?.anaesthetist || n.noteDetails?.anesthetist || "",
+          findings: n.noteDetails?.findings || n.noteDetails?.outcome || "",
+          notes: n.noteDetails?.notes || n.remarks || n.note || "",
+          indication: n.noteDetails?.indication || n.provisionalDiagnosis || "",
+          role: "Doctor", signedBy: n.signedByName, signedAt: n.signedAt,
+        }));
+        const fromNurses = allNursingNotes.filter(n => PROC_TYPES.test(n.noteType || "")).map(n => ({
+          name: n.noteData?.procedureName || n.noteType,
+          date: n.visitDate || n.noteDate || n.createdAt,
+          surgeon: n.nurseName || n.signedByName || "",
+          anaesthetist: "", findings: n.noteData?.findings || n.noteData?.outcome || "",
+          notes: n.noteData?.notes || n.remarks || "",
+          indication: n.noteData?.indication || "", role: "Nurse",
+          signedBy: n.signedByName, signedAt: n.submittedAt,
+        }));
+        return [...fromDocs, ...fromNurses].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+      })(),
+      consents: data.consents || [],
+      doctorOrders: Array.isArray(data.doctorOrders) ? data.doctorOrders : [],
+      mar: Array.isArray(data.mar) ? data.mar : [],
+      intakeOutput: Array.isArray(data.intakeOutput) ? data.intakeOutput : [],
+      labReports: Array.isArray(data.labReports) ? data.labReports : [],
+      labTrends: Array.isArray(data.labTrends) ? data.labTrends : [],
+      shiftHandovers: Array.isArray(data.shiftHandovers) ? data.shiftHandovers : [],
+      nursingAssessments: Array.isArray(data.nursingAssessments) ? data.nursingAssessments : [],
+      nursingCarePlans: Array.isArray(data.nursingCarePlans) ? data.nursingCarePlans : [],
+      bedTransfers: Array.isArray(data.bedTransfers) ? data.bedTransfers : [],
+      bloodTransfusion: (() => {
+        const dedicated = Array.isArray(data.bloodTransfusion) ? data.bloodTransfusion : [];
+        const fromNurseNotes = allNursingNotes.filter(n => matchBlood(n.noteData)).map(n => ({
+          ...n.noteData, startedAt: n.visitDate || n.noteDate || n.createdAt,
+          createdAt: n.createdAt, transfusedByName: n.nurseName || n.signedByName || "",
+          _source: "nurseNote",
+        }));
+        return [...dedicated, ...fromNurseNotes].sort((a, b) => new Date(a.startedAt || a.createdAt || 0) - new Date(b.startedAt || b.createdAt || 0));
+      })(),
+      dietPlans: Array.isArray(data.dietPlans) ? data.dietPlans : [],
+      icuBundles: Array.isArray(data.icuBundles) ? data.icuBundles : [],
+      mlc: Array.isArray(data.mlc) ? data.mlc : [],
+      bills: Array.isArray(data.bills) ? data.bills : [],
+      activityLog: ["Admin", "Doctor", "MRD", "Accountant"].includes(viewerRole)
+        ? (Array.isArray(data.activityLog) ? data.activityLog : []) : [],
+      ...((ds) => {
+        const head = Array.isArray(ds) ? ds[0] : ds;
+        return {
+          dischargeSummary: head?.summary || head?.courseOfStay || "",
+          dischargeAdvice: head?.advice || head?.finalAdvice || "",
+          dischargeMedications: head?.dischargeMeds || head?.medsOnDischarge || head?.dischargeMedications || [],
+          followUpDate: head?.followUpDate, dischargeCondition: head?.conditionOnDischarge,
+        };
+      })(data.dischargeSummary),
+      printCount: 1, printedAt: new Date().toISOString(),
+      viewerRole: String(viewerRole || "").toLowerCase(),
+    };
+  };
+
+  /* ── R7gr / R7gs — Narrative is the ONLY view ─────────────────
+     R7gr added an opt-in print-mirror render. R7gs (user feedback:
+     "is page ki UI mujhe bhot preshan krti hai") makes it the only
+     view — the legacy chip-grid interactive layout below this block
+     is permanently bypassed. `?view=interactive` is intentionally
+     ignored so deep links from the old UI still land on the clean
+     Narrative copy. */
+  if (data) {
+    const receipt = buildPrintReceipt();
+    const file   = normalizeFileData(receipt);
+    const events = buildChronologicalEvents(file);
+    return (
+      <div className="pf-page pf-page--mirror" style={{ background: "#f8fafc", minHeight: "100vh" }}>
+        <div style={{
+          position: "sticky", top: 0, zIndex: 30, background: "#fff",
+          borderBottom: "1px solid #e2e8f0", padding: "10px 22px",
+          display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
+        }}>
+          <button onClick={() => navigate(-1)} style={{
+            border: "1px solid #e2e8f0", background: "#fff", padding: "6px 14px",
+            borderRadius: 7, cursor: "pointer", fontSize: 13,
+          }}>← Back</button>
+          <div style={{ fontWeight: 700, fontSize: 15, color: "#0f172a" }}>
+            Complete Patient File
+          </div>
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={() => { try { openPrint("ipd-file", receipt); } catch { window.print(); } }}
+            style={{
+              border: "none", background: "linear-gradient(90deg,#7c3aed,#4c1d95)", color: "#fff",
+              padding: "7px 18px", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 700,
+              boxShadow: "0 2px 8px rgba(124,58,237,.28)",
+            }}
+          >🖨 Print Complete File</button>
+        </div>
+        <div style={{ maxWidth: 980, margin: "16px auto 64px", background: "#fff",
+          boxShadow: "0 4px 20px rgba(15,23,42,.06)", padding: "30px 36px", borderRadius: 8,
+        }}>
+          <NarrativeTheme
+            settings={hospitalSettings || {}}
+            receipt={receipt}
+            file={file}
+            events={events}
+            viewerRole={String(viewerRole || "").toLowerCase()}
+          />
+        </div>
+      </div>
+    );
+  }
 
   const navItems = [
     { id: "admission",     label: "Admission",          icon: "🛏", count: data.admissions?.length },
@@ -3560,11 +4312,30 @@ export default function CompletePatientFilePage() {
   // top-to-bottom so the browser print dialog gets the entire file in one
   // continuous stream.
   if (printMode) {
+    // R7fq Track D — PrintShell (rendered inside PrintBody) now provides
+    // the SGRH/Max-style triple-zone header, the patient-info strip and
+    // the footer with digital-signature stamp + terms. PrintLetterhead
+    // (R7eo) and PrintFooter (R7eo) are intentionally NOT invoked here
+    // anymore so a single page doesn't double-stamp the header / repeat
+    // the footer. Their function definitions remain in the file (still
+    // referenced by no one) — left in place to keep the patch surgical
+    // and to make a quick revert one-line if PrintShell turns out to
+    // miss anything those custom blocks covered.
     return (
       <div className={`pf-page pf-print-mode pf-tint--${role === "nurse" ? "nurse" : "doctor"}`}>
-        <PrintLetterhead patient={patient} currentAdmission={currentAdmission} role={role} hs={hospitalSettings} />
-        <PrintBody data={data} docInitial={docInitial} nurseInitial={nurseInitial} docOther={docOther} nurseOther={nurseOther} />
-        <PrintFooter uhid={uhid} role={role} hs={hospitalSettings} />
+        <PrintBody
+          data={data}
+          docInitial={docInitial}
+          nurseInitial={nurseInitial}
+          docOther={docOther}
+          nurseOther={nurseOther}
+          viewerRole={viewerRole}
+          patient={patient}
+          hospitalSettings={hospitalSettings}
+          viewerName={user?.name || user?.fullName || ""}
+          role={role}
+          uhid={uhid}
+        />
       </div>
     );
   }
@@ -3577,7 +4348,310 @@ export default function CompletePatientFilePage() {
           currentAdmission={currentAdmission}
           role={role}
           onBack={() => navigate(-1)}
-          onPrint={() => window.open(`/patient-file/${uhid}?role=${role}&autoprint=1`, "_blank", "noopener,width=1100,height=900")}
+          {...(() => {
+            // R7ft: route the print button through openPrint() →
+            // /print/complete-ipd-file, which delegates to the admin-
+            // picked theme (Narrative / Timeline / Executive / Audit /
+            // Editorial) via CompleteIPDFile.jsx. The legacy
+            // ?autoprint=1 same-page popup is preserved as the fallback
+            // for two cases:
+            //   1) `data` hasn't loaded yet (race on first click — the
+            //      fetched payload is what we need to build the receipt)
+            //   2) openPrint throws (sessionStorage full, popup
+            //      blocker, browser quirk). We toast + fall through.
+            //
+            // R7fv — same receipt + same fallback for the Referral
+            // Summary button. Only the slug differs: "referral-summary"
+            // instead of "ipd-file". The theme component subsets the
+            // receipt; the receipt itself is identical.
+            const buildReceipt = () => {
+              if (!data) throw new Error("Patient file not loaded yet");
+              const adm = currentAdmission || data.currentAdmission || {};
+              // R7ft-FIX1 — the real Initial Assessment blob lives in
+              // doctorNotes[].noteDetails.doctor / .nursing (R7fa split).
+              // currentAdmission.initialAssessment is only a thin marker.
+              // Find the signed IA note and unpack noteDetails.doctor /
+              // noteDetails.nursing — that's where hopi / chiefComplaints
+              // / pmh / vitals / examination actually live.
+              const allDoctorNotes  = Array.isArray(data.doctorNotes)  ? data.doctorNotes  : [];
+              // R7gb-VERIFY-FIX2 — backend returns data.nurseNotes (singular,
+              // matching the on-page Section id="nurse-notes" reader). The
+              // older receipt read data.nursingNotes which never existed →
+              // the receipt's nursingNotes array was always empty → Narrative
+              // day-wise Clinical Journey + dedicated nurse-notes section both
+              // rendered blank no matter how many nurse notes were on file.
+              // Read nurseNotes first, fall back to nursingNotes for any
+              // future renames.
+              const allNursingNotes = Array.isArray(data.nurseNotes) ? data.nurseNotes
+                                    : Array.isArray(data.nursingNotes) ? data.nursingNotes
+                                    : [];
+              const iaDocNote   = allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.doctor) ||
+                                  allDoctorNotes.find(n => n.noteType === "initial");
+              const iaNurseNote = allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.nursing) ||
+                                  allNursingNotes.find(n => n.noteType === "initial");
+              const iaDoc   = iaDocNote?.noteDetails?.doctor
+                              || adm.initialAssessment
+                              || data.initialAssessment
+                              || {};
+              const iaNurse = iaNurseNote?.noteDetails?.nursing
+                              || iaNurseNote?.noteData?.nursing
+                              || adm.nurseInitialAssessment
+                              || data.nurseInitialAssessment
+                              || {};
+              // Filter the loud "Doctor — initial" / "Nurse — initial"
+              // entries out of the regular notes timeline — the IA is its
+              // own dedicated print section, so leaving them in produces
+              // the "Day 2: initial. initial. initial." garbage line the
+              // user reported.
+              const regularDoctorNotes  = allDoctorNotes.filter(n  => n.noteType !== "initial");
+              const regularNursingNotes = allNursingNotes.filter(n => n.noteType !== "initial");
+              // Normalize the IA vitals object. R7fc nurse IA stores vitals
+              // as flat { bpSys, bpDia, pulse, temp, spo2, rr, weight,
+              // height } — NOT a nested {bp:{systolic,diastolic}} object
+              // like the original spec assumed. Handle BOTH shapes so the
+              // adapter is forward-compatible.
+              const rawVitals = iaNurse.vitals || iaDoc.vitals || {};
+              const bpObj = rawVitals.bp;
+              const bpFromObj  = bpObj && typeof bpObj === "object"
+                                 ? `${bpObj.systolic ?? bpObj.sys ?? "?"}/${bpObj.diastolic ?? bpObj.dia ?? "?"}`
+                                 : "";
+              const bpFromStr  = typeof bpObj === "string" ? bpObj : "";
+              const bpFromFlat = (rawVitals.bpSys || rawVitals.bpDia)
+                                 ? `${rawVitals.bpSys ?? "?"}/${rawVitals.bpDia ?? "?"}`
+                                 : "";
+              const flatVitals = {
+                bp:     bpFromStr || bpFromObj || bpFromFlat,
+                pulse:  rawVitals.pulse,
+                temp:   rawVitals.temp,
+                spo2:   rawVitals.spo2,
+                rr:     rawVitals.rr,
+                weight: rawVitals.weight || iaNurse.anthropometry?.weightKg || iaDoc.anthropometry?.weightKg,
+                height: rawVitals.height || iaNurse.anthropometry?.heightCm || iaDoc.anthropometry?.heightCm,
+                bmi:    rawVitals.bmi    || iaNurse.anthropometry?.bmi      || iaDoc.anthropometry?.bmi,
+              };
+              const receipt = {
+                /* identity */
+                patientName: patient?.fullName || patient?.name || [patient?.firstName, patient?.lastName].filter(Boolean).join(" "),
+                uhid:        patient?.UHID || patient?.uhid || uhid,
+                ipdNo:       adm.admissionNumber || adm.ipdNo || "",
+                age:         patient?.age,
+                gender:      patient?.gender || patient?.sex,
+                mobile:      patient?.mobile || patient?.contactNumber,
+                bloodGroup:  patient?.bloodGroup,
+                completeAddress: patient?.completeAddress || patient?.address,
+
+                /* admission */
+                admissionDate:   adm.admissionDate,
+                admissionType:   adm.admissionType,
+                modeOfArrival:   adm.modeOfArrival,
+                referringDoctor: adm.referringDoctor,
+                consultantName:  adm.attendingDoctor || adm.consultantName,
+                department:      adm.department,
+                bedNumber:       adm.bedNumber,
+                wardName:        adm.wardName,
+                reasonForAdmission:   adm.reasonForAdmission || adm.reasonForVisit,
+                provisionalDiagnosis: adm.provisionalDiagnosis,
+                workingDiagnosis:     adm.workingDiagnosis,
+                finalDiagnosis:       adm.finalDiagnosis || data.dischargeSummary?.finalDiagnosis,
+                icd10:           adm.icd10 || data.dischargeSummary?.icd10,
+                icd10Desc:       adm.icd10Desc || data.dischargeSummary?.icd10Desc,
+                dischargeDate:   adm.actualDischargeDate || adm.dischargeDate,
+                totalDays:       adm.lengthOfStay || adm.totalDays,
+
+                /* alerts */
+                allergies:        data.allergies || iaDoc.allergies?.list || iaNurse.allergies?.list
+                                  || patient?.allergyList || patient?.allergies || [],
+                isolationFlags:   adm.isolationFlags || iaDoc.isolationFlags || [],
+                crossCheckAlerts: iaNurse.crossCheckAlerts || iaDoc.crossCheckAlerts || [],
+
+                /* vitals on admission — flattened above; bp is now a
+                   "120/80" string, not a {systolic,diastolic} object. */
+                vitalsOnAdmission: flatVitals,
+                vitalsTrend:       data.vitalSheet || data.vitalsTrend || [],
+
+                /* history & exam — every alias path the R7fa/R7fb/R7fc
+                   IA forms can land in. The doctor IA's hopi field is
+                   the primary HOPI bucket; nurse's chiefComplaint is a
+                   common fallback when the doctor signed IA without
+                   filling the field (real-world data gap). Real R7fc
+                   field names: famHx, socHx, genExam (NOT
+                   familyHistory / generalExamination). */
+                chiefComplaints: iaDoc.chiefComplaints || iaDoc.cc || iaDoc.complaints
+                                 || iaNurse.chiefComplaint || iaNurse.cc
+                                 || adm.chiefComplaints || adm.reasonForAdmission || "",
+                history:         iaDoc.hopi || iaDoc.historyOfPresentingIllness || iaDoc.history
+                                 || iaDoc.presentingIllness
+                                 || iaNurse.hopi || iaNurse.chiefComplaint || "",
+                medicalHistory:  iaDoc.pmh || iaDoc.briefPmh || iaDoc.pastMedicalHistory
+                                 || iaNurse.briefPmh || iaNurse.pmh || iaNurse.pastMedicalHistory || "",
+                surgicalHistory: iaDoc.psh || iaDoc.surgicalHistory || iaDoc.pastSurgicalHistory || "",
+                familyHistory:   iaDoc.famHx || iaDoc.familyHistory || "",
+                socialHistory:   iaDoc.socHx || iaDoc.socialHistory || iaDoc.personalHistory || "",
+                ia: { doctor: iaDoc, nursing: iaNurse },
+                generalExamination:  iaDoc.genExam || iaDoc.examination || iaDoc.generalExamination || "",
+                systemicExamination: [
+                  iaDoc.cvs     ? `CVS: ${iaDoc.cvs}` : "",
+                  iaDoc.rs      ? `RS: ${iaDoc.rs}`   : "",
+                  iaDoc.abdomen ? `P/A: ${iaDoc.abdomen}` : "",
+                  iaDoc.cns     ? `CNS: ${iaDoc.cns}` : "",
+                  iaDoc.systemic || iaDoc.systemicExamination || "",
+                ].filter(Boolean).join(" · "),
+
+                /* clinical events — initial-assessment notes filtered
+                   out so the Day-by-Day course doesn't spam "initial."
+                   for each of them. The IA renders in its own section. */
+                investigations:  data.investigations || [],
+                doctorNotes:     regularDoctorNotes,
+                nursingNotes:    regularNursingNotes,
+                medications:     data.medications    || data.treatmentChart || [],
+                // R7gb P0-9: backend never returns data.procedures;
+                // synthesise from doctor + nurse notes whose noteType
+                // matches the procedure regex used by
+                // ProcedureNotesSection. Include actor/date/payload so
+                // Narrative.procedures can render name + surgeon +
+                // findings instead of "—".
+                procedures: (() => {
+                  const PROC_TYPES = /procedure|operative|preop|postop/i;
+                  const fromDocs = allDoctorNotes
+                    .filter(n => PROC_TYPES.test(n.noteType || ""))
+                    .map(n => ({
+                      name:        n.noteDetails?.procedureName || n.noteType,
+                      date:        n.visitDate || n.createdAt,
+                      surgeon:     n.doctorName || n.signedByName || "",
+                      anaesthetist:n.noteDetails?.anaesthetist || n.noteDetails?.anesthetist || "",
+                      findings:    n.noteDetails?.findings || n.noteDetails?.outcome || "",
+                      notes:       n.noteDetails?.notes || n.remarks || n.note || "",
+                      indication:  n.noteDetails?.indication || n.provisionalDiagnosis || "",
+                      role:        "Doctor",
+                      signedBy:    n.signedByName,
+                      signedAt:    n.signedAt,
+                    }));
+                  const fromNurses = allNursingNotes
+                    .filter(n => PROC_TYPES.test(n.noteType || ""))
+                    .map(n => ({
+                      name:        n.noteData?.procedureName || n.noteType,
+                      date:        n.visitDate || n.noteDate || n.createdAt,
+                      surgeon:     n.nurseName || n.signedByName || "",
+                      anaesthetist:"",
+                      findings:    n.noteData?.findings || n.noteData?.outcome || "",
+                      notes:       n.noteData?.notes || n.remarks || "",
+                      indication:  n.noteData?.indication || "",
+                      role:        "Nurse",
+                      signedBy:    n.signedByName,
+                      signedAt:    n.submittedAt,
+                    }));
+                  return [...fromDocs, ...fromNurses].sort(
+                    (a, b) => new Date(a.date || 0) - new Date(b.date || 0)
+                  );
+                })(),
+                consents:        data.consents       || [],
+
+                /* R7ft-FIX2 — comprehensive clinical record. Every
+                   collection the backend returns is surfaced into the
+                   receipt so the Narrative print is a true "complete
+                   file", not a 1-page brief. dischargeSummary on the
+                   API is often a 50-row array (find().limit(50)), so
+                   we defensively pick the newest entry below. */
+                doctorOrders:        Array.isArray(data.doctorOrders)        ? data.doctorOrders        : [],
+                mar:                 Array.isArray(data.mar)                 ? data.mar                 : [],
+                intakeOutput:        Array.isArray(data.intakeOutput)        ? data.intakeOutput        : [],
+                labReports:          Array.isArray(data.labReports)          ? data.labReports          : [],
+                labTrends:           Array.isArray(data.labTrends)           ? data.labTrends           : [],
+                shiftHandovers:      Array.isArray(data.shiftHandovers)      ? data.shiftHandovers      : [],
+                nursingAssessments:  Array.isArray(data.nursingAssessments)  ? data.nursingAssessments  : [],
+                nursingCarePlans:    Array.isArray(data.nursingCarePlans)    ? data.nursingCarePlans    : [],
+                bedTransfers:        Array.isArray(data.bedTransfers)        ? data.bedTransfers        : [],
+                // R7gb P0-10: on-page Blood Transfusion section also
+                // scans nurse notes via matchBlood(noteData) — many
+                // transfusion events are saved as nurse-note payloads,
+                // not in the dedicated bloodTransfusion collection.
+                // Mirror that scan into the receipt.
+                bloodTransfusion: (() => {
+                  const dedicated = Array.isArray(data.bloodTransfusion) ? data.bloodTransfusion : [];
+                  const fromNurseNotes = allNursingNotes
+                    .filter(n => matchBlood(n.noteData))
+                    .map(n => ({
+                      ...n.noteData,
+                      startedAt:        n.visitDate || n.noteDate || n.createdAt,
+                      createdAt:        n.createdAt,
+                      transfusedByName: n.nurseName || n.signedByName || "",
+                      _source:          "nurseNote",
+                    }));
+                  return [...dedicated, ...fromNurseNotes].sort(
+                    (a, b) => new Date(a.startedAt || a.createdAt || 0) - new Date(b.startedAt || b.createdAt || 0)
+                  );
+                })(),
+                dietPlans:           Array.isArray(data.dietPlans)           ? data.dietPlans           : [],
+                icuBundles:          Array.isArray(data.icuBundles)          ? data.icuBundles          : [],
+                mlc:                 Array.isArray(data.mlc)                 ? data.mlc                 : [],
+                // R7gb P0-11: surface backend bills so the Narrative
+                // bills section is wired.
+                bills:               Array.isArray(data.bills)               ? data.bills               : [],
+                // R7gb P0-12: activity log is operational/PHI-adjacent
+                // — gate to the same roles permitted on-page (line
+                // 2586). Other viewers get an empty array so the
+                // section auto-elides.
+                activityLog:         ["Admin", "Doctor", "MRD", "Accountant"].includes(viewerRole)
+                                       ? (Array.isArray(data.activityLog) ? data.activityLog : [])
+                                       : [],
+
+                /* discharge — defensive resolve: the API may return
+                   dischargeSummary as either an object (singleton) or
+                   an array (find().limit(50)). Pick the newest. */
+                ...((ds) => {
+                  const head = Array.isArray(ds) ? ds[0] : ds;
+                  return {
+                    dischargeSummary:     head?.summary || head?.courseOfStay || "",
+                    dischargeAdvice:      head?.advice || head?.finalAdvice || "",
+                    dischargeMedications: head?.dischargeMeds || head?.medsOnDischarge || head?.dischargeMedications || [],
+                    followUpDate:         head?.followUpDate,
+                    dischargeCondition:   head?.conditionOnDischarge,
+                  };
+                })(data.dischargeSummary),
+
+                printCount: 1,
+                printedAt:  new Date().toISOString(),
+
+                /* R7gb-P0-12 — viewer role propagation. CompleteIPDFile.jsx
+                   reads receipt.viewerRole and passes it to the theme as a
+                   first-class prop so PHI-heavy sections (Activity Log,
+                   MLC) can gate by role. Lowercase canonical form. */
+                viewerRole: String(viewerRole || "").toLowerCase(),
+              };
+              return receipt;
+            };
+            const fireFallback = () => {
+              const url = `/patient-file/${uhid}?role=${role}&autoprint=1`;
+              const w = window.open(url, "_blank", "noopener,width=1100,height=900");
+              if (!w || w.closed || typeof w.closed === "undefined") {
+                try { toast.warn("Pop-up blocked — opening in same tab. Use Ctrl+P to print."); } catch {}
+                setTimeout(() => { window.location.href = url; }, 500);
+              }
+            };
+            return {
+              // R7ga — REVERTED R7fz. R7fz routed Print through the
+              // page's own ?autoprint=1 path, which printed a literal
+              // mirror of the on-page UI — 36 pages of UI elements,
+              // role tints, sidebars and chip soup. User feedback:
+              // "this not as structered patient file" — they wanted
+              // the Narrative theme's compact structured output.
+              // Back to openPrint("ipd-file", ...) which dispatches
+              // to CompleteIPDFile.jsx → admin-picked theme. R7fy's
+              // day-wise restructure of Narrative.jsx + R7fx-A's
+              // shared improvements remain active because they were
+              // applied INSIDE the theme. fireFallback() stays as
+              // safety net for openPrint throws (pop-up blocker,
+              // sessionStorage full).
+              onPrint: () => {
+                try { openPrint("ipd-file", buildReceipt()); }
+                catch (e) { fireFallback(); }
+              },
+              onPrintReferral: () => {
+                try { openPrint("referral-summary", buildReceipt()); }
+                catch (e) { fireFallback(); }
+              },
+            };
+          })()}
         />
         {/* R7i: Same-day discharge undo (Admin only). Component
             short-circuits when conditions aren't met. */}
@@ -3620,22 +4694,27 @@ export default function CompletePatientFilePage() {
             </Section>
 
             <Section id="initial" icon="🩺" title="Initial Assessment" sub="NABH COP.2 + IPSG.6 — combined intake">
+              <div style={{ marginBottom: 10, padding: "8px 12px", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 6, fontSize: 12, color: "#78350f" }}>
+                Showing latest signed version. Full amendment history visible in Activity Log.
+              </div>
               <h4 style={{ margin: "0 0 8px", color: "var(--pf-accent-d)" }}>Doctor — Initial Assessment</h4>
               <RoleAddCTA viewerRole={viewerRole} uhid={uhid}
                 allow={["Doctor"]} href="/ipd-assessment/{UHID}"
                 color="#7c3aed" label="Add Doctor IA in console" icon="✏" />
-              <NoteList notes={docInitial} kind="doctor" emptyMsg="Doctor initial assessment not recorded" />
+              <NoteList notes={latestDocIA || fallbackDocIA ? [latestDocIA || fallbackDocIA] : []} kind="doctor" emptyMsg="Doctor initial assessment not recorded" />
               <h4 style={{ margin: "16px 0 8px", color: "var(--pf-accent-d)" }}>Nursing — Initial Assessment</h4>
               <RoleAddCTA viewerRole={viewerRole} uhid={uhid}
                 allow={["Nurse"]} href="/nurse-initial-assessment?uhid={UHID}"
                 color="#db2777" label="Add Nursing IA in console" icon="✏" />
-              <NoteList notes={nurseInitial} kind="nurse" emptyMsg="Nursing initial assessment not recorded" />
+              <NoteList notes={latestNurseIA ? [latestNurseIA] : nurseInitial} kind="nurse" emptyMsg="Nursing initial assessment not recorded" />
               {/* The dedicated /nurse-initial-assessment page stores its full
                   NABH-required payload directly on the admission document
                   (admission.nurseInitialAssessment, type: Mixed). It's
                   separate from NurseNote.noteData and was never being
-                  surfaced here. Render every populated field. */}
-              {isMeaningful(currentAdmission?.nurseInitialAssessment) && (
+                  surfaced here. Render every populated field.
+                  R7g: skip when a nurse-section DoctorNote already covers it
+                  (else this becomes a 7th duplicate dump). */}
+              {!hasNurseSectionIA && isMeaningful(currentAdmission?.nurseInitialAssessment) && (
                 <div className="pf-record pf-record--nurse" style={{ marginTop: 12 }}>
                   <div className="pf-record__head">
                     <span className="pf-record__title">Nurse IA — full assessment payload</span>
@@ -3646,8 +4725,9 @@ export default function CompletePatientFilePage() {
                   </div>
                 </div>
               )}
-              {/* Same idea for the admission-level doctor IA payload, if any */}
-              {isMeaningful(currentAdmission?.initialAssessment) && (
+              {/* Same idea for the admission-level doctor IA payload, if any.
+                  R7g: only render when no doctor-section IA already covers it. */}
+              {!(latestDocIA || fallbackDocIA) && isMeaningful(currentAdmission?.initialAssessment) && (
                 <div className="pf-record pf-record--doctor" style={{ marginTop: 12 }}>
                   <div className="pf-record__head">
                     <span className="pf-record__title">Doctor IA gate</span>
@@ -3697,7 +4777,7 @@ export default function CompletePatientFilePage() {
                 allow={["Nurse", "Doctor"]}
                 href={`/updateVitalSheet/{UHID}/${new Date().toISOString().slice(0,10)}`}
                 color="#0d9488" label="Record vitals (today)" icon="📈" />
-              <VitalsSection vitals={vitals} nurseNotes={nurseNotes} />
+              <VitalsSection vitals={vitals} nurseNotes={nurseNotes} doctorNotes={doctorNotes} currentAdmission={currentAdmission} />
             </Section>
 
             <Section id="investigations" icon="🧪" title="Investigations" sub="Lab + imaging orders with results" count={investigations.length}>

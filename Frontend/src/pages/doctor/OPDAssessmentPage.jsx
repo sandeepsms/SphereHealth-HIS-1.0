@@ -12,6 +12,13 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import API_ENDPOINTS from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
+// R7fq Track C: shared print shell — replaces the legacy
+// openPrint("opd-prescription", payload) routing with direct
+// buildPrintShellHtml() calls so the SGRH-style header / patient strip /
+// signature zone / footer all come from one source of truth. The R7bt
+// fixes (full payload — HOPI / vitals / chronic / allergies / drugs /
+// investigations / advice) are preserved inside bodyHtml.
+import { buildPrintShellHtml } from "@/templates/PrintShell";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 import DrugAutocomplete, { parseStrength, drugDisplayName } from "../../Components/clinical/DrugAutocomplete";
 import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
@@ -1283,6 +1290,10 @@ export default function OPDAssessmentPage() {
       p => p && (p.name || p.procedureName)
     );
 
+    // R7eo-B — Pattern B caller payload gap fix: pass visitType so the
+    // OPD prescription template can render IPD-context fields (IPD No.,
+    // Bed, Ward) when an inpatient consult uses the same printable.
+    // Doctor reg fallback chain extended for robustness.
     openPrint("opd-prescription", {
       rxNo:         v.visitNumber || "",
       patientName:  v.patientName || v.UHID || "",
@@ -1297,8 +1308,10 @@ export default function OPDAssessmentPage() {
       bloodGroup:   patientBloodGroup,
       address:      patientAddress,
       doctorName:   drName,
-      doctorReg:    docUser?.registrationNo || "",
+      doctorReg:    docUser?.registrationNo || v?.consultantRegistrationNo || v?.attendingDoctorReg || "",
       department:   v.department || docUser?.department || "",
+      visitType:    v.visitType || "OPD",
+      ...(v.visitType === "IPD" ? { ipdNo: v.ipdNo, bedNumber: v.bedNumber, wardName: v.wardName } : {}),
       visitDate:    v.visitDate || new Date().toISOString(),
       vitals: {
         // R7bt-OPD-PRINT-9: BP is normalized to "<sys>/<dia>" string

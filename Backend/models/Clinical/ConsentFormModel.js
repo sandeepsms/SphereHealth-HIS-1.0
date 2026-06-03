@@ -115,7 +115,94 @@ const ConsentFormSchema = new mongoose.Schema(
     // every print/reprint. Pre-R7bh ConsentForm had no printCount
     // field, so $inc no-op'd and the DUPLICATE watermark + PrintAudit
     // chain-of-custody (NABH PRE.4) didn't engage on reprints.
-    printCount: { type: Number, default: 0 } },
+    printCount: { type: Number, default: 0 },
+
+    // ── R7ez · Paperless consent — biometric + staff e-sign ──────────
+    //
+    // Three blocks that together replace the paper "thumb impression +
+    // doctor signature" artefact on every consent. The /sign endpoint
+    // now refuses to flip status PENDING→SIGNED unless either:
+    //   • biometric.captured === true AND staffSignature.signedAt set
+    //   • bypass.authorisedAt set by an Admin (with reason)
+    consentingParty: {
+      // "Who placed the fingerprint?". Either the patient themselves or
+      // a legally authorised representative (LAR). Captured even if the
+      // form was filled by staff so the audit chain knows whose finger
+      // touched the device.
+      relation: {
+        type: String,
+        enum: ["SELF", "SPOUSE", "FATHER", "MOTHER", "SON", "DAUGHTER", "GUARDIAN", "LAR", "OTHER"],
+      },
+      relationOther: { type: String, trim: true },
+      name: { type: String, trim: true },
+      idProofType: {
+        type: String,
+        enum: ["AADHAAR", "PAN", "DRIVING_LICENSE", "PASSPORT", "VOTER_ID", "OTHER", ""],
+        default: "",
+      },
+      idProofNumber: { type: String, trim: true },
+      contactNumber: { type: String, trim: true },
+    },
+
+    biometric: {
+      captured: { type: Boolean, default: false },
+      method: {
+        // WEBAUTHN: platform authenticator via Windows Hello / Touch ID
+        // MANUAL:   external fingerprint device (out of scope this phase)
+        // BYPASS:   no biometric — admin override, see `bypass` block below
+        type: String,
+        enum: ["WEBAUTHN", "MANUAL", "BYPASS", ""],
+        default: "",
+      },
+      // The W3C WebAuthn assertion stored verbatim for audit replay.
+      // credentialId + publicKey are public values; storing them does not
+      // leak biometric template (the fingerprint never leaves the device).
+      credentialId:    { type: String, default: "" },     // base64url
+      publicKey:       { type: String, default: "" },     // base64url COSE key
+      counter:         { type: Number, default: 0 },
+      attestationFmt:  { type: String, default: "" },     // none / packed / fido-u2f / apple / tpm
+      aaguid:          { type: String, default: "" },     // authenticator type id
+      // R7gh — Hardware-backed flag. True only when the AAGUID matches
+      // an approved TPM/Secure-Enclave/StrongBox authenticator. False
+      // would mean a software/virtual authenticator slipped past the
+      // verifier (only possible if STRICT_HARDWARE_BIOMETRIC was off).
+      // The /sign endpoint MUST refuse to flip PENDING→SIGNED when
+      // this is false, unless the admin has lodged a bypass.
+      isHardwareBacked:     { type: Boolean, default: false },
+      authenticatorVendor:  { type: String, default: "" },  // e.g. "Windows Hello Hardware (TPM)"
+      // Server-stamped at verify time (cannot be forged by client).
+      capturedAt:      { type: Date },
+      capturedFromIp:  { type: String, default: "" },
+      capturedUserAgent: { type: String, default: "" },
+      // The transient challenge issued to the browser. Cleared after
+      // verify so it can never be replayed.
+      pendingChallenge: { type: String, default: "" },
+      pendingChallengeExpiresAt: { type: Date },
+    },
+
+    staffSignature: {
+      // The staff member / doctor who facilitated the consent ceremony.
+      // Identity comes from req.user (cannot be spoofed by the body).
+      userId:        { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      userName:      { type: String, default: "" },
+      userRole:      { type: String, default: "" },
+      // Drawn signature image (base64 PNG). Reuses the existing
+      // SignaturePad component on the frontend.
+      signatureImage: { type: String, default: "" },
+      signedAt:      { type: Date },
+      signedFromIp:  { type: String, default: "" },
+    },
+
+    bypass: {
+      // Admin-only escape valve when device fails or patient genuinely
+      // cannot biometric-sign. NABH PRE.4 still demands a documented
+      // reason + authoriser; this captures both.
+      reason:        { type: String, default: "" },
+      authorisedBy:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      authorisedByName: { type: String, default: "" },
+      authorisedAt:  { type: Date },
+    },
+  },
   { timestamps: true, collection: "consent_forms" }
 );
 

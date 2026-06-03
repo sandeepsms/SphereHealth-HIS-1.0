@@ -9,10 +9,10 @@ const { validateObjectIdParam } = require("../../utils/queryGuards");
 router.use(attemptAuth);
 
 // Reads — any clinical role
-router.get("/summary",        ctrl.getSummary);
-router.get("/patient/:UHID",  ctrl.getByUHID);
-router.get("/",               ctrl.getAll);
-router.get("/:id",            ctrl.getById);
+router.get("/summary",        requireAction("lab.records.read"), ctrl.getSummary);
+router.get("/patient/:UHID",  requireAction("lab.records.read"), ctrl.getByUHID);
+router.get("/",               requireAction("lab.records.read"), ctrl.getAll);
+router.get("/:id",            requireAction("lab.records.read"), validateObjectIdParam("id"), ctrl.getById);
 
 // Writes — gated by action.
 // Order entry: Doctor / Receptionist (per ACTIONS.lab.order).

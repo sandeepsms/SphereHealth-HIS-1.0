@@ -23,6 +23,21 @@ const CreditNotePrint = ({ settings = {}, receipt = {} }) => {
   const printCount = toNum(r.printCount);
   const items = Array.isArray(r.items) ? r.items : [];
 
+  // R7eo-D — Pattern D regulatory fix (GST §34): derive isInterState from
+  // placeOfSupply vs settings.state instead of silently defaulting to
+  // intrastate. The previous code made every CN intrastate by default,
+  // which mis-bookkeeps CGST/SGST for genuinely inter-state transactions.
+  const computedInterState =
+    (r.placeOfSupply || "").trim().toLowerCase() !==
+    (settings.state || "").trim().toLowerCase();
+  const effectiveInterState = r.isInterState ?? (r.placeOfSupply ? computedInterState : false);
+
+  // R7eo-D — Pattern D regulatory fix (GST §34(1)): credit note MUST cite
+  // the original tax-invoice number — without it, the CN cannot be filed
+  // on GSTR-1 Table 9B and is legally void.
+  const originalBillRef = r.originalBillNumber || r.originalBillNo;
+  const originalBillMissing = !originalBillRef;
+
   // Aggregate by GST slab — required on the credit note + matches the
   // GSTR-1 9B line items so the accountant can directly map.
   const slabMap = new Map();
@@ -38,9 +53,9 @@ const CreditNotePrint = ({ settings = {}, receipt = {} }) => {
     const gstPct = toNum(it.gstRate ?? it.taxPercent);
     const taxable = toNum(it.taxableAmount ?? (qty * rate));
     const tax = toNum(it.gstAmount ?? (taxable * gstPct / 100));
-    const cgst = toNum(it.cgstAmount ?? (r.isInterState ? 0 : tax / 2));
-    const sgst = toNum(it.sgstAmount ?? (r.isInterState ? 0 : tax / 2));
-    const igst = toNum(it.igstAmount ?? (r.isInterState ? tax : 0));
+    const cgst = toNum(it.cgstAmount ?? (effectiveInterState ? 0 : tax / 2));
+    const sgst = toNum(it.sgstAmount ?? (effectiveInterState ? 0 : tax / 2));
+    const igst = toNum(it.igstAmount ?? (effectiveInterState ? tax : 0));
     totalTaxable += taxable;
     totalCgst += cgst;
     totalSgst += sgst;
@@ -74,18 +89,33 @@ const CreditNotePrint = ({ settings = {}, receipt = {} }) => {
         { label: "Patient",         value: r.patientName },
         { label: "UHID",            value: r.uhid },
         { label: "IPD / OPD No",    value: r.ipdNo || r.opdNo },
-        { label: "Place of Supply", value: r.placeOfSupply || settings.state || "—" },
+        { label: "Place of Supply", value: r.placeOfSupply || "—" },
         { label: "Hospital GSTIN",  value: settings.gstin },
         { label: "Customer GSTIN",  value: r.customerGstin || "—" },
         { label: "Issued By",       value: r.issuedBy || r.cashierName },
       ]}
       signatureLabels={["Authorised Signatory", "Recipient"]}
     >
+      {/* R7eo-D — Pattern D regulatory fix (GST §34(1)): blocking banner
+          when the credit note has no original tax-invoice reference. */}
+      {originalBillMissing && (
+        <div style={{
+          background: "#dc2626", border: "2px solid #7f1d1d", color: "#ffffff",
+          padding: "12px 16px", borderRadius: 8, marginBottom: 12,
+          fontSize: 12.5, fontWeight: 800, textAlign: "center",
+          textTransform: "uppercase", letterSpacing: ".5px",
+        }}>
+          ORIGINAL INVOICE REFERENCE MISSING — INVALID UNDER GST §34(1).<br/>
+          <span style={{ fontSize: 11, fontWeight: 700, textTransform: "none", letterSpacing: 0 }}>
+            This credit note cannot be filed with GST returns.
+          </span>
+        </div>
+      )}
       <div style={{
         background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b",
         padding: "10px 14px", borderRadius: 6, marginBottom: 12, fontSize: 11,
       }}>
-        <strong>CREDIT NOTE</strong> — issued under GST Rules §34 against tax invoice <strong>{r.originalBillNumber || r.originalBillNo || "—"}</strong>.
+        <strong>CREDIT NOTE</strong> — issued under GST Rules §34 against tax invoice <strong>{originalBillRef || "—"}</strong>.
         This document REVERSES the corresponding portion of the original invoice for GSTR-1 (Table 9B) reporting.
       </div>
 

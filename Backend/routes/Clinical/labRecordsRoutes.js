@@ -21,16 +21,16 @@ router.post  ("/qc",                requireAction("lab.records.write"), ctrl.qcC
 
 /* Trend sheets */
 router.get  ("/trends",         requireAction("lab.records.read"),  ctrl.trendList);
-router.get  ("/trends/:id",     requireAction("lab.records.read"),  ctrl.trendGet);
+router.get  ("/trends/:id",     validateObjectIdParam("id"), requireAction("lab.records.read"),  ctrl.trendGet);
 router.post ("/trends",         requireAction("lab.records.write"), ctrl.trendCreate);
-router.put  ("/trends/:id",     requireAction("lab.records.write"), ctrl.trendUpdate);
+router.put  ("/trends/:id",     validateObjectIdParam("id"), requireAction("lab.records.write"), ctrl.trendUpdate);
 router.patch("/trends/:id/verify", validateObjectIdParam("id"), requireAction("lab.records.verify"), ctrl.trendVerify);
 
 /* Reports (imaging / micro / histopath / etc.) */
 router.get  ("/reports",        requireAction("lab.records.read"),  ctrl.reportList);
-router.get  ("/reports/:id",    requireAction("lab.records.read"),  ctrl.reportGet);
+router.get  ("/reports/:id",    validateObjectIdParam("id"), requireAction("lab.records.read"),  ctrl.reportGet);
 router.post ("/reports",        requireAction("lab.records.write"), ctrl.reportCreate);
-router.put  ("/reports/:id",    requireAction("lab.records.write"), ctrl.reportUpdate);
+router.put  ("/reports/:id",    validateObjectIdParam("id"), requireAction("lab.records.write"), ctrl.reportUpdate);
 router.patch("/reports/:id/verify", validateObjectIdParam("id"), requireAction("lab.records.verify"), ctrl.reportVerify);
 
 module.exports = router;

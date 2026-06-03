@@ -165,6 +165,11 @@ export const ACTIONS = {
   "ipd.discharge-summary": ["Admin", "Doctor"],
   "vitals.write":          ["Admin", "Nurse", "Doctor"],
   "mar.write":             ["Admin", "Nurse"],
+  // R7ei — ICU Bundles of Care write surface (mirror of backend).
+  // Bedside clinician (intensivist) + nurse + admin can chart bundles;
+  // distinct from mar.write so the medication-administration ACL stays
+  // tight.
+  "icu-bundle.write":      ["Admin", "Doctor", "Nurse"],
   "doctor-orders.write":   ["Admin", "Doctor"],
   // R7m: Mirror new doctor-order action gates (see Backend/config/permissions.js).
   "order.acknowledge":     ["Admin", "Nurse", "Doctor"],
@@ -349,6 +354,10 @@ export const ACTIONS = {
   "compliance.firedrill.read":     ["Admin", "Security"],
   // R7bo — NABH Inspection Dashboard (RBS / Emergency / Blood Transfusion).
   "compliance.read":               ["Admin", "Doctor", "Nurse", "MRD"],
+  // R7gw-B9 — NABH register surface gates (mirror of backend); Sentinel,
+  // Hand-Hygiene, HAI, Med-Error, etc.
+  "compliance.nabh.read":          ["Admin", "Doctor", "Nurse", "MRD"],
+  "compliance.nabh.write":         ["Admin", "Doctor", "Nurse", "MRD"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 
   // ── R7bh-F6 — Accountant regulatory + cold-chain (mirror of backend) ─

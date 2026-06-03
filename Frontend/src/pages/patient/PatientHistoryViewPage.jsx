@@ -539,26 +539,69 @@ function IPDFileTab({ uhid }) {
   );
 }
 
-/* ── Top-bar search box (UHID OR IPD number) ──────────────────── */
+/* ── Top-bar search box ────────────────────────────────────────
+   R7gq — search by UHID, IPD number, NAME, or MOBILE.
+   - UHID typed (UH…) or admission number (ADM… / IPD-…) → direct route
+     on Enter / "Open File" (existing R7bu behaviour).
+   - Everything else (name fragment, phone number, partial name) →
+     debounced live search against /api/patients/search which already
+     searches name + UHID + phone server-side. Matching patients show
+     as a dropdown; clicking one opens that patient's file.
+*/
 function SearchBox({ initial = "", onResolve }) {
   const [q, setQ] = useState(initial);
+  const [results, setResults] = useState([]);   // [{_id, UHID, fullName, age, gender, contactNumber}]
+  const [loading, setLoading] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [hi, setHi] = useState(-1);             // keyboard highlight index
   const navigate = useNavigate();
+
+  // Distinguish identifier-style queries from free-text. UHIDs and
+  // admission numbers go straight through; everything else hits the
+  // /search endpoint.
+  const isIdentifier = (s) => /^UH/i.test(s) || /^ADM/i.test(s) || /^IPD-/i.test(s);
+
+  // Debounced live search for name/phone queries (≥ 2 chars).
+  useEffect(() => {
+    const v = (q || "").trim();
+    if (!v || v.length < 2 || isIdentifier(v)) {
+      setResults([]); setShowDropdown(false); return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    const handle = setTimeout(() => {
+      axios.get(`${BASE}/patients/search`, { params: { q: v, limit: 10 } })
+        .then((res) => {
+          if (cancelled) return;
+          const list = res.data?.data || [];
+          setResults(list);
+          setShowDropdown(list.length > 0);
+          setHi(list.length ? 0 : -1);
+        })
+        .catch(() => { if (!cancelled) { setResults([]); setShowDropdown(false); } })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }, 250);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [q]);
+
+  const openByUHID = (uhid) => navigate(`/patient-history-view/${uhid}`);
 
   const submit = (e) => {
     e?.preventDefault?.();
     const v = (q || "").trim();
     if (!v) return;
 
-    // Smart routing:
-    //  - looks like a UHID (UH + digits)         → /patient-history-view/UHxxxx
-    //  - looks like an admission/ipd identifier  → fall through to backend, which
-    //    accepts those IDs as the `idOrUhid` param for the IPD-file endpoint.
-    //    We still navigate to the UHID-keyed URL but pre-select the admission
-    //    via query string so the IPD tab picker honours it.
+    // Keyboard pick from dropdown
+    if (showDropdown && results[hi]) {
+      openByUHID(results[hi].UHID);
+      setShowDropdown(false);
+      return;
+    }
+
+    // Smart routing — identifier paths first
     if (/^UH/i.test(v)) {
-      navigate(`/patient-history-view/${v.toUpperCase()}`);
+      openByUHID(v.toUpperCase());
     } else if (/^ADM|^IPD-/i.test(v)) {
-      // Look up the UHID for this admission via the IPD-file endpoint
       axios.get(`${BASE}/patient-history/${encodeURIComponent(v)}/file`)
         .then((res) => {
           const adm = res.data?.data?.admission;
@@ -566,25 +609,96 @@ function SearchBox({ initial = "", onResolve }) {
             navigate(`/patient-history-view/${adm.UHID}?admission=${encodeURIComponent(adm.admissionNumber || v)}&tab=ipd`);
           }
         })
-        .catch(() => {
-          // Fallback: just treat as UHID and let the page show "no patient"
-          navigate(`/patient-history-view/${v}`);
-        });
-    } else {
-      // Could be a phone number / name — defer to the existing Patient Lookup
-      navigate(`/patient-search?q=${encodeURIComponent(v)}`);
+        .catch(() => { navigate(`/patient-history-view/${v}`); });
+    } else if (results[0]) {
+      // Name / phone Enter with results visible → open the top match.
+      openByUHID(results[0].UHID);
+    }
+  };
+
+  // Keyboard nav within the results dropdown
+  const onKeyDown = (e) => {
+    if (!showDropdown || !results.length) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHi((i) => Math.min(results.length - 1, i + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHi((i) => Math.max(0, i - 1));
+    } else if (e.key === "Escape") {
+      setShowDropdown(false);
     }
   };
 
   return (
-    <form className="phv-search" onSubmit={submit}>
-      <input
-        className="phv-search__input"
-        placeholder="Search by UHID (UH00000004) or IPD number (ADM26050002 / IPD-2026-000001)"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        autoFocus={!initial}
-      />
+    <form className="phv-search" onSubmit={submit} autoComplete="off">
+      <div className="phv-search__inputwrap" style={{ position: "relative", flex: 1 }}>
+        <input
+          className="phv-search__input"
+          placeholder="Search by UHID, IPD number, patient name, or mobile (min 2 chars)"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={onKeyDown}
+          onFocus={() => { if (results.length) setShowDropdown(true); }}
+          onBlur={() => { setTimeout(() => setShowDropdown(false), 180); }}
+          autoFocus={!initial}
+        />
+        {loading && (
+          <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "#64748b" }}>
+            Searching…
+          </span>
+        )}
+        {showDropdown && results.length > 0 && (
+          <div
+            className="phv-search__dropdown"
+            style={{
+              position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50,
+              background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8,
+              marginTop: 4, boxShadow: "0 10px 28px rgba(15,23,42,.12)",
+              maxHeight: 360, overflowY: "auto",
+            }}
+            role="listbox"
+          >
+            {results.map((p, i) => (
+              <div
+                key={p._id || p.UHID}
+                role="option"
+                aria-selected={i === hi}
+                onMouseDown={(ev) => { ev.preventDefault(); openByUHID(p.UHID); }}
+                onMouseEnter={() => setHi(i)}
+                style={{
+                  display: "flex", gap: 10, alignItems: "center",
+                  padding: "9px 12px",
+                  background: i === hi ? "#f5f3ff" : "#fff",
+                  borderBottom: "1px solid #f1f5f9",
+                  cursor: "pointer",
+                }}
+              >
+                <div style={{
+                  width: 32, height: 32, borderRadius: "50%",
+                  background: "#ede9fe", color: "#5b21b6",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontWeight: 700, fontSize: 12, flexShrink: 0,
+                }}>
+                  {(p.fullName || "?").trim().split(/\s+/).slice(0, 2).map((s) => (s || "")[0]).join("").toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: "#0f172a" }}>
+                    {p.fullName || "(no name)"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 1 }}>
+                    {p.UHID}
+                    {p.age != null && ` · ${p.age}y`}
+                    {p.gender && ` · ${p.gender}`}
+                    {p.contactNumber && ` · ☎ ${p.contactNumber}`}
+                  </div>
+                </div>
+                <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 600, letterSpacing: ".3px" }}>OPEN →</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <button type="submit" className="phv-search__btn">🔎 Open File</button>
     </form>
   );
@@ -618,7 +732,8 @@ export default function PatientHistoryViewPage() {
         <div className="phv-container">
           <h2 className="phv-h1">Patient File — OPD History &amp; IPD File</h2>
           <p className="phv-lead">
-            Find a patient's complete record. Search by their UHID, or by an IPD/admission number.
+            Find a patient's complete record. Search by UHID, IPD/admission number,
+            patient name, or mobile.
           </p>
           <SearchBox />
         </div>

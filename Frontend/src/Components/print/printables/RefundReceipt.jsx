@@ -2,76 +2,112 @@
 // Refund slip — money returned to patient (advance excess, cancelled
 // service, etc.). Half-A4 friendly. Includes audit-trail-relevant
 // fields (original payment ref, approval by, refund mode).
+//
+// R7fq Track A: refactored onto the new shared <PrintShell> contract.
+// Hospital logo + name + address now live entirely in the shell.
+//
+// Patient-strip mapping (per Track-A contract):
+//   left:  Receipt No · UMID · Patient Name · Gender/Age · Contact · Address
+//   right: Receipt Date · IP No · Approved By · Refunded By · Payer
+//          (Doctor / Specialization not relevant for a cashier-cut refund
+//           slip; replaced with the approval-trail fields the audit
+//           review actually inspects)
 
 import React from "react";
-import PrintShell from "../PrintShell";
+import PrintShell from "@/templates/PrintShell";
 import { fmtINR } from "../amountWords";
 import { numberToIndianWords, toNum } from "../../../utils/printUtils";
 
-const RefundReceipt = ({ settings, receipt = {} }) => {
+const fmtDateTime = (d) =>
+  d
+    ? new Date(d).toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      })
+    : "—";
+
+const RefundReceipt = ({ settings = {}, receipt = {} }) => {
   const amount = toNum(receipt.amount);
   const printCount = toNum(receipt.printCount);
   // R7bf-F / A4-HIGH-5 + R7bh-F7 / R7bg-7-HIGH-4: refund mode + UTR
-  // reference. Use refundMode (preferred — set by the controller from
-  // the audit row), falling back to `method` for legacy callers. UTR
-  // comes from the bank API when the refund is an NEFT/IMPS transfer.
-  // The backend uses 4 different aliases over different code paths —
-  // all 4 are mapped here so the slip never shows "—" when a real
-  // bank reference exists.
+  // reference. Prefer refundMode (set by controller from audit row),
+  // fall back to `method` for legacy callers. UTR may arrive under any
+  // of 4 aliases over different code paths.
   const refundMode = receipt.refundMode || receipt.method || "Cash";
   const utrReference = receipt.utrReference
     || receipt.utrRef
     || receipt.refundTransactionId
     || receipt.refNo;
+
+  const receiptNo = receipt.receiptNo || "—";
+  const genderAge = [receipt.gender, receipt.age && `${receipt.age}Y`]
+    .filter(Boolean).join(" ");
+  const ipOrOpd = receipt.ipdNo || receipt.opdNo || "—";
+
+  const patientLeft = [
+    { label: "Receipt No",   value: receiptNo },
+    { label: "UMID",         value: receipt.uhid || "—" },
+    { label: "Patient Name", value: receipt.patientName || "—" },
+    { label: "Gender/Age",   value: genderAge || "—" },
+    { label: "Contact",      value: receipt.contactNumber || receipt.mobile || "—" },
+    { label: "Address",      value: receipt.completeAddress || receipt.address || "—" },
+  ];
+  const patientRight = [
+    { label: "Receipt Date", value: fmtDateTime(receipt.date || new Date().toISOString()) },
+    { label: "IP / OP No",   value: ipOrOpd },
+    { label: "Approved By",  value: receipt.approvedBy || "—" },
+    { label: "Refunded By",  value: receipt.refundedBy || "—" },
+    { label: "Payer",        value: receipt.payer || "Self" },
+  ];
+
   return (
     <PrintShell
-      settings={settings}
-      documentTitle="Refund Receipt"
-      serialNo={receipt.receiptNo}
-      printCount={printCount}
-      infoItems={[
-        { label: "Patient",       value: receipt.patientName },
-        { label: "UHID",          value: receipt.uhid },
-        { label: "IPD / OPD No",  value: receipt.ipdNo || receipt.opdNo },
-        { label: "Refund Date",   value: receipt.date
-            ? new Date(receipt.date).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
-            : new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
-        { label: "Approved By",   value: receipt.approvedBy },
-        { label: "Refunded By",   value: receipt.refundedBy },
-      ]}
-      signatureLabels={["Authorised Cashier", "Recipient"]}
+      hospital={settings}
+      docTitle="Refund Receipt"
+      patient={{ left: patientLeft, right: patientRight }}
+      signatures={{
+        type: "prepared-by",
+        preparedBy: { name: receipt.refundedBy || receipt.preparedBy || "Cashier", role: "Cashier" },
+        showAttestedStamp: true,
+      }}
+      banners={{ emergency24x7: true }}
+      meta={{
+        docNumber: receiptNo,
+        pageOf: "1 of 1",
+        printCount,
+      }}
     >
-      <div style={{
-        background: "linear-gradient(135deg, #fee2e2, #fecaca)",
-        border: "2px solid #fca5a5",
-        borderRadius: 8, padding: "16px 18px",
-        textAlign: "center", marginBottom: 14,
-      }}>
-        <div style={{ fontSize: 11, color: "#991b1b", fontWeight: 800, letterSpacing: ".5px", textTransform: "uppercase" }}>
-          Refund Amount
-        </div>
-        <div style={{ fontSize: 32, fontWeight: 800, color: "#7f1d1d", lineHeight: 1, marginTop: 4 }}>
-          {fmtINR(amount)}
-        </div>
-        {receipt.method && (
-          <div style={{ marginTop: 10 }}>
-            <span className={`pr-paymethod pr-paymethod--${String(receipt.method).toLowerCase()}`}>
-              {String(receipt.method).toUpperCase()}
-            </span>
-            {receipt.refNo && (
-              <span style={{ marginLeft: 10, fontSize: 11, color: "#991b1b" }}>Ref: {receipt.refNo}</span>
-            )}
-          </div>
-        )}
+      {/* Body: bordered table — Particulars · Amount (₹) */}
+      <table className="pr-table" style={{ marginBottom: 12 }}>
+        <thead>
+          <tr>
+            <th>Particulars</th>
+            <th className="right" style={{ width: 140 }}>Amount (₹)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="bill-line-row">
+            <td>
+              <div style={{ fontWeight: 600 }}>Refund Amount</div>
+              {receipt.reason && (
+                <div className="muted" style={{ fontSize: 10 }}>{receipt.reason}</div>
+              )}
+            </td>
+            <td className="right">{toNum(amount).toLocaleString("en-IN")}</td>
+          </tr>
+          <tr>
+            <td className="right" style={{ fontWeight: 700 }}>Total Amount</td>
+            <td className="right" style={{ fontWeight: 800 }}>{fmtINR(amount)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="pr-amount-words" style={{ fontStyle: "italic" }}>
+        Refunded an amount of (Rs.) {numberToIndianWords(amount)} only
       </div>
 
-      <div className="pr-amount-words">
-        <strong>Refund in words:</strong> {numberToIndianWords(amount)}
-      </div>
-
-      {/* R7bf-F / A4-HIGH-5: refund mode + UTR slip — required when the
-          refund goes out via NEFT/IMPS so the recipient can match the
-          bank credit against the receipt. */}
+      {/* Refund mode + UTR slip — required when refund is NEFT/IMPS so the
+          recipient can match the bank credit against the receipt. */}
       <div className="pr-section">
         <div className="pr-section__title">Refund Mode</div>
         <div className="pr-section__body" style={{ fontSize: 11 }}>

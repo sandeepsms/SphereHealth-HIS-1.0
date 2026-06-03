@@ -152,15 +152,19 @@ const NAV = [
       { label: "Room Categories",    icon: "pi-th-large",  path: "/roomcategory",   roles: [ADMIN] },
       { label: "Floors",             icon: "pi-arrows-v",  path: "/floors",         roles: [ADMIN] },
       { label: "Buildings",          icon: "pi-building",  path: "/buildings",      roles: [ADMIN] },
+      // ── R7gk — Maintenance + Equipment Tracker reinstated.
+      // R7bb-E had removed the standalone "Maintenance" section because
+      // the "MT" role was phantom (no backend ACL). The pages and routes
+      // (/maintenance + /equipment) were always alive — only the sidebar
+      // entry point disappeared. Per the removal comment's own
+      // recommendation, surfacing them here as Admin-only entries inside
+      // Bed Management's facility-admin group, which is the correct home
+      // until a dedicated Facilities-Manager role exists in the backend.
+      { label: "Maintenance",        icon: "pi-wrench",    path: "/maintenance",    roles: [ADMIN] },
+      { label: "Equipment Tracker",  icon: "pi-cog",       path: "/equipment",      roles: [ADMIN] },
     ],
   },
 
-  /* R7bb-E/D1-CRIT-2, D6-CRIT-1 — Maintenance section deleted.
-     "Maintenance" was a phantom role with no backend ACL backing; nothing
-     under /maintenance or /equipment was reachable by the (non-existent)
-     MT user. Housekeeping uses HOUSEKEEPING_NAV; equipment + maintenance
-     dashboards can be reinstated as admin-only tiles inside Bed Management
-     when there's real backend support behind them. */
 
   /* ── Clinical — Doctor ────────────────────────────────
      R7av — slim sidebar to 3 core entries. Emergency Assessment,
@@ -185,6 +189,9 @@ const NAV = [
       { label: "Patient Panel",  icon: "pi-id-card",   path: "/doctor-patient-panel", roles: [ADMIN, DR] },
       { label: "OPD Assessment", icon: "pi-file-edit", path: "/doctor-opd-panel",     roles: [ADMIN, DR], nabh: true },
       { label: "Doctor Notes",   icon: "pi-book",      path: "/doctor-notes",         roles: [ADMIN, DR], nabh: true },
+      // R7fu — Medical Certificate builder. 12 NABH-compliant cert types
+      // (fitness / sick-leave / disability / vaccination / cause-of-death etc.)
+      { label: "Medical Certificates", icon: "pi-id-card", path: "/medical-certificates", roles: [ADMIN, DR], badge: "NEW" },
     ],
   },
 
@@ -306,6 +313,10 @@ const NAV = [
       { label: "TPA Services",          icon: "pi-briefcase", path: "/addservice",          roles: [ADMIN, TPA, AC] },
       { label: "Chargeable Services",   icon: "pi-dollar",  path: "/chargeable-services",   roles: [ADMIN, AC] },
       { label: "Service Master",        icon: "pi-cog",     path: "/service-master",        roles: [ADMIN] },
+      { label: "Doctor Charges",        icon: "pi-user-edit", path: "/doctor-charges",      roles: [ADMIN, AC] },
+      // R7en — Per-room-category daily-charges matrix. Sits next to
+      // Doctor Charges so the two "master price tables" live together.
+      { label: "Room Charges",          icon: "pi-table",    path: "/room-charges",        roles: [ADMIN, AC] },
     ],
   },
 
@@ -338,6 +349,22 @@ const NAV = [
     items: [
       { label: "Task Board",          icon: "pi-list",   path: "/ward-tasks",   roles: [ADMIN, RX, NR, DR] },
       { label: "Ward Manager",        icon: "pi-chart-bar", path: "/ward-manager", roles: [ADMIN] },
+    ],
+  },
+
+  /* ── Housekeeping — console + manager dashboard ───────────────
+     B8-T07 — surfaces the previously-orphan /housekeeping-manager
+     route for Admin. Housekeeping role itself still sees the
+     HOUSEKEEPING_NAV hard-fork (single-page /housekeeping console),
+     so this section only shows for Admin. Mirrors the Ward Boy
+     pattern: Console = operational, Manager = aggregate metrics. */
+  {
+    id: "housekeeping", label: "Housekeeping",
+    icon: "pi-sparkles", color: "#0d9488", light: "#f0fdfa",
+    roles: [ADMIN],
+    items: [
+      { label: "Housekeeping Console",  icon: "pi-home",      path: "/housekeeping",         roles: [ADMIN] },
+      { label: "Housekeeping Manager",  icon: "pi-chart-bar", path: "/housekeeping-manager", roles: [ADMIN], badge: "NEW" },
     ],
   },
 
@@ -399,6 +426,9 @@ const NAV = [
       // activity / integrity / server).  Admin-only — the section itself
       // is already roles:[ADMIN] so no per-item role override is needed.
       { label: "System Health",      icon: "pi-server",     path: "/admin/system-health", badge: "NEW" },
+      // R7dw — NABH Signage Generator: 88 bilingual signage templates
+      // for accreditation. Admin-only — used during NABH prep / audit.
+      { label: "NABH Signage",       icon: "pi-images",     path: "/admin/nabh-signage",  badge: "NEW" },
       { label: "Hospital Charges",   icon: "pi-dollar",     path: "/hospital-charges" },
       // R7bf-G / NABH HRD.3 — staff credentialing register lives under
       // Masters & Admin since Admin owns the HR function today.
@@ -408,46 +438,34 @@ const NAV = [
     ],
   },
 
-  /* ── R7bf-G + R7bj-F2/F6 — Quality & Compliance (NABH scaffolds) ─ */
-  // Surfaces the NABH register pages: AAC.6 critical-value alerts,
-  // PRE.6 grievance, MOM.7 ADR, FMS.4 fire drill, and the new R7bj
-  // additions — food-reaction sentinel events (F2), BMW transport
-  // manifest (F6 / BMWM 2016), code response / rapid response (F6),
-  // sharps-injury register (F6 / HRD.8).
+  /* ── R7bf-G + R7bj-F2/F6 + R7ej — Quality & Compliance (NABH gateway) ─ */
+  // R7ej (May 2026): collapsed 15 individual NABH-register entries (AAC.6
+  // Critical Value Alerts, PRE.6 Grievance, MOM.7 ADR, FMS.4 Fire Drill,
+  // Food Reactions, BMW Manifest, Code Response, HRD.8 Sharps Injury,
+  // COP.10 OT, COP.13 Anaesthesia, COP.16 Readmission, COP.18 Mortality,
+  // COP.17 Restraint, MOM.7 Antimicrobial, HIC.5 Infection Control) into
+  // the /compliance/nabh-registers landing page as categorized tiles.
+  // The sidebar now exposes a single gateway entry; the gateway page itself
+  // role-gates the individual register pages via the existing route guards.
+  // Widened roles cover the union of all previously-permitted populations
+  // (Doctor/Nurse/Reception/Pharmacist/Lab/Security/Dietician/Ward Boy/
+  // Housekeeping/MRD) so role-specific registers (e.g. BMW Manifest for
+  // Housekeeping, Fire Drill for Security) are still reachable.
   {
     id: "quality", label: "Quality & Compliance",
     icon: "pi-verified", color: "#0d9488", light: "#f0fdfa",
-    nabh: true, roles: [ADMIN, DR, NR, RX, PH, SE, DT, WB, "Housekeeping", "MRD"],
+    nabh: true, roles: [ADMIN, DR, NR, RX, PH, LB, SE, DT, WB, "Housekeeping", "MRD"],
     items: [
-      { label: "Critical Value Alerts", icon: "pi-bell",                 path: "/critical-value-alerts", nabh: true, badge: "AAC.6", roles: [ADMIN, DR, NR] },
-      { label: "Grievance Register",    icon: "pi-comment",              path: "/grievances",            nabh: true, badge: "PRE.6", roles: [ADMIN, RX, DR, "MRD"] },
-      { label: "ADR Reports",           icon: "pi-flag",                 path: "/adr-reports",           nabh: true, badge: "MOM.7", roles: [ADMIN, DR, NR, PH] },
-      { label: "Fire Drill Register",   icon: "pi-shield",               path: "/fire-drills",           nabh: true, badge: "FMS.4", roles: [ADMIN, SE] },
-      // R7bj-F2 — adverse food reaction sentinel-event register.
-      { label: "Food Reactions",        icon: "pi-exclamation-triangle", path: "/food-reactions",        nabh: true, badge: "NEW",   roles: [ADMIN, DR, NR, DT, PH, "MRD"] },
-      // R7bj-F6 — biomedical waste manifest (cart-out → vendor → PCB).
-      { label: "BMW Manifest",          icon: "pi-truck",                path: "/bmw-manifest",          nabh: true, badge: "FMS.5", roles: [ADMIN, "Housekeeping", WB, "MRD"] },
-      // R7bj-F6 — code response (code blue / pink / purple / black) log.
-      { label: "Code Response Log",     icon: "pi-bolt",                 path: "/code-response",         nabh: true, badge: "NEW",   roles: [ADMIN, DR, NR, "MRD"] },
-      // R7bj-F6 — sharps-injury register (HRD.8 needle-stick reporting).
-      { label: "Sharps Injury",         icon: "pi-info-circle",          path: "/sharps-injury",         nabh: true, badge: "HRD.8", roles: [ADMIN, DR, NR, PH, LB, WB, "Housekeeping", "MRD"] },
-      // R7bo — NABH Inspection Dashboard: surveyor-ready unified view of
-      // RBS, Emergency, and Blood Transfusion registers (auto-populated).
-      // R7bs — DVT (Caprini) chip lives inside the Nursing Notes page as
-      // requested (Assessment & Monitoring section, next to Fall Risk).
-      // No separate sidebar entry — keeps the chip-page consolidation
-      // discipline established by R7e (avoid duplicate nursing entries).
-      { label: "NABH Registers",        icon: "pi-th-large",             path: "/compliance/nabh-registers", nabh: true, badge: "R7bo", roles: [ADMIN, DR, NR, "MRD"] },
-      // R7bx — six new surveyor-facing NABH registers. Each is a self-
-      // contained filterable + printable + CSV-exportable chronological
-      // log, auto-populated from existing clinical save paths (doctor
-      // orders, procedure notes, admissions, discharge finalize).
-      { label: "OT Register",           icon: "pi-briefcase",            path: "/compliance/nabh/ot-register",            nabh: true, badge: "COP.10",  roles: [ADMIN, DR, NR, "MRD"] },
-      { label: "Anaesthesia Register",  icon: "pi-shield",               path: "/compliance/nabh/asa-register",           nabh: true, badge: "COP.13",  roles: [ADMIN, DR, NR, "MRD"] },
-      { label: "Readmission Register",  icon: "pi-reply",                path: "/compliance/nabh/readmission-register",   nabh: true, badge: "COP.16",  roles: [ADMIN, DR, NR, "MRD"] },
-      { label: "Mortality Register",    icon: "pi-times-circle",         path: "/compliance/nabh/mortality-register",     nabh: true, badge: "COP.18",  roles: [ADMIN, DR, NR, "MRD"] },
-      { label: "Restraint Register",    icon: "pi-lock",                 path: "/compliance/nabh/restraint-register",     nabh: true, badge: "COP.17",  roles: [ADMIN, DR, NR, "MRD"] },
-      { label: "Antimicrobial Use",     icon: "pi-stop-circle",          path: "/compliance/nabh/antimicrobial-register", nabh: true, badge: "MOM.7",   roles: [ADMIN, DR, NR, "MRD"] },
+      // R7ek — Inspection Dashboard is a manager-facing "what's happening
+      // today" view (KPIs + last-24h activity per register). Lives as its
+      // own sidebar entry above the registers gateway so it's reachable
+      // in one click without going through the tile landing page.
+      { label: "Inspection Dashboard", icon: "pi-chart-bar", path: "/compliance/inspection-dashboard",
+        nabh: true, badge: "TODAY",
+        roles: [ADMIN, DR, NR, RX, PH, LB, SE, DT, WB, "Housekeeping", "MRD"] },
+      { label: "NABH Registers", icon: "pi-th-large", path: "/compliance/nabh-registers",
+        nabh: true, badge: "R7bo",
+        roles: [ADMIN, DR, NR, RX, PH, LB, SE, DT, WB, "Housekeeping", "MRD"] },
     ],
   },
 ];
@@ -864,14 +882,38 @@ export default function Sidebar({ collapsed, setCollapsed }) {
         background: "linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%)",
         flexShrink: 0,
       }}>
+        {/* R7dt — Hospital logo (from HospitalSettings.logo). Falls back
+            to a gradient "S" badge if no logo configured yet. Used in
+            both expanded and collapsed sidebar states so the brand
+            stays consistent. The hospital uploads its logo via the
+            Hospital Config wizard; once saved, it appears here +
+            in the footer + on every printed bill/receipt. */}
         {!collapsed && (
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{
-              width: 30, height: 30,
-              background: "linear-gradient(135deg,#38bdf8,#7c3aed)",
-              borderRadius: 8, display: "flex", alignItems: "center",
-              justifyContent: "center", fontSize: 14, fontWeight: 900, color: "#fff",
-            }}>S</div>
+            {settings?.logo
+              ? (
+                <div style={{
+                  width: 30, height: 30, borderRadius: 8, overflow: "hidden",
+                  background: "#fff", flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: "0 0 0 1px rgba(255,255,255,.18)",
+                }}>
+                  <img
+                    src={settings.logo}
+                    alt={settings?.hospitalName || "Hospital logo"}
+                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                  />
+                </div>
+              )
+              : (
+                <div style={{
+                  width: 30, height: 30,
+                  background: "linear-gradient(135deg,#38bdf8,#7c3aed)",
+                  borderRadius: 8, display: "flex", alignItems: "center",
+                  justifyContent: "center", fontSize: 14, fontWeight: 900, color: "#fff",
+                }}>{(settings?.hospitalName || "S").charAt(0).toUpperCase()}</div>
+              )
+            }
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", lineHeight: 1 }}>
                 {settings?.hospitalName || "Hospital"}<span style={{ color: "#38bdf8" }}> HIS</span>
@@ -889,12 +931,29 @@ export default function Sidebar({ collapsed, setCollapsed }) {
           </div>
         )}
         {collapsed && (
-          <div style={{
-            width: 30, height: 30,
-            background: "linear-gradient(135deg,#38bdf8,#7c3aed)",
-            borderRadius: 8, display: "flex", alignItems: "center",
-            justifyContent: "center", fontSize: 14, fontWeight: 900, color: "#fff",
-          }}>S</div>
+          settings?.logo
+            ? (
+              <div style={{
+                width: 30, height: 30, borderRadius: 8, overflow: "hidden",
+                background: "#fff",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                boxShadow: "0 0 0 1px rgba(255,255,255,.18)",
+              }}>
+                <img
+                  src={settings.logo}
+                  alt={settings?.hospitalName || "Hospital logo"}
+                  style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                />
+              </div>
+            )
+            : (
+              <div style={{
+                width: 30, height: 30,
+                background: "linear-gradient(135deg,#38bdf8,#7c3aed)",
+                borderRadius: 8, display: "flex", alignItems: "center",
+                justifyContent: "center", fontSize: 14, fontWeight: 900, color: "#fff",
+              }}>{(settings?.hospitalName || "S").charAt(0).toUpperCase()}</div>
+            )
         )}
         <button
           onClick={() => setCollapsed(p => !p)}
@@ -1026,14 +1085,35 @@ export default function Sidebar({ collapsed, setCollapsed }) {
           background: "#f8fafc", flexShrink: 0,
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
+          {/* R7dt — Footer brand mark also uses HospitalSettings.logo
+              when configured. Falls back to the role-colored shield
+              icon for first-run / pre-config state. */}
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <div style={{
-              width: 20, height: 20, borderRadius: 5,
-              background: roleMeta.color,
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
-              <i className={`pi ${roleMeta.icon}`} style={{ fontSize: 10, color: "#fff" }} />
-            </div>
+            {settings?.logo
+              ? (
+                <div style={{
+                  width: 20, height: 20, borderRadius: 5, overflow: "hidden",
+                  background: "#fff", flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: `0 0 0 1px ${roleMeta.color}30`,
+                }}>
+                  <img
+                    src={settings.logo}
+                    alt={settings?.hospitalName || "Hospital logo"}
+                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                  />
+                </div>
+              )
+              : (
+                <div style={{
+                  width: 20, height: 20, borderRadius: 5,
+                  background: roleMeta.color,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <i className={`pi ${roleMeta.icon}`} style={{ fontSize: 10, color: "#fff" }} />
+                </div>
+              )
+            }
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, color: "#1e293b", lineHeight: 1 }}>{`${settings?.hospitalName || "Hospital"} HIS`}</div>
               <div style={{ fontSize: 9, color: "#94a3b8", marginTop: 1 }}>v2.0 · NABH Ready</div>

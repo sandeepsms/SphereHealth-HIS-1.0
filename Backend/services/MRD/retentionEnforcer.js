@@ -42,7 +42,7 @@ const TARGETS = [
   },
   {
     label: "DoctorNote",
-    model: "DoctorNote",
+    model: "DoctorNotes",
     floorDays: FLOORS.clinical,
     dateField: "createdAt",
   },
@@ -138,4 +138,27 @@ async function runRetentionReview() {
   return { totalCandidates, breakdown };
 }
 
-module.exports = { runRetentionReview, FLOORS, TARGETS };
+/**
+ * Boot-time sanity check (R7gv / B4-T07 Part B).
+ *
+ * Returns one row per expected retention model: `{ name, ok, reason? }`.
+ * A row is `ok:false` when the model name isn't registered with mongoose
+ * (typo in the TARGETS list, or the model file isn't required anywhere
+ * by app bootstrap) or when a no-op `find().limit(0)` round-trips an
+ * error (collection missing, index corruption, auth, etc.). Caller is
+ * expected to console.warn any failures so the retention cron doesn't
+ * fail silently every night for weeks at 04:00 IST.
+ */
+async function startupSelfTest() {
+  const KNOWN_MODELS = ['DoctorNotes', 'MAR', 'ConsentForm', 'PatientBill', 'DischargeSummary', 'Prescription'];
+  const results = [];
+  for (const name of KNOWN_MODELS) {
+    const Model = mongoose.modelNames().includes(name) ? mongoose.model(name) : null;
+    if (!Model) { results.push({ name, ok: false, reason: 'model-not-registered' }); continue; }
+    try { await Model.find({}).limit(0).lean(); results.push({ name, ok: true }); }
+    catch (e) { results.push({ name, ok: false, reason: e.message }); }
+  }
+  return results;
+}
+
+module.exports = { runRetentionReview, FLOORS, TARGETS, startupSelfTest };

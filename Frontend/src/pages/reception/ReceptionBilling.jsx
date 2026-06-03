@@ -29,6 +29,15 @@ import ActivePatientDirectory from "../../Components/ActivePatientDirectory";
 import "./reception-shared.css";
 // R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
 import { toMoney } from "../../utils/money";
+// R7fq Track B — shared NABH-style print frame. The consolidated Final
+// Bill (R7an: OPD + Day Care + ER + Services in one print) previously
+// duplicated the hospital-logo masthead inline; every Hospital Settings
+// edit drifted from every other printable until someone hand-synced.
+// buildPrintShellHtml returns the full <!doctype>…</html> string with
+// hospital header, patient strip, banners, signature zone, disclaimer
+// + footer baked in; callers only own the body slot.
+import { buildPrintShellHtml } from "../../templates/PrintShell";
+import { amountInWords } from "../../Components/print/amountWords";
 import { confirm } from "../../Components/common/ConfirmDialog";
 
 const fmtCur  = (n) => `₹${(toMoney(n) || 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
@@ -44,6 +53,86 @@ const STATUS_CLASS = {
   REFUNDED:  "expired",
 };
 
+/* ────────────────────────────────────────────────────────────────
+   IPD-Live-Ledger-aligned theme tokens. Defined once; referenced
+   across the hero card, KPI strip, action row, and section
+   accordions so the page matches IPDBillingLedger.jsx visually.
+   Do not import additional palettes — keep one source of truth.
+   ──────────────────────────────────────────────────────────────── */
+const C = {
+  bg:      "#f8fafc",
+  card:    "#ffffff",
+  border:  "#e2e8f0",
+  text:    "#0f172a",
+  muted:   "#64748b",
+  subtle:  "#f8fafc",
+  blue:    "#1d4ed8",  blueL:   "#eff6ff",
+  green:   "#16a34a",  greenL:  "#dcfce7",
+  red:     "#dc2626",  redL:    "#fef2f2",
+  orange:  "#ea580c",  orangeL: "#fff7ed",
+  amber:   "#d97706",  amberL:  "#fffbeb",
+  purple:  "#7c3aed",  purpleL: "#f5f3ff",
+  teal:    "#0d9488",  tealL:   "#ccfbf1",
+  pink:    "#db2777",  pinkL:   "#fce7f3",
+  slate:   "#475569",
+};
+const FONT_SANS = "'DM Sans', 'Inter', system-ui, sans-serif";
+const FONT_MONO = "'DM Mono', monospace";
+
+/* KPI tile — mirrors the IPDBillingLedger KPI helper so the strip
+   on this page has identical sizing, padding, and typography. */
+function KPI({ label, value, tone = C.text, sub, mono = true }) {
+  return (
+    <div style={{
+      flex: 1, minWidth: 170,
+      background: C.card, border: `1.5px solid ${C.border}`,
+      borderRadius: 12, padding: "12px 14px",
+      boxShadow: "0 1px 2px rgba(15,23,42,.04)",
+    }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: tone, marginTop: 4, fontFamily: mono ? FONT_MONO : FONT_SANS, lineHeight: 1.1 }}>{value}</div>
+      <div style={{ fontSize: 10.5, color: C.muted, marginTop: 4, minHeight: 14 }}>{sub || "—"}</div>
+    </div>
+  );
+}
+
+/* Section accordion header — colored title pill on the left
+   (icon + title + N-lines sub), right-aligned total + chevron. */
+function SectionHeader({ icon, title, sub, total, tone = C.blue, toneBg = C.blueL, right, collapsed, onToggle }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 10,
+      padding: "10px 14px",
+      background: toneBg,
+      borderBottom: `1.5px solid ${C.border}`,
+      borderTopLeftRadius: 12, borderTopRightRadius: 12,
+    }}>
+      <i className={`pi ${icon}`} style={{ color: tone, fontSize: 14 }} />
+      <div style={{ fontSize: 12.5, fontWeight: 800, color: tone, textTransform: "uppercase", letterSpacing: ".4px" }}>
+        {title}
+      </div>
+      {sub && (
+        <div style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>· {sub}</div>
+      )}
+      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+        {right}
+        {total != null && (
+          <div style={{ fontFamily: FONT_MONO, fontWeight: 800, color: C.text, fontSize: 13 }}>{total}</div>
+        )}
+        {onToggle && (
+          <button
+            onClick={onToggle}
+            style={{ border: "none", background: "transparent", color: tone, cursor: "pointer", fontSize: 14, padding: 2 }}
+            title={collapsed ? "Expand" : "Collapse"}
+          >
+            <i className={`pi ${collapsed ? "pi-chevron-down" : "pi-chevron-up"}`} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Matches PaymentSchema.paymentMode enum on the backend. TPA_CLAIM is used
 // when the TPA reimbursement settles a previously-pending share of a bill.
 const PAYMENT_MODES = ["CASH", "UPI", "CARD", "CHEQUE", "ONLINE", "TPA_CLAIM"];
@@ -58,14 +147,19 @@ const ADVANCE_MODES = ["CASH", "UPI", "CARD", "CHEQUE", "ONLINE"];
    success-state Print button and the per-row Reprint icon call this. */
 function printAdvanceReceipt(advance, patient) {
   if (!advance || !patient) return;
+  // R7en-2: receipt now shows Department + Doctor in the slots previously
+  // occupied by Hospital/Customer GSTIN; pull from advance.admission when
+  // populated (BillingService populates the nested admission ref).
   openPrint("advance-receipt", {
     receiptNo:    advance.receiptNumber,
     patientName:  [patient.title, patient.fullName].filter(Boolean).join(" "),
     uhid:         patient.UHID,
     ipdNo:        advance.admission?.admissionNumber || null,
     admissionDate: advance.admission?.admissionDate || null,
-    bedNumber:    null,
-    wardName:     null,
+    bedNumber:    advance.admission?.bedNumber || null,
+    wardName:     advance.admission?.wardName || null,
+    department:   advance.admission?.department || null,
+    doctor:       advance.admission?.attendingDoctor || null,
     date:         advance.paidAt || advance.createdAt || new Date().toISOString(),
     amount:       toMoney(advance.amount),
     method:       advance.paymentMode,
@@ -143,6 +237,12 @@ export default function ReceptionBilling() {
   const [uhid, setUhid] = useState(paramUhid || "");
   const [patient, setPatient] = useState(null);
   const [bills, setBills] = useState([]);
+  // R7en-CURRENT-CTX: toggle to show historical (non-current-visit) bills
+  // + advances. Default hidden so the page only shows the CURRENT visit's
+  // billing context (IPD admission OR today's OPD walk-in). Receptionists
+  // were getting confused seeing an IPD patient's 5-month-old OPD bill
+  // mixed with the active IPD draft on the same page.
+  const [showHistory, setShowHistory] = useState(false);
   const [loading, setLoading] = useState(false);
   const [activeBill, setActiveBill] = useState(null); // full bill detail
   const [billLoading, setBillLoading] = useState(false);
@@ -164,6 +264,71 @@ export default function ReceptionBilling() {
   const [advances,      setAdvances]      = useState([]);
   const [unspentAdv,    setUnspentAdv]    = useState(0);
   const [showAdvDlg,    setShowAdvDlg]    = useState(false);
+
+  /* ─── R7en-CURRENT-CTX: split bills + advances into "current visit"
+       vs "history" ────────────────────────────────────────────────
+     Receptionists were seeing IPD draft + 5-month-old OPD bill on the
+     same screen for the same patient, which made it unclear which row
+     they were actually meant to collect against. Now:
+
+       • If the patient has any ACTIVE IPD bill (DRAFT / GENERATED /
+         PARTIAL) → currentContext = { type: "IPD", admissionNumber }.
+         Current view shows ONLY bills for that admission + advances
+         tied to it (or unscoped advances). History view shows the rest.
+       • Else if there are OPD/Daycare/Emergency bills created today →
+         currentContext = { type: "OPD" } and current shows today's
+         non-IPD activity.
+       • Else → patient has no active visit; current view is empty and
+         the user is nudged to click History to see past bills.
+
+     History toggle (showHistory) flips the lists shown — current and
+     history never appear simultaneously, so receptionists see exactly
+     one bucket and can drill into the other on demand. */
+  const { currentBills, pastBills, currentAdvances, pastAdvances, currentContext } = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const isToday = (d) => {
+      if (!d) return false;
+      const x = new Date(d); x.setHours(0, 0, 0, 0);
+      return x.getTime() === today.getTime();
+    };
+    const isActiveStatus = (s) => ["DRAFT", "GENERATED", "PARTIAL"].includes(s);
+
+    // 1. Look for an active IPD bill
+    const activeIpd = bills.find(b =>
+      b.visitType === "IPD" && isActiveStatus(b.billStatus));
+    if (activeIpd?.admissionNumber) {
+      const adm = activeIpd.admissionNumber;
+      const cur = bills.filter(b =>
+        b.visitType === "IPD" && b.admissionNumber === adm);
+      const past = bills.filter(b => !cur.includes(b));
+      const curAdv = advances.filter(a =>
+        a.admission?.admissionNumber === adm || !a.admission);
+      const pastAdv = advances.filter(a => !curAdv.includes(a));
+      return { currentBills: cur, pastBills: past, currentAdvances: curAdv, pastAdvances: pastAdv,
+               currentContext: { type: "IPD", admissionNumber: adm } };
+    }
+
+    // 2. No active IPD — look for today's OPD/Daycare/Emergency
+    const todayBills = bills.filter(b =>
+      b.visitType !== "IPD" && (isToday(b.createdAt) || isActiveStatus(b.billStatus)));
+    if (todayBills.length > 0) {
+      const past = bills.filter(b => !todayBills.includes(b));
+      // OPD advances rarely have admission scoping — keep advances with no
+      // admission OR ones created today as "current".
+      const curAdv = advances.filter(a => !a.admission || isToday(a.createdAt) || isToday(a.paidAt));
+      const pastAdv = advances.filter(a => !curAdv.includes(a));
+      return { currentBills: todayBills, pastBills: past, currentAdvances: curAdv, pastAdvances: pastAdv,
+               currentContext: { type: "OPD" } };
+    }
+
+    // 3. No current visit at all
+    return { currentBills: [], pastBills: bills, currentAdvances: [], pastAdvances: advances,
+             currentContext: null };
+  }, [bills, advances]);
+
+  // Pick the active list based on the toggle
+  const displayBills    = showHistory ? pastBills    : currentBills;
+  const displayAdvances = showHistory ? pastAdvances : currentAdvances;
   // ── Smart search + active-patient directory ────────────────────
   //   searchQ        — text in the search box (name / UHID / phone)
   //   searchResults  — live dropdown matches (debounced 250ms)
@@ -177,6 +342,15 @@ export default function ReceptionBilling() {
   const [searchBusy,      setSearchBusy]      = useState(false);
   const [directory,       setDirectory]       = useState([]);
   const [listType,        setListType]        = useState("OPD");
+  // R7eu — guard against stale listType values that point at the now-
+  // hidden IPD/Daycare chips. Without this, a session that was on the
+  // IPD tab before R7eu would render an empty directory (the chip is
+  // gone but the filter is still active).
+  useEffect(() => {
+    if (listType === "IPD" || listType === "Daycare" || listType === "Day Care") {
+      setListType("OPD");
+    }
+  }, [listType]);
   const [directoryLoading,setDirectoryLoading]= useState(false);
   const searchDebRef = React.useRef(null);
 
@@ -219,6 +393,95 @@ export default function ReceptionBilling() {
       if (!p) { toast.warning("No patient found for that UHID"); setLoading(false); return; }
       setPatient(p);
       setBills(list);
+
+      // R7eq-FIX-2 — billingService.getBillsByUHID deliberately drops
+      // populate("admission") for perf (see Backend billingService.js
+      // line 294). When an IPD/Daycare/ER bill is present we therefore
+      // have no bed/ward/admission-date on the bill payload, and
+      // Patient.currentAdmission on the patient doc is just an ObjectId
+      // (not nested). Probe /admissions/patient/:patientId — same call
+      // the picker click handler runs — and stash the resolved active
+      // inpatient admission on patient.currentAdmission so the hero
+      // card's "Bed / Room" + "Admission" slots populate.
+      //
+      // Same gap exists for OPD bills: the bill carries only `visitId`
+      // (no doctor/department denormalization) and the patient root has
+      // no `currentVisit` field. So we ALSO probe /opd/patient/:pid for
+      // the most recent OPD visit and stash it on patient.currentVisit
+      // so the hero card's "Doctor" + "Department" slots populate.
+      const hasIpdBill = list.some(
+        (b) => b.visitType === "IPD" || b.visitType === "Daycare"
+            || b.visitType === "Day Care" || b.visitType === "Emergency",
+      );
+      const hasOpdBill = list.some((b) => b.visitType === "OPD");
+      if (hasOpdBill && !hasIpdBill && p._id) {
+        try {
+          const vr = await axios.get(
+            `${API_ENDPOINTS.BASE}/opd/patient/${encodeURIComponent(p._id)}`,
+          );
+          const varr = vr?.data?.data || vr?.data?.visits || vr?.data || [];
+          // Most recent first (server sorts by visitDate desc already).
+          let recent = (Array.isArray(varr) ? varr : [])[0];
+          if (recent) {
+            // R7eq-FIX-3 — some OPD visits store the department as a raw
+            // ObjectId on `.department` (legacy) without populating
+            // `.departmentId`. Doctor profiles always carry their
+            // department fully populated, so when the visit doesn't have
+            // a usable department name we merge the doctor's into
+            // `recent.doctorProfile.department` so the hero fallback
+            // chain can read `cv.doctorProfile.department.departmentName`.
+            const visitDeptName = recent?.departmentId?.departmentName
+                                || recent?.departmentName;
+            const docId = recent?.doctorId?._id || recent?.doctorId;
+            if (!visitDeptName && docId) {
+              try {
+                const dr = await axios.get(
+                  `${API_ENDPOINTS.BASE}/doctors/${encodeURIComponent(docId)}`,
+                );
+                const docDoc = dr?.data?.data || dr?.data?.doctor || dr?.data;
+                if (docDoc) {
+                  recent = { ...recent, doctorProfile: docDoc };
+                }
+              } catch (e) { /* soft-fail */ }
+            }
+            setPatient((prev) => prev ? { ...prev, currentVisit: recent } : prev);
+          }
+        } catch (e) {
+          console.warn("[ReceptionBilling] OPD visit probe failed:", e?.message);
+        }
+      }
+      if (hasIpdBill && p._id) {
+        try {
+          const ar = await axios.get(
+            `${API_ENDPOINTS.BASE}/admissions/patient/${encodeURIComponent(p._id)}`,
+          );
+          const arr = ar?.data?.admissions || ar?.data?.data || ar?.data || [];
+          // R7eq-FIX-2 — admission.admissionType is the *category* enum
+          // (Planned / Emergency / Day Care / OPD-to-IPD / etc.), NOT a
+          // visit-type tag. Real "is this an inpatient stay" signal is:
+          //   • status === "Active"
+          //   • AND either has a bed assigned (bedId / hasBed / bedNumber)
+          //     OR the admissionNumber prefix says IPD/ER/DC
+          // This mirrors the IPDBillingLedger's own admission resolver.
+          const active = (Array.isArray(arr) ? arr : []).find((a) => {
+            if (!a || a.status !== "Active") return false;
+            const num = String(a.admissionNumber || "").toUpperCase();
+            return !!(a.bedId
+              || a.hasBed
+              || a.bedNumber
+              || /^(IPD|ER|EMG|DC|DAYCARE|DAY-CARE)-/.test(num)
+              || a.admissionType === "IPD"
+              || a.admissionType === "Emergency"
+              || a.admissionType === "Day Care"
+              || a.admissionType === "Daycare");
+          });
+          if (active) {
+            setPatient((prev) => prev ? { ...prev, currentAdmission: active } : prev);
+          }
+        } catch (e) {
+          console.warn("[ReceptionBilling] admission probe failed:", e?.message);
+        }
+      }
 
       // Parallel fetch — never blocks bill rendering if it 5xxs.
       try {
@@ -856,12 +1119,19 @@ export default function ReceptionBilling() {
    * receiptHTML() path below is kept as a fallback if anyone needs it
    * but new code should always go through openPrint(). */
   const printReceipt = (bill) => {
+    // R7ey-F1 — pre-R7ey passed `amount: it.netAmount` here (per-item
+    // discount already applied) AND `discount: bill.totalDiscount` (which
+    // INCLUDES the per-item portion). The receipt template then computed
+    // `grand = subtotal − discount + tax`, double-subtracting per-item
+    // discount and undercharging the customer vs the ledger. Fix: send
+    // GROSS per-line amount (unitPrice × quantity) so the printed math
+    // reads cleanly: Subtotal (gross) − Discount (per-item + extra) + Tax = Grand.
     const items = (bill.billItems || []).map(it => ({
       name: it.serviceName || it.name,
       description: it.description,
       qty:  it.quantity || 1,
       rate: it.unitPrice,
-      amount: it.netAmount,
+      amount: toMoney(it.unitPrice) * Number(it.quantity || 1),
     }));
     const lastPay = (bill.payments || []).slice(-1)[0];
     // R7b-HIGH-3b: SERVICE bills (walk-in lab/imaging/day procedures with
@@ -876,9 +1146,36 @@ export default function ReceptionBilling() {
       uhid:        patient?.UHID,
       age:         patient?.age,
       gender:      patient?.gender,
+      // R7en-VISIT-TITLE: lets OPDReceipt title the document with the
+      // actual visit type ("IPD Bill / Receipt" for IPD interim sub-bills,
+      // "Daycare Bill / Receipt" for Daycare, etc.) instead of the
+      // hardcoded "OPD Bill / Receipt".
+      visitType:   bill.visitType,
       // OPD-only fields (ignored by ServiceReceipt)
-      doctorName:  bill.doctorName || bill.consultantName,
-      department:  bill.department,
+      // R7en-DOC-DEPT-FIX: bill.doctorName + bill.department are often
+      // empty because the BillingService doesn't always denormalize them
+      // onto the bill at create time. Fall back to the populated visit /
+      // admission ref (server populates these for OPD/IPD), then to the
+      // patient's currentVisit object, then "—" so the slot is never
+      // literally blank like before.
+      doctorName:  bill.doctorName
+                || bill.consultantName
+                || bill.attendingDoctor
+                || bill.opdVisit?.attendingDoctor
+                || bill.opdVisit?.doctorName
+                || bill.admission?.attendingDoctor
+                || patient?.currentVisit?.attendingDoctor
+                || patient?.currentVisit?.doctorName
+                || patient?.currentAdmission?.attendingDoctor
+                || "—",
+      department:  bill.department
+                || bill.opdVisit?.department
+                || bill.opdVisit?.departmentName
+                || bill.admission?.department
+                || patient?.currentVisit?.department
+                || patient?.currentVisit?.departmentName
+                || patient?.currentAdmission?.department
+                || "—",
       visitDate:   bill.createdAt,
       // SERVICE-only fields (ignored by OPDReceipt)
       serviceDate: bill.createdAt,
@@ -956,9 +1253,12 @@ export default function ReceptionBilling() {
       // action-shortcuts.
       if (isTyping) return;
 
-      // 1-6 — directory tab switch (only when no patient loaded).
-      if (!patient && /^[1-6]$/.test(e.key)) {
-        const TABS = ["OPD","IPD","Daycare","Emergency","Services","ALL"];
+      // 1-4 — directory tab switch (only when no patient loaded).
+      // R7eu — keep parity with the now-visible chips: OPD / Emergency
+      // / Services / ALL. IPD + Daycare moved to /ipd-ledger so the
+      // 2/3 digit shortcuts are unmapped here.
+      if (!patient && /^[1-4]$/.test(e.key)) {
+        const TABS = ["OPD","Emergency","Services","ALL"];
         setListType(TABS[Number(e.key) - 1]);
         return;
       }
@@ -1058,34 +1358,52 @@ export default function ReceptionBilling() {
   }, [bills]);
 
   return (
-    <div className="rx-page">
-      <div className="rx-header">
-        <div>
-          <div className="rx-header-title"><i className="pi pi-receipt" /> Billing & Payments</div>
-          <div className="rx-header-meta">
-            Patient bills · Cash / UPI / Card collection · Receipt printing
-            {todayCollection?.totalCollected != null && <> · Today: <strong className="rx-text-success-light">{fmtCur(todayCollection.totalCollected)}</strong></>}
-          </div>
+    <div className="rx-page" style={{ background: C.bg, minHeight: "100vh", padding: "16px 20px 60px", fontFamily: FONT_SANS }}>
+      {/* Back + title row — matches the IPDBillingLedger header strip. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <button onClick={() => navigate("/reception")} style={{
+          padding: "6px 12px", background: "#fff", border: `1px solid ${C.border}`,
+          borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, color: C.text, fontSize: 12,
+        }}>
+          <i className="pi pi-arrow-left" style={{ marginRight: 6, fontSize: 11 }} />
+          Dashboard
+        </button>
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.text, display: "flex", alignItems: "center", gap: 8 }}>
+          <i className="pi pi-receipt" style={{ color: C.blue }} />
+          Billing Counter
         </div>
-        <div className="rx-header-actions">
-          <button className="rx-btn-ghost"
-                  onClick={() => setShowShortcuts(true)}
-                  title="Keyboard shortcuts (press ?)">
-            <i className="pi pi-question-circle" /> Shortcuts
-            <kbd className="rx-kbd rx-kbd--dark">?</kbd>
+        <div style={{ fontSize: 11, color: C.muted }}>
+          Cash · UPI · Card · Cheque collection
+          {todayCollection?.totalCollected != null && <> · Today: <strong style={{ color: C.green }}>{fmtCur(todayCollection.totalCollected)}</strong></>}
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button onClick={() => setShowShortcuts(true)}
+                  title="Keyboard shortcuts (press ?)"
+                  style={{
+                    padding: "6px 12px", background: "#fff", border: `1px solid ${C.border}`,
+                    borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, color: C.muted, fontSize: 12,
+                  }}>
+            <i className="pi pi-question-circle" style={{ marginRight: 6 }} /> Shortcuts
+            <kbd className="rx-kbd rx-kbd--dark" style={{ marginLeft: 4 }}>?</kbd>
           </button>
-          <button className="rx-btn-ghost" onClick={() => navigate("/patient-search")}>
-            <i className="pi pi-search" /> Patient Search
-          </button>
-          <button className="rx-btn-ghost" onClick={() => navigate("/reception")}>
-            <i className="pi pi-arrow-left" /> Dashboard
+          <button onClick={() => navigate("/patient-search")} style={{
+            padding: "6px 12px", background: "#fff", border: `1px solid ${C.border}`,
+            borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, color: C.muted, fontSize: 12,
+          }}>
+            <i className="pi pi-search" style={{ marginRight: 6 }} /> Patient Search
           </button>
         </div>
       </div>
 
       {/* Smart search bar — name / UHID / phone. Live dropdown of
-          matches as the receptionist types (min 2 chars). */}
-      <div style={{ position: "relative", marginBottom: 14 }}>
+          matches as the receptionist types (min 2 chars). The white
+          card wrapper matches the filter-bar look from the IPD
+          Live Ledger reference design. */}
+      <div style={{
+        position: "relative", marginBottom: 14,
+        background: C.card, border: `1.5px solid ${C.border}`,
+        borderRadius: 12, padding: "10px 14px",
+      }}>
         <div className="rx-search" style={{ marginBottom: 0 }}>
           <i className="pi pi-search" />
           <input
@@ -1163,7 +1481,12 @@ export default function ReceptionBilling() {
       </div>
 
       {loading ? (
-        <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
+        <div style={{
+          background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12,
+          padding: 40, textAlign: "center", color: C.muted,
+        }}>
+          <i className="pi pi-spin pi-spinner" style={{ fontSize: 26, color: C.blue }} />
+        </div>
       ) : !patient ? (
         /* ── Active-patient directory ──────────────────────────────
            No patient picked yet. Show a tabbed list of currently
@@ -1177,117 +1500,320 @@ export default function ReceptionBilling() {
           rows={directory}
           loading={directoryLoading}
           onPick={pickPatient}
+          // R7eu — IPD + Daycare billing now lives exclusively in
+          // /ipd-ledger (per-admission live ledger). Hiding those two
+          // chips here removes the duplicate entry point and keeps the
+          // Billing Counter focused on OPD / Emergency / Services
+          // walk-in collection. Picker click for an IPD/Daycare/ER
+          // patient still auto-redirects to /billing/ipd/:admissionId
+          // (see pickPatient at line ~624 — the activeIpd probe).
+          typesToShow={["OPD", "Emergency", "Services", "ALL"]}
+          // R7ew — "All Types" must also respect the OPD/Emergency/
+          // Services whitelist. Without this filter the backend's
+          // unfiltered fetch (when listType === "ALL") would include
+          // IPD and Daycare rows again, defeating R7eu.
+          patientFilter={(p) => {
+            const t = String(p.registrationType || "").toLowerCase();
+            return t !== "ipd" && t !== "daycare" && t !== "day care";
+          }}
         />
       ) : (
         <>
-          {/* Patient summary */}
-          <div className="rx-card rx-mb-12">
-            <div className="rx-card-main">
-              <div className="rx-card-name">
-                {patient.fullName}
-                {patient.tpa && <span className="rx-card-stage rx-card-stage--submitted">TPA</span>}
-                {patient.paymentType && <span className="rx-mono-tag">{patient.paymentType}</span>}
+          {/* ──────────────────────────────────────────────────────
+              Hero / patient summary card — 4-column grid layout
+              cloned from IPDBillingLedger. Slot 3 auto-adapts based
+              on the current visit context (BED/ROOM for IPD,
+              DEPARTMENT/DOCTOR for OPD/Daycare/Service). All field
+              labels are ALL-CAPS small grey above bold values.
+              ────────────────────────────────────────────────────── */}
+          {(() => {
+            // Derive department + doctor + an IPD admission ref (if any)
+            // up front so each grid slot stays a tidy expression. Falls
+            // back through patient + active IPD bill so the new layout
+            // never shows "—" when data exists elsewhere on the page.
+            const ipdBill = (bills || []).find((b) => b.visitType === "IPD" && b.admissionNumber);
+            const ctxType = currentContext?.type;
+            const isIPD   = ctxType === "IPD";
+            // R7eq-FIX-3 — PatientBill carries no doctor/department for
+            // OPD; the OPDVisit doc has them on `consultantName` (denorm
+            // string) + `doctorId` (populated to {personalInfo.fullName})
+            // + `departmentId` (populated to {departmentName}) or the
+            // legacy `department` string. load() now stashes the most
+            // recent OPD visit on patient.currentVisit so this chain has
+            // something to read from. Last fallback skips raw ObjectIds
+            // (24-hex chars) that some legacy visits stored in `.department`
+            // by mistake — we'd rather render "—" than an ObjectId.
+            const cv = patient.currentVisit;
+            const _looksLikeObjectId = (s) =>
+              typeof s === "string" && /^[a-f0-9]{24}$/i.test(s);
+            const _safe = (v) => (_looksLikeObjectId(v) ? "" : v);
+            const dept =
+                 (cv?.departmentId?.departmentName)
+              || (cv?.departmentName)
+              || (cv?.doctorProfile?.department?.departmentName)
+              || (cv?.doctorProfile?.department?.name)
+              || _safe(cv?.department)
+              || (typeof patient.department === "object"
+                    ? (patient.department?.name)
+                    : _safe(patient.department))
+              || "—";
+            const doc =
+                 (cv?.consultantName)
+              || (cv?.doctorId?.personalInfo?.fullName)
+              || (cv?.doctorId?.fullName)
+              || (cv?.doctorName)
+              || (cv?.attendingDoctor)
+              || (typeof patient.doctor === "object"
+                    ? (patient.doctor?.fullName || patient.doctor?.personalInfo?.fullName)
+                    : patient.doctor)
+              || "—";
+            // OPD/Daycare/ER bills created today (for the visit summary slot)
+            const todayBill = (currentBills || [])[0] || (bills || [])[0];
+            return (
+              <div style={{
+                background: C.card, border: `1.5px solid ${C.border}`,
+                borderRadius: 14, padding: 18, marginBottom: 12,
+              }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr", gap: 16, alignItems: "start" }}>
+                  {/* PATIENT */}
+                  <div>
+                    <div style={{ fontSize: 10.5, color: C.muted, textTransform: "uppercase", fontWeight: 700, letterSpacing: ".5px" }}>Patient</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginTop: 4 }}>
+                      {patient.title ? `${patient.title} ` : ""}{patient.fullName || "—"}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>
+                      UHID: <strong style={{ color: C.text }}>{patient.UHID}</strong>
+                      {patient.age != null && <> · {patient.age}y</>}
+                      {patient.gender && <> · {patient.gender}</>}
+                      {patient.contactNumber && <> · {patient.contactNumber}</>}
+                    </div>
+                  </div>
+                  {/* ADMISSION / VISIT */}
+                  <div>
+                    <div style={{ fontSize: 10.5, color: C.muted, textTransform: "uppercase", fontWeight: 700, letterSpacing: ".5px" }}>
+                      {isIPD ? "Admission" : "Visit"}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginTop: 5 }}>
+                      {isIPD
+                        ? fmtDateTime(
+                            ipdBill?.admission?.admissionDate
+                            || patient?.currentAdmission?.admissionDate
+                            || ipdBill?.admissionDate
+                            || todayBill?.createdAt
+                          )
+                        : fmtDateTime(todayBill?.createdAt || new Date())}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                      {isIPD
+                        ? `IPD · ${currentContext?.admissionNumber || ipdBill?.admissionNumber || "—"}`
+                        : `${todayBill?.visitType || "OPD"} · Today`}
+                      {patient.tpa && (
+                        <span style={{
+                          marginLeft: 6, fontSize: 10, fontWeight: 800, color: C.amber,
+                          background: C.amberL, padding: "2px 6px", borderRadius: 6,
+                        }}>TPA</span>
+                      )}
+                    </div>
+                  </div>
+                  {/* BED / ROOM (IPD)   or   DEPARTMENT / DOCTOR (OPD) */}
+                  <div>
+                    <div style={{ fontSize: 10.5, color: C.muted, textTransform: "uppercase", fontWeight: 700, letterSpacing: ".5px" }}>
+                      {isIPD ? "Bed / Room" : "Department"}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginTop: 5 }}>
+                      {/* R7eq-FIX: PatientBill does NOT denormalize bed/ward —
+                          they live on the populated admission ref (mirrors the
+                          advance.admission?.bedNumber pattern at line 150).
+                          Read through the ref first, then admission-level
+                          patient fallbacks, then the flat bill fields as a
+                          last-resort safety net. */}
+                      {isIPD
+                        ? (ipdBill?.admission?.bedNumber
+                           || patient?.currentAdmission?.bedNumber
+                           || ipdBill?.bedNumber
+                           || patient?.bedNumber
+                           || "—")
+                        : dept}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                      {isIPD
+                        ? (ipdBill?.admission?.wardName
+                           || patient?.currentAdmission?.wardName
+                           || ipdBill?.wardName
+                           || patient?.wardName
+                           || dept
+                           || "—")
+                        : (doc
+                            ? (/^(Dr\.?|Prof\.?|Mr\.?|Mrs\.?|Ms\.?)\s+/i.test(doc) ? doc : `Dr. ${doc}`)
+                            : "—")}
+                    </div>
+                  </div>
+                  {/* PACKAGE / TPA */}
+                  <div>
+                    <div style={{ fontSize: 10.5, color: C.muted, textTransform: "uppercase", fontWeight: 700, letterSpacing: ".5px" }}>
+                      Package / TPA
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: patient.tpa ? C.purple : C.text, marginTop: 5 }}>
+                      {patient.tpa
+                        ? (typeof patient.tpa === "object" ? (patient.tpa.tpaName || patient.tpa.name || "TPA") : patient.tpa)
+                        : (patient.paymentType || "Self-pay")}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                      {patient.tpa ? "Insurance / TPA" : "None matched"}
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="rx-card-meta">
-                <span>UHID: <strong>{patient.UHID}</strong></span>
-                {patient.contactNumber && <span>📱 <strong>{patient.contactNumber}</strong></span>}
-                {patient.department && <span>Dept: <strong>{typeof patient.department === "object" ? patient.department.name : patient.department}</strong></span>}
-                {patient.doctor && <span>Doctor: <strong>{typeof patient.doctor === "object" ? (patient.doctor.fullName || patient.doctor.personalInfo?.fullName) : patient.doctor}</strong></span>}
-              </div>
-            </div>
-            <div className="rx-card-actions">
-              <button className="rx-action-btn rx-action-btn--primary"
-                      onClick={() => setShowAdvDlg(true)}
-                      title="Take cash / UPI / card deposit (T)">
-                <i className="pi pi-wallet" /> Take Advance
-                <kbd className="rx-kbd">T</kbd>
-              </button>
-              {/* R7an: one-click consolidated Final Bill for OPD / Day Care / ER / Services.
-                  Only renders when there's at least one active non-IPD bill on this UHID. */}
-              {(bills || []).some((b) =>
-                ["OPD", "Day Care", "Daycare", "Emergency", "ER", "Services"].includes(b.visitType)
-                && b.billStatus !== "CANCELLED" && b.billStatus !== "REFUNDED",
-              ) && (
-                <button className="rx-action-btn"
-                        style={{ background: "#7c3aed", color: "#fff", borderColor: "#7c3aed" }}
-                        onClick={generateFinalBill}
-                        title="Finalize all DRAFT bills, apply any remaining advance, and print one consolidated Final Bill across OPD / Day Care / ER / Services for this patient">
-                  <i className="pi pi-file-pdf" /> Generate Final Bill
-                </button>
-              )}
-              {/* R7ci: History button removed per user request. The complete
-                  per-UHID OPD/IPD chronology lives on the Patient File page
-                  (/patient-file/:uhid) which is reachable from Reception's
-                  sidebar + the patient-lookup page. The visit-history route
-                  itself is preserved — just unlinked from this counter. */}
-              <button className="rx-action-btn rx-action-btn--danger"
-                      onClick={clearPatient}
-                      title="Clear current patient and return to directory (Esc)">
-                <i className="pi pi-times" /> Clear
-                <kbd className="rx-kbd">Esc</kbd>
-              </button>
-            </div>
+            );
+          })()}
+
+          {/* ──────────────────────────────────────────────────────
+              KPI strip — cloned from IPDBillingLedger. 7 tiles in
+              auto-fit grid; reuses the totals useMemo (totals.gross,
+              totals.due, totals.paid, totals.bills, totals.open,
+              totals.drafts) + unspentAdv state. Sub-text shows
+              context-sensitive hints so the tiles never look empty.
+              ────────────────────────────────────────────────────── */}
+          <div style={{
+            display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+            gap: 12, marginBottom: 12,
+          }}>
+            <KPI label="Gross"        value={fmtCur(totals.gross)} tone={C.text}
+                 sub={`${totals.bills} billed line${totals.bills === 1 ? "" : "s"}`} />
+            <KPI label="Discount"     value={fmtCur(Math.max(0, totals.gross - totals.paid - totals.due))} tone={C.orange}
+                 sub={totals.gross - totals.paid - totals.due > 0 ? "Applied" : "—"} />
+            <KPI label="Net Payable"  value={fmtCur(totals.gross)} tone={C.text}
+                 sub={`${totals.open} open bill${totals.open === 1 ? "" : "s"}`} />
+            <KPI label="Paid"         value={fmtCur(totals.paid)} tone={C.green}
+                 sub={totals.paid > 0 ? "Collected" : "—"} />
+            <KPI label="Outstanding"  value={fmtCur(totals.due)} tone={totals.due > 0 ? C.red : C.green}
+                 sub={totals.due > 0 ? `${totals.open} bill${totals.open === 1 ? "" : "s"} due` : "All settled"} />
+            <KPI label="Drafts"       value={String(totals.drafts)} tone={totals.drafts > 0 ? C.amber : C.text} mono={false}
+                 sub={totals.drafts > 0 ? "Awaiting generation" : "—"} />
+            <KPI label="Advance Pool" value={fmtCur(unspentAdv)} tone={unspentAdv > 0 ? C.purple : C.muted}
+                 sub={unspentAdv > 0
+                   ? `${advances.filter((a) => (a.remainingAmount || 0) > 0).length} deposit${advances.filter((a) => (a.remainingAmount || 0) > 0).length === 1 ? "" : "s"}`
+                   : "Unspent UHID advance"} />
           </div>
 
-          {/* KPI strip — 5th tile (Advance Credit) only renders when
-              the patient has an unspent deposit; otherwise the strip
-              stays compact at 4 tiles. */}
-          <div className="rx-kpis">
-            <div className="rx-kpi rx-kpi--accent">
-              <div className="rx-kpi-label">Total Bills</div>
-              <div className="rx-kpi-value">{totals.bills}</div>
-              <div className="rx-kpi-sub">{totals.drafts} draft · {totals.open} open</div>
-            </div>
-            <div className="rx-kpi rx-kpi--accent">
-              <div className="rx-kpi-label">Total Billed</div>
-              <div className="rx-kpi-value">{fmtCur(totals.gross)}</div>
-            </div>
-            <div className="rx-kpi rx-kpi--accent">
-              <div className="rx-kpi-label">Collected</div>
-              <div className="rx-kpi-value rx-text-success">{fmtCur(totals.paid)}</div>
-            </div>
-            <div className={`rx-kpi rx-kpi--accent ${totals.due > 0 ? "rx-kpi--actionable" : ""}`}>
-              <div className="rx-kpi-label">Outstanding</div>
-              <div className={`rx-kpi-value ${totals.due > 0 ? "rx-text-danger" : "rx-text-success"}`}>{fmtCur(totals.due)}</div>
-              {totals.due > 0 && totals.open > 0 && (
-                <div className="rx-kpi-actions">
-                  <button className="rx-kpi-btn rx-kpi-btn--success"
-                          onClick={() => setShowBulkCollect(true)}
-                          title={`Collect ${fmtCur(totals.due)} in one go — distributed FIFO across ${totals.open} bill${totals.open === 1 ? "" : "s"}`}>
-                    <i className="pi pi-check-circle" /> Collect All Dues
-                  </button>
-                  <button className="rx-kpi-btn rx-kpi-btn--primary"
-                          onClick={() => setShowBulkSettle(true)}
-                          title="Apply one discount across every outstanding bill, then collect">
-                    <i className="pi pi-sliders-h" /> Settle All
-                  </button>
-                </div>
-              )}
-            </div>
-            {unspentAdv > 0 && (
-              <div className="rx-kpi rx-kpi--accent rx-kpi--credit"
-                   title="Unspent advance deposits on this UHID. Click Apply on any open bill to consume.">
-                <div className="rx-kpi-label">Advance Credit</div>
-                <div className="rx-kpi-value rx-text-success">{fmtCur(unspentAdv)}</div>
-                <div className="rx-kpi-sub">{advances.filter((a) => (a.remainingAmount || 0) > 0).length} deposit{advances.filter((a) => (a.remainingAmount || 0) > 0).length === 1 ? "" : "s"}</div>
-              </div>
+          {/* ──────────────────────────────────────────────────────
+              Action bar — single row of pill buttons mirroring the
+              IPDBillingLedger layout. Mapped to ReceptionBilling's
+              existing handlers (setShowAdvDlg, generateFinalBill,
+              clearPatient, etc.). IPD-only actions hide for OPD.
+              ────────────────────────────────────────────────────── */}
+          <div style={{
+            background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12,
+            padding: 10, marginBottom: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center",
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, marginRight: 6, letterSpacing: ".4px" }}>ACTIONS:</div>
+            {/* Take Advance — every receptionist can record a deposit. */}
+            <button onClick={() => setShowAdvDlg(true)}
+                    title="Take cash / UPI / card deposit (T)"
+                    style={{
+                      padding: "7px 14px", background: C.green, color: "#fff", border: "none",
+                      borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                    }}>
+              <i className="pi pi-plus" /> Take Advance
+              <kbd className="rx-kbd" style={{ background: "rgba(255,255,255,.22)", color: "#fff", marginLeft: 2 }}>T</kbd>
+            </button>
+            {/* Add Charge — creates a fresh DRAFT bill so the user can
+                add an ad-hoc service. Maps to the existing New Bill modal. */}
+            <button onClick={() => setShowNewBill(true)}
+                    title="Add an ad-hoc charge / new draft bill"
+                    style={{
+                      padding: "7px 14px", background: C.purple, color: "#fff", border: "none",
+                      borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                    }}>
+              <i className="pi pi-plus" /> Add Charge
+            </button>
+            {/* Generate Final Bill — only when at least one active non-IPD bill exists. */}
+            {(bills || []).some((b) =>
+              ["OPD", "Day Care", "Daycare", "Emergency", "ER", "Services"].includes(b.visitType)
+              && b.billStatus !== "CANCELLED" && b.billStatus !== "REFUNDED",
+            ) && (
+              <button onClick={generateFinalBill}
+                      title="Finalize all DRAFT bills, apply any remaining advance, and print one consolidated Final Bill"
+                      style={{
+                        padding: "7px 14px", background: "#fff", color: C.purple,
+                        border: `1.5px solid ${C.purple}`,
+                        borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                      }}>
+                <i className="pi pi-check-square" /> Generate Final Bill
+              </button>
             )}
+            {/* Bulk collect / settle — only render when there is something outstanding. */}
+            {totals.due > 0 && totals.open > 0 && (
+              <>
+                <button onClick={() => setShowBulkCollect(true)}
+                        title={`Collect ${fmtCur(totals.due)} in one go — distributed FIFO across ${totals.open} bill${totals.open === 1 ? "" : "s"}`}
+                        style={{
+                          padding: "7px 14px", background: C.blue, color: "#fff", border: "none",
+                          borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
+                          display: "inline-flex", alignItems: "center", gap: 6,
+                        }}>
+                  <i className="pi pi-check-circle" /> Collect All Dues
+                </button>
+                <button onClick={() => setShowBulkSettle(true)}
+                        title="Apply one discount across every outstanding bill, then collect"
+                        style={{
+                          padding: "7px 14px", background: "#fff", color: C.blue,
+                          border: `1.5px solid ${C.blue}`,
+                          borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
+                          display: "inline-flex", alignItems: "center", gap: 6,
+                        }}>
+                  <i className="pi pi-sliders-h" /> Settle All
+                </button>
+              </>
+            )}
+            {/* Clear — push to the right; matches the "Refresh" position
+                on the reference. Keeps Esc shortcut. */}
+            <button onClick={clearPatient}
+                    title="Clear current patient and return to directory (Esc)"
+                    style={{
+                      marginLeft: "auto",
+                      padding: "7px 12px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
+                      borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, fontSize: 12,
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                    }}>
+              <i className="pi pi-times" /> Clear
+              <kbd className="rx-kbd" style={{ marginLeft: 2 }}>Esc</kbd>
+            </button>
           </div>
 
           {/* ── Advance Deposits ledger ─────────────────────────────
               Shows every deposit (active + applied + refunded). Reprint
               icon on each non-void row. When a bill is selected on the
               right, "Apply Advance" button on its toolbar consumes from
-              the oldest active deposit. */}
-          {advances.length > 0 && (
-            <div className="rx-card rx-mb-12" style={{ borderLeft: "4px solid #06b6d4", display: "block" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 12, fontWeight: 800, color: "#06b6d4", textTransform: "uppercase", letterSpacing: 0.4 }}>
-                <i className="pi pi-wallet" /> Advance Deposits
-                <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: unspentAdv > 0 ? "#15803d" : "#64748b", background: unspentAdv > 0 ? "#f0fdf4" : "#f1f5f9", padding: "3px 10px", borderRadius: 999, border: `1px solid ${unspentAdv > 0 ? "#86efac" : "#e2e8f0"}`, letterSpacing: 0, textTransform: "none" }}>
-                  {unspentAdv > 0 ? `Available: ${fmtCur(unspentAdv)}` : "Fully applied"}
-                </span>
-              </div>
-              {advances.map((a) => {
+              the oldest active deposit. Header pill uses purple tint to
+              match the section-accordion palette from IPDBillingLedger. */}
+          {displayAdvances.length > 0 && (
+            <div style={{
+              background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12,
+              overflow: "hidden", marginBottom: 12,
+            }}>
+              <SectionHeader
+                icon="pi-wallet"
+                title={`Advance Deposits${showHistory ? " · History" : ""}`}
+                sub={`${displayAdvances.length} entr${displayAdvances.length === 1 ? "y" : "ies"}`}
+                tone={C.purple} toneBg={C.purpleL}
+                right={(
+                  <span style={{
+                    fontSize: 10.5, fontWeight: 700,
+                    color: unspentAdv > 0 ? C.green : C.muted,
+                    background: unspentAdv > 0 ? C.greenL : "#f1f5f9",
+                    padding: "3px 10px", borderRadius: 999,
+                    border: `1px solid ${unspentAdv > 0 ? "#86efac" : C.border}`,
+                  }}>
+                    {unspentAdv > 0 ? `Available: ${fmtCur(unspentAdv)}` : "Fully applied"}
+                  </span>
+                )}
+              />
+              <div style={{ padding: "8px 14px" }}>
+              {displayAdvances.map((a) => {
                 const isVoid = a.status === "REFUNDED" || a.status === "CANCELLED";
                 return (
                   <div key={a._id} style={{
@@ -1362,38 +1888,101 @@ export default function ReceptionBilling() {
                   </div>
                 );
               })}
+              </div>
+            </div>
+          )}
+
+          {/* Tab strip — Current ↔ History toggle, restyled as a tab
+              underline (blue 2px bottom border on active, grey text on
+              inactive) to match the IPDBillingLedger tab aesthetic.
+              Hidden when no past entries exist. */}
+          {(pastBills.length > 0 || pastAdvances.length > 0) && (
+            <div style={{ display: "flex", gap: 4, borderBottom: `2px solid ${C.border}`, marginBottom: 12 }}>
+              {[
+                { id: false, label: "Current Visit", icon: "pi-bookmark" },
+                { id: true,  label: `History${pastBills.length + pastAdvances.length > 0 ? ` (${pastBills.length + pastAdvances.length})` : ""}`, icon: "pi-history" },
+              ].map(t => (
+                <button key={String(t.id)} onClick={() => setShowHistory(t.id)} style={{
+                  padding: "10px 18px", background: showHistory === t.id ? C.card : "transparent",
+                  border: "none",
+                  borderBottom: showHistory === t.id ? `3px solid ${C.blue}` : "3px solid transparent",
+                  marginBottom: -2, cursor: "pointer", fontFamily: "inherit",
+                  fontWeight: showHistory === t.id ? 800 : 600,
+                  color: showHistory === t.id ? C.blue : C.muted, fontSize: 13,
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                }}>
+                  <i className={`pi ${t.icon}`} style={{ fontSize: 12 }} />
+                  {t.label}
+                </button>
+              ))}
             </div>
           )}
 
           {/* Two-column layout: bill list | active bill details */}
           <div className="rx-split-list">
-            {/* Bills column */}
-            <div>
-              {/* Bills list header — exposes a "New Bill" action so the
-                  cashier can spin up a fresh DRAFT when the doctor adds
-                  an ad-hoc charge (e.g. RBS after the previous bill was
-                  already settled). Backend's getOrCreateDraftBill is
-                  idempotent: if there's already a DRAFT for the same
-                  (UHID, visitType, admission), it returns the existing
-                  one instead of duplicating. */}
-              <div className="rx-bill-list-head">
-                <div className="rx-bill-list-head-title">
-                  <i className="pi pi-list" /> Bills
-                  {bills.length > 0 && <span className="rx-bill-list-count">{bills.length}</span>}
-                </div>
-                <button className="rx-action-btn rx-action-btn--primary"
-                        onClick={() => setShowNewBill(true)}
-                        title="Create a fresh DRAFT bill for ad-hoc charges">
-                  <i className="pi pi-plus" /> New Bill
-                </button>
-              </div>
+            {/* Bills column — wrapped in a section card with a colored
+                header pill (blue tint for current, grey for history) so
+                it matches the section-accordion aesthetic. */}
+            <div style={{
+              background: C.card, border: `1.5px solid ${C.border}`,
+              borderRadius: 12, overflow: "hidden",
+            }}>
+              {/* SectionHeader replaces the old rx-bill-list-head. The
+                  "New Bill" action is wired into the header's right slot
+                  (only when not viewing history), and the current-visit
+                  context chip lives in the sub-label. Backend's
+                  getOrCreateDraftBill is idempotent: if there's already
+                  a DRAFT for the same (UHID, visitType, admission), it
+                  returns the existing one instead of duplicating. */}
+              <SectionHeader
+                icon="pi-list"
+                title={showHistory ? "Bills · History" : "Bills · Current"}
+                sub={displayBills.length > 0
+                  ? `${displayBills.length} bill${displayBills.length === 1 ? "" : "s"}`
+                  : "Empty"}
+                tone={showHistory ? C.slate : C.blue}
+                toneBg={showHistory ? "#f1f5f9" : C.blueL}
+                right={(
+                  <>
+                    {!showHistory && currentContext && (
+                      <span style={{
+                        fontSize: 10, fontWeight: 700,
+                        color: currentContext.type === "IPD" ? C.purple : "#0891b2",
+                        background: currentContext.type === "IPD" ? C.purpleL : "#ecfeff",
+                        padding: "2px 8px", borderRadius: 999,
+                        border: `1px solid ${currentContext.type === "IPD" ? "#c4b5fd" : "#a5f3fc"}`,
+                      }}>
+                        {currentContext.type === "IPD" ? `IPD ${currentContext.admissionNumber}` : "Today"}
+                      </span>
+                    )}
+                    {!showHistory && (
+                      <button onClick={() => setShowNewBill(true)}
+                              title="Create a fresh DRAFT bill for ad-hoc charges"
+                              style={{
+                                padding: "5px 11px", background: C.blue, color: "#fff", border: "none",
+                                borderRadius: 6, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 11,
+                                display: "inline-flex", alignItems: "center", gap: 4,
+                              }}>
+                        <i className="pi pi-plus" style={{ fontSize: 10 }} /> New Bill
+                      </button>
+                    )}
+                  </>
+                )}
+              />
 
-              {bills.length === 0 ? (
-                <div className="rx-empty">
-                  <span className="rx-empty-icon">📑</span>
-                  No bills yet for this patient.
+              {displayBills.length === 0 ? (
+                <div style={{
+                  padding: 40, textAlign: "center", color: C.muted, fontSize: 13,
+                  background: C.subtle,
+                }}>
+                  <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.6 }}>📑</div>
+                  {showHistory
+                    ? "No past bills for this patient."
+                    : currentContext
+                      ? `No bills yet for the current ${currentContext.type === "IPD" ? "admission" : "visit"}.`
+                      : "No active visit. Click History to see past bills."}
                 </div>
-              ) : bills.map(b => {
+              ) : displayBills.map(b => {
                 const isActive = activeBill?._id === b._id;
                 const cls = STATUS_CLASS[b.billStatus] || "pending";
                 // R7aa: derive effective Total/Paid/Due from billItems when
@@ -1431,10 +2020,18 @@ export default function ReceptionBilling() {
             {/* Active bill details */}
             <div>
               {billLoading ? (
-                <div className="rx-empty"><i className="pi pi-spin pi-spinner rx-loader-icon" /></div>
+                <div style={{
+                  background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12,
+                  padding: 40, textAlign: "center", color: C.muted,
+                }}>
+                  <i className="pi pi-spin pi-spinner" style={{ fontSize: 24, color: C.blue }} />
+                </div>
               ) : !activeBill ? (
-                <div className="rx-empty">
-                  <span className="rx-empty-icon">👉</span>
+                <div style={{
+                  background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12,
+                  padding: 40, textAlign: "center", color: C.muted, fontSize: 13,
+                }}>
+                  <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.6 }}>👉</div>
                   Select a bill from the left to view items, payments and collect.
                 </div>
               ) : (
@@ -3390,11 +3987,9 @@ function ShortcutsModal({ patientLoaded, activeBillStatus, unspentAdv, onClose }
           </div>
           <div style={dim(!patientLoaded)}>
             <ShortcutRow keys={["1"]} label="OPD" />
-            <ShortcutRow keys={["2"]} label="IPD" />
-            <ShortcutRow keys={["3"]} label="Day Care" />
-            <ShortcutRow keys={["4"]} label="Emergency" />
-            <ShortcutRow keys={["5"]} label="Services" />
-            <ShortcutRow keys={["6"]} label="All Types" />
+            <ShortcutRow keys={["2"]} label="Emergency" />
+            <ShortcutRow keys={["3"]} label="Services" />
+            <ShortcutRow keys={["4"]} label="All Types" />
           </div>
 
           <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "#06b6d4", letterSpacing: 0.4, marginTop: 10 }}>

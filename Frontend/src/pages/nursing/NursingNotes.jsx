@@ -20,6 +20,11 @@ import { saveVitalSheet, getVitalSheet } from "../../Services/vital/vitalService
 import NursingPatientReport from "../../Components/nursing/NursingPatientReport";
 // R7cb-C: stop passing literal "SphereHealth Hospital" to NursingPatientReport.
 import useHospitalSettings from "../../Components/print/useHospitalSettings";
+// R7gc — per-type compact print for nursing notes (mirrors R7fx doctor-note pattern)
+// R7gv — also pull the embed-card HTML builder so the standalone Nursing Notes
+// timeline renders the same per-type artwork the Complete File embeds (instead
+// of the bespoke dnp-note inline cards this page shipped with).
+import { printNurseNote, buildNurseNoteCardHtml } from "./printNurseNote";
 // R7bi — shared patient banner (Doctor + Nursing parity). Replaces the
 // inline JSX that lived here pre-R7bi (with R7bg's QR/IPD/age/diagnosis
 // enhancements now promoted into the shared component).
@@ -301,8 +306,9 @@ const bradenBand = (score) => {
 
 function getShift() {
   const h = new Date().getHours();
-  if (h >= 7 && h < 14) return "morning";
-  if (h >= 14 && h < 21) return "evening";
+  if (h >= 7  && h < 12) return "morning";
+  if (h >= 12 && h < 17) return "afternoon";
+  if (h >= 17 && h < 21) return "evening";
   return "night";
 }
 
@@ -446,6 +452,7 @@ function NursingNotesContent({ selectedPatient }) {
   const [notes,      setNotes]      = useState([]);
   const [loading,    setLoading]    = useState(false);
   const [activeModal,setActiveModal]= useState(null);
+  const [editingNote,setEditingNote]= useState(null);
 
   /* ── Late-entry mode (NABH HIC.6 backdated entry) ──
      Enabled when the loaded admission is already DISCHARGED — typically
@@ -475,6 +482,16 @@ function NursingNotesContent({ selectedPatient }) {
   const gateActive = !!patient && !nurseAssessmentDone;
   const [filterType, setFilterType] = useState("All");
   const [filterShift,setFilterShift]= useState("");
+  // R7fp — date range filter (parity with Doctor Notes timeline).
+  // Values: "today" | "week" | "7days" | "all". Default "today".
+  // R7gv — default to "all" so the standalone Nursing Notes timeline
+  // surfaces ALL historical notes the same way the Complete File does
+  // (the tile is literally subtitled "All historical care notes + filters").
+  // The "today" default left timelines empty whenever no nurse note was
+  // recorded on the current calendar date — even when the patient had a
+  // long history under Badal-style admissions. setFilterDateRange is still
+  // available for future date-pill UI.
+  const [filterDateRange, setFilterDateRange] = useState("all");
   const [shift,      setShift]      = useState(getShift());
   const [selectedTags, setSelectedTags] = useState([]);
   const [noteText,   setNoteText]   = useState("");
@@ -1210,10 +1227,32 @@ function NursingNotesContent({ selectedPatient }) {
     finally { setLoading(false); }
   };
 
+  // R7fp — date range matcher. "today" = since 00:00 local; "week" = current
+  // ISO week (Mon→Sun); "7days" = rolling 7 days; "all" = no constraint.
+  const dateRangeMatch = (n) => {
+    if (filterDateRange === "all") return true;
+    const d = new Date(n.createdAt || n.noteDate || 0);
+    if (isNaN(d.getTime())) return true;
+    const now = new Date();
+    if (filterDateRange === "today") {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return d >= start;
+    }
+    if (filterDateRange === "7days") {
+      const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      return d >= start;
+    }
+    if (filterDateRange === "week") {
+      const day = now.getDay() || 7; // Mon = 1, Sun = 7
+      const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (day - 1));
+      return d >= monday;
+    }
+    return true;
+  };
   const filteredNotes = notes.filter(n => {
     const typeMatch = filterType === "All" || n.noteType === filterType;
     const shiftMatch = !filterShift || n.shift === filterShift;
-    return typeMatch && shiftMatch;
+    return typeMatch && shiftMatch && dateRangeMatch(n);
   });
 
   const modDef = (id) => MODULES.find(m => m.id === id);
@@ -1516,6 +1555,40 @@ function NursingNotesContent({ selectedPatient }) {
                   action: () => navigate("/diabetic-chart", {
                     state: { uhid: patient?.UHID || patient?.uhid || searchUHID || "" },
                   }),
+                },
+                /* R7eg — Bundles of Care (ICU). One-shift bundle compliance
+                   sheet (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP). Same
+                   PHI-safe location.state handoff as the Diabetic Chart
+                   tile above. Saves + finalizes auto-feed the NABH HIC.5
+                   Infection Control register via ClinicalAudit. */
+                {
+                  id: "icubundles-nav",
+                  title: "Bundles of Care — ICU",
+                  subtitle: "VAP / CAUTI / CLABSI / DVT / Sepsis / SUP (NABH HIC.5)",
+                  icon: "pi-shield",
+                  color: "#059669",
+                  tint: "#d1fae5",
+                  badges: [{ label: "NABH", tone: "ok" }, { label: "Quality", tone: "accent" }],
+                  action: () => navigate("/icu-bundles", {
+                    state: { uhid: patient?.UHID || patient?.uhid || searchUHID || "" },
+                  }),
+                },
+                /* R7du — Restraint Register (NABH COP.17). Nurse-side
+                   structured entry for restraint episodes (physical /
+                   chemical / both). Doctor enters the order as plain text
+                   in nursing communication; this tile opens the form that
+                   captures device, reason, monitoring frequency, and
+                   alternatives tried — auto-populating the COP.17 register
+                   row via /api/restraints → emitRestraint. */
+                {
+                  id: "restraint-nav",
+                  title: "Restraint Register",
+                  subtitle: "Physical / chemical restraint episodes (NABH COP.17)",
+                  icon: "pi-lock",
+                  color: "#dc2626",
+                  tint: "#fee2e2",
+                  badges: [{ label: "NABH", tone: "ok" }, { label: "COP.17", tone: "warn" }],
+                  action: () => navigate(`/nursing/restraints/${encodeURIComponent(patient?.UHID || patient?.uhid || searchUHID || "")}`),
                 },
                 {
                   id: "ipdassessment-nav",
@@ -2029,7 +2102,47 @@ function NursingNotesContent({ selectedPatient }) {
               </div>
             ) : (
               <div className="dnp-timeline pf-tint--nurse">
-              {filteredNotes.map((note, i) => {
+              {/* R7gv — day-grouped timeline (mirrors Complete File / patient
+                   panel pills). Each day is its own header pill, then the per-
+                   note cards under it. Card body comes from the same
+                   buildNurseNoteCardHtml() the printed Complete File embeds —
+                   so the standalone timeline shows the rich per-type artwork
+                   instead of the legacy dnp-note bespoke layout. */}
+              {(() => {
+                const byDay = new Map();
+                for (const n of filteredNotes) {
+                  const ts = n.createdAt ? new Date(n.createdAt) : null;
+                  const key = ts && !isNaN(ts)
+                    ? ts.toISOString().slice(0, 10)
+                    : "undated";
+                  if (!byDay.has(key)) byDay.set(key, []);
+                  byDay.get(key).push(n);
+                }
+                const dayLabel = (key) => {
+                  if (key === "undated") return "Undated";
+                  const d = new Date(key + "T00:00:00");
+                  return d.toLocaleDateString("en-IN", {
+                    weekday: "short", day: "2-digit", month: "short", year: "numeric",
+                  });
+                };
+                return [...byDay.entries()].map(([dayKey, dayNotes]) => (
+                  <React.Fragment key={dayKey}>
+                    <div className="dnp-day-header" style={{
+                      display: "flex", alignItems: "center", gap: 10,
+                      margin: "12px 0 6px 0", padding: "6px 12px",
+                      background: "linear-gradient(90deg,#f0fdfa 0%,#ffffff 100%)",
+                      border: `1px solid ${C.border}`, borderLeft: `4px solid ${C.primary}`,
+                      borderRadius: 8,
+                    }}>
+                      <i className="pi pi-calendar" style={{ fontSize: 11, color: C.primary }} />
+                      <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: ".4px", color: C.primary, textTransform: "uppercase" }}>
+                        {dayLabel(dayKey)}
+                      </span>
+                      <span style={{ fontSize: 10, color: C.muted }}>
+                        {dayNotes.length} note{dayNotes.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                    {dayNotes.map((note, i) => {
                 const ns  = NOTE_STYLE[note.noteType] || NOTE_STYLE.general;
                 const ss  = SHIFT_STYLE[note.shift] || SHIFT_STYLE.morning;
                 const mod = modDef(note.noteType);
@@ -2055,8 +2168,30 @@ function NursingNotesContent({ selectedPatient }) {
                     <div className="dnp-note__body">
                       <div className="dnp-note__badge-row">
                         <span className="dnp-note__type-badge">
-                          {mod && <i className={`pi ${mod.icon}`} style={{ fontSize: 10 }} />}
-                          {mod?.label || note.noteType?.toUpperCase()}
+                          {mod
+                            ? <i className={`pi ${mod.icon}`} style={{ fontSize: 10 }} />
+                            : note.noteType === "initial"
+                              ? <i className="pi pi-clipboard" style={{ fontSize: 10 }} />
+                              : null}
+                          {/* R7fm — friendlier label for the dual-written
+                              IPD Initial Assessment (no MODULES entry by
+                              design — R7bj removed the inline picker). */}
+                          {mod?.label
+                            || (note.noteType === "initial" ? "Initial Assessment · NABH AAC.1" : note.noteType?.toUpperCase())}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: 9,
+                            fontWeight: 700,
+                            padding: "2px 7px",
+                            borderRadius: 4,
+                            background: note.status === "submitted" ? "#dcfce7" : note.status === "draft" ? "#fef3c7" : "#e2e8f0",
+                            color: note.status === "submitted" ? "#15803d" : note.status === "draft" ? "#92400e" : "#475569",
+                            letterSpacing: 0.3,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {note.status === "submitted" ? "✓ Submitted" : (note.status || "draft").toUpperCase()}
                         </span>
                         {note.isCriticalEvent && (
                           <span className="dnp-note__status dnp-note__status--critical">
@@ -2068,8 +2203,20 @@ function NursingNotesContent({ selectedPatient }) {
                         )}
                       </div>
 
-                      {/* Vitals structured data */}
-                      {note.vitals && note.noteType === "vitals" && (
+                      {/* R7gv \u2014 Body artwork is now the shared
+                           buildNurseNoteCardHtml() output (same as Complete
+                           File and patient-panel pills). All the legacy
+                           per-block renderers (vitals strip, MEWS band,
+                           generic noteData section, remarks, tags) used to
+                           live here \u2014 see git history. Builder includes the
+                           SIGNED footer with Emp ID + signature image. */}
+                      <div
+                        className="tnc-body-embed pf-tint--nurse"
+                        style={{ marginBottom: 8 }}
+                        // eslint-disable-next-line react/no-danger
+                        dangerouslySetInnerHTML={{ __html: buildNurseNoteCardHtml(note) }}
+                      />
+                      {false && (
                         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "10px 16px", background: `linear-gradient(to right, ${ns.bg}60, white)`, borderRadius: 10, marginBottom: 8 }}>
                           {[
                             { label: "BP",    value: `${note.vitals.bp?.systolic || "\u2014"}/${note.vitals.bp?.diastolic || "\u2014"}`, abnormal: isAbnormal("bp_sys", note.vitals.bp?.systolic) },
@@ -2077,8 +2224,8 @@ function NursingNotesContent({ selectedPatient }) {
                             { label: "TEMP",  value: note.vitals.temp ? `${note.vitals.temp}\u00b0F` : "\u2014", abnormal: isAbnormal("temp", note.vitals.temp) },
                             { label: "SPO\u2082",  value: note.vitals.spo2 ? `${note.vitals.spo2}%` : "\u2014", abnormal: isAbnormal("spo2", note.vitals.spo2) },
                             { label: "RR",    value: note.vitals.rr ? `${note.vitals.rr} /min` : "\u2014", abnormal: isAbnormal("rr", note.vitals.rr) },
-                            { label: "GCS",   value: note.moduleData?.vitals?.gcs || note.vitals.gcs || "\u2014" },
-                            { label: "BSL",   value: (note.moduleData?.vitals?.bsl || note.vitals.bsl) ? `${note.moduleData?.vitals?.bsl || note.vitals.bsl} mg/dL` : "\u2014", abnormal: isAbnormal("bsl", note.moduleData?.vitals?.bsl || note.vitals.bsl) },
+                            { label: "GCS",   value: note.noteData?.vitals?.gcs || note.vitals.gcs || "\u2014" },
+                            { label: "BSL",   value: (note.noteData?.vitals?.bsl || note.vitals.bsl) ? `${note.noteData?.vitals?.bsl || note.vitals.bsl} mg/dL` : "\u2014", abnormal: isAbnormal("bsl", note.noteData?.vitals?.bsl || note.vitals.bsl) },
                           ].map(v => (
                             <div key={v.label} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                               <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".6px", color: C.muted }}>{v.label}</span>
@@ -2088,9 +2235,10 @@ function NursingNotesContent({ selectedPatient }) {
                         </div>
                       )}
 
-                      {/* ── MEWS Score (special colored band display) ── */}
-                      {note.moduleData?.mewsScore && note.noteType === "mews" && (() => {
-                        const ms = note.moduleData.mewsScore;
+                      {/* ── MEWS Score (special colored band display) ──
+                           R7gv — guarded off; builder now renders MEWS band. */}
+                      {false && note.noteData?.mewsScore && note.noteType === "mews" && (() => {
+                        const ms = note.noteData.mewsScore;
                         const band = mewsBand(ms.total || 0);
                         return (
                           <div style={{ display:"flex", gap:12, flexWrap:"wrap", padding:"8px 14px", background:band.bg, borderRadius:7, marginBottom:8, alignItems:"center", border:`1px solid ${band.color}20` }}>
@@ -2112,10 +2260,10 @@ function NursingNotesContent({ selectedPatient }) {
                         );
                       })()}
 
-                      {/* ── All module data: generic renderer from note.moduleData ──
-                           Covers: pain, blood, iv, intake, neuro, wound, skin, fall,
-                           procedure, discharge, daily, initial, carePlan, nutrition, education */}
-                      {note.moduleData && (() => {
+                      {/* ── All module data: generic renderer from note.noteData ──
+                           R7gv — guarded off; builder renders all module data
+                           in the per-type artwork now. */}
+                      {false && note.noteData && (() => {
                         const SKIP = new Set(
                           note.noteType === "mews"   ? ["mewsScore"] :
                           note.noteType === "vitals" ? ["vitals"]    : []
@@ -2215,7 +2363,7 @@ function NursingNotesContent({ selectedPatient }) {
                           }
                           return String(v);
                         };
-                        const blocks = Object.entries(note.moduleData)
+                        const blocks = Object.entries(note.noteData)
                           .filter(([k]) => !SKIP.has(k))
                           .map(([mk, mv]) => {
                             if (!mv) return null;
@@ -2255,13 +2403,13 @@ function NursingNotesContent({ selectedPatient }) {
                         );
                       })()}
 
-                      {/* Remarks */}
-                      {note.remarks && (
+                      {/* Remarks — R7gv: builder renders remarks too. */}
+                      {false && note.remarks && (
                         <div style={{ fontSize: 12.5, color: C.text, lineHeight: 1.6, marginBottom: 8 }}>{note.remarks}</div>
                       )}
 
-                      {/* Tags */}
-                      {note.tags?.length > 0 && (
+                      {/* Tags — R7gv: builder renders tags too. */}
+                      {false && note.tags?.length > 0 && (
                         <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                           {note.tags.map(t => (
                             <span key={t} style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: C.grayL, color: C.muted, border: `1px solid ${C.border}` }}>
@@ -2274,16 +2422,36 @@ function NursingNotesContent({ selectedPatient }) {
 
                     {/* Actions */}
                     <div className="dnp-note__actions">
-                      <button className="dnp-note__btn dnp-note__btn--info">
-                        <i className="pi pi-pencil" style={{ fontSize: 10 }} /> Edit
-                      </button>
-                      <button className="dnp-note__btn">
+                      {note.status !== "submitted" && (
+                        <button
+                          className="dnp-note__btn dnp-note__btn--info"
+                          onClick={() => {
+                            setActiveModal(note.noteType);
+                            setEditingNote(note);
+                          }}
+                        >
+                          <i className="pi pi-pencil" style={{ fontSize: 10 }} /> Edit
+                        </button>
+                      )}
+                      <button
+                        className="dnp-note__btn"
+                        onClick={() => {
+                          // R7gc — use the new per-type print builder (mirrors
+                          // R7fx for doctor notes). Replaces the previous raw
+                          // JSON.stringify dump.
+                          const ok = printNurseNote(note, hospitalSettings || {});
+                          if (!ok) toast.error("Pop-up blocked");
+                        }}
+                      >
                         <i className="pi pi-print" style={{ fontSize: 10 }} /> Print
                       </button>
                     </div>
                   </div>
                 );
               })}
+                  </React.Fragment>
+                ));
+              })()}
               </div>
             )}
           </div>

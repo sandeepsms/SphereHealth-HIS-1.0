@@ -213,6 +213,110 @@ async function resolveBedAndNursingRates(admission) {
   }
 }
 
+// ── R7en helper: resolve full charge matrix from RoomCategoryCharges ─────────
+// Returns the eight-field charge sheet from the new per-category matrix
+// (Backend/models/admin/RoomCategoryChargesModel.js). Falls back to a
+// minimal { bedRent, nursingCharge } shape derived from the legacy
+// RoomCategory.defaultPricing when no matrix row exists — so an
+// admission whose bed category hasn't been migrated yet still bills
+// the old two-line set (no silent revenue loss on the cron flip).
+//
+// Output shape:
+//   {
+//     matched:        boolean   — true if a RoomCategoryCharges row matched
+//     categoryCode:   "GENW" | "PVT" | ...
+//     categoryName:   "Private Room" | ...
+//     roomType:       legacy enum for serviceCode tagging
+//     chargingRule:   "Full" | "HalfOnAdmission" | "HalfOnDischarge" | "HalfBoth"
+//     charges: {
+//       bedRent, nursingCharge, doctorVisitCharge, rmoCharge,
+//       monitoringCharge, dieteticsCharge, housekeepingCharge, linenCharge
+//     }
+//   }
+async function resolveRoomCategoryChargeMatrix(admission) {
+  // Reuse the legacy resolver to discover the categoryCode + categoryName
+  // off the admission's populated room → roomCategory chain. That gives
+  // us the join key for the matrix lookup AND a safe legacy fallback.
+  const legacy = await resolveBedAndNursingRates(admission);
+  const empty = {
+    matched: false,
+    categoryCode: legacy.categoryCode,
+    categoryName: legacy.categoryName,
+    roomType:     legacy.roomType,
+    chargingRule: "HalfBoth",
+    charges: {
+      bedRent:           legacy.bedRate     || 0,
+      nursingCharge:     legacy.nursingRate || 0,
+      doctorVisitCharge: 0,
+      rmoCharge:         0,
+      monitoringCharge:  0,
+      dieteticsCharge:   0,
+      housekeepingCharge:0,
+      linenCharge:       0,
+    },
+  };
+  if (!legacy.categoryCode) return empty;
+  try {
+    const RoomCategoryCharges = require("../../models/Admin/RoomCategoryChargesModel");
+    const row = await RoomCategoryCharges.findOne({
+      categoryCode: String(legacy.categoryCode).toUpperCase(),
+      active:       true,
+      effectiveTo:  null,
+    }).lean();
+    if (!row) return empty;
+    return {
+      matched: true,
+      categoryCode: row.categoryCode,
+      categoryName: row.categoryName || legacy.categoryName,
+      roomType:     legacy.roomType,
+      chargingRule: row.chargingRule || "HalfBoth",
+      charges: {
+        bedRent:           Number(row.charges?.bedRent           || 0),
+        nursingCharge:     Number(row.charges?.nursingCharge     || 0),
+        doctorVisitCharge: Number(row.charges?.doctorVisitCharge || 0),
+        rmoCharge:         Number(row.charges?.rmoCharge         || 0),
+        monitoringCharge:  Number(row.charges?.monitoringCharge  || 0),
+        dieteticsCharge:   Number(row.charges?.dieteticsCharge   || 0),
+        housekeepingCharge:Number(row.charges?.housekeepingCharge|| 0),
+        linenCharge:       Number(row.charges?.linenCharge       || 0),
+      },
+    };
+  } catch (e) {
+    console.error("[AutoBilling] resolveRoomCategoryChargeMatrix error:", e.message);
+    return empty;
+  }
+}
+
+// ── R7en helper: half-day proration multiplier ──────────────────────────────
+// Maps a (chargingRule, isAdmissionDay, isDischargeDay) tuple to a 0.5 or 1
+// multiplier. The cron call site computes `isAdmissionDay` from the
+// admission.admissionDate vs the day cursor, and `isDischargeDay` from
+// admission.actualDischargeDate (when present) vs the cursor.
+function halfDayMultiplier(chargingRule, { isAdmissionDay, isDischargeDay }) {
+  const rule = chargingRule || "HalfBoth";
+  if (rule === "Full") return 1;
+  if (rule === "HalfOnAdmission" && isAdmissionDay) return 0.5;
+  if (rule === "HalfOnDischarge" && isDischargeDay) return 0.5;
+  if (rule === "HalfBoth"        && (isAdmissionDay || isDischargeDay)) return 0.5;
+  return 1;
+}
+
+// ── R7en helper: serviceCode + category mapping for each line item ──────────
+// Single source of truth so the cron, the override paths, and the
+// ServiceMaster duplicate audit all stay aligned. Skip-zero short-circuits
+// at the call site — there's no "bill ₹0" line, the trigger isn't emitted.
+const ROOM_CATEGORY_LINE_ITEMS = [
+  // [chargesKey,         serviceCode prefix,    serviceName label,             billCategory]
+  ["bedRent",             "BED",                 "Bed Charge",                  "ROOM"],
+  ["nursingCharge",       "NURSING",             "Nursing Care",                "NURSING"],
+  ["doctorVisitCharge",   "DOC-VISIT",           "Doctor Daily Visit",          "DOCTOR_VISIT"],
+  ["rmoCharge",           "RMO",                 "RMO Attendance",              "DOCTOR_VISIT"],
+  ["monitoringCharge",    "ICU-MONITOR",         "Continuous Monitoring",       "ICU_MONITORING"],
+  ["dieteticsCharge",     "DIET",                "Clinical Dietetics",          "DIET"],
+  ["housekeepingCharge",  "HOUSEKEEPING",        "Housekeeping",                "HOUSEKEEPING"],
+  ["linenCharge",         "LINEN",               "Linen / Laundry",             "LINEN"],
+];
+
 // ── Helper: map doctor note (type + shift) → billable visit code ─────────────
 // One charge per doctor per round per day. The dedup-by-doctor flag ensures
 // two consultants on the same day each get a separate line.
@@ -929,6 +1033,78 @@ async function onDoctorNoteSaved(noteDoc) {
   const visit = resolveDoctorVisitCode(noteType, noteDoc.shift, { isRepeatToday });
   if (!visit) return; // procedure notes etc. bill via their own path
 
+  // R7gl — Daily auto-bill cap on doctor visits.
+  //
+  // Business rule from the hospital owner: in IPD a doctor's routine
+  // visit charge should auto-add at most TWICE per day (morning round
+  // + evening round). Any further visit the same day MUST be entered
+  // by hand from the IPD Live Ledger "Manual Charge" button so a
+  // human stops to confirm the third+ event is genuinely billable
+  // (could be a courtesy round, family-meeting, or a re-explained
+  // procedure already covered by another code) instead of letting a
+  // back-dated nursing note or a late evening progress entry quietly
+  // billowing a 3rd, 4th, 5th visit fee.
+  //
+  // Applies to the routine-round / ICU / emergency-after-hours codes.
+  // DOC-ADMISSION, DOC-DISCHARGE, DOC-CONSULT are independent
+  // milestones — they bypass the cap (admission is a one-shot,
+  // discharge is a one-shot, consult is a separate consultant whose
+  // fee is independently negotiated and only fires once via
+  // dedupByDoctor).
+  const VISIT_CAP_CODES = new Set([
+    "DOC-MORN-ROUND", "DOC-EVE-ROUND", "DOC-NIGHT-ROUND",
+    "DOC-ICU-VISIT", "DOC-EMERGENCY-VISIT",
+  ]);
+  if (VISIT_CAP_CODES.has(visit.code)) {
+    try {
+      const dateKeyToday = getDateKey();
+      const activeVisitsToday = await BillingTrigger.countDocuments({
+        admissionId, dateKey: dateKeyToday,
+        serviceCode: { $in: Array.from(VISIT_CAP_CODES) },
+        status: { $nin: ["voided", "cancelled", "skipped"] },
+      });
+      if (activeVisitsToday >= 2) {
+        // Cap hit — do NOT createTrigger. Drop a paper-trail trigger
+        // tagged `status: "skipped"` so the audit tab shows that an
+        // auto-bill attempt happened and was blocked. Operator can
+        // then add the extra visit manually from the ledger.
+        await _emitTrigger({
+          admissionId,
+          patientId:   noteDoc.patientId,
+          UHID:        noteDoc.UHID || noteDoc.patientUHID,
+          patientType: "IPD",
+          serviceCode: visit.code,
+          serviceName: visit.name,
+          quantity:    1,
+          unitPrice:   0,
+          totalAmount: 0,
+          sourceType:  "DoctorNote",
+          sourceDocumentId:    noteDoc._id,
+          sourceDocumentModel: "DoctorNote",
+          orderedBy:   doctorName,
+          orderedById: doctorId,
+          orderedByRole: "Doctor",
+          completedBy: doctorName,
+          completedById: doctorId,
+          completedByRole: "Doctor",
+          status: "skipped",
+          autoCharged: true,
+          isDailyCharge: false,
+          dateKey: dateKeyToday,
+          shift: noteDoc.shift,
+          completionNotes: `Auto-bill skipped — IPD doctor visit cap (2/day) already reached. ` +
+                           `Add manually from IPD Live Ledger if this 3rd+ visit is billable.`,
+        }, { name: doctorName, role: "Doctor" });
+        return;
+      }
+    } catch (e) {
+      // If the count lookup fails we'd rather under-bill than double-bill,
+      // so log + fall through (the existing dailyDedup on the trigger
+      // itself still protects against a same-code same-day duplicate).
+      console.warn("[AutoBilling] doctor-visit cap lookup failed:", e.message);
+    }
+  }
+
   try {
     await createTrigger({
       admissionId,
@@ -1309,6 +1485,33 @@ async function onInvestigationResulted(orderDoc) {
  */
 async function onEquipmentCharged(chargeEntry, billItemId) {
   if (!chargeEntry) return;
+  // R7gg — Idempotency guard. One Badal admission had 36,925 duplicate
+  // BillingTrigger rows pointing to a SINGLE NursingChargeEntry (Foley
+  // Catheter ₹300 × 1) because this hook was being re-fired by a
+  // backfill / cron / retry path with no dedupe check. ₹110 lakh
+  // appeared under "EQUIP" in the IPD Live Ledger as a result, the
+  // category response timed out the renderer (32k+ items shipped),
+  // and the receptionist's Billing Counter also froze loading the
+  // same payload. Before creating yet another trigger for this
+  // chargeEntry, look up whether one already exists; bail out if so.
+  if (chargeEntry?._id) {
+    try {
+      const existing = await BillingTrigger.findOne({
+        sourceDocumentId: chargeEntry._id,
+        sourceDocumentModel: "NursingChargeEntry",
+      }).select("_id").lean();
+      if (existing) {
+        // Already billed — nothing to do. Don't even log; the cron may
+        // poll us many times per minute and noise would drown real errors.
+        return;
+      }
+    } catch (e) {
+      console.error("[AutoBilling] onEquipmentCharged idempotency check failed:", e.message);
+      // Fall through and try to create — losing a charge is worse than
+      // creating one duplicate (the same guard on the next call will
+      // catch it once Mongo is healthy again).
+    }
+  }
   if (billItemId) {
     // Already manually billed elsewhere — leave a paper-trail trigger and
     // exit, so we don't double-add to the bill.
@@ -1485,9 +1688,24 @@ async function confirmAndBillTrigger(triggerId, { confirmedBy, confirmedByRole =
 /**
  * Called when an OPD visit is created (by Receptionist/Admin).
  * Creates a BillingTrigger for OPD Consultation fee.
+ *
+ * R7dq — Consult-fee bug fix: previously the trigger only carried
+ * serviceCode "OPD-CON" and addItemToBill would price it from
+ * ServiceMaster.defaultPrice (a hardcoded ₹500). That ignored the
+ * doctor's actual fee that the receptionist saw + the auto-fill from
+ * the doctor's opdFirst/opdFollowup rates (R7dp). Now we pass the
+ * exact consultationFee the OPD visit recorded as unitPriceOverride,
+ * so the bill amount matches what the receptionist showed the patient.
  */
 async function onOPDRegistered(opdVisit, admission) {
   if (!admission?._id) return;
+  // R7dq — Use the OPD visit's consultationFee field as the authoritative
+  // amount. It was set by the receptionist (either auto-filled from the
+  // doctor's opdFirst/opdFollowup rate via R7dp, or manually entered).
+  // Falls back to undefined if missing so addItemToBill drops to its
+  // ServiceMaster lookup like before.
+  const visitFee = Number(opdVisit.consultationFee);
+  const overrideAmount = Number.isFinite(visitFee) && visitFee >= 0 ? visitFee : undefined;
   return createTrigger({
     admissionId:         admission._id,
     opdVisitId:          opdVisit._id,
@@ -1497,6 +1715,7 @@ async function onOPDRegistered(opdVisit, admission) {
     serviceCode:         "OPD-CON",           // OPD Consultation service code
     serviceName:         "OPD Consultation",
     quantity:            1,
+    unitPriceOverride:   overrideAmount,      // R7dq — doctor-specific fee
     sourceType:          "DoctorVisit",
     sourceDocumentId:    opdVisit._id,
     sourceDocumentModel: "OPD",
@@ -1512,40 +1731,92 @@ async function onOPDRegistered(opdVisit, admission) {
 
 /**
  * Called when a nurse records vitals for an OPD visit.
- * Creates a BillingTrigger for Vitals/Nursing fee.
+ *
+ * R7ds — No-op for OPD vitals.
+ *
+ * History: this used to create a BillingTrigger with serviceCode
+ * "NRS-009" intending to charge a "Vitals Recording" nursing fee.
+ * But NRS-009 in ServiceMaster is actually "Blood Glucose Monitoring
+ * (RBS) ₹50" — a wrong code mapping that resulted in every OPD patient
+ * who had vitals taken (i.e. every OPD patient) being billed for an
+ * RBS test they never had.
+ *
+ * Beyond the mapping bug, OPD vitals shouldn't be billed separately
+ * at all — they're part of the consultation. The doctor's consult fee
+ * (driven by opdFirst/opdFollowup via R7dp) already covers the
+ * vitals + assessment + Rx for one walk-in visit. IPD nursing-per-day
+ * charges are a different category and still fire from
+ * onDoctorNoteSaved / NurseNote:vitals → DOC-MORN-ROUND etc.
+ *
+ * Receptionist / nurse can still add nursing line items manually via
+ * Services & Orders when a separate procedure is performed.
+ *
+ * Kept as an exported no-op so any caller (OPDService, controllers)
+ * that already imports it doesn't crash.
  */
-async function onOPDVitalsRecorded(opdVisit, admission, nurseName) {
-  if (!admission?._id) return;
-  return createTrigger({
-    admissionId:         admission._id,
-    opdVisitId:          opdVisit._id,
-    patientId:           admission.patientId,
-    UHID:                admission.UHID,
-    patientType:         "OPD",
-    serviceCode:         "NRS-009",           // Nursing/Vitals service code
-    serviceName:         "Vitals Recording (OPD)",
-    quantity:            1,
-    sourceType:          "NurseNote",
-    sourceDocumentId:    opdVisit._id,
-    sourceDocumentModel: "OPD",
-    orderedBy:           nurseName || "Nurse",
-    orderedByRole:       "Nurse",
-    completedBy:         nurseName || "Nurse",
-    completedByRole:     "Nurse",
-    orderDetails:        `Vitals recorded for OPD visit ${opdVisit.visitNumber}`,
-    autoCharge:          true,
-    dailyDedup:          true,
-    department:          opdVisit.department || admission.department,
-    notes:               `Nurse: ${nurseName || "Nurse"} | Visit: ${opdVisit.visitNumber}`,
-  });
+async function onOPDVitalsRecorded(_opdVisit, _admission, _nurseName) {
+  return null;
 }
 
 /**
  * Called when a Doctor saves an OPD assessment (SOAP note).
  * Creates a BillingTrigger for Doctor Assessment / Follow-up fee.
+ *
+ * R7dr — De-duplicate consultation charges for OPD visits.
+ *
+ * Pre-R7dr the OPD-CON registration fee (fired by onOPDRegistered) and
+ * the CON-001 doctor-assessment fee (this function) both landed on the
+ * same patient bill — the patient was charged TWICE for one consultation
+ * (₹500 + ₹500 = ₹1000 instead of the doctor's actual ₹300/₹500). The
+ * two triggers nominally cover different things ("registration token"
+ * vs "doctor's professional fee") but in practice every OPD visit incurs
+ * both, so the doubling was always there and always wrong.
+ *
+ * Resolution: when an OPD-CON trigger already exists for this opdVisit
+ * (i.e. the receptionist registered the visit at the desk), the doctor
+ * has nothing extra to bill — the registration fee IS the consultation
+ * fee. Skip the CON-001 trigger. The R7dp doctor-charges sheet's
+ * opdFirst/opdFollowup rates drive the single OPD-CON line via
+ * unitPriceOverride (R7dq), so the single bill line carries the
+ * doctor's actual professional fee.
+ *
+ * Edge cases preserved:
+ *   • An OPD assessment saved without a prior OPD-CON (unusual but
+ *     possible — e.g. a walk-in note before registration) still fires
+ *     CON-001 because the dedup query returns nothing. The patient is
+ *     still charged exactly once.
+ *   • IPD doctor notes are routed through onDoctorNoteSaved →
+ *     DOC-MORN-ROUND / DOC-EVE-ROUND etc., not CON-001, so this guard
+ *     does not affect any IPD billing.
  */
 async function onOPDAssessmentSaved(opdVisit, admission, doctorName, assessmentId) {
   if (!admission?._id) return;
+
+  // Look for an existing OPD-CON trigger on this admission. status: any
+  // non-cancelled/voided state implies the registration fee already
+  // landed (or is about to) on the bill.
+  //
+  // Note (R7dr-FIX): we filter by admissionId, not opdVisitId. The
+  // createTrigger helper doesn't destructure opdVisitId from its config,
+  // so even though onOPDRegistered passes it, the field never lands on
+  // the saved trigger doc. admissionId IS persisted and is sufficient
+  // here — an OPD admission carries exactly one opd visit at a time.
+  try {
+    const existing = await BillingTrigger.findOne({
+      admissionId: admission._id,
+      serviceCode: "OPD-CON",
+      status: { $nin: ["cancelled", "voided", "rejected"] },
+    }).lean();
+    if (existing) {
+      // Registration already covered the consult. Don't double-bill.
+      return null;
+    }
+  } catch (e) {
+    // If the dedup lookup fails, defaulting to fire CON-001 reproduces
+    // pre-R7dr behaviour — preferable to silently dropping a charge.
+    console.warn("[AutoBilling] OPD-CON dedup lookup failed (proceeding with CON-001):", e.message);
+  }
+
   return createTrigger({
     admissionId:         admission._id,
     opdVisitId:          opdVisit._id,
@@ -1857,59 +2128,48 @@ async function onAdmissionCreated(admissionDoc) {
     }).catch((e) => { console.error("Admission charge trigger error:", e.message); return null; })
   );
 
-  // 3. First bed-day + nursing-daily charge (if IPD/Daycare) — daily cron
-  //    handles subsequent days. Rates come from the bed's room category
-  //    so ICU/HDU/Private/Ward patients pay their tier's price without
-  //    any per-category ServiceMaster pre-seed.
+  // 3. R7en — Day-1 charges (if IPD/Daycare) from the per-room-category
+  //    matrix. All 8 line items (bed, nursing, doctor visit, RMO,
+  //    monitoring, dietetics, housekeeping, linen) are emitted on admission
+  //    day with the category's half-day rule applied (HalfBoth/HalfOnAdmission
+  //    → 0.5×; Full/HalfOnDischarge → 1×). The daily cron in
+  //    runDailyBedChargeAccrual handles subsequent days idempotently.
+  //    When no matrix row exists yet for this category, the resolver
+  //    falls back to the legacy two-line shape priced from
+  //    RoomCategory.defaultPricing so revenue continuity is preserved.
   if (typeCode === "IPD" || typeCode === "DAYCARE") {
-    const rates = await resolveBedAndNursingRates(admissionDoc);
-    const catTag = rates.categoryCode ? `-${rates.categoryCode}` : "";
+    const matrix = await resolveRoomCategoryChargeMatrix(admissionDoc);
+    const catTag = matrix.categoryCode ? `-${matrix.categoryCode}` : "";
 
-    if (rates.bedRate > 0) {
+    const halfMult = halfDayMultiplier(matrix.chargingRule, {
+      isAdmissionDay: true,
+      isDischargeDay: false,
+    });
+    const halfNote = halfMult === 0.5 ? " [½ admission day]" : "";
+
+    for (const [chargesKey, codePrefix, label, _category] of ROOM_CATEGORY_LINE_ITEMS) {
+      const rawRate = Number(matrix.charges?.[chargesKey] || 0);
+      if (!(rawRate > 0)) continue;
       triggers.push(
         await createTrigger({
           admissionId:         admissionDoc._id,
           patientId:           admissionDoc.patientId,
           UHID:                admissionDoc.UHID,
           patientType:         typeCode,
-          serviceCode:         `BED${catTag}`,
-          serviceName:         `Bed Charge — ${rates.categoryName || rates.roomType || typeCode} (Day 1)`,
+          serviceCode:         `${codePrefix}${catTag}`,
+          serviceName:         `${label} — ${matrix.categoryName || matrix.roomType || typeCode} (Day 1)${halfNote}`,
           quantity:            1,
-          unitPriceOverride:   rates.bedRate,
-          sourceType:          "BedCharge",
+          unitPriceOverride:   rawRate * halfMult,
+          sourceType:          "DailyRoomAccrual",
           sourceDocumentId:    admissionDoc._id,
           sourceDocumentModel: "Admission",
           orderedBy:           "System",
           orderedByRole:       "System",
-          orderDetails:        `Day 1 bed charge — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.bedRate}/day`,
+          orderDetails:        `Day 1 ${label.toLowerCase()} — ${matrix.categoryName || matrix.roomType || "category"} @ ₹${rawRate}/day${halfNote}`,
           autoCharge:          true,
           dailyDedup:          true,
           department:          admissionDoc.department,
-        }).catch((e) => { console.error("Bed-day trigger error:", e.message); return null; })
-      );
-    }
-
-    if (rates.nursingRate > 0) {
-      triggers.push(
-        await createTrigger({
-          admissionId:         admissionDoc._id,
-          patientId:           admissionDoc.patientId,
-          UHID:                admissionDoc.UHID,
-          patientType:         typeCode,
-          serviceCode:         `NURSING${catTag}`,
-          serviceName:         `Nursing Care — ${rates.categoryName || rates.roomType || typeCode} (Day 1)`,
-          quantity:            1,
-          unitPriceOverride:   rates.nursingRate,
-          sourceType:          "BedCharge",
-          sourceDocumentId:    admissionDoc._id,
-          sourceDocumentModel: "Admission",
-          orderedBy:           "System",
-          orderedByRole:       "System",
-          orderDetails:        `Day 1 nursing care — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.nursingRate}/day`,
-          autoCharge:          true,
-          dailyDedup:          true,
-          department:          admissionDoc.department,
-        }).catch((e) => { console.error("Nursing-day trigger error:", e.message); return null; })
+        }).catch((e) => { console.error(`Day 1 ${chargesKey} trigger error:`, e.message); return null; })
       );
     }
   }
@@ -2131,64 +2391,112 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
     return { bedFired, nurseFired, skipped };   // Skip raw bed+nursing entirely
   }
 
-  const rates = await resolveBedAndNursingRates(admission);
-  const catTag = rates.categoryCode ? `-${rates.categoryCode}` : "";
+  // ── R7en: per-room-category multi-line emit ────────────────────────
+  // Pre-R7en the cron emitted ONE bed trigger + ONE nursing trigger,
+  // priced from the legacy `RoomCategory.defaultPricing`. R7en switches
+  // to the new RoomCategoryCharges matrix (8 line items: bed, nursing,
+  // doctor visit, RMO, monitoring, dietetics, housekeeping, linen). If
+  // no matrix row exists yet for this admission's category, the helper
+  // falls back to the legacy two-line shape so the cron flip is
+  // revenue-neutral.
+  //
+  // Half-day proration (chargingRule):
+  //   - "Full"             → 1× every day
+  //   - "HalfOnAdmission"  → 0.5× Day 1, 1× thereafter
+  //   - "HalfOnDischarge"  → 1× until discharge day, 0.5× on discharge
+  //   - "HalfBoth"         → 0.5× Day 1 AND 0.5× on discharge, 1× interior
+  // The Daycare prorateMultiplier above still wins for hourly visits.
+  const matrix = await resolveRoomCategoryChargeMatrix(admission);
+  const catTag = matrix.categoryCode ? `-${matrix.categoryCode}` : "";
 
-  if (rates.bedRate > 0) {
-    const bedRate = rates.bedRate * prorateMultiplier;
+  // Today's calendar day in IST. We compare admission/discharge days
+  // by their getDateKey() bucket — that avoids time-of-day edge cases
+  // (admission at 23:50 IST → not counted as discharge day at 00:10).
+  const todayKey = getDateKey();
+  const admDateKey = getDateKey(new Date(admission.admissionDate || admission.createdAt));
+  const dischargeDateKey = (admission.actualDischargeDate || _dischargingFlush)
+    ? getDateKey(new Date(admission.actualDischargeDate || Date.now()))
+    : null;
+
+  const halfMult = halfDayMultiplier(matrix.chargingRule, {
+    isAdmissionDay:  todayKey === admDateKey,
+    isDischargeDay:  !!dischargeDateKey && todayKey === dischargeDateKey,
+  });
+  // Daycare hourly proration and admission/discharge half-day proration
+  // are independent multipliers — Daycare halves AGAIN inside a half-day
+  // admission window. In practice only one ever applies (Daycare admissions
+  // discharge same day → half-day rule may also flag this day as discharge,
+  // but Daycare prorate is the dominant signal).
+  const finalMult = prorateMultiplier * halfMult;
+
+  const halfNoteFragment =
+    halfMult === 0.5
+      ? (todayKey === admDateKey ? " [½ admission day]"
+       : todayKey === dischargeDateKey ? " [½ discharge day]"
+       : "")
+      : "";
+
+  // Counters by category — exposed in the return shape so callers
+  // (admissionService.dischargePatient, runDailyBedChargeAccrual) can
+  // log per-line-item activity for ops triage.
+  const fired = {
+    bed: 0, nursing: 0, doctorVisit: 0, rmo: 0,
+    monitoring: 0, dietetics: 0, housekeeping: 0, linen: 0,
+  };
+
+  for (const [chargesKey, codePrefix, label, _category] of ROOM_CATEGORY_LINE_ITEMS) {
+    const rawRate = Number(matrix.charges?.[chargesKey] || 0);
+    if (!(rawRate > 0)) continue;     // skip zero-priced line items entirely
+    const lineRate = rawRate * finalMult;
     const r = await createTrigger({
       admissionId:         admission._id,
       patientId:           admission.patientId,
       UHID:                admission.UHID,
       patientType:         tc,
-      serviceCode:         `BED${catTag}`,
-      serviceName:         `Bed Charge — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})${prorateNote}`,
+      serviceCode:         `${codePrefix}${catTag}`,
+      serviceName:         `${label} — ${matrix.categoryName || matrix.roomType || tc} (Day ${dayN})${halfNoteFragment}${prorateNote}`,
       quantity:            1,
-      unitPriceOverride:   bedRate,
-      sourceType:          "BedCharge",
+      unitPriceOverride:   lineRate,
+      sourceType:          "DailyRoomAccrual",
       sourceDocumentId:    admission._id,
       sourceDocumentModel: "Admission",
       orderedBy:           "System",
       orderedByRole:       "System",
-      orderDetails:        `Daily bed accrual — Day ${dayN} — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.bedRate}/day${prorateNote}`,
+      orderDetails:        `Daily ${label.toLowerCase()} — Day ${dayN} — ${matrix.categoryName || matrix.roomType || "category"} @ ₹${rawRate}/day${halfNoteFragment}${prorateNote}`,
       autoCharge:          true,
       dailyDedup:          true,
       department:          admission.department,
       _dischargingFlush,                              // R7as-FIX-4
       triggeredByRole:     _cronRole,                 // R7bh-F3
     });
-    if (r?.skipped) skipped++;
-    else if (r?.trigger) bedFired++;
+    if (r?.skipped) { skipped++; continue; }
+    if (r?.trigger) {
+      // Map back into the per-line counter set for return-shape logging.
+      if (chargesKey === "bedRent")            fired.bed++;
+      else if (chargesKey === "nursingCharge") fired.nursing++;
+      else if (chargesKey === "doctorVisitCharge") fired.doctorVisit++;
+      else if (chargesKey === "rmoCharge")     fired.rmo++;
+      else if (chargesKey === "monitoringCharge") fired.monitoring++;
+      else if (chargesKey === "dieteticsCharge") fired.dietetics++;
+      else if (chargesKey === "housekeepingCharge") fired.housekeeping++;
+      else if (chargesKey === "linenCharge")   fired.linen++;
+    }
   }
 
-  if (rates.nursingRate > 0) {
-    const nurseRate = rates.nursingRate * prorateMultiplier;
-    const r = await createTrigger({
-      admissionId:         admission._id,
-      patientId:           admission.patientId,
-      UHID:                admission.UHID,
-      patientType:         tc,
-      serviceCode:         `NURSING${catTag}`,
-      serviceName:         `Nursing Care — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})${prorateNote}`,
-      quantity:            1,
-      unitPriceOverride:   nurseRate,
-      sourceType:          "BedCharge",
-      sourceDocumentId:    admission._id,
-      sourceDocumentModel: "Admission",
-      orderedBy:           "System",
-      orderedByRole:       "System",
-      orderDetails:        `Daily nursing care — Day ${dayN} — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.nursingRate}/day${prorateNote}`,
-      autoCharge:          true,
-      dailyDedup:          true,
-      department:          admission.department,
-      _dischargingFlush,                              // R7as-FIX-4
-      triggeredByRole:     _cronRole,                 // R7bh-F3
-    });
-    if (r?.skipped) skipped++;
-    else if (r?.trigger) nurseFired++;
-  }
-
-  return { bedFired, nurseFired, skipped };
+  // Preserve the legacy bedFired / nurseFired keys so existing callers
+  // (runDailyBedChargeAccrual summing into the cron-tick report,
+  // admissionService.dischargePatient logging the flush counts) keep
+  // working; expose the new per-line breakdown on `firedByLine` for
+  // future callers who care about the 8-line split.
+  return {
+    bedFired:   fired.bed,
+    nurseFired: fired.nursing,
+    skipped,
+    firedByLine: fired,
+    matrixMatched: matrix.matched,   // false → legacy two-line fallback
+    chargingRule:  matrix.chargingRule,
+    halfMult,
+  };
 }
 
 /**
@@ -2227,18 +2535,23 @@ async function backfillAdmissionCharges(admission) {
   };
   const tc = typeMap[admission.admissionType] || "IPD";
 
-  const rates = await resolveBedAndNursingRates(admission);
-  const catTag = rates.categoryCode ? `-${rates.categoryCode}` : "";
+  // R7en: use the matrix here too so backfill matches what the daily
+  // cron would have written. Falls back to the legacy two-line shape
+  // when no RoomCategoryCharges row exists for this category.
+  const matrix = await resolveRoomCategoryChargeMatrix(admission);
+  const catTag = matrix.categoryCode ? `-${matrix.categoryCode}` : "";
+  const matrixTotal = Object.values(matrix.charges || {}).reduce((a, b) => a + (b || 0), 0);
   console.log(
-    `[Backfill] ADM ${admission.admissionNumber} (${tc}) — room=${rates.roomType || "?"}/${rates.categoryName || rates.categoryCode || "?"}`,
-    `bed=₹${rates.bedRate} nursing=₹${rates.nursingRate}`,
+    `[Backfill] ADM ${admission.admissionNumber} (${tc}) — room=${matrix.roomType || "?"}/${matrix.categoryName || matrix.categoryCode || "?"}`,
+    `daily=₹${matrixTotal} rule=${matrix.chargingRule} matched=${matrix.matched}`,
   );
 
-  // ── 1. Bed + nursing day-by-day from admissionDate → today ──────────────────
-  if (rates.bedRate > 0 || rates.nursingRate > 0) {
+  // ── 1. Bed + nursing + other line items day-by-day from admissionDate → today ──
+  if (matrixTotal > 0) {
     const startDate = new Date(admission.admissionDate || admission.createdAt);
     if (!isNaN(startDate.getTime())) {
       const todayKey = getDateKey();
+      const admDateKey = getDateKey(startDate);
       // Anchor cursor at noon to dodge DST edges; we only care about the
       // calendar-day buckets in IST anyway.
       const cursor = new Date(startDate);
@@ -2251,51 +2564,35 @@ async function backfillAdmissionCharges(admission) {
         result.days++;
         const dayN = result.days;
 
-        if (rates.bedRate > 0) {
-          try {
-            const r = await createTrigger({
-              admissionId:         admission._id,
-              patientId:           admission.patientId,
-              UHID:                admission.UHID,
-              patientType:         tc,
-              serviceCode:         `BED${catTag}`,
-              serviceName:         `Bed Charge — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})`,
-              quantity:            1,
-              unitPriceOverride:   rates.bedRate,
-              sourceType:          "BedCharge",
-              sourceDocumentId:    admission._id,
-              sourceDocumentModel: "Admission",
-              orderedBy:           "System",
-              orderedByRole:       "System",
-              orderDetails:        `Backfill bed accrual — Day ${dayN} (${dateKey}) — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.bedRate}/day`,
-              autoCharge:          true,
-              dailyDedup:          true,
-              department:          admission.department,
-              overrideDateKey:     dateKey,
-              chargeDate:          new Date(cursor),
-            });
-            if (r?.skipped) result.skipped++;
-            else if (r?.trigger) result.bedFired++;
-          } catch (e) { result.errors++; console.error("[Backfill] bed:", e.message); }
-        }
+        // Half-day proration — for an open admission the discharge day
+        // is unknown, so only the admission-day half ever applies during
+        // backfill. The discharge-day half is added later by
+        // flushDailyChargesForAdmission when the admission closes.
+        const halfMult = halfDayMultiplier(matrix.chargingRule, {
+          isAdmissionDay: dateKey === admDateKey,
+          isDischargeDay: false,
+        });
+        const halfNote = halfMult === 0.5 ? " [½ admission day]" : "";
 
-        if (rates.nursingRate > 0) {
+        for (const [chargesKey, codePrefix, label, _category] of ROOM_CATEGORY_LINE_ITEMS) {
+          const rawRate = Number(matrix.charges?.[chargesKey] || 0);
+          if (!(rawRate > 0)) continue;
           try {
             const r = await createTrigger({
               admissionId:         admission._id,
               patientId:           admission.patientId,
               UHID:                admission.UHID,
               patientType:         tc,
-              serviceCode:         `NURSING${catTag}`,
-              serviceName:         `Nursing Care — ${rates.categoryName || rates.roomType || tc} (Day ${dayN})`,
+              serviceCode:         `${codePrefix}${catTag}`,
+              serviceName:         `${label} — ${matrix.categoryName || matrix.roomType || tc} (Day ${dayN})${halfNote}`,
               quantity:            1,
-              unitPriceOverride:   rates.nursingRate,
-              sourceType:          "BedCharge",
+              unitPriceOverride:   rawRate * halfMult,
+              sourceType:          "DailyRoomAccrual",
               sourceDocumentId:    admission._id,
               sourceDocumentModel: "Admission",
               orderedBy:           "System",
               orderedByRole:       "System",
-              orderDetails:        `Backfill nursing care — Day ${dayN} (${dateKey}) — ${rates.categoryName || rates.roomType || "category"} @ ₹${rates.nursingRate}/day`,
+              orderDetails:        `Backfill ${label.toLowerCase()} — Day ${dayN} (${dateKey}) — ${matrix.categoryName || matrix.roomType || "category"} @ ₹${rawRate}/day${halfNote}`,
               autoCharge:          true,
               dailyDedup:          true,
               department:          admission.department,
@@ -2303,8 +2600,18 @@ async function backfillAdmissionCharges(admission) {
               chargeDate:          new Date(cursor),
             });
             if (r?.skipped) result.skipped++;
-            else if (r?.trigger) result.nurseFired++;
-          } catch (e) { result.errors++; console.error("[Backfill] nursing:", e.message); }
+            else if (r?.trigger) {
+              if (chargesKey === "bedRent")        result.bedFired++;
+              else if (chargesKey === "nursingCharge") result.nurseFired++;
+              // Other line-item types fold into the consumable counter
+              // for the existing return shape (so callers see a stable
+              // total of accrued non-bed/non-nursing rows).
+              else result.consumableFired++;
+            }
+          } catch (e) {
+            result.errors++;
+            console.error(`[Backfill] ${chargesKey}:`, e.message);
+          }
         }
 
         cursor.setDate(cursor.getDate() + 1);
@@ -3028,6 +3335,161 @@ async function cancelTrigger(triggerId, { reason, user } = {}) {
 }
 
 /**
+ * B4-T08: Retry a stuck (pending-review) trigger.
+ *
+ * Called by /api/billing/triggers/:id/retry after the controller has flipped
+ * the trigger to status:"queued" + stamped retriedAt/retriedBy. We re-run
+ * the same accrual logic createTrigger ran on first fire: resolve the
+ * service, find-or-create the DRAFT bill, push the line via addItemToBill.
+ *
+ * Outcomes:
+ *   • Success → trigger.status = "applied", billId/billItemId stamped,
+ *     reviewReason cleared. Returns { status:"applied", billId, billItemId }.
+ *   • Failure → trigger.status flips back to "pending-review" with a fresh
+ *     reviewReason describing why this retry failed (closed bill, missing
+ *     service, etc.). Returns { status:"pending-review", reviewReason }.
+ *
+ * Never throws — every failure path lands on pending-review so the operator
+ * can see the new reason in the Stuck Triggers tile and decide whether to
+ * retry again, cancel, or escalate.
+ */
+async function retryTrigger(triggerId, user = {}) {
+  const trigger = await BillingTrigger.findById(triggerId);
+  if (!trigger) {
+    const err = new Error("Trigger not found");
+    err.status = 404;
+    err.code = "TRIGGER_NOT_FOUND";
+    throw err;
+  }
+  // The controller flips status:"queued" before calling us. Defend against
+  // a stale caller that hands us a trigger still in pending-review (or any
+  // unexpected state) — we only re-run the accrual when the controller has
+  // explicitly handed us a queued row.
+  if (trigger.status !== "queued") {
+    const err = new Error(`retryTrigger expected status:"queued", got "${trigger.status}"`);
+    err.code = "TRIGGER_NOT_QUEUED";
+    err.status = 409;
+    throw err;
+  }
+
+  // Retry path needs an admissionId — pending-review is documented (per
+  // BillingTrigger schema comments) as the IPD Live Ledger's Stuck-Triggers
+  // tile context. Without an admissionId we can't resolve a draft bill,
+  // so flip back to pending-review with a fresh reason.
+  const _flipBackToReview = async (newReason) => {
+    trigger.status       = "pending-review";
+    trigger.reviewReason = newReason;
+    trigger.reviewedAt   = new Date();
+    trigger.reviewedBy   = user?.fullName || user?.name || "System";
+    await trigger.save();
+    return { status: "pending-review", reviewReason: newReason };
+  };
+
+  if (!trigger.admissionId) {
+    return _flipBackToReview("Retry not supported: trigger has no admissionId");
+  }
+
+  // Resolve service: prefer the stored serviceId, fall back to code lookup.
+  let service = null;
+  if (trigger.serviceId) {
+    service = await ServiceMaster.findById(trigger.serviceId).lean();
+  }
+  if (!service && trigger.serviceCode) {
+    service = await findServiceByCode(trigger.serviceCode);
+  }
+  // Synthetic service fallback: createTrigger accepts a trigger whose
+  // ServiceMaster row hasn't been seeded yet, as long as the trigger has
+  // the code + name + unitPrice. Mirror that here so a retry doesn't
+  // regress on the seed-lag case.
+  if (!service) {
+    if (!trigger.serviceCode || !trigger.serviceName) {
+      return _flipBackToReview(
+        `Retry failed: ServiceMaster row missing for ${trigger.serviceCode || "(no code)"} and no fallback name/price on the trigger`,
+      );
+    }
+    service = {
+      _id: undefined,
+      serviceCode: trigger.serviceCode,
+      serviceName: trigger.serviceName,
+      category: "Service",
+      billingType: "PER_DAY",
+      defaultPrice: toNum(trigger.unitPrice ?? 0),
+    };
+  }
+
+  // Get-or-create the DRAFT bill. If the admission has been finalised
+  // (PAID/CANCELLED/REFUNDED) the addItemToBill guard below will catch it
+  // and return null — _flipBackToReview captures the specific reason.
+  const bill = await getOrCreateBill(trigger.admissionId, trigger.patientType || "IPD");
+  if (!bill) {
+    return _flipBackToReview(
+      `Retry failed: getOrCreateBill returned null for admission=${trigger.admissionId} patientType=${trigger.patientType || "IPD"}`,
+    );
+  }
+
+  // Re-derive addedBySource from the original sourceType — same mapping
+  // createTrigger uses on first fire so the bill-item attribution matches.
+  const _addedBySource =
+    trigger.sourceType === "DoctorNote"         ? "Doctor" :
+    trigger.sourceType === "NurseNote"          ? "Nurse"  :
+    trigger.sourceType === "MAR"                ? "Nurse"  :
+    trigger.sourceType === "Equipment"          ? "Nurse"  :
+    trigger.sourceType === "InvestigationOrder" ? "Lab"    :
+    "Auto";
+
+  const result = await addItemToBill(
+    bill,
+    service,
+    trigger.quantity || 1,
+    {
+      addedBySource: _addedBySource,
+      addedBy:       trigger.completedBy || trigger.orderedBy || user?.fullName || "System",
+      addedByRole:   trigger.completedByRole || trigger.orderedByRole || "System",
+      remarks:       `[Retry] ${trigger.sourceType} — ${trigger.orderDetails || trigger.serviceName || trigger.serviceCode}`,
+      sourceType:    trigger.sourceType,
+      // Re-use the trigger's unitPrice as the override so a retry doesn't
+      // re-price off the live tariff and surprise the patient with a
+      // different number than the original fire showed.
+      unitPriceOverride: toNum(trigger.unitPrice ?? 0) > 0 ? toNum(trigger.unitPrice) : undefined,
+    },
+    trigger,
+  );
+
+  if (result) {
+    trigger.status       = "applied";
+    trigger.billId       = result.bill._id;
+    trigger.billItemId   = result.itemId;
+    trigger.billedAt     = new Date();
+    trigger.billedBy     = user?.fullName || user?.name || trigger.completedBy || trigger.orderedBy || "System";
+    trigger.unitPrice    = result.unitPrice;
+    trigger.totalAmount  = result.totalAmt;
+    // Clear the stuck-trigger metadata now that we've recovered. retriedAt /
+    // retriedBy stay on the doc so the audit trail can still tie the retry
+    // back to a person — only the failure-side reviewReason is wiped.
+    trigger.reviewReason = undefined;
+    await trigger.save();
+    return {
+      status:     "applied",
+      billId:     result.bill._id,
+      billItemId: result.itemId,
+    };
+  }
+
+  // addItemToBill returned null. Most likely a closed/frozen bill —
+  // the inner guard may already have flipped the trigger to "skipped"
+  // (PAID/CANCELLED/REFUNDED) as a legitimate business outcome. Re-read
+  // the trigger to see if that happened; if it did, surface the skip
+  // reason instead of clobbering it with a fresh pending-review row.
+  const fresh = await BillingTrigger.findById(triggerId).lean();
+  if (fresh?.status === "skipped") {
+    return { status: "skipped", reviewReason: fresh.skipReason || "Bill closed — no new charges accepted" };
+  }
+  return _flipBackToReview(
+    `Retry failed: addItemToBill returned null for ${trigger.serviceCode} on bill ${bill._id} (status=${bill.billStatus})`,
+  );
+}
+
+/**
  * Add a manual charge to a patient's bill ledger.
  *
  * Used by the "Add Charge" button on the IPD Live Billing page — lets any
@@ -3163,14 +3625,26 @@ async function getIPDLedger(admissionId, user = {}) {
 
   // Category-grouped — for the "Category" tab on the UI. Sums totals so
   // the section header can show "Bed Charges — ₹4,500 (3 lines)".
+  // R7gg — Cap the per-category `items` array at 200 rows so a polluted
+  // category (we hit 36k EQUIP rows on Badal) can't ship a 16 MB payload
+  // that freezes the renderer. count + total stay accurate (computed
+  // from ALL active triggers); only the items list is truncated, with
+  // a sentinel `truncated:true` and `truncatedAt:N` for the UI to show
+  // a "showing first 200 of N" hint when needed.
+  const ITEMS_PER_CATEGORY_CAP = 200;
   const byCategory = {};
   for (const t of decorated) {
     if (t.status === "voided" || t.status === "cancelled" || t.status === "skipped") continue;
     const cat = t.serviceCode?.split("-")[0] || "OTHER";
-    if (!byCategory[cat]) byCategory[cat] = { category: cat, count: 0, total: 0, items: [] };
+    if (!byCategory[cat]) byCategory[cat] = { category: cat, count: 0, total: 0, items: [], truncated: false, truncatedAt: 0 };
     byCategory[cat].count += 1;
     byCategory[cat].total += Number(t.totalAmount || 0);
-    byCategory[cat].items.push(t);
+    if (byCategory[cat].items.length < ITEMS_PER_CATEGORY_CAP) {
+      byCategory[cat].items.push(t);
+    } else if (!byCategory[cat].truncated) {
+      byCategory[cat].truncated = true;
+      byCategory[cat].truncatedAt = ITEMS_PER_CATEGORY_CAP;
+    }
   }
 
   // Day-grouped — for the "Daily breakdown" tab. Uses dateKey (YYYY-MM-DD,
@@ -3198,7 +3672,7 @@ async function getIPDLedger(admissionId, user = {}) {
   // earliest live bill wins when picking the primary action target —
   // newer DRAFTs (created mid-stay after a previous one settled) take
   // precedence over PAID/CANCELLED.
-  const { toNum } = require("../../utils/money");
+  const { toNum, decimalToNumber } = require("../../utils/money");
   const allBills = await PatientBill.find({ admission: admissionId })
     .sort({ createdAt: 1 })
     .lean();
@@ -3234,7 +3708,6 @@ async function getIPDLedger(admissionId, user = {}) {
   let advanceBalance = 0;
   try {
     const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
-    const { toNum } = require("../../utils/money");
     const advances = await PatientAdvance.find({
       UHID: admission.UHID,
       status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
@@ -3253,6 +3726,17 @@ async function getIPDLedger(admissionId, user = {}) {
   const triggerLiveTotal = decorated
     .filter(t => !["voided", "cancelled", "skipped"].includes(t.status))
     .reduce((s, t) => s + toNum(t.totalAmount), 0);
+
+  // R7ey-F18 — Architectural fix. .lean() bypasses each schema's toJSON
+  // decimalToNumber transform, so the wire shipped raw Decimal128 EJSON
+  // ({$numberDecimal:"500"}) for every money field on admission / bills /
+  // triggers. Frontend consumers had to compensate per-field with toMoney
+  // calls — they missed sites (R7ex / F1 / F16 / F17), so amounts rendered
+  // as ₹0 or NaN. Unwrap ONCE here: walks recursively over every nested
+  // money field. Closes the class at the source.
+  decimalToNumber(null, admission);
+  allBills.forEach(b => decimalToNumber(null, b));   // also covers `bill` (same refs)
+  decorated.forEach(t => decimalToNumber(null, t));  // also covers byCategory/byDay items (same refs)
 
   return {
     admission,
@@ -3312,6 +3796,8 @@ module.exports = {
   undoTrigger,
   overrideTrigger,
   cancelTrigger,
+  // B4-T08: Stuck-trigger re-fire (POST /api/billing/triggers/:id/retry)
+  retryTrigger,
   getIPDLedger,
   addManualCharge,
   // Pharmacy indent release → reservation billing hook

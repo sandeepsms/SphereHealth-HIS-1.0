@@ -363,6 +363,76 @@ function BrandingTab({ form, upd, updRaw }) {
         </Row>
       </Section>
 
+      {/* R7ft — Patient-file print theme picker. The IPD "Complete File"
+          print button delegates to 1-of-5 themes (Narrative / Timeline /
+          Executive / Audit / Editorial) based on this setting. Admin
+          previews each in the Print Gallery before committing. */}
+      <Section title="Patient-file print theme" icon="pi-file" color="purple">
+        <Row label="Theme (applies to Complete IPD File printout)">
+          <div className="hcw-themecards">
+            {[
+              { key: "narrative",  name: "Narrative Letter",       blurb: "Apollo/Fortis discharge-letter prose. Reads like a referral letter; 5–6 pages.", brand: "Premium · referral-quality" },
+              { key: "timeline",   name: "Chronological Journal",  blurb: "Single vertical day-diary, every event date-stamped in order. ~5 pages.",        brand: "Legal / NABH inspector" },
+              { key: "executive",  name: "Executive Brief",        blurb: "Max/Tirath 2-col dense — side rail + prose. Compact 4–5 pages.",                  brand: "Corporate handover" },
+              { key: "audit",      name: "NABH Audit Table",       blurb: "Inspector tables only. Every field maps to a NABH chapter code. ~6 pages.",      brand: "Compliance-grade" },
+              { key: "editorial",  name: "Editorial Magazine",     blurb: "Glossy hero card + magazine-style 2-col prose with pull-quotes. 5–6 pages.",     brand: "Luxury / VIP wing" },
+            ].map((t) => {
+              const selected = (form.patientFilePrintTheme || "narrative") === t.key;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  className={`hcw-themecard ${selected ? "hcw-themecard--selected" : ""}`}
+                  onClick={upd("patientFilePrintTheme", t.key)}
+                  style={{
+                    textAlign: "left",
+                    border: selected ? "2px solid var(--hcw-pv-accent, #1d4ed8)" : "1.5px solid #e2e8f0",
+                    background: selected ? "#eff6ff" : "#fff",
+                    borderRadius: 10,
+                    padding: "12px 14px",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    width: "100%",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: "#0f172a" }}>{t.name}</div>
+                    {selected && (
+                      <span style={{
+                        fontSize: 9, fontWeight: 800, padding: "2px 8px", borderRadius: 999,
+                        background: "var(--hcw-pv-accent, #1d4ed8)", color: "#fff", letterSpacing: 0.5,
+                      }}>DEFAULT</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "#475569" }}>{t.blurb}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+                    <span style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.6 }}>
+                      {t.brand}
+                    </span>
+                    <a
+                      href={`/print/ipd-file-${t.key}?demo=1`}
+                      target={`_preview_${t.key}`}
+                      rel="noopener"
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        fontSize: 10.5, fontWeight: 700,
+                        color: "var(--hcw-pv-accent, #1d4ed8)",
+                        textDecoration: "none",
+                      }}
+                    >
+                      Preview ↗
+                    </a>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </Row>
+      </Section>
+
       <Section title="Live preview" icon="pi-eye" color="blue">
         <div className="hcw-preview" style={{ "--hcw-pv-bg": form.printHeaderColor || "#1e293b", "--hcw-pv-accent": form.printAccentColor || "#1d4ed8" }}>
           <div className="hcw-preview__head">

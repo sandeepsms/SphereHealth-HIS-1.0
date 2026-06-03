@@ -39,6 +39,11 @@ const Patient     = require("../../models/Patient/patientModel");
 const mongoose    = require("mongoose");
 const { assertDrugSafeOrOverride } = require("../../utils/allergyCheck");
 const scheduleXRegister = require("../../services/Pharmacy/scheduleXRegister");
+// B6-T05 — Pharmacy lifecycle ClinicalAudit emits (NABH AAC.7 + IMS.2).
+// Dispense / cancel / return / addItems / collectCredit each leave one
+// audit row so the NABH register can reconstruct "who dispensed what to
+// whom, and when" without scraping individual Sale docs.
+const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
 // R7cu — pulled to module scope so collectCredit() can convert payment
 // amounts to Decimal128 + retry on VersionError races (two cashiers
 // collecting on the same sale simultaneously).
@@ -829,6 +834,29 @@ exports.dispense = async (req, res) => {
       }
     }
 
+    // B6-T05 — ClinicalAudit emit (NABH AAC.7 + MOM.4). Walk-in sales
+    // emit too but with empty UHID/admissionId; HAM flag in metadata
+    // surfaces controlled-drug dispenses for the audit register filter.
+    try {
+      emitClinicalAudit({
+        req,
+        event: "PHARMACY_DISPENSED",
+        UHID: sale.patientUHID || "",
+        admissionId: sale.admissionId || null,
+        patientName: sale.patientName || "",
+        targetType: "PharmacySale",
+        targetId: sale._id,
+        after: {
+          billNumber: sale.billNumber,
+          saleType: sale.saleType,
+          totalAmount: Number(sale.grandTotal || 0),
+          itemCount: (sale.items || []).length,
+          paymentMode: sale.paymentMode,
+          hamPresent: (sale.items || []).some((i) => i.isHAM === true),
+        },
+      });
+    } catch (_) { /* silent — audit emit is non-blocking */ }
+
     // R7bf-H A6-HIGH-2: bust pharmacy revenue trend cache so the chart
     // doesn't lag the dashboard by up to 24h after a bulk sale.
     try {
@@ -1125,7 +1153,9 @@ exports.listIpdCreditAdmissions = async (req, res) => {
         admissionStatus: a.status || "Unknown",
         bedNumber:      a.bedId?.bedNumber || "—",
         wardName:       a.bedId?.wardName || a.wardName || a.department || "—",
-        consultant:     a.primaryConsultant || "",
+        // R7ey-F39: attendingDoctor is the canonical denormalized name;
+        // primaryConsultant was a phantom field that no save path populated.
+        consultant:     a.attendingDoctor || a.primaryConsultant || "",
         patientFullName: a.patientId?.fullName || r.patientName,
         patientAge:     a.patientId?.age || null,
         patientGender:  a.patientId?.gender || "",
@@ -1529,6 +1559,29 @@ exports.collectCredit = async (req, res) => {
       return sale.toObject();
     });
 
+    // B6-T05 — ClinicalAudit emit on credit collection so the patient's
+    // chronological audit trail reflects every money-flow against the
+    // pharmacy bill (NABH AAC.7 + IMS.2).
+    try {
+      emitClinicalAudit({
+        req,
+        event: "PHARMACY_CREDIT_COLLECTED",
+        UHID: updated.patientUHID || "",
+        admissionId: updated.admissionId || null,
+        patientName: updated.patientName || "",
+        targetType: "PharmacySale",
+        targetId: updated._id,
+        after: {
+          billNumber: updated.billNumber,
+          amount: amt,
+          mode,
+          txnRef,
+          balanceDueRemaining: Number(updated.balanceDue?.toString?.() ?? updated.balanceDue ?? 0),
+          fullyPaid: updated.balanceDue?.toString?.() === "0" || Number(updated.balanceDue || 0) === 0,
+        },
+      });
+    } catch (_) { /* silent — audit emit is non-blocking */ }
+
     res.json({
       success: true,
       message: updated.balanceDue.toString() === "0"
@@ -1709,6 +1762,30 @@ exports.returnItems = async (req, res) => {
 
     await sale.save();
 
+    // B6-T05 — ClinicalAudit emit on partial / full return (NABH MOM.4 +
+    // drug-control trail). Captures refund slip + amount + refund mode so
+    // a register query can reconstruct the reversal trail per UHID.
+    try {
+      emitClinicalAudit({
+        req,
+        event: "PHARMACY_RETURNED",
+        UHID: sale.patientUHID || "",
+        admissionId: sale.admissionId || null,
+        patientName: sale.patientName || "",
+        targetType: "PharmacySale",
+        targetId: sale._id,
+        reason: reason || "",
+        after: {
+          billNumber: sale.billNumber,
+          refundSlipNumber,
+          refundAmount: round2(refundAmount),
+          refundMode,
+          itemCount: refundedItems.length,
+          newStatus: sale.status,
+        },
+      });
+    } catch (_) { /* silent — audit emit is non-blocking */ }
+
     res.json({ success: true, data: { sale, returnRecord } });
   } catch (e) { sendErr(res, e); }
 };
@@ -1838,6 +1915,30 @@ exports.addItems = async (req, res) => {
       `Added ${addedItems.length} line(s) · slip ${supplementSlipNumber} · ${fmtINRSimple(addedTotal)} via ${paymentMode}`;
 
     await sale.save();
+
+    // B6-T05 — ClinicalAudit emit on supplementary invoice (NABH AAC.7).
+    // Surfaces post-bill drug additions so the register can flag
+    // dispensers who routinely "remember" items after closing the bill.
+    try {
+      emitClinicalAudit({
+        req,
+        event: "PHARMACY_ITEMS_ADDED",
+        UHID: sale.patientUHID || "",
+        admissionId: sale.admissionId || null,
+        patientName: sale.patientName || "",
+        targetType: "PharmacySale",
+        targetId: sale._id,
+        reason: reason || "",
+        after: {
+          billNumber: sale.billNumber,
+          supplementSlipNumber,
+          addedTotal: round2(addedTotal),
+          paymentMode,
+          itemCount: addedItems.length,
+          hamPresent: addedItems.some((i) => i.isHAM === true),
+        },
+      });
+    } catch (_) { /* silent — audit emit is non-blocking */ }
 
     res.status(201).json({ success: true, data: { sale, supplementRecord } });
     } catch (consumeErr) {
@@ -2010,6 +2111,31 @@ exports.cancelSale = async (req, res) => {
         }, { req });
       } catch (_) { /* best-effort */ }
     }
+
+    // B6-T05 — ClinicalAudit emit on sale cancellation (NABH IMS.2). The
+    // SOD-override flag below distinguishes legitimate cancels from
+    // dispenser self-cancels that bypassed SOD via an Admin role.
+    try {
+      emitClinicalAudit({
+        req,
+        event: "PHARMACY_SALE_CANCELLED",
+        UHID: s.patientUHID || "",
+        admissionId: s.admissionId || null,
+        patientName: s.patientName || "",
+        targetType: "PharmacySale",
+        targetId: s._id,
+        before: { status: "Completed" },
+        after: {
+          billNumber: s.billNumber,
+          status: "Cancelled",
+          totalAmount: Number(s.grandTotal || 0),
+          itemCount: (s.items || []).length,
+          cancelledAt: cancelStamp,
+          adminOverrideSelfCancel: isAdminOverride && cancellerId === dispenserId,
+          hamPresent: (s.items || []).some((i) => i.isHAM === true),
+        },
+      });
+    } catch (_) { /* silent — audit emit is non-blocking */ }
 
     res.json({ success: true, data: s });
   } catch (e) { sendErr(res, e); }

@@ -20,9 +20,9 @@ const ctrl = require("../../controllers/Print/printAuditController");
 router.post("/", requireAction("print.audit.write"), ctrl.recordPrint);
 
 // GET /api/print-audit/count?entityType=...&entityId=... — probe count
-router.get("/count", ctrl.getPrintCount);
+router.get("/count", requireAction("reports.audit"), ctrl.getPrintCount);
 
 // GET /api/print-audit?entityType=...&entityId=...&limit=50 — full list
-router.get("/", ctrl.listPrintAudit);
+router.get("/",      requireAction("reports.audit"), ctrl.listPrintAudit);
 
 module.exports = router;

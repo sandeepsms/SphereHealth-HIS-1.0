@@ -1,9 +1,15 @@
 const router   = require("express").Router();
 const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
+const User = require("../../models/User/userModel");
 // R7m: Apply role-based action gates to every write route. Reads stay
 // open (any authenticated clinician can view orders). Writes are
 // scoped to the appropriate role per Backend/config/permissions.js.
 const { requireAction, adminOnly } = require("../../middleware/auth");
+// B1-T08: doctor-order writes (create/bulk/restart/doctor-action) are
+// licensed clinical acts under NMC Regulations 2002 + NABH HRD.3 — block on
+// missing/expired NMC_REG. Mounted AFTER requireAction so the role gate
+// runs first.
+const { credentialExpiryBlocker } = require("../../middleware/credentialExpiryBlocker");
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 /* ─────────────────────────────────────────────────────
@@ -67,7 +73,7 @@ function dateAtMidnightOffset(base, nDays) {
 ═══════════════════════════════════════════════════ */
 
 // POST / — create single order (Doctor / Admin only)
-router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
+router.post("/", requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
   try {
     const body = req.body;
     // Auto-set HAM flags
@@ -193,6 +199,24 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
       }
     }
 
+    // R7gw-B3-T08 — defense-in-depth: high-risk Procedure orders auto-flag
+    // for the OT register even if the UI toggle (T06) is bypassed by a
+    // direct API caller or an older client. Major / Surgical procedures
+    // and GA / Sedation / Spinal anaesthesia always belong in the OT
+    // register per NABH COP.10. The downstream emitter at line ~272 keys
+    // off `order.orderDetails.requiresOT === true`, so we mutate the same
+    // path here before persistence.
+    if (body.orderType === "Procedure") {
+      const details = body.orderDetails || (body.orderDetails = {});
+      const highRiskTypes = new Set(["Major", "Surgical"]);
+      const highRiskAnaes = new Set(["GA", "Sedation", "Spinal"]);
+      const uiFlag = details.requiresOT === true || details.requiresOT === "Yes";
+      details.requiresOT =
+        uiFlag ||
+        highRiskTypes.has(details.procedureType) ||
+        highRiskAnaes.has(details.anaesthesia);
+    }
+
     const order = await DoctorOrder.create(body);
 
     // R7bn-3 / D1-fix: when the doctor orders a blood transfusion, auto-
@@ -210,7 +234,19 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
         const admission = order.admissionId
           ? await Admission.findById(order.admissionId).select("_id admissionNumber wardName ward").lean()
           : null;
-        emitBloodTransfusion({ order, patient: patient || {}, admission, actor: req.user || {} })
+        // R7du — DoctorOrderModel has no `preTransfusion` schema slot, so
+        // Mongoose strict-mode strips it on .create(). Build a plain-object
+        // shim that carries the persisted order's _id + identity fields plus
+        // the raw `preTransfusion` payload from the request body, so the
+        // NABH MOM.4 emitter (which reads `order.preTransfusion.{consentSigned,
+        // consentFormId, bp, pulse, temp, spo2}`) gets the consent + pre-tx
+        // vitals captured by the doctor at order entry. Adding the field at
+        // the DoctorOrder schema level is a separate, broader change.
+        const orderForEmit = order.toObject ? order.toObject() : { ...order };
+        if (body && body.preTransfusion && typeof body.preTransfusion === "object") {
+          orderForEmit.preTransfusion = body.preTransfusion;
+        }
+        emitBloodTransfusion({ order: orderForEmit, patient: patient || {}, admission, actor: req.user || {} })
           .catch((e) => console.error("[doctor-orders] emitBloodTransfusion error:", e?.message));
       } catch (e) {
         console.error("[doctor-orders] BloodTransfusion emit wiring failed:", e?.message);
@@ -266,6 +302,56 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
           .catch((e) => console.error("[doctor-orders] emitOT error:", e?.message));
       } catch (e) {
         console.error("[doctor-orders] OT emit wiring failed:", e?.message);
+      }
+    }
+
+    // R7en — Auto-populate NABH ECG register when an Investigation order
+    // names an ECG / EKG / Electrocardiogram. Creates a PendingReport row
+    // immediately so the surveyor sees the order in the register from the
+    // moment it's written; the nurse/tech files findings via the
+    // PATCH /api/ecg-register/:id/report endpoint once the strip is read.
+    // Non-blocking — never rolls back the primary doctor-order write.
+    if (order.orderType === "Investigation" || order.orderType === "Lab") {
+      try {
+        const details = order.orderDetails || {};
+        const name = String(
+          details.testName || details.displayName || details.investigationName || details.medicineName || ""
+        ).toLowerCase();
+        const isECG =
+          /\becg\b/.test(name) ||
+          /\bekg\b/.test(name) ||
+          name.includes("electrocardiogram") ||
+          name.includes("electro-cardiogram");
+        if (isECG) {
+          const { emitECG } = require("../../services/Compliance/nabhRegisterEmitter");
+          const Patient = require("../../models/Patient/patientModel");
+          const Admission = require("../../models/Patient/admissionModel");
+          const patient = order.patientId
+            ? await Patient.findById(order.patientId).select("_id UHID fullName name age gender sex").lean()
+            : null;
+          const admission = order.admissionId
+            ? await Admission.findById(order.admissionId).select("_id admissionNumber wardName ward").lean()
+            : null;
+          emitECG({
+            patient: patient || {},
+            admission,
+            ecg: {
+              orderedAt: order.orderedAt || order.createdAt || new Date(),
+              // performedAt defaults to orderedAt for PendingReport rows; the
+              // /report patch updates it with the actual performance time.
+              performedAt: order.orderedAt || order.createdAt || new Date(),
+              indication: details.indication || order.indication || order.notes || details.diagnosis || "",
+              indicationCategory: details.indicationCategory || "Other",
+              location: admission?.wardName || admission?.ward || "Ward",
+              leadType: details.leadType || "12-lead",
+              sourceType: "DoctorOrder",
+              doctorOrderId: order._id,
+            },
+            actor: req.user || {},
+          }).catch((e) => console.error("[doctor-orders] emitECG error:", e?.message));
+        }
+      } catch (e) {
+        console.error("[doctor-orders] ECG emit wiring failed:", e?.message);
       }
     }
 
@@ -363,7 +449,7 @@ router.post("/", requireAction("doctor-orders.write"), async (req, res) => {
 // when only 3 actually inserted, and the missing 2 quietly disappeared.
 // Now we report inserted + failed counts with reasons so the UI can flag
 // the bad rows.
-router.post("/bulk", requireAction("doctor-orders.write"), async (req, res) => {
+router.post("/bulk", requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
   try {
     const { orders } = req.body;
     if (!Array.isArray(orders) || !orders.length)
@@ -675,7 +761,7 @@ router.post("/:id/step", validateObjectIdParam("id"), requireAction("order.ackno
    Body: { restartedBy?: string }
    Returns: { ok: true, data: <new order>, parentId: <original> }
 ═══════════════════════════════════════════════════ */
-router.post("/:id/restart", validateObjectIdParam("id"), requireAction("doctor-orders.write"), async (req, res) => {
+router.post("/:id/restart", validateObjectIdParam("id"), requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
   try {
     const original = await DoctorOrder.findById(req.params.id);
     if (!original) return res.status(404).json({ ok: false, message: "Original order not found" });
@@ -768,6 +854,24 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
     // Validate HAM 2-nurse check
     if (order.twoNurseRequired && status === "given" && !verifiedBy)
       return res.status(422).json({ ok: false, message: "HAM order requires second nurse verification (verifiedBy)" });
+
+    // B1-T05: When a witness (verifiedBy) is supplied — for HAM, controlled
+    // substances, or voluntary co-sign — verify the actor is a real Nurse
+    // (ISMP two-nurse rule, NABH MOM.3) AND is not the same person doing
+    // the administration. Previously we only checked presence — any user id
+    // (or none) passed. Hardens against forged witness on HAM doses.
+    if (verifiedBy) {
+      const wUser = await User.findById(verifiedBy).select("role employeeId fullName").lean();
+      if (!wUser) {
+        return res.status(400).json({ success: false, code: "VERIFIER_NOT_FOUND", message: "verifiedBy user not found" });
+      }
+      if (wUser.role !== "Nurse") {
+        return res.status(400).json({ success: false, code: "VERIFIER_NOT_NURSE", message: "Witness must be a Nurse (ISMP)" });
+      }
+      if (String(wUser._id) === String(req.user.id)) {
+        return res.status(400).json({ success: false, code: "VERIFIER_SAME_USER", message: "Witness must be different from acting nurse" });
+      }
+    }
 
     // Validate 5 Rights for given status
     if (status === "given" && !fiveRightsChecked)
@@ -973,6 +1077,23 @@ router.post("/:id/infusion-rate", validateObjectIdParam("id"), requireAction("ma
     if (order.twoNurseRequired && !verifiedBy)
       return res.status(422).json({ ok: false, message: "HAM infusion rate change requires second nurse verification" });
 
+    // B1-T05: When a witness (verifiedBy) is supplied — for HAM infusion
+    // rate change — verify the actor is a real Nurse (ISMP two-nurse rule)
+    // AND is not the same person changing the rate. Previously we only
+    // checked presence — any user id (or none) passed.
+    if (verifiedBy) {
+      const wUser = await User.findById(verifiedBy).select("role employeeId fullName").lean();
+      if (!wUser) {
+        return res.status(400).json({ success: false, code: "VERIFIER_NOT_FOUND", message: "verifiedBy user not found" });
+      }
+      if (wUser.role !== "Nurse") {
+        return res.status(400).json({ success: false, code: "VERIFIER_NOT_NURSE", message: "Witness must be a Nurse (ISMP)" });
+      }
+      if (String(wUser._id) === String(req.user.id)) {
+        return res.status(400).json({ success: false, code: "VERIFIER_SAME_USER", message: "Witness must be different from acting nurse" });
+      }
+    }
+
     // R7bn-4 / D7-2-fix: doctorInformed defaults to true whenever a
     // doctorName is supplied AND the change is non-emergency. The audit
     // surfaced this flag as "exists but never set" — nurses adjusted
@@ -1054,7 +1175,7 @@ router.post("/:id/infusion-monitor", validateObjectIdParam("id"), requireAction(
  *   }
  * }
  */
-router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("order.stop"), async (req, res) => {
+router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("order.stop"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
   try {
     const { type, doneBy, reason, reasonDetail, holdUntil, orderDetails, substituteWith } = req.body;
     if (!type || !doneBy)

@@ -918,12 +918,45 @@ const _cancelRetentionReview = scheduleDaily("retention-review", 4, 0, async () 
   }
 });
 
+// R7gv / B4-T07 Part B — Boot-time self-test for retention models.
+// Pre-fix the daily retention-review cron silently no-op'd "DoctorNote"
+// every night (registered name is "DoctorNotes"). Surfacing the
+// missing-model failure at boot rather than 04:00 IST in a log file no
+// one reads turns a 5-year-old data-retention gap into a startup warn.
+(async () => {
+  try {
+    const svc = require("./services/MRD/retentionEnforcer");
+    const results = await svc.startupSelfTest();
+    const failures = results.filter((r) => !r.ok);
+    if (failures.length) {
+      for (const f of failures) {
+        console.warn(`[startup:retention-self-test] FAIL ${f.name}: ${f.reason}`);
+      }
+    } else {
+      console.log(`[startup:retention-self-test] OK — ${results.length} model(s) reachable`);
+    }
+  } catch (e) {
+    console.warn("[startup:retention-self-test] error:", e.message);
+  }
+})();
+
 // R7bj-F9 — visitor-pass expiry every 5 min (moves expensive updateMany off
 // the visitorPassController hot path). Stale passes auto-flip Active → Expired
 // with autoExpiredAt stamp. setInterval (not IST-anchored cron) — cadence-based.
 const _cancelVisitorPassExpiry = (() => {
   const { expireStalePasses } = require("./services/Compliance/visitorPassExpiryCron");
-  const interval = setInterval(() => { expireStalePasses().catch(() => {}); }, 5 * 60 * 1000);
+  const interval = setInterval(async () => {
+    const start = Date.now();
+    try {
+      const result = await expireStalePasses();
+      // emitBillingAudit('CRON_RECONCILED', { kind: 'VISITOR_PASS_EXPIRY', expired: result?.expired || 0, durationMs: Date.now() - start });
+      // wire after B4-T06 centralizes heartbeat in cronScheduler. For now, console.info.
+      console.info(`[cron:visitor-pass-expiry] tick OK — expired=${result?.expired||0} dur=${Date.now()-start}ms`);
+    } catch (e) {
+      console.error('[cron:visitor-pass-expiry] error:', e.stack || e.message);
+      // TODO B4-T05 retry: recordCronFailure('visitor-pass-expiry', e);
+    }
+  }, 5 * 60 * 1000);
   if (typeof interval.unref === "function") interval.unref();
   console.log("[cron:visitor-pass-expiry] armed — every 5 min");
   return () => clearInterval(interval);
@@ -981,7 +1014,22 @@ const _cancelAssessmentComplianceSweeper = (() => {
   // One-shot boot run (60s after start so mongoose connection is up) +
   // recurring 15-min cron.
   setTimeout(() => { tick(); }, 60 * 1000);
-  const interval = setInterval(tick, 15 * 60 * 1000);
+  const interval = setInterval(async () => {
+    const start = Date.now();
+    try {
+      const { acquireLock, releaseLock } = require('./utils/distributedLock');
+      const acquired = await acquireLock('cron:assessment-compliance', 14 * 60);
+      if (!acquired) return; // another replica
+      try {
+        await tick();
+        console.info(`[cron:assessment-compliance] tick OK — dur=${Date.now()-start}ms`);
+      } finally {
+        await releaseLock('cron:assessment-compliance');
+      }
+    } catch (e) {
+      console.error('[cron:assessment-compliance] error:', e.stack || e.message);
+    }
+  }, 15 * 60 * 1000);
   if (typeof interval.unref === "function") interval.unref();
   console.log("[cron:assessment-compliance] armed — boot+60s, then every 15 min");
   return () => clearInterval(interval);

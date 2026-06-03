@@ -240,6 +240,10 @@ const requireAction = (action) => (req, res, next) => {
    on endpoints that want to APPLY role-based filtering when a doctor is
    logged in, but still serve broader data to reception/admin. */
 const attemptAuth = (req, _res, next) => {
+  // R7gw-B1-T06 — once global authenticate has populated req.user with DB-fresh
+  // phone / fullName / mustChangePassword / wards, attemptAuth must NOT clobber.
+  // OPDRoutes.js removed attemptAuth entirely for this reason (R7bb-B/D4-CRIT-S1).
+  if (req.user) return next();
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) return next();
   try {
@@ -247,6 +251,30 @@ const attemptAuth = (req, _res, next) => {
     req.user = { ..._decoded, _id: _decoded.id };  // R7ar-P0-1: expose both id + _id
   } catch (e) { /* ignore — leave req.user undefined */ }
   next();
+};
+
+/* ── R7gw-B1-T07: requirePasswordRotated ──
+   authenticate() above stashes req.user.mustChangePassword from a fresh DB
+   read (line ~113 / ~159) for defense-in-depth, but until now no callsite
+   actually enforced it. A user whose admin reset their password could bypass
+   the frontend "change password" modal via devtools / a raw axios call and
+   continue writing.
+   This gate sits right after the global authenticate mount and rejects any
+   mutating verb (POST/PUT/PATCH/DELETE) from a user with mustChangePassword
+   still true. GETs stay open so the app shell can boot. The change-password
+   endpoint itself is allow-listed so the user has a way OUT of the lockout. */
+const WRITE_METHODS_FOR_PWD = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const requirePasswordRotated = (req, res, next) => {
+  if (!req.user) return next(); // attemptAuth-style routes
+  if (!req.user.mustChangePassword) return next();
+  if (!WRITE_METHODS_FOR_PWD.has(req.method)) return next();
+  // Allow the password-change endpoint itself
+  if (req.path.startsWith('/auth/change-password') || req.path.startsWith('/auth/password')) return next();
+  return res.status(403).json({
+    success: false,
+    code: 'PASSWORD_RESET_REQUIRED',
+    message: 'Password rotation pending. Change your password before performing writes.',
+  });
 };
 
 /* ── Resolve the doctor profile for the logged-in user ──
@@ -427,73 +455,292 @@ const blockNonClinicalForDoctorNurse = (req, res, next) => {
    Failures: 409 with code `PATIENT_DISCHARGED`.
    Soft-fail: if no admission can be located the middleware NOOPs (the
    controller's own validation handles missing-link errors). */
+// ── R7gw-B2: Resolver helpers for discharge-write gate ──────────────────
+// Each rule below carries an optional async resolveAdmissionId(req) that
+// returns the admission _id this request mutates. Pre-B2 the runner only
+// inspected body.admissionId / params.admissionId / params.id — which broke
+// for sub-resource endpoints whose params.id is actually the MAR / order /
+// care-plan document id, not the admission id. The lookup silently failed
+// and discharged patients were writable through those surfaces.
+//
+// Resolvers may be sync or async. They must return either a 24-char hex
+// ObjectId string (admission), an ObjectId-like value with toString(), or
+// null when no admission can be identified — in which case the runner soft-
+// fails (NOOP) unless the rule sets enforceStrict:true (then we reject).
+const defaultResolver = (req) =>
+  req.body?.admissionId || req.params?.admissionId || null;
+
+const admissionParamResolver = (req) => req.params?.id || null;
+
+// Pull the resource id out of req.path directly — the global mount of this
+// middleware sits ABOVE the feature routers, so req.params is still empty
+// when we run. req.path is the post-/api path (e.g. "/mar/<id>/medication/…").
+const marUrlResolver = async (req) => {
+  const m = req.path.match(/^\/mar\/([^/]+)\/medication/);
+  if (!m) return null;
+  try {
+    const MAR = require("../models/Clinical/MARModel");
+    const doc = await MAR.findById(m[1]).select("admissionId").lean();
+    return doc?.admissionId || null;
+  } catch (e) {
+    console.warn("[discharge-gate] marUrlResolver failed:", e.message);
+    return null;
+  }
+};
+
+const docOrderByIdResolver = async (req) => {
+  const m = req.path.match(/^\/doctor-orders\/([^/]+)\//);
+  if (!m) return req.body?.admissionId || null;
+  try {
+    const DoctorOrder = require("../models/Doctor/DoctorOrderModel");
+    const doc = await DoctorOrder.findById(m[1]).select("admissionId").lean();
+    return doc?.admissionId || req.body?.admissionId || null;
+  } catch (e) {
+    console.warn("[discharge-gate] docOrderByIdResolver failed:", e.message);
+    return req.body?.admissionId || null;
+  }
+};
+
+const prescriptionByIdResolver = async (req) => {
+  const m = req.path.match(/^\/prescriptions\/([^/]+)/);
+  if (!m) return req.body?.admissionId || null;
+  try {
+    const Prescription = require("../models/Doctor/prescription");
+    const doc = await Prescription.findById(m[1]).select("admissionId").lean();
+    return doc?.admissionId || req.body?.admissionId || null;
+  } catch (e) {
+    console.warn("[discharge-gate] prescriptionByIdResolver failed:", e.message);
+    return req.body?.admissionId || null;
+  }
+};
+
+const carePlanByIdResolver = async (req) => {
+  const m = req.path.match(/^\/nursing-care-plans\/([^/]+)/);
+  if (!m) return req.body?.admissionId || null;
+  try {
+    const NursingCarePlan = require("../models/Nurse/NursingCarePlanModel");
+    const doc = await NursingCarePlan.findById(m[1]).select("admissionId").lean();
+    return doc?.admissionId || req.body?.admissionId || null;
+  } catch (e) {
+    console.warn("[discharge-gate] carePlanByIdResolver failed:", e.message);
+    return req.body?.admissionId || null;
+  }
+};
+
+const icuBundleByIdResolver = async (req) => {
+  const m = req.path.match(/^\/icu-bundles\/([^/]+)/);
+  if (!m) return req.body?.admissionId || null;
+  try {
+    const ICUBundle = require("../models/Clinical/ICUBundleModel");
+    const doc = await ICUBundle.findById(m[1]).select("admissionId").lean();
+    return doc?.admissionId || req.body?.admissionId || null;
+  } catch (e) {
+    console.warn("[discharge-gate] icuBundleByIdResolver failed:", e.message);
+    return req.body?.admissionId || null;
+  }
+};
+
+// Pharmacy IPD sales only — saleType !== 'IPD' rows (OPD walk-in, vendor
+// returns) bypass via the rule.condition predicate.
+const pharmacyIpdResolver = (req) => req.body?.admissionId || null;
+
+// B3-T09 / PART B — UHID-path resolver. Real frontend prescription &
+// nursing-assessment writes hit /prescriptions/uhid/:uhid (and similar)
+// rather than the bare /prescriptions form. Pre-T09 the rule used
+// defaultResolver which never inspected the URL, so the discharge-write
+// gate silently let writes through even when the targeted patient was
+// discharged. This resolver extracts the UHID from the path and looks
+// up the latest Active/Discharged admission, then hands the admission _id
+// to the gate runner. Falls back to body.admissionId when no UHID path
+// segment is present.
+const uhidPathResolver = async (req) => {
+  const m = req.path.match(/\/uhid\/([^/?]+)/);
+  if (!m) return req.body?.admissionId || null;
+  try {
+    const Admission = require("../models/Patient/admissionModel");
+    const adm = await Admission.findOne({
+      UHID: m[1],
+      status: { $in: ["Active", "Discharged"] },
+    })
+      .sort({ admissionDate: -1 })
+      .select("_id status")
+      .lean();
+    return adm?._id || null;
+  } catch (e) {
+    console.warn("[discharge-gate] uhidPathResolver failed:", e.message);
+    return null;
+  }
+};
+
 const ENFORCE_DISCHARGE_WRITE_RULES = [
-  { method: "POST",   regex: /\/doctor-notes(\/|$|\?)/ },
-  { method: "PUT",    regex: /\/doctor-notes\/[^/]+(\/|$|\?)/ },
-  { method: "PATCH",  regex: /\/doctor-notes\/[^/]+\/[^/]+(\/|$|\?)/ },
-  { method: "POST",   regex: /\/nurse-notes(\/|$|\?)/ },
-  { method: "PUT",    regex: /\/nurse-notes\/[^/]+(\/|$|\?)/ },
-  { method: "PATCH",  regex: /\/nurse-notes\/[^/]+\/[^/]+(\/|$|\?)/ },
-  { method: "POST",   regex: /\/nursing-notes(\/|$|\?)/ },
-  { method: "POST",   regex: /\/mar(\/|$|\?)/ },
-  { method: "PUT",    regex: /\/mar\/[^/]+(\/|$|\?)/ },
-  { method: "PATCH",  regex: /\/mar\/[^/]+\/[^/]+(\/|$|\?)/ },
-  { method: "POST",   regex: /\/vitalsheet(\/|$|\?)/ },
-  { method: "PUT",    regex: /\/vitalsheet\/[^/]+(\/|$|\?)/ },
-  { method: "POST",   regex: /\/consent-forms(\/|$|\?)/ },
-  { method: "PUT",    regex: /\/consent-forms\/[^/]+(\/|$|\?)/ },
-  { method: "POST",   regex: /\/discharge-summary(\/|$|\?)/ },
-  { method: "PUT",    regex: /\/discharge-summary\/[^/]+(\/|$|\?)/ },
+  // ── R7az-A original surfaces ────────────────────────────────────────
+  { method: "POST",   regex: /\/doctor-notes(\/|$|\?)/,                        resolveAdmissionId: defaultResolver },
+  { method: "PUT",    regex: /\/doctor-notes\/[^/]+(\/|$|\?)/,                 resolveAdmissionId: defaultResolver },
+  { method: "PATCH",  regex: /\/doctor-notes\/[^/]+\/[^/]+(\/|$|\?)/,          resolveAdmissionId: defaultResolver },
+  { method: "POST",   regex: /\/nurse-notes(\/|$|\?)/,                         resolveAdmissionId: defaultResolver },
+  { method: "PUT",    regex: /\/nurse-notes\/[^/]+(\/|$|\?)/,                  resolveAdmissionId: defaultResolver },
+  { method: "PATCH",  regex: /\/nurse-notes\/[^/]+\/[^/]+(\/|$|\?)/,           resolveAdmissionId: defaultResolver },
+  { method: "POST",   regex: /\/nursing-notes(\/|$|\?)/,                       resolveAdmissionId: defaultResolver },
+  { method: "POST",   regex: /\/mar(\/|$|\?)/,                                 resolveAdmissionId: defaultResolver },
+  { method: "PUT",    regex: /\/mar\/[^/]+(\/|$|\?)/,                          resolveAdmissionId: defaultResolver },
+  { method: "PATCH",  regex: /\/mar\/[^/]+\/[^/]+(\/|$|\?)/,                   resolveAdmissionId: defaultResolver },
+  { method: "POST",   regex: /\/vitalsheet(\/|$|\?)/,                          resolveAdmissionId: defaultResolver },
+  { method: "PUT",    regex: /\/vitalsheet\/[^/]+(\/|$|\?)/,                   resolveAdmissionId: defaultResolver },
+  { method: "POST",   regex: /\/consent-forms(\/|$|\?)/,                       resolveAdmissionId: defaultResolver },
+  { method: "PUT",    regex: /\/consent-forms\/[^/]+(\/|$|\?)/,                resolveAdmissionId: defaultResolver },
+  { method: "POST",   regex: /\/discharge-summary(\/|$|\?)/,                   resolveAdmissionId: defaultResolver },
+  { method: "PUT",    regex: /\/discharge-summary\/[^/]+(\/|$|\?)/,            resolveAdmissionId: defaultResolver },
+
+  // ── R7gw-B2 new surfaces (10 endpoint families) ─────────────────────
+  // Doctor orders — base creates carry admissionId in body; sub-resource
+  // verbs (administer / infusion-* / restart / doctor-action) carry only
+  // the order id in the URL, so we have to resolve via DoctorOrder doc.
+  { method: "POST",   regex: /\/doctor-orders(\/|$|\?)/,                       resolveAdmissionId: defaultResolver },
+  { method: "POST",   regex: /\/doctor-orders\/bulk(\/|$|\?)/,                 resolveAdmissionId: defaultResolver },
+  { method: "PATCH",  regex: /\/doctor-orders\/[^/]+\/(administer|infusion-rate|infusion-monitor|restart|doctor-action)(\/|$|\?)/, resolveAdmissionId: docOrderByIdResolver },
+  { method: "POST",   regex: /\/doctor-orders\/[^/]+\/(administer|infusion-rate|infusion-monitor|restart|doctor-action|bulk)(\/|$|\?)/, resolveAdmissionId: docOrderByIdResolver },
+
+  // Prescriptions — POST hits /prescriptions/uhid/:uhid (frontend shape);
+  // regex covers both the bare /prescriptions form and the uhid sub-path
+  // so the rule fires regardless of caller. Resolver pulls UHID from path
+  // first, falling back to body.admissionId. PATCH on existing rx uses
+  // url param and we have to resolve via Prescription doc.
+  { method: "POST",   regex: /\/prescriptions(\/uhid\/[^/?]+)?(\/|$|\?)/,      resolveAdmissionId: uhidPathResolver },
+  { method: "PATCH",  regex: /\/prescriptions\/[^/]+(\/|$|\?)/,                resolveAdmissionId: prescriptionByIdResolver },
+
+  // Nursing care plan — POST carries admissionId in body; PUT/PATCH on
+  // an existing plan only has the plan id in URL, resolve via doc.
+  { method: "POST",   regex: /\/nursing-care-plans(\/|$|\?)/,                  resolveAdmissionId: defaultResolver },
+  { method: "PUT",    regex: /\/nursing-care-plans\/[^/]+(\/|$|\?)/,           resolveAdmissionId: carePlanByIdResolver },
+  { method: "PATCH",  regex: /\/nursing-care-plans\/[^/]+\/(problem\/[^/]+\/status|complete)(\/|$|\?)/, resolveAdmissionId: carePlanByIdResolver },
+
+  // Nursing assessment / intake-output — POST /nursing-assessments/:type
+  // (NOT :admissionId — the URL param is the assessment type slug:
+  // "daily" | "fall-risk" | "pressure-area" | "pain" | "nutrition" |
+  // "education" | "dvt"). admissionId lives in req.body; B3-T09 PART A
+  // now also rejects 400 NURSING_ASSESSMENT_MISSING_PATIENT_CONTEXT at
+  // the route level if it's missing.
+  { method: "POST",   regex: /\/nursing-assessments\/[^/]+(\/|$|\?)/,          resolveAdmissionId: defaultResolver },
+  { method: "POST",   regex: /\/intake-output(\/|$|\?)/,                       resolveAdmissionId: defaultResolver },
+
+  // ICU bundles — POST has body.admissionId; finalize uses bundle id in URL.
+  { method: "POST",   regex: /\/icu-bundles(\/|$|\?)/,                         resolveAdmissionId: defaultResolver },
+  { method: "POST",   regex: /\/icu-bundles\/[^/]+\/finalize(\/|$|\?)/,        resolveAdmissionId: icuBundleByIdResolver },
+
+  // Admission-scoped assessments (consultation, nurse-assessment, initial-
+  // assessment) — the URL itself carries the admission id at :id.
+  { method: "POST",   regex: /\/admissions\/[^/]+\/(consultation|nurse-assessment|initial-assessment)(\/|$|\?)/, resolveAdmissionId: admissionParamResolver },
+  { method: "PUT",    regex: /\/admissions\/[^/]+\/(consultation|nurse-assessment|initial-assessment)(\/|$|\?)/, resolveAdmissionId: admissionParamResolver },
+
+  // Bed transfers — body.admissionId.
+  { method: "POST",   regex: /\/bed-transfers(\/|$|\?)/,                       resolveAdmissionId: defaultResolver },
+
+  // Pharmacy sales — only when saleType=IPD (OPD walk-in sales legitimately
+  // happen without an admission). enforceStrict:true so a malformed IPD
+  // request without admissionId is REJECTED rather than waved through.
+  { method: "POST",   regex: /\/pharmacy\/sales(\/|$|\?)/,                     resolveAdmissionId: pharmacyIpdResolver,
+    condition: (req) => req.body?.saleType === "IPD", enforceStrict: true },
+
+  // MAR per-medication administer/discontinue — URL is /mar/:marId/medication/:medId/<verb>,
+  // resolve via MAR document. enforceStrict so an unresolved MAR fails closed
+  // (these are pure clinical-time-stamped writes; a discharged admission
+  // must never receive an "administered" record).
+  { method: "PATCH",  regex: /\/mar\/[^/]+\/medication\/[^/]+\/(administer|discontinue)(\/|$|\?)/, resolveAdmissionId: marUrlResolver, enforceStrict: true },
 ];
 const enforceActivePatientForClinicalWrites = async (req, res, next) => {
   try {
     if (!WRITE_METHODS.has(req.method)) return next();
     const url = req.originalUrl.split("?")[0];
-    const matched = ENFORCE_DISCHARGE_WRITE_RULES.some(
+    // Find the FIRST matching rule (rule order matters — keep the more
+    // specific sub-resource rules above the catch-all base regexes).
+    const rule = ENFORCE_DISCHARGE_WRITE_RULES.find(
       (r) => r.method === req.method && r.regex.test(url),
     );
-    if (!matched) return next();
+    if (!rule) return next();
+    // Optional gate — e.g. pharmacy sales rule only applies when
+    // body.saleType === 'IPD'. condition returning false = bypass.
+    if (typeof rule.condition === "function") {
+      try { if (!rule.condition(req)) return next(); }
+      catch (e) {
+        console.warn("[discharge-gate] rule.condition threw:", e.message);
+        return next();
+      }
+    }
     // Late-entry escape hatch — controller must still record the addendum
     // explicitly. Per spec, an "ADDENDUM" action with X-Late-Entry: true.
     if (String(req.headers["x-late-entry"] || "").toLowerCase() === "true") {
       return next();
     }
 
-    const body = req.body || {};
-    const params = req.params || {};
     const Admission = require("../models/Patient/admissionModel");
 
-    let admission = null;
-    const admId = body.admissionId || params.admissionId || params.id;
-    const ipdNo = body.ipdNo || params.ipdNo;
-    const uhid  = body.UHID || body.uhid || params.uhid;
+    // Resolve the admission id via the rule's helper (sync or async).
+    let admissionId = null;
+    try {
+      const r = rule.resolveAdmissionId
+        ? await rule.resolveAdmissionId(req)
+        : (req.body?.admissionId || req.params?.admissionId || req.params?.id || null);
+      admissionId = r ? String(r) : null;
+    } catch (e) {
+      console.warn("[discharge-gate] resolver threw:", e.message);
+      admissionId = null;
+    }
 
-    // Prefer the most specific identifier the request actually carries.
-    if (admId && typeof admId === "string" && /^[a-f0-9]{24}$/i.test(admId)) {
-      admission = await Admission.findById(admId).select("status").lean();
+    let admission = null;
+    if (admissionId && /^[a-f0-9]{24}$/i.test(admissionId)) {
+      admission = await Admission.findById(admissionId).select("status").lean();
     }
-    if (!admission && ipdNo) {
-      admission = await Admission.findOne({ admissionNumber: ipdNo })
-        .select("status").lean();
+
+    // Fallbacks for legacy callers that pass ipdNo or UHID instead of an
+    // admission _id (keeps the original D9-HIGH-10 behaviour intact for
+    // doctor-notes / nurse-notes / etc.).
+    if (!admission) {
+      const body = req.body || {};
+      const params = req.params || {};
+      const ipdNo = body.ipdNo || params.ipdNo;
+      const uhid  = body.UHID || body.uhid || params.uhid;
+      if (ipdNo) {
+        admission = await Admission.findOne({ admissionNumber: ipdNo })
+          .select("status").lean();
+      }
+      if (!admission && uhid) {
+        admission = await Admission.findOne({ UHID: String(uhid).toUpperCase() })
+          .sort({ admissionDate: -1 })
+          .select("status").lean();
+      }
     }
-    if (!admission && uhid) {
-      // Fall back to the most recent admission on this UHID — if it's
-      // discharged we still block (per design, late edits on the last
-      // admission are exactly the case D9-HIGH-10 was raised for).
-      admission = await Admission.findOne({ UHID: String(uhid).toUpperCase() })
-        .sort({ admissionDate: -1 })
-        .select("status").lean();
+
+    // Soft-fail when nothing matched — UNLESS the rule is marked
+    // enforceStrict (MAR administer + IPD pharmacy sales): those are
+    // pure clinical/financial writes; an unresolvable admission means
+    // the controller would have no audit anchor either.
+    if (!admission) {
+      if (rule.enforceStrict) {
+        console.warn(
+          "[discharge-gate] strict rule could not resolve admission for",
+          req.method, url,
+        );
+        return res.status(409).json({
+          success: false,
+          code: "ADMISSION_UNRESOLVED",
+          message:
+            "Could not identify the admission this write targets. " +
+            "Strict clinical surfaces (MAR administer, IPD pharmacy sale) " +
+            "require a resolvable admissionId.",
+        });
+      }
+      return next();
     }
-    // Soft-fail when nothing matched — controller-level validation will
-    // catch the missing reference and the gate stays out of the way for
-    // truly UHID-less clinical surfaces (e.g. OPD that doesn't carry an
-    // admission link).
-    if (!admission) return next();
 
     if (admission.status === "Discharged") {
-      return res.status(409).json({
+      return res.status(423).json({
         success: false,
-        code: "PATIENT_DISCHARGED",
+        // R7gw-B2: code is ADMISSION_DISCHARGED_NO_WRITE for the new
+        // rule families. Original D9-HIGH-10 surfaces continue to
+        // observe the same blocker; the frontend interceptor maps
+        // both PATIENT_DISCHARGED and ADMISSION_DISCHARGED_NO_WRITE
+        // to the same toast.
+        code: "ADMISSION_DISCHARGED_NO_WRITE",
         message:
           "This admission is Discharged — clinical writes are sealed. " +
           "Use an ADDENDUM with header X-Late-Entry: true if a correction is required.",
@@ -514,6 +761,7 @@ module.exports = {
   adminOnly,
   requireAction,
   attemptAuth,
+  requirePasswordRotated,
   attachDoctorProfile,
   restrictToOwnDoctorPatients,
   restrictToOwnNurseWard,

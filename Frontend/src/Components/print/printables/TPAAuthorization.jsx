@@ -11,10 +11,24 @@ const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-dig
 
 const TPAAuthorization = ({ settings, receipt = {} }) => {
   const r = receipt;
+  // R7eo-A — Pattern A fix: hardcoded "Cashless / TPA Authorization
+  // Request" was reused unchanged for Approved Letters and Denial
+  // Letters, which carry different legal weight than a pre-auth ask.
+  // Derive the title from receipt.stage and surface approval details
+  // when present. Legacy callers (no stage field) keep the original
+  // pre-auth request banner.
+  const stage = String(r.stage || "").toLowerCase();
+  const isApproved = stage === "approved";
+  const isDenied   = stage === "denied";
+  const docTitle = isApproved
+    ? "Cashless / TPA Approval Letter"
+    : isDenied
+    ? "Cashless / TPA Denial Letter"
+    : "Cashless / TPA Pre-Authorization Request";
   return (
     <PrintShell
       settings={settings}
-      documentTitle="Cashless / TPA Authorization Request"
+      documentTitle={docTitle}
       serialNo={r.requestNo}
       printCount={toNum(r.printCount)}
       infoItems={[
@@ -68,6 +82,22 @@ const TPAAuthorization = ({ settings, receipt = {} }) => {
             <dt>Pre-existing conditions</dt><dd>{r.preExisting || "Nil declared"}</dd>
           </div>
         </div>
+
+        {/* R7eo-A — Approval Details (rendered only on Approved Letters).
+            Surfaces the TPA's approval number, sanctioned amount, validity
+            window, and co-pay split so the patient + cashier can verify
+            cashless coverage at admission. */}
+        {isApproved && (r.approvalNumber || r.approvedAmount != null || r.validTill || r.coPayPercent != null) && (
+          <div className="pr-section">
+            <div className="pr-section__title">Approval Details</div>
+            <div className="pr-kv" style={{ fontSize: 11.5 }}>
+              {r.approvalNumber  != null && <><dt>Approval No</dt><dd style={{ fontFamily: "'DM Mono', monospace" }}>{r.approvalNumber}</dd></>}
+              {r.approvedAmount  != null && <><dt>Approved Amount</dt><dd>{fmtINR(r.approvedAmount)}</dd></>}
+              {r.validTill              && <><dt>Valid Till</dt><dd>{fmtDate(r.validTill)}</dd></>}
+              {r.coPayPercent    != null && <><dt>Co-Pay (Patient)</dt><dd>{toNum(r.coPayPercent)}%</dd></>}
+            </div>
+          </div>
+        )}
 
         <div className="pr-section">
           <div className="pr-section__title">Estimated Cost Breakdown</div>

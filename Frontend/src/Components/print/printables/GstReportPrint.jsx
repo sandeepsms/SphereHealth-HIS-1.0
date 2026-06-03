@@ -24,6 +24,15 @@ const GstReportPrint = ({ settings = {}, receipt = {} }) => {
   const period = r.period || fmtMY(r.month, r.year);
   const summary = r.summary || {};
 
+  // R7eo-D — Pattern D regulatory fix (GST §34): mirror credit-note logic
+  // and derive interstate from placeOfSupply vs settings.state instead of
+  // silently defaulting Place of Supply to settings.state (which would
+  // misclassify every interstate supply as intrastate).
+  const computedInterState =
+    (r.placeOfSupply || "").trim().toLowerCase() !==
+    (settings.state || "").trim().toLowerCase();
+  const effectiveInterState = r.isInterState ?? (r.placeOfSupply ? computedInterState : false);
+
   // Slab-wise rows: [{ gstRate, taxable, cgst, sgst, igst, cess, totalTax }]
   const slabRows = Array.isArray(r.byRate) ? r.byRate : [];
   // HSN rows for GSTR-1 Table 12
@@ -54,7 +63,7 @@ const GstReportPrint = ({ settings = {}, receipt = {} }) => {
         { label: "Period",          value: period },
         { label: "Hospital GSTIN",  value: settings.gstin },
         { label: "State",           value: settings.state || "—" },
-        { label: "Place of Supply", value: r.placeOfSupply || settings.state || "—" },
+        { label: "Place of Supply", value: r.placeOfSupply || "—" },
         { label: "PAN",             value: settings.panNumber || "—" },
         { label: "Generated",       value: new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
         { label: "Accountant",      value: r.accountantName || r.generatedBy },
@@ -111,7 +120,18 @@ const GstReportPrint = ({ settings = {}, receipt = {} }) => {
           <tbody>
             {slabRows.length === 0 ? (
               <tr><td colSpan={7} className="muted center" style={{ padding: 12, fontStyle: "italic" }}>No taxable supplies.</td></tr>
-            ) : slabRows.map((s, i) => {
+            ) : slabRows.map((slab, i) => {
+              const s = slab;
+              // R7eo-D — Pattern D regulatory fix (GST §34): CGST/SGST and
+              // IGST are mutually exclusive for any given supply. Same-slab
+              // simultaneous values indicate corrupt aggregation and would
+              // double-count tax in GSTR-3B.
+              if (Number(slab.cgst) > 0 && Number(slab.igst) > 0) {
+                // eslint-disable-next-line no-console
+                console.warn(
+                  `[GstReportPrint] Data anomaly: slab ${toNum(slab.gstRate ?? slab.rate)}% has both CGST (${toNum(slab.cgst)}) and IGST (${toNum(slab.igst)}) > 0 simultaneously. These are mutually exclusive per GST law — verify aggregation pipeline.`
+                );
+              }
               const slabTotal = toNum(s.cgst) + toNum(s.sgst) + toNum(s.igst) + toNum(s.cess);
               return (
                 <tr key={i}>
@@ -224,14 +244,32 @@ const GstReportPrint = ({ settings = {}, receipt = {} }) => {
         {numberToIndianWords(grandTotal)}
       </div>
 
+      {/* R7eo-D — Pattern D regulatory fix (GST §34): the hospital-exemption
+          note under Notification 12/2017 Entry 74 only applies to hospital
+          (in-patient) supplies. Drop the line when the report is pharmacy-only,
+          as pharmacy OTC/Rx sales are fully taxable under HSN 3004. */}
       <div className="pr-section">
         <div className="pr-section__title">Notes</div>
         <div className="pr-section__body" style={{ fontSize: 10.5, lineHeight: 1.55 }}>
-          1. This register reflects outward supplies as recorded in the HIS for the period {period}.
-          Health-care services rendered to in-patients are exempt under Notification 12/2017-Central Tax (Rate) Entry 74,
-          and are reported under "Exempt outward supplies" in GSTR-3B 3.1(c).<br/>
-          2. Pharmacy sales (OTC + prescription) are taxable under HSN 3004 — rates as per the Drug Master.<br/>
-          3. Match against the credit-note register (CN issued — GSTR-1 9B) before filing.
+          {(r.scope === "hospital" || r.scope === "both" || r.scope == null) && (
+            <>
+              1. This register reflects outward supplies as recorded in the HIS for the period {period}.
+              Health-care services rendered to in-patients are exempt under Notification 12/2017-Central Tax (Rate) Entry 74,
+              and are reported under "Exempt outward supplies" in GSTR-3B 3.1(c).<br/>
+              2. Pharmacy sales (OTC + prescription) are taxable under HSN 3004 — rates as per the Drug Master.<br/>
+              3. Match against the credit-note register (CN issued — GSTR-1 9B) before filing.
+            </>
+          )}
+          {r.scope === "pharmacy" && (
+            <>
+              1. This register reflects pharmacy outward supplies (OTC + prescription) for the period {period},
+              taxable under HSN 3004 — rates as per the Drug Master.<br/>
+              2. Inter-state vs intra-state determination is based on Place of Supply
+              ({r.placeOfSupply || "—"}) vs Hospital State ({settings.state || "—"}) —
+              {effectiveInterState ? " classified as INTER-STATE (IGST)." : " classified as INTRA-STATE (CGST + SGST)."}<br/>
+              3. Match against the credit-note register (CN issued — GSTR-1 9B) before filing.
+            </>
+          )}
         </div>
       </div>
     </PrintShell>

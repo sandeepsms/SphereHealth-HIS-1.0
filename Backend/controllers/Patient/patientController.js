@@ -179,6 +179,11 @@ exports.getPatientByUHID = async (req, res) => {
 const CLINICAL_PATIENT_FIELDS = new Set([
   "bloodGroup",
   "knownAllergies",
+  // R7fl: Typed allergyList[] is the source of truth for the `allergies`
+  // virtual (banners, drug-allergy gate, MAR cross-check). IPD Initial
+  // Assessment writes here at sign-off. Treat as clinical so the
+  // patient.write-clinical gate fires (same audit chain as knownAllergies).
+  "allergyList",
   "dateOfBirth",
   "age",
   "gender",

@@ -134,6 +134,24 @@ const PatientSchema = new mongoose.Schema(
     totalServicesVisits: { type: Number, default: 0 }, // ✅ NEW
 
     lastVisitDate: Date,
+
+    // R7gw-B8-T09 — per-patient vital range overrides.
+    // When a clinician sets a baseline (e.g. COPD SpO2 88-92, beta-blocker
+    // resting pulse 50-90), the Frontend vitalRanges.bandFor() reads from
+    // here and falls back to the age-banded default only when min/max are
+    // not present. `reason` records the clinical rationale for audit.
+    vitalOverrides: {
+      spo2:    { min: Number, max: Number, reason: String },
+      pulse:   { min: Number, max: Number, reason: String },
+      bp_sys:  { min: Number, max: Number, reason: String },
+      bp_dia:  { min: Number, max: Number, reason: String },
+      rr:      { min: Number, max: Number, reason: String },
+      temp:    { min: Number, max: Number, reason: String },
+      bsl:     { min: Number, max: Number, reason: String },
+      comments: String,
+      setAt:   Date,
+      setByUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    },
   },
   { timestamps: true },
 );

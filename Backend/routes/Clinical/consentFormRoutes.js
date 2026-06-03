@@ -22,4 +22,15 @@ router.patch("/:id/refuse",    validateObjectIdParam("id"), requireAction("conse
 router.patch("/:id/revoke",    validateObjectIdParam("id"), requireAction("consent.write"),  ctrl.revoke);
 router.delete("/:id",          validateObjectIdParam("id"), requireAction("consent.delete"), ctrl.delete);
 
+// R7ez — Paperless consent: biometric (WebAuthn) + staff e-sign + bypass.
+// Same `consent.write` permission scope as the existing edit/sign chain so
+// the same roles (Admin/Doctor/Nurse) can capture biometric + sign. The
+// bypass endpoint enforces Admin-only at the controller layer (since it
+// requires a documented reason and we want a clean 403 message).
+router.put  ("/:id/consenting-party", validateObjectIdParam("id"), requireAction("consent.write"), ctrl.setConsentingParty);
+router.post ("/:id/biometric/options", validateObjectIdParam("id"), requireAction("consent.write"), ctrl.biometricOptions);
+router.post ("/:id/biometric/verify",  validateObjectIdParam("id"), requireAction("consent.write"), ctrl.biometricVerify);
+router.post ("/:id/staff-sign",        validateObjectIdParam("id"), requireAction("consent.write"), ctrl.staffSign);
+router.post ("/:id/bypass",            validateObjectIdParam("id"), requireAction("consent.write"), ctrl.bypassBiometric);
+
 module.exports = router;

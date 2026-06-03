@@ -51,6 +51,15 @@ const PatientDietPlan    = DietitianModels?.PatientDietPlan || null;
 const LabRecordsModels   = (() => { try { return require("../../models/Clinical/labRecordsModels"); } catch { return null; } })();
 const LabTrend           = LabRecordsModels?.LabTrend  || null;
 const LabReport          = LabRecordsModels?.LabReport || null;
+// ICUBundle — six per-shift care-bundle sheets (VAP / CAUTI / CLABSI /
+// DVT / Sepsis / SUP). Surfaced into the Complete Patient File so the
+// NABH HIC.5 / COP.13 bundles appear in print without a separate API call.
+const ICUBundle          = (() => { try { return require("../../models/Clinical/ICUBundleModel"); } catch { return null; } })();
+// R7ft-FIX2 — Blood transfusion register. Surfaced into the
+// Complete Patient File so the Narrative print can include
+// every transfusion (NABH HIC.4 / MOM.4). Optional require so
+// legacy deployments without the model don't 500 the aggregator.
+const BloodTransfusionRegister = (() => { try { return require("../../models/Compliance/BloodTransfusionRegisterModel"); } catch { return null; } })();
 
 // ── Helper: safe collection fetch — never let a single model failure
 // break the whole aggregator. If a query throws (missing model, schema
@@ -127,7 +136,7 @@ exports.getCompleteFile = async (req, res) => {
       nursingAssessments, nursingCarePlans, shiftHandovers, bedTransfers,
       mar, vitals, mlc,
       investigations, bills, billingTriggers, activityLog,
-      dietPlans, intakeOutput,
+      dietPlans, intakeOutput, bloodTransfusion,
     ] = await Promise.all([
       // Admissions are small (typically 1–3) and the chronology spine — load all.
       safe("admissions",       () => Admission.find({ UHID }).sort({ admissionDate: -1 }).limit(50).lean()),
@@ -137,7 +146,13 @@ exports.getCompleteFile = async (req, res) => {
       safe("opdVisits",        () => OPDRegistration.find({ UHID }).sort({ visitDate: -1, createdAt: -1 }).limit(100).lean()),
       // The 7-day window applies to high-cardinality recorded data.
       safe("doctorNotes",      () => DoctorNotes.find({ patientUHID: UHID, createdAt: win }).sort({ visitDate: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
-      safe("nurseNotes",       () => NurseNotes.find({ patientUHID: UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      // R7fo — nursing-timeline visibility regression. The `createdAt: win`
+      // 7-day default hid older nurse notes from the patient file (e.g.
+      // an admission's initial assessment from day-1 vanished on day-9).
+      // Drop the date window: notes are scoped by patientUHID and the
+      // PER_SECTION_LIMIT cap (default 200, max 500) prevents bloat.
+      // Sort DESC by createdAt picks the newest within the cap.
+      safe("nurseNotes",       () => NurseNotes.find({ patientUHID: UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("doctorOrders",     () => DoctorOrder.find({ UHID, createdAt: win }).sort({ orderedAt: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       // Consents are infrequent + must be visible historically — load all but capped.
       safe("consents",         () => ConsentForm.find({ UHID }).sort({ createdAt: -1 }).limit(100).lean()),
@@ -153,7 +168,9 @@ exports.getCompleteFile = async (req, res) => {
       // query matched zero rows. Fall back to the canonical `createdAt`
       // window for the date filter; entry-level time precision is the
       // dedicated /patient-history/:id/file endpoint's job.
-      safe("vitals",             () => VitalSheet ? VitalSheet.find({ uhid: UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
+      // R7fo — same widening as nurseNotes: vitals from before the 7-day
+      // window were invisible. PER_SECTION_LIMIT cap still bounds payload.
+      safe("vitals",             () => VitalSheet ? VitalSheet.find({ uhid: UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
       // MLC + bills + admissions don't bloat — keep small, no window.
       safe("mlc",                () => MLCReport ? MLCReport.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
       safe("investigations",     () => InvestigationOrder.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
@@ -161,10 +178,14 @@ exports.getCompleteFile = async (req, res) => {
       safe("billingTriggers",    () => BillingTrigger.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("activityLog",        () => PatientActivityLog.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("dietPlans",          () => PatientDietPlan ? PatientDietPlan.find({ UHID }).sort({ assignedAt: -1, createdAt: -1 }).limit(50).lean() : []),
-      // IntakeOutput — every IN/OUT event for this patient inside the
-      // active window. Lets the timeline show per-fluid balance and the
-      // I/O section render an accurate chronological list.
-      safe("intakeOutput",       () => IntakeOutputEntry ? IntakeOutputEntry.find({ UHID, ts: win, voided: { $ne: true } }).sort({ ts: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
+      // IntakeOutput — every IN/OUT event for this patient. R7fo widening:
+      // the 7-day `ts: win` filter hid the start-of-stay I/O entries (the
+      // graph showed only the trailing week, not the full admission).
+      // PER_SECTION_LIMIT bounds the response.
+      safe("intakeOutput",       () => IntakeOutputEntry ? IntakeOutputEntry.find({ UHID, voided: { $ne: true } }).sort({ ts: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
+      // R7ft-FIX2 — blood transfusion register (UHID + reverse-chrono).
+      // Bounded at 50 entries since a single patient seldom exceeds this.
+      safe("bloodTransfusion",   () => BloodTransfusionRegister ? BloodTransfusionRegister.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
     ]);
 
     // Lab-records (manual trend sheets + imaging/micro/histopath reports).
@@ -173,8 +194,74 @@ exports.getCompleteFile = async (req, res) => {
     const labTrends  = LabTrend  ? await safe("labTrends",  () => LabTrend.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean())  : [];
     const labReports = LabReport ? await safe("labReports", () => LabReport.find({ UHID, reportDate: win }).sort({ reportDate: -1 }).limit(PER_SECTION_LIMIT).lean()) : [];
 
+    // R7ey-F19 — .lean() bypasses each schema's toJSON decimalToNumber
+    // transform, so every money field on bills/triggers shipped as raw
+    // Decimal128 EJSON. CompletePatientFile's billing section reducer
+    // then poisoned to "[object Object]" → ₹0 Gross / Paid / Outstanding
+    // even when the patient had real outstanding balance. Clinicians
+    // could discharge a patient without seeing what was owed.
+    try {
+      const { decimalToNumber } = require("../../utils/money");
+      (bills || []).forEach((b) => decimalToNumber(null, b));
+      (billingTriggers || []).forEach((t) => decimalToNumber(null, t));
+    } catch (_) { /* utils/money is always present in this tree; this is paranoia */ }
+
     const currentAdmission =
       admissions.find((a) => a.status === "Active") || admissions[0] || null;
+
+    // ICUBundle — fetched scoped to the current admission so the print sees
+    // every shift of every day of the stay (not the UHID-level 30-day cap
+    // applied by listByUhid). For OPD-only patients or visits with no
+    // currentAdmission we skip and return []. Each row is unwrapped into a
+    // print-friendly shape with bundles: [{key, title, items[], compliancePct, ...}].
+    const SHIFT_ORDER = { Morning: 0, Evening: 1, Night: 2 };
+    const BUNDLE_TITLES = {
+      vap:    "VAP — Ventilator-Associated Pneumonia",
+      cauti:  "CAUTI — Catheter-Associated UTI",
+      clabsi: "CLABSI — Central Line BSI",
+      dvt:    "DVT Prophylaxis",
+      sepsis: "Sepsis — Hour-1 Bundle",
+      sup:    "SUP — Stress Ulcer Prophylaxis",
+    };
+    const icuBundles = (ICUBundle && currentAdmission?._id)
+      ? await safe("icuBundles", async () => {
+          const rows = await ICUBundle
+            .find({ admissionId: currentAdmission._id })
+            .sort({ date: 1 })
+            .lean();
+          rows.sort((a, b) => {
+            if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+            return (SHIFT_ORDER[a.shift] ?? 9) - (SHIFT_ORDER[b.shift] ?? 9);
+          });
+          const BUNDLE_KEYS = ICUBundle.BUNDLE_KEYS || ["vap", "cauti", "clabsi", "dvt", "sepsis", "sup"];
+          return rows.map((r) => ({
+            _id: r._id,
+            UHID: r.UHID,
+            admissionId: r.admissionId,
+            admissionNumber: r.admissionNumber,
+            patientName: r.patientName,
+            date: r.date,
+            shift: r.shift,
+            status: r.status,
+            overallCompliancePct: r.overallCompliancePct,
+            notes: r.notes,
+            finalizedBy: r.finalizedBy || "",
+            finalizedAt: r.finalizedAt || null,
+            bundles: BUNDLE_KEYS.map((k) => {
+              const b = r[k] || {};
+              return {
+                key: k,
+                title: BUNDLE_TITLES[k] || k.toUpperCase(),
+                applicable: b.applicable !== false,
+                items: Array.isArray(b.items) ? b.items : [],
+                compliancePct: typeof b.compliancePct === "number" ? b.compliancePct : 0,
+                nurseName: b.nurseName || "",
+                signedAt: b.signedAt || null,
+              };
+            }),
+          }));
+        })
+      : [];
 
     // ── Build a unified chronological timeline. Each entry has a stable
     // shape the UI can render without knowing the source model.
@@ -272,6 +359,13 @@ exports.getCompleteFile = async (req, res) => {
       { id: d._id, model: "PatientDietPlan" },
       { status: d.status, templateCode: d.plan?.templateCode }));
 
+    // ICU bundles — one timeline entry per shift sheet so the unified feed
+    // shows when each VAP/CAUTI/CLABSI/... bundle was finalized.
+    icuBundles.forEach((b) => push(b.finalizedAt || b.date, "icu-bundle",
+      `ICU bundles — ${b.date} ${b.shift} (${b.overallCompliancePct}%${b.status === "finalized" ? " · signed" : " · draft"})`,
+      { id: b._id, model: "ICUBundle" },
+      { status: b.status, shift: b.shift, date: b.date, compliancePct: b.overallCompliancePct }));
+
     activityLog.forEach((a) => push(a.createdAt, "audit",
       `${a.userName || "System"} — ${a.module}/${a.action}${a.area ? ` (${a.area})` : ""}`,
       { id: a._id, model: "PatientActivityLog" },
@@ -363,6 +457,12 @@ exports.getCompleteFile = async (req, res) => {
         intakeOutput,
         labTrends,
         labReports,
+        // ICU care bundles (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP) —
+        // every shift sheet for the current admission, with items[] unwrapped
+        // for direct print rendering.
+        icuBundles,
+        // R7ft-FIX2 — blood transfusion register (NABH HIC.4 / MOM.4).
+        bloodTransfusion,
         timeline,
         completeness,
         pagination,

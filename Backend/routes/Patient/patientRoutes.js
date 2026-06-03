@@ -33,12 +33,12 @@ router.get("/tpa/:tpaId", requireAction("patient.read"), patientController.getPa
 router.get("/", requireAction("patient.read"), patientController.getAllPatients);
 router.post("/", requireAction("reception.register"), patientController.createPatient);
 router.get("/:id", validateObjectIdParam("id"), requireAction("patient.read"), patientController.getPatientById);
-// PUT split into two actions in the controller. The route itself accepts any
-// authenticated user; the controller redirects clinical-field edits
-// (bloodGroup, knownAllergies, dateOfBirth, gender) through the
-// patient.write-clinical gate and demographic edits through
-// patient.write-demographics. Both branches are enforced server-side.
-router.put("/:id", validateObjectIdParam("id"), patientController.updatePatient);
+// PUT split into two actions in the controller. The route-level guard is the
+// baseline `patient.write-demographics`; the controller upgrades to
+// `patient.write-clinical` when clinical-field edits (bloodGroup,
+// knownAllergies, dateOfBirth, gender) are touched. Both branches are
+// enforced server-side (defense-in-depth: B7-T10).
+router.put("/:id", validateObjectIdParam("id"), requireAction("patient.write-demographics"), patientController.updatePatient);
 router.delete("/:id", validateObjectIdParam("id"), requireAction("patient.delete"), patientController.deletePatient);
 
 module.exports = router;

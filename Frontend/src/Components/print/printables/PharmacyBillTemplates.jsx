@@ -114,7 +114,8 @@ export function T3_Heritage(p) {
           </div>
         </div>
         <div style={{ borderTop: `1px dashed ${id.color}80`, margin: "10px -20px", padding: "8px 20px 0", display: "flex", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 11 }}><b>Tax Invoice No:</b> <span style={{ fontFamily: "DM Mono, monospace", color: id.accent, fontWeight: 800 }}>{r.billNumber}</span></div>
+          {/* R7eo-A — honour billLabel override (Cash Memo / Credit Note / ...) */}
+          <div style={{ fontSize: 11 }}><b>{p.billLabel || "Tax Invoice"} No:</b> <span style={{ fontFamily: "DM Mono, monospace", color: id.accent, fontWeight: 800 }}>{r.billNumber}</span></div>
           <div style={{ fontSize: 10, color: COL.mute }}>{new Date(r.createdAt || Date.now()).toLocaleString("en-IN")}</div>
         </div>
         <div style={{ padding: "8px 0", borderBottom: `1px dashed ${id.color}80`, marginBottom: 8 }}>
@@ -146,7 +147,8 @@ export function T4_PremiumDark(p) {
             {id.tagline && <div className="pb-mast-line" style={{ opacity: .85, marginTop: 1 }}>{id.tagline}</div>}
           </div>
           <div style={{ textAlign: "right", borderLeft: `2px solid ${gold}`, paddingLeft: 14, fontSize: 9.5 }}>
-            <div style={{ color: gold, fontWeight: 800, letterSpacing: ".5px", textTransform: "uppercase" }}>Tax Invoice</div>
+            {/* R7eo-A — billLabel override falls through to "Tax Invoice" */}
+            <div style={{ color: gold, fontWeight: 800, letterSpacing: ".5px", textTransform: "uppercase" }}>{p.billLabel || "Tax Invoice"}</div>
             <div style={{ fontFamily: "DM Mono, monospace", fontWeight: 800, fontSize: 13, marginTop: 2 }}>{r.billNumber}</div>
             <div style={{ opacity: .8, marginTop: 2 }}>{new Date(r.createdAt || Date.now()).toLocaleDateString("en-IN")}</div>
           </div>
@@ -227,7 +229,8 @@ export function T6_RetailExpress(p) {
       </div>
       <div style={{ display: "flex", justifyContent: "center", padding: "10px 22px", background: id.accent + "08", borderBottom: `1.5px dashed ${id.color}40` }}>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 9, color: COL.mute, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>Cash Memo · Tax Invoice</div>
+          {/* R7eo-A — billLabel override; defaults to "Cash Memo · Tax Invoice" */}
+          <div style={{ fontSize: 9, color: COL.mute, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>{p.billLabel || "Cash Memo · Tax Invoice"}</div>
           <div style={{ fontSize: 16, fontWeight: 800, color: id.color, fontFamily: "DM Mono, monospace", marginTop: 2 }}>{r.billNumber}</div>
         </div>
       </div>

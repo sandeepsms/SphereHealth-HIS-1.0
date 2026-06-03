@@ -8,6 +8,7 @@ import axios from "axios";
 import { useParams } from "react-router-dom";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
+import { toMoney } from "../../utils/money";
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
 const C = {
@@ -129,11 +130,12 @@ function AuditRow({ trigger, onConfirm, confirmingId }) {
           </div>
         </div>
 
-        {/* Amount */}
+        {/* Amount — R7ey-F17: toMoney unwraps Decimal128 EJSON so the cell
+            doesn't print "[object Object]" when the wire shipped raw $numberDecimal */}
         <div style={{ textAlign:"right", flexShrink:0 }}>
-          {(trigger.totalAmount || 0) > 0 ? (
+          {toMoney(trigger.totalAmount) > 0 ? (
             <span style={{ fontWeight:800, fontSize:14, color:isBilled?C.green:C.text }}>
-              ₹{(trigger.totalAmount || 0).toLocaleString("en-IN")}
+              ₹{toMoney(trigger.totalAmount).toLocaleString("en-IN")}
             </span>
           ) : (
             <span style={{ fontSize:12, color:C.muted }}>—</span>
@@ -218,7 +220,8 @@ function AuditRow({ trigger, onConfirm, confirmingId }) {
                 <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
                   <span style={{ fontSize:11, color:C.green, fontWeight:700, display:"flex", alignItems:"center", gap:4 }}>
                     <i className="pi pi-check-circle" style={{ fontSize:11 }} />
-                    ₹{(trigger.totalAmount || 0).toLocaleString("en-IN")} billed
+                    {/* R7ey-F17: toMoney unwrap */}
+                    ₹{toMoney(trigger.totalAmount).toLocaleString("en-IN")} billed
                   </span>
                   <span style={{ fontSize:11, color:C.muted, display:"flex", alignItems:"center", gap:4 }}>
                     <i className="pi pi-clock" style={{ fontSize:9 }} />{fmtDt(trigger.billedAt)}
@@ -574,7 +577,9 @@ export default function BillingAuditTrailPage() {
         {/* ── Audit trail grouped by date ── */}
         {!loading && sortedDates.map(dateKey => {
           const dayTriggers = groupedByDate[dateKey];
-          const dayTotal    = dayTriggers.filter(t => t.status==="billed").reduce((s,t) => s+(t.totalAmount||0), 0);
+          // R7ey-F17: toMoney unwraps Decimal128; pre-fix this reducer
+          // concatenated $numberDecimal objects into "[object Object]"
+          const dayTotal    = dayTriggers.filter(t => t.status==="billed").reduce((s,t) => s+toMoney(t.totalAmount), 0);
           const dayPending  = dayTriggers.filter(t => t.status==="pending").length;
 
           return (

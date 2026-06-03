@@ -1,24 +1,33 @@
 /**
  * PharmacyBill.jsx
  *
- * Thin wrapper that prepares bill data (identity / items / HSN
- * breakup / totals) ONCE and routes to one of 10 visual templates
- * defined in PharmacyBillTemplates.jsx.
+ * R7fr Track B: refactored onto the new shared <PrintShell> contract
+ * (templates/PrintShell.jsx). The 10-template visual cascade
+ * (PharmacyBillTemplates.jsx) is retired — every pharmacy bill now
+ * renders through the same NABH-style triple-zone header + 2-col
+ * patient strip + line-items body + GST/HSN/totals + amount-in-words.
  *
- * Template selection cascade (first non-empty wins):
- *   1. receipt.template / receipt.billTemplate  — per-print override
- *   2. receipt.pharmacySettings.billTemplate    — pharmacy's saved choice
- *   3. fallback: 1 (Classic Modern)
+ * Preserved unchanged:
+ *   • GST + HSN/SAC + line-item compute (sub-total, discount, taxable,
+ *     tax, CGST/SGST/IGST split, round-off, grand total, balance)
+ *   • Decimal128 wire-shape unwrap on every money field (Mongoose
+ *     `.lean()` surfaces { $numberDecimal: "320" } — bare Number()
+ *     NaNs and pollutes summations)
+ *   • Outsourced-pharmacy identity (pharmacy.mode === "outsourced"
+ *     remaps name/GSTIN/D.L./address — those flow into PrintShell's
+ *     hospital prop so the shell header carries the pharmacy brand)
+ *   • Returns / Supplements / REVISED / CANCELLED watermark sections
+ *   • billLabel override for Cash Memo / Credit Note reprints
+ *   • DUPLICATE watermark on reprints (PrintWatermark)
  *
- * Paper-size compaction (A4 / Half-A4 / A5) hangs off the same
- * `html[data-paper]` attribute the PrintPreviewPage toolbar writes.
- * The <style> block below applies to every template because they
- * all carry the `.pr-pharm-bill` class on the root element.
+ * Patient-strip mapping (Track-B contract):
+ *   left:  Bill No · UHID · Patient · Age/Sex · Contact
+ *   right: Bill Date · Doctor · Counter · Payer · GSTIN
  */
 import React from "react";
+import PrintShell from "@/templates/PrintShell";
 import "../print.css";
 import { fmtINR, amountInWords } from "../amountWords";
-import TEMPLATES from "./PharmacyBillTemplates";
 import PrintWatermark from "../PrintWatermark";
 import { toNum } from "../../../utils/printUtils";
 
@@ -28,10 +37,8 @@ const _fmtDate = (d, opts) => d
 
 // R7da — Decimal128-aware numeric coercion for reduce()/sum sites.
 // Mongoose Decimal128 fields surface as { $numberDecimal: "320" } when
-// the backend uses .lean() (which bypasses the toJSON transform).
-// Plain Number() on that wrapper returns NaN — so a single ₹NaN
-// poisoned summations on supplementary + return slips. fmtINR has the
-// same unwrap built-in, but reduce() callbacks need their own helper.
+// the backend uses .lean(). Plain Number() on that wrapper returns NaN
+// so a single ₹NaN poisoned summations on supplementary + return slips.
 const _dec = (v) => {
   if (v == null) return 0;
   if (typeof v === "number") return Number.isFinite(v) ? v : 0;
@@ -51,74 +58,70 @@ const _fmtAddr = (s = {}) => [
   s.country,
 ].filter(Boolean).join(", ");
 
-/** Pharmacy settings (when mode=outsourced) override hospital. */
-function resolveIdentity(hospital = {}, pharmacy = null) {
+/** Pharmacy settings (when mode=outsourced) override hospital identity
+ *  so the shell header shows the pharmacy brand instead of the hospital.
+ *  Returned shape matches PrintShell.hospital prop conventions. */
+function resolveIdentityForShell(hospital = {}, pharmacy = null) {
   const isOut = pharmacy?.mode === "outsourced";
   if (isOut) {
     return {
-      isOutsourced: true,
-      name:        pharmacy.pharmacyName || "Pharmacy",
-      tagline:     pharmacy.tagline || "",
-      logo:        pharmacy.showLogoInPrint === false ? null : pharmacy.logo || null,
-      addressStr:  _fmtAddr(pharmacy) || _fmtAddr(hospital),
-      state:       pharmacy.state || hospital.state,
-      phone:       [pharmacy.phone1, pharmacy.phone2].filter(Boolean).join(" · "),
-      email:       pharmacy.email,
-      website:     pharmacy.website,
-      gstin:       pharmacy.gstin,
-      drugLicense: pharmacy.drugLicenseNo,
-      fssai:       pharmacy.fssaiNumber,
-      pan:         pharmacy.panNumber,
-      bank: {
-        name: pharmacy.bankName, account: pharmacy.bankAccount,
-        ifsc: pharmacy.ifscCode, branch: pharmacy.bankBranch,
-        upi:  pharmacy.upiId,
-      },
-      footerNote:  pharmacy.footerNote,
-      terms: [pharmacy.termsLine1, pharmacy.termsLine2, pharmacy.termsLine3].filter(Boolean),
-      color:  pharmacy.headerColor || "#ea580c",
-      accent: pharmacy.accentColor || "#c2410c",
+      // PrintShell reads from these fields directly
+      name:          pharmacy.pharmacyName || "Pharmacy",
+      hospitalName:  pharmacy.pharmacyName || "Pharmacy",
+      tagline:       pharmacy.tagline || "",
+      logo:          pharmacy.showLogoInPrint === false ? null : pharmacy.logo || null,
+      addressLine1:  pharmacy.addressLine1 || hospital.addressLine1,
+      addressLine2:  pharmacy.addressLine2 || hospital.addressLine2,
+      city:          pharmacy.city || hospital.city,
+      state:         pharmacy.state || hospital.state,
+      pincode:       pharmacy.pincode || hospital.pincode,
+      phone:         [pharmacy.phone1, pharmacy.phone2].filter(Boolean).join(" · "),
+      email:         pharmacy.email,
+      website:       pharmacy.website,
+      gstin:         pharmacy.gstin,
+      printHeaderColor: pharmacy.headerColor || hospital.printHeaderColor || "#1e3a8a",
+      helpline24x7:  hospital.helpline24x7,
+      // Pharmacy-specific identifiers — surfaced in footer GSTIN line
+      // via NABH cert slot (D.L. is the regulatory pharmacy equivalent).
+      nabhCertNumber: pharmacy.drugLicenseNo
+        ? `D.L. ${pharmacy.drugLicenseNo}`
+        : hospital.nabhCertNumber,
+      // For per-bill resolution downstream
+      _stateForGst:  pharmacy.state || hospital.state,
+      _isOutsourced: true,
     };
   }
+  // In-house — hospital identity carries through unchanged.
   return {
-    isOutsourced: false,
-    name:        hospital.hospitalName || "Hospital Pharmacy",
-    tagline:     hospital.tagline,
-    logo:        hospital.showLogoInPrint && hospital.logo,
-    addressStr:  _fmtAddr(hospital),
-    state:       hospital.state,
-    phone:       [hospital.phone1, hospital.phone2].filter(Boolean).join(" · "),
-    email:       hospital.email,
-    website:     hospital.website,
-    gstin:       hospital.gstin,
-    drugLicense: hospital.drugLicenseNo || hospital.drugLicenseNumber,
-    fssai:       hospital.fssaiNumber,
-    pan:         hospital.panNumber,
-    bank: {
-      name: hospital.bankName, account: hospital.accountNo,
-      ifsc: hospital.ifscCode, branch: hospital.bankBranch,
-    },
-    footerNote: hospital.billFooterNote,
-    terms: [hospital.termsLine1, hospital.termsLine2, hospital.termsLine3].filter(Boolean),
-    color:  hospital.printHeaderColor || "#1e293b",
-    accent: hospital.printAccentColor || "#1d4ed8",
+    ...hospital,
+    name:         hospital.hospitalName || hospital.name || "Hospital Pharmacy",
+    _stateForGst: hospital.state,
+    _isOutsourced: false,
   };
 }
 
 const PharmacyBill = ({ settings = {}, receipt = {} }) => {
-  const id = resolveIdentity(settings, receipt.pharmacySettings);
+  const id = resolveIdentityForShell(settings, receipt.pharmacySettings);
   const r = receipt;
   const items = Array.isArray(r.items) ? r.items : [];
 
+  // R7eo-A — billLabel override drives the document title (Cash Memo,
+  // Credit Note, Pharmacy Bill, etc.) and the browser document.title
+  // (file-name in print dialog + OS taskbar). Default = "Pharmacy Bill".
+  React.useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (!r.billLabel) return;
+    const prev = document.title;
+    document.title = String(r.billLabel);
+    return () => { document.title = prev; };
+  }, [r.billLabel]);
+  const docTitle = r.billLabel || "Pharmacy Bill";
+
   /* Tax + HSN ─────────────────────────────────────────────────── */
-  const customerState = String(r.customerState || id.state || "").trim().toLowerCase();
-  const hospState     = String(id.state || "").trim().toLowerCase();
+  const customerState = String(r.customerState || id._stateForGst || "").trim().toLowerCase();
+  const hospState     = String(id._stateForGst || "").trim().toLowerCase();
   const isInterState  = !!customerState && !!hospState && customerState !== hospState;
 
-  // R7bh-F7 / R7bg-7-CRIT-5: Decimal128 wire-shape unwrap. Bare Number()
-  // on a {$numberDecimal:"…"} object returned NaN → entire totals card
-  // rendered "₹0". toNum() drains the right field name regardless of
-  // whether the back-end serialised it as Number, string, or Decimal128.
   const hsnMap = new Map();
   let subTotal = 0, totalDisc = 0, totalTaxable = 0, totalTax = 0;
   for (const it of items) {
@@ -142,372 +145,364 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const roundOff   = toNum(r.roundOff != null ? r.roundOff : grandTotal - grandRaw);
   const paid       = toNum(r.amountPaid != null ? r.amountPaid : grandTotal);
   const balance    = Math.max(0, grandTotal - paid);
-  const totals = { subTotal, totalDisc, totalTaxable, totalTax, grandTotal, roundOff, paid, balance };
   const hasControlled = items.some(it => it.schedule && /^(H|H1|X)$/i.test(it.schedule));
 
-  /* Returns / revised-bill state ───────────────────────────────────
-     If the sale has been partially or fully returned, surface that on
-     the print so the customer copy is unambiguous about what's owed
-     and what's been refunded. The original items[] block is preserved
-     untouched — legal requirement, the original tax invoice must
-     remain reprintable as-is — and the refunds section is appended
-     after the totals.  */
+  /* Returns / supplements / revised state ──────────────────────── */
   const returns       = Array.isArray(r.returns) ? r.returns : [];
   const supplements   = Array.isArray(r.supplements) ? r.supplements : [];
   const isRevised     = ["Partial-Return", "Refunded", "Cancelled", "Supplemented"].includes(r.status);
-  // R7bh-F7 / R7bg-7-CRIT-5: Decimal128 unwrap on refund/supplement money.
   const refundTotal     = returns.reduce((s, x) => s + toNum(x.refundAmount), 0);
   const supplementTotal = supplements.reduce((s, x) => s + toNum(x.addedTotal), 0);
-  const netAfter      = Math.max(0, toNum(r.grandTotal) + supplementTotal - refundTotal);
-  const patientCred   = toNum(r.patientCredit);
+  const netAfter        = Math.max(0, toNum(r.grandTotal) + supplementTotal - refundTotal);
+  const patientCred     = toNum(r.patientCredit);
+  const printCount      = toNum(r.printCount);
 
-  /* Template choice — per-print override > pharmacy default > 1 */
-  const tplId   = Number(r.template || r.billTemplate || r.pharmacySettings?.billTemplate || 1);
-  const Chosen  = (TEMPLATES.find(t => t.id === tplId) || TEMPLATES[0]).Render;
-
-  const COL = { ink: "#0f172a", mute: "#64748b", line: "#e2e8f0", soft: "#f8fafc" };
-  const SHEET = { fontFamily: "'DM Sans', 'Inter', system-ui, sans-serif", color: COL.ink, fontSize: 11 };
-
-  const renderProps = {
-    id, items, hsnRows, totals, isInterState, receipt: r,
-    COL, fmtINR, amountInWords, _fmtDate, hasControlled,
-  };
+  /* Patient-strip mapping — Track-B contract */
+  const genderAge = [r.gender, r.age && `${r.age}Y`].filter(Boolean).join(" ");
+  const patientLeft = [
+    { label: "Bill No",  value: r.billNumber || "—" },
+    { label: "UHID",     value: r.UHID || r.uhid || "—" },
+    { label: "Patient",  value: r.patientName || r.fullName || "—" },
+    { label: "Age/Sex",  value: genderAge || "—" },
+    { label: "Contact",  value: r.contactNumber || r.mobile || "—" },
+  ];
+  const patientRight = [
+    { label: "Bill Date", value: _fmtDate(r.createdAt || r.billDate || new Date()) },
+    { label: "Doctor",    value: r.doctorName || r.prescribingDoctor || "—" },
+    { label: "Counter",   value: r.counter || r.pharmacyCounter || "—" },
+    { label: "Payer",     value: r.payer || (r.tpaName ? r.tpaName : "Self") },
+    { label: "GSTIN",     value: r.customerGstin || "" },
+  ];
 
   return (
-    <>
-      {/* Shared paper-size-scoped CSS — applies to every template
-          because they all set className="pr-pharm-bill" on their root
-          via the wrapper div below. */}
-      <style>{`
-        .pr-pharm-bill { font-size: 10.5px; }
-        html[data-paper="half-a4"] .pr-pharm-bill { font-size: 9px; }
-        html[data-paper="a5"]      .pr-pharm-bill { font-size: 8.8px; }
+    <PrintShell
+      hospital={id}
+      docTitle={docTitle}
+      docSubtitle={isInterState ? "Inter-State (IGST)" : "Intra-State (CGST + SGST)"}
+      patient={{ left: patientLeft, right: patientRight }}
+      signatures={{
+        type: "prepared-by",
+        preparedBy: {
+          name: r.preparedBy || r.cashier || r.pharmacist || "Pharmacist",
+          role: "Pharmacist",
+        },
+        showAttestedStamp: true,
+      }}
+      banners={{ emergency24x7: true }}
+      meta={{
+        docNumber: r.billNumber,
+        pageOf:    "1 of 1",
+        printCount,
+      }}
+    >
+      {/* DUPLICATE watermark on reprints (GST §48(4)) */}
+      <PrintWatermark
+        printCount={printCount}
+        recipient={r.patientName || "RECIPIENT"}
+      />
 
-        .pr-pharm-bill .pb-mast       { padding: 18px 22px; gap: 16px; }
-        .pr-pharm-bill .pb-mast-logo  { width: 64px; height: 64px; padding: 6px; }
-        .pr-pharm-bill .pb-mast-name  { font-size: 20px; }
-        .pr-pharm-bill .pb-mast-line  { font-size: 10.5px; }
-        .pr-pharm-bill .pb-mast-chip  { font-size: 10px; padding: 10px 14px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-mast       { padding: 9px 16px; gap: 10px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-mast-logo  { width: 38px; height: 38px; padding: 3px; border-radius: 6px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-mast-name  { font-size: 13.5px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-mast-line  { font-size: 8.5px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-mast-chip  { font-size: 8.5px; padding: 5px 8px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-mast       { padding: 9px 14px; gap: 10px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-mast-logo  { width: 36px; height: 36px; padding: 3px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-mast-name  { font-size: 13px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-mast-line  { font-size: 8.5px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-mast-chip  { font-size: 8.5px; padding: 5px 8px; }
+      {isRevised && (
+        <div style={{
+          margin: "0 0 10px", padding: "7px 12px",
+          background: r.status === "Cancelled" ? "#fef2f2" : "#fffbeb",
+          border: `1.5px solid ${r.status === "Cancelled" ? "#fecaca" : "#fcd34d"}`,
+          borderRadius: 6, fontSize: 10.5,
+          color: r.status === "Cancelled" ? "#7f1d1d" : "#92400e",
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}>
+          <span>
+            <b>{r.status === "Cancelled" ? "CANCELLED BILL" : "REVISED BILL"}</b>
+            {" · "}
+            {r.status === "Refunded"       && "All items returned"}
+            {r.status === "Partial-Return" && "One or more items returned"}
+            {r.status === "Cancelled"      && "Sale cancelled — invoice retained for audit"}
+            {r.status === "Supplemented"   && `${supplements.length} item${supplements.length === 1 ? "" : "s"} added via supplementary invoice`}
+          </span>
+          <span>
+            Original&nbsp;{fmtINR(r.grandTotal)}
+            {supplementTotal > 0 && <> · Added&nbsp;<b style={{ color: "#15803d" }}>+ {fmtINR(supplementTotal)}</b></>}
+            {refundTotal > 0     && <> · Refund&nbsp;<b style={{ color: "#b45309" }}>− {fmtINR(refundTotal)}</b></>}
+            {(supplementTotal > 0 || refundTotal > 0) && <> · Net&nbsp;<b>{fmtINR(netAfter)}</b></>}
+          </span>
+        </div>
+      )}
 
-        .pr-pharm-bill .pb-title    { padding: 12px 22px; }
-        .pr-pharm-bill .pb-title-no { font-size: 16px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-title    { padding: 6px 16px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-title-no { font-size: 13px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-title    { padding: 6px 14px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-title-no { font-size: 12.5px; }
+      {hasControlled && (
+        <div style={{
+          margin: "0 0 10px", padding: "7px 12px",
+          background: "#fef2f2", border: "1.5px solid #fecaca",
+          borderRadius: 6, fontSize: 10.5, color: "#7f1d1d",
+          fontWeight: 700,
+        }}>
+          ⚠ This bill contains Schedule H/H1/X controlled drugs. Sale recorded under
+          Drugs &amp; Cosmetics Act §65 — prescription mandatory.
+        </div>
+      )}
 
-        .pr-pharm-bill .pb-billto { padding: 14px 22px; gap: 18px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-billto { padding: 7px 16px 5px; gap: 10px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-billto { padding: 7px 14px 5px; gap: 10px; }
+      {/* ── Line items ── */}
+      <table className="pr-table" style={{ marginBottom: 10, fontSize: 10.5 }}>
+        <thead>
+          <tr>
+            <th style={{ width: 26 }}>#</th>
+            <th>Drug</th>
+            <th style={{ width: 70 }}>Batch</th>
+            <th style={{ width: 64 }}>Expiry</th>
+            <th style={{ width: 60 }}>HSN</th>
+            <th style={{ width: 36 }} className="right">Qty</th>
+            <th style={{ width: 60 }} className="right">Rate</th>
+            <th style={{ width: 48 }} className="right">Disc</th>
+            <th style={{ width: 48 }} className="right">GST%</th>
+            <th style={{ width: 68 }} className="right">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.length === 0 ? (
+            <tr><td colSpan={10} style={{ textAlign: "center", padding: 18, color: "#94a3b8" }}>No items on this bill</td></tr>
+          ) : items.map((it, i) => {
+            const qty = toNum(it.quantity || it.qty);
+            const rate = toNum(it.unitPrice || it.rate);
+            const gst = toNum(it.gstRate ?? 12);
+            const gross = qty * rate;
+            const disc = toNum(it.discountAmount != null ? it.discountAmount : gross * (toNum(it.discountPercent) / 100));
+            const taxable = toNum(it.taxableAmount != null ? it.taxableAmount : gross - disc);
+            const tax = toNum(it.gstAmount != null ? it.gstAmount : taxable * (gst / 100));
+            const lineNet = taxable + tax;
+            return (
+              <tr key={i}>
+                <td>{i + 1}</td>
+                <td>
+                  <div style={{ fontWeight: 600 }}>{it.drugName || it.name || "—"}</div>
+                  {it.generic && <div className="muted" style={{ fontSize: 9.5 }}>({it.generic})</div>}
+                  {it.schedule && /^(H|H1|X)$/i.test(it.schedule) && (
+                    <div style={{ fontSize: 9, color: "#b91c1c", fontWeight: 700 }}>Sch {it.schedule}</div>
+                  )}
+                </td>
+                <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{it.batchNo || "—"}</td>
+                <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{_fmtDate(it.expiry || it.expDate, { month: "short", year: "2-digit" })}</td>
+                <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{it.hsnCode || "30049099"}</td>
+                <td className="right">{qty}</td>
+                <td className="right">{fmtINR(rate)}</td>
+                <td className="right">{disc > 0 ? fmtINR(disc) : "—"}</td>
+                <td className="right">{gst}%</td>
+                <td className="right" style={{ fontWeight: 700 }}>{fmtINR(lineNet)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
 
-        .pr-pharm-bill .pb-schh { margin: 0 22px 12px; padding: 8px 12px; font-size: 10.5px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-schh { margin: 0 16px 6px; padding: 4px 10px; font-size: 8.5px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-schh { margin: 0 14px 6px; padding: 4px 10px; font-size: 8.5px; }
-
-        .pr-pharm-bill .pb-tableWrap { padding: 0 22px; }
-        .pr-pharm-bill .pb-table th  { padding: 9px 10px; font-size: 9.5px; }
-        .pr-pharm-bill .pb-table td  { padding: 8px 10px; font-size: 10.5px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-tableWrap { padding: 0 16px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-table th  { padding: 4px 7px; font-size: 8px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-table td  { padding: 3px 7px; font-size: 8.6px; line-height: 1.2; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-table .pb-cell-mono { font-size: 8px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-table .pb-cell-sub  { font-size: 7.5px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-tableWrap { padding: 0 14px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-table th  { padding: 4px 6px; font-size: 7.8px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-table td  { padding: 3px 6px; font-size: 8.4px; line-height: 1.2; }
-
-        .pr-pharm-bill .pb-twocol { padding: 0 22px 14px; gap: 14px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-twocol { padding: 0 16px 6px; gap: 8px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-twocol { padding: 0 14px 6px; gap: 8px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-hsn-section-title,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-hsn-section-title { padding: 4px 9px !important; font-size: 8px !important; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-hsn-table th,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-hsn-table th { padding: 3px 7px !important; font-size: 7.5px !important; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-hsn-table td,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-hsn-table td { padding: 3px 7px !important; font-size: 8.3px !important; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-totals-card-body,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-totals-card-body { padding: 6px 10px !important; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-totals-row,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-totals-row { padding: 2px 0 !important; font-size: 9px !important; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-grand,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-grand { margin-top: 6px !important; padding: 6px 10px !important; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-grand-num,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-grand-num { font-size: 14px !important; }
-
-        .pr-pharm-bill .pb-words { margin: 0 22px 14px; padding: 10px 14px; font-size: 10.5px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-words { margin: 0 16px 5px; padding: 4px 10px; font-size: 8.5px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-words { margin: 0 14px 5px; padding: 4px 10px; font-size: 8.5px; }
-
-        .pr-pharm-bill .pb-foot { padding: 0 22px 22px; gap: 18px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-foot { padding: 0 16px 6px; gap: 10px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-foot { padding: 0 14px 6px; gap: 10px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-foot,
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-foot * { font-size: 8.5px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-sign-line { height: 20px !important; }
-
-        .pr-pharm-bill .pb-terms { padding: 12px 22px; font-size: 9px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-terms { padding: 4px 16px; font-size: 7.5px; }
-        html[data-paper="a5"]      .pr-pharm-bill .pb-terms { padding: 4px 14px; font-size: 7.5px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-terms ol,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-terms ol { padding-left: 14px; margin: 0; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-terms li,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-terms li { line-height: 1.35; }
-
-        @media print {
-          .pr-pharm-bill {
-            page-break-inside: avoid;
-            min-height: 0 !important;
-            height: auto !important;
-            page-break-after: avoid !important;
-            break-after: avoid-page !important;
-          }
-          .pr-pharm-bill > *:last-child {
-            page-break-after: avoid !important;
-            break-after: avoid-page !important;
-          }
-        }
-
-        /* ── Revised-bill watermark (Partial-Return / Refunded / Cancelled)
-             Sits as a semi-transparent diagonal stamp across the centre of
-             the page so it's unambiguous from any angle but never covers
-             critical fields like GSTIN, totals, or signatures. Rendered
-             behind content via z-index + transparent fill colour.        */
-        .pr-pharm-bill .pb-revised-watermark {
-          position: absolute;
-          top: 50%; left: 50%;
-          transform: translate(-50%, -50%) rotate(-22deg);
-          font-size: 92px; font-weight: 900; letter-spacing: 14px;
-          color: ${r.status === "Cancelled" ? "rgba(185,28,28,.10)" : "rgba(180,83,9,.10)"};
-          border: 8px solid ${r.status === "Cancelled" ? "rgba(185,28,28,.18)" : "rgba(180,83,9,.18)"};
-          border-radius: 12px;
-          padding: 14px 38px;
-          white-space: nowrap;
-          pointer-events: none;
-          z-index: 1;
-          text-transform: uppercase;
-        }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-revised-watermark,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-revised-watermark {
-          font-size: 62px; letter-spacing: 10px; padding: 10px 26px; border-width: 6px;
-        }
-        @media print {
-          .pr-pharm-bill .pb-revised-watermark {
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
-        }
-        .pr-pharm-bill .pb-revised-banner {
-          margin: 0 22px 8px; padding: 7px 12px;
-          background: ${r.status === "Cancelled" ? "#fef2f2" : "#fffbeb"};
-          border: 1.5px solid ${r.status === "Cancelled" ? "#fecaca" : "#fcd34d"};
-          border-radius: 6px; font-size: 10px; color: ${r.status === "Cancelled" ? "#7f1d1d" : "#92400e"};
-          display: flex; justify-content: space-between; align-items: center;
-        }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-revised-banner,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-revised-banner { margin: 0 16px 5px; padding: 4px 10px; font-size: 8.5px; }
-
-        /* ── Returns section block (one per refund slip) */
-        .pr-pharm-bill .pb-returns { margin: 8px 22px 12px; border: 1.5px dashed #f59e0b; border-radius: 8px; overflow: hidden; }
-        .pr-pharm-bill .pb-returns-head { padding: 7px 12px; background: #fffbeb; border-bottom: 1px solid #fde68a; font-size: 10px; color: #92400e; display: flex; justify-content: space-between; }
-        .pr-pharm-bill .pb-returns-table { width: 100%; border-collapse: collapse; font-size: 10px; }
-        .pr-pharm-bill .pb-returns-table th { padding: 5px 9px; text-align: left; background: #fef3c7; color: #78350f; font-size: 8.5px; letter-spacing: .4px; text-transform: uppercase; border-bottom: 1px solid #fcd34d; }
-        .pr-pharm-bill .pb-returns-table td { padding: 5px 9px; border-bottom: 1px solid #fef3c7; }
-        .pr-pharm-bill .pb-returns-foot { display: flex; justify-content: flex-end; gap: 12px; padding: 6px 12px; background: #fffbeb; font-size: 10px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-returns,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-returns { margin: 4px 16px 6px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-returns-head,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-returns-head { padding: 4px 10px; font-size: 8.5px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-returns-table th,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-returns-table th { padding: 3px 7px; font-size: 7.5px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-returns-table td,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-returns-table td { padding: 3px 7px; font-size: 8.4px; }
-
-        /* ── Supplements section block (one per debit-note slip) ── green
-           palette to visually distinguish from returns (amber/orange). */
-        .pr-pharm-bill .pb-supplements { margin: 8px 22px 12px; border: 1.5px dashed #16a34a; border-radius: 8px; overflow: hidden; }
-        .pr-pharm-bill .pb-supplements-head { padding: 7px 12px; background: #f0fdf4; border-bottom: 1px solid #bbf7d0; font-size: 10px; color: #166534; display: flex; justify-content: space-between; }
-        .pr-pharm-bill .pb-supplements-table { width: 100%; border-collapse: collapse; font-size: 10px; }
-        .pr-pharm-bill .pb-supplements-table th { padding: 5px 9px; text-align: left; background: #dcfce7; color: #14532d; font-size: 8.5px; letter-spacing: .4px; text-transform: uppercase; border-bottom: 1px solid #86efac; }
-        .pr-pharm-bill .pb-supplements-table td { padding: 5px 9px; border-bottom: 1px solid #dcfce7; }
-        .pr-pharm-bill .pb-supplements-foot { display: flex; justify-content: flex-end; gap: 12px; padding: 6px 12px; background: #f0fdf4; font-size: 10px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-supplements,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-supplements { margin: 4px 16px 6px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-supplements-head,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-supplements-head { padding: 4px 10px; font-size: 8.5px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-supplements-table th,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-supplements-table th { padding: 3px 7px; font-size: 7.5px; }
-        html[data-paper="half-a4"] .pr-pharm-bill .pb-supplements-table td,
-        html[data-paper="a5"]      .pr-pharm-bill .pb-supplements-table td { padding: 3px 7px; font-size: 8.4px; }
-      `}</style>
-
-      <div className="pr-page pr-pharm-bill" style={{
-        ...SHEET,
-        "--pr-header-color": id.color,
-        "--pr-accent-color": id.accent,
-        padding: 0,
-        position: "relative",
-        overflow: "hidden",
-      }}>
-        {isRevised && (
-          <div className="pb-revised-watermark">
-            {r.status === "Cancelled" ? "CANCELLED" : "REVISED"}
+      {/* ── HSN + Totals split: side-by-side ── */}
+      <div style={{ display: "grid", gridTemplateColumns: hsnRows.length ? "1fr 1fr" : "1fr", gap: 12, marginBottom: 10 }}>
+        {hsnRows.length > 0 && (
+          <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, overflow: "hidden" }}>
+            <div style={{
+              padding: "5px 10px", background: "#f1f5f9", color: "#0f172a",
+              fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase",
+            }}>HSN / SAC Summary</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: "4px 8px", textAlign: "left", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>HSN</th>
+                  <th style={{ padding: "4px 8px", textAlign: "right", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>GST%</th>
+                  <th style={{ padding: "4px 8px", textAlign: "right", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>Taxable</th>
+                  <th style={{ padding: "4px 8px", textAlign: "right", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>Tax</th>
+                </tr>
+              </thead>
+              <tbody>
+                {hsnRows.map((row, i) => (
+                  <tr key={i}>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9", fontFamily: "'DM Mono', monospace" }}>{row.hsn}</td>
+                    <td style={{ padding: "4px 8px", textAlign: "right", borderBottom: "1px solid #f1f5f9" }}>{row.gstRate}%</td>
+                    <td style={{ padding: "4px 8px", textAlign: "right", borderBottom: "1px solid #f1f5f9" }}>{fmtINR(row.taxable)}</td>
+                    <td style={{ padding: "4px 8px", textAlign: "right", borderBottom: "1px solid #f1f5f9" }}>{fmtINR(row.tax)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
 
-        {/* R7bf-F / A4-CRIT-5: DUPLICATE watermark on reprints. Sits
-            inside the same .pr-page so it auto-positions with the
-            content. Hidden on first print (printCount<=1). */}
-        <PrintWatermark
-          printCount={toNum(r.printCount)}
-          recipient="RECIPIENT"
-        />
-
-        <Chosen {...renderProps} />
-
-        {isRevised && (
-          <div className="pb-revised-banner">
-            <span>
-              <b>{r.status === "Cancelled" ? "CANCELLED BILL" : "REVISED BILL"}</b>
-              {" · "}
-              {r.status === "Refunded"      && "All items returned"}
-              {r.status === "Partial-Return"&& "One or more items returned"}
-              {r.status === "Cancelled"     && "Sale cancelled — invoice retained for audit"}
-              {r.status === "Supplemented"  && `${supplements.length} item${supplements.length === 1 ? "" : "s"} added via supplementary invoice`}
-            </span>
-            <span>
-              {/* R7da — drop redundant Number() wrap. fmtINR now handles
-                  Decimal128 wire format ({$numberDecimal:"320"}) which
-                  Number() would NaN. */}
-              Original&nbsp;{fmtINR(r.grandTotal)}
-              {supplementTotal > 0 && <> · Added&nbsp;<b style={{ color: "#15803d" }}>+ {fmtINR(supplementTotal)}</b></>}
-              {refundTotal > 0     && <> · Refund&nbsp;<b style={{ color: "#b45309" }}>− {fmtINR(refundTotal)}</b></>}
-              {(supplementTotal > 0 || refundTotal > 0) && <> · Net&nbsp;<b>{fmtINR(netAfter)}</b></>}
-            </span>
+        <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, overflow: "hidden" }}>
+          <div style={{
+            padding: "5px 10px", background: "#f1f5f9", color: "#0f172a",
+            fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase",
+          }}>Bill Summary</div>
+          <div style={{ padding: "8px 12px", fontSize: 11 }}>
+            <Row label="Sub Total" value={fmtINR(subTotal)} />
+            {totalDisc > 0 && <Row label="Discount" value={`- ${fmtINR(totalDisc)}`} />}
+            <Row label="Taxable Value" value={fmtINR(totalTaxable)} />
+            {isInterState
+              ? <Row label={`IGST`} value={fmtINR(totalTax)} />
+              : (
+                <>
+                  <Row label="CGST" value={fmtINR(totalTax / 2)} />
+                  <Row label="SGST" value={fmtINR(totalTax / 2)} />
+                </>
+              )}
+            {Math.abs(roundOff) > 0.001 && (
+              <Row label="Round-off" value={(roundOff >= 0 ? "+ " : "- ") + fmtINR(Math.abs(roundOff))} />
+            )}
+            <div style={{
+              marginTop: 5, padding: "6px 0", borderTop: "1.5px solid #0f172a",
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              fontWeight: 800, fontSize: 13,
+            }}>
+              <span>Grand Total</span>
+              <span>{fmtINR(grandTotal)}</span>
+            </div>
+            {paid > 0 && <Row label="Paid" value={fmtINR(paid)} />}
+            {balance > 0 && (
+              <Row label="Balance Due" value={fmtINR(balance)} bold color="#dc2626" />
+            )}
           </div>
-        )}
-
-        {supplements.length > 0 && (
-          <div className="pb-supplements">
-            <div className="pb-supplements-head">
-              <b>SUPPLEMENTARY INVOICE — {supplements.length} slip(s)</b>
-              <span>Added total: <b>{fmtINR(supplementTotal)}</b></span>
-            </div>
-            {supplements.map((sup, si) => (
-              <div key={si} style={{ borderTop: si > 0 ? "1px solid #bbf7d0" : "none" }}>
-                <div className="pb-supplements-head" style={{ background: "#f0fdf4", borderBottom: "1px dashed #86efac", fontSize: 9.5 }}>
-                  <span>
-                    <b style={{ fontFamily: "DM Mono, monospace" }}>{sup.supplementSlipNumber || `Supplement #${si+1}`}</b>
-                    {sup.addedAt && <> · {_fmtDate(sup.addedAt, { day: "2-digit", month: "short", year: "numeric" })}</>}
-                    {sup.paymentMode && <> · {sup.paymentMode}</>}
-                    {sup.reason && <> · <i>{sup.reason}</i></>}
-                  </span>
-                  <span>Total: <b>{fmtINR(sup.addedTotal)}</b></span>
-                </div>
-                <table className="pb-supplements-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: "5%" }}>#</th>
-                      <th style={{ width: "45%" }}>Drug</th>
-                      <th style={{ width: "12%" }}>Batch</th>
-                      <th style={{ width: "8%", textAlign: "right" }}>Qty</th>
-                      <th style={{ width: "10%", textAlign: "right" }}>Rate</th>
-                      <th style={{ width: "10%", textAlign: "right" }}>GST</th>
-                      <th style={{ width: "10%", textAlign: "right" }}>Net</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(sup.addedItems || []).map((it, ii) => (
-                      <tr key={ii}>
-                        <td>{ii + 1}</td>
-                        <td>{it.drugName}</td>
-                        <td style={{ fontFamily: "DM Mono, monospace", fontSize: 9 }}>{it.batchNo || "—"}</td>
-                        <td style={{ textAlign: "right" }}>{it.quantity}</td>
-                        {/* R7da — fmtINR unwraps Decimal128 natively;
-                            the old Number() wrap NaN'd those values. */}
-                        <td style={{ textAlign: "right" }}>{fmtINR(it.unitPrice)}</td>
-                        <td style={{ textAlign: "right" }}>{fmtINR(it.gstAmount)}</td>
-                        <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR(it.netAmount)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ))}
-            <div className="pb-supplements-foot">
-              {/* R7da — reduce() needs explicit unwrap for the Decimal128 wire
-                  format. Use a tiny inline _n() so summations stay safe. */}
-              <span>Paid: <b style={{ color: "#15803d" }}>{fmtINR(supplements.reduce((s, x) => s + _dec(x.amountPaid), 0))}</b></span>
-              <span>Balance due: <b style={{ color: "#dc2626" }}>{fmtINR(supplements.reduce((s, x) => s + _dec(x.balanceDue), 0))}</b></span>
-              <span>Addendum total: <b style={{ color: "#15803d" }}>{fmtINR(supplementTotal)}</b></span>
-            </div>
-          </div>
-        )}
-
-        {returns.length > 0 && (
-          <div className="pb-returns">
-            <div className="pb-returns-head">
-              <b>RETURNS &amp; REFUNDS — {returns.length} slip(s)</b>
-              <span>Net of returns: <b>{fmtINR(netAfter)}</b></span>
-            </div>
-            {returns.map((ret, ri) => (
-              <div key={ri} style={{ borderTop: ri > 0 ? "1px solid #fde68a" : "none" }}>
-                <div className="pb-returns-head" style={{ background: "#fffdf5", borderBottom: "1px dashed #fcd34d", fontSize: 9.5 }}>
-                  <span>
-                    <b style={{ fontFamily: "DM Mono, monospace" }}>{ret.refundSlipNumber || `Refund #${ri+1}`}</b>
-                    {ret.refundedAt && <> · {_fmtDate(ret.refundedAt, { day: "2-digit", month: "short", year: "numeric" })}</>}
-                    {ret.refundMode && <> · {ret.refundMode}</>}
-                    {ret.reason && <> · <i>{ret.reason}</i></>}
-                  </span>
-                  <span>Refund: <b>{fmtINR(ret.refundAmount)}</b></span>
-                </div>
-                <table className="pb-returns-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: "5%" }}>#</th>
-                      <th style={{ width: "45%" }}>Drug</th>
-                      <th style={{ width: "12%" }}>Batch</th>
-                      <th style={{ width: "8%", textAlign: "right" }}>Qty</th>
-                      <th style={{ width: "10%", textAlign: "right" }}>Rate</th>
-                      <th style={{ width: "10%", textAlign: "right" }}>GST</th>
-                      <th style={{ width: "10%", textAlign: "right" }}>Net</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(ret.refundedItems || []).map((it, ii) => (
-                      <tr key={ii}>
-                        <td>{ii + 1}</td>
-                        <td>{it.drugName}</td>
-                        <td style={{ fontFamily: "DM Mono, monospace", fontSize: 9 }}>{it.batchNo || "—"}</td>
-                        <td style={{ textAlign: "right" }}>{it.quantity}</td>
-                        {/* R7da — same Decimal128 unwrap as supplements above */}
-                        <td style={{ textAlign: "right" }}>{fmtINR(it.unitPrice)}</td>
-                        <td style={{ textAlign: "right" }}>{fmtINR(it.gstAmount)}</td>
-                        <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtINR(it.netAmount)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ))}
-            <div className="pb-returns-foot">
-              <span>Total refunded: <b style={{ color: "#b45309" }}>{fmtINR(refundTotal)}</b></span>
-              {patientCred > 0 && <span>Credit held: <b style={{ color: "#0369a1" }}>{fmtINR(patientCred)}</b></span>}
-            </div>
-          </div>
-        )}
+        </div>
       </div>
-    </>
+
+      {/* ── Amount in words ── */}
+      <div style={{
+        padding: "8px 12px", marginBottom: 10,
+        background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: 6,
+        fontSize: 11, fontStyle: "italic",
+      }}>
+        <b>Amount in words:</b> {amountInWords(grandTotal)} only.
+      </div>
+
+      {/* ── Payment method chip ── */}
+      {r.method && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, fontSize: 11 }}>
+          <span style={{ color: "#475569", fontWeight: 700 }}>Paid via:</span>
+          <span className={`pr-paymethod pr-paymethod--${String(r.method).toLowerCase()}`}>
+            {String(r.method).toUpperCase()}
+          </span>
+          {r.refNo && <span style={{ color: "#64748b", fontSize: 10.5 }}>Ref: {r.refNo}</span>}
+        </div>
+      )}
+
+      {/* ── Tax Identification (B2B GSTIN block) ── */}
+      {(r.customerGstin || settings.gstin) && (
+        <div style={{ marginBottom: 10, fontSize: 10.5 }}>
+          <div style={{ fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".4px", fontSize: 9.5, marginBottom: 3 }}>
+            Tax Identification
+          </div>
+          <div><strong>Pharmacy GSTIN:</strong> <span style={{ fontFamily: "'DM Mono', monospace" }}>{id.gstin || settings.gstin || "—"}</span></div>
+          {r.customerGstin && (
+            <div style={{ marginTop: 2 }}>
+              <strong>Customer GSTIN:</strong> <span style={{ fontFamily: "'DM Mono', monospace" }}>{r.customerGstin}</span>
+            </div>
+          )}
+          {r.customerLegalName && (
+            <div style={{ marginTop: 2 }}><strong>Legal Name:</strong> {r.customerLegalName}</div>
+          )}
+        </div>
+      )}
+
+      {/* ── Supplements (debit-note slips) ── */}
+      {supplements.length > 0 && (
+        <div style={{ marginBottom: 10, border: "1.5px dashed #16a34a", borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ padding: "7px 12px", background: "#f0fdf4", borderBottom: "1px solid #bbf7d0", fontSize: 10.5, color: "#166534", display: "flex", justifyContent: "space-between" }}>
+            <b>SUPPLEMENTARY INVOICE — {supplements.length} slip(s)</b>
+            <span>Added total: <b>{fmtINR(supplementTotal)}</b></span>
+          </div>
+          {supplements.map((sup, si) => (
+            <SubBillSlip key={si} slip={sup} idx={si} kind="supplement" />
+          ))}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 14, padding: "6px 12px", background: "#f0fdf4", fontSize: 10.5 }}>
+            <span>Paid: <b style={{ color: "#15803d" }}>{fmtINR(supplements.reduce((s, x) => s + _dec(x.amountPaid), 0))}</b></span>
+            <span>Balance due: <b style={{ color: "#dc2626" }}>{fmtINR(supplements.reduce((s, x) => s + _dec(x.balanceDue), 0))}</b></span>
+            <span>Addendum total: <b style={{ color: "#15803d" }}>{fmtINR(supplementTotal)}</b></span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Returns / refunds ── */}
+      {returns.length > 0 && (
+        <div style={{ marginBottom: 10, border: "1.5px dashed #f59e0b", borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ padding: "7px 12px", background: "#fffbeb", borderBottom: "1px solid #fde68a", fontSize: 10.5, color: "#92400e", display: "flex", justifyContent: "space-between" }}>
+            <b>RETURNS &amp; REFUNDS — {returns.length} slip(s)</b>
+            <span>Net of returns: <b>{fmtINR(netAfter)}</b></span>
+          </div>
+          {returns.map((ret, ri) => (
+            <SubBillSlip key={ri} slip={ret} idx={ri} kind="return" />
+          ))}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 14, padding: "6px 12px", background: "#fffbeb", fontSize: 10.5 }}>
+            <span>Total refunded: <b style={{ color: "#b45309" }}>{fmtINR(refundTotal)}</b></span>
+            {patientCred > 0 && <span>Credit held: <b style={{ color: "#0369a1" }}>{fmtINR(patientCred)}</b></span>}
+          </div>
+        </div>
+      )}
+    </PrintShell>
   );
 };
+
+/* Internal helpers ─────────────────────────────────────────────── */
+
+function Row({ label, value, bold, color }) {
+  return (
+    <div style={{
+      display: "flex", justifyContent: "space-between",
+      padding: "2px 0", fontSize: 11,
+      fontWeight: bold ? 800 : 500,
+      color: color || "inherit",
+    }}>
+      <span>{label}</span>
+      <span>{value}</span>
+    </div>
+  );
+}
+
+function SubBillSlip({ slip, idx, kind }) {
+  const isSup = kind === "supplement";
+  const headBg = isSup ? "#f0fdf4" : "#fffdf5";
+  const headBorder = isSup ? "#86efac" : "#fcd34d";
+  const slipNo = isSup ? slip.supplementSlipNumber : slip.refundSlipNumber;
+  const slipDate = isSup ? slip.addedAt : slip.refundedAt;
+  const mode = isSup ? slip.paymentMode : slip.refundMode;
+  const rowItems = isSup ? slip.addedItems : slip.refundedItems;
+  const total = isSup ? slip.addedTotal : slip.refundAmount;
+  return (
+    <div style={{ borderTop: idx > 0 ? `1px solid ${headBorder}` : "none" }}>
+      <div style={{
+        display: "flex", justifyContent: "space-between",
+        padding: "5px 12px", background: headBg,
+        borderBottom: `1px dashed ${headBorder}`,
+        fontSize: 10,
+      }}>
+        <span>
+          <b style={{ fontFamily: "'DM Mono', monospace" }}>{slipNo || `${isSup ? "Supplement" : "Refund"} #${idx+1}`}</b>
+          {slipDate && <> · {_fmtDate(slipDate)}</>}
+          {mode && <> · {mode}</>}
+          {slip.reason && <> · <i>{slip.reason}</i></>}
+        </span>
+        <span>{isSup ? "Total" : "Refund"}: <b>{fmtINR(total)}</b></span>
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+        <thead>
+          <tr>
+            <th style={{ padding: "4px 8px", textAlign: "left", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", width: 28 }}>#</th>
+            <th style={{ padding: "4px 8px", textAlign: "left", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>Drug</th>
+            <th style={{ padding: "4px 8px", textAlign: "left", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", width: 80 }}>Batch</th>
+            <th style={{ padding: "4px 8px", textAlign: "right", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", width: 50 }}>Qty</th>
+            <th style={{ padding: "4px 8px", textAlign: "right", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", width: 70 }}>Rate</th>
+            <th style={{ padding: "4px 8px", textAlign: "right", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", width: 70 }}>GST</th>
+            <th style={{ padding: "4px 8px", textAlign: "right", background: "#f8fafc", borderBottom: "1px solid #e2e8f0", width: 80 }}>Net</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(rowItems || []).map((it, ii) => (
+            <tr key={ii}>
+              <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9" }}>{ii + 1}</td>
+              <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9" }}>{it.drugName}</td>
+              <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9", fontFamily: "'DM Mono', monospace", fontSize: 9 }}>{it.batchNo || "—"}</td>
+              <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9", textAlign: "right" }}>{it.quantity}</td>
+              <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9", textAlign: "right" }}>{fmtINR(it.unitPrice)}</td>
+              <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9", textAlign: "right" }}>{fmtINR(it.gstAmount)}</td>
+              <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9", textAlign: "right", fontWeight: 700 }}>{fmtINR(it.netAmount)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 export default PharmacyBill;

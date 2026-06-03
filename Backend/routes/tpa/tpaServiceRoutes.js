@@ -9,6 +9,13 @@ const express = require("express");
 const router = express.Router();
 const tpaServiceController = require("../../controllers/tpa/TPAServicesController");
 const { requireAction } = require("../../middleware/auth");
+const { validateObjectIdParam } = require("../../utils/queryGuards");
+
+// B7-T03: ObjectId param guards — reject malformed :id / :tpaId / :serviceId
+// at the edge so controllers don't blow up with CastError → 500.
+const vId        = validateObjectIdParam("id");
+const vTpaId     = validateObjectIdParam("tpaId");
+const vServiceId = validateObjectIdParam("serviceId");
 
 // Create TPA Service
 router.post  ("/",                                   requireAction("departments.write"), tpaServiceController.createTPAService);
@@ -26,27 +33,27 @@ router.get   ("/all-services",                       requireAction("billing.read
 router.get   ("/type/:serviceType",                  requireAction("billing.read"),      tpaServiceController.getServicesByType);
 
 // Get TPA Service stats
-router.get   ("/stats/:tpaId",                       requireAction("billing.read"),      tpaServiceController.getTPAServiceStats);
+router.get   ("/stats/:tpaId",                       vTpaId, requireAction("billing.read"),      tpaServiceController.getTPAServiceStats);
 
 // Get TPA Service by TPA ID
-router.get   ("/tpa/:id",                            requireAction("billing.read"),      tpaServiceController.getTPAServiceById);
+router.get   ("/tpa/:id",                            vId, requireAction("billing.read"),      tpaServiceController.getTPAServiceById);
 
 // Get TPA Services by TPA ID (alternative)
-router.get   ("/by-tpa/:tpaId",                      requireAction("billing.read"),      tpaServiceController.getTPAServicesByTPAId);
+router.get   ("/by-tpa/:tpaId",                      vTpaId, requireAction("billing.read"),      tpaServiceController.getTPAServicesByTPAId);
 
 // Update TPA Service
-router.put   ("/:id",                                requireAction("departments.write"), tpaServiceController.updateTPAService);
+router.put   ("/:id",                                vId, requireAction("departments.write"), tpaServiceController.updateTPAService);
 
 // Delete TPA Service
-router.delete("/:id",                                requireAction("departments.write"), tpaServiceController.deleteTPAService);
+router.delete("/:id",                                vId, requireAction("departments.write"), tpaServiceController.deleteTPAService);
 
 // Add single service
-router.post  ("/:id/add-service",                    requireAction("departments.write"), tpaServiceController.addService);
+router.post  ("/:id/add-service",                    vId, requireAction("departments.write"), tpaServiceController.addService);
 
 // Remove service
-router.delete("/:id/service/:serviceId",             requireAction("departments.write"), tpaServiceController.removeService);
+router.delete("/:id/service/:serviceId",             vId, vServiceId, requireAction("departments.write"), tpaServiceController.removeService);
 
 // Toggle active status
-router.patch ("/:id/toggle-status",                  requireAction("departments.write"), tpaServiceController.toggleActiveStatus);
+router.patch ("/:id/toggle-status",                  vId, requireAction("departments.write"), tpaServiceController.toggleActiveStatus);
 
 module.exports = router;

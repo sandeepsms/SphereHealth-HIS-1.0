@@ -83,7 +83,31 @@ export function HospitalSettingsProvider({ children }) {
     }
   };
 
-  useEffect(() => { fetchSettings(); }, []);
+  useEffect(() => {
+    fetchSettings();
+    // R7fs: re-fetch when authentication state flips. With R7y's
+    // sessionStorage JWT model, the very first mount happens on the
+    // login page where no token exists; the backend GET is now public
+    // so we DO get the real hospital identity then — but we still
+    // listen for these events so a fresh login (or a different user
+    // signing in mid-session) re-pulls in case admin just edited the
+    // settings, AND so the print-module cache stays in sync.
+    //   • "his:auth-changed" — dispatched by AuthContext on login /
+    //     logout / token refresh (this file owns the contract — see
+    //     dispatchAuthChanged() in AuthContext).
+    //   • "storage" — fires when another tab writes/clears the JWT
+    //     (cross-tab login). sessionStorage doesn't cross tabs, but
+    //     a future migration that pings a shared key (e.g. for "you
+    //     just logged out in another tab" UX) would still surface
+    //     here, so the listener is cheap insurance.
+    const onAuthChanged = () => { fetchSettings(); };
+    window.addEventListener("his:auth-changed", onAuthChanged);
+    window.addEventListener("storage",          onAuthChanged);
+    return () => {
+      window.removeEventListener("his:auth-changed", onAuthChanged);
+      window.removeEventListener("storage",          onAuthChanged);
+    };
+  }, []);
 
   return (
     <HospitalSettingsContext.Provider value={{ settings, loading, reload: fetchSettings }}>

@@ -96,6 +96,17 @@ const HospitalSettingsSchema = new mongoose.Schema(
        of truth for multi-cert displays (NABL/JCI/ISO alongside). */
     nabhCertNumber:  { type: String, default: "" },
     nabhValidUntil:  { type: Date,   default: null },
+    /* R7fq — print-shell enrichments. NABH-style header + footer
+       blocks consumed by Frontend/src/templates/PrintShell.jsx. */
+    nabhLogo:        { type: String, default: "" },            // URL or data-uri to accreditation badge image
+    nabhSinceDate:   { type: String, default: "" },            // e.g. "Since June 16, 2008"
+    taglineLeft:     { type: String, default: "" },            // small print under the left logo
+    taglineRight:    { type: String, default: "" },            // small print under the right NABH badge
+    helpline24x7:    { type: String, default: "" },            // surfaced in the emergency banner
+    homeCareBrand:   { type: String, default: "" },            // e.g. "MaxAtHome"
+    homeCarePhone:   { type: String, default: "" },
+    printDisclaimer: { type: String, default: "This is a computer generated document and does not require any signature." },
+    preparedByDefault:{ type: String, default: "" },           // counter-staff name fallback for prepared-by signature zone
     socials: {
       facebook:  { type: String, default: "" },
       instagram: { type: String, default: "" },
@@ -202,6 +213,26 @@ const HospitalSettingsSchema = new mongoose.Schema(
     showPageNumbers:  { type: Boolean, default: true },
     showQrOnBills:    { type: Boolean, default: false },
     qrPayloadType:    { type: String, enum: ["billUrl","upiLink","none"], default: "billUrl" },
+
+    /* ───────────────────────────────────────────────────────────
+       R7ft: Patient-file print theme — 5 design templates.
+       Admin picks one in Hospital Settings; CompleteIPDFile.jsx
+       delegates rendering to the chosen theme component.
+         • narrative — Apollo/Fortis discharge-letter prose
+         • timeline  — chronological day-diary feed
+         • executive — Max/Tirath 2-col dense brief
+         • audit     — NABH inspector tabular
+         • editorial — Glossy VIP magazine layout
+       All 5 themes consume the same normalized data shape so swapping
+       is just-a-render-difference, never a data-fetch difference.
+       Default is "narrative" — best mix of brand impression + read-
+       ability + page-count for tier-2/3 hospitals.
+       ─────────────────────────────────────────────────────────── */
+    patientFilePrintTheme: {
+      type: String,
+      enum: ["narrative","timeline","executive","audit","editorial"],
+      default: "narrative",
+    },
 
     // Bill footer
     billFooterNote: { type: String, default: "Thank you for choosing our hospital." },

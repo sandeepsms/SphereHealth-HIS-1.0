@@ -5,21 +5,36 @@
 // uses Service Date / Reference labels instead of Doctor / Department /
 // Visit Date, which are OPD-specific. Half-A4 friendly.
 //
+// R7fq Track A: refactored onto the new shared <PrintShell> contract.
+// Hospital logo + name + address now live entirely in the shell.
+//
+// Patient-strip mapping (per Track-A contract):
+//   left:  Receipt No · UMID · Patient Name · Gender/Age · Contact · Address
+//   right: Receipt Date · Service Date · Reference · Counter · Payer
+//          (IP No / Admission Date / Doctor / Specialization omitted —
+//           walk-in services have no admission and may have no doctor;
+//           replaced with the operationally relevant Service/Reference/
+//           Counter fields)
+//   GST B2B fields appended only when this is a tax invoice.
+//
 // Caller fires this via `openPrint("service-receipt", payload)` after a
 // SERVICE bill is generated or paid — see ReceptionBilling.printReceipt
-// which now branches on `bill.visitType === "SERVICE"`.
-//
-// R7bf-F / A4-CRIT-3: GST tax-invoice gaps closed — HSN/SAC, GST split,
-// customer GSTIN, place of supply, total in words.
-// R7bf-F / A4-CRIT-5: DUPLICATE watermark via PrintShell printCount prop.
-// R7bf-F / A4-MED-5: bill-line-row class for page-break-inside: avoid.
+// which branches on `bill.visitType === "SERVICE"`.
 
 import React from "react";
-import PrintShell from "../PrintShell";
+import PrintShell from "@/templates/PrintShell";
 import { fmtINR } from "../amountWords";
 import { numberToIndianWords, toNum } from "../../../utils/printUtils";
 
-const ServiceReceipt = ({ settings, receipt = {} }) => {
+const fmtDateTime = (d) =>
+  d
+    ? new Date(d).toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      })
+    : "—";
+
+const ServiceReceipt = ({ settings = {}, receipt = {} }) => {
   const items = Array.isArray(receipt.items) ? receipt.items : [];
   const subtotal = items.reduce((s, it) => s + toNum(it.amount), 0);
   const discount = toNum(receipt.discount);
@@ -37,27 +52,49 @@ const ServiceReceipt = ({ settings, receipt = {} }) => {
   const printCount = toNum(receipt.printCount);
   const docTitle = hasGstFields ? "Tax Invoice (Service)" : "Service Bill / Receipt";
 
+  const receiptNo = receipt.receiptNo || receipt.invoiceNo || receipt.billNumber || "—";
+  const genderAge = [receipt.gender, receipt.age && `${receipt.age}Y`]
+    .filter(Boolean).join(" ");
+
+  const patientLeft = [
+    { label: "Receipt No",   value: receiptNo },
+    { label: "UMID",         value: receipt.uhid || "—" },
+    { label: "Patient Name", value: receipt.patientName || "—" },
+    { label: "Gender/Age",   value: genderAge || "—" },
+    { label: "Contact",      value: receipt.contactNumber || receipt.mobile || "—" },
+    { label: "Address",      value: receipt.completeAddress || receipt.address || "—" },
+  ];
+  const patientRight = [
+    { label: "Receipt Date", value: fmtDateTime(receipt.date || receipt.paidAt || new Date().toISOString()) },
+    { label: "Service Date", value: fmtDateTime(receipt.serviceDate || receipt.visitDate) },
+    { label: "Reference",    value: receipt.referredBy || receipt.referralSource || "Walk-in" },
+    { label: "Counter",      value: receipt.counter || "Reception" },
+    { label: "Payer",        value: receipt.payer || "Self" },
+  ];
+  if (hasGstFields) {
+    patientRight.push(
+      { label: "Place of Supply", value: receipt.placeOfSupply || "—" },
+      { label: "Customer GSTIN",  value: receipt.customerGstin || "—" },
+    );
+  }
+
   return (
     <PrintShell
-      settings={settings}
-      documentTitle={docTitle}
-      serialNo={receipt.receiptNo || receipt.invoiceNo || receipt.billNumber}
-      printCount={printCount}
-      watermarkRecipient={hasGstFields ? "RECIPIENT" : undefined}
-      infoItems={[
-        { label: "Patient",      value: receipt.patientName },
-        { label: "UHID",         value: receipt.uhid },
-        { label: "Age / Sex",    value: [receipt.age && `${receipt.age}Y`, receipt.gender].filter(Boolean).join(" / ") },
-        { label: "Service Date", value: receipt.serviceDate || receipt.visitDate
-            ? new Date(receipt.serviceDate || receipt.visitDate).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
-            : "—" },
-        { label: "Reference",    value: receipt.referredBy || receipt.referralSource || "Walk-in" },
-        { label: "Counter",      value: receipt.counter || "Reception" },
-        ...(hasGstFields ? [
-          { label: "Place of Supply", value: receipt.placeOfSupply || "—" },
-          { label: "Customer GSTIN",  value: receipt.customerGstin || "—" },
-        ] : []),
-      ]}
+      hospital={settings}
+      docTitle={docTitle}
+      patient={{ left: patientLeft, right: patientRight }}
+      signatures={{
+        type: "prepared-by",
+        preparedBy: { name: receipt.preparedBy || receipt.cashier || "Cashier", role: "Cashier" },
+        showAttestedStamp: true,
+      }}
+      banners={{ emergency24x7: true }}
+      meta={{
+        docNumber: receiptNo,
+        pageOf: "1 of 1",
+        printCount,
+        watermarkRecipient: hasGstFields ? "RECIPIENT" : undefined,
+      }}
     >
       {hasGstFields && (receipt.customerLegalName || receipt.customerAddress) && (
         <div className="pr-section">
@@ -75,12 +112,12 @@ const ServiceReceipt = ({ settings, receipt = {} }) => {
           <thead>
             <tr>
               <th style={{ width: 30 }}>#</th>
-              <th>Service / Particulars</th>
+              <th>Particulars</th>
               {hasGstFields && <th style={{ width: 70 }}>HSN/SAC</th>}
               <th className="center" style={{ width: 50 }}>Qty</th>
               <th className="right" style={{ width: 75 }}>Rate (₹)</th>
               {hasGstFields && <th className="right" style={{ width: 60 }}>GST %</th>}
-              <th className="right" style={{ width: 85 }}>Amount (₹)</th>
+              <th className="right" style={{ width: 95 }}>Amount (₹)</th>
             </tr>
           </thead>
           <tbody>
@@ -100,6 +137,10 @@ const ServiceReceipt = ({ settings, receipt = {} }) => {
                 <td className="right">{toNum(it.amount).toLocaleString("en-IN")}</td>
               </tr>
             ))}
+            <tr className="bill-line-row">
+              <td colSpan={hasGstFields ? 6 : 4} className="right" style={{ fontWeight: 700 }}>Total Amount</td>
+              <td className="right" style={{ fontWeight: 800 }}>{fmtINR(grand)}</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -145,8 +186,8 @@ const ServiceReceipt = ({ settings, receipt = {} }) => {
         </div>
       </div>
 
-      <div className="pr-amount-words">
-        <strong>Amount in words:</strong> {numberToIndianWords(grand)}
+      <div className="pr-amount-words" style={{ fontStyle: "italic" }}>
+        Received an amount of (Rs.) {numberToIndianWords(grand)} only
       </div>
 
       {receipt.paymentMethod && (

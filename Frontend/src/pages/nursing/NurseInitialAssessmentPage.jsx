@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect } from "react";
 import axios from "axios";
-import { API_ENDPOINTS } from "../../config/api";
+import { API_ENDPOINTS, API_BASE_URL as API } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
@@ -447,6 +447,36 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
         payload,
         { headers: { Authorization: `Bearer ${token}` } }
       );
+
+      // R7gw-B3-T04 — seed NABH IPSG.6 + HIC.4 admission baselines.
+      try {
+        const fanoutHeaders = { Authorization: `Bearer ${token}` };
+        const baselinePayload = {
+          UHID: patInfo.UHID || patInfo.patientId?.UHID || uhid,
+          admissionId: patInfo._id,
+          patientId: patInfo.patientId?._id || patInfo.patientId,
+          patientName: patName,
+          nurseName: signoff.nurseName || user?.fullName || `${user?.firstName || ''} ${user?.lastName || ''}`.trim(),
+          nurseEmployeeId: signoff.nurseId || user?.employeeId || '',
+          assessmentSource: 'INITIAL_ASSESSMENT_BASELINE',
+        };
+        await Promise.allSettled([
+          axios.post(`${API}/nursing-assessments/fall-risk`, {
+            ...baselinePayload,
+            score: morseScore,
+            risk: morseRisk.label,
+            scores: morse,
+          }, { headers: fanoutHeaders }),
+          axios.post(`${API}/nursing-assessments/pressure-area`, {
+            ...baselinePayload,
+            bradenScore,
+            bradenRisk: bradenRisk.label,
+            bradenScale: braden,
+            ulcerPresent: false,
+          }, { headers: fanoutHeaders }),
+        ]);
+      } catch (e) { /* silent — baseline seeding is best-effort */ }
+
       toast.success("✅ Nursing Initial Assessment saved successfully");
       clearDraft();
       setSaved(true);

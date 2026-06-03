@@ -21,6 +21,9 @@ const vAdm    = validateObjectIdParam("admissionId");
 const vTrig   = validateObjectIdParam("triggerId");
 const vItem   = validateObjectIdParam("itemId");
 const vPay    = validateObjectIdParam("paymentId");
+// B4-T08: the stuck-trigger retry endpoint uses `:id` (per spec) rather
+// than the existing `:triggerId` convention, so it needs its own guard.
+const vId     = validateObjectIdParam("id");
 
 // Soft-auth — capture req.user when present so audit trail (who recorded
 // each payment) is accurate, but don't 401 on legacy unauthenticated callers.
@@ -119,6 +122,12 @@ router.post("/trigger/:triggerId/override",
   vTrig, requireAction("billing.override"),      ctrl.overrideTrigger);
 router.post("/trigger/:triggerId/cancel",
   vTrig, requireAction("billing.cancel-charge"), ctrl.cancelTrigger);
+// B4-T08: stuck-trigger re-fire — Receptionist/Accountant/Admin can press
+// Retry from the IPD Live Ledger's Stuck Triggers tile to re-run the
+// accrual logic on a pending-review trigger. billing.write gate matches
+// addManualCharge (same write surface — a retry can land a new bill line).
+router.post("/triggers/:id/retry",
+  vId, requireAction("billing.write"),           ctrl.retryStuckTrigger);
 
 // ── Bill CRUD & actions ───────────────────────────────────────
 router.get("/:billId", vBill, requireAction("billing.read"), ctrl.getBillById); // R7ap-F5/F25
@@ -182,7 +191,7 @@ router.post("/backfill-registration", requireAction("billing.refund"), ctrl.back
 // Preview is a safe read — any authenticated user can call it. Attach
 // and Detach change ledger state, so gated to billing.refund tier
 // (Accountant / Admin / Receptionist with elevated permission).
-router.post("/packages/preview", ctrl.previewPackageMatch);
+router.post("/packages/preview", requireAction("billing.read"), ctrl.previewPackageMatch);
 router.post("/admissions/:admissionId/attach-package",
   requireAction("billing.refund"), ctrl.attachPackageToAdmission);
 router.post("/admissions/:admissionId/detach-package",

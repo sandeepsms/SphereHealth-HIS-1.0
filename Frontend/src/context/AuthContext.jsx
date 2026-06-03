@@ -240,6 +240,14 @@ export function AuthProvider({ children }) {
         setDoctorProfile(me.data?.doctorProfile || null);
       } catch { /* non-fatal */ }
     }
+    // R7fs: tell HospitalSettingsProvider (and any other auth-aware
+    // singletons) that we now have a valid JWT — they can re-fetch
+    // private data. Even though the hospital-settings GET is public
+    // post-R7fs, this event also covers the case where admin edited
+    // the settings just before this user logged in, so their session
+    // pulls the freshest copy instead of whatever the unauthenticated
+    // first-paint fetch saw.
+    try { window.dispatchEvent(new CustomEvent("his:auth-changed", { detail: { kind: "login" } })); } catch { /* non-fatal */ }
     return u;
   }, []);
 
@@ -279,6 +287,10 @@ export function AuthProvider({ children }) {
     clearStoredUser(); // R7cf: drop the print-window mirror on logout
     setDoctorProfile(null);
     setMustChangePassword(false);
+    // R7fs: notify HospitalSettingsProvider that auth state changed so
+    // it can re-pull a clean copy on the login screen (hospital identity
+    // is public branding, but the listener stays symmetric with login).
+    try { window.dispatchEvent(new CustomEvent("his:auth-changed", { detail: { kind: "logout" } })); } catch { /* non-fatal */ }
   }, []);
 
   /* ── R7bb-E/S2 — 401-with-code interceptor ──

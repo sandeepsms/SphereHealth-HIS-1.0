@@ -30,6 +30,14 @@ import { useAuth } from "../../context/AuthContext";
 import { openPrint } from "../../Components/print/openPrint";
 import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
 import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
+// R7fq Track B — shared NABH-style print frame for the Complete IPD Bill.
+// The previous popup HTML duplicated the hospital-logo masthead inline,
+// drifting from every other printable as Hospital Settings evolved. The
+// helper returns the full <!doctype>…</html> string with hospital header,
+// patient strip, banners, signature zone, disclaimer + footer baked in;
+// callers only own the body slot (categorized bill table here).
+import { buildPrintShellHtml } from "../../templates/PrintShell";
+import { amountInWords } from "../../Components/print/amountWords";
 // R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap to avoid 7-page drift.
 import { toMoney } from "../../utils/money";
 
@@ -51,6 +59,11 @@ import { toMoney } from "../../utils/money";
         a user adds, the printout shows.
 */
 const CODE_PREFIX = {
+  // Registration & Admission (was "Other Charges" — too vague; R7ex)
+  REG: "Registration & Admission",
+  REGISTRATION: "Registration & Admission",
+  ADM: "Registration & Admission",
+  ADMISSION: "Registration & Admission",
   // Bed / Room
   BED: "Room/Bed Charges",       ROOM: "Room/Bed Charges",      WARD: "Room/Bed Charges",
   // Doctor / Consultant
@@ -89,7 +102,7 @@ const CODE_PREFIX = {
   // Misc
   NEB: "Nursing Charges",        // nebulization session
   PKG: "Other Charges", PACKAGE: "Other Charges",
-  ER: "Other Charges", REG: "Other Charges", ADM: "Other Charges",
+  ER: "Other Charges",
   IPD: null, OPD: null,           // pure prefixes — keep falling through
 };
 
@@ -334,6 +347,73 @@ export default function IPDBillingLedger() {
   const [addRemarks, setAddRemarks] = useState("");
   const [addBusy, setAddBusy] = useState(false);
 
+  // B4-T09 — Stuck triggers widget (Admin / Accountant only).
+  // Surfaces BillingTrigger rows that landed in status="pending-review"
+  // so the desk can spot revenue-leak risks and retry them in one click.
+  // TODO(B4-T09): Backend lacks a GET /billing/triggers?status=pending-review
+  // endpoint as of this commit; the fetch below 404s harmlessly and the
+  // widget renders empty. Wire up the read endpoint + POST .../retry
+  // route in autoBillingService for full functionality.
+  const [stuckTriggers, setStuckTriggers] = useState([]);
+  const [retryingIds, setRetryingIds] = useState(new Set());
+  const [stuckOpen, setStuckOpen] = useState(true);
+
+  const canSeeStuck = user?.role === "Admin" || user?.role === "Accountant";
+
+  useEffect(() => {
+    if (!canSeeStuck) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // TODO(B4-T09): confirm final endpoint shape; this is a best-guess
+        // matching the GET /api/billing/triggers?status=pending-review path
+        // suggested in the task brief.
+        const { data: r } = await axios.get(
+          `${API_ENDPOINTS.BASE}/billing/triggers?status=pending-review${admissionId ? `&admissionId=${admissionId}` : ""}`,
+        );
+        if (cancelled) return;
+        const rows = Array.isArray(r) ? r : (r?.data || r?.triggers || []);
+        setStuckTriggers(rows);
+      } catch (_e) {
+        // Endpoint may not exist yet — fail silent so the page still works.
+        if (!cancelled) setStuckTriggers([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [canSeeStuck, admissionId]);
+
+  const retryTrigger = async (id) => {
+    setRetryingIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    try {
+      // TODO(B4-T09): confirm retry endpoint exists; brief specifies
+      // POST /api/billing/triggers/:id/retry — wire up the controller +
+      // route to re-run the autoBilling pipeline for this single trigger.
+      await axios.post(`${API_ENDPOINTS.BASE}/billing/triggers/${id}/retry`);
+      toast.success("Trigger retried");
+      // Drop the row optimistically so the user sees their click work.
+      setStuckTriggers(rows => rows.filter(t => t._id !== id));
+      load();
+    } catch (e) {
+      toast.error(`Retry failed: ${e.response?.data?.message || e.message}`);
+    } finally {
+      setRetryingIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const ageMin = (createdAt) => {
+    if (!createdAt) return "?";
+    const ms = Date.now() - new Date(createdAt).getTime();
+    return Math.max(0, Math.floor(ms / 60000));
+  };
+
   const load = useCallback(async () => {
     if (!admissionId) return;
     setLoading(true);
@@ -362,6 +442,13 @@ export default function IPDBillingLedger() {
      ALL admissions (including discharged) so the receptionist can also
      re-open a closed bill for re-print / refund. */
   const [pickerList,   setPickerList]   = useState([]);
+  // R7ew — IPD vs Daycare pill filter on the no-admission picker.
+  // Default to "IPD" (matches admissionType in IPD/Planned/Transfer/
+  // Emergency — true inpatient stays). "DAYCARE" matches Day Care /
+  // Daycare. The picker already drops OPD/Services upstream via
+  // INPATIENT_TYPES; this pill just splits the inpatient bucket so
+  // the receptionist sees one workflow at a time.
+  const [typeFilter,   setTypeFilter]   = useState("IPD");
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerSearch, setPickerSearch] = useState("");
 
@@ -400,11 +487,21 @@ export default function IPDBillingLedger() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [admissionId]);
+  // R7ew — pill-driven type buckets.
+  const IPD_BUCKET     = new Set(["IPD", "Planned", "Transfer", "Emergency"]);
+  const DAYCARE_BUCKET = new Set(["Day Care", "Daycare"]);
+  const matchesTypePill = (a) => {
+    const t = a?.admissionType;
+    if (typeFilter === "DAYCARE") return DAYCARE_BUCKET.has(t);
+    return IPD_BUCKET.has(t); // default "IPD" pill
+  };
+  const typedList = pickerList.filter(matchesTypePill);
+
   // Live filter — search by name / UHID / IPD No / bed / doctor / dept.
   const filteredPicker = (() => {
     const q = pickerSearch.trim().toLowerCase();
-    if (!q) return pickerList;
-    return pickerList.filter(a => {
+    if (!q) return typedList;
+    return typedList.filter(a => {
       const hay = [
         a.patientName, a.UHID, a.admissionNumber, a.bedNumber,
         a.attendingDoctor, a.department, a.admissionType,
@@ -489,20 +586,30 @@ export default function IPDBillingLedger() {
     if (!canGenerateFinal) {
       return toast.warn(`Discharge not yet approved (stage: ${dischargeStage}). Doctor must approve first.`);
     }
+    // R7ex — toMoney() unwraps Decimal128 ({$numberDecimal:"500"}); raw
+    // pass-through made every rate/amount render as ₹0.
     const items = (data.triggers || [])
       .filter(t => !["voided", "cancelled", "skipped"].includes(t.status))
-      .map(t => ({
-        category:    printCategoryFor(t),
-        name:        t.serviceName || t.serviceCode,
-        description: t.orderDetails,
-        date:        t.createdAt,
-        qty:         t.quantity || 1,
-        rate:        t.unitPrice || 0,
-        amount:      t.totalAmount || ((t.unitPrice || 0) * (t.quantity || 1)),
-      }));
+      .map(t => {
+        const rate = toMoney(t.unitPrice);
+        const qty  = Number(t.quantity || 1);
+        const amt  = toMoney(t.totalAmount) || (rate * qty);
+        return {
+          category:    printCategoryFor(t),
+          name:        t.serviceName || t.serviceCode,
+          description: t.orderDetails,
+          date:        t.createdAt,
+          qty,
+          rate,
+          amount:      amt,
+        };
+      });
     openPrint("final-bill", {
       isInterim:        false,
       viewMode:         "category",
+      // R7ey-F3 — pass visitType so FinalBill prints "Day Care" / "Emergency"
+      // / "IPD" titles correctly instead of always "IPD".
+      visitType:        data.admission.admissionType,
       billNo:           data.bill?.billNumber || `FINAL-${data.admission.admissionNumber}`,
       patientName:      patient.fullName || data.admission.UHID,
       uhid:             data.admission.UHID,
@@ -514,9 +621,17 @@ export default function IPDBillingLedger() {
       totalDays:        stayDays,
       bedNumber:        data.admission.bedId?.bedNumber || "",
       wardName:         data.admission.bedId?.wardName || data.admission.department || "",
-      consultantName:   data.admission.consultantDoctor?.fullName || data.admission.primaryConsultant || "",
+      // R7en-FIX: stored field is attendingDoctor (legacy fields never
+      // populated). TPA falls back to Self-pay for cash patients.
+      consultantName:   data.admission.attendingDoctor
+                      || data.admission.consultantDoctor?.fullName
+                      || data.admission.primaryConsultant
+                      || "—",
       finalDiagnosis:   data.admission.finalDiagnosis || data.admission.provisionalDiagnosis || data.admission.workingDiagnosis || data.admission.diagnosis || "",
-      tpaName:          data.bill?.tpaName || null,
+      tpaName:          data.bill?.tpaName
+                      || data.admission.tpaProvider
+                      || data.admission.insuranceProvider
+                      || "Self-pay",
       items,
       discount:         totalDiscount,
       advanceReceived:  paid,
@@ -571,9 +686,17 @@ export default function IPDBillingLedger() {
 
     const esc = (s = "") => String(s ?? "").replace(/[&<>"']/g, (c) =>
       ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+    // R7ex — Decimal128 unwrap. Mongoose serialises Decimal128 to JSON as
+    // { $numberDecimal: "500" }. The default Object#toString returns
+    // "[object Object]" → NaN, which silently zeroed every rate/amount on
+    // the print. Check $numberDecimal explicitly before generic .toString.
     const _num = (v) => {
       if (v == null) return 0;
-      if (typeof v === "object" && v.toString) v = v.toString();
+      if (typeof v === "object") {
+        if (v.$numberDecimal != null)         v = v.$numberDecimal;
+        else if (typeof v.toString === "function" && v.toString !== Object.prototype.toString) v = v.toString();
+        else                                  v = NaN;
+      }
       const n = Number(v); return Number.isFinite(n) ? n : 0;
     };
     const _money = (n) => `₹${_num(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -654,83 +777,105 @@ export default function IPDBillingLedger() {
        new Date(data.admission.admissionDate)) / 86400000,
     ));
     const patientName = (data.admission.patientId?.fullName) || data.admission.UHID || "Patient";
-    const consultant  = data.admission.consultantDoctor?.fullName || data.admission.primaryConsultant || "—";
+    // R7ex / R7ey-F39 — admission fallback chain. The audit confirmed
+    // that `consultantDoctor` and `primaryConsultant` are phantom
+    // fields (never populated by any save path); `attendingDoctor` is
+    // the canonical denormalized name string. Lead with that.
+    const _docRaw     = data.admission.attendingDoctor
+                     || data.admission.consultantDoctor?.fullName
+                     || data.admission.primaryConsultant
+                     || "";
+    const consultant  = _docRaw
+      ? (/^(Dr\.?|Prof\.?|Mr\.?|Mrs\.?|Ms\.?)\s+/i.test(_docRaw) ? _docRaw : `Dr. ${_docRaw}`)
+      : "—";
     const dx          = data.admission.provisionalDiagnosis || data.admission.workingDiagnosis || data.admission.diagnosis || "—";
-    const bedNo       = data.admission.bedId?.bedNumber || "—";
-    const wardName    = data.admission.bedId?.wardName || data.admission.wardName || data.admission.department || "—";
+    const bedNo       = data.admission.bedId?.bedNumber || data.admission.bedNumber || "—";
+    const wardName    = data.admission.bedId?.wardName   || data.admission.wardName  || data.admission.department || "—";
 
-    // R7ce / R7cg: NABH badge only when the admin has stamped a real
-    // certificate number on Hospital Settings — never claim NABH
-    // compliance just because a default flag is true.
-    const nabhOk = !!(hs.nabhCertNumber && String(hs.nabhCertNumber).trim());
+    // R7ey-F2 — derive visitLabel + visitLabelShort from admissionType so
+    // Day Care / Emergency / Transfer admissions don't all print as "IPD".
+    // Pattern-A from the R7eo print sweep (OPDReceipt etc. all use this
+    // same ladder).
+    const _visitRaw = String(data.admission.admissionType || "IPD").toUpperCase();
+    const visitLabel =
+        _visitRaw === "DAYCARE"   ? "Day Care"
+      : _visitRaw === "DAY CARE"  ? "Day Care"
+      : _visitRaw === "EMERGENCY" ? "Emergency"
+      : _visitRaw === "ER"        ? "Emergency"
+      : _visitRaw === "TRANSFER"  ? "Transfer"
+      : _visitRaw === "PLANNED"   ? "IPD"
+                                  : "IPD";
+    // "IPD #:" / "Day Care #:" / "Emergency #:" row label — keep it terse.
+    const visitNumLabel = visitLabel === "Day Care" ? "Day Care #" : `${visitLabel} #`;
 
-    const _addrLine  = [hs.addressLine1, hs.addressLine2, [hs.city, hs.state, hs.pincode].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
-    const _phoneLine = [hs.phone1, hs.phone2, hs.emergencyPhone].filter(Boolean).join(" · ");
+    // R7fq Track B — hospital header / patient strip / signatures / footer
+    // are now owned by the shared PrintShell. This handler only builds the
+    // body HTML (categorised + day-wise + payments + totals + amount-in-
+    // words + net strip) and delegates the chrome to buildPrintShellHtml.
+    // Pre-R7fq this function carried its own inline masthead — every
+    // Hospital Settings edit (logo, name, GSTIN, NABH cert) drifted from
+    // every other printable until someone hand-synced this file.
 
-    // Build per-section HTML fragments separately so the template
-    // string stays scannable. esc() everywhere — never trust patient
-    // text / diagnosis / remarks (they may contain stray < or &).
-    const headerHtml = `
-      <div class="hdr">
-        <div class="hdr-left">
-          ${hs.logo ? `<img src="${esc(hs.logo)}" alt="" style="max-height:64px;display:block;margin-bottom:6px"/>` : ""}
-          <div class="h-name" style="color:${esc(hs.printHeaderColor || "#0f172a")}">${esc(hs.hospitalName || "Hospital")}</div>
-          ${hs.tagline ? `<div class="h-tag">${esc(hs.tagline)}</div>` : ""}
-          ${_addrLine  ? `<div class="h-meta">${esc(_addrLine)}</div>` : ""}
-          ${_phoneLine ? `<div class="h-meta">${esc(_phoneLine)}</div>` : ""}
-          ${hs.gstin ? `<div class="h-meta">GSTIN: ${esc(hs.gstin)}</div>` : ""}
-          ${nabhOk ? `<div class="h-meta nabh">NABH Certified · ${esc(hs.nabhCertNumber)}</div>` : ""}
-        </div>
-        <div class="hdr-right">
-          <div class="doc-title">COMPLETE IPD BILL</div>
-          <div class="h-meta"><strong>${esc(patientName)}</strong></div>
-          <div class="h-meta">UHID: ${esc(data.admission.UHID)} · ${data.admission.patientId?.age ? data.admission.patientId.age + "y" : ""} · ${esc(data.admission.patientId?.gender || "")}</div>
-          <div class="h-meta">IPD #: ${esc(data.admission.admissionNumber)}</div>
-          <div class="h-meta">Bill #: ${esc(data.bill?.billNumber || "DRAFT")}</div>
-          <div class="h-meta">Printed: ${_dt(new Date())}</div>
-        </div>
-      </div>
-      <div class="adm-strip">
-        <div><span class="lbl">Admitted</span> ${_dt(data.admission.admissionDate)}</div>
-        <div><span class="lbl">Discharged</span> ${data.admission.actualDischargeDate ? _dt(data.admission.actualDischargeDate) : "<em>(still admitted)</em>"}</div>
-        <div><span class="lbl">Stay</span> ${stayDays} day${stayDays === 1 ? "" : "s"}</div>
-        <div><span class="lbl">Bed / Ward</span> ${esc(bedNo)} · ${esc(wardName)}</div>
-        <div><span class="lbl">Consultant</span> ${esc(consultant)}</div>
-        <div><span class="lbl">Diagnosis</span> ${esc(dx)}</div>
-      </div>`;
+    // Build the per-line categorised bill table (Sir Ganga Ram pattern:
+    // category band row → line items → subtotal row, repeated per
+    // category, then a single Grand Total row). The Section A/B/C
+    // breakdown is preserved as supplementary blocks below the main
+    // categorised table so the patient still sees day-wise + payments
+    // + advance-deposits, but the top-of-bill view is now the standard
+    // categorised pattern used across every bill print.
+    let slNo = 0;
+    // Group liveTriggers by category in CATEGORY_ORDER, then unknowns.
+    const CATEGORY_ORDER = [
+      "Registration & Admission",
+      "Room/Bed Charges",
+      "Doctor / Consultant Fees",
+      "Nursing Charges",
+      "Procedure / OT Charges",
+      "Investigations / Lab",
+      "Radiology / Imaging",
+      "Pharmacy / Medications",
+      "Consumables / Disposables",
+      "Equipment / Monitoring",
+      "Ambulance",
+      "Other Charges",
+    ];
+    const grouped = {};
+    for (const t of liveTriggers) {
+      const cat = printCategoryFor(t);
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(t);
+    }
+    const orderedCats = [
+      ...CATEGORY_ORDER.filter(c => grouped[c]),
+      ...Object.keys(grouped).filter(c => !CATEGORY_ORDER.includes(c)),
+    ];
+    const billRows = orderedCats.map(cat => {
+      const rowsHtml = grouped[cat].map(t => {
+        slNo += 1;
+        const rate = _num(t.unitPrice);
+        const qty  = _num(t.quantity || 1);
+        const amt  = _num(t.totalAmount) || (rate * qty);
+        return `
+          <tr>
+            <td>${slNo}</td>
+            <td>${esc(t.serviceName || t.serviceCode)}${t.orderDetails ? `<div class="rmk">${esc(t.orderDetails)}</div>` : ""}</td>
+            <td>${_date(t.createdAt)}</td>
+            <td style="text-align:right">${rate.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td style="text-align:right">${qty.toFixed(2)}</td>
+            <td style="text-align:right"><strong>${amt.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
+          </tr>`;
+      }).join("");
+      const sub = grouped[cat].reduce((s, t) => s + (_num(t.totalAmount) || (_num(t.unitPrice) * _num(t.quantity || 1))), 0);
+      return `
+        <tr class="ps-cat-row"><td colspan="6"><b>${esc(cat)}</b></td></tr>
+        ${rowsHtml}
+        <tr class="ps-subtotal"><td colspan="3"></td><td><b>Sub Total</b></td><td></td><td style="text-align:right"><b>${sub.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></td></tr>`;
+    }).join("");
 
-    // ── Section A: category-wise table ────────────────────────────
-    const catTableRows = catRows.map(r => `
-      <tr>
-        <td><strong>${esc(r.name)}</strong></td>
-        <td style="text-align:right">${r.lines}</td>
-        <td style="text-align:right">${r.qty.toFixed(0)}</td>
-        <td style="text-align:right">${catTotal > 0 ? ((r.total / catTotal) * 100).toFixed(1) + "%" : "—"}</td>
-        <td style="text-align:right"><strong>${_money(r.total)}</strong></td>
-      </tr>`).join("");
-
-    const categoryHtml = `
-      <div class="section">
-        <div class="section-title">SECTION A · Category-wise Summary</div>
-        ${catRows.length === 0
-          ? `<div class="empty">No billable charges accrued yet.</div>`
-          : `<table>
-              <thead><tr>
-                <th>Category</th>
-                <th style="text-align:right;width:90px">Lines</th>
-                <th style="text-align:right;width:90px">Qty</th>
-                <th style="text-align:right;width:90px">Share</th>
-                <th style="text-align:right;width:130px">Subtotal</th>
-              </tr></thead>
-              <tbody>${catTableRows}</tbody>
-              <tfoot><tr>
-                <td colspan="4" style="text-align:right">Category Sub-Total</td>
-                <td style="text-align:right"><strong>${_money(catTotal)}</strong></td>
-              </tr></tfoot>
-            </table>`}
-      </div>`;
-
-    // ── Section B: day-wise table (items grouped by day) ──────────
+    // Supplementary tables — day-wise breakdown, payment ledger, advance
+    // ledger — kept below the main categorised bill so the patient sees
+    // the complete picture in one document (the original Section A/B/C/D
+    // value).
     const dayBlocks = dayRows.map(d => {
       const itemsHtml = d.items.map(it => `
         <tr>
@@ -759,15 +904,12 @@ export default function IPDBillingLedger() {
         </div>`;
     }).join("");
 
-    const dailyHtml = `
-      <div class="section">
-        <div class="section-title">SECTION B · Day-wise Detailed Breakdown</div>
-        ${dayRows.length === 0
-          ? `<div class="empty">No itemised charges recorded yet.</div>`
-          : dayBlocks}
+    const dailyHtml = dayRows.length === 0 ? "" : `
+      <div class="ps-section">
+        <div class="ps-section-title">Day-wise Detailed Breakdown</div>
+        ${dayBlocks}
       </div>`;
 
-    // ── Section C: payments + advances ────────────────────────────
     const payRows = payments.map(p => `
       <tr>
         <td>${_dt(p.paidAt || p.createdAt)}</td>
@@ -788,12 +930,10 @@ export default function IPDBillingLedger() {
         <td style="text-align:right">${_money(a.remainingAmount)}</td>
       </tr>`).join("");
 
-    const paymentsHtml = `
-      <div class="section">
-        <div class="section-title">SECTION C · Payment Ledger &amp; Advance Adjustments</div>
-        ${payments.length === 0
-          ? `<div class="empty">No payments recorded against this bill yet.</div>`
-          : `<table>
+    const paymentsHtml = (payments.length === 0 && advances.length === 0) ? "" : `
+      <div class="ps-section">
+        <div class="ps-section-title">Payment Ledger &amp; Advance Adjustments</div>
+        ${payments.length === 0 ? "" : `<table>
               <thead><tr>
                 <th>Date</th><th>Mode</th><th>Reference</th><th>Received by</th>
                 <th style="text-align:right;width:130px">Amount</th>
@@ -805,7 +945,7 @@ export default function IPDBillingLedger() {
               </tr></tfoot>
             </table>`}
         ${advances.length === 0 ? "" : `
-          <div class="sub-title">Patient Advance Deposits (UHID-wide)</div>
+          <div class="ps-sub-title">Patient Advance Deposits (UHID-wide)</div>
           <table>
             <thead><tr>
               <th>Receipt #</th><th>Date</th><th>Mode</th><th>Status</th>
@@ -817,81 +957,134 @@ export default function IPDBillingLedger() {
           </table>`}
       </div>`;
 
-    // ── Section D: grand totals ───────────────────────────────────
+    // Grand total + amount-in-words + net-payable strip (Sir Ganga Ram
+    // pattern: a bold strip just under the bill table makes the bottom-
+    // line unambiguous to a non-technical patient/relative). R7da
+    // amountInWords helper handles Decimal128 wire format natively.
     const settled = sumDue <= 0;
-    const totalsHtml = `
-      <div class="grand">
-        <div class="grand-row"><span>Total Gross</span><strong>${_money(sumGross)}</strong></div>
-        <div class="grand-row"><span>Total Discount</span><strong>− ${_money(sumDisc)}</strong></div>
-        <div class="grand-row"><span>Total Tax</span><strong>${_money(sumTax)}</strong></div>
-        <div class="grand-row"><span>Total Net Payable</span><strong>${_money(sumNet)}</strong></div>
-        <div class="grand-row paid"><span>Paid (cash + advance)</span><strong>${_money(sumPaid)}</strong></div>
-        ${advApplied > 0 ? `<div class="grand-row sub"><span>&nbsp;&nbsp;↳ via Advance Adjustment</span><strong>${_money(advApplied)}</strong></div>` : ""}
-        <div class="grand-row major ${settled ? "ok" : "due"}">
-          <span>${settled ? "PATIENT ACCOUNT SETTLED" : "BALANCE DUE"}</span>
-          <strong>${_money(sumDue)}</strong>
-        </div>
-      </div>`;
-
-    const html = `<!doctype html><html><head>
-      <meta charset="utf-8">
-      <title>Complete IPD Bill — ${esc(patientName)} · ${esc(data.admission.admissionNumber)}</title>
+    const bodyHtml = `
       <style>
-        *{margin:0;padding:0;box-sizing:border-box}
-        body{font-family:'Segoe UI',Arial,sans-serif;padding:18px 22px 40px;color:#0f172a;font-size:12px;line-height:1.45}
-        @media print{
-          body{print-color-adjust:exact;-webkit-print-color-adjust:exact}
-          @page{margin:8mm 10mm;size:A4}
-          .section{page-break-inside:avoid}
-          .day-block{page-break-inside:avoid}
-        }
-        .hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:10px;border-bottom:2px solid #0f172a;margin-bottom:12px}
-        .hdr-right{text-align:right}
-        .h-name{font-size:20px;font-weight:800;letter-spacing:-.3px}
-        .h-tag{font-size:11px;color:#64748b;margin-top:2px}
-        .h-meta{font-size:11px;color:#475569;margin-top:2px}
-        .h-meta.nabh{color:#15803d;font-weight:700}
-        .doc-title{font-size:15px;font-weight:900;color:#7c3aed;letter-spacing:.6px;margin-bottom:6px}
-        .adm-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 18px;font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:14px}
-        .adm-strip .lbl{color:#94a3b8;text-transform:uppercase;font-size:9.5px;letter-spacing:.4px;display:block;margin-bottom:1px}
-        .section{margin:18px 0}
-        .section-title{font-size:12.5px;font-weight:900;color:#0f172a;background:#e0e7ff;padding:7px 12px;border-left:4px solid #7c3aed;letter-spacing:.4px;margin-bottom:8px}
-        .sub-title{font-size:11px;font-weight:800;color:#475569;text-transform:uppercase;letter-spacing:.4px;margin:14px 0 4px}
-        table{width:100%;border-collapse:collapse;margin:4px 0 6px;font-size:11.5px}
-        th,td{padding:5px 9px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}
-        th{background:#f1f5f9;font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.3px;color:#475569}
-        tfoot td{background:#f8fafc;font-weight:700;border-top:1.5px solid #cbd5e1;border-bottom:none}
-        .rmk{font-size:10px;color:#94a3b8;margin-top:1px;font-style:italic}
-        .empty{padding:18px;text-align:center;color:#94a3b8;font-style:italic;background:#f8fafc;border-radius:6px}
-        .day-block{margin:10px 0 14px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
-        .day-head{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#fef3c7;font-size:12px;color:#a16207}
-        .day-head .day-total{font-weight:900;color:#0f172a}
-        .pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:9.5px;font-weight:700;background:#f1f5f9;color:#475569}
-        .pill-adv{background:#f3e8ff;color:#7c3aed}
-        .pill-active{background:#dbeafe;color:#1d4ed8}
-        .pill-refunded{background:#fee2e2;color:#b91c1c}
-        .pill-exhausted{background:#dcfce7;color:#15803d}
-        .grand{margin-top:18px;padding-top:10px;border-top:2px solid #0f172a}
-        .grand-row{display:flex;justify-content:space-between;padding:4px 0;font-size:12px}
-        .grand-row.sub{font-size:11px;color:#7c3aed;padding:2px 0}
-        .grand-row.paid{color:#15803d}
-        .grand-row.major{font-size:16px;font-weight:900;padding-top:10px;margin-top:6px;border-top:1px dashed #cbd5e1}
-        .grand-row.major.ok{color:#15803d}
-        .grand-row.major.due{color:#b91c1c}
-        .footer{margin-top:22px;padding-top:10px;border-top:1px dashed #cbd5e1;font-size:10px;color:#94a3b8;text-align:center;line-height:1.6}
-      </style></head><body>
-      ${headerHtml}
-      ${categoryHtml}
-      ${dailyHtml}
-      ${paymentsHtml}
-      ${totalsHtml}
-      <div class="footer">
-        Complete IPD bill generated ${_dt(new Date())} · Sections A (category-wise) + B (day-wise) + C (payments &amp; advances) + D (grand totals).<br>
-        ${esc(hs.billFooterNote || "Thank you for choosing our hospital.")}<br>
-        This is a computer-generated document — every line maps to the live billing trigger ledger.
+        .ps-bill { width:100%; border-collapse:collapse; font-size:11.5px; margin-bottom:10px; }
+        .ps-bill th, .ps-bill td { padding:5px 9px; border-bottom:1px solid #e5e7eb; text-align:left; vertical-align:top; }
+        .ps-bill thead th { background:#f3f4f6; font-size:9.5px; text-transform:uppercase; letter-spacing:.4px; color:#374151; }
+        .ps-bill .ps-cat-row td { background:#e0e7ff; color:#3730a3; font-size:11px; font-weight:800; letter-spacing:.4px; padding:6px 10px; text-transform:uppercase; }
+        .ps-bill .ps-subtotal td { background:#f8fafc; font-weight:700; border-top:1px dashed #cbd5e1; }
+        .ps-bill .ps-grand-total td { background:#fef3c7; color:#92400e; font-size:13px; font-weight:900; border-top:2px solid #1f2937; border-bottom:2px solid #1f2937; padding:8px 10px; }
+        .ps-amount-words { padding:8px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; font-size:11px; margin:10px 0; }
+        .ps-net-strip { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#1e3a8a; color:#fff; border-radius:6px; font-size:13px; font-weight:800; margin:10px 0 14px; }
+        .ps-net-strip b { font-size:16px; }
+        .ps-section { margin:14px 0; }
+        .ps-section-title { font-size:11.5px; font-weight:800; color:#1f2937; background:#e0e7ff; padding:5px 10px; border-left:3px solid #7c3aed; letter-spacing:.4px; margin-bottom:6px; }
+        .ps-sub-title { font-size:10.5px; font-weight:800; color:#475569; text-transform:uppercase; letter-spacing:.4px; margin:12px 0 4px; }
+        .ps-section table { width:100%; border-collapse:collapse; font-size:11px; }
+        .ps-section th, .ps-section td { padding:4px 8px; border-bottom:1px solid #e5e7eb; text-align:left; vertical-align:top; }
+        .ps-section th { background:#f3f4f6; font-size:9px; text-transform:uppercase; letter-spacing:.3px; color:#374151; }
+        .ps-section tfoot td { background:#f8fafc; font-weight:700; }
+        .rmk { font-size:9.5px; color:#94a3b8; margin-top:1px; font-style:italic; }
+        .day-block { margin:8px 0 12px; border:1px solid #e2e8f0; border-radius:6px; overflow:hidden; page-break-inside:avoid; }
+        .day-head { display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:#fef3c7; font-size:11px; color:#92400e; }
+        .day-head .day-total { font-weight:900; color:#0f172a; }
+        .pill { display:inline-block; padding:1px 7px; border-radius:10px; font-size:9px; font-weight:700; background:#f1f5f9; color:#475569; }
+        .pill-adv { background:#f3e8ff; color:#7c3aed; }
+        .pill-active { background:#dbeafe; color:#1d4ed8; }
+        .pill-refunded { background:#fee2e2; color:#b91c1c; }
+        .pill-exhausted { background:#dcfce7; color:#15803d; }
+        .ps-status-banner { padding:8px 12px; border-radius:6px; font-size:12px; font-weight:800; margin:8px 0; text-align:center; letter-spacing:.4px; }
+        .ps-status-banner.ok { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+        .ps-status-banner.due { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+      </style>
+      ${billRows ? `
+      <table class="ps-bill">
+        <thead>
+          <tr>
+            <th style="width:36px">Sl.No</th>
+            <th>Item Name</th>
+            <th style="width:90px">Date</th>
+            <th style="width:90px;text-align:right">Price</th>
+            <th style="width:60px;text-align:right">Qty</th>
+            <th style="width:110px;text-align:right">Amount (₹)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${billRows}
+          ${sumDisc > 0 ? `<tr><td colspan="3"></td><td style="text-align:right">Less: Discount</td><td></td><td style="text-align:right">− ${sumDisc.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>` : ""}
+          ${sumTax > 0 ? `<tr><td colspan="3"></td><td style="text-align:right">Add: Tax</td><td></td><td style="text-align:right">+ ${sumTax.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>` : ""}
+          <tr class="ps-grand-total">
+            <td colspan="3"></td>
+            <td><b>Grand Total</b></td>
+            <td style="text-align:right">${(catTotal).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td style="text-align:right"><b>${sumNet.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="ps-amount-words">
+        <b>Amount in words:</b> ${esc(amountInWords(sumNet))}
       </div>
-      <script>window.onload = () => { setTimeout(() => window.print(), 250); };</script>
-      </body></html>`;
+
+      <div class="ps-net-strip">
+        <span>Net Amount to be paid by Patient:</span>
+        <b>₹ ${sumNet.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b>
+      </div>
+
+      <div class="ps-section">
+        <div class="ps-section-title">Settlement Summary</div>
+        <table>
+          <tbody>
+            <tr><td>Total Net Payable</td><td style="text-align:right"><b>${_money(sumNet)}</b></td></tr>
+            <tr><td>Paid (cash + advance)</td><td style="text-align:right; color:#15803d"><b>${_money(sumPaid)}</b></td></tr>
+            ${advApplied > 0 ? `<tr><td style="padding-left:24px; color:#7c3aed">↳ via Advance Adjustment</td><td style="text-align:right; color:#7c3aed">${_money(advApplied)}</td></tr>` : ""}
+          </tbody>
+        </table>
+        <div class="ps-status-banner ${settled ? "ok" : "due"}">
+          ${settled ? `PATIENT ACCOUNT SETTLED · ${_money(0)}` : `BALANCE DUE · ${_money(sumDue)}`}
+        </div>
+      </div>
+      ` : `<div style="padding:24px; text-align:center; color:#94a3b8; font-style:italic; background:#f8fafc; border-radius:6px;">No billable charges accrued yet.</div>`}
+
+      ${paymentsHtml}
+      ${dailyHtml}
+    `;
+
+    const html = buildPrintShellHtml({
+      hospital: {
+        ...hs,
+        name: hs.hospitalName,
+        phone: hs.phone1,
+        helpline24x7: hs.emergencyPhone || hs.phone1,
+      },
+      docTitle: `Complete ${visitLabel} Bill`,
+      docSubtitle: hs.tagline || "",
+      patient: {
+        left: [
+          { label: "Bill No", value: data.bill?.billNumber || "DRAFT" },
+          { label: "UHID", value: data.admission.UHID },
+          { label: "Patient", value: patientName },
+          { label: "Age/Sex", value: [data.admission.patientId?.age && `${data.admission.patientId.age}Y`, data.admission.patientId?.gender].filter(Boolean).join(" / ") || "—" },
+          { label: "Contact", value: data.admission.patientId?.contactNumber || "—" },
+          { label: "Diagnosis", value: dx },
+        ],
+        right: [
+          { label: "Bill Date", value: _dt(new Date()) },
+          { label: visitNumLabel, value: data.admission.admissionNumber },
+          { label: "Admit/Discharge", value: `${_dt(data.admission.admissionDate)} — ${data.admission.actualDischargeDate ? _dt(data.admission.actualDischargeDate) : "Ongoing"}` },
+          { label: "Stay", value: `${stayDays} day${stayDays === 1 ? "" : "s"}` },
+          { label: "Doctor", value: consultant },
+          { label: "Ward/Bed", value: `${wardName} / ${bedNo}` },
+        ],
+      },
+      signatures: {
+        type: "prepared-by",
+        preparedBy: { name: user?.fullName || "Billing", role: "Billing" },
+        showAttestedStamp: true,
+      },
+      banners: { emergency24x7: !!(hs.emergencyPhone || hs.phone1) },
+      meta: {
+        docNumber: data.bill?.billNumber || `IPD-${data.admission.admissionNumber}`,
+        pageOf: "1 of {n}",
+      },
+      bodyHtml,
+    });
 
     const win = window.open("", "_blank", "width=1100,height=1400");
     if (!win) return toast.warn("Pop-up blocked — allow pop-ups to print the complete bill");
@@ -919,6 +1112,9 @@ export default function IPDBillingLedger() {
     // bill number, totals. Only the middle table changes.
     const baseHeader = {
       isInterim:        true,
+      // R7ey-F3 — pass visitType so FinalBill normalises the doc title
+      // (Day Care / Emergency / IPD) instead of always saying "IPD".
+      visitType:        data.admission.admissionType,
       billNo:           data.bill?.billNumber || `INTERIM-${data.admission.admissionNumber}`,
       patientName:      patient.fullName || data.admission.UHID,
       uhid:             data.admission.UHID,
@@ -930,9 +1126,22 @@ export default function IPDBillingLedger() {
       totalDays:        stayDaysCalc,
       bedNumber:        data.admission.bedId?.bedNumber || "",
       wardName:         data.admission.bedId?.wardName || data.admission.department || "",
-      consultantName:   data.admission.consultantDoctor?.fullName || data.admission.primaryConsultant || "",
+      // R7en-FIX: the admission row stores the admitting/treating doctor
+      // in `attendingDoctor` (string), not `consultantDoctor` / `primary
+      // Consultant` — those legacy field names were never populated by the
+      // reception form, so every interim bill printed "—" for Consultant.
+      // Same fix for TPA: cash patients have no bill row + no TPA, but
+      // the receipt shouldn't leave the field blank — fall back to
+      // "Self-pay" so the surveyor / patient sees the payment basis.
+      consultantName:   data.admission.attendingDoctor
+                      || data.admission.consultantDoctor?.fullName
+                      || data.admission.primaryConsultant
+                      || "—",
       finalDiagnosis:   data.admission.provisionalDiagnosis || data.admission.workingDiagnosis || data.admission.diagnosis || "",
-      tpaName:          data.bill?.tpaName || null,
+      tpaName:          data.bill?.tpaName
+                      || data.admission.tpaProvider
+                      || data.admission.insuranceProvider
+                      || "Self-pay",
       discount:         totalDiscount,
       advanceReceived:  paid,
       payments:         (data.bill?.payments || []).map(p => ({
@@ -962,16 +1171,21 @@ export default function IPDBillingLedger() {
       const auditEntries = (data.triggers || [])
         .slice()                                  // copy before sort (lean response)
         .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
-        .map(t => ({
+        .map(t => {
+          // R7ex — Decimal128 unwrap so rate/amount aren't ₹0 on print
+          const rate = toMoney(t.unitPrice);
+          const qty  = Number(t.quantity || 1);
+          const amt  = toMoney(t.totalAmount) || (rate * qty);
+          return {
           when:           t.createdAt,
           source:         t.sourceType,
           category:       printCategoryFor(t),
           name:           t.serviceName || t.serviceCode,
           code:           t.serviceCode,
           remarks:        t.orderDetails,
-          qty:            t.quantity || 1,
-          rate:           t.unitPrice || 0,
-          amount:         t.totalAmount || ((t.unitPrice || 0) * (t.quantity || 1)),
+          qty,
+          rate,
+          amount:         amt,
           status:         t.status,
           actor:          t.orderedBy
             ? `${t.orderedBy}${t.orderedByRole ? ` (${t.orderedByRole})` : ""}`
@@ -984,7 +1198,8 @@ export default function IPDBillingLedger() {
           overrideHistory:t.overrideHistory || [],
           originalUnitPrice: t.originalUnitPrice,
           originalQuantity:  t.originalQuantity,
-        }));
+          };
+        });
       openPrint("interim-bill", {
         ...baseHeader,
         viewMode:     "audit",
@@ -1020,9 +1235,10 @@ export default function IPDBillingLedger() {
             name:        t.serviceName || t.serviceCode,
             description: `${t.serviceCode}${t.orderDetails ? ` · ${t.orderDetails}` : ""}`,
             date:        t.createdAt,
-            qty:         t.quantity || 1,
-            rate:        t.unitPrice || 0,
-            amount:      t.totalAmount || ((t.unitPrice || 0) * (t.quantity || 1)),
+            // R7ex — Decimal128 unwrap (rate/amount were ₹0 on print)
+            qty:         Number(t.quantity || 1),
+            rate:        toMoney(t.unitPrice),
+            amount:      toMoney(t.totalAmount) || (toMoney(t.unitPrice) * Number(t.quantity || 1)),
           });
         });
       const categories = Object.values(byDay).sort((a, b) =>
@@ -1044,9 +1260,10 @@ export default function IPDBillingLedger() {
         name:        t.serviceName || t.serviceCode,
         description: t.orderDetails,
         date:        t.createdAt,
-        qty:         t.quantity || 1,
-        rate:        t.unitPrice || 0,
-        amount:      t.totalAmount || ((t.unitPrice || 0) * (t.quantity || 1)),
+        // R7ex — Decimal128 unwrap (rate/amount were ₹0 on print)
+        qty:         Number(t.quantity || 1),
+        rate:        toMoney(t.unitPrice),
+        amount:      toMoney(t.totalAmount) || (toMoney(t.unitPrice) * Number(t.quantity || 1)),
       }));
     openPrint("interim-bill", {
       ...baseHeader,
@@ -1105,6 +1322,55 @@ export default function IPDBillingLedger() {
             </div>
           </div>
 
+          {/* R7ew — Type filter pills. IPD bucket covers true inpatient
+              stays (IPD/Planned/Transfer/Emergency); Daycare bucket
+              covers same-day procedures (Day Care/Daycare). Each pill
+              shows its own count from the unfiltered picker list so the
+              receptionist can see at a glance how many of each type are
+              live. */}
+          {(() => {
+            const ipdCount = pickerList.filter(a => IPD_BUCKET.has(a?.admissionType)).length;
+            const dcCount  = pickerList.filter(a => DAYCARE_BUCKET.has(a?.admissionType)).length;
+            const Pill = ({ value, label, count, icon, color, tint }) => {
+              const active = typeFilter === value;
+              return (
+                <button
+                  type="button"
+                  onClick={() => setTypeFilter(value)}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 999,
+                    border: `1.5px solid ${active ? color : C.border}`,
+                    background: active ? `linear-gradient(135deg, ${color}, ${color}dd)` : C.card,
+                    color: active ? "#fff" : C.dark,
+                    fontSize: 12.5, fontWeight: 800,
+                    fontFamily: "inherit",
+                    cursor: "pointer",
+                    display: "inline-flex", alignItems: "center", gap: 7,
+                    transition: "all .15s",
+                    boxShadow: active ? `0 2px 8px ${color}40` : "none",
+                  }}
+                >
+                  <i className={`pi ${icon}`} style={{ fontSize: 13 }} />
+                  {label}
+                  <span style={{
+                    background: active ? "rgba(255,255,255,.25)" : tint,
+                    color: active ? "#fff" : color,
+                    fontSize: 10.5, fontWeight: 800,
+                    padding: "1px 7px", borderRadius: 999,
+                    minWidth: 18, textAlign: "center",
+                  }}>{count}</span>
+                </button>
+              );
+            };
+            return (
+              <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                <Pill value="IPD"     label="IPD"     count={ipdCount} icon="pi-home" color="#7c3aed" tint="#f3e8ff" />
+                <Pill value="DAYCARE" label="Day Care" count={dcCount}  icon="pi-sun"  color="#d97706" tint="#fef3c7" />
+              </div>
+            );
+          })()}
+
           {/* Search box */}
           <div style={{
             background: C.card,
@@ -1117,14 +1383,14 @@ export default function IPDBillingLedger() {
               autoFocus
               value={pickerSearch}
               onChange={(e) => setPickerSearch(e.target.value)}
-              placeholder="Search by name, UHID, IPD No, bed, doctor or department…"
+              placeholder={`Search ${typeFilter === "DAYCARE" ? "daycare admissions" : "IPD admissions"} by name, UHID, IPD No, bed, doctor or department…`}
               style={{
                 flex: 1, border: "none", outline: "none",
                 fontSize: 14, fontFamily: "inherit", color: C.dark,
               }}
             />
             <span style={{ fontSize: 11, color: C.muted, fontFamily: "'DM Mono', monospace" }}>
-              {filteredPicker.length} / {pickerList.length}
+              {filteredPicker.length} / {typedList.length}
             </span>
           </div>
 
@@ -1138,9 +1404,17 @@ export default function IPDBillingLedger() {
             ) : filteredPicker.length === 0 ? (
               <div style={{ padding: 40, textAlign: "center", color: C.muted, fontSize: 13 }}>
                 <i className="pi pi-inbox" style={{ fontSize: 28, marginBottom: 8, color: "#cbd5e1" }} />
-                <div>{pickerSearch ? "No matching admissions" : "No active IPD/DC/ER admissions"}</div>
+                <div>{pickerSearch
+                  ? "No matching admissions"
+                  : (typeFilter === "DAYCARE" ? "No active Day Care admissions" : "No active IPD admissions")
+                }</div>
                 <div style={{ fontSize: 11, marginTop: 6 }}>
-                  {pickerSearch ? "Try a different search term" : "Admit a patient via Reception → New Registration → IPD/Daycare/Emergency"}
+                  {pickerSearch
+                    ? "Try a different search term"
+                    : (typeFilter === "DAYCARE"
+                        ? "Admit a patient via Reception → New Registration → Day Care"
+                        : "Admit a patient via Reception → New Registration → IPD/Emergency")
+                  }
                 </div>
               </div>
             ) : (
@@ -1439,6 +1713,102 @@ export default function IPDBillingLedger() {
           Refresh
         </button>
       </div>
+
+      {/* B4-T09 — Stuck Triggers widget (Admin / Accountant only).
+          Lists BillingTrigger rows in status="pending-review" so the
+          accountant can spot revenue-leak risks and retry them with a
+          single click. Hidden entirely when no rows are stuck or when
+          the current role can't act on them. */}
+      {canSeeStuck && stuckTriggers.length > 0 && (
+        <div style={{
+          background: "#fffbeb",
+          border: `1px solid ${C.warn}`,
+          borderRadius: 12,
+          marginBottom: 14,
+          overflow: "hidden",
+        }}>
+          <button
+            type="button"
+            onClick={() => setStuckOpen(o => !o)}
+            style={{
+              width: "100%", padding: "10px 14px",
+              background: "transparent", border: "none",
+              cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+              display: "flex", alignItems: "center", gap: 10,
+              borderBottom: stuckOpen ? `1px solid ${C.warn}` : "none",
+            }}
+          >
+            <i className="pi pi-exclamation-triangle" style={{ fontSize: 16, color: C.warn }} />
+            <span style={{ fontWeight: 800, color: C.warn, fontSize: 13 }}>
+              Stuck Triggers ({stuckTriggers.length})
+            </span>
+            <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>
+              · pending-review · revenue-leak risk
+            </span>
+            <i className="pi pi-chevron-down" style={{
+              marginLeft: "auto", fontSize: 11, color: C.warn,
+              transform: stuckOpen ? "rotate(0)" : "rotate(-90deg)",
+              transition: "transform .15s",
+            }} />
+          </button>
+          {stuckOpen && (
+            <div style={{ padding: 0 }}>
+              {stuckTriggers.map(t => (
+                <div
+                  key={t._id}
+                  className="stuck-trigger-row"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "120px 110px 1fr 70px 110px",
+                    gap: 10,
+                    padding: "8px 14px",
+                    borderBottom: `1px solid #fde68a`,
+                    alignItems: "center",
+                    fontSize: 12,
+                  }}
+                >
+                  <span style={{ fontWeight: 700, color: C.dark, fontFamily: "'DM Mono', monospace" }}>
+                    {t.kind || t.triggerType || t.serviceCode || "—"}
+                  </span>
+                  <span style={{
+                    fontFamily: "'DM Mono', monospace",
+                    color: C.dark, fontWeight: 700,
+                  }}>
+                    {inr(t.amount ?? t.totalAmount ?? (Number(t.unitPrice || 0) * Number(t.quantity || 1)))}
+                  </span>
+                  <span
+                    title={t.reviewReason || t.remarks || ""}
+                    style={{
+                      color: C.muted,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {(t.reviewReason || t.remarks || "").slice(0, 80) || "—"}
+                  </span>
+                  <span style={{ color: C.muted, fontFamily: "'DM Mono', monospace", textAlign: "right" }}>
+                    {ageMin(t.createdAt)}m
+                  </span>
+                  <button
+                    onClick={() => retryTrigger(t._id)}
+                    disabled={retryingIds.has(t._id)}
+                    style={{
+                      padding: "5px 10px",
+                      background: C.warn, color: "#fff", border: "none",
+                      borderRadius: 6, cursor: retryingIds.has(t._id) ? "wait" : "pointer",
+                      fontFamily: "inherit", fontWeight: 700, fontSize: 11,
+                      opacity: retryingIds.has(t._id) ? 0.7 : 1,
+                    }}
+                  >
+                    {retryingIds.has(t._id) ? "Retrying…" : "Retry"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 4, borderBottom: `2px solid ${C.border}`, marginBottom: 14 }}>

@@ -42,10 +42,24 @@ const DayBookPrint = ({ settings = {}, receipt = {} }) => {
                 .reduce((s, x) => s + toNum(x.amount), 0);
   }
 
+  // R7eo-A — Pattern A fix: hardcoded "Day Book — Cash Register"
+  // masked multi-counter hospitals where the cashier needed to see
+  // which counter the snapshot belonged to. Derive a counter-aware
+  // title when receipt.counter is set, or a "Multi-Counter (N)" label
+  // when the payload aggregates more than one counter. Legacy callers
+  // (no counter / countersIncluded) keep the original heading.
+  const countersIncluded = toNum(r.countersIncluded);
+  const isMultiCounter = !r.counter && countersIncluded > 1;
+  const docTitle = r.counter
+    ? `Day Book — Counter ${r.counter}`
+    : isMultiCounter
+    ? `Day Book — Multi-Counter (${countersIncluded})`
+    : "Day Book — Cash Register";
+
   return (
     <PrintShell
       settings={settings}
-      documentTitle="Day Book — Cash Register"
+      documentTitle={docTitle}
       serialNo={r.dayBookNo || fmtD(r.date)}
       printCount={printCount}
       infoItems={[
@@ -64,8 +78,21 @@ const DayBookPrint = ({ settings = {}, receipt = {} }) => {
         background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534",
         padding: "8px 14px", borderRadius: 6, marginBottom: 12,
         fontSize: 11, fontWeight: 700,
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
       }}>
-        DAY BOOK — opening + cash in − cash out = closing. Retain per Income Tax §44AA + NABH AAC.7.
+        <span>DAY BOOK — opening + cash in − cash out = closing. Retain per Income Tax §44AA + NABH AAC.7.</span>
+        {/* R7eo-A — Multi-Counter chip when payload aggregates >1 counter */}
+        {isMultiCounter && (
+          <span style={{
+            background: "#1e40af", color: "#fff",
+            padding: "2px 9px", borderRadius: 999,
+            fontSize: 9.5, fontWeight: 800,
+            letterSpacing: ".5px", textTransform: "uppercase",
+            whiteSpace: "nowrap",
+          }}>
+            Multi-Counter · {countersIncluded}
+          </span>
+        )}
       </div>
 
       {/* Opening balance */}

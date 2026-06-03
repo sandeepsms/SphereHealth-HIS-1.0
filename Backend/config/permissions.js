@@ -121,6 +121,13 @@ const ACTIONS = {
   "ipd.discharge-summary": ["Admin", "Doctor"],
   "vitals.write":          ["Admin", "Nurse", "Doctor"],
   "mar.write":             ["Admin", "Nurse"],
+  // R7ei — ICU Bundles of Care (VAP/CAUTI/CLABSI/DVT/Sepsis/SUP).
+  // Distinct from mar.write because bundles are quality-of-care
+  // checklists charted by the bedside clinician (intensivist OR
+  // nurse), NOT medication administration. Adding Doctor onto the
+  // medication-administration token would muddy that ACL; this
+  // dedicated action covers exactly the ICU bundle write surface.
+  "icu-bundle.write":      ["Admin", "Doctor", "Nurse"],
   "doctor-orders.write":   ["Admin", "Doctor"],
   // R7m: Nurse-side actions on doctor orders. Acknowledge is the
   // first formal touch before any dose administration (NABH MOM.3).
@@ -492,6 +499,12 @@ const ACTIONS = {
   // by domain: RBS via vitals.write, transfusion via doctor-orders.write,
   // emergency is auto-populated and not user-written.
   "compliance.read":               ["Admin", "Doctor", "Nurse", "MRD"],
+  // R7gw-B9 — NABH register surface gates (Sentinel-Event, Medication-Error,
+  // HAI Surveillance, Hand Hygiene, LAMA, Near-Miss/RCA, etc.). Reads open
+  // to the same surveyor + clinical cohort that uses compliance.read; writes
+  // include bedside clinicians who first detect / log the incident.
+  "compliance.nabh.read":          ["Admin", "Doctor", "Nurse", "MRD"],
+  "compliance.nabh.write":         ["Admin", "Doctor", "Nurse", "MRD"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 
   // ── R7bh-F6 — Accountant regulatory + cold-chain (NABH + GST + IT Act) ─

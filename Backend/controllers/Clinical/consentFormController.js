@@ -1,5 +1,7 @@
 // controllers/Clinical/consentFormController.js
 const ConsentForm = require("../../models/Clinical/ConsentFormModel");
+// R7ez — paperless consent: WebAuthn helper for biometric attestation.
+const biometric = require("../../services/Compliance/consentBiometricService");
 
 const handle = (fn) => async (req, res) => {
   try {
@@ -89,8 +91,55 @@ class ConsentFormController {
   // R7az-D2-CRIT-1 / D2-HIGH-7: CAS — only flip PENDING → SIGNED. If the
   // status changed underneath (e.g. another tab refused the consent), we
   // return 409 instead of silently overwriting a refusal with a sign.
+  // R7ez: biometric + staff signature gate. Mandatory across all consent
+  // types unless an admin bypass is on record. The gate fires BEFORE the
+  // CAS update so the failure messages distinguish "wrong status" from
+  // "consent not yet ready to sign".
   sign = handle(async (req, res) => {
     const { guardianName, guardianRelation, witnessName } = req.body;
+
+    // R7ez gate — fetch first so we can show the user exactly which
+    // pre-requisite is missing instead of generic "cannot sign".
+    const draft = await ConsentForm.findById(req.params.id).lean();
+    if (!draft) return res.status(404).json({ success: false, message: "Consent form not found" });
+    if (draft.status !== "PENDING") {
+      return res.status(409).json({
+        success: false,
+        code: "CONSENT_STATE_CHANGED",
+        message: `Consent is no longer PENDING (now ${draft.status}) — cannot sign`,
+      });
+    }
+    const hasBio    = !!(draft.biometric?.captured && draft.biometric?.capturedAt);
+    const hasStaff  = !!(draft.staffSignature?.signatureImage && draft.staffSignature?.signedAt);
+    const hasBypass = !!(draft.bypass?.authorisedAt && draft.bypass?.reason);
+    // R7gh — Even when a biometric capture is recorded, refuse to flip
+    // PENDING → SIGNED unless it was HARDWARE-backed. This blocks a
+    // legacy / pre-R7gh / virtual-authenticator record from sneaking
+    // through. Admin bypass is still the documented escape valve.
+    const hwBacked  = !!(draft.biometric?.isHardwareBacked);
+    if (!hasBypass && hasBio && !hwBacked) {
+      return res.status(412).json({
+        success: false,
+        code: "BIOMETRIC_NOT_HARDWARE",
+        message:
+          "Cannot sign — captured biometric is not from a hardware-backed scanner " +
+          "(software / virtual / legacy authenticator). Re-capture using the laptop's " +
+          "built-in fingerprint reader, or use admin bypass with reason.",
+      });
+    }
+    if (!hasBypass && (!hasBio || !hasStaff)) {
+      return res.status(412).json({
+        success: false,
+        code: "CONSENT_INCOMPLETE",
+        message: "Cannot sign — biometric capture and staff signature are mandatory (or admin bypass with reason)",
+        missing: {
+          biometric:      !hasBio,
+          staffSignature: !hasStaff,
+          consentingParty:!(draft.consentingParty?.name && draft.consentingParty?.relation),
+        },
+      });
+    }
+
     const form = await ConsentForm.findOneAndUpdate(
       { _id: req.params.id, status: "PENDING" },
       {
@@ -157,6 +206,10 @@ class ConsentFormController {
   // PATCH /api/consent-forms/:id/refuse
   refuse = handle(async (req, res) => {
     const { refusalReason } = req.body;
+    // B6-T06 — capture prior status before the update so we can record
+    // prevStatus → newStatus in the cross-patient ClinicalAudit row below.
+    const before = await ConsentForm.findById(req.params.id).select("status").lean();
+    const prevStatus = before?.status || null;
     const form = await ConsentForm.findByIdAndUpdate(
       req.params.id,
       {
@@ -171,12 +224,38 @@ class ConsentFormController {
       { new: true }
     );
     if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
+
+    // B6-T06 — cross-patient ClinicalAudit emit (CONSENT_REFUSED is on
+    // LONG_RETENTION_EVENTS so the row is retained for 7y per NABH PRE.4).
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      await emitClinicalAudit({
+        req,
+        event: "CONSENT_REFUSED",
+        UHID: form.UHID,
+        admissionId: form.admissionId,
+        patientId: form.patientId,
+        patientName: form.patientName,
+        targetType: "ConsentForm",
+        targetId: form._id,
+        reason: refusalReason || "",
+        before: { status: prevStatus },
+        after: { status: form.status, consentType: form.consentType, refusedAt: form.refusedAt },
+      });
+    } catch (e) {
+      console.warn("[consent-audit] emit failed (non-fatal):", e.message);
+    }
+
     return res.json({ success: true, data: form, message: "Consent refusal recorded" });
   });
 
   // PATCH /api/consent-forms/:id/revoke
   revoke = handle(async (req, res) => {
     const { revokedReason } = req.body;
+    // B6-T06 — capture prior status before the update so we can record
+    // prevStatus → newStatus in the cross-patient ClinicalAudit row below.
+    const before = await ConsentForm.findById(req.params.id).select("status").lean();
+    const prevStatus = before?.status || null;
     const form = await ConsentForm.findByIdAndUpdate(
       req.params.id,
       {
@@ -191,7 +270,234 @@ class ConsentFormController {
       { new: true }
     );
     if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
+
+    // B6-T06 — cross-patient ClinicalAudit emit (CONSENT_REVOKED is on
+    // LONG_RETENTION_EVENTS so the row is retained for 7y per NABH PRE.4).
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      await emitClinicalAudit({
+        req,
+        event: "CONSENT_REVOKED",
+        UHID: form.UHID,
+        admissionId: form.admissionId,
+        patientId: form.patientId,
+        patientName: form.patientName,
+        targetType: "ConsentForm",
+        targetId: form._id,
+        reason: revokedReason || "",
+        before: { status: prevStatus },
+        after: { status: form.status, consentType: form.consentType, revokedAt: form.revokedAt },
+      });
+    } catch (e) {
+      console.warn("[consent-audit] emit failed (non-fatal):", e.message);
+    }
+
     return res.json({ success: true, data: form, message: "Consent revoked" });
+  });
+
+  // ── R7ez · Paperless consent endpoints ──────────────────────────
+
+  // PUT /api/consent-forms/:id/consenting-party
+  // Captures who's about to place the fingerprint (self / spouse / LAR
+  // / etc.) along with their name + ID-proof + contact. Editable while
+  // PENDING; locked once SIGNED (consent is a legal record).
+  setConsentingParty = handle(async (req, res) => {
+    const form = await ConsentForm.findById(req.params.id);
+    if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
+    if (form.status !== "PENDING") {
+      return res.status(409).json({ success: false, code: "CONSENT_LOCKED",
+        message: `Cannot edit consenting party on a ${form.status} consent` });
+    }
+    const { relation, relationOther, name, idProofType, idProofNumber, contactNumber } = req.body || {};
+    if (!name || !relation) {
+      return res.status(400).json({ success: false, message: "name and relation are required" });
+    }
+    form.consentingParty = {
+      relation, relationOther, name, idProofType, idProofNumber, contactNumber,
+    };
+    form.auditTrail.push(auditEntry(req, "UPDATED", `consentingParty:${relation}/${name}`));
+    await form.save();
+    return res.json({ success: true, data: form });
+  });
+
+  // POST /api/consent-forms/:id/biometric/options
+  // Issues a WebAuthn registration challenge. The challenge is stamped
+  // onto the consent doc so the matching verify call can validate it
+  // server-side (cannot be replayed by reusing options).
+  biometricOptions = handle(async (req, res) => {
+    const form = await ConsentForm.findById(req.params.id);
+    if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
+    if (form.status !== "PENDING") {
+      return res.status(409).json({ success: false, code: "CONSENT_LOCKED",
+        message: `Cannot capture biometric on a ${form.status} consent` });
+    }
+    if (!form.consentingParty?.name || !form.consentingParty?.relation) {
+      return res.status(400).json({ success: false, code: "CONSENTING_PARTY_MISSING",
+        message: "Set consenting-party (relation + name) before capturing biometric" });
+    }
+    const { options, expectedChallenge, expectedChallengeExpiresAt } =
+      await biometric.makeRegistrationOptions(form, req.hostname);
+    form.biometric = form.biometric || {};
+    form.biometric.pendingChallenge = expectedChallenge;
+    form.biometric.pendingChallengeExpiresAt = expectedChallengeExpiresAt;
+    await form.save();
+    return res.json({ success: true, options });
+  });
+
+  // POST /api/consent-forms/:id/biometric/verify
+  // Verifies the attestation, stores the public credential + capture
+  // metadata, clears the pending challenge so it can't be replayed.
+  biometricVerify = handle(async (req, res) => {
+    const form = await ConsentForm.findById(req.params.id);
+    if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
+    if (form.status !== "PENDING") {
+      return res.status(409).json({ success: false, code: "CONSENT_LOCKED",
+        message: `Cannot capture biometric on a ${form.status} consent` });
+    }
+    const expectedChallenge = form.biometric?.pendingChallenge;
+    const expiresAt = form.biometric?.pendingChallengeExpiresAt;
+    if (!expectedChallenge || (expiresAt && expiresAt < new Date())) {
+      return res.status(412).json({ success: false, code: "CHALLENGE_EXPIRED",
+        message: "Challenge missing or expired — request fresh options" });
+    }
+    let verification;
+    try {
+      verification = await biometric.verifyRegistrationResponse(
+        req.body?.attestation || req.body,
+        expectedChallenge,
+        req.headers.origin,
+        req.hostname,
+      );
+    } catch (e) {
+      return res.status(400).json({ success: false, code: "WEBAUTHN_VERIFY_FAILED",
+        message: e.message });
+    }
+    // R7gh — Hardware enforcement. The service returns
+    // hardwareRejected:true when the cryptographic verify passed BUT
+    // the AAGUID belongs to a software / virtual / unknown
+    // authenticator. Surface this as a clear, actionable error instead
+    // of pretending verification failed for unknown reasons.
+    if (!verification.verified && verification.hardwareRejected) {
+      // Audit the rejection so a forensic reviewer can see what was
+      // attempted (e.g. someone probing with a virtual authenticator).
+      form.auditTrail.push(auditEntry(req, "REJECTED", `biometric:hw-reject ${verification.aaguid}`));
+      await form.save();
+      return res.status(400).json({
+        success: false,
+        code: "HARDWARE_REQUIRED",
+        message: verification.rejectReason,
+        aaguid: verification.aaguid,
+      });
+    }
+    if (!verification.verified) {
+      return res.status(400).json({ success: false, code: "WEBAUTHN_VERIFY_FAILED",
+        message: "Attestation could not be verified" });
+    }
+    const ip = (req.headers["x-forwarded-for"] || req.ip || "").toString().split(",")[0].trim();
+    form.biometric = {
+      captured: true,
+      method: "WEBAUTHN",
+      credentialId: verification.credentialId,
+      publicKey: verification.publicKey,
+      counter: verification.counter,
+      attestationFmt: verification.attestationFmt,
+      aaguid: verification.aaguid,
+      // R7gh — persist the hardware classification.
+      isHardwareBacked: !!verification.isHardwareBacked,
+      authenticatorVendor: verification.authenticatorVendor || "",
+      capturedAt: new Date(),
+      capturedFromIp: ip,
+      capturedUserAgent: (req.headers["user-agent"] || "").slice(0, 200),
+      // Clear the transient challenge — it has done its job.
+      pendingChallenge: "",
+      pendingChallengeExpiresAt: null,
+    };
+    form.auditTrail.push(auditEntry(req, "UPDATED",
+      `biometric:captured hw=${verification.isHardwareBacked ? "yes" : "no"} vendor=${verification.authenticatorVendor || "—"}`));
+    await form.save();
+    return res.json({ success: true, data: {
+      captured: true,
+      capturedAt: form.biometric.capturedAt,
+      method: form.biometric.method,
+      isHardwareBacked: !!verification.isHardwareBacked,
+      authenticatorVendor: verification.authenticatorVendor || "",
+      // Public-safe summary — never leak the raw publicKey to the UI.
+      credentialFingerprint: (verification.credentialId || "").slice(0, 16) + "…",
+    } });
+  });
+
+  // POST /api/consent-forms/:id/staff-sign
+  // Captures the staff/doctor's drawn signature image. The identity
+  // (userId, name, role) comes from req.user — the body only carries
+  // the signature image. signedAt is server-stamped.
+  staffSign = handle(async (req, res) => {
+    const { signatureImage } = req.body || {};
+    if (!signatureImage || !signatureImage.startsWith("data:image/")) {
+      return res.status(400).json({ success: false, code: "INVALID_SIGNATURE",
+        message: "signatureImage must be a data URL (base64 PNG/JPG)" });
+    }
+    // Hard cap on size — a drawn signature is typically < 30 KB.
+    if (signatureImage.length > 500_000) {
+      return res.status(413).json({ success: false, code: "SIGNATURE_TOO_LARGE",
+        message: "Signature image exceeds 500 KB — re-draw smaller" });
+    }
+    const form = await ConsentForm.findById(req.params.id);
+    if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
+    if (form.status !== "PENDING") {
+      return res.status(409).json({ success: false, code: "CONSENT_LOCKED",
+        message: `Cannot e-sign a ${form.status} consent` });
+    }
+    const ip = (req.headers["x-forwarded-for"] || req.ip || "").toString().split(",")[0].trim();
+    form.staffSignature = {
+      userId:   req.user?.id || null,
+      userName: req.user?.fullName || "",
+      userRole: req.user?.role || "",
+      signatureImage,
+      signedAt: new Date(),
+      signedFromIp: ip,
+    };
+    form.auditTrail.push(auditEntry(req, "UPDATED", `staff-sign:${req.user?.fullName || ""}`));
+    await form.save();
+    return res.json({ success: true, data: {
+      signedAt: form.staffSignature.signedAt,
+      userName: form.staffSignature.userName,
+      userRole: form.staffSignature.userRole,
+    } });
+  });
+
+  // POST /api/consent-forms/:id/bypass — admin only
+  // Documented escape valve when the scanner is unavailable / patient
+  // cannot biometric-sign. Requires a non-empty reason; the admin's
+  // identity is recorded from req.user.
+  bypassBiometric = handle(async (req, res) => {
+    if ((req.user?.role || "").toLowerCase() !== "admin") {
+      return res.status(403).json({ success: false, code: "ADMIN_ONLY",
+        message: "Only Admin can bypass biometric capture" });
+    }
+    const { reason } = req.body || {};
+    if (!reason || reason.trim().length < 10) {
+      return res.status(400).json({ success: false, code: "REASON_REQUIRED",
+        message: "A reason of at least 10 characters is required" });
+    }
+    const form = await ConsentForm.findById(req.params.id);
+    if (!form) return res.status(404).json({ success: false, message: "Consent form not found" });
+    if (form.status !== "PENDING") {
+      return res.status(409).json({ success: false, code: "CONSENT_LOCKED",
+        message: `Cannot bypass on a ${form.status} consent` });
+    }
+    form.bypass = {
+      reason: reason.trim(),
+      authorisedBy: req.user?.id || null,
+      authorisedByName: req.user?.fullName || "",
+      authorisedAt: new Date(),
+    };
+    // Also stamp biometric.method = BYPASS so downstream readers can
+    // see at a glance how this consent was authenticated.
+    form.biometric = form.biometric || {};
+    form.biometric.method = "BYPASS";
+    form.auditTrail.push(auditEntry(req, "UPDATED", `bypass:${reason}`));
+    await form.save();
+    return res.json({ success: true, data: form.bypass });
   });
 
   // DELETE /api/consent-forms/:id (only PENDING forms)
