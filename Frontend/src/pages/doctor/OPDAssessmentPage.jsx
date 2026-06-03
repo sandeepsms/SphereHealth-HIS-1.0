@@ -1387,6 +1387,8 @@ export default function OPDAssessmentPage() {
         painScore:    vit.painScore ?? "",
         gcsScore:     vit.gcsScore || "",
         enteredBy:    vit.enteredBy || v.vitalsEnteredBy || "",
+        enteredByEmployeeId: vit.enteredByEmployeeId || vit.nurseEmployeeId || v.vitalsEnteredByEmployeeId || "",
+        enteredBySignature:  vit.enteredBySignature  || vit.nurseSignatureImage  || "",
         recordedAt:   vit.recordedAt || v.vitalsRecordedAt || "",
       },
       // R7hn-2: nurse's chief complaint capture (separate from the
