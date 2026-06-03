@@ -18,10 +18,10 @@ const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 router.post  ("/",                       requireAction("users.write"), ctrl.create);
 router.get   ("/",                       requireAction("ipd.read"),    ctrl.getAll);
-router.get   ("/department/:deptId",     requireAction("ipd.read"),    ctrl.getByDepartment);
+router.get   ("/department/:deptId",     validateObjectIdParam("deptId"), requireAction("ipd.read"),    ctrl.getByDepartment);
 router.get   ("/:id",                    requireAction("ipd.read"),    ctrl.getById);
-router.put   ("/:id",                    requireAction("users.write"), ctrl.update);
-router.patch ("/:id/toggle-status",      requireAction("users.write"), ctrl.toggleStatus);
+router.put   ("/:id",                    validateObjectIdParam("id"), requireAction("users.write"), ctrl.update);
+router.patch ("/:id/toggle-status",      validateObjectIdParam("id"), requireAction("users.write"), ctrl.toggleStatus);
 router.delete("/:id",                    validateObjectIdParam("id"), requireAction("users.write"), ctrl.remove);
 
 module.exports = router;

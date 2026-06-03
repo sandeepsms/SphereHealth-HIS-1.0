@@ -17,10 +17,10 @@ router.get   ("/uhid/:uhid",                          requireAction("nursing.car
 router.get   ("/ipd/:ipdNo",                          requireAction("nursing.care-plan.read"), ctrl.getByIPD);
 router.get   ("/admission/:admissionId",              requireAction("nursing.care-plan.read"), ctrl.getByAdmission);
 router.post  ("/",                                    requireAction("mar.write"), ctrl.create);
-router.get   ("/:id",                                 requireAction("nursing.care-plan.read"), ctrl.getById);
-router.put   ("/:id",                                 requireAction("mar.write"), ctrl.update);
-router.patch ("/:id/problem/:problemId/status",       requireAction("mar.write"), ctrl.updateProblemStatus);
-router.patch ("/:id/complete",                        requireAction("mar.write"), ctrl.complete);
+router.get   ("/:id",                                 validateObjectIdParam("id"), requireAction("nursing.care-plan.read"), ctrl.getById);
+router.put   ("/:id",                                 validateObjectIdParam("id"), requireAction("mar.write"), ctrl.update);
+router.patch ("/:id/problem/:problemId/status",       validateObjectIdParam("id"), validateObjectIdParam("problemId"), requireAction("mar.write"), ctrl.updateProblemStatus);
+router.patch ("/:id/complete",                        validateObjectIdParam("id"), requireAction("mar.write"), ctrl.complete);
 router.delete("/:id",                                 validateObjectIdParam("id"), requireAction("mar.write"), ctrl.delete);
 
 module.exports = router;

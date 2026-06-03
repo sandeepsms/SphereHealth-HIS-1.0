@@ -11,9 +11,10 @@ const router = express.Router();
 const ctrl = require("../../controllers/Compliance/bmwManifestController");
 const { requireAction } = require("../../middleware/auth");
 const { credentialExpiryBlocker } = require("../../middleware/credentialExpiryBlocker");
+const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 router.get("/",                  requireAction("compliance.bmw.read"),  ctrl.list);
-router.get("/:id",               requireAction("compliance.bmw.read"),  ctrl.getOne);
+router.get("/:id",               validateObjectIdParam("id"), requireAction("compliance.bmw.read"),  ctrl.getOne);
 
 router.post("/",                 requireAction("compliance.bmw.write"), ctrl.create);
 
@@ -23,9 +24,9 @@ router.post("/",                 requireAction("compliance.bmw.write"), ctrl.cre
 // BMW-handler training. credentialExpiryBlocker runs AFTER the role
 // gate; on missing / expired BMW_HANDLER it 403s with
 // CREDENTIAL_MISSING | CREDENTIAL_EXPIRED.
-router.put("/:id/handover",      requireAction("compliance.bmw.write"),
+router.put("/:id/handover",      validateObjectIdParam("id"), requireAction("compliance.bmw.write"),
                                  credentialExpiryBlocker("BMW_HANDLER"),
                                  ctrl.handover);
-router.put("/:id/pcb-filed",     requireAction("compliance.bmw.write"), ctrl.markPcbFiled);
+router.put("/:id/pcb-filed",     validateObjectIdParam("id"), requireAction("compliance.bmw.write"), ctrl.markPcbFiled);
 
 module.exports = router;

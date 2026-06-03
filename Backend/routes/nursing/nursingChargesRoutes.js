@@ -19,16 +19,16 @@ const { validateObjectIdParam } = require("../../utils/queryGuards");
 // ── Master catalogue ───────────────────────────────────────
 router.get   ("/items",            requireAction("billing.read"), ctrl.getItems);
 router.post  ("/items",            requireAction("departments.write"), ctrl.createItem);
-router.put   ("/items/:id",        requireAction("departments.write"), ctrl.updateItem);
+router.put   ("/items/:id",        validateObjectIdParam("id"), requireAction("departments.write"), ctrl.updateItem);
 router.delete("/items/:id",        validateObjectIdParam("id"), requireAction("departments.write"), ctrl.deleteItem);
 
 // ── Charge entries ────────────────────────────────────────────
 router.post  ("/log",              requireAction("billing.manual-charge"), ctrl.logItems);
-router.delete("/entry/:entryId",   requireAction("billing.manual-charge"), ctrl.voidEntry);
+router.delete("/entry/:entryId",   validateObjectIdParam("entryId"), requireAction("billing.manual-charge"), ctrl.voidEntry);
 
 // ── Per-admission queries ─────────────────────────────────────
-router.get("/:admissionId/today",        requireAction("billing.read"), ctrl.getTodayCharges);
-router.get("/:admissionId/history",      requireAction("billing.read"), ctrl.getAllCharges);
-router.get("/:admissionId/daily-totals", requireAction("billing.read"), ctrl.getDailyTotals);
+router.get("/:admissionId/today",        validateObjectIdParam("admissionId"), requireAction("billing.read"), ctrl.getTodayCharges);
+router.get("/:admissionId/history",      validateObjectIdParam("admissionId"), requireAction("billing.read"), ctrl.getAllCharges);
+router.get("/:admissionId/daily-totals", validateObjectIdParam("admissionId"), requireAction("billing.read"), ctrl.getDailyTotals);
 
 module.exports = router;

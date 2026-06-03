@@ -28,8 +28,8 @@ router.post("/",                            requireAction("mar.write"), ctrl.ups
 router.put("/:id/scale",                    validateObjectIdParam("id"), requireAction("diabetic.scale.write"), ctrl.updateScale);
 
 // Entries — nurse charts a BG reading + administers per scale.
-router.post  ("/:id/entry",                 requireAction("mar.write"), ctrl.addOrReplaceEntry);
-router.put   ("/:id/entry/:entryId",        requireAction("mar.write"), ctrl.patchEntry);
+router.post  ("/:id/entry",                 validateObjectIdParam("id"), requireAction("mar.write"), ctrl.addOrReplaceEntry);
+router.put   ("/:id/entry/:entryId",        validateObjectIdParam("id"), validateObjectIdParam("entryId"), requireAction("mar.write"), ctrl.patchEntry);
 router.delete("/:id/entry/:entryId",        validateObjectIdParam("id"), requireAction("mar.write"), ctrl.deleteEntry);
 
 // Helper — given a sheet and a BG value, return recommended dose
