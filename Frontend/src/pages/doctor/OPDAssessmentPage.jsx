@@ -1350,10 +1350,21 @@ export default function OPDAssessmentPage() {
       visitType:    v.visitType || "OPD",
       ...(v.visitType === "IPD" ? { ipdNo: v.ipdNo, bedNumber: v.bedNumber, wardName: v.wardName } : {}),
       visitDate:    v.visitDate || new Date().toISOString(),
+      // R7hn-1 — richer patient particulars (Final-Bill-style density)
+      tokenNumber:     v.tokenNumber || v.token || "",
+      paymentType:     v.paymentType || "",
+      consultationFee: v.consultationFee ?? v.feeAmount ?? "",
+      feeType:         v.feeType || "",
+      registrationDate: v.registrationDate || v.createdAt || "",
       vitals: {
         // R7bt-OPD-PRINT-9: BP is normalized to "<sys>/<dia>" string
         // before forwarding so the printable doesn't render an object.
         bp:     bpString,
+        // R7hn-2: also forward the split BP so the print can show
+        // "Systolic / Diastolic" cells when the nurse entered them
+        // separately on the Nurse Pre-Assessment form.
+        bpSystolic:  vit.bloodPressureSystolic ?? "",
+        bpDiastolic: vit.bloodPressureDiastolic ?? "",
         pulse:  vit.pulse || "",
         temp:   vit.temperature || "",
         spo2:   vit.oxygenSaturation || "",
@@ -1361,7 +1372,29 @@ export default function OPDAssessmentPage() {
         weight: vit.weight || "",
         height: vit.height || "",
         bmi:    vit.bmi || "",
+        // R7hn-2: RBS panel — full nurse-entered Random Blood Sugar
+        // section. Reading + unit + sample type + fasting state + notes
+        // + when-taken. Print template renders this as its own card.
+        bloodSugarRandom:     vit.bloodSugarRandom || "",
+        bloodSugarUnit:       vit.bloodSugarUnit || "mg/dL",
+        bloodSugarSampleType: vit.bloodSugarSampleType || "",
+        bloodSugarFasting:    vit.bloodSugarFasting || "",
+        bloodSugarNotes:      vit.bloodSugarNotes || "",
+        bloodSugarTakenAt:    vit.bloodSugarTakenAt || "",
+        // R7hn-2: nurse meta — who took the vitals + when. Print
+        // template shows this as the provenance line ("Entered by Nurse
+        // at 09:11 pm") matching the on-screen card.
+        painScore:    vit.painScore ?? "",
+        gcsScore:     vit.gcsScore || "",
+        enteredBy:    vit.enteredBy || v.vitalsEnteredBy || "",
+        recordedAt:   vit.recordedAt || v.vitalsRecordedAt || "",
       },
+      // R7hn-2: nurse's chief complaint capture (separate from the
+      // doctor's subjective note — see the registration-time
+      // chiefComplaint above). Print uses this in the Nurse Pre-Asmt
+      // section so the doctor's S note and the nurse's intake note are
+      // both visible to the reader.
+      nurseChiefComplaint: v.chiefComplaint || "",
       // R7bt-OPD-PRINT-10: priority reversed — doctor's SOAP S note
       // is authoritative because the receptionist's chief-complaint
       // capture is often stale by the time the doctor finishes the

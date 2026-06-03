@@ -146,18 +146,35 @@ const OPDPrescription = ({ settings, receipt = {} }) => {
          + signedAt for the doctor's block in the footer. */
       signatureImage={receipt.signatureImage || receipt.doctor?.signatureImage}
       signedAt={receipt.signedAt || receipt.doctor?.signedAt}
+      /* R7hn-1: Final-Bill-style particulars grid. Mirrors the dense
+         multi-column layout the Final Bill uses (Patient / UHID / Visit
+         No / Token / Age-Sex / Mobile / Visit Type / Payment / Doctor /
+         Reg No / Department / Visit Date / Fee). Each row is dropped
+         when its value is missing so the grid stays tight rather than
+         showing rows of dashes. */
       infoItems={[
-        { label: "Patient",    value: receipt.patientName },
-        { label: "UHID",       value: receipt.uhid },
-        { label: "Age / Sex",  value: [receipt.age && `${receipt.age}Y`, receipt.gender].filter(Boolean).join(" / ") },
-        { label: "Mobile",     value: receipt.mobile },
-        { label: "Doctor",     value: receipt.doctorName },
-        { label: "Reg. No",    value: regLine },
-        { label: "Department", value: receipt.department },
-        { label: "Visit Date", value: receipt.visitDate
+        { label: "Patient",        value: receipt.patientName },
+        { label: "UHID",           value: receipt.uhid },
+        { label: visitTypeRaw === "IPD" ? "IPD No" : "OPD No", value: receipt.rxNo || receipt.visitNo },
+        ...(receipt.tokenNumber ? [{ label: "Token", value: `#${receipt.tokenNumber}` }] : []),
+        { label: "Age / Sex",      value: [receipt.age && `${receipt.age}Y`, receipt.gender].filter(Boolean).join(" / ") },
+        { label: "Mobile",         value: receipt.mobile },
+        ...(receipt.bloodGroup ? [{ label: "Blood Group", value: receipt.bloodGroup }] : []),
+        ...(receipt.visitType ? [{ label: "Visit Type", value: receipt.visitType }] : []),
+        ...(receipt.paymentType ? [{ label: "Payment Type", value: receipt.paymentType }] : []),
+        { label: "Doctor",         value: receipt.doctorName },
+        { label: "Reg. No",        value: regLine },
+        { label: "Department",     value: receipt.department },
+        { label: "Visit Date",     value: receipt.visitDate
             ? new Date(receipt.visitDate).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
             : new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
-      ]}
+        ...(receipt.consultationFee ? [{
+          label: receipt.feeType ? `Consult Fee (${receipt.feeType})` : "Consult Fee",
+          value: `₹${Number(receipt.consultationFee).toLocaleString("en-IN")}`,
+        }] : []),
+        ...(receipt.registrationDate ? [{ label: "Registered", value:
+            new Date(receipt.registrationDate).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) }] : []),
+      ].filter(it => it && it.value !== undefined && it.value !== "" && it.value !== "—")}
       /* OPD-PRINT-AUDIT Item 20: verification QR top-right of patient strip. */
       headerExtra={
         <div style={{ textAlign: "center" }}>
@@ -210,20 +227,155 @@ const OPDPrescription = ({ settings, receipt = {} }) => {
         </div>
       )}
 
-      {/* ── Vitals strip ── */}
-      {(vitals.bp || vitals.pulse || vitals.temp || vitals.spo2 || vitals.weight || vitals.height) && (
+      {/* ── Nurse Pre-Assessment (Vitals + RBS panel + nurse meta) ──
+           R7hn-2: Single card that surfaces EVERY field the nurse
+           captures on the OPD Pre-Assessment form so the printout is
+           a faithful copy of what's on screen. Sections inside the
+           card:
+             1. Vitals chips — BP / Pulse / Temp / SpO₂ / RR / Wt / Ht / BMI
+                (BP renders the systolic/diastolic split when present, so
+                the doctor sees both the composed string and the raw
+                components).
+             2. RBS row — only when reading is present. Shows mg/dL
+                value, sample type, fasting state and free-text notes
+                in a tinted band so the doctor can spot critical values
+                without scanning. Mirrors the on-screen card layout.
+             3. Pain score + GCS chips — when filled.
+             4. Provenance line — "Entered by Nurse {name} at {time}"
+                so the audit trail is visible on paper.
+       */}
+      {(vitals.bp || vitals.bpSystolic || vitals.pulse || vitals.temp || vitals.spo2 ||
+        vitals.weight || vitals.height || vitals.bloodSugarRandom ||
+        vitals.painScore || vitals.gcsScore || vitals.enteredBy || receipt.nurseChiefComplaint) && (
         <div className="pr-section">
-          <div className="pr-section__title">Vitals on Examination</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <VitalCell label="BP"      value={vitals.bp}      unit="mmHg" />
-            <VitalCell label="Pulse"   value={vitals.pulse}   unit="bpm"  />
-            <VitalCell label="Temp"    value={vitals.temp}    unit="°F"   />
-            <VitalCell label="SpO₂"    value={vitals.spo2}    unit="%"    />
-            <VitalCell label="RR"      value={vitals.rr}      unit="/min" />
-            <VitalCell label="Weight"  value={vitals.weight}  unit="kg"   />
-            <VitalCell label="Height"  value={vitals.height}  unit="cm"   />
-            <VitalCell label="BMI"     value={vitals.bmi}                 />
-          </div>
+          <div className="pr-section__title">Nurse Pre-Assessment</div>
+
+          {/* Nurse's chief-complaint capture — separate from the doctor's
+              S note. Renders only when populated. */}
+          {receipt.nurseChiefComplaint && (
+            <div style={{
+              background: "#fdf2f8", border: "1px solid #fbcfe8",
+              borderLeft: "3px solid #db2777",
+              padding: "6px 10px", borderRadius: 6,
+              marginBottom: 8,
+            }}>
+              <div style={{
+                fontSize: 9, fontWeight: 800, color: "#9d174d",
+                textTransform: "uppercase", letterSpacing: ".5px",
+              }}>
+                Chief Complaint (Nurse intake)
+              </div>
+              <div style={{ fontSize: 11, color: "#0f172a", marginTop: 2 }}>
+                {receipt.nurseChiefComplaint}
+              </div>
+            </div>
+          )}
+
+          {/* Vitals strip */}
+          {(vitals.bp || vitals.bpSystolic || vitals.pulse || vitals.temp ||
+            vitals.spo2 || vitals.weight || vitals.height) && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {vitals.bpSystolic || vitals.bpDiastolic ? (
+                <>
+                  <VitalCell label="BP Systolic"  value={vitals.bpSystolic}  unit="mmHg" />
+                  <VitalCell label="BP Diastolic" value={vitals.bpDiastolic} unit="mmHg" />
+                </>
+              ) : (
+                <VitalCell label="BP"      value={vitals.bp}      unit="mmHg" />
+              )}
+              <VitalCell label="Pulse"   value={vitals.pulse}   unit="bpm"  />
+              <VitalCell label="Temp"    value={vitals.temp}    unit="°F"   />
+              <VitalCell label="SpO₂"    value={vitals.spo2}    unit="%"    />
+              <VitalCell label="RR"      value={vitals.rr}      unit="/min" />
+              <VitalCell label="Weight"  value={vitals.weight}  unit="kg"   />
+              <VitalCell label="Height"  value={vitals.height}  unit="cm"   />
+              <VitalCell label="BMI"     value={vitals.bmi}                 />
+              {vitals.painScore !== "" && vitals.painScore != null && (
+                <VitalCell label="Pain"  value={vitals.painScore} unit="/10" />
+              )}
+              {vitals.gcsScore && (
+                <VitalCell label="GCS"   value={vitals.gcsScore}            />
+              )}
+            </div>
+          )}
+
+          {/* RBS panel — only when reading is present. */}
+          {vitals.bloodSugarRandom && (() => {
+            const v = Number(vitals.bloodSugarRandom);
+            const isCritical = vitals.bloodSugarUnit === "mg/dL" && (v < 70 || v > 300);
+            const tone = isCritical
+              ? { bg: "#fee2e2", border: "#dc2626", labelFg: "#7f1d1d", valueFg: "#b91c1c" }
+              : { bg: "#ecfeff", border: "#22d3ee", labelFg: "#0e7490", valueFg: "#155e75" };
+            return (
+              <div style={{
+                marginTop: 8,
+                background: tone.bg, border: `1px solid ${tone.border}`,
+                borderLeft: `4px solid ${tone.border}`,
+                padding: "8px 12px", borderRadius: 6,
+                display: "grid",
+                gridTemplateColumns: "auto 1fr 1fr 2fr",
+                gap: 12,
+                fontSize: 10.5,
+                alignItems: "center",
+              }}>
+                <div>
+                  <div style={{
+                    fontSize: 9, fontWeight: 800, color: tone.labelFg,
+                    textTransform: "uppercase", letterSpacing: ".5px",
+                  }}>RBS{isCritical ? " · CRITICAL" : ""}</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: tone.valueFg }}>
+                    {vitals.bloodSugarRandom}
+                    <span style={{ fontSize: 10, color: "#64748b", marginLeft: 4 }}>
+                      {vitals.bloodSugarUnit || "mg/dL"}
+                    </span>
+                  </div>
+                </div>
+                {vitals.bloodSugarSampleType && (
+                  <div>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px" }}>Sample</div>
+                    <div style={{ fontWeight: 600, color: "#0f172a", textTransform: "capitalize" }}>{vitals.bloodSugarSampleType}</div>
+                  </div>
+                )}
+                {vitals.bloodSugarFasting && (
+                  <div>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px" }}>State</div>
+                    <div style={{ fontWeight: 600, color: "#0f172a" }}>{vitals.bloodSugarFasting}</div>
+                  </div>
+                )}
+                {vitals.bloodSugarNotes && (
+                  <div>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px" }}>Notes</div>
+                    <div style={{ color: "#0f172a" }}>{vitals.bloodSugarNotes}</div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Provenance line — nurse name + recorded-at, mirrors the
+              on-screen "Entered by Nurse at 09:11 pm" caption. */}
+          {(vitals.enteredBy || vitals.recordedAt || vitals.bloodSugarTakenAt) && (
+            <div style={{
+              marginTop: 6, fontSize: 9.5, color: "#64748b",
+              display: "flex", gap: 12, flexWrap: "wrap",
+            }}>
+              {vitals.enteredBy && (
+                <span>
+                  ✓ Entered by <strong style={{ color: "#0f172a" }}>{vitals.enteredBy}</strong>
+                </span>
+              )}
+              {vitals.recordedAt && (
+                <span>
+                  at {new Date(vitals.recordedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              )}
+              {vitals.bloodSugarTakenAt && vitals.bloodSugarTakenAt !== vitals.recordedAt && (
+                <span>
+                  · RBS taken at {new Date(vitals.bloodSugarTakenAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
