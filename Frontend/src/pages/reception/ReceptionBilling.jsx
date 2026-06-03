@@ -982,6 +982,49 @@ export default function ReceptionBilling() {
     const _accent = hs.printAccentColor || "#1d4ed8";
     const _bills = billRows.length;
     const _firstVt = String(billRows[0]?.b?.visitType || "OPD").toUpperCase();
+    // R7hd-FIX — patient strip was missing Department / Doctor /
+    // Address. Compute them here from currentVisit (OPD) → admission
+    // (IPD) → patient flat fields with object-id guards (some legacy
+    // visits stored raw ObjectIds in .department).
+    const _cv = patient?.currentVisit;
+    const _ca = patient?.currentAdmission;
+    const _isObjId = (s) => typeof s === "string" && /^[a-f0-9]{24}$/i.test(s);
+    const _safe = (v) => (_isObjId(v) ? "" : v);
+    const _printDept =
+         (_cv?.departmentId?.departmentName)
+      || (_cv?.departmentName)
+      || (_cv?.doctorProfile?.department?.departmentName)
+      || (_cv?.doctorProfile?.department?.name)
+      || _safe(_cv?.department)
+      || (_ca?.departmentName)
+      || _safe(_ca?.department)
+      || (typeof patient?.department === "object"
+            ? (patient.department?.name || patient.department?.departmentName)
+            : _safe(patient?.department))
+      || "";
+    const _rawDoc =
+         (_cv?.consultantName)
+      || (_cv?.doctorId?.personalInfo?.fullName)
+      || (_cv?.doctorId?.fullName)
+      || (_cv?.doctorName)
+      || (_cv?.attendingDoctor)
+      || (_ca?.doctorName)
+      || (_ca?.attendingDoctor)
+      || (typeof patient?.doctor === "object"
+            ? (patient.doctor?.fullName || patient.doctor?.personalInfo?.fullName)
+            : patient?.doctor)
+      || "";
+    const _printDoc = _rawDoc
+      ? (/^(Dr\.?|Prof\.?|Mr\.?|Mrs\.?|Ms\.?)\s+/i.test(_rawDoc) ? _rawDoc : `Dr. ${_rawDoc}`)
+      : "";
+    // Patient address — `address.completeAddress` is the canonical free-
+    // text field. `district` comes through on freshly registered patients;
+    // `city`/`state`/`pincode` round out the postal line.
+    const _pa = patient?.address || {};
+    const _pAddrLine = [
+      _pa.completeAddress || patient?.permanentAddress || patient?.currentAddress,
+      [_pa.district || _pa.city, _pa.state, _pa.pincode].filter(Boolean).join(", "),
+    ].filter(Boolean).join(" · ");
     win.document.write(`<!doctype html><html><head>
       <title>Final Consolidated Bill — ${esc(patient?.fullName || uhid)}</title>
       <style>
@@ -1076,6 +1119,19 @@ export default function ReceptionBilling() {
           <div class="info-strip__lbl">Phone</div>
           <div class="info-strip__val">${esc(patient?.contactNumber || "—")}</div>
         </div>
+        <!-- R7hd-FIX — address spans both columns when long, otherwise stays in its slot. -->
+        ${_pAddrLine ? `<div class="info-strip__row" style="grid-column: 1 / -1">
+          <div class="info-strip__lbl">Address</div>
+          <div class="info-strip__val" style="font-weight:600">${esc(_pAddrLine)}</div>
+        </div>` : ""}
+        ${_printDept ? `<div class="info-strip__row">
+          <div class="info-strip__lbl">Department</div>
+          <div class="info-strip__val">${esc(_printDept)}</div>
+        </div>` : ""}
+        ${_printDoc ? `<div class="info-strip__row">
+          <div class="info-strip__lbl">Doctor</div>
+          <div class="info-strip__val">${esc(_printDoc)}</div>
+        </div>` : ""}
         <div class="info-strip__row">
           <div class="info-strip__lbl">Visit Type</div>
           <div class="info-strip__val">${esc(_firstVt === "ER" ? "Emergency" : _firstVt === "DAYCARE" || _firstVt === "DAY CARE" ? "Daycare" : _firstVt === "SERVICES" || _firstVt === "SERVICE" ? "Service" : _firstVt[0] + _firstVt.slice(1).toLowerCase())}</div>
