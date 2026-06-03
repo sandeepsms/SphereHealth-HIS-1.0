@@ -3,6 +3,16 @@
 // signature footer). Mirrors the R7fx TYPE_BUILDERS pattern in
 // DoctorNotesPage.jsx printNote() so the Complete Patient File Narrative
 // theme can embed identical per-type cards inside the day-wise journey.
+//
+// R7gx — Initial Assessment card now pulls every populated NABH P1+P2
+// sub-bucket through the shared renderer module so the patient panel
+// surfaces every assessed dimension (NABH AAC.1 / AAC.2 / IPSG.6),
+// not just the six sections the original builder hard-coded.
+
+import {
+  renderDoctorNabhExtras,
+  renderNursingNabhExtras,
+} from "../../Components/clinical/iaNabhRenderers";
 
 const escapeHtml = (s) =>
   String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -369,6 +379,7 @@ const buildBuilder = (note) => {
         ["Wt",   v.weight || anthro.weightKg ? `${v.weight || anthro.weightKg} kg` : ""],
         ["Ht",   v.height || anthro.heightCm ? `${v.height || anthro.heightCm} cm` : ""],
         ["BMI",  anthro.bmi || ""],
+        ["IBW",  anthro.idealBodyWeightKg ? `${anthro.idealBodyWeightKg} kg` : ""],
       ].filter(c => c[1]);
       const vitalsHtml = vitalCells.length
         ? _section("Vitals on Admission", "#dc2626",
@@ -397,14 +408,15 @@ const buildBuilder = (note) => {
             ).join("")}</table>`)
         : "";
 
-      // Comorbidities — only show TRUE ones
-      const cm = nabh.comorbidities || {};
-      const cmList = Object.entries(cm).filter(([k, v]) => v === true).map(([k]) => k);
-      if (cm.other) cmList.push(cm.other);
-      const cmHtml = cmList.length
-        ? _section("Active Comorbidities", "#d97706",
-            `<div style="display:flex;flex-wrap:wrap;gap:5px">${cmList.map(c => `<span style="padding:3px 10px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:600;text-transform:capitalize">${escapeHtml(c)}</span>`).join("")}</div>`)
-        : "";
+      // R7gx — Doctor NABH extras (Comorbidities + ROS + ECOG +
+      // Immunisation + Spiritual + Obstetric/Gynae) emitted through
+      // the shared renderer module. Each renderer returns "" when its
+      // bucket is empty so populated ones surface in form-order and
+      // empty ones stay hidden. Pre-R7gx the card only emitted a
+      // capitalize-keys chip strip for comorbidities and silently
+      // dropped the other 5 sub-blocks even when fully populated.
+      const H = { _section, _grid, _kv, _narr, cssPrefix: "dfx" };
+      const nabhExtras = renderDoctorNabhExtras(nabh, H);
 
       // Code Status + Goals of Care + Prognosis
       const cs = nabh.codeStatus || {};
@@ -460,7 +472,19 @@ const buildBuilder = (note) => {
           ]))
         : "";
 
-      return alertBanner + cc + history + vitalsHtml + exam + medRecHtml + cmHtml + codeSection + riskHtml + consentHtml + dx + planSection;
+      // R7gx — Cross-disciplinary nursing intake. Even on the doctor
+      // card, surface the populated nursingNabh.* sub-blocks so a
+      // doctor reviewing IA on rounds sees Barthel / Special
+      // Precautions / Cultural-Spiritual / Caregiver / etc. inline
+      // without having to scroll down to the nurse card. Empty
+      // buckets stay hidden; if no nursing sub-blocks are populated
+      // the divider+block is suppressed entirely.
+      const nursingExtras = renderNursingNabhExtras(nNabh, H);
+      const nursingBlock = nursingExtras
+        ? `<div style="margin:18px 0 6px;padding:6px 12px;border-radius:6px;background:linear-gradient(90deg,#eef2ff,#fdf2f8);font-size:11px;font-weight:700;color:#312e81;letter-spacing:.5px;text-align:center">━━━ NURSING INTAKE — CROSS-DISCIPLINARY (NABH IPSG.6) ━━━</div>${nursingExtras}`
+        : "";
+
+      return alertBanner + cc + history + vitalsHtml + exam + medRecHtml + nabhExtras + codeSection + riskHtml + consentHtml + dx + planSection + nursingBlock;
     },
     // R7gp — initialAssessment is the alias the frontend sends from the
     // IPD Initial Assessment doctor form; route it to the same builder.
