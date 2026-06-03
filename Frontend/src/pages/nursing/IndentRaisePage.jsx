@@ -183,7 +183,80 @@ export default function IndentRaisePage() {
           list = orderRes.data?.data || orderRes.data?.orders || [];
         } catch (_) { /* leave list empty — the form still works via Other Drug */ }
       }
-      setOrders(Array.isArray(list) ? list : []);
+
+      // R7gx-FIX-2 — MAR PARITY: TreatmentChart (the MAR) aggregates
+      // medications from TWO sources — the DoctorOrder collection AND
+      // every doctorNote.noteDetails.medicationOrders / .infusionOrders
+      // embedded array. Indent raise was reading only the first source,
+      // so meds prescribed inline inside an Initial Assessment, Daily
+      // Progress note, ICU note, etc. (without ever being promoted to
+      // a standalone DoctorOrder document) never showed up on the
+      // prescription tab. The pharmacist would see only a partial picture
+      // of what the patient is on — a real dispensing-safety gap.
+      //
+      // Canonical reader: DoctorPatientPanel.TreatmentChartTab L1515-1551
+      // — both lists are mirrored into the same shape for the MAR grid.
+      // We mirror it here, then dedupe so DoctorOrder rows (real lifecycle)
+      // win over note-embedded duplicates of the same drug.
+      const noteEmbeddedOrders = [];
+      if (visitId) {
+        try {
+          const noteRes = await axios.get(
+            `${API_ENDPOINTS.BASE}/doctor-notes/ipd/${encodeURIComponent(visitId)}`,
+          );
+          const notes = noteRes.data?.data || noteRes.data?.notes
+            || (Array.isArray(noteRes.data) ? noteRes.data : []);
+          (Array.isArray(notes) ? notes : []).forEach((note) => {
+            const nd      = note?.noteDetails || {};
+            const meds    = Array.isArray(nd.medicationOrders) ? nd.medicationOrders : [];
+            const infs    = Array.isArray(nd.infusionOrders)   ? nd.infusionOrders   : [];
+            [...meds, ...infs].forEach((m, idx) => {
+              const drugName = m?.drug || m?.drugFluid || m?.medicineName || "";
+              if (!drugName) return;
+              // Skip note-embedded rows that the doctor explicitly cancelled.
+              const ms = String(m?.status || "").toLowerCase();
+              if (ms === "cancelled" || ms === "stopped") return;
+              noteEmbeddedOrders.push({
+                _id:          `note-${note._id}-${idx}`,
+                orderDetails: {
+                  medicineName: drugName,
+                  drugId:       m?.drugId || m?.medicineId || "",
+                  medicineCode: m?.medicineCode || m?.itemCode || "",
+                  dose:         m?.dose      || m?.volume || "",
+                  form:         m?.form      || "",
+                  frequency:    m?.frequency || m?.rate   || "",
+                  route:        m?.route     || "",
+                },
+                status:    m?.status || "Active",
+                orderedBy: note?.doctorName || note?.signedByName || "Doctor",
+                source:    "note",
+                noteRef:   note?._id,
+                noteType:  note?.noteType || "",
+              });
+            });
+          });
+        } catch (_) { /* note fetch is best-effort — the form still works without it */ }
+      }
+
+      // Dedupe — DoctorOrder rows (real lifecycle + admin trail) outrank
+      // note-embedded mirrors of the same drug. Match by drugId when both
+      // sides have one, else by case-insensitive trimmed medicineName.
+      const seen = new Set();
+      const keyFor = (o) => {
+        const d = o.orderDetails || {};
+        const id = String(d.drugId || d.medicineId || "").trim();
+        if (id) return `id:${id}`;
+        const nm = String(d.medicineName || d.displayName || o.serviceName || "").toLowerCase().trim();
+        return nm ? `nm:${nm}` : `oid:${o._id}`;
+      };
+      const merged = [];
+      [...(Array.isArray(list) ? list : []), ...noteEmbeddedOrders].forEach((o) => {
+        const k = keyFor(o);
+        if (seen.has(k)) return;
+        seen.add(k);
+        merged.push(o);
+      });
+      setOrders(merged);
 
       // Build the dual-key lookup. The stock endpoint returns rows
       // shaped { drugId, drugName, totalRemaining, batchCount,
