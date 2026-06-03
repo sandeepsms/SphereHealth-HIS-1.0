@@ -917,21 +917,12 @@ export default function ReceptionBilling() {
           <td>${esc(p.transactionId || "—")}</td>
           <td style="text-align:right">₹${_num(p.amount).toFixed(2)}</td>
         </tr>`).join("");
-      // R7hd — surface the visit number with a dynamic label per visit
-      // type so the consolidated bill reads "OPD No: OPD-26-06" /
-      // "IPD No: IPD-26-02" / "Daycare No: …" / "Emergency No: …" /
-      // "Service No: …". Falls back silently when no number exists.
-      const _vt = String(b.visitType || "").toUpperCase();
-      const _visitLabel =
-          _vt === "IPD"        ? "IPD No"
-        : _vt === "DAYCARE"    ? "Daycare No"
-        : _vt === "DAY CARE"   ? "Daycare No"
-        : _vt === "EMERGENCY"  ? "Emergency No"
-        : _vt === "ER"         ? "Emergency No"
-        : _vt === "SERVICES"   ? "Service No"
-        : _vt === "SERVICE"    ? "Service No"
-                               : "OPD No";
-      const _visitNo = b.admissionNumber || b.opdNumber || "";
+      // R7hd-FIX3 — the visit number now lives in the patient info strip
+      // (opposite the Address row). Showing it again on the bill row was
+      // redundant and noisy, especially for single-visit consolidated bills.
+      // For multi-bill consolidations (rare — patient with both OPD and
+      // a same-day Daycare bill, etc.) the per-row visitType pill still
+      // disambiguates which encounter the bill belongs to.
       return `
         <div class="bill-block">
           <div class="bill-head">
@@ -939,7 +930,6 @@ export default function ReceptionBilling() {
             <span class="pill pill-${esc((b.visitType || "").toLowerCase())}">${esc(b.visitType || "")}</span>
             <span class="pill pill-${esc((b.billStatus || "").toLowerCase())}">${esc(b.billStatus || "")}</span>
             <span class="meta">${new Date(b.billDate || b.createdAt).toLocaleString("en-IN")}</span>
-            ${_visitNo ? `<span class="meta" style="margin-left:auto"><strong style="color:#0f172a">${_visitLabel}:</strong> <span style="font-family:'DM Mono',monospace;color:#0f172a">${esc(_visitNo)}</span></span>` : ""}
           </div>
           <table>
             <thead><tr><th>Service</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Net</th></tr></thead>
