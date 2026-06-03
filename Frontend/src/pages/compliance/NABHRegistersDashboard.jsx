@@ -111,6 +111,26 @@ const INCIDENT_REGISTERS = [
 ];
 const INCIDENT_ACCENT = "#b45309";
 
+/* ════════════════════════════════════════════════════════════════
+   B10-T08 — QUALITY OUTCOMES & FACILITIES REGISTERS
+   Seven NABH 6th-edition registers covering antimicrobial resistance
+   reporting (antibiogram), medical staff oversight, environmental /
+   ESG compliance, employee wellness, patient-reported outcomes,
+   facilities maintenance, and statutory regulatory compliance.
+   Role-gated to Admin / ComplianceOfficer / MRD; the route guard
+   still applies on each destination page.
+══════════════════════════════════════════════════════════════ */
+const QUALITY_FACILITIES_REGISTERS = [
+  { id: "antibiogram",            label: "Antibiogram",            icon: "pi-shield",   path: "/compliance/nabh-registers/antibiogram",            nabhRef: "HIC.6",       desc: "Antimicrobial susceptibility cumulative report — organism × antibiotic %S" },
+  { id: "mso-log",                label: "MSO Log",                icon: "pi-heart",    path: "/compliance/nabh-registers/mso-log",                nabhRef: "PRE.1",       desc: "Medical Superintendent rounds / decisions / disciplinary log" },
+  { id: "esg-compliance",         label: "ESG Compliance",         icon: "pi-globe",    path: "/compliance/nabh-registers/esg-compliance",         nabhRef: "6th-ed Env",  desc: "Environment / Social / Governance — energy, water, waste, carbon" },
+  { id: "wellness",               label: "Wellness",               icon: "pi-sun",      path: "/compliance/nabh-registers/wellness",               nabhRef: "HRM.6",       desc: "Employee wellness — screenings, vaccinations, mental-health support" },
+  { id: "prom-prem",              label: "PROM/PREM",              icon: "pi-comment",  path: "/compliance/nabh-registers/prom-prem",              nabhRef: "PRE.4",       desc: "Patient-reported outcome & experience measures — survey log" },
+  { id: "facilities-maintenance", label: "Facilities Maintenance", icon: "pi-wrench",   path: "/compliance/nabh-registers/facilities-maintenance", nabhRef: "FMS.5",       desc: "Preventive + breakdown maintenance for plant, HVAC, lifts, equipment" },
+  { id: "statutory",              label: "Statutory Compliance",   icon: "pi-bookmark", path: "/compliance/nabh-registers/statutory",              nabhRef: "AAC.16",      desc: "Statutory licences + renewals — fire NOC, PCB, BMW, lift, NABH, etc." },
+];
+const QUALITY_FACILITIES_ACCENT = "#15803d";
+
 const tileStyle = {
   display: "flex", flexDirection: "column", gap: 8,
   padding: 14, borderRadius: 10,
@@ -377,6 +397,71 @@ export default function NABHRegistersDashboard() {
                 <div style={{
                   marginTop: "auto", paddingTop: 4,
                   fontSize: 11, color: INCIDENT_ACCENT, fontWeight: 600,
+                }}>
+                  Open →
+                </div>
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* B10-T08 — Quality Outcomes & Facilities tiles (7 NABH 6th-ed registers).
+          Role-gated to Admin / ComplianceOfficer / MRD; route guards on
+          each destination still apply. */}
+      {canSeeIncidents && (
+        <Card title="Quality Outcomes & Facilities">
+          <div style={{ fontSize: 12, color: C.muted, marginBottom: 12, marginTop: -4 }}>
+            NABH 6th-edition registers — antimicrobial stewardship, MSO oversight,
+            ESG/wellness, patient-reported outcomes, facilities maintenance, and
+            statutory licence tracking. Visible to compliance staff only.
+          </div>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+            gap: 10,
+          }}>
+            {QUALITY_FACILITIES_REGISTERS.map((reg) => (
+              <button
+                key={reg.id}
+                type="button"
+                onClick={() => navigate(reg.path)}
+                style={tileStyle}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                  e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)";
+                  e.currentTarget.style.borderColor = QUALITY_FACILITIES_ACCENT;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "none";
+                  e.currentTarget.style.borderColor = C.border;
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{
+                    width: 36, height: 36, borderRadius: 8,
+                    background: `${QUALITY_FACILITIES_ACCENT}15`, color: QUALITY_FACILITIES_ACCENT,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 18,
+                  }}>
+                    <i className={`pi ${reg.icon}`} />
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: C.text }}>
+                      {reg.label}
+                    </div>
+                    <div style={{ marginTop: 2 }}>
+                      <Badge value={reg.nabhRef} palette="blue" />
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.4 }}>
+                  {reg.desc}
+                </div>
+                <div style={{
+                  marginTop: "auto", paddingTop: 4,
+                  fontSize: 11, color: QUALITY_FACILITIES_ACCENT, fontWeight: 600,
                 }}>
                   Open →
                 </div>

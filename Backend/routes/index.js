@@ -429,6 +429,88 @@ try {
     console.warn("[routes] hai-surveillance mount failed:", e.message);
   }
 }
+// R7gw-B10-T06 — NABH Facilities & Equipment Maintenance Log (FMS.5).
+// Engineering / Biomedical / Facilities staff log PPM jobs, corrective
+// tickets and AMC visits across BMS / Generator / Fire / Lift / Biomedical
+// / HVAC / MedGas / UPS / Steam-Boiler. Manual entry only.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/facilities-maintenance", require("./Compliance/nabhRegisters/facilities-maintenanceRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] facilities-maintenance mount failed:", e.message);
+  }
+}
+// R7gw-B10-T02 — NABH MSO Session Log register (PRE.1). Manual-entry log
+// of Medical Social Officer sessions (counseling / financial-aid /
+// discharge-planning / bereavement / grievance / vulnerable-patient care).
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/mso-log", require("./Compliance/nabhRegisters/mso-logRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] mso-log mount failed:", e.message);
+  }
+}
+// R7gw-B10-T07 — NABH Statutory Compliance register (AAC.16). Manual register
+// of statutory licences (Hospital / Pharmacy / BloodBank / Fire-NOC /
+// PCB-Consent / BMW-Authorisation / Atomic-Energy / PNDT / CTL / PRA /
+// Drug-Licence / Lift-Inspection) with issue + expiry + renewal status.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/statutory", require("./Compliance/nabhRegisters/statutoryRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] statutory mount failed:", e.message);
+  }
+}
+// R7gw-B10-T03 — NABH ESG Compliance register (6th-ed Environment). Monthly
+// facility Environmental / Social / Governance report — energy / water /
+// diesel / waste / carbon-equivalent + green-initiatives + audit findings.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/esg-compliance", require("./Compliance/nabhRegisters/esg-complianceRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] esg-compliance mount failed:", e.message);
+  }
+}
+// R7gw-B10-T01 — NABH Antibiogram register (HIC.6). Periodic facility-level
+// cumulative susceptibility report (organism × ward × sample-type × period)
+// derived from microbiology isolates; powers the AMSC's empiric first-/
+// second-line recommendation tables. Manual-entry by AMSC / IC officer.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/antibiogram", require("./Compliance/nabhRegisters/antibiogramRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] antibiogram mount failed:", e.message);
+  }
+}
+// R7gw-B10-T04 — NABH Staff Wellness Programme register (HRM.6). Manual
+// register of staff-wellness sessions — annual health checks, vaccination
+// drives, stress-management workshops, yoga / mindfulness, nutrition. HR /
+// Wellness committee files each session row from the page UI.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/wellness", require("./Compliance/nabhRegisters/wellnessRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] wellness mount failed:", e.message);
+  }
+}
+// R7gw-B10-T05 — NABH PROM / PREM register (PRE.4 6th-ed). PRO officer
+// or floor nurse files each survey administration (PROMIS / SF-36 / EQ-5D /
+// HCAHPS / NHS-FFT / Custom-PREM) with domain scores + comments. Defaults
+// to dischargeContext=true; can be flagged false for follow-up visits.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/prom-prem", require("./Compliance/nabhRegisters/prom-premRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] prom-prem mount failed:", e.message);
+  }
+}
 // R7en — ECG Register (NABH AAC.4 + IPSG.2 + COP.7). Manual + auto-emit
 // from DoctorOrder (Investigation/ECG). Surveyor reads via dashboard-summary
 // above; this mount is the write surface (entry + report + cardio review).

@@ -199,6 +199,27 @@ const SentinelEventRegisterPage     = lazy(() => import("./pages/compliance/Sent
 // R7gw-B9-B9-T06 — NABH Hand Hygiene Compliance Register (HIC.3). IC-officer
 // driven WHO 5-Moments observation log; mobile-friendly tap-to-record UI.
 const HandHygieneRegisterPage       = lazy(() => import("./pages/compliance/HandHygieneRegisterPage"));
+// R7gw-B10-T02 — NABH MSO Session Log Register (PRE.1). Medical Social
+// Officer log of counseling / financial-aid / discharge-planning /
+// bereavement / grievance / vulnerable-patient-care sessions.
+const MSOLogRegisterPage            = lazy(() => import("./pages/compliance/MSOLogRegisterPage"));
+// R7gw-B10-T07 — NABH Statutory Compliance Register (AAC.16). Living register
+// of statutory licences (Hospital, Pharmacy, Blood-Bank, Fire-NOC, PCB, BMW,
+// Atomic Energy, PNDT, etc.) with issued / expiry / renewal status tracking.
+const StatutoryComplianceRegisterPage = lazy(() => import("./pages/compliance/StatutoryComplianceRegisterPage"));
+// R7gw-B10-T01 — NABH Antibiogram Register (HIC.6). Periodic cumulative
+// susceptibility — organism × ward × sample × period — feeding the AMSC's
+// empiric first-/second-line recommendation tables.
+const AntibiogramRegisterPage       = lazy(() => import("./pages/compliance/AntibiogramRegisterPage"));
+// R7gw-B10-T03 — NABH ESG Compliance Register (6th-ed Environment).
+// Monthly facility ESG report — energy / water / diesel / waste / carbon +
+// green-initiatives + audit findings. Manual-entry only.
+const ESGComplianceRegisterPage     = lazy(() => import("./pages/compliance/ESGComplianceRegisterPage"));
+// R7gw-B10-T04 — NABH Staff Wellness Programme Register (HRM.6). Manual
+// register of staff-wellness sessions — annual health checks, vaccination
+// drives, stress management, yoga, nutrition, mindfulness. HR / Wellness
+// committee files each session row with attendance + feedback score.
+const WellnessProgramRegisterPage   = lazy(() => import("./pages/compliance/WellnessProgramRegisterPage"));
 // R7gw-B9-T02 — NABH Near-Miss Event Register (QPS.5). Manual-entry log
 // of intercepted wrong-meds, prevented falls, caught equipment failures.
 const NearMissEventRegisterPage     = lazy(() => import("./pages/compliance/NearMissEventRegisterPage"));
@@ -219,6 +240,14 @@ const RCARegisterPage               = lazy(() => import("./pages/compliance/RCAR
 // the ICU bundle finalize path when CAUTI compliance <100, Foley dwell>3d,
 // positive UTI culture; manual entries for SSI / CDI / MRSA-bacteremia.
 const HAISurveillanceRegisterPage   = lazy(() => import("./pages/compliance/HAISurveillanceRegisterPage"));
+// R7gw-B10-T06 — NABH Facilities & Equipment Maintenance Log (FMS.5). PPM /
+// Corrective / AMC log for BMS, DG, Fire-system, Lift, Biomedical, HVAC,
+// Medical-Gas, UPS, Steam-Boiler. Manual entry by engineering / biomedical.
+const FacilitiesMaintenanceLogRegisterPage = lazy(() => import("./pages/compliance/FacilitiesMaintenanceLogRegisterPage"));
+// R7gw-B10-T05 — NABH PROM / PREM register (PRE.4 6th-ed). PRO officer or
+// floor nurse files each survey administration (PROMIS / SF-36 / EQ-5D /
+// HCAHPS / NHS-FFT / Custom-PREM) with domain scores + comments.
+const PROMPREMRegRegisterPage       = lazy(() => import("./pages/compliance/PROMPREMRegRegisterPage"));
 // R7bx — six new surveyor-facing NABH registers (COP.10/13/16/17/18 + MOM.7).
 const OTRegisterPage                = lazy(() => import("./pages/nabh/OTRegisterPage"));
 const ASARegisterPage               = lazy(() => import("./pages/nabh/ASARegisterPage"));
@@ -710,6 +739,42 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/compliance/nabh-registers/handhygiene" element={
               <RoleGuard action="compliance.nabh.read"><HandHygieneRegisterPage /></RoleGuard>
             } />
+            {/* R7gw-B10-T02 — MSO Session Log Register (NABH PRE.1). MSO
+                manual entry of counseling / financial-aid / discharge-
+                planning / bereavement / grievance / vulnerable-patient
+                care sessions for psychosocial-support evidence trail. */}
+            <Route path="/compliance/nabh-registers/mso-log" element={
+              <RoleGuard action="compliance.nabh.read"><MSOLogRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T07 — Statutory Compliance Register (NABH AAC.16).
+                Living register of statutory licences (Hospital / Pharmacy /
+                Blood-Bank / Fire-NOC / PCB-Consent / BMW-Authorisation /
+                Atomic-Energy / PNDT / CTL / PRA / Drug-Licence / Lift-
+                Inspection) with issued + expiry + renewal status tracking. */}
+            <Route path="/compliance/nabh-registers/statutory" element={
+              <RoleGuard action="compliance.nabh.read"><StatutoryComplianceRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T01 — Antibiogram Register (NABH HIC.6). Periodic
+                cumulative susceptibility per organism × ward × sample-type
+                × period, with sensitivityProfile Map (antibiotic → S/I/R)
+                + AMSC first-/second-line empiric recommendations. */}
+            <Route path="/compliance/nabh-registers/antibiogram" element={
+              <RoleGuard action="compliance.nabh.read"><AntibiogramRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T03 — ESG Compliance Register (NABH 6th-ed Environment).
+                Monthly facility Environmental / Social / Governance report —
+                energy / water / diesel / waste / carbon-equivalent + green-
+                initiatives + ESG-audit findings. Manual-entry only. */}
+            <Route path="/compliance/nabh-registers/esg-compliance" element={
+              <RoleGuard action="compliance.nabh.read"><ESGComplianceRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T04 — Staff Wellness Programme Register (NABH HRM.6).
+                Manual log of staff wellness sessions — annual health checks,
+                vaccination drives, stress management, yoga, nutrition,
+                mindfulness — with attendance + feedback score per session. */}
+            <Route path="/compliance/nabh-registers/wellness" element={
+              <RoleGuard action="compliance.nabh.read"><WellnessProgramRegisterPage /></RoleGuard>
+            } />
             {/* R7gw-B9-T02 — Near-Miss Event Register (NABH QPS.5). Manual-
                 entry log of intercepted wrong-med / wrong-patient / wrong-
                 site / extravasation / fall / equipment-failure events. */}
@@ -743,6 +808,20 @@ function AppLayout({ collapsed, setCollapsed }) {
                 from the lab feed. */}
             <Route path="/compliance/nabh-registers/haisurveillance" element={
               <RoleGuard action="compliance.nabh.read"><HAISurveillanceRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T06 — Facilities & Equipment Maintenance Log (NABH FMS.5).
+                Engineering / Biomedical / Facilities team logs PPM, Corrective,
+                AMC and Breakdown jobs for BMS, DG-set, Fire-system, Lift,
+                Biomedical, HVAC, Medical-Gas, UPS and Steam-Boiler. */}
+            <Route path="/compliance/nabh-registers/facilities-maintenance" element={
+              <RoleGuard action="compliance.nabh.read"><FacilitiesMaintenanceLogRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B10-T05 — PROM / PREM Register (NABH PRE.4 6th-ed). PRO officer
+                or floor nurse files each survey administration (PROMIS / SF-36 /
+                EQ-5D / HCAHPS / NHS-FFT / Custom-PREM) with domain scores +
+                comments at discharge or follow-up. */}
+            <Route path="/compliance/nabh-registers/prom-prem" element={
+              <RoleGuard action="compliance.nabh.read"><PROMPREMRegRegisterPage /></RoleGuard>
             } />
             {/* R7eg — NABH HIC.5 Infection Control register: ICU care-bundle
                 compliance aggregated over time (VAP / CAUTI / CLABSI / DVT

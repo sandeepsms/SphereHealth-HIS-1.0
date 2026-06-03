@@ -2563,6 +2563,519 @@ async function emitHAISurveillance(payload = {}) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// R7gw-B10-T02 — emitMSOLog — Medical Social Officer session log (NABH PRE.1)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Find-or-create-by-sourceRef. Manual-entry register: the social worker
+// types in a session (counseling / financial aid / discharge planning /
+// bereavement / grievance / vulnerable patient care), the route calls this
+// emitter, and the row lands in mso_log_registers. Idempotent on sourceRef
+// so a network retry doesn't double-write the same session.
+async function emitMSOLog(args = {}) {
+  try {
+    const MSOLogRegister = require("../../models/Compliance/MSOLogRegisterModel");
+    const { session = {}, actor = {} } = args;
+    if (!session.UHID) return null;
+    if (!session.sessionType) return null;
+    if (!session.outcome) return null;
+
+    const actorMeta = _actor(actor);
+    const sessionDate = session.sessionDate ? new Date(session.sessionDate) : new Date();
+
+    // R7bw — resolve canonical active admission so the row links to the
+    // KEEPER admission even if the caller is still holding a stale id.
+    const canonicalAdmissionId = await _resolveCanonicalAdmissionId(
+      session.UHID,
+      session.admissionId || null,
+    );
+
+    // Idempotent find-or-create on sourceRef (caller may pass an explicit
+    // UUID to coalesce retries; otherwise the schema default generates one).
+    const incomingSourceRef = session.sourceRef || "";
+    if (incomingSourceRef) {
+      const existing = await MSOLogRegister.findOne({ sourceRef: incomingSourceRef }).lean();
+      if (existing) return existing;
+    }
+
+    const row = await MSOLogRegister.create({
+      patientId:        session.patientId || null,
+      UHID:             String(session.UHID).toUpperCase(),
+      patientName:      session.patientName || "",
+      admissionId:      canonicalAdmissionId,
+      admissionNumber:  session.admissionNumber || "",
+
+      sessionDate,
+      sessionType:      session.sessionType,
+      duration:         Number(session.duration) || 0,
+      concernAddressed: session.concernAddressed || "",
+
+      outcome:          session.outcome,
+      followUpNeeded:   !!session.followUpNeeded,
+      followUpDate:     session.followUpDate ? new Date(session.followUpDate) : null,
+      referredTo:       session.referredTo || "",
+
+      socialWorkerEmpId:  session.socialWorkerEmpId || "",
+      socialWorkerName:   session.socialWorkerName || actorMeta.byName || "",
+      socialWorkerUserId: actorMeta.byUserId || null,
+
+      notes:            session.notes || "",
+      status:           session.status || "Closed",
+
+      ...(incomingSourceRef ? { sourceRef: incomingSourceRef } : {}),
+      sourceType:       session.sourceType || "Manual",
+
+      hospitalId:       session.hospitalId || null,
+
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `sessionType=${session.sessionType} outcome=${session.outcome}`,
+      }],
+    });
+    return row;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error("[nabhRegisterEmitter] emitMSOLog FAILED:", e.message,
+      "— UHID:", args?.session?.UHID, "sessionType:", args?.session?.sessionType);
+    return null;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// R7gw-B10-T07 — emitStatutoryCompliance (NABH AAC.16 — Statutory Licence register)
+// ═════════════════════════════════════════════════════════════════════════
+// Compliance officer / Admin maintains the living register of every statutory
+// licence in force — Hospital, Pharmacy, Blood-Bank, Fire-NOC, PCB-Consent,
+// BMW-Authorisation, Atomic-Energy, PNDT, CTL, PRA, Drug-Licence, Lift-Inspection.
+// No upstream auto-trigger — every row is a manual POST from the compliance
+// page. Idempotent on sourceRef so repeated mobile submits coalesce.
+const StatutoryComplianceRegister = require("../../models/Compliance/StatutoryComplianceRegisterModel");
+const _crypto_SC_R7gwB10T07 = require("crypto");
+
+async function emitStatutoryCompliance(args = {}) {
+  try {
+    const { entry = {}, actor = {} } = args;
+    // Bail silently on missing required fields — schema would throw otherwise
+    // and mask the real caller bug.
+    if (!entry.licenseType) return null;
+    if (!entry.licenseNo) return null;
+
+    // Idempotency: server-generated UUID if caller did not supply one.
+    const sourceRef = entry.sourceRef || _crypto_SC_R7gwB10T07.randomUUID();
+    try {
+      const existing = await StatutoryComplianceRegister.findOne({ sourceRef }).lean();
+      if (existing) return existing;
+    } catch (_) { /* non-fatal */ }
+
+    const actorMeta = _actor(actor);
+
+    const row = await StatutoryComplianceRegister.create({
+      licenseType: entry.licenseType,
+      licenseNo: String(entry.licenseNo).trim(),
+      issuedBy: entry.issuedBy || "",
+      issuedDate: entry.issuedDate ? new Date(entry.issuedDate) : null,
+      expiryDate: entry.expiryDate ? new Date(entry.expiryDate) : null,
+      renewalAppliedDate: entry.renewalAppliedDate ? new Date(entry.renewalAppliedDate) : null,
+      renewalStatus: entry.renewalStatus || "NotStarted",
+      documentPath: entry.documentPath || "",
+      notes: entry.notes || "",
+      status: entry.status || "Active",
+      sourceRef,
+      sourceType: entry.sourceType || "Manual",
+      emittedAt: new Date(),
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `licenseType=${entry.licenseType} licenseNo=${entry.licenseNo}`,
+      }],
+      hospitalId: entry.hospitalId || null,
+    });
+    return row;
+  } catch (e) {
+    if (e?.code === 11000) return null;
+    // eslint-disable-next-line no-console
+    console.error(
+      "[nabhRegisterEmitter] emitStatutoryCompliance FAILED:",
+      e.message,
+      "— licenseType:", args?.entry?.licenseType,
+      "licenseNo:", args?.entry?.licenseNo,
+    );
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// R7gw-B10-T01 — emitAntibiogram (NABH HIC.6 — Antibiogram register)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// One row per organism × period × ward × sampleType cohort. Find-or-create
+// by sourceRef so periodic regenerations of the same cohort coalesce
+// (e.g. monthly batch re-run, network retry from manual POST). Caller
+// supplies organism + sensitivityProfile (Map of antibiotic→S/I/R) plus
+// optional first/second-line recommendations. Idempotent on sourceRef.
+const AntibiogramRegister = require("../../models/Compliance/AntibiogramRegisterModel");
+const _crypto_AB_R7gwB10T01 = require("crypto");
+
+async function emitAntibiogram(payload = {}) {
+  try {
+    if (!payload || !payload.organism) return null;
+
+    const sourceRef = payload.sourceRef || _crypto_AB_R7gwB10T01.randomUUID();
+    const actorMeta = _actor(payload.actor || {});
+
+    // find-or-create-by-sourceRef → repeated emits of the same cohort do
+    // not duplicate. Manual entries always carry a fresh UUID.
+    const existing = await AntibiogramRegister.findOne({ sourceRef }).lean();
+    if (existing) return existing;
+
+    // Normalise sensitivityProfile: accept plain object {amox:"S"}, an
+    // array of [antibiotic, value] pairs, or an existing Map. Coerce
+    // anything else to an empty Map so Mongoose doesn't choke.
+    let profile = payload.sensitivityProfile;
+    if (profile && !(profile instanceof Map)) {
+      if (Array.isArray(profile)) profile = new Map(profile);
+      else if (typeof profile === "object") profile = new Map(Object.entries(profile));
+      else profile = new Map();
+    }
+
+    const row = await AntibiogramRegister.create({
+      organism: String(payload.organism).trim(),
+      isolatedAt: payload.isolatedAt ? new Date(payload.isolatedAt) : null,
+      ward: payload.ward || "",
+      sampleType: payload.sampleType || "Other",
+      sensitivityProfile: profile || new Map(),
+      recommendedFirstLine:  Array.isArray(payload.recommendedFirstLine)  ? payload.recommendedFirstLine  : [],
+      recommendedSecondLine: Array.isArray(payload.recommendedSecondLine) ? payload.recommendedSecondLine : [],
+      period: payload.period || "",
+      totalIsolates: Number(payload.totalIsolates) || 0,
+      notes: payload.notes || "",
+      status: payload.status || "Closed",
+      sourceRef,
+      sourceType: payload.sourceType || "Manual",
+      hospitalId: payload.hospitalId || null,
+      createdBy: actorMeta.byUserId,
+      createdByName: actorMeta.byName,
+      createdByRole: actorMeta.byRole,
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `source=${payload.sourceType || "Manual"} organism=${payload.organism} period=${payload.period || "?"}`,
+      }],
+    });
+    return row;
+  } catch (e) {
+    // Non-blocking — register writes must never abort upstream lab work.
+    // eslint-disable-next-line no-console
+    console.error(
+      "[nabhRegisterEmitter] emitAntibiogram FAILED:",
+      e.message,
+      "organism:", payload?.organism,
+      "period:", payload?.period,
+    );
+    return null;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// R7gw-B10-T03 — emitESGCompliance (NABH 6th-ed Environment chapter)
+// ═════════════════════════════════════════════════════════════════════════
+// Monthly Environmental, Social & Governance report — energy / water /
+// diesel / waste / carbon + green-initiatives + ESG-audit findings.
+// Manual-entry only; one row per facility-month period (YYYY-MM).
+const ESGComplianceRegister = require("../../models/Compliance/ESGComplianceRegisterModel");
+const _crypto_ESG_R7gwB10T03 = require("crypto");
+
+async function emitESGCompliance(args = {}) {
+  try {
+    const { report = {}, actor = {} } = args;
+    if (!report.period || !/^\d{4}-\d{2}$/.test(String(report.period))) return null;
+    if (!report.reportedByEmpId) return null;
+
+    // Idempotency: server-generated UUID if caller didn't supply one.
+    const sourceRef = report.sourceRef || _crypto_ESG_R7gwB10T03.randomUUID();
+    try {
+      const existing = await ESGComplianceRegister.findOne({ sourceRef }).lean();
+      if (existing) return existing;
+    } catch (_) { /* non-fatal */ }
+
+    const actorMeta = _actor(actor);
+
+    const initiatives = Array.isArray(report.greenInitiatives)
+      ? report.greenInitiatives.map((s) => String(s).trim()).filter(Boolean)
+      : [];
+
+    const row = await ESGComplianceRegister.create({
+      period: String(report.period),
+      energyKwh:         Number(report.energyKwh)         || 0,
+      waterKl:           Number(report.waterKl)           || 0,
+      dieselLitres:      Number(report.dieselLitres)      || 0,
+      medicalWasteKg:    Number(report.medicalWasteKg)    || 0,
+      biomedicalWasteKg: Number(report.biomedicalWasteKg) || 0,
+      recycledPct:       Number(report.recycledPct)       || 0,
+      co2eqKg:           Number(report.co2eqKg)           || 0,
+      greenInitiatives:  initiatives,
+      auditFindings:     report.auditFindings || "",
+      reportedByEmpId:   report.reportedByEmpId,
+      reportedByName:    report.reportedByName || actorMeta.byName || "",
+      reportedByUserId:  actorMeta.byUserId,
+      status:            report.status || "Closed",
+      sourceRef,
+      sourceType:        report.sourceType || "Manual",
+      emittedAt:         new Date(),
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `period=${report.period} energy=${report.energyKwh || 0}kWh water=${report.waterKl || 0}kL CO2e=${report.co2eqKg || 0}kg`,
+      }],
+      hospitalId: report.hospitalId || null,
+    });
+    return row;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(
+      "[nabhRegisterEmitter] emitESGCompliance FAILED:",
+      e.message,
+      "— period:", args?.report?.period,
+    );
+    return null;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// R7gw-B10-T04 — emitWellnessProgram (NABH HRM.6 — Staff Wellness Programmes)
+// ═════════════════════════════════════════════════════════════════════════
+// HR / Wellness committee files each session row from the page UI. No auto-
+// trigger from clinical writes. Bails silently on missing programName / type /
+// sessionDate / topic / facilitator because the schema requires them and an
+// incomplete payload would throw a ValidationError that masks the real caller
+// bug. Idempotency by sourceRef (server-generated UUID at emit time).
+const WellnessProgramRegister_R7gwB10T04 = require("../../models/Compliance/WellnessProgramRegisterModel");
+const _crypto_WP_R7gwB10T04 = require("crypto");
+
+async function emitWellnessProgram(args = {}) {
+  try {
+    const { session = {}, actor = {} } = args;
+    if (!session.programName) return null;
+    if (!session.type) return null;
+    if (!session.sessionDate) return null;
+    if (!session.topic) return null;
+    if (!session.facilitator) return null;
+
+    // Idempotency: find-or-create by sourceRef. Pre-existing rows are
+    // returned unchanged so a duplicate POST never doubles a session log.
+    const sourceRef = session.sourceRef || _crypto_WP_R7gwB10T04.randomUUID();
+    try {
+      const existing = await WellnessProgramRegister_R7gwB10T04.findOne({ sourceRef }).lean();
+      if (existing) return existing;
+    } catch (_) { /* non-fatal */ }
+
+    const actorMeta = _actor(actor);
+    const sessionDateVal = new Date(session.sessionDate);
+
+    const participantList = Array.isArray(session.participantEmpIds)
+      ? session.participantEmpIds.filter(Boolean).map((s) => String(s).trim()).filter(Boolean)
+      : [];
+
+    let feedbackScoreVal = Number(session.feedbackScore || 0);
+    if (!Number.isFinite(feedbackScoreVal) || feedbackScoreVal < 0) feedbackScoreVal = 0;
+    if (feedbackScoreVal > 5) feedbackScoreVal = 5;
+
+    const row = await WellnessProgramRegister_R7gwB10T04.create({
+      programName: String(session.programName).trim(),
+      type: session.type,
+      sessionDate: sessionDateVal,
+      participantEmpIds: participantList,
+      topic: String(session.topic).trim(),
+      facilitator: String(session.facilitator).trim(),
+      feedbackScore: feedbackScoreVal,
+      notes: session.notes || "",
+      status: session.status || "Completed",
+      sourceRef,
+      sourceType: session.sourceType || "Manual",
+      emittedAt: new Date(),
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `type=${session.type} topic=${session.topic} participants=${participantList.length}`,
+      }],
+      hospitalId: session.hospitalId || null,
+    });
+    return row;
+  } catch (e) {
+    if (e?.code === 11000) return null;
+    // eslint-disable-next-line no-console
+    console.error("[nabhRegisterEmitter] emitWellnessProgram FAILED:", e.message,
+      "— programName:", args?.session?.programName,
+      "type:", args?.session?.type);
+    return null;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// R7gw-B10-T06 — emitFacilitiesMaintenanceLog (NABH FMS.5)
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Facilities / Biomedical / Engineering maintenance log. Manual-entry only —
+// engineering staff (or AMC-vendor liaison) logs a scheduled-PPM job, an
+// active corrective ticket, or an AMC visit. No upstream auto-trigger; the
+// surveyor reads aggregate compliance % via the page filter.
+//
+// Find-or-create-by-sourceRef so a network retry of the same job ticket
+// coalesces into the same row.
+async function emitFacilitiesMaintenanceLog(args = {}) {
+  try {
+    const FacilitiesMaintenanceLogRegister = require("../../models/Compliance/FacilitiesMaintenanceLogRegisterModel");
+    const { entry = {}, actor = {} } = args;
+    if (!entry.equipmentType || !entry.equipmentId) return null;
+    if (!entry.scheduledAt) return null;
+
+    const actorMeta = _actor(actor);
+    const scheduledAtVal = new Date(entry.scheduledAt);
+    const performedAtVal = entry.performedAt ? new Date(entry.performedAt) : null;
+    const nextDueDateVal = entry.nextDueDate ? new Date(entry.nextDueDate) : null;
+
+    // Idempotent find-or-create on sourceRef. If caller supplies a UUID we
+    // re-use it; the model defaults to crypto.randomUUID() when absent.
+    const incomingSourceRef = entry.sourceRef || "";
+    if (incomingSourceRef) {
+      const existing = await FacilitiesMaintenanceLogRegister.findOne({ sourceRef: incomingSourceRef }).lean();
+      if (existing) return existing;
+    }
+
+    const createDoc = {
+      equipmentType:    entry.equipmentType,
+      equipmentId:      String(entry.equipmentId).trim(),
+      equipmentName:    entry.equipmentName || "",
+      location:         entry.location || "",
+
+      scheduledAt:      scheduledAtVal,
+      performedAt:      performedAtVal,
+
+      performedByEmpId: entry.performedByEmpId || actor.empId || "",
+      performedByName:  entry.performedByName || actorMeta.byName || "",
+      performedByUserId:actorMeta.byUserId,
+      vendor:           entry.vendor || "",
+      amcContractRef:   entry.amcContractRef || "",
+
+      jobType:          entry.jobType || "PPM",
+      findings:         entry.findings || "",
+      correctiveAction: entry.correctiveAction || "",
+      partsReplaced:    entry.partsReplaced || "",
+      downtimeMinutes:  Number(entry.downtimeMinutes) || 0,
+
+      nextDueDate:      nextDueDateVal,
+
+      status:           entry.status || (performedAtVal ? "Done" : "Scheduled"),
+
+      sourceType:       entry.sourceType || "Manual",
+      emittedAt:        new Date(),
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `eq=${entry.equipmentType}/${entry.equipmentId} job=${entry.jobType || "PPM"}`,
+      }],
+      hospitalId:       entry.hospitalId || null,
+    };
+    if (incomingSourceRef) createDoc.sourceRef = incomingSourceRef;
+
+    const row = await FacilitiesMaintenanceLogRegister.create(createDoc);
+    return row;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(
+      "[nabhRegisterEmitter] emitFacilitiesMaintenanceLog FAILED:", e.message,
+      "— equipmentType:", args?.entry?.equipmentType,
+      "equipmentId:", args?.entry?.equipmentId,
+    );
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// R7gw-B10-T05 — emitPROMPREMReg
+// PROM / PREM Register (NABH PRE.4 6th-ed). Find-or-create by sourceRef so
+// repeated POSTs of the same survey administration coalesce into one row.
+// ─────────────────────────────────────────────────────────────────────────
+let _PROMPREMRegRegister_R7gwB10T05;
+try {
+  // eslint-disable-next-line global-require
+  _PROMPREMRegRegister_R7gwB10T05 = require("../../models/Compliance/PROMPREMRegRegisterModel");
+} catch (_) { /* model not present in some deployments */ }
+const _crypto_PROMPREM_R7gwB10T05 = require("crypto");
+
+async function emitPROMPREMReg(payload = {}) {
+  try {
+    if (!_PROMPREMRegRegister_R7gwB10T05) return null;
+    const data = payload || {};
+    if (!data.UHID) return null;
+    if (!data.instrument) return null;
+    if (!data.administeredAt) return null;
+
+    const sourceRef = data.sourceRef || _crypto_PROMPREM_R7gwB10T05.randomUUID();
+
+    // Find-or-create by sourceRef for idempotency.
+    try {
+      const existing = await _PROMPREMRegRegister_R7gwB10T05.findOne({ sourceRef }).lean();
+      if (existing) return existing;
+    } catch (_) { /* non-fatal */ }
+
+    const actorMeta = _actor(data.actor || {});
+    const canonicalAdmissionId = await _resolveCanonicalAdmissionId(
+      data.UHID,
+      data.admissionId || null,
+    );
+
+    // Scores can come in as a plain object or a Map — Mongoose handles both
+    // when assigned to a Map field; ensure we don't pass undefined.
+    const scoresIn = data.scores && typeof data.scores === "object" ? data.scores : {};
+
+    const row = await _PROMPREMRegRegister_R7gwB10T05.create({
+      patientId: data.patientId || null,
+      UHID: String(data.UHID).toUpperCase(),
+      patientName: data.patientName || "",
+      admissionId: canonicalAdmissionId,
+      admissionNumber: data.admissionNumber || "",
+      instrument: data.instrument,
+      administeredAt: new Date(data.administeredAt),
+      administeredByEmpId: data.administeredByEmpId || "",
+      administeredByName: data.administeredByName || actorMeta.byName || "",
+      administeredByUserId: actorMeta.byUserId,
+      scores: scoresIn,
+      comments: data.comments || "",
+      recommendation: data.recommendation || "",
+      dischargeContext: data.dischargeContext != null ? !!data.dischargeContext : true,
+      status: data.status || "Closed",
+      sourceRef,
+      sourceType: data.sourceType || "Manual",
+      hospitalId: data.hospitalId || null,
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `instrument=${data.instrument} dischargeContext=${data.dischargeContext != null ? !!data.dischargeContext : true}`,
+      }],
+    });
+    return row;
+  } catch (e) {
+    if (e?.code === 11000) return null; // duplicate sourceRef — idempotent no-op
+    // eslint-disable-next-line no-console
+    console.error(
+      "[nabhRegisterEmitter] emitPROMPREMReg FAILED:",
+      e.message,
+      "— UHID:", payload?.UHID,
+      "instrument:", payload?.instrument,
+    );
+    return null;
+  }
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 // Exports
 // ═════════════════════════════════════════════════════════════════════════
@@ -2603,6 +3116,20 @@ module.exports = {
   emitSentinelEventWithRCA,
   // R7gw-B9-T05 — HAI Surveillance register (NABH HIC.4)
   emitHAISurveillance,
+  // R7gw-B10-T02 — MSO session log register (NABH PRE.1)
+  emitMSOLog,
+  // R7gw-B10-T07 — Statutory Compliance register (NABH AAC.16)
+  emitStatutoryCompliance,
+  // R7gw-B10-T01 — Antibiogram register (NABH HIC.6)
+  emitAntibiogram,
+  // R7gw-B10-T03 — ESG Compliance register (NABH 6th-ed Environment)
+  emitESGCompliance,
+  // R7gw-B10-T04 — Wellness Program register (NABH HRM.6)
+  emitWellnessProgram,
+  // R7gw-B10-T06 — Facilities Maintenance Log register (NABH FMS.5)
+  emitFacilitiesMaintenanceLog,
+  // R7gw-B10-T05 — PROM / PREM register (NABH PRE.4 6th-ed)
+  emitPROMPREMReg,
   // Helpers exposed for testing / re-use
   isAntibiotic,
   _deriveEcgFlags,
