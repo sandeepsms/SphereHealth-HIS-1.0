@@ -1443,12 +1443,20 @@ export default function OPDAssessmentPage() {
   }, [autoPrint, loading, visit]);
 
   const vitals = visit?.vitals || {};
+  // R7hj — show every field the nurse can enter on the Pre-Assessment.
+  // BP renders the split S/D values when present (R7hf) and falls back
+  // to the legacy "120/80" string. Height + RR are new chips.
+  const bpDisplay = (vitals.bloodPressureSystolic != null && vitals.bloodPressureDiastolic != null)
+    ? `${vitals.bloodPressureSystolic}/${vitals.bloodPressureDiastolic}`
+    : (vitals.bloodPressure || "—");
   const vitInfo = [
-    { label: "BP",    value: vitals.bloodPressure || "—" },
+    { label: "BP",    value: bpDisplay },
     { label: "Pulse", value: vitals.pulse ? `${vitals.pulse} bpm` : "—" },
     { label: "Temp",  value: vitals.temperature ? `${vitals.temperature} °F` : "—" },
+    { label: "RR",    value: vitals.respiratoryRate ? `${vitals.respiratoryRate} /min` : "—" },
     { label: "SpO₂",  value: vitals.oxygenSaturation ? `${vitals.oxygenSaturation}%` : "—" },
     { label: "Wt",    value: vitals.weight ? `${vitals.weight} kg` : "—" },
+    { label: "Ht",    value: vitals.height ? `${vitals.height} cm` : "—" },
     { label: "BMI",   value: vitals.bmi || "—" },
   ];
 
@@ -1532,28 +1540,47 @@ export default function OPDAssessmentPage() {
 
           {/* Nurse Pre-Assessment Strip */}
           <Card title="Nurse Pre-Assessment" icon="pi-heart" color={C.nurse}>
-            {/* Chief Complaint + Allergy */}
-            {(visit?.chiefComplaint || visit?.allergyHistory) && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
-                {visit.chiefComplaint && (
-                  <div style={{ background: "#fdf4ff", border: "1px solid #e9d5ff", borderRadius: 8, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 10, color: "#9333ea", fontWeight: 700, marginBottom: 3 }}>CHIEF COMPLAINT</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: C.dark }}>{visit.chiefComplaint}</div>
-                  </div>
-                )}
-                {visit.allergyHistory && (
-                  <div style={{ background: "#fff1f2", border: "1px solid #fecdd3", borderRadius: 8, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 10, color: "#e11d48", fontWeight: 700, marginBottom: 3 }}>KNOWN ALLERGIES</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: C.dark }}>{visit.allergyHistory}</div>
-                  </div>
-                )}
-              </div>
-            )}
-            {/* Vitals */}
+            {/* R7hj — Chief Complaint + Known Allergies. Allergies prefers
+                what the nurse re-confirmed on the visit; falls back to the
+                patient's master record (set at registration) so the doctor
+                always sees something when allergies exist anywhere. */}
+            {(() => {
+              const visitAllergy = (visit?.allergyHistory || "").trim();
+              const masterAllergy = (visit?.patientId?.knownAllergies || "").trim();
+              const shownAllergy = visitAllergy || masterAllergy;
+              const fromMaster = !visitAllergy && !!masterAllergy;
+              if (!visit?.chiefComplaint && !shownAllergy) return null;
+              return (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                  {visit.chiefComplaint && (
+                    <div style={{ background: "#fdf4ff", border: "1px solid #e9d5ff", borderRadius: 8, padding: "10px 14px" }}>
+                      <div style={{ fontSize: 10, color: "#9333ea", fontWeight: 700, marginBottom: 3 }}>CHIEF COMPLAINT</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.dark }}>{visit.chiefComplaint}</div>
+                    </div>
+                  )}
+                  {shownAllergy && (
+                    <div style={{ background: "#fff1f2", border: "1px solid #fecdd3", borderRadius: 8, padding: "10px 14px" }}>
+                      <div style={{ fontSize: 10, color: "#e11d48", fontWeight: 700, marginBottom: 3 }}>
+                        KNOWN ALLERGIES
+                        {fromMaster && (
+                          <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 600, color: "#9f1239", background: "#fff", padding: "1px 6px", borderRadius: 8, border: "1px solid #fecdd3" }}>
+                            From registration
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.dark }}>{shownAllergy}</div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Vitals — R7hj: 8 chips (BP, Pulse, Temp, RR, SpO₂, Wt, Ht,
+                BMI) on a 4-up grid so the BP split + Ht + RR all surface */}
             {visit?.vitalsStatus === "Done" ? (
               <>
                 <div style={{ fontSize: 10, color: C.muted, fontWeight: 700, letterSpacing: ".5px", marginBottom: 8 }}>VITALS</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
                   {vitInfo.map(v => (
                     <div key={v.label} style={{ background: C.bg, borderRadius: 8, padding: "9px 12px", border: `1px solid ${C.border}`, textAlign: "center" }}>
                       <div style={{ fontSize: 9, color: C.muted, fontWeight: 600, marginBottom: 2 }}>{v.label}</div>
@@ -1561,6 +1588,63 @@ export default function OPDAssessmentPage() {
                     </div>
                   ))}
                 </div>
+
+                {/* R7hj — RBS (Random Blood Sugar) panel. Only renders
+                    when the nurse actually entered a reading. Shows the
+                    reading + unit, sample type, fasting state, and any
+                    notes; tinted amber if the reading is critical
+                    (<70 / >300 mg/dL after mmol→mg/dL convert). */}
+                {(() => {
+                  const v = Number(vitals.bloodSugarRandom);
+                  if (!Number.isFinite(v) || v <= 0) return null;
+                  const mgdl = vitals.bloodSugarUnit === "mmol/L" ? Math.round(v * 18) : v;
+                  const critical = mgdl < 70 || mgdl > 300;
+                  const tone = critical ? "#dc2626" : "#0d9488";
+                  const bg   = critical ? "#fef2f2" : "#f0fdfa";
+                  const border = critical ? "#fecaca" : "#a7f3d0";
+                  return (
+                    <div style={{
+                      marginTop: 10,
+                      background: bg,
+                      border: `1px solid ${border}`,
+                      borderRadius: 8,
+                      padding: "10px 14px",
+                      display: "grid",
+                      gridTemplateColumns: "auto 1fr 1fr 1fr",
+                      gap: 12,
+                      alignItems: "center",
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <i className="pi pi-chart-line" style={{ fontSize: 16, color: tone }} />
+                        <div>
+                          <div style={{ fontSize: 9, color: tone, fontWeight: 700, letterSpacing: ".4px", textTransform: "uppercase" }}>RBS</div>
+                          <div style={{ fontSize: 17, fontWeight: 800, color: tone, lineHeight: 1.1 }}>
+                            {v} <span style={{ fontSize: 10, fontWeight: 600 }}>{vitals.bloodSugarUnit || "mg/dL"}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 9, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Sample</div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: C.dark, textTransform: "capitalize" }}>{vitals.bloodSugarSampleType || "—"}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 9, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>State</div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: C.dark }}>{vitals.bloodSugarFasting || "Random"}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 9, color: C.muted, fontWeight: 700, textTransform: "uppercase" }}>Notes</div>
+                        <div style={{ fontSize: 11, color: C.dark }}>{vitals.bloodSugarNotes || "—"}</div>
+                      </div>
+                      {critical && (
+                        <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: tone }}>
+                          <i className="pi pi-exclamation-triangle" style={{ fontSize: 12 }} />
+                          Critical value — flagged in NABH RBS register.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {visit.vitalsEnteredBy && (
                   <div style={{ fontSize: 11, color: C.muted, marginTop: 8 }}>
                     <i className="pi pi-check-circle" style={{ marginRight: 5, color: C.success }} />
@@ -1998,7 +2082,15 @@ export default function OPDAssessmentPage() {
           })()}
 
           {/* SOAP */}
-          <Card title="SOAP Assessment" icon="pi-file-edit" color={C.doctor} badge="NABH">
+          {/* R7hj — SOAP Assessment collapsed by default. Diagnosis,
+              Rx and the per-section cards (HOPI, Clinical Examination,
+              Patient Diagnosis, Prescription) already give the doctor
+              everything they need to record a visit. The classic SOAP
+              free-text quartet stays available as an optional surface
+              for doctors who prefer the traditional notation — they
+              just click the card header to expand it. Per-card collapse
+              state is persisted in localStorage, so the choice sticks. */}
+          <Card title="SOAP Assessment" icon="pi-file-edit" color={C.doctor} badge="NABH" defaultOpen={false}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <Field label="S — Subjective (Chief Complaint)">
                 <Textarea value={soap.subjectiveNote} onChange={v => setSoap(p => ({ ...p, subjectiveNote: v }))}
