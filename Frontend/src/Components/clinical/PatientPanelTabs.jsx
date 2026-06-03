@@ -950,9 +950,7 @@ function HandoverSection({ title, items, emptyMsg, kind, urgent }) {
         <div className="ppt-empty">{emptyMsg}</div>
       ) : (
         items.map((n) => (
-          kind === "doctor"
-            ? <DoctorNoteExpanded key={n._id} note={n} />
-            : <NurseNoteExpanded  key={n._id} note={n} />
+          <NoteCardEmbed key={n._id} note={n} role={kind === 'mixed' ? 'doctor' : kind} />
         ))
       )}
     </div>

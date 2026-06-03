@@ -25,7 +25,6 @@ const COLLECTIONS_TO_WIPE = [
   ["../models/Patient/OPDModels",             "OPDVisit"],          // module exports OPDVisit
   ["../models/Patient/emergencyModel",        "Emergency"],
   ["../models/Patient/bedTransferModel",      "BedTransfer"],
-  ["../models/OpdrModel",                     "Opdr"],
 
   // ── Clinical notes / charts / plans ──
   ["../models/Doctor/DoctorNotesModel",       "DoctorNote"],

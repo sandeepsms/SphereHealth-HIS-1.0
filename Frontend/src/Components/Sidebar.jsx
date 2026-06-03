@@ -352,6 +352,22 @@ const NAV = [
     ],
   },
 
+  /* ── Housekeeping — console + manager dashboard ───────────────
+     B8-T07 — surfaces the previously-orphan /housekeeping-manager
+     route for Admin. Housekeeping role itself still sees the
+     HOUSEKEEPING_NAV hard-fork (single-page /housekeeping console),
+     so this section only shows for Admin. Mirrors the Ward Boy
+     pattern: Console = operational, Manager = aggregate metrics. */
+  {
+    id: "housekeeping", label: "Housekeeping",
+    icon: "pi-sparkles", color: "#0d9488", light: "#f0fdfa",
+    roles: [ADMIN],
+    items: [
+      { label: "Housekeeping Console",  icon: "pi-home",      path: "/housekeeping",         roles: [ADMIN] },
+      { label: "Housekeeping Manager",  icon: "pi-chart-bar", path: "/housekeeping-manager", roles: [ADMIN], badge: "NEW" },
+    ],
+  },
+
   /* ── Security — visitor passes + gate logs + incident reports ─
      Mirrors the Dietician/Ward Boy pattern: Security users see the
      SECURITY_NAV hard-fork (4-entry workspace), Admin sees this

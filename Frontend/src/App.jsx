@@ -21,17 +21,18 @@ import "primereact/resources/primereact.min.css";
 import "primeicons/primeicons.css";
 import "primeflex/primeflex.css";
 
-// ── Critical paths (eager) — login + dashboard + main ───────────
+// ── Critical paths (eager) — login + dashboard ──────────────────
 import LoginPage from "./pages/auth/LoginPage";
-import MainPage from "./pages/mainPage/MainPage";
 import Dashboard1 from "./pages/patient/Dashboard";
 
 // ── Lazy-loaded pages (downloaded on-demand) ────────────────────
 // PatientsTable deleted 2026-05-17 — superseded by PatientLookupPage's
 // "directory" view. The /allpatient route now mounts PatientLookupPage.
-const Servicebtn = lazy(() => import("./Components/Servicebtn"));
 const OPDPrint = lazy(() => import("./pages/OPD/OPDPrint"));
-const ServiceAlldata = lazy(() => import("./Components/ServiceAlldata"));
+// B8-T07 — /ServiceAlldata route + ServiceAlldata lazy import removed.
+// ServiceAlldata.jsx was a TreeTable scaffold with hardcoded test data
+// ("sahil/Rahul/Kabir"), never linked from any sidebar/menu and not
+// referenced by any other page. File deleted alongside this import.
 const DepartmentManagement = lazy(() => import("../src/pages/Department/DepartmentManagement"));
 
 // Bed Management
@@ -380,8 +381,8 @@ function AppLayout({ collapsed, setCollapsed }) {
         <Suspense fallback={<RouteLoader />}>
           <Routes>
             {/* ── Dashboard ─────────────────────────────────────── */}
-            <Route path="/dashboard1" element={<Dashboard1 />} />
-            <Route path="/dash" element={<Dashboard1 />} />
+            <Route path="/dashboard1" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dash"       element={<Navigate to="/dashboard" replace />} />
 
             {/* Patient Registration moved to /reception (see below) */}
             {/* /allpatient → unified PatientLookupPage in "directory" mode.
@@ -470,9 +471,9 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/addtpa" element={
               <RoleGuard action="tpa.pre-auth"><AddTpa /></RoleGuard>
             } />
-            <Route path="/ServiceAlldata" element={
-              <RoleGuard action="billing.read"><ServiceAlldata /></RoleGuard>
-            } />
+            {/* B8-T07 — /ServiceAlldata orphan route removed (was a
+                TreeTable test scaffold with hardcoded sample data, never
+                linked from anywhere). Component file deleted. */}
 
             {/* ── Department ──────────────────────────────────────
                 Anyone may read (departments.read); writes happen inside the

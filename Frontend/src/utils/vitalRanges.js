@@ -26,9 +26,15 @@
  * Keys for `vital`:
  *   bp_sys, bp_dia, pulse, spo2, temp, rr, gcs, blood_sugar
  *
- * TODO: R7az-followup — per-patient overrides (COPD SpO2 baseline 88-92,
- * CCF target SpO2 94-98, beta-blocker patient pulse 50-90, etc). For
- * now those have to be eyeballed by the nurse against the adult band.
+ * // R7gw-B8-T09 — per-patient vitalOverrides resolved at getRanges() time.
+ * Per-patient overrides (COPD SpO2 baseline 88-92, CCF target SpO2
+ * 94-98, beta-blocker patient pulse 50-90, hypertension goal BP, etc)
+ * stored on `patient.vitalOverrides[<metric>] = { min, max, reason }`
+ * win over the age-bucketed default. Only `min` / `max` are required —
+ * the warn band collapses onto the danger band when an override is set
+ * (i.e. anything outside [min, max] is `warn`; we keep the legacy
+ * `danger` margin = override band ± 10 % of the band width to preserve
+ * the three-tier classifier).
  */
 
 // ── Reference bands ────────────────────────────────────────────────────
@@ -108,10 +114,43 @@ export function bandFor(patient, vital) {
               : ageY < 1      ? neonate
               : ageY < 18     ? paediatric
                               : adult;
-  // TODO: R7az-followup — per-patient overrides (COPD baseline SpO2,
-  // CCF target SpO2, beta-blocker resting pulse, hypertension goal BP)
-  // should override the age-bucketed default here.
-  return dict[vital] || adult[vital] || adult.pulse;
+  const base = dict[vital] || adult[vital] || adult.pulse;
+  // R7gw-B8-T09 — per-patient vitalOverrides resolved at getRanges() time.
+  // If a clinician has stamped a per-patient baseline for this metric, it
+  // overrides the age-bucketed default. `min` -> warnLow, `max` -> warnHigh.
+  // We widen by 10 % of the band width to keep a "danger" outer ring so
+  // the three-tier classifier (normal / warn / danger) still works.
+  const ov = patient?.vitalOverrides?.[vital];
+  if (ov && (ov.min != null || ov.max != null)) {
+    const warnLow  = ov.min != null ? Number(ov.min) : base.warnLow;
+    const warnHigh = ov.max != null ? Number(ov.max) : base.warnHigh;
+    const width    = Math.max(1, warnHigh - warnLow);
+    const margin   = Math.max(2, width * 0.10);
+    return {
+      dangerLow:  warnLow  - margin,
+      warnLow,
+      warnHigh,
+      dangerHigh: warnHigh + margin,
+      _override:  true,
+    };
+  }
+  return base;
+}
+
+/**
+ * R7gw-B8-T09 — alias matching the task spec's getRanges(metric, age, patient)
+ * signature so newer callers can request a range without holding the patient
+ * record (e.g. age-only lookups in print views). When a patient is supplied
+ * its `vitalOverrides[metric]` wins; otherwise we resolve by `age` against
+ * the same neonate/paediatric/adult buckets used by bandFor.
+ */
+export function getRanges(metric, age, patient) {
+  if (patient) return bandFor(patient, metric);
+  const dict = age == null ? adult
+              : age < 1    ? neonate
+              : age < 18   ? paediatric
+                           : adult;
+  return dict[metric] || adult[metric] || adult.pulse;
 }
 
 /**
@@ -155,4 +194,4 @@ function ageYears(dob) {
   }
 }
 
-export default { bands, bandFor, tier, isAbnormal };
+export default { bands, bandFor, getRanges, tier, isAbnormal };
