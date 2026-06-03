@@ -3,6 +3,43 @@ const Patient   = require("../../models/Patient/patientModel");
 const Admission = require("../../models/Patient/admissionModel");
 const { nextSequence } = require("../../utils/counter");
 
+// R7hg — OPD.patientId is `type: String` (legacy denormalised reference,
+// no `ref`), so mongoose .populate() silently no-ops. We hand-merge the
+// allergy data by UHID after fetching the visit batch.
+//
+// Output: each visit gets `visit.patientId` replaced by an object shaped
+// like a populated row so the receiving FE code can read
+//   visit.patientId.knownAllergies / .allergyList
+// without changing any other call site.
+async function _attachPatientAllergies(visits) {
+  if (!Array.isArray(visits) || visits.length === 0) return visits;
+  const uhids = [...new Set(visits.map((v) => v.UHID).filter(Boolean))];
+  if (uhids.length === 0) return visits;
+  const patients = await Patient.find(
+    { UHID: { $in: uhids } },
+    "_id UHID fullName knownAllergies allergyList",
+  ).lean();
+  const byUhid = new Map();
+  patients.forEach((p) => byUhid.set(p.UHID, p));
+  return visits.map((v) => {
+    const p = byUhid.get(v.UHID);
+    if (!p) return v;
+    // Replace the string patientId with an object that has the same
+    // shape Mongoose populate would have produced, plus the allergy
+    // fields the Pre-Assessment modal reads.
+    return {
+      ...v,
+      patientId: {
+        _id: p._id,
+        UHID: p.UHID,
+        fullName: p.fullName,
+        knownAllergies: p.knownAllergies || "",
+        allergyList: Array.isArray(p.allergyList) ? p.allergyList : [],
+      },
+    };
+  });
+}
+
 // ── Generate OPD admission number ──────────────────────────────────────────
 // R7bd-A-7 / A1-HIGH-8 — atomic via utils/counter.
 // Pre-R7bd this used `findOne({admissionNumber: /^prefix/}).sort(-1)` then
@@ -278,14 +315,16 @@ class OPDService {
 
     // R7hg — carry the patient's registration allergies so the Nurse
     // Pre-Assessment modal can pre-fill "Known Allergies" from the
-    // patient master. Without this populate, the nurse sees a blank
-    // field every visit even if the patient declared allergies at
-    // registration.
-    return OPD.find(query)
+    // patient master. NOTE: OPD.patientId is declared as `type: String`
+    // (legacy, denormalised by UHID — no `ref` on the field), so
+    // mongoose .populate() silently no-ops on it. We hand-merge below
+    // by UHID instead.
+    const visits = await OPD.find(query)
       .sort({ tokenNumber: 1 })
       .populate("departmentId", "departmentName")
       .populate("doctorId", "personalInfo doctorId")
-      .populate("patientId", "fullName UHID knownAllergies allergyList");
+      .lean();
+    return _attachPatientAllergies(visits);
   }
 
   /* ── Visits by department (recent, with optional date filter) ── */
@@ -298,11 +337,12 @@ class OPDService {
       d2.setDate(d.getDate() + 1);
       query.visitDate = { $gte: d, $lt: d2 };
     }
-    return OPD.find(query)
+    const visits = await OPD.find(query)
       .sort({ visitDate: -1, tokenNumber: 1 })
       .populate("departmentId", "departmentName")
       .populate("doctorId", "personalInfo doctorId")
-      .populate("patientId", "fullName UHID knownAllergies allergyList");
+      .lean();
+    return _attachPatientAllergies(visits);
   }
 
   /* ── Visits by doctor ── */
@@ -315,11 +355,12 @@ class OPDService {
       d2.setDate(d.getDate() + 1);
       query.visitDate = { $gte: d, $lt: d2 };
     }
-    return OPD.find(query)
+    const visits = await OPD.find(query)
       .sort({ visitDate: -1, tokenNumber: 1 })
       .populate("departmentId", "departmentName")
       .populate("doctorId", "personalInfo doctorId")
-      .populate("patientId", "fullName UHID knownAllergies allergyList");
+      .lean();
+    return _attachPatientAllergies(visits);
   }
 
   /* ── Follow-up due ── */
