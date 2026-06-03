@@ -1224,6 +1224,107 @@ exports.cancelTrigger = async (req, res, next) => {
   }
 };
 
+// ── B4-T08: POST /api/billing/triggers/:id/retry ─────────────────
+// Re-fire a stuck (pending-review) trigger. The handler:
+//   1. Loads the trigger; 404 if missing, 400 TRIGGER_NOT_PENDING_REVIEW
+//      if the status isn't pending-review.
+//   2. Flips status → "queued" + stamps retriedAt/retriedBy on the doc so
+//      the audit trail captures the operator who pressed Retry.
+//   3. Delegates to autoBillingService.retryTrigger which re-runs the
+//      same accrual logic createTrigger ran on first fire (get-or-create
+//      bill → addItemToBill → mark applied/pending-review based on outcome).
+//   4. Emits BillingAudit STUCK_TRIGGER_RETRIED with the prevReason +
+//      newStatus so an accountant can replay every retry attempt.
+//   5. Returns 200 { status:"retried", newTriggerStatus, newReason }.
+//
+// Permission: billing.write (Admin/Accountant/Receptionist). Same tier as
+// addManualCharge — a retry can land a new bill line, so it's a write.
+exports.retryStuckTrigger = async (req, res, next) => {
+  try {
+    const BillingTrigger = require("../../models/Billing/BillingTrigger");
+    const autoBilling = require("../../services/Billing/autoBillingService");
+    const user = req.user || {};
+
+    const trigger = await BillingTrigger.findById(req.params.id);
+    if (!trigger) {
+      return res.status(404).json({
+        success: false,
+        message: "Trigger not found",
+        code: "TRIGGER_NOT_FOUND",
+      });
+    }
+    if (trigger.status !== "pending-review") {
+      return res.status(400).json({
+        success: false,
+        message: `Trigger is "${trigger.status}", not "pending-review" — retry is only allowed for stuck triggers`,
+        code: "TRIGGER_NOT_PENDING_REVIEW",
+      });
+    }
+
+    const prevReason = trigger.reviewReason || null;
+
+    // Flip → queued + stamp retry metadata BEFORE the service runs. This
+    // means a second concurrent click sees status:"queued" and the service
+    // layer's "expected queued" guard rejects it, instead of two retries
+    // racing on the same trigger.
+    trigger.status    = "queued";
+    trigger.retriedAt = new Date();
+    trigger.retriedBy = user._id || user.id || null;
+    await trigger.save();
+
+    // Re-run accrual. retryTrigger is "never-throws-on-business-failure":
+    // a closed bill / missing service / failed addItemToBill all flip the
+    // trigger back to pending-review with a new reviewReason and return
+    // { status:"pending-review", reviewReason }. Only schema / 404 paths
+    // throw (e.g. trigger was deleted mid-flight).
+    const result = await autoBilling.retryTrigger(req.params.id, user);
+
+    // Best-effort audit row. We capture prevReason (what the trigger was
+    // stuck on before) + newStatus (applied / pending-review / skipped) so
+    // a future "retry-history" view can render every attempt without
+    // joining BillingTrigger.overrideHistory.
+    try {
+      const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+      await emitBillingAudit({
+        event:       "STUCK_TRIGGER_RETRIED",
+        UHID:        trigger.UHID,
+        admissionId: trigger.admissionId,
+        triggerId:   trigger._id,
+        billId:      result?.billId || trigger.billId,
+        amount:      trigger.totalAmount,
+        actorId:     user._id || user.id,
+        actorName:   user.fullName || user.employeeId || user.name,
+        actorRole:   user.role,
+        reason:      `Stuck-trigger retry: prevReason="${prevReason || "(none)"}" → newStatus="${result?.status || "unknown"}"`,
+        before:      { status: "pending-review", reviewReason: prevReason },
+        after:       {
+          status:        result?.status,
+          reviewReason:  result?.reviewReason || null,
+          billId:        result?.billId || null,
+          billItemId:    result?.billItemId || null,
+          retriedBy:     user._id || user.id || null,
+        },
+      }, { req });
+    } catch (e) { /* non-fatal — audit emit already swallows */ }
+
+    return res.json({
+      success:           true,
+      status:            "retried",
+      newTriggerStatus:  result?.status || null,
+      newReason:         result?.reviewReason || null,
+    });
+  } catch (e) {
+    const code = e.code;
+    const status = e.status
+      || (code === "TRIGGER_NOT_FOUND" ? 404
+        : code === "TRIGGER_NOT_PENDING_REVIEW" ? 400
+        : code === "TRIGGER_NOT_QUEUED" ? 409
+        : 500);
+    if (status !== 500) return res.status(status).json({ success: false, message: e.message, code });
+    next(e);
+  }
+};
+
 /* ─────────────────────────────────────────────────────────────
    TPA CASES WORKFLOW
    List patients with TPA/Insurance + manage pre-auth / approval flow

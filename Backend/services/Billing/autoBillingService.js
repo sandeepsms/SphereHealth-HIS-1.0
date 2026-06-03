@@ -3335,6 +3335,161 @@ async function cancelTrigger(triggerId, { reason, user } = {}) {
 }
 
 /**
+ * B4-T08: Retry a stuck (pending-review) trigger.
+ *
+ * Called by /api/billing/triggers/:id/retry after the controller has flipped
+ * the trigger to status:"queued" + stamped retriedAt/retriedBy. We re-run
+ * the same accrual logic createTrigger ran on first fire: resolve the
+ * service, find-or-create the DRAFT bill, push the line via addItemToBill.
+ *
+ * Outcomes:
+ *   • Success → trigger.status = "applied", billId/billItemId stamped,
+ *     reviewReason cleared. Returns { status:"applied", billId, billItemId }.
+ *   • Failure → trigger.status flips back to "pending-review" with a fresh
+ *     reviewReason describing why this retry failed (closed bill, missing
+ *     service, etc.). Returns { status:"pending-review", reviewReason }.
+ *
+ * Never throws — every failure path lands on pending-review so the operator
+ * can see the new reason in the Stuck Triggers tile and decide whether to
+ * retry again, cancel, or escalate.
+ */
+async function retryTrigger(triggerId, user = {}) {
+  const trigger = await BillingTrigger.findById(triggerId);
+  if (!trigger) {
+    const err = new Error("Trigger not found");
+    err.status = 404;
+    err.code = "TRIGGER_NOT_FOUND";
+    throw err;
+  }
+  // The controller flips status:"queued" before calling us. Defend against
+  // a stale caller that hands us a trigger still in pending-review (or any
+  // unexpected state) — we only re-run the accrual when the controller has
+  // explicitly handed us a queued row.
+  if (trigger.status !== "queued") {
+    const err = new Error(`retryTrigger expected status:"queued", got "${trigger.status}"`);
+    err.code = "TRIGGER_NOT_QUEUED";
+    err.status = 409;
+    throw err;
+  }
+
+  // Retry path needs an admissionId — pending-review is documented (per
+  // BillingTrigger schema comments) as the IPD Live Ledger's Stuck-Triggers
+  // tile context. Without an admissionId we can't resolve a draft bill,
+  // so flip back to pending-review with a fresh reason.
+  const _flipBackToReview = async (newReason) => {
+    trigger.status       = "pending-review";
+    trigger.reviewReason = newReason;
+    trigger.reviewedAt   = new Date();
+    trigger.reviewedBy   = user?.fullName || user?.name || "System";
+    await trigger.save();
+    return { status: "pending-review", reviewReason: newReason };
+  };
+
+  if (!trigger.admissionId) {
+    return _flipBackToReview("Retry not supported: trigger has no admissionId");
+  }
+
+  // Resolve service: prefer the stored serviceId, fall back to code lookup.
+  let service = null;
+  if (trigger.serviceId) {
+    service = await ServiceMaster.findById(trigger.serviceId).lean();
+  }
+  if (!service && trigger.serviceCode) {
+    service = await findServiceByCode(trigger.serviceCode);
+  }
+  // Synthetic service fallback: createTrigger accepts a trigger whose
+  // ServiceMaster row hasn't been seeded yet, as long as the trigger has
+  // the code + name + unitPrice. Mirror that here so a retry doesn't
+  // regress on the seed-lag case.
+  if (!service) {
+    if (!trigger.serviceCode || !trigger.serviceName) {
+      return _flipBackToReview(
+        `Retry failed: ServiceMaster row missing for ${trigger.serviceCode || "(no code)"} and no fallback name/price on the trigger`,
+      );
+    }
+    service = {
+      _id: undefined,
+      serviceCode: trigger.serviceCode,
+      serviceName: trigger.serviceName,
+      category: "Service",
+      billingType: "PER_DAY",
+      defaultPrice: toNum(trigger.unitPrice ?? 0),
+    };
+  }
+
+  // Get-or-create the DRAFT bill. If the admission has been finalised
+  // (PAID/CANCELLED/REFUNDED) the addItemToBill guard below will catch it
+  // and return null — _flipBackToReview captures the specific reason.
+  const bill = await getOrCreateBill(trigger.admissionId, trigger.patientType || "IPD");
+  if (!bill) {
+    return _flipBackToReview(
+      `Retry failed: getOrCreateBill returned null for admission=${trigger.admissionId} patientType=${trigger.patientType || "IPD"}`,
+    );
+  }
+
+  // Re-derive addedBySource from the original sourceType — same mapping
+  // createTrigger uses on first fire so the bill-item attribution matches.
+  const _addedBySource =
+    trigger.sourceType === "DoctorNote"         ? "Doctor" :
+    trigger.sourceType === "NurseNote"          ? "Nurse"  :
+    trigger.sourceType === "MAR"                ? "Nurse"  :
+    trigger.sourceType === "Equipment"          ? "Nurse"  :
+    trigger.sourceType === "InvestigationOrder" ? "Lab"    :
+    "Auto";
+
+  const result = await addItemToBill(
+    bill,
+    service,
+    trigger.quantity || 1,
+    {
+      addedBySource: _addedBySource,
+      addedBy:       trigger.completedBy || trigger.orderedBy || user?.fullName || "System",
+      addedByRole:   trigger.completedByRole || trigger.orderedByRole || "System",
+      remarks:       `[Retry] ${trigger.sourceType} — ${trigger.orderDetails || trigger.serviceName || trigger.serviceCode}`,
+      sourceType:    trigger.sourceType,
+      // Re-use the trigger's unitPrice as the override so a retry doesn't
+      // re-price off the live tariff and surprise the patient with a
+      // different number than the original fire showed.
+      unitPriceOverride: toNum(trigger.unitPrice ?? 0) > 0 ? toNum(trigger.unitPrice) : undefined,
+    },
+    trigger,
+  );
+
+  if (result) {
+    trigger.status       = "applied";
+    trigger.billId       = result.bill._id;
+    trigger.billItemId   = result.itemId;
+    trigger.billedAt     = new Date();
+    trigger.billedBy     = user?.fullName || user?.name || trigger.completedBy || trigger.orderedBy || "System";
+    trigger.unitPrice    = result.unitPrice;
+    trigger.totalAmount  = result.totalAmt;
+    // Clear the stuck-trigger metadata now that we've recovered. retriedAt /
+    // retriedBy stay on the doc so the audit trail can still tie the retry
+    // back to a person — only the failure-side reviewReason is wiped.
+    trigger.reviewReason = undefined;
+    await trigger.save();
+    return {
+      status:     "applied",
+      billId:     result.bill._id,
+      billItemId: result.itemId,
+    };
+  }
+
+  // addItemToBill returned null. Most likely a closed/frozen bill —
+  // the inner guard may already have flipped the trigger to "skipped"
+  // (PAID/CANCELLED/REFUNDED) as a legitimate business outcome. Re-read
+  // the trigger to see if that happened; if it did, surface the skip
+  // reason instead of clobbering it with a fresh pending-review row.
+  const fresh = await BillingTrigger.findById(triggerId).lean();
+  if (fresh?.status === "skipped") {
+    return { status: "skipped", reviewReason: fresh.skipReason || "Bill closed — no new charges accepted" };
+  }
+  return _flipBackToReview(
+    `Retry failed: addItemToBill returned null for ${trigger.serviceCode} on bill ${bill._id} (status=${bill.billStatus})`,
+  );
+}
+
+/**
  * Add a manual charge to a patient's bill ledger.
  *
  * Used by the "Add Charge" button on the IPD Live Billing page — lets any
@@ -3641,6 +3796,8 @@ module.exports = {
   undoTrigger,
   overrideTrigger,
   cancelTrigger,
+  // B4-T08: Stuck-trigger re-fire (POST /api/billing/triggers/:id/retry)
+  retryTrigger,
   getIPDLedger,
   addManualCharge,
   // Pharmacy indent release → reservation billing hook

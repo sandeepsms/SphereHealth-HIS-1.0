@@ -32,6 +32,7 @@
 // ════════════════════════════════════════════════════════════════════
 const mongoose = require("mongoose");
 const { logErr } = require("../../utils/logErr");
+const { acquireLock, releaseLock } = require("../../utils/cronScheduler");
 
 /** Midnight of today in the server's local timezone (which the rest of
  * the codebase treats as IST on this deployment — the diag script in
@@ -147,18 +148,27 @@ async function tickOnce() {
  * without waiting 15 minutes.
  */
 function arm({ intervalMs = 15 * 60 * 1000 } = {}) {
-  tickOnce()
+  const runGuarded = async () => {
+    try {
+      const acquired = await acquireLock('cron:missed-dose', 10 * 60); // 10-min TTL
+      if (!acquired) return; // another replica is running
+      try { return await tickOnce(); }
+      finally { await releaseLock('cron:missed-dose'); }
+    } catch (e) { console.error('[cron:missed-dose] lock error:', e.message); }
+  };
+
+  runGuarded()
     .then((r) => {
-      if (r.flipped || r.ordersTouched) {
+      if (r && (r.flipped || r.ordersTouched)) {
         console.log(`[cron:missed-dose] first tick processed=${r.processed} ordersTouched=${r.ordersTouched} flipped=${r.flipped}`);
       }
     })
     .catch((e) => console.error("[cron:missed-dose] first tick failed:", e?.message));
 
   const interval = setInterval(() => {
-    tickOnce()
+    runGuarded()
       .then((r) => {
-        if (r.flipped || r.ordersTouched) {
+        if (r && (r.flipped || r.ordersTouched)) {
           console.log(`[cron:missed-dose] tick processed=${r.processed} ordersTouched=${r.ordersTouched} flipped=${r.flipped}`);
         }
       })

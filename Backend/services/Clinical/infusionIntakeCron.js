@@ -150,26 +150,58 @@ async function tickOnce() {
  * existing row.
  */
 function arm({ intervalMs = 60 * 60 * 1000 } = {}) {
+  // B4-T03 — multi-replica safety: wrap each tick in a 15-min distributed
+  // lock so only one instance per cluster actually sweeps a given hour
+  // bucket. Combined with the partial unique index on IntakeOutputEntry
+  // this is belt-and-suspenders: the lock keeps idle replicas out of the
+  // sweep entirely; the index keeps the row layer honest if two ticks
+  // race the same bucket from different processes.
+  const { acquireLock, releaseLock } = require("../../utils/cronScheduler");
+  const LOCK = "cron:infusion-intake";
+
+  const guardedTick = async (label) => {
+    let acquired = false;
+    try {
+      acquired = await acquireLock(LOCK, 15 * 60);
+      if (!acquired) {
+        // Another replica is sweeping this bucket; quiet skip.
+        return null;
+      }
+      const r = await tickOnce();
+      if (r && (r.written || r.completed)) {
+        console.log(`[cron:infusion-intake] ${label} processed=${r.processed} written=${r.written} completed=${r.completed} skipped=${r.skipped}`);
+      }
+      // Heartbeat audit — best-effort, never throws into the cron.
+      try {
+        const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+        await emitBillingAudit({
+          event: "CRON_RECONCILED",
+          actorName: "System (infusion-intake-cron)",
+          reason: `Infusion intake sweep ${label}: processed=${r?.processed || 0} written=${r?.written || 0} completed=${r?.completed || 0} skipped=${r?.skipped || 0}.`,
+          after: { kind: "CRON_HEARTBEAT", cron: "infusion-intake", label, ...r, runAt: new Date().toISOString() },
+        });
+      } catch (e) {
+        console.warn("[cron:infusion-intake] audit emit failed:", e?.message);
+      }
+      return r;
+    } catch (e) {
+      console.error(`[cron:infusion-intake] ${label} failed:`, e?.message);
+      return null;
+    } finally {
+      if (acquired) { try { await releaseLock(LOCK); } catch (_) {} }
+    }
+  };
+
   // Fire once at arm-time so the current hour gets a row immediately,
   // even if the server was restarted mid-hour.
-  tickOnce().then((r) => {
-    if (r.written || r.completed) {
-      console.log(`[cron:infusion-intake] first tick processed=${r.processed} written=${r.written} completed=${r.completed} skipped=${r.skipped}`);
-    }
-  }).catch((e) => console.error("[cron:infusion-intake] first tick failed:", e?.message));
+  guardedTick("first tick").catch((e) => console.error("[cron:infusion-intake] first tick failed:", e?.message));
 
   const interval = setInterval(() => {
-    tickOnce()
-      .then((r) => {
-        if (r.written || r.completed) {
-          console.log(`[cron:infusion-intake] tick processed=${r.processed} written=${r.written} completed=${r.completed} skipped=${r.skipped}`);
-        }
-      })
-      .catch((e) => console.error("[cron:infusion-intake] tick failed:", e?.message));
+    guardedTick("tick").catch((e) => console.error("[cron:infusion-intake] tick failed:", e?.message));
   }, intervalMs);
 
   if (typeof interval.unref === "function") interval.unref();
-  console.log("[cron:infusion-intake] armed — every 60 min");
+  console.log("[cron:infusion-intake] armed — every 60 min (lock: cron:infusion-intake)");
 
   return () => clearInterval(interval);
 }

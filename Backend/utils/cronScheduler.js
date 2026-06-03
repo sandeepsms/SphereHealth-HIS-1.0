@@ -130,23 +130,79 @@ function scheduleDaily(name, hourIST, minuteIST, fn) {
 
   const tick = async () => {
     if (cancelled) return;                             // R7at-FIX-6
-    const t0 = Date.now();
+    const start = Date.now();
+    const t0 = start;
     let acquired = false;
+    // B4-T06: track outcome ('ok' | 'skip' | 'fail') + result/err so the
+    // post-tick heartbeat emit + cron-failure recorder both have access
+    // without re-throwing or losing state across the try/catch boundary.
+    let outcome = "ok";
+    let result  = null;
+    let tickErr = null;
     try {
       // 30-minute lock TTL — generous so a slow runner finishes before
       // a replica tries to grab the next-day slot.
       acquired = await acquireLock(`cron:${name}`, 30 * 60);
       if (!acquired) {
         console.log(`[cron:${name}] skip — another instance holds the lock`);
+        outcome = "skip";
+        result  = { skipped: "lock-held-elsewhere" };
         return;
       }
       const r = await fn();
+      result = r;
       const dt = ((Date.now() - t0) / 1000).toFixed(1);
       console.log(`[cron:${name}] done in ${dt}s:`, r);
     } catch (e) {
+      outcome = "fail";
+      tickErr = e;
       console.error(`[cron:${name}] error:`, e.stack || e.message);
     } finally {
       if (acquired) await releaseLock(`cron:${name}`);
+      // B4-T06: emit a CRON_RECONCILED heartbeat for every tick (success,
+      // skip, fail) so systemHealthController can show lastRunAt. We use
+      // the BillingAudit model's `emit` helper (exported as both `emit`
+      // and `emitBillingAudit` — see models/Billing/BillingAudit.js).
+      // Best-effort: never throw out of the scheduler.
+      try {
+        const emitter = require("../models/Billing/BillingAudit");
+        const _emit = emitter.emitBillingAudit || emitter.emit;
+        if (typeof _emit === "function") {
+          await _emit({
+            event: "CRON_RECONCILED",
+            actorName: `System (cron:${name})`,
+            reason:
+              outcome === "ok"     ? `Cron tick ok (${name})`
+              : outcome === "skip" ? `Cron tick skipped (${name}): ${result?.skipped || "unknown"}`
+              :                      `Cron tick failed (${name}): ${tickErr?.message || "unknown"}`,
+            after: {
+              kind:
+                outcome === "ok"   ? "CRON_HEARTBEAT"
+                : outcome === "skip" ? "CRON_SKIPPED"
+                :                      "CRON_FAILED",
+              name,
+              outcome,
+              durationMs:    Date.now() - start,
+              skippedReason: result?.skipped,
+              resultKeys:    Object.keys(result || {}),
+              errorMessage:  tickErr ? (tickErr.message || String(tickErr)) : undefined,
+            },
+          });
+        }
+      } catch (auditErr) {
+        console.warn(`[cron:${name}] heartbeat emit failed (non-fatal):`, auditErr.message);
+      }
+      // B4-T06: also record the failure into the CronFailure retry queue
+      // (B4-T05 helper) so the sweeper can replay this tick on its
+      // backoff ladder. Best-effort: never throw out of the scheduler.
+      if (tickErr) {
+        try {
+          const { recordCronFailure } = require("./cronRetry");
+          await recordCronFailure(name, tickErr);
+        } catch (retryErr) {
+          console.warn(`[cron:${name}] recordCronFailure failed (non-fatal):`, retryErr.message);
+        }
+      }
       // R7at-FIX-6: don't re-arm if shutdown has been signalled.
       if (!cancelled) {
         const at = nextRunAt(hourIST, minuteIST);

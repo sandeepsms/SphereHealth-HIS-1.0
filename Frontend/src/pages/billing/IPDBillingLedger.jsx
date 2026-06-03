@@ -347,6 +347,73 @@ export default function IPDBillingLedger() {
   const [addRemarks, setAddRemarks] = useState("");
   const [addBusy, setAddBusy] = useState(false);
 
+  // B4-T09 — Stuck triggers widget (Admin / Accountant only).
+  // Surfaces BillingTrigger rows that landed in status="pending-review"
+  // so the desk can spot revenue-leak risks and retry them in one click.
+  // TODO(B4-T09): Backend lacks a GET /billing/triggers?status=pending-review
+  // endpoint as of this commit; the fetch below 404s harmlessly and the
+  // widget renders empty. Wire up the read endpoint + POST .../retry
+  // route in autoBillingService for full functionality.
+  const [stuckTriggers, setStuckTriggers] = useState([]);
+  const [retryingIds, setRetryingIds] = useState(new Set());
+  const [stuckOpen, setStuckOpen] = useState(true);
+
+  const canSeeStuck = user?.role === "Admin" || user?.role === "Accountant";
+
+  useEffect(() => {
+    if (!canSeeStuck) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // TODO(B4-T09): confirm final endpoint shape; this is a best-guess
+        // matching the GET /api/billing/triggers?status=pending-review path
+        // suggested in the task brief.
+        const { data: r } = await axios.get(
+          `${API_ENDPOINTS.BASE}/billing/triggers?status=pending-review${admissionId ? `&admissionId=${admissionId}` : ""}`,
+        );
+        if (cancelled) return;
+        const rows = Array.isArray(r) ? r : (r?.data || r?.triggers || []);
+        setStuckTriggers(rows);
+      } catch (_e) {
+        // Endpoint may not exist yet — fail silent so the page still works.
+        if (!cancelled) setStuckTriggers([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [canSeeStuck, admissionId]);
+
+  const retryTrigger = async (id) => {
+    setRetryingIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    try {
+      // TODO(B4-T09): confirm retry endpoint exists; brief specifies
+      // POST /api/billing/triggers/:id/retry — wire up the controller +
+      // route to re-run the autoBilling pipeline for this single trigger.
+      await axios.post(`${API_ENDPOINTS.BASE}/billing/triggers/${id}/retry`);
+      toast.success("Trigger retried");
+      // Drop the row optimistically so the user sees their click work.
+      setStuckTriggers(rows => rows.filter(t => t._id !== id));
+      load();
+    } catch (e) {
+      toast.error(`Retry failed: ${e.response?.data?.message || e.message}`);
+    } finally {
+      setRetryingIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const ageMin = (createdAt) => {
+    if (!createdAt) return "?";
+    const ms = Date.now() - new Date(createdAt).getTime();
+    return Math.max(0, Math.floor(ms / 60000));
+  };
+
   const load = useCallback(async () => {
     if (!admissionId) return;
     setLoading(true);
@@ -1646,6 +1713,102 @@ export default function IPDBillingLedger() {
           Refresh
         </button>
       </div>
+
+      {/* B4-T09 — Stuck Triggers widget (Admin / Accountant only).
+          Lists BillingTrigger rows in status="pending-review" so the
+          accountant can spot revenue-leak risks and retry them with a
+          single click. Hidden entirely when no rows are stuck or when
+          the current role can't act on them. */}
+      {canSeeStuck && stuckTriggers.length > 0 && (
+        <div style={{
+          background: "#fffbeb",
+          border: `1px solid ${C.warn}`,
+          borderRadius: 12,
+          marginBottom: 14,
+          overflow: "hidden",
+        }}>
+          <button
+            type="button"
+            onClick={() => setStuckOpen(o => !o)}
+            style={{
+              width: "100%", padding: "10px 14px",
+              background: "transparent", border: "none",
+              cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+              display: "flex", alignItems: "center", gap: 10,
+              borderBottom: stuckOpen ? `1px solid ${C.warn}` : "none",
+            }}
+          >
+            <i className="pi pi-exclamation-triangle" style={{ fontSize: 16, color: C.warn }} />
+            <span style={{ fontWeight: 800, color: C.warn, fontSize: 13 }}>
+              Stuck Triggers ({stuckTriggers.length})
+            </span>
+            <span style={{ fontSize: 11, color: C.muted, fontWeight: 600 }}>
+              · pending-review · revenue-leak risk
+            </span>
+            <i className="pi pi-chevron-down" style={{
+              marginLeft: "auto", fontSize: 11, color: C.warn,
+              transform: stuckOpen ? "rotate(0)" : "rotate(-90deg)",
+              transition: "transform .15s",
+            }} />
+          </button>
+          {stuckOpen && (
+            <div style={{ padding: 0 }}>
+              {stuckTriggers.map(t => (
+                <div
+                  key={t._id}
+                  className="stuck-trigger-row"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "120px 110px 1fr 70px 110px",
+                    gap: 10,
+                    padding: "8px 14px",
+                    borderBottom: `1px solid #fde68a`,
+                    alignItems: "center",
+                    fontSize: 12,
+                  }}
+                >
+                  <span style={{ fontWeight: 700, color: C.dark, fontFamily: "'DM Mono', monospace" }}>
+                    {t.kind || t.triggerType || t.serviceCode || "—"}
+                  </span>
+                  <span style={{
+                    fontFamily: "'DM Mono', monospace",
+                    color: C.dark, fontWeight: 700,
+                  }}>
+                    {inr(t.amount ?? t.totalAmount ?? (Number(t.unitPrice || 0) * Number(t.quantity || 1)))}
+                  </span>
+                  <span
+                    title={t.reviewReason || t.remarks || ""}
+                    style={{
+                      color: C.muted,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {(t.reviewReason || t.remarks || "").slice(0, 80) || "—"}
+                  </span>
+                  <span style={{ color: C.muted, fontFamily: "'DM Mono', monospace", textAlign: "right" }}>
+                    {ageMin(t.createdAt)}m
+                  </span>
+                  <button
+                    onClick={() => retryTrigger(t._id)}
+                    disabled={retryingIds.has(t._id)}
+                    style={{
+                      padding: "5px 10px",
+                      background: C.warn, color: "#fff", border: "none",
+                      borderRadius: 6, cursor: retryingIds.has(t._id) ? "wait" : "pointer",
+                      fontFamily: "inherit", fontWeight: 700, fontSize: 11,
+                      opacity: retryingIds.has(t._id) ? 0.7 : 1,
+                    }}
+                  >
+                    {retryingIds.has(t._id) ? "Retrying…" : "Retry"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 4, borderBottom: `2px solid ${C.border}`, marginBottom: 14 }}>

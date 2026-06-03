@@ -106,9 +106,16 @@ const BillingTriggerSchema = new mongoose.Schema({
   billedBy:   String,
 
   // ── Status lifecycle ─────────────────────────────────────────
+  // B4-T08: "queued" / "applied" extend the lifecycle for the Stuck
+  // Triggers retry endpoint. queued = retry in flight (controller has
+  // accepted /triggers/:id/retry, service-layer accrual is running);
+  // applied = a previously pending-review trigger has now been re-fired
+  // and landed on the bill. We keep "billed" as the terminal state for
+  // the original auto-charge path so the audit trail can distinguish
+  // "billed on first fire" from "billed after a manual retry".
   status: {
     type: String,
-    enum: ["pending","in_progress","completed","billed","cancelled","voided","skipped","pending-review"],
+    enum: ["pending","in_progress","completed","billed","cancelled","voided","skipped","pending-review","queued","applied"],
     default: "pending" },
   // When addItemToBill silently returns null (closed bill, validation
   // error inside save(), etc.), we used to mark the trigger "completed"
@@ -118,6 +125,13 @@ const BillingTriggerSchema = new mongoose.Schema({
   reviewReason:  String,
   reviewedAt:    Date,
   reviewedBy:    String,
+  // B4-T08: Stuck-trigger retry stamps. retriedAt is set the moment the
+  // controller flips status from "pending-review" → "queued"; retriedBy
+  // captures the operator (User._id) so the audit trail ties the manual
+  // retry to a person. Both stay sticky once written so multiple retries
+  // can replay via the BillingAudit STUCK_TRIGGER_RETRIED rows.
+  retriedAt:     Date,
+  retriedBy:     { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
   // ── Flags ────────────────────────────────────────────────────
   autoCharged:          { type: Boolean, default: false },
@@ -183,7 +197,10 @@ BillingTriggerSchema.index(
     unique: true,
     partialFilterExpression: {
       dateKey: { $exists: true, $type: "string" },
-      status:  { $in: ["completed", "billed", "pending", "pending-review"] },
+      // B4-T08: include queued/applied in the dedup so a re-fired stuck
+      // trigger (status flipped via /triggers/:id/retry) doesn't get
+      // duplicated by a concurrent cron tick for the same dateKey.
+      status:  { $in: ["completed", "billed", "pending", "pending-review", "queued", "applied"] },
       // R7au-FIX-9/D7-HIGH-C9: scope this single-instance daily index to
       // rows that DON'T use the multi-doctor pattern. Doctor-round
       // triggers (dedupByDoctor=true / orderedById set) need their own
@@ -204,7 +221,8 @@ BillingTriggerSchema.index(
     partialFilterExpression: {
       dateKey:     { $exists: true, $type: "string" },
       orderedById: { $exists: true },
-      status:      { $in: ["completed", "billed", "pending", "pending-review"] },
+      // B4-T08: include queued/applied — see uniq_daily_charge note above.
+      status:      { $in: ["completed", "billed", "pending", "pending-review", "queued", "applied"] },
     },
     name: "uniq_daily_charge_per_doctor",
   },
