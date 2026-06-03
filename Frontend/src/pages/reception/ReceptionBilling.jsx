@@ -1573,6 +1573,30 @@ export default function ReceptionBilling() {
               || "—";
             // OPD/Daycare/ER bills created today (for the visit summary slot)
             const todayBill = (currentBills || [])[0] || (bills || [])[0];
+            // R7hc — surface the visit number on the patient card. Pre-R7hc
+            // only IPD admissions showed a number in the sub-line ("IPD · IPD-26-02");
+            // OPD/Daycare/ER/Service just said "OPD · Today" — so the
+            // receptionist couldn't quote the OPD/ER/Service identifier
+            // without opening the bill. Now every visit type shows a
+            // labelled number (or "Today" fallback if none).
+            const _visitTypeRaw = String(
+              (isIPD && (currentContext?.type || "IPD")) ||
+              todayBill?.visitType ||
+              patient?.currentVisit?.visitType ||
+              "OPD"
+            ).toUpperCase();
+            const _visitTypeLabel =
+              _visitTypeRaw === "IPD"        ? "IPD"
+            : _visitTypeRaw === "DAYCARE"    ? "Daycare"
+            : _visitTypeRaw === "DAY CARE"   ? "Daycare"
+            : _visitTypeRaw === "EMERGENCY"  ? "Emergency"
+            : _visitTypeRaw === "ER"         ? "Emergency"
+            : _visitTypeRaw === "SERVICES"   ? "Service"
+            : _visitTypeRaw === "SERVICE"    ? "Service"
+                                             : "OPD";
+            const _visitNumber = isIPD
+              ? (currentContext?.admissionNumber || ipdBill?.admissionNumber || patient?.currentAdmission?.admissionNumber)
+              : (todayBill?.admissionNumber || todayBill?.opdNumber || patient?.currentVisit?.admissionNumber || patient?.currentVisit?.visitNumber);
             return (
               <div style={{
                 background: C.card, border: `1.5px solid ${C.border}`,
@@ -1608,9 +1632,13 @@ export default function ReceptionBilling() {
                         : fmtDateTime(todayBill?.createdAt || new Date())}
                     </div>
                     <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
-                      {isIPD
-                        ? `IPD · ${currentContext?.admissionNumber || ipdBill?.admissionNumber || "—"}`
-                        : `${todayBill?.visitType || "OPD"} · Today`}
+                      {/* R7hc — show {Type} No: {visitNumber} for every
+                          visit type. Falls back to "Today" when no number
+                          exists yet (e.g. walk-in being registered). */}
+                      {_visitTypeLabel} No: <strong style={{ color: C.text, fontFamily: "'DM Mono', monospace" }}>
+                        {_visitNumber || "—"}
+                      </strong>
+                      {!_visitNumber && <span style={{ marginLeft: 4 }}>· Today</span>}
                       {patient.tpa && (
                         <span style={{
                           marginLeft: 6, fontSize: 10, fontWeight: 800, color: C.amber,
