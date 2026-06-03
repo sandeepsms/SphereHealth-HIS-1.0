@@ -10,6 +10,11 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientFileExport from "../../Components/clinical/PatientFileExport";
+// R7gx-UI — Mirror Doctor panel: nurse panel surfaces the canonical
+// Treatment Chart MAR view. Shared TreatmentChart component handles
+// medication + infusion administration; nurseMode=true gives full
+// write access (Given / Hold / Not-Available / Partial / Refused).
+import TreatmentChart from "../../Components/clinical/TreatmentChart";
 // Phase 2 shell — pf-* design system shared with DoctorPatientPanel.
 import PatientPanelShell from "../../Components/clinical/PatientPanelShell";
 // Phase 3 — log every nurse-side UI event into the patient activity feed.
@@ -66,6 +71,11 @@ const TABS = [
   { id:"rbs",         label:"🩸 RBS Monitoring"       },
   { id:"handover",    label:"🔄 Handover Notes"       },
   { id:"icubundles",  label:"🛡 ICU Bundles"         },
+  // R7gx-UI — Treatment Chart pill (mirrors Doctor panel position).
+  // Single source of truth for medication administration; nurses chart
+  // every dose here. Pill position kept identical to Doctor panel so
+  // muscle memory transfers between roles.
+  { id:"treatment",   label:"💉 Treatment Chart"      },
   { id:"orders",      label:"📋 Doctor Orders"        },
   // R7gx-UI — Medications pill removed (mirror of Doctor panel cleanup).
   { id:"medrecon",    label:"⚖ Med Reconciliation"   },
@@ -2122,6 +2132,8 @@ function NursePatientPanelContent({ selectedAdmission }) {
       case "blood":      return <BloodTransfusionRecordsTab nursingNotes={nursingNotes}/>;
       case "rbs":        return <RBSMonitoringTab nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>;
       case "handover":   return <HandoverNotesTab patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>;
+      // R7gx-UI — Treatment Chart (MAR) via shared component, nurse-mode on.
+      case "treatment":  return <TreatmentChart UHID={patient?.UHID} admissionId={admission?._id} patientName={patient?.fullName || patient?.name} nurseMode={true} />;
       case "orders":     return <DoctorOrdersTab doctorNotes={doctorNotes}/>;
       // R7gx-UI — "meds" tab removed.
       case "medrecon":   return <MedReconciliationTab admission={admission} patient={patient}/>;
