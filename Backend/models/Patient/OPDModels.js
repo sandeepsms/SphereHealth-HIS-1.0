@@ -98,15 +98,39 @@ const OPDSchema = new mongoose.Schema(
     currentMedications: String,
 
     // ── Vitals (entered by Nurse) ──
+    // R7hf — BP split into systolic+diastolic numbers (the legacy
+    // `bloodPressure: "120/80"` string is auto-composed in
+    // OPDService.updateVitals so every existing print template /
+    // discharge consumer keeps working without change).
+    // Random blood sugar added with capillary/venous + fasting context
+    // so the auto-emitted NABH RBS Register row carries full provenance.
     vitals: {
       weight: Number,
       height: Number,
       bmi: Number,
       temperature: Number,
-      bloodPressure: String,
+      bloodPressure: String,             // legacy "S/D" string (auto-composed)
+      bloodPressureSystolic:  Number,    // mmHg
+      bloodPressureDiastolic: Number,    // mmHg
       pulse: Number,
       respiratoryRate: Number,
       oxygenSaturation: Number,
+      // ── Random Blood Sugar (RBS / GRBS) — auto-feeds NABH RBS register
+      bloodSugarRandom: Number,          // numeric reading
+      bloodSugarUnit: { type: String, enum: ["mg/dL", "mmol/L"], default: "mg/dL" },
+      bloodSugarSampleType: {
+        type: String,
+        enum: ["capillary", "venous", "arterial", "unknown", ""],
+        default: "",
+      },
+      bloodSugarFasting: {
+        type: String,
+        // Random covers GRBS; Fasting and PostPrandial swing the readingType
+        enum: ["Random", "Fasting", "PostPrandial", ""],
+        default: "",
+      },
+      bloodSugarNotes: { type: String, default: "" },
+      bloodSugarTakenAt: Date,
     },
     vitalsStatus: {
       type: String,

@@ -114,12 +114,21 @@ export default function NurseOPDQueuePage() {
   const [search, setSearch] = useState("");
   const [lastRefresh, setLastRefresh] = useState(null);
 
-  // Vitals modal
+  // Vitals modal — R7hf: BP split into S/D, RBS sub-section added
   const [vitalsModal, setVitalsModal] = useState(false);
   const [selectedVisit, setSelectedVisit] = useState(null);
   const [vitals, setVitals] = useState({
     weight: null, height: null, temperature: null,
-    bloodPressure: "", pulse: null, respiratoryRate: null, oxygenSaturation: null,
+    bloodPressure: "",
+    bloodPressureSystolic: null,
+    bloodPressureDiastolic: null,
+    pulse: null, respiratoryRate: null, oxygenSaturation: null,
+    // Random blood sugar (auto-feeds NABH RBS register)
+    bloodSugarRandom: null,
+    bloodSugarUnit: "mg/dL",
+    bloodSugarSampleType: "capillary",
+    bloodSugarFasting: "Random",
+    bloodSugarNotes: "",
     chiefComplaint: "", allergyHistory: "",
   });
   const [savingVitals, setSavingVitals] = useState(false);
@@ -161,14 +170,32 @@ export default function NurseOPDQueuePage() {
 
   const openVitals = (visit) => {
     setSelectedVisit(visit);
+    const v = visit.vitals || {};
+    // R7hf — derive split BP from the schema fields if present, else
+    // parse the legacy "120/80" string so editing an old record still
+    // shows two boxes filled in.
+    let sys = v.bloodPressureSystolic ?? null;
+    let dia = v.bloodPressureDiastolic ?? null;
+    if ((sys == null || dia == null) && typeof v.bloodPressure === "string" && v.bloodPressure.includes("/")) {
+      const [s, d] = v.bloodPressure.split("/").map((x) => Number(x.trim()));
+      if (Number.isFinite(s)) sys = s;
+      if (Number.isFinite(d)) dia = d;
+    }
     setVitals({
-      weight: visit.vitals?.weight || null,
-      height: visit.vitals?.height || null,
-      temperature: visit.vitals?.temperature || null,
-      bloodPressure: visit.vitals?.bloodPressure || "",
-      pulse: visit.vitals?.pulse || null,
-      respiratoryRate: visit.vitals?.respiratoryRate || null,
-      oxygenSaturation: visit.vitals?.oxygenSaturation || null,
+      weight: v.weight || null,
+      height: v.height || null,
+      temperature: v.temperature || null,
+      bloodPressure: v.bloodPressure || "",
+      bloodPressureSystolic: sys,
+      bloodPressureDiastolic: dia,
+      pulse: v.pulse || null,
+      respiratoryRate: v.respiratoryRate || null,
+      oxygenSaturation: v.oxygenSaturation || null,
+      bloodSugarRandom: v.bloodSugarRandom ?? null,
+      bloodSugarUnit: v.bloodSugarUnit || "mg/dL",
+      bloodSugarSampleType: v.bloodSugarSampleType || "capillary",
+      bloodSugarFasting: v.bloodSugarFasting || "Random",
+      bloodSugarNotes: v.bloodSugarNotes || "",
       chiefComplaint: visit.chiefComplaint || "",
       allergyHistory: visit.allergyHistory || "",
     });
@@ -643,29 +670,42 @@ export default function NurseOPDQueuePage() {
                   <VitalInputCustom label="Weight (kg)" value={vitals.weight} onChange={(v) => vSet("weight", v)} placeholder="e.g. 70" />
                   <VitalInputCustom label="Height (cm)" value={vitals.height} onChange={(v) => vSet("height", v)} placeholder="e.g. 170" />
                   <VitalInputCustom label="Temperature (°F)" value={vitals.temperature} onChange={(v) => vSet("temperature", v)} placeholder="e.g. 98.6" />
-                  <div>
-                    <label style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
-                      Blood Pressure
-                    </label>
-                    <input
-                      value={vitals.bloodPressure}
-                      onChange={(e) => vSet("bloodPressure", e.target.value)}
-                      placeholder="120/80"
-                      style={{
-                        width: "100%",
-                        marginTop: 4,
-                        padding: "7px 10px",
-                        borderRadius: 7,
-                        border: `1.5px solid ${C.border}`,
-                        background: "#fff",
-                        fontSize: 13,
-                        color: C.text,
-                        fontFamily: "'DM Sans',sans-serif",
-                        outline: "none",
-                      }}
-                    />
-                  </div>
                   <VitalInputCustom label="Pulse (bpm)" value={vitals.pulse} onChange={(v) => vSet("pulse", v)} placeholder="e.g. 72" />
+
+                  {/* R7hf — BP split into Systolic + Diastolic mini-grid */}
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Blood Pressure (mmHg)
+                    </label>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center", marginTop: 4 }}>
+                      <input
+                        type="number"
+                        value={vitals.bloodPressureSystolic ?? ""}
+                        onChange={(e) => vSet("bloodPressureSystolic", e.target.value === "" ? null : Number(e.target.value))}
+                        placeholder="Systolic · 120"
+                        style={{
+                          width: "100%", padding: "7px 10px", borderRadius: 7,
+                          border: `1.5px solid ${C.border}`, background: "#fff",
+                          fontSize: 13, color: C.text,
+                          fontFamily: "'DM Sans',sans-serif", outline: "none",
+                        }}
+                      />
+                      <span style={{ fontSize: 16, fontWeight: 700, color: C.muted, padding: "0 4px" }}>/</span>
+                      <input
+                        type="number"
+                        value={vitals.bloodPressureDiastolic ?? ""}
+                        onChange={(e) => vSet("bloodPressureDiastolic", e.target.value === "" ? null : Number(e.target.value))}
+                        placeholder="Diastolic · 80"
+                        style={{
+                          width: "100%", padding: "7px 10px", borderRadius: 7,
+                          border: `1.5px solid ${C.border}`, background: "#fff",
+                          fontSize: 13, color: C.text,
+                          fontFamily: "'DM Sans',sans-serif", outline: "none",
+                        }}
+                      />
+                    </div>
+                  </div>
+
                   <VitalInputCustom label="Respiratory Rate (/min)" value={vitals.respiratoryRate} onChange={(v) => vSet("respiratoryRate", v)} placeholder="e.g. 16" />
                   <VitalInputCustom label="SpO2 (%)" value={vitals.oxygenSaturation} onChange={(v) => vSet("oxygenSaturation", v)} placeholder="e.g. 98" />
 
@@ -701,6 +741,154 @@ export default function NurseOPDQueuePage() {
                       Enter weight &amp; height to see BMI
                     </div>
                   )}
+                </div>
+              </div>
+
+              {/* ── Section: Random Blood Sugar (R7hf) ── */}
+              {/* Optional — when entered, auto-creates an NABH RBS Register row
+                  with sample-type + fasting-state provenance. Only one extra
+                  field (Notes) is asked for to keep the OPD desk fast. */}
+              <div style={{ marginTop: 16 }}>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  fontSize: 10, fontWeight: 800, color: "#854d0e",
+                  textTransform: "uppercase", letterSpacing: ".6px",
+                  marginBottom: 8,
+                }}>
+                  <i className="pi pi-chart-line" style={{ fontSize: 11 }} />
+                  Random Blood Sugar (RBS)
+                  <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 600, color: C.muted, textTransform: "none", letterSpacing: 0 }}>
+                    · feeds NABH RBS register
+                  </span>
+                </div>
+                <div style={{
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 10,
+                  padding: "14px",
+                  background: "#fff",
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 12,
+                }}>
+                  {/* Reading + Unit (combo) */}
+                  <div>
+                    <label style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Reading
+                    </label>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 100px", gap: 6, marginTop: 4 }}>
+                      <input
+                        type="number"
+                        value={vitals.bloodSugarRandom ?? ""}
+                        onChange={(e) => vSet("bloodSugarRandom", e.target.value === "" ? null : Number(e.target.value))}
+                        placeholder="e.g. 110"
+                        style={{
+                          width: "100%", padding: "7px 10px", borderRadius: 7,
+                          border: `1.5px solid ${C.border}`, background: "#fff",
+                          fontSize: 13, color: C.text,
+                          fontFamily: "'DM Sans',sans-serif", outline: "none",
+                        }}
+                      />
+                      <select
+                        value={vitals.bloodSugarUnit}
+                        onChange={(e) => vSet("bloodSugarUnit", e.target.value)}
+                        style={{
+                          width: "100%", padding: "7px 8px", borderRadius: 7,
+                          border: `1.5px solid ${C.border}`, background: "#fff",
+                          fontSize: 12, color: C.text,
+                          fontFamily: "'DM Sans',sans-serif", outline: "none",
+                        }}
+                      >
+                        <option value="mg/dL">mg/dL</option>
+                        <option value="mmol/L">mmol/L</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Sample type */}
+                  <div>
+                    <label style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Sample Type
+                    </label>
+                    <select
+                      value={vitals.bloodSugarSampleType}
+                      onChange={(e) => vSet("bloodSugarSampleType", e.target.value)}
+                      style={{
+                        width: "100%", marginTop: 4, padding: "7px 10px", borderRadius: 7,
+                        border: `1.5px solid ${C.border}`, background: "#fff",
+                        fontSize: 13, color: C.text,
+                        fontFamily: "'DM Sans',sans-serif", outline: "none",
+                      }}
+                    >
+                      <option value="capillary">Capillary (finger-prick)</option>
+                      <option value="venous">Venous</option>
+                      <option value="arterial">Arterial</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </div>
+
+                  {/* Fasting state */}
+                  <div>
+                    <label style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Fasting State
+                    </label>
+                    <select
+                      value={vitals.bloodSugarFasting}
+                      onChange={(e) => vSet("bloodSugarFasting", e.target.value)}
+                      style={{
+                        width: "100%", marginTop: 4, padding: "7px 10px", borderRadius: 7,
+                        border: `1.5px solid ${C.border}`, background: "#fff",
+                        fontSize: 13, color: C.text,
+                        fontFamily: "'DM Sans',sans-serif", outline: "none",
+                      }}
+                    >
+                      <option value="Random">Random (GRBS)</option>
+                      <option value="Fasting">Fasting (FBS)</option>
+                      <option value="PostPrandial">Post-Prandial (PPBS)</option>
+                    </select>
+                  </div>
+
+                  {/* Notes — free text */}
+                  <div>
+                    <label style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Notes <span style={{ fontWeight: 500, textTransform: "none", color: C.muted, fontSize: 9 }}>(glucometer, lot no, anything else)</span>
+                    </label>
+                    <input
+                      value={vitals.bloodSugarNotes}
+                      onChange={(e) => vSet("bloodSugarNotes", e.target.value)}
+                      placeholder="e.g. Accu-Chek lot 4521, last meal 2 h ago"
+                      style={{
+                        width: "100%", marginTop: 4, padding: "7px 10px", borderRadius: 7,
+                        border: `1.5px solid ${C.border}`, background: "#fff",
+                        fontSize: 13, color: C.text,
+                        fontFamily: "'DM Sans',sans-serif", outline: "none",
+                      }}
+                    />
+                  </div>
+
+                  {/* Critical-value live hint — surfaces NABH <70 / >300 mg/dL threshold */}
+                  {(() => {
+                    const v = Number(vitals.bloodSugarRandom);
+                    if (!Number.isFinite(v) || v <= 0) return null;
+                    const mgdl = vitals.bloodSugarUnit === "mmol/L" ? Math.round(v * 18) : v;
+                    const critical = mgdl < 70 || mgdl > 300;
+                    return (
+                      <div style={{
+                        gridColumn: "1 / -1",
+                        background: critical ? C.redL : C.greenL,
+                        border: `1px solid ${critical ? C.redB : C.greenB}`,
+                        borderRadius: 8,
+                        padding: "8px 12px",
+                        display: "flex", alignItems: "center", gap: 8,
+                        fontSize: 12, color: critical ? C.red : C.green,
+                        fontWeight: 600,
+                      }}>
+                        <i className={`pi ${critical ? "pi-exclamation-triangle" : "pi-check-circle"}`} style={{ fontSize: 13 }} />
+                        {critical
+                          ? `Critical value (${mgdl} mg/dL) — will auto-flag in RBS register + alert clinician.`
+                          : `Within range (${mgdl} mg/dL) · NABH normal 70–300 mg/dL.`}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>

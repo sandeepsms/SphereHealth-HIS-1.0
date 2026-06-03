@@ -341,8 +341,22 @@ class OPDService {
   }
 
   /* ── Nurse updates vitals ── */
-  async updateVitals(visitNumber, vitalsData, nurseName) {
+  async updateVitals(visitNumber, vitalsData, nurseName, actor = null) {
     const { chiefComplaint, allergyHistory, ...pureVitals } = vitalsData;
+
+    // R7hf — Auto-compose the legacy `bloodPressure: "S/D"` string from
+    // the split fields so every existing print/discharge consumer that
+    // still reads vitals.bloodPressure keeps working unchanged.
+    if (
+      pureVitals.bloodPressureSystolic != null &&
+      pureVitals.bloodPressureDiastolic != null
+    ) {
+      const sys = Number(pureVitals.bloodPressureSystolic);
+      const dia = Number(pureVitals.bloodPressureDiastolic);
+      if (Number.isFinite(sys) && Number.isFinite(dia)) {
+        pureVitals.bloodPressure = `${sys}/${dia}`;
+      }
+    }
 
     const update = {
       vitals: pureVitals,
@@ -377,6 +391,47 @@ class OPDService {
       } catch (e) {
         const { logErr } = require("../../utils/logErr");
         logErr("autoBilling", "load failure on OPD vitals")(e);
+      }
+    }
+
+    // R7hf — Auto-feed NABH RBS Register when a blood-sugar reading is
+    // entered with the vitals. Carries sample-type + fasting context so
+    // the surveyor view shows full provenance (no manual back-fill).
+    if (updatedVisit) {
+      const rbsVal = Number(pureVitals.bloodSugarRandom);
+      if (Number.isFinite(rbsVal) && rbsVal > 0) {
+        try {
+          const patient = await Patient.findById(updatedVisit.patientId).lean();
+          if (patient && patient.UHID) {
+            const { emitBloodSugar } = require("../Compliance/nabhRegisterEmitter");
+            const fastingState = pureVitals.bloodSugarFasting || "Random";
+            // Map nurse-side fasting label → NABH register readingType
+            const readingType = fastingState === "Fasting"
+              ? "FBS"
+              : fastingState === "PostPrandial"
+                ? "PPBS"
+                : "RBS";
+            await emitBloodSugar({
+              patient,
+              admission: null, // OPD readings — admissionId left null per RBS schema
+              reading: {
+                value: rbsVal,
+                unit: pureVitals.bloodSugarUnit || "mg/dL",
+                type: readingType,
+                sampleType: pureVitals.bloodSugarSampleType || "capillary",
+                location: "OPD",
+                sourceType: "VitalSheet",
+                sourceRef: updatedVisit._id,
+                takenAt: pureVitals.bloodSugarTakenAt || updatedVisit.vitalsEnteredAt || new Date(),
+                notes: pureVitals.bloodSugarNotes || `OPD pre-assessment · ${updatedVisit.visitNumber}`,
+              },
+              actor: actor || { name: nurseName || "Nurse", role: "Nurse" },
+            });
+          }
+        } catch (e) {
+          const { logErr } = require("../../utils/logErr");
+          logErr("rbsRegister", `OPD vitals emit ${updatedVisit?.visitNumber}`)(e);
+        }
       }
     }
 
