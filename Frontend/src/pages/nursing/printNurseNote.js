@@ -9,6 +9,18 @@
 //   hospitalSettings— from useHospitalSettings() — populates PrintShell
 
 import { buildPrintShellHtml } from "../../templates/PrintShell";
+// R7gx — Shared NABH sub-bucket renderers so the nurse Initial
+// Assessment card mirrors every populated nursingNabh.* block, not
+// just the seven the original builder hard-coded (Identification,
+// Allergies, Vitals, PMH+HomeMeds, Psychosocial+Edu, ADL-total,
+// FamilyCaregiver, DischargePlanning). Pre-R7gx the card silently
+// dropped bodyChart, specialPrecautions, cognitiveCommunication,
+// culturalSpiritual, bowelBladder, sleepPattern, valuablesBelongings,
+// highRiskFlags, mobilityGait, preAnaesthesia, NRS-2002, promPrem,
+// and the per-item Barthel breakdown.
+import {
+  renderNursingNabhExtras,
+} from "../../Components/clinical/iaNabhRenderers";
 
 const escapeHtml = (s) =>
   String(s ?? "")
@@ -395,19 +407,6 @@ const buildBuilder = (note) => {
         _kv("Mobility", nrs.mobility),
       ]));
 
-      // NABH IPSG.1 identification verification
-      const ident = nNabh.identification || {};
-      const idChips = [
-        ["Band Attached", ident.bandAttached],
-        ["Name Verified", ident.nameVerified],
-        ["UHID Verified", ident.uhidVerified],
-        ["DOB Verified", ident.dobVerified],
-      ].filter(c => c[1]);
-      const identHtml = (idChips.length || ident.verifiedBy)
-        ? _section("Identification (NABH IPSG.1)", "#16a34a",
-            `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${idChips.map(c => `<span style="padding:3px 10px;border-radius:999px;background:#dcfce7;color:#15803d;font-size:11px;font-weight:600">✓ ${escapeHtml(c[0])}</span>`).join("")}${ident.verifiedBy ? `<span style="font-size:11px;color:#475569;margin-left:6px">Verified by: <strong>${escapeHtml(ident.verifiedBy)}</strong></span>` : ""}</div>`)
-        : "";
-
       // Allergies (NABH IPSG.3)
       const allergies = nNabh.allergies?.list || [];
       const allergyHtml = allergies.length
@@ -449,53 +448,18 @@ const buildBuilder = (note) => {
         _kv("Pain Character", nrs.painCharacter, true),
       ]));
 
-      // Psychosocial + Educational
-      const ps = nNabh.psychosocial || {};
-      const edu = nNabh.educationNeeds || {};
-      const psSection = (ps.emotionalState || edu.preferredLanguage)
-        ? _section("Psychosocial & Education", "#d97706", _grid([
-            _kv("Emotional State", ps.emotionalState),
-            _kv("Family Support", ps.familySupport),
-            _kv("Preferred Language", ps.languagePreferred || edu.preferredLanguage),
-            _kv("Learning Style", edu.learningStyle),
-            _kv("Can Read", edu.canRead ? "Yes" : ""),
-            _kv("Can Write", edu.canWrite ? "Yes" : ""),
-            _kv("Barriers to Learning", edu.barriersToLearning),
-            _kv("Notes", ps.notes, true),
-          ]))
-        : "";
-
-      // ADL Barthel
-      const adl = nNabh.adlBarthel || {};
-      const adlHtml = adl.total != null
-        ? _section("ADL — Barthel Index", "#0891b2",
-            `<div style="font-size:11.5px"><strong>Total Score:</strong> ${escapeHtml(String(adl.total))} / 100 (${adl.total >= 80 ? "Independent" : adl.total >= 60 ? "Mild dependency" : adl.total >= 40 ? "Moderate" : "Severe / Total dependency"})</div>`)
-        : "";
-
-      // Family & Caregiver
-      const fc = nNabh.familyCaregiver || {};
-      const fcHtml = (fc.primaryName || fc.escalationName)
-        ? _section("Family & Caregiver", "#7c3aed", _grid([
-            _kv("Primary Caregiver", fc.primaryName),
-            _kv("Relation", fc.primaryRelation),
-            _kv("Primary Contact", fc.primaryContact),
-            _kv("Escalation Name", fc.escalationName),
-            _kv("Escalation Relation", fc.escalationRelation),
-            _kv("Escalation Contact", fc.escalationContact),
-            _kv("Lives with Patient", fc.lives_with_patient ? "Yes" : null),
-          ]))
-        : "";
-
-      // Discharge planning
-      const dp = nNabh.dischargePlanning || {};
-      const dpHtml = (dp.homeSupport || dp.primaryCaregiver || dp.transportNeed)
-        ? _section("Discharge Planning", "#16a34a", _grid([
-            _kv("Home Support", dp.homeSupport),
-            _kv("Primary Caregiver", dp.primaryCaregiver),
-            _kv("Transport Need", dp.transportNeed),
-            _kv("Anticipated Barriers", dp.anticipatedBarriers, true),
-          ]))
-        : "";
+      // R7gx — Every populated nursingNabh.* sub-block emitted through
+      // the shared renderer module: Identification, Psychosocial,
+      // ADL-Barthel (per-item table + total band), BodyChart,
+      // SpecialPrecautions, Cognitive/Communication, Cultural-Spiritual,
+      // Bowel/Bladder, SleepPattern, Valuables, FamilyCaregiver,
+      // HighRiskFlags, MobilityGait, PreAnaesthesia, NRS-2002 quick,
+      // DischargePlanning, EducationNeeds, PROM/PREM triggers.
+      // Pre-R7gx the card silently dropped 12+ of these sub-blocks
+      // even when fully populated — the patient panel only showed
+      // ID-band + allergy + vitals + PMH + 3 compressed sections.
+      const H = { _section, _grid, _kv, _narr, cssPrefix: "nfx" };
+      const nursingExtras = renderNursingNabhExtras(nNabh, H);
 
       // Nursing diagnosis / problems / goals / notes (narrative)
       const narrHtml = (nrs.nursingProblems || nrs.nursingGoals || nrs.nursingNotes)
@@ -506,7 +470,7 @@ const buildBuilder = (note) => {
           ]))
         : "";
 
-      return admit + identHtml + allergyHtml + vitalsHtml + pmhMedsHtml + ccPain + psSection + adlHtml + fcHtml + dpHtml + narrHtml;
+      return admit + allergyHtml + vitalsHtml + pmhMedsHtml + ccPain + nursingExtras + narrHtml;
     },
     initialAssessment: function() { return BUILDERS.initial(); },
 
