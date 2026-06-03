@@ -276,10 +276,16 @@ class OPDService {
     if (filters.doctorId) query.doctorId = filters.doctorId;
     if (filters.vitalsStatus) query.vitalsStatus = filters.vitalsStatus;
 
+    // R7hg — carry the patient's registration allergies so the Nurse
+    // Pre-Assessment modal can pre-fill "Known Allergies" from the
+    // patient master. Without this populate, the nurse sees a blank
+    // field every visit even if the patient declared allergies at
+    // registration.
     return OPD.find(query)
       .sort({ tokenNumber: 1 })
       .populate("departmentId", "departmentName")
-      .populate("doctorId", "personalInfo doctorId");
+      .populate("doctorId", "personalInfo doctorId")
+      .populate("patientId", "fullName UHID knownAllergies allergyList");
   }
 
   /* ── Visits by department (recent, with optional date filter) ── */
@@ -295,7 +301,8 @@ class OPDService {
     return OPD.find(query)
       .sort({ visitDate: -1, tokenNumber: 1 })
       .populate("departmentId", "departmentName")
-      .populate("doctorId", "personalInfo doctorId");
+      .populate("doctorId", "personalInfo doctorId")
+      .populate("patientId", "fullName UHID knownAllergies allergyList");
   }
 
   /* ── Visits by doctor ── */
@@ -311,7 +318,8 @@ class OPDService {
     return OPD.find(query)
       .sort({ visitDate: -1, tokenNumber: 1 })
       .populate("departmentId", "departmentName")
-      .populate("doctorId", "personalInfo doctorId");
+      .populate("doctorId", "personalInfo doctorId")
+      .populate("patientId", "fullName UHID knownAllergies allergyList");
   }
 
   /* ── Follow-up due ── */

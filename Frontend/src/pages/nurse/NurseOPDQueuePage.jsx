@@ -181,6 +181,23 @@ export default function NurseOPDQueuePage() {
       if (Number.isFinite(s)) sys = s;
       if (Number.isFinite(d)) dia = d;
     }
+    // R7hg — auto-fill Known Allergies from the patient's REGISTRATION
+    // record so the nurse never starts with a blank field when the
+    // patient already declared allergies at the front desk. Priority:
+    //   1. nurse's own previous entry on this visit (visit.allergyHistory)
+    //   2. structured allergyList[] on Patient master (typed ledger)
+    //   3. legacy Patient.knownAllergies free-text
+    const allergyListStr = Array.isArray(visit.patientId?.allergyList)
+      ? visit.patientId.allergyList
+          .map((row) => row?.allergen)
+          .filter(Boolean)
+          .join(", ")
+      : "";
+    const registrationAllergy =
+      allergyListStr ||
+      (typeof visit.patientId?.knownAllergies === "string"
+        ? visit.patientId.knownAllergies.trim()
+        : "");
     setVitals({
       weight: v.weight || null,
       height: v.height || null,
@@ -197,7 +214,10 @@ export default function NurseOPDQueuePage() {
       bloodSugarFasting: v.bloodSugarFasting || "Random",
       bloodSugarNotes: v.bloodSugarNotes || "",
       chiefComplaint: visit.chiefComplaint || "",
-      allergyHistory: visit.allergyHistory || "",
+      allergyHistory: visit.allergyHistory || registrationAllergy || "",
+      // Carry the registration value separately so the modal can show
+      // a "From registration" chip even after the nurse edits the field.
+      _registrationAllergy: registrationAllergy,
     });
     setVitalsModal(true);
   };
@@ -206,7 +226,11 @@ export default function NurseOPDQueuePage() {
     if (!selectedVisit) return;
     setSavingVitals(true);
     try {
-      await opdService.updateVitals(selectedVisit.visitNumber, vitals, user?.name || user?.username || "Nurse");
+      // R7hg — strip internal-only UI fields (prefixed with _) before
+      // sending so Mongoose strict mode doesn't drop the real fields
+      // and the backend payload stays clean.
+      const { _registrationAllergy, ...payload } = vitals;
+      await opdService.updateVitals(selectedVisit.visitNumber, payload, user?.name || user?.username || "Nurse");
       toast.current?.show({ severity: "success", summary: "Vitals saved", detail: `Vitals updated for ${selectedVisit.UHID}`, life: 3000 });
       setVitalsModal(false);
       loadQueue();
@@ -635,7 +659,10 @@ export default function NurseOPDQueuePage() {
                         marginTop: 4,
                         padding: "7px 10px",
                         borderRadius: 7,
-                        border: `1.5px solid ${C.border}`,
+                        // R7hg — green border when pre-filled from registration
+                        // so the nurse instantly sees the field carries trusted
+                        // patient-master data.
+                        border: `1.5px solid ${vitals._registrationAllergy ? "#a7f3d0" : C.border}`,
                         background: "#fff",
                         fontSize: 13,
                         color: C.text,
@@ -643,6 +670,27 @@ export default function NurseOPDQueuePage() {
                         outline: "none",
                       }}
                     />
+                    {/* R7hg — visible "from registration" provenance chip.
+                        Stays visible even after the nurse edits so she
+                        always has the original on-file value to compare. */}
+                    {vitals._registrationAllergy && (
+                      <div style={{
+                        marginTop: 5,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        padding: "3px 8px",
+                        borderRadius: 6,
+                        background: C.greenL,
+                        border: `1px solid ${C.greenB}`,
+                        fontSize: 10,
+                        color: C.green,
+                        fontWeight: 600,
+                      }}>
+                        <i className="pi pi-check-circle" style={{ fontSize: 9 }} />
+                        From registration: {vitals._registrationAllergy}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
