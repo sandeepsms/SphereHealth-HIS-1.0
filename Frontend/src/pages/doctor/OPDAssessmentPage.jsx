@@ -277,9 +277,17 @@ export default function OPDAssessmentPage() {
     advice: "", followUpDate: "", doctorNotes: "",
   });
 
+  // R7hi — HOPI now branches by `painPresent`. SOCRATES-style fields
+  // (character, aggravating, relieving) only matter when pain is the
+  // primary complaint; for general complaints like fever/cough the form
+  // surfaces a chronological narrative + prior treatment fields instead.
   const [hopi, setHopi] = useState({
     onset: "", durationValue: "", durationUnit: "Days", progression: "",
     character: "", associatedSymptoms: [], aggravating: "", relieving: "",
+    painPresent: false,
+    narrative: "",         // free-text chronological story (general path)
+    treatmentTried: "",    // OTC drugs / home remedies / outside Rx
+    responseSoFar: "",     // how patient is responding to treatment so far
   });
 
   const [chronic, setChronic] = useState({ conditions: [], others: "" });
@@ -464,6 +472,15 @@ export default function OPDAssessmentPage() {
         associatedSymptoms: v.hopiAssociatedSymptoms || [],
         aggravating:        v.hopiAggravating        || "",
         relieving:          v.hopiRelieving          || "",
+        // R7hi — derive painPresent. Persisted flag wins. If the flag is
+        // absent on legacy records, infer ON whenever any pain-shaped
+        // field was filled so we never silently hide existing data.
+        painPresent: typeof v.hopiPainPresent === "boolean"
+          ? v.hopiPainPresent
+          : !!(v.hopiCharacter || v.hopiAggravating || v.hopiRelieving),
+        narrative:      v.hopiNarrative      || "",
+        treatmentTried: v.hopiTreatmentTried || "",
+        responseSoFar:  v.hopiResponseSoFar  || "",
       });
       setChronic({ conditions: v.chronicConditions || [], others: v.chronicOthers || "" });
 
@@ -582,6 +599,15 @@ export default function OPDAssessmentPage() {
         hopiAssociatedSymptoms: hopi.associatedSymptoms,
         hopiAggravating:        hopi.aggravating,
         hopiRelieving:          hopi.relieving,
+        // R7hi — Pain-toggle + general-HOPI fields. The flag is the
+        // source of truth; the pain-shaped fields above are only saved
+        // when painPresent is true. The narrative/treatmentTried/
+        // responseSoFar fields apply regardless and stand on their own
+        // for non-pain complaints (fever, cough, fatigue, etc.).
+        hopiPainPresent:        !!hopi.painPresent,
+        hopiNarrative:          hopi.narrative,
+        hopiTreatmentTried:     hopi.treatmentTried,
+        hopiResponseSoFar:      hopi.responseSoFar,
         chronicConditions:      chronic.conditions,
         chronicOthers:          chronic.others,
         // OBG history — flat fields prefixed obg* so the print receipt
@@ -1142,11 +1168,22 @@ export default function OPDAssessmentPage() {
     if (h.onset)         hopiBits.push(`Onset: ${h.onset}`);
     if (h.durationValue) hopiBits.push(`Duration: ${h.durationValue} ${h.durationUnit || ""}`.trim());
     if (h.progression)   hopiBits.push(`Progression: ${h.progression}`);
-    if (h.character)     hopiBits.push(`Character: ${h.character}`);
+    // R7hi — only include pain-shaped fields when painPresent is true
+    // (or, for legacy records without the flag, when any of them are
+    // filled). That way the printout doesn't show empty "Character:" /
+    // "Aggravating:" tokens for fever or cough visits.
+    const showPain = h.painPresent
+      || (!("painPresent" in h) && (h.character || h.aggravating || h.relieving));
+    if (showPain && h.character)    hopiBits.push(`Character: ${h.character}`);
     if (Array.isArray(h.associatedSymptoms) && h.associatedSymptoms.length)
       hopiBits.push(`Associated: ${h.associatedSymptoms.join(", ")}`);
-    if (h.aggravating)   hopiBits.push(`Aggravating: ${h.aggravating}`);
-    if (h.relieving)     hopiBits.push(`Relieving: ${h.relieving}`);
+    if (showPain && h.aggravating)  hopiBits.push(`Aggravating: ${h.aggravating}`);
+    if (showPain && h.relieving)    hopiBits.push(`Relieving: ${h.relieving}`);
+    // R7hi — general-HOPI narrative tokens — appended after the
+    // structured ones so the printout still reads chronologically.
+    if (h.narrative)      hopiBits.push(`Story: ${h.narrative}`);
+    if (h.treatmentTried) hopiBits.push(`Treatment tried: ${h.treatmentTried}`);
+    if (h.responseSoFar)  hopiBits.push(`Response: ${h.responseSoFar}`);
     const hopiLine = hopiBits.join(" · ");
 
     // Chronic comorbidities — merges the picklist + any "others" free
@@ -1542,7 +1579,58 @@ export default function OPDAssessmentPage() {
 
           {/* HOPI — History of Present Illness */}
           <Card title="History of Present Illness (HOPI)" icon="pi-calendar" color="#7c3aed">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "10px 14px", marginBottom: 14 }}>
+            {/* R7hi — Pain toggle. SOCRATES-style Character/Aggravating/
+                Relieving fields are pain-specific (you only ask
+                "what makes it worse" of someone whose complaint is pain).
+                For general complaints (fever, cough, fatigue, etc.) the
+                form swaps to a narrative + treatment-tried layout. */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "10px 14px",
+              background: hopi.painPresent ? "#fef3c7" : "#f1f5f9",
+              border: `1px solid ${hopi.painPresent ? "#fde68a" : C.border}`,
+              borderRadius: 8,
+              marginBottom: 14,
+              cursor: "pointer",
+            }}
+            onClick={() => setHopi(p => ({ ...p, painPresent: !p.painPresent }))}>
+              <input
+                type="checkbox"
+                checked={hopi.painPresent}
+                onChange={(e) => setHopi(p => ({ ...p, painPresent: e.target.checked }))}
+                onClick={(e) => e.stopPropagation()}
+                style={{ accentColor: "#d97706", width: 16, height: 16 }}
+              />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: hopi.painPresent ? "#92400e" : C.dark }}>
+                  Pain is part of this complaint
+                </div>
+                <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>
+                  Tick this if the patient is complaining of pain — extra SOCRATES
+                  fields (character, aggravating, relieving) will appear. Leave it
+                  off for general complaints like fever, cough, fatigue, etc.
+                </div>
+              </div>
+              {hopi.painPresent && (
+                <span style={{
+                  background: "#fff",
+                  border: "1px solid #fde68a",
+                  borderRadius: 12,
+                  padding: "2px 10px",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: "#92400e",
+                  textTransform: "uppercase",
+                  letterSpacing: ".5px",
+                }}>
+                  Pain mode
+                </span>
+              )}
+            </div>
+
+            {/* Common timeline fields — onset, duration, progression
+                apply to both pain and general complaints. */}
+            <div style={{ display: "grid", gridTemplateColumns: hopi.painPresent ? "1fr 1fr 1fr 1fr" : "1fr 1fr 1fr", gap: "10px 14px", marginBottom: 14 }}>
               <div>
                 <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Onset</label>
                 {["Sudden","Gradual","Intermittent"].map(opt => (
@@ -1573,44 +1661,105 @@ export default function OPDAssessmentPage() {
                   {["Improving","Stable","Worsening","Fluctuating"].map(o => <option key={o}>{o}</option>)}
                 </select>
               </div>
-              <div>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Character of Complaint</label>
-                <input value={hopi.character} onChange={e => setHopi(p => ({ ...p, character: e.target.value }))}
-                  placeholder="Sharp / Dull / Burning…"
-                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
+              {/* R7hi — Character of Complaint only when pain toggle is ON */}
+              {hopi.painPresent && (
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#92400e", marginBottom: 6 }}>
+                    Character of Pain
+                  </label>
+                  <input value={hopi.character} onChange={e => setHopi(p => ({ ...p, character: e.target.value }))}
+                    placeholder="Sharp / Dull / Burning…"
+                    style={{ width: "100%", border: `1.5px solid #fde68a`, borderRadius: 6, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", boxSizing: "border-box", background: "#fffbeb" }} />
+                </div>
+              )}
+            </div>
+
+            {/* Associated Symptoms — always shown (relevant for both
+                pain and general complaints) */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Associated Symptoms</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "5px 12px" }}>
+                {["Fever","Vomiting","Nausea","Diarrhea","Cough","Headache","Dizziness","Dyspnea","Chest Pain","Abdominal Pain","Weakness","Loss of Appetite"].map(sym => (
+                  <label key={sym} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
+                    <input type="checkbox"
+                      checked={hopi.associatedSymptoms.includes(sym)}
+                      onChange={e => {
+                        const arr = e.target.checked
+                          ? [...hopi.associatedSymptoms, sym]
+                          : hopi.associatedSymptoms.filter(s => s !== sym);
+                        setHopi(p => ({ ...p, associatedSymptoms: arr }));
+                      }}
+                      style={{ accentColor: "#7c3aed" }} />
+                    {sym}
+                  </label>
+                ))}
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: "10px 14px" }}>
-              <div>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Associated Symptoms</label>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "5px 12px" }}>
-                  {["Fever","Vomiting","Nausea","Diarrhea","Cough","Headache","Dizziness","Dyspnea","Chest Pain","Abdominal Pain","Weakness","Loss of Appetite"].map(sym => (
-                    <label key={sym} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
-                      <input type="checkbox"
-                        checked={hopi.associatedSymptoms.includes(sym)}
-                        onChange={e => {
-                          const arr = e.target.checked
-                            ? [...hopi.associatedSymptoms, sym]
-                            : hopi.associatedSymptoms.filter(s => s !== sym);
-                          setHopi(p => ({ ...p, associatedSymptoms: arr }));
-                        }}
-                        style={{ accentColor: "#7c3aed" }} />
-                      {sym}
-                    </label>
-                  ))}
+
+            {/* R7hi — Pain-specific aggravating/relieving (toggle ON) */}
+            {hopi.painPresent && (
+              <div style={{
+                display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 14px",
+                padding: "12px 14px",
+                background: "#fffbeb",
+                border: "1px solid #fde68a",
+                borderRadius: 8,
+                marginBottom: 14,
+              }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#92400e", marginBottom: 6 }}>Aggravating Factors</label>
+                  <textarea value={hopi.aggravating} onChange={e => setHopi(p => ({ ...p, aggravating: e.target.value }))}
+                    placeholder="What makes the pain worse — movement, food, position, breathing…" rows={3}
+                    style={{ width: "100%", border: "1.5px solid #fde68a", borderRadius: 6, padding: "8px 10px", fontSize: 12, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box", background: "#fff" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#92400e", marginBottom: 6 }}>Relieving Factors</label>
+                  <textarea value={hopi.relieving} onChange={e => setHopi(p => ({ ...p, relieving: e.target.value }))}
+                    placeholder="What makes the pain better — rest, antacid, paracetamol, position…" rows={3}
+                    style={{ width: "100%", border: "1.5px solid #fde68a", borderRadius: 6, padding: "8px 10px", fontSize: 12, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box", background: "#fff" }} />
                 </div>
               </div>
+            )}
+
+            {/* R7hi — General-HOPI narrative block — always available, but
+                emphasised when there's no pain (it carries the main story
+                of the complaint). Three short fields work for fever,
+                cough, fatigue, GI upset, dyspnoea, fall, etc. */}
+            <div style={{
+              display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px 14px",
+              padding: "12px 14px",
+              background: "#f8fafc",
+              border: `1px solid ${C.border}`,
+              borderRadius: 8,
+            }}>
               <div>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Aggravating Factors</label>
-                <textarea value={hopi.aggravating} onChange={e => setHopi(p => ({ ...p, aggravating: e.target.value }))}
-                  placeholder="What makes it worse…" rows={3}
-                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>
+                  Story of the Complaint
+                </label>
+                <textarea value={hopi.narrative} onChange={e => setHopi(p => ({ ...p, narrative: e.target.value }))}
+                  placeholder={hopi.painPresent
+                    ? "How did the pain start? Any pattern over the days?"
+                    : "How did it start? Day-by-day what happened?"}
+                  rows={3}
+                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box", background: "#fff" }} />
               </div>
               <div>
-                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>Relieving Factors</label>
-                <textarea value={hopi.relieving} onChange={e => setHopi(p => ({ ...p, relieving: e.target.value }))}
-                  placeholder="What makes it better…" rows={3}
-                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>
+                  Treatment Tried So Far
+                </label>
+                <textarea value={hopi.treatmentTried} onChange={e => setHopi(p => ({ ...p, treatmentTried: e.target.value }))}
+                  placeholder="OTC drugs, home remedies, outside Rx — name & dose if known"
+                  rows={3}
+                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box", background: "#fff" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 }}>
+                  Response So Far
+                </label>
+                <textarea value={hopi.responseSoFar} onChange={e => setHopi(p => ({ ...p, responseSoFar: e.target.value }))}
+                  placeholder="Did the symptoms get better, worse, or unchanged with what they tried?"
+                  rows={3}
+                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", fontSize: 12, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box", background: "#fff" }} />
               </div>
             </div>
           </Card>

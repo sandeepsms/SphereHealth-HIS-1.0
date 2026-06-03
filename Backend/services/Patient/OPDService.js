@@ -568,6 +568,13 @@ class OPDService {
       hopiAssociatedSymptoms: assessmentData.hopiAssociatedSymptoms || [],
       hopiAggravating:        pick(assessmentData.hopiAggravating),
       hopiRelieving:          pick(assessmentData.hopiRelieving),
+      // R7hi — pain-toggle + general-HOPI fields
+      hopiPainPresent:        typeof assessmentData.hopiPainPresent === "boolean"
+                                ? assessmentData.hopiPainPresent
+                                : undefined,
+      hopiNarrative:          pick(assessmentData.hopiNarrative),
+      hopiTreatmentTried:     pick(assessmentData.hopiTreatmentTried),
+      hopiResponseSoFar:      pick(assessmentData.hopiResponseSoFar),
       // Chronic illnesses
       chronicConditions:      assessmentData.chronicConditions      || [],
       chronicOthers:          pick(assessmentData.chronicOthers),

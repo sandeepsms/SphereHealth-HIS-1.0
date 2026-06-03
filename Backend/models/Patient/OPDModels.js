@@ -278,6 +278,14 @@ const OPDSchema = new mongoose.Schema(
     hopiAssociatedSymptoms: [String],
     hopiAggravating:        String,
     hopiRelieving:          String,
+    // R7hi — pain-toggle + general-HOPI fields. `hopiPainPresent` swaps
+    // the form's mode on screen and gates the SOCRATES-style pain
+    // fields above; the three narrative fields below apply to both
+    // modes (fever / cough / fatigue / etc. → general path).
+    hopiPainPresent:        { type: Boolean, default: false },
+    hopiNarrative:          String,
+    hopiTreatmentTried:     String,
+    hopiResponseSoFar:      String,
 
     // ── Chronic Illnesses / Past Medical History ──
     chronicConditions: [{ condition: String, duration: String }],
