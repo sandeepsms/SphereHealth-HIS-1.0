@@ -3418,6 +3418,21 @@ function OPDRxTab() {
   const stripFormPrefix = (name) =>
     String(name || "").replace(/^(tab\.?|cap\.?|syp\.?|inj\.?|cream|oint\.?|drop[s]?)\s+/i, "").trim();
 
+  // R7ho-FIX: parens-stripped fallback. Backend uses a contains-regex
+  // search, so "Bifilac probiotic" (no parens) does NOT substring-match
+  // a stored row named "Bifilac (probiotic)" (the " (" between is in
+  // the way). Conversely, "ORS sachets (WHO formula)" does not match a
+  // row named "ORS sachets WHO formula" (clean). The two-shot below
+  // tries the original query first (preserves matches against parens-
+  // named SKUs), then a parens-stripped retry to catch clean-named
+  // SKUs. Both branches use the same scoring so the best candidate
+  // surfaces regardless of the SKU author's punctuation choice.
+  const stripPunctuation = (s) =>
+    String(s || "")
+      .replace(/[()\[\]{},;:!?]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
   // Frequency → doses/day. Covers the abbreviations our doctors use.
   const parseFrequency = (f) => {
     const x = String(f || "").toUpperCase();
@@ -3439,24 +3454,46 @@ function OPDRxTab() {
   // Best-match: search inventory for the medicine name (form prefix
   // stripped) and pick the candidate whose normalised name most
   // closely matches the prescription.
+  // R7ho-FIX: two-shot search — original query first, then parens-
+  // stripped fallback. Catches both punctuation styles a doctor or
+  // pharmacist might have used when authoring the SKU master.
   const matchInventoryDrug = async (medicineName) => {
     const q = stripFormPrefix(medicineName);
     if (q.length < 2) return null;
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const targetN = norm(q);
+    const scoreList = (list) => list.map(d => {
+      const candidates = [d.brandName, d.genericName, d.name].filter(Boolean).map(norm);
+      let best = 0;
+      for (const c of candidates) {
+        if (c === targetN) best = Math.max(best, 100);
+        else if (c.startsWith(targetN) || targetN.startsWith(c)) best = Math.max(best, 80);
+        else if (c.includes(targetN) || targetN.includes(c)) best = Math.max(best, 60);
+      }
+      return { d, s: best };
+    }).sort((a, b) => b.s - a.s);
     try {
-      const r = await listDrugs({ q, limit: 5 });
-      const list = Array.isArray(r) ? r : (r?.data || []);
-      if (!list.length) return null;
-      const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-      const targetN = norm(q);
-      // Score by: exact match > startsWith > includes > first
-      const scored = list.map(d => {
-        const candidate = norm(d.brandName || d.genericName || d.name);
-        if (candidate === targetN) return { d, s: 100 };
-        if (candidate.startsWith(targetN) || targetN.startsWith(candidate)) return { d, s: 80 };
-        if (candidate.includes(targetN) || targetN.includes(candidate)) return { d, s: 60 };
-        return { d, s: 0 };
-      }).sort((a, b) => b.s - a.s);
-      return scored[0]?.d || list[0];
+      // Shot 1 — original query
+      let r = await listDrugs({ q, limit: 8 });
+      let list = Array.isArray(r) ? r : (r?.data || []);
+      if (list.length) {
+        const scored = scoreList(list);
+        if (scored[0]?.s >= 60) return scored[0].d;
+      }
+      // Shot 2 — parens-stripped fallback (covers SKUs stored without
+      // punctuation when the Rx text carries it, or vice versa).
+      const qClean = stripPunctuation(q);
+      if (qClean && qClean !== q) {
+        r = await listDrugs({ q: qClean, limit: 8 });
+        list = Array.isArray(r) ? r : (r?.data || []);
+        if (list.length) {
+          const scored = scoreList(list);
+          if (scored[0]?.s >= 60) return scored[0].d;
+          return scored[0]?.d || list[0];
+        }
+      }
+      // Final fallback — first hit from whatever shot 1 produced
+      return list[0] || null;
     } catch (_) { return null; }
   };
 
