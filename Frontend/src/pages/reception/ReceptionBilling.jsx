@@ -917,6 +917,21 @@ export default function ReceptionBilling() {
           <td>${esc(p.transactionId || "—")}</td>
           <td style="text-align:right">₹${_num(p.amount).toFixed(2)}</td>
         </tr>`).join("");
+      // R7hd — surface the visit number with a dynamic label per visit
+      // type so the consolidated bill reads "OPD No: OPD-26-06" /
+      // "IPD No: IPD-26-02" / "Daycare No: …" / "Emergency No: …" /
+      // "Service No: …". Falls back silently when no number exists.
+      const _vt = String(b.visitType || "").toUpperCase();
+      const _visitLabel =
+          _vt === "IPD"        ? "IPD No"
+        : _vt === "DAYCARE"    ? "Daycare No"
+        : _vt === "DAY CARE"   ? "Daycare No"
+        : _vt === "EMERGENCY"  ? "Emergency No"
+        : _vt === "ER"         ? "Emergency No"
+        : _vt === "SERVICES"   ? "Service No"
+        : _vt === "SERVICE"    ? "Service No"
+                               : "OPD No";
+      const _visitNo = b.admissionNumber || b.opdNumber || "";
       return `
         <div class="bill-block">
           <div class="bill-head">
@@ -924,6 +939,7 @@ export default function ReceptionBilling() {
             <span class="pill pill-${esc((b.visitType || "").toLowerCase())}">${esc(b.visitType || "")}</span>
             <span class="pill pill-${esc((b.billStatus || "").toLowerCase())}">${esc(b.billStatus || "")}</span>
             <span class="meta">${new Date(b.billDate || b.createdAt).toLocaleString("en-IN")}</span>
+            ${_visitNo ? `<span class="meta" style="margin-left:auto"><strong style="color:#0f172a">${_visitLabel}:</strong> <span style="font-family:'DM Mono',monospace;color:#0f172a">${esc(_visitNo)}</span></span>` : ""}
           </div>
           <table>
             <thead><tr><th>Service</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Net</th></tr></thead>
@@ -959,15 +975,45 @@ export default function ReceptionBilling() {
             </tr>`).join("")}</tbody>
         </table>
       </div>`;
+    // R7hd — header redesigned to mirror PrintShell pattern (Registration
+    // Receipt + IPD bill style). White hospital band with right-aligned
+    // GSTIN/Reg/PAN block; accent title bar; patient info strip; per-bill
+    // blocks below now carry the visit number with a dynamic label.
+    const _accent = hs.printAccentColor || "#1d4ed8";
+    const _bills = billRows.length;
+    const _firstVt = String(billRows[0]?.b?.visitType || "OPD").toUpperCase();
     win.document.write(`<!doctype html><html><head>
-      <title>Final Bill — ${esc(patient?.fullName || uhid)}</title>
+      <title>Final Consolidated Bill — ${esc(patient?.fullName || uhid)}</title>
       <style>
-        body { font-family: Arial, sans-serif; padding: 24px; color:#0f172a; font-size:13px; }
-        h1 { font-size: 22px; margin: 0; }
-        .meta { color: #64748b; font-size: 11px; margin-bottom: 14px; }
-        .hdr { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; padding-bottom:10px; border-bottom:1.5px solid #cbd5e1; }
-        .bill-block { margin: 18px 0; padding-bottom: 12px; border-bottom: 1px dashed #e2e8f0; page-break-inside: avoid; }
-        .bill-head { display:flex; gap:10px; align-items:center; margin-bottom:8px; }
+        *{box-sizing:border-box;font-family:'DM Sans',Arial,sans-serif}
+        body { padding: 0; color:#0f172a; font-size:13px; margin: 0; }
+        .wrap { max-width: 820px; margin: 0 auto; padding: 24px; }
+        /* ── Hospital header band (white, accent border-bottom) ── */
+        .hd { display: flex; align-items: flex-start; gap: 14px; padding: 14px 4px; border-bottom: 2px solid ${_accent}; }
+        .hd img { height: 54px; width: auto; border-radius: 6px; }
+        .hd-body { flex: 1; min-width: 0; }
+        .hd-title { font-size: 18px; font-weight: 800; color: ${_accent}; margin: 0; line-height: 1.2; }
+        .hd-tag { font-size: 11.5px; color:#475569; margin-top: 2px; }
+        .hd-addr { font-size: 11px; color:#64748b; margin-top: 3px; line-height: 1.4; }
+        .hd-meta { font-size: 10.5px; color: #475569; text-align: right; min-width: 140px; line-height: 1.5; }
+        .hd-meta strong { color:#0f172a; }
+        /* ── Title bar ── */
+        .title-bar { display:flex; align-items:center; justify-content:space-between; margin: 10px 0 14px; padding: 9px 14px; background: ${_accent}; color:#fff; border-radius: 6px; }
+        .title-bar__title { font-size: 13px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; }
+        .title-bar__meta { display:flex; align-items:center; gap:10px; }
+        .title-bar__no { font-size: 11px; font-weight: 700; background: rgba(255,255,255,.2); padding: 3px 10px; border-radius: 4px; letter-spacing: .3px; font-family:'DM Mono',monospace; }
+        .title-bar__date { font-size: 10.5px; font-weight: 600; opacity: .9; }
+        /* ── Patient info strip (2-column grid) ── */
+        .info-strip { display:grid; grid-template-columns: repeat(2, 1fr); gap: 4px 24px; padding: 10px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 14px; }
+        .info-strip__row { display:flex; gap: 8px; font-size: 11.5px; }
+        .info-strip__lbl { color: #64748b; font-weight: 600; min-width: 78px; text-transform: uppercase; font-size: 10px; letter-spacing: .3px; padding-top: 2px; }
+        .info-strip__val { color: #0f172a; font-weight: 700; font-size: 12px; }
+        .info-strip__val.mono { font-family: 'DM Mono', monospace; }
+        /* ── Per-bill blocks ── */
+        .meta { color: #64748b; font-size: 11px; }
+        .bill-block { margin: 14px 0; padding: 10px; border: 1px solid #e2e8f0; border-radius: 8px; page-break-inside: avoid; background: #fff; }
+        .bill-head { display:flex; gap:10px; align-items:center; margin-bottom:8px; font-size: 13px; flex-wrap: wrap; }
+        .bill-head > strong { color: ${_accent}; font-family: 'DM Mono', monospace; font-size: 14px; }
         .pill { padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; background:#f1f5f9; color:#475569; }
         .pill-opd { background:#ecfeff; color:#0e7490; }
         .pill-emergency, .pill-er { background:#fef2f2; color:#b91c1c; }
@@ -977,30 +1023,66 @@ export default function ReceptionBilling() {
         .pill-generated { background:#ecfeff; color:#0369a1; }
         .pill-partial { background:#fef3c7; color:#a16207; }
         .pill-draft { background:#f1f5f9; color:#64748b; }
-        .bill-sub { color:#475569; font-size:12px; margin: 6px 0 4px; }
+        .bill-sub { color:#475569; font-size:12px; margin: 6px 0 4px; padding: 8px 10px; background: #f8fafc; border-radius: 6px; }
         .pay-head { font-weight:700; font-size:11px; color:#475569; margin: 10px 0 4px; text-transform:uppercase; letter-spacing:.5px; }
         table { width:100%; border-collapse: collapse; margin: 4px 0 6px; font-size:12px; }
         th, td { padding: 5px 8px; border-bottom: 1px solid #e2e8f0; text-align:left; }
         th { background:#f8fafc; font-weight:700; }
-        .grand { margin-top: 20px; padding-top: 12px; border-top: 2px solid #0f172a; }
-        .grand-row { display:flex; justify-content:space-between; padding: 4px 0; }
-        .grand-row.major { font-size:16px; font-weight:900; padding-top:8px; border-top:1px dashed #cbd5e1; margin-top:4px; }
-        .footer { margin-top: 24px; padding-top: 10px; border-top: 1px dashed #cbd5e1; font-size: 10px; color:#94a3b8; text-align:center; }
+        /* ── Grand totals card ── */
+        .grand { margin-top: 20px; padding: 14px; background: #f8fafc; border: 1.5px solid ${_accent}; border-radius: 10px; }
+        .grand-row { display:flex; justify-content:space-between; padding: 4px 0; font-size: 12.5px; }
+        .grand-row.major { font-size:16px; font-weight:900; padding-top:8px; border-top:1px dashed #cbd5e1; margin-top:6px; }
+        .footer { margin-top: 18px; padding-top: 10px; border-top: 1px dashed #cbd5e1; font-size: 10px; color:#94a3b8; text-align:center; line-height:1.5; }
+        @media print { body { padding: 0; } .wrap { padding: 12px; } }
       </style></head><body>
-      <div class="hdr">
-        <div>
-          ${hs.logo ? `<img src="${hs.logo}" alt="" style="max-height:54px;display:block;margin-bottom:6px"/>` : ""}
-          <h1 style="color:${hs.printHeaderColor || "#0f172a"}">${esc(_hospName)}</h1>
-          <div class="meta">${_hospTagline ? esc(_hospTagline) + " · " : ""}Final Consolidated Bill</div>
-          ${_addrLine ? `<div class="meta">${esc(_addrLine)}</div>` : ""}
-          ${_phoneLine ? `<div class="meta">${esc(_phoneLine)}</div>` : ""}
-          ${hs.gstin ? `<div class="meta">GSTIN: ${esc(hs.gstin)}</div>` : ""}
+      <div class="wrap">
+      <div class="hd">
+        ${hs.logo ? `<img src="${hs.logo}" alt=""/>` : ""}
+        <div class="hd-body">
+          <h1 class="hd-title">${esc(_hospName)}</h1>
+          ${_hospTagline ? `<div class="hd-tag">${esc(_hospTagline)}</div>` : ""}
+          ${_addrLine ? `<div class="hd-addr">${esc(_addrLine)}</div>` : ""}
+          ${_phoneLine ? `<div class="hd-addr">${esc(_phoneLine)}</div>` : ""}
         </div>
-        <div style="text-align:right">
-          <strong>${esc(patient?.fullName || "Patient")}</strong><br>
-          <span class="meta">UHID: ${esc(uhid)} · ${patient?.age ? patient.age + "y" : ""} · ${esc(patient?.gender || "")}</span><br>
-          <span class="meta">Phone: ${esc(patient?.contactNumber || "—")}</span><br>
-          <span class="meta">Printed: ${new Date().toLocaleString("en-IN")}</span>
+        <div class="hd-meta">
+          ${hs.gstin ? `<div><strong>GSTIN:</strong> ${esc(hs.gstin)}</div>` : ""}
+          ${hs.registrationNo ? `<div><strong>Reg No:</strong> ${esc(hs.registrationNo)}</div>` : ""}
+          ${hs.panNumber ? `<div><strong>PAN:</strong> ${esc(hs.panNumber)}</div>` : ""}
+        </div>
+      </div>
+      <!-- Title bar -->
+      <div class="title-bar">
+        <div class="title-bar__title">Final Consolidated Bill</div>
+        <div class="title-bar__meta">
+          <span class="title-bar__no">${_bills} BILL${_bills === 1 ? "" : "S"}</span>
+          <span class="title-bar__date">${new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+        </div>
+      </div>
+      <!-- Patient info strip -->
+      <div class="info-strip">
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Patient</div>
+          <div class="info-strip__val">${esc(patient?.title || "")} ${esc(patient?.fullName || "—")}</div>
+        </div>
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">UHID</div>
+          <div class="info-strip__val mono">${esc(uhid)}</div>
+        </div>
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Age / Sex</div>
+          <div class="info-strip__val">${patient?.age ? patient.age + "y" : "—"}${patient?.gender ? " · " + esc(patient.gender) : ""}</div>
+        </div>
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Phone</div>
+          <div class="info-strip__val">${esc(patient?.contactNumber || "—")}</div>
+        </div>
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Visit Type</div>
+          <div class="info-strip__val">${esc(_firstVt === "ER" ? "Emergency" : _firstVt === "DAYCARE" || _firstVt === "DAY CARE" ? "Daycare" : _firstVt === "SERVICES" || _firstVt === "SERVICE" ? "Service" : _firstVt[0] + _firstVt.slice(1).toLowerCase())}</div>
+        </div>
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Printed</div>
+          <div class="info-strip__val">${new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
         </div>
       </div>
       ${itemsHtml}
@@ -1020,8 +1102,10 @@ export default function ReceptionBilling() {
       <div class="footer">
         Final consolidated bill generated by Reception · ${new Date().toLocaleString("en-IN")}<br>
         ${list.length} bill${list.length === 1 ? "" : "s"} across OPD / Day Care / ER / Services for this patient.
-        ${hs.billFooterNote ? esc(hs.billFooterNote) : ""}
+        ${hs.billFooterNote ? "<br>" + esc(hs.billFooterNote) : ""}
+        <div style="margin-top:6px;opacity:.7">Generated by ${esc(_hospName)} HIS</div>
       </div>
+      </div><!-- /.wrap -->
       <script>window.onload = () => { setTimeout(() => window.print(), 200); };</script>
       </body></html>`);
     win.document.close();
