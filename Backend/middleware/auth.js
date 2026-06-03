@@ -544,6 +544,34 @@ const icuBundleByIdResolver = async (req) => {
 // returns) bypass via the rule.condition predicate.
 const pharmacyIpdResolver = (req) => req.body?.admissionId || null;
 
+// B3-T09 / PART B — UHID-path resolver. Real frontend prescription &
+// nursing-assessment writes hit /prescriptions/uhid/:uhid (and similar)
+// rather than the bare /prescriptions form. Pre-T09 the rule used
+// defaultResolver which never inspected the URL, so the discharge-write
+// gate silently let writes through even when the targeted patient was
+// discharged. This resolver extracts the UHID from the path and looks
+// up the latest Active/Discharged admission, then hands the admission _id
+// to the gate runner. Falls back to body.admissionId when no UHID path
+// segment is present.
+const uhidPathResolver = async (req) => {
+  const m = req.path.match(/\/uhid\/([^/?]+)/);
+  if (!m) return req.body?.admissionId || null;
+  try {
+    const Admission = require("../models/Patient/admissionModel");
+    const adm = await Admission.findOne({
+      UHID: m[1],
+      status: { $in: ["Active", "Discharged"] },
+    })
+      .sort({ admissionDate: -1 })
+      .select("_id status")
+      .lean();
+    return adm?._id || null;
+  } catch (e) {
+    console.warn("[discharge-gate] uhidPathResolver failed:", e.message);
+    return null;
+  }
+};
+
 const ENFORCE_DISCHARGE_WRITE_RULES = [
   // ── R7az-A original surfaces ────────────────────────────────────────
   { method: "POST",   regex: /\/doctor-notes(\/|$|\?)/,                        resolveAdmissionId: defaultResolver },
@@ -572,9 +600,12 @@ const ENFORCE_DISCHARGE_WRITE_RULES = [
   { method: "PATCH",  regex: /\/doctor-orders\/[^/]+\/(administer|infusion-rate|infusion-monitor|restart|doctor-action)(\/|$|\?)/, resolveAdmissionId: docOrderByIdResolver },
   { method: "POST",   regex: /\/doctor-orders\/[^/]+\/(administer|infusion-rate|infusion-monitor|restart|doctor-action|bulk)(\/|$|\?)/, resolveAdmissionId: docOrderByIdResolver },
 
-  // Prescriptions — POST has body.admissionId; PATCH on existing rx uses
+  // Prescriptions — POST hits /prescriptions/uhid/:uhid (frontend shape);
+  // regex covers both the bare /prescriptions form and the uhid sub-path
+  // so the rule fires regardless of caller. Resolver pulls UHID from path
+  // first, falling back to body.admissionId. PATCH on existing rx uses
   // url param and we have to resolve via Prescription doc.
-  { method: "POST",   regex: /\/prescriptions(\/|$|\?)/,                       resolveAdmissionId: defaultResolver },
+  { method: "POST",   regex: /\/prescriptions(\/uhid\/[^/?]+)?(\/|$|\?)/,      resolveAdmissionId: uhidPathResolver },
   { method: "PATCH",  regex: /\/prescriptions\/[^/]+(\/|$|\?)/,                resolveAdmissionId: prescriptionByIdResolver },
 
   // Nursing care plan — POST carries admissionId in body; PUT/PATCH on
@@ -583,9 +614,12 @@ const ENFORCE_DISCHARGE_WRITE_RULES = [
   { method: "PUT",    regex: /\/nursing-care-plans\/[^/]+(\/|$|\?)/,           resolveAdmissionId: carePlanByIdResolver },
   { method: "PATCH",  regex: /\/nursing-care-plans\/[^/]+\/(problem\/[^/]+\/status|complete)(\/|$|\?)/, resolveAdmissionId: carePlanByIdResolver },
 
-  // Nursing assessment / intake-output — POSTed against an admission id
-  // already in the URL (/nursing-assessments/:admissionId) or body
-  // (/intake-output).
+  // Nursing assessment / intake-output — POST /nursing-assessments/:type
+  // (NOT :admissionId — the URL param is the assessment type slug:
+  // "daily" | "fall-risk" | "pressure-area" | "pain" | "nutrition" |
+  // "education" | "dvt"). admissionId lives in req.body; B3-T09 PART A
+  // now also rejects 400 NURSING_ASSESSMENT_MISSING_PATIENT_CONTEXT at
+  // the route level if it's missing.
   { method: "POST",   regex: /\/nursing-assessments\/[^/]+(\/|$|\?)/,          resolveAdmissionId: defaultResolver },
   { method: "POST",   regex: /\/intake-output(\/|$|\?)/,                       resolveAdmissionId: defaultResolver },
 

@@ -267,7 +267,14 @@ function PressureAreaContent({ patient }) {
     };
     try {
       await axios.post(`${API}/nursing-assessments/pressure-area`, {
-        patientId: patient._id, ...entry, woundLog, pressurePoints,
+        patientId: patient._id,
+        // B3-T03: UHID + admissionId + patientName required by
+        // PressureUlcerRegisterModel (UHID required=true at schema level).
+        // Without these the register row cannot persist even if emit runs.
+        UHID: patient.UHID,
+        admissionId: patient.currentAdmissionId || patient.admissionId || patient.activeAdmissionId || undefined,
+        patientName: patient.fullName || `${patient.firstName || ""} ${patient.lastName || ""}`.trim(),
+        ...entry, woundLog, pressurePoints,
         // R7em-1: NABH HIC.4 ulcer surveillance fields. ulcerStage/site/size
         // /dressingType only carry data when ulcerPresent=true; otherwise
         // they're empty strings (matches PressureUlcerRegisterModel enum "").

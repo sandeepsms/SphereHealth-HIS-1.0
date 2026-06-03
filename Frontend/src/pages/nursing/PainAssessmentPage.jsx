@@ -130,7 +130,11 @@ function PainContent({ patient }) {
     const entry = { date: new Date().toISOString(), ...form, reassessLog: [...reassessLog] };
     try {
       await axios.post(`${API}/nursing-assessments/pain`, {
-        patientId: patient._id, ...entry,
+        patientId: patient._id,
+        UHID: patient.UHID,
+        admissionId: patient.currentAdmissionId || patient.admissionId,
+        patientName: patient.fullName || patient.name,
+        ...entry,
         nurseName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
         nurseEmployeeId: user?.employeeId || "",
         nurseSignature: signature || undefined,

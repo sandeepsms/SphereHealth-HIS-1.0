@@ -199,6 +199,24 @@ router.post("/", requireAction("doctor-orders.write"), credentialExpiryBlocker("
       }
     }
 
+    // R7gw-B3-T08 — defense-in-depth: high-risk Procedure orders auto-flag
+    // for the OT register even if the UI toggle (T06) is bypassed by a
+    // direct API caller or an older client. Major / Surgical procedures
+    // and GA / Sedation / Spinal anaesthesia always belong in the OT
+    // register per NABH COP.10. The downstream emitter at line ~272 keys
+    // off `order.orderDetails.requiresOT === true`, so we mutate the same
+    // path here before persistence.
+    if (body.orderType === "Procedure") {
+      const details = body.orderDetails || (body.orderDetails = {});
+      const highRiskTypes = new Set(["Major", "Surgical"]);
+      const highRiskAnaes = new Set(["GA", "Sedation", "Spinal"]);
+      const uiFlag = details.requiresOT === true || details.requiresOT === "Yes";
+      details.requiresOT =
+        uiFlag ||
+        highRiskTypes.has(details.procedureType) ||
+        highRiskAnaes.has(details.anaesthesia);
+    }
+
     const order = await DoctorOrder.create(body);
 
     // R7bn-3 / D1-fix: when the doctor orders a blood transfusion, auto-

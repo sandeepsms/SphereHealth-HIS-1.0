@@ -19,10 +19,31 @@ router.use(attemptAuth);
 
 const ALLOWED = ["daily", "fall-risk", "pressure-area", "pain", "nutrition", "education", "dvt"];
 
+// B3-T09 / PART A — Defense-in-depth: nursing assessments must arrive with
+// both UHID and admissionId in the body. Pre-T09 the route accepted writes
+// missing either field, leaving an unanchored row that bypassed the
+// discharge-write gate (which keys off admissionId) and broke patient-file
+// joins. Reject 400 NURSING_ASSESSMENT_MISSING_PATIENT_CONTEXT so the
+// frontend surfaces a clear error instead of swallowing a silently-orphaned
+// record. Mirror of B3 pattern used on doctor-notes / nurse-notes.
+const requirePatientContext = (req, res, next) => {
+  const { UHID, admissionId } = req.body || {};
+  if (!UHID || !admissionId) {
+    return res.status(400).json({
+      success: false,
+      code: "NURSING_ASSESSMENT_MISSING_PATIENT_CONTEXT",
+      message:
+        "Nursing assessment requires both UHID and admissionId in the body. " +
+        "Frontend must pass patient.UHID and patient.currentAdmissionId on every POST.",
+    });
+  }
+  return next();
+};
+
 /* POST /api/nursing-assessments/:type
    Body: any payload object. We split out UHID / admissionId / patientName
    / recordedBy so they index correctly; the rest goes into `data`. */
-router.post("/:type", requireAction("vitals.write"), async (req, res) => {
+router.post("/:type", requireAction("vitals.write"), requirePatientContext, async (req, res) => {
   try {
     const { type } = req.params;
     if (!ALLOWED.includes(type)) {

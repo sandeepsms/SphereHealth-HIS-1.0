@@ -388,10 +388,23 @@ function OrderForm({ typeId, form, set }) {
         <Field form={form} set={set} label="Estimated Duration" name="estimatedDuration" placeholder="e.g. 30 min"/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
-      <div style={g("1fr 1fr 1fr")}>
+      <div style={g("1fr 1fr 1fr 1fr")}>
         <Field form={form} set={set} label="Consent Required" name="consentRequired" options={["Yes","No"]}/>
         <Field form={form} set={set} label="Anaesthesia" name="anaesthesia" options={["None","Local","Sedation","GA"]}/>
         <Field form={form} set={set} label="Position" name="position" options={["Supine","Lateral Decubitus","Sitting","Prone","Lithotomy"]}/>
+        {/* B3-T06 — Will be conducted in OT?
+            Auto-defaults to Yes when type is Major/Surgical OR anaesthesia is GA/Sedation,
+            otherwise No. Doctor can override either way. The boolean lands on
+            base.requiresOT in buildPayload so the OT scheduler / procedure register
+            can pick it up downstream. */}
+        <Field
+          form={{ ...form, requiresOT: form.requiresOT
+            || ((form.procedureType === "Major" || form.procedureType === "Surgical"
+                 || form.anaesthesia   === "GA"    || form.anaesthesia   === "Sedation") ? "Yes" : "No") }}
+          set={set}
+          label="Will be conducted in OT?"
+          name="requiresOT"
+          options={["Yes","No"]}/>
       </div>
       <Field form={form} set={set} label="Pre-procedure Instructions / Equipment Needed" name="notes" placeholder="NPO, coagulation check, equipment list…" type="textarea"/>
     </>
@@ -1031,11 +1044,11 @@ function OrderCard({ order, onCancel, onComplete }) {
         <div style={{ padding: "0 14px 14px" }}>
           <AuditTrail order={order}/>
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {/* Complete Procedure button — only for OT-bound procedure orders
-                that haven't finished yet. Posting the note transitions the
-                linked OTRegister row Scheduled → Completed (NABH COP.10). */}
+            {/* Complete Procedure button — appears for ANY Procedure order
+                that hasn't finished yet. Backend procedureNoteController
+                handles both OT and bedside procedures; OTRegister row only
+                transitions when requiresOT===true (NABH COP.10). */}
             {order.orderType === "Procedure"
-              && order.orderDetails?.requiresOT === true
               && order.status !== "Completed"
               && order.status !== "Cancelled" && (
                 <button
@@ -1203,6 +1216,13 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
       base.procedureName = form.procedureName;
       base.procedureType = form.procedureType;
       base.consentRequired = form.consentRequired === "Yes";
+      // B3-T06 — OT flag. If the doctor never touched the toggle (form.requiresOT
+      // is undefined/blank), apply the same auto-default the UI shows: Major/Surgical
+      // type OR GA/Sedation anaesthesia ⇒ Yes; everything else ⇒ No.
+      const otValue = form.requiresOT
+        || ((form.procedureType === "Major" || form.procedureType === "Surgical"
+             || form.anaesthesia   === "GA"    || form.anaesthesia   === "Sedation") ? "Yes" : "No");
+      base.requiresOT = otValue === "Yes";
     }
     base.notes = form.notes || "";
     base.displayName = form.medicineName || form.testName || form.procedureName
