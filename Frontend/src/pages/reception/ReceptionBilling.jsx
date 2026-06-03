@@ -1119,19 +1119,51 @@ export default function ReceptionBilling() {
           <div class="info-strip__lbl">Phone</div>
           <div class="info-strip__val">${esc(patient?.contactNumber || "—")}</div>
         </div>
-        <!-- R7hd-FIX — address spans both columns when long, otherwise stays in its slot. -->
-        ${_pAddrLine ? `<div class="info-strip__row" style="grid-column: 1 / -1">
+        <!-- R7hd-FIX2 — Address (left) opposite the visit-number row (right),
+             so the sequence between Phone and Doctor reads
+             "Address ║ OPD No / IPD No / Daycare No / …". Address is no
+             longer a wide row — keeps the strip a clean 2-col grid. -->
+        <div class="info-strip__row">
           <div class="info-strip__lbl">Address</div>
-          <div class="info-strip__val" style="font-weight:600">${esc(_pAddrLine)}</div>
-        </div>` : ""}
-        ${_printDept ? `<div class="info-strip__row">
+          <div class="info-strip__val" style="font-weight:600">${esc(_pAddrLine || "—")}</div>
+        </div>
+        ${(() => {
+          // Visit-number row with dynamic label per visit type, sourced
+          // from the first bill (or fall back to patient.currentVisit /
+          // currentAdmission so the row still renders before a bill is
+          // generated). Mirrors the per-bill block label.
+          const _topVisitLabel =
+              _firstVt === "IPD"        ? "IPD No"
+            : _firstVt === "DAYCARE"    ? "Daycare No"
+            : _firstVt === "DAY CARE"   ? "Daycare No"
+            : _firstVt === "EMERGENCY"  ? "Emergency No"
+            : _firstVt === "ER"         ? "Emergency No"
+            : _firstVt === "SERVICES"   ? "Service No"
+            : _firstVt === "SERVICE"    ? "Service No"
+                                        : "OPD No";
+          const _topVisitNo = billRows[0]?.b?.admissionNumber
+                          || billRows[0]?.b?.opdNumber
+                          || _ca?.admissionNumber
+                          || _cv?.admissionNumber
+                          || _cv?.visitNumber
+                          || "";
+          return `<div class="info-strip__row">
+            <div class="info-strip__lbl">${_topVisitLabel}</div>
+            <div class="info-strip__val mono">${esc(_topVisitNo || "—")}</div>
+          </div>`;
+        })()}
+        <!-- R7hd-FIX2 — always render these rows so the 2-col grid
+             alignment (Address↔OPD No, Department↔Doctor, Visit Type↔
+             Printed) stays consistent. Fields fall back to "—" when
+             missing — typical for late-stage walk-ins. -->
+        <div class="info-strip__row">
           <div class="info-strip__lbl">Department</div>
-          <div class="info-strip__val">${esc(_printDept)}</div>
-        </div>` : ""}
-        ${_printDoc ? `<div class="info-strip__row">
+          <div class="info-strip__val">${esc(_printDept || "—")}</div>
+        </div>
+        <div class="info-strip__row">
           <div class="info-strip__lbl">Doctor</div>
-          <div class="info-strip__val">${esc(_printDoc)}</div>
-        </div>` : ""}
+          <div class="info-strip__val">${esc(_printDoc || "—")}</div>
+        </div>
         <div class="info-strip__row">
           <div class="info-strip__lbl">Visit Type</div>
           <div class="info-strip__val">${esc(_firstVt === "ER" ? "Emergency" : _firstVt === "DAYCARE" || _firstVt === "DAY CARE" ? "Daycare" : _firstVt === "SERVICES" || _firstVt === "SERVICE" ? "Service" : _firstVt[0] + _firstVt.slice(1).toLowerCase())}</div>
