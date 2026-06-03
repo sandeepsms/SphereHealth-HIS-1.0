@@ -910,13 +910,28 @@ export default function ReceptionBilling() {
           <td style="text-align:right">₹${_num(it.unitPrice).toFixed(2)}</td>
           <td style="text-align:right">₹${_num(it.netAmount).toFixed(2)}</td>
         </tr>`).join("");
-      const paysRows = (b.payments || []).map((p) => `
+      // R7hd-FIX4 — Receipt No column. Each payment's receipt slip is
+      // numbered {billNumber}-P{seq} (positive amounts) or {billNumber}-R{seq}
+      // (refunds, negative amounts) — same convention printPaymentReceipt
+      // / printRefundReceipt use. Prefer the stored p.receiptNumber if
+      // the backend has stamped one (e.g. via PaymentReceiptModel), else
+      // compute the synthetic slip number for display only.
+      let _pSeq = 0, _rSeq = 0;
+      const paysRows = (b.payments || []).map((p) => {
+        const isRefund = _num(p.amount) < 0;
+        if (isRefund) _rSeq++; else _pSeq++;
+        const _slip = p.receiptNumber
+                   || p.receiptNo
+                   || `${b.billNumber || "DRAFT"}-${isRefund ? "R" : "P"}${isRefund ? _rSeq : _pSeq}`;
+        return `
         <tr>
+          <td style="font-family:'DM Mono',monospace;font-size:11px">${esc(_slip)}</td>
           <td>${new Date(p.paidAt || p.createdAt || Date.now()).toLocaleString("en-IN")}</td>
           <td>${esc(p.paymentMode || "")}</td>
           <td>${esc(p.transactionId || "—")}</td>
           <td style="text-align:right">₹${_num(p.amount).toFixed(2)}</td>
-        </tr>`).join("");
+        </tr>`;
+      }).join("");
       // R7hd-FIX3 — the visit number now lives in the patient info strip
       // (opposite the Address row). Showing it again on the bill row was
       // redundant and noisy, especially for single-visit consolidated bills.
@@ -943,7 +958,7 @@ export default function ReceptionBilling() {
           ${paysRows ? `
             <div class="pay-head">Payments</div>
             <table>
-              <thead><tr><th>Date</th><th>Mode</th><th>Reference</th><th style="text-align:right">Amount</th></tr></thead>
+              <thead><tr><th>Receipt No</th><th>Date</th><th>Mode</th><th>Reference</th><th style="text-align:right">Amount</th></tr></thead>
               <tbody>${paysRows}</tbody>
             </table>` : ""}
         </div>`;
