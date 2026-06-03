@@ -321,6 +321,7 @@ export function normalizeFileData(receipt = {}) {
         temp:   toStr(v.temp || v.temperature),
         spo2:   toStr(v.spo2 || v.SpO2),
         rr:     toStr(v.rr || v.respiratoryRate),
+        painScore:  toNum(v.painScore || v.pain || v.vasPain),
         recordedBy: toStr(v.recordedBy || v.recordedByName || v.nurseName),
       };
     }).filter(v => v.at),

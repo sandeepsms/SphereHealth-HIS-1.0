@@ -202,6 +202,7 @@ const COL = {
   muted:   "#475569",  // sub-heading / minor labels
   faded:   "#94a3b8",  // chips, decorative
   accent:  "#1e3a8a",  // KEY-fact bold tint
+  head:    "#1e3a8a",  // Day banner + IA signer pill (R7gu / R7gt)
   rule:    "#0f172a",  // section rule
   pillBg:  "#f1f5f9",
   pillTxt: "#475569",
@@ -684,13 +685,13 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   const ioByDay       = groupByDay(f.intakeOutput || [], (r) => r.at || r.recordedAt || r.createdAt);
   const invsByDay     = groupByDay((f.investigations || []).filter((i) => i.name),
                                    (i) => i.reportedAt || i.orderedAt || i.createdAt);
-  const bloodByDay    = groupByDay(f.bloodTransfusion || [], (b) => b.startedAt || b.createdAt);
-  const carePlanByDay = groupByDay(f.nursingCarePlans || [], (p) => p.assessmentDate || p.createdAt);
-  const nurAssByDay   = groupByDay(f.nursingAssessments || [], (a) => a.assessmentDate || a.createdAt);
+  const bloodByDay    = groupByDay(f.bloodTransfusion || [], (b) => b.at || b.startedAt || b.createdAt);
+  const carePlanByDay = groupByDay(f.nursingCarePlans || [], (p) => p.at || p.assessmentDate || p.createdAt);
+  const nurAssByDay   = groupByDay(f.nursingAssessments || [], (a) => a.at || a.assessmentDate || a.createdAt);
   const consentByDay  = groupByDay(f.consents || [], (c) => c.signedAt || c.createdAt);
-  const icuByDay      = groupByDay(f.icuBundles || [], (b) => b.bundleDate || b.createdAt);
+  const icuByDay      = groupByDay(f.icuBundles || [], (b) => b.at || b.date || b.bundleDate || b.createdAt);
   const xferByDay     = groupByDay(f.bedTransfers || [], (t) => t.transferredAt || t.at || t.createdAt);
-  const mlcByDay      = groupByDay(f.mlc || [], (m) => m.incidentDate || m.createdAt);
+  const mlcByDay      = groupByDay(f.mlc || [], (m) => m.at || m.incidentDate || m.createdAt);
   // Merge doctor + nursing notes for a given day into a single chronological
   // stream so the printout reads like a real clinical timeline (R7fy).
   // R7gf — Sort within a day by clinical timestamp (noteDate), not the
@@ -1540,12 +1541,12 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                   <MiniTable
                     headers={["Time", "Component", "Unit", "Group", "Reactions", "By"]}
                     rows={bloods.map((b) => [
-                      fmtTimeOnly(b.startedAt || b.createdAt),
+                      fmtTimeOnly(b.at || b.startedAt || b.createdAt),
                       b.component || b.product || "—",
-                      b.unitNumber || b.unit || "—",
+                      b.bagNumber || b.unitNumber || b.unit || "—",
                       b.bloodGroup || "—",
-                      b.reactions || b.adverseReaction || "—",
-                      displayActor(b.transfusedByName || b.administeredBy) || "—",
+                      b.reaction === true ? (b.reactionType || "Yes") : (b.reactions || b.adverseReaction || "—"),
+                      displayActor(b.transfusedBy || b.transfusedByName || b.administeredBy) || "—",
                     ])}
                     widths={["12%", "20%", "14%", "10%", "20%", "24%"]}
                   />
@@ -1555,27 +1556,34 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               const cplanBlock = cplans.length > 0 ? (
                 <div key={`day-cp-${k}`} style={{ marginBottom: 6 }}>
                   <Para style={subHeadStyle}>Nursing Care Plan</Para>
-                  {cplans.map((p, i) => (
-                    <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
-                      {p.problem ? <strong>{p.problem}</strong> : null}
-                      {p.goal ? <> · Goal: {p.goal}</> : null}
-                      {p.interventions ? <> · Intv: {p.interventions}</> : null}
-                      {p.evaluation ? <> · Eval: {p.evaluation}</> : null}
-                    </Para>
-                  ))}
+                  {cplans.map((p, i) => {
+                    const problem = p.diagnosis || p.problem;
+                    const goal    = p.goals || p.goal;
+                    return (
+                      <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
+                        {problem ? <strong>{problem}</strong> : null}
+                        {goal ? <> · Goal: {goal}</> : null}
+                        {p.interventions ? <> · Intv: {p.interventions}</> : null}
+                        {p.evaluation ? <> · Eval: {p.evaluation}</> : null}
+                      </Para>
+                    );
+                  })}
                 </div>
               ) : null;
 
               const nassBlock = nasses.length > 0 ? (
                 <div key={`day-nass-${k}`} style={{ marginBottom: 6 }}>
                   <Para style={subHeadStyle}>Nursing Reassessment</Para>
-                  {nasses.map((a, i) => (
-                    <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
-                      {a.type ? <strong>{a.type}</strong> : null}
-                      {a.score != null ? <> · Score: {a.score}</> : null}
-                      {a.summary ? <> · {a.summary}</> : null}
-                    </Para>
-                  ))}
+                  {nasses.map((a, i) => {
+                    const summary = a.content || a.summary;
+                    return (
+                      <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
+                        {a.type ? <strong>{a.type}</strong> : null}
+                        {a.score != null ? <> · Score: {a.score}</> : null}
+                        {summary ? <> · {summary}</> : null}
+                      </Para>
+                    );
+                  })}
                 </div>
               ) : null;
 
@@ -1598,12 +1606,26 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               const icuBlock = icus.length > 0 ? (
                 <div key={`day-icu-${k}`} style={{ marginBottom: 6 }}>
                   <Para style={subHeadStyle}>ICU Care Bundles (HIC.5)</Para>
-                  {icus.map((b, i) => (
-                    <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
-                      {(b.bundleType || "Bundle")}: {b.completed ? "✓ Complete" : "Partial"}
-                      {b.bundleScore != null ? <> · Score {b.bundleScore}</> : null}
-                    </Para>
-                  ))}
+                  {icus.map((b, i) => {
+                    // Per-bundle compliance summary built from canonical
+                    // per-key %s (vap/cauti/clabsi/dvt/sepsis/sup). Fall
+                    // back to legacy bundleType label when no breakdown.
+                    const parts = [
+                      b.vapPct    != null ? `VAP ${b.vapPct}%`       : null,
+                      b.cautiPct  != null ? `CAUTI ${b.cautiPct}%`   : null,
+                      b.clabsiPct != null ? `CLABSI ${b.clabsiPct}%` : null,
+                      b.dvtPct    != null ? `DVT ${b.dvtPct}%`       : null,
+                      b.sepsisPct != null ? `Sepsis ${b.sepsisPct}%` : null,
+                      b.supPct    != null ? `SUP ${b.supPct}%`       : null,
+                    ].filter(Boolean);
+                    const label = parts.length > 0 ? parts.join(" · ") : (b.bundleType || "Bundle");
+                    const score = b.overallPct ?? b.bundleScore ?? "—";
+                    return (
+                      <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
+                        {label} · Score {score === "—" ? "—" : `${score}%`}
+                      </Para>
+                    );
+                  })}
                 </div>
               ) : null;
 
@@ -1622,13 +1644,21 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               const mlcBlock = mlcs.length > 0 ? (
                 <div key={`day-mlc-${k}`} style={{ marginBottom: 6 }}>
                   <Para style={{ ...subHeadStyle, color: "#dc2626" }}>Medico-Legal Case Entry</Para>
-                  {mlcs.map((m, i) => (
-                    <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
-                      <strong>{m.mlcNumber || "MLC"}</strong> · {m.natureOfCase || m.allegedType || "—"}
-                      {m.policeStation ? <> · PS: {m.policeStation}</> : null}
-                      {m.fir ? <> · FIR: {m.fir}</> : null}
-                    </Para>
-                  ))}
+                  {mlcs.map((m, i) => {
+                    const type    = m.type || m.natureOfCase || m.allegedType;
+                    const brief   = m.brief || m.summary;
+                    const io      = m.io || m.investigatingOfficer;
+                    const station = m.station || m.policeStation;
+                    return (
+                      <Para key={i} style={{ fontSize: 11, margin: "2px 0" }}>
+                        <strong>{m.mlcNumber || "MLC"}</strong> · {type || "—"}
+                        {brief ? <> · {brief}</> : null}
+                        {io ? <> · IO: {io}</> : null}
+                        {station ? <> · PS: {station}</> : null}
+                        {m.fir ? <> · FIR: {m.fir}</> : null}
+                      </Para>
+                    );
+                  })}
                 </div>
               ) : null;
 
@@ -2098,14 +2128,17 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       {bills.length > 0 ? (() => {
         let totBilled = 0, totPaid = 0, totBal = 0;
         const rows = bills.map((b) => {
-          const tot  = Number(b.total ?? b.grandTotal ?? b.amount) || 0;
+          const tot  = Number(b.amount ?? b.total ?? b.grandTotal) || 0;
           const paid = Number(b.paid  ?? b.amountPaid)             || 0;
           const bal  = Number(b.balance ?? (tot - paid))           || 0;
           totBilled += tot; totPaid += paid; totBal += bal;
+          const billNo = b.billNumber || b.billNo || b.invoiceNo || b.number || "—";
+          const date   = b.at || b.date || b.createdAt;
+          const type   = b.category || b.type || b.billType || "—";
           return [
-            b.billNo || b.invoiceNo || b.number || "—",
-            b.date || b.createdAt ? fmtDate(b.date || b.createdAt) : "—",
-            b.type || b.billType || "—",
+            billNo,
+            date ? fmtDate(date) : "—",
+            type,
             `INR ${tot.toLocaleString("en-IN")}`,
             `INR ${paid.toLocaleString("en-IN")}`,
             <strong style={{ color: bal > 0 ? COL.abN : COL.body }}>INR {bal.toLocaleString("en-IN")}</strong>,
