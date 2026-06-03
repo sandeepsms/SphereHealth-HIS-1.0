@@ -17,21 +17,31 @@ const { nextSequence } = require("../../utils/counter");
 // We seed FROM the existing same-day max ONCE so a redeploy mid-day
 // doesn't re-issue numbers that already left the building.
 async function generateOPDAdmissionNumber() {
+  // R7hb — Short, readable OPD format: OPD-YY-NN (continuous within the
+  // year, auto-widens past 99). Mirrors the IPD-YY-NN scheme set by R7ag
+  // so admission numbers stay short on receipts. Pre-R7hb this used
+  // OPD-YYYYMMDD-NNNN (daily 4-digit pad) which read as e.g.
+  // "OPD-20260603-0001" on the payment receipt — long, hard to dictate.
   const today = new Date();
-  const datePart = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,"0")}${String(today.getDate()).padStart(2,"0")}`;
-  const prefix = `OPD-${datePart}-`;
-  const key = `opd-admission:${datePart}`;
+  const yy = String(today.getFullYear()).slice(-2);
+  const prefix = `OPD-${yy}-`;
+  const key = `opd-admission:${yy}`;
 
   const Counter = require("../../models/CounterModel");
   const existing = await Counter.findOne({ _id: key }).lean();
   let seed = null;
   if (!existing) {
+    // Seed from the existing same-year max so a redeploy mid-year doesn't
+    // re-issue numbers that already left the building. Also tolerates the
+    // legacy OPD-YYYYMMDD-NNNN rows post-migration — if migration mapped
+    // those to OPD-YY-NN, the regex still finds them; if not, the seed is 0
+    // and OPDService keeps going from there.
     const last = await Admission.findOne({ admissionNumber: { $regex: `^${prefix}` } })
       .sort({ admissionNumber: -1 }).lean();
-    seed = last ? (parseInt(last.admissionNumber.slice(-4), 10) || 0) : 0;
+    seed = last ? (parseInt(last.admissionNumber.slice(prefix.length), 10) || 0) : 0;
   }
   const seq = await nextSequence(key, seed);
-  return `${prefix}${String(seq).padStart(4, "0")}`;
+  return `${prefix}${String(seq).padStart(2, "0")}`;
 }
 
 class OPDService {

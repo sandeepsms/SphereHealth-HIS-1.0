@@ -37,19 +37,27 @@ function sanitizeTaxPct(v) {
 const { nextSequence } = require("../../utils/counter");
 
 async function generateBillNumber() {
-  const year = new Date().getFullYear();
-  const key = `bill:${year}`;
+  // R7hb — Short bill number: BILL-YY-NN (continuous within year,
+  // auto-widens past 99). Pre-R7hb this was BILL-YYYY-NNNNNN — too
+  // long for counter receipts and verbal hand-off. Year-keyed so a
+  // fiscal-year audit still groups correctly.
+  const yy = String(new Date().getFullYear()).slice(-2);
+  const key = `bill:${yy}`;
   // Seed from existing max on first call this year so legacy series
-  // continues without a gap.
+  // continues without a gap. Looks for the short prefix BILL-YY-; the
+  // migration script (migrateNumberShortFormat.js) is responsible for
+  // renaming old BILL-YYYY-NNNNNN rows to the new format. If no
+  // already-short rows exist, seed is 0 and the counter starts fresh.
+  const prefix = `BILL-${yy}-`;
   const last = await PatientBill.findOne({
-    billNumber: { $regex: `^BILL-${year}-` },
+    billNumber: { $regex: `^${prefix}` },
   })
     .sort({ billNumber: -1 })
     .select({ billNumber: 1 })
     .lean();
-  const seed = last ? parseInt(last.billNumber.slice(-6), 10) || 0 : 0;
+  const seed = last ? parseInt(last.billNumber.slice(prefix.length), 10) || 0 : 0;
   const seq  = await nextSequence(key, seed);
-  return `BILL-${year}-${String(seq).padStart(6, "0")}`;
+  return `${prefix}${String(seq).padStart(2, "0")}`;
 }
 
 // R7bp-FIX (audit P0 — billNumber dup-null E11000) — defense-in-depth.

@@ -66,7 +66,15 @@ const PaymentReceipt = ({ settings = {}, receipt = {} }) => {
       infoItems={[
         { label: "Patient",    value: receipt.patientName },
         { label: "UHID",       value: receipt.uhid },
-        { label: "IPD No",     value: receipt.ipdNo },
+        // R7hb — Dynamic visit-number label. Pre-R7hb every payment
+        // receipt printed "IPD No: <admissionNumber>" regardless of
+        // visit type, so OPD bills read "IPD No: OPD-…" — confusing.
+        // Prefer the new `visitNo` field; fall back to legacy
+        // `ipdNo` / `opdNo` if the caller still uses them.
+        {
+          label: visitLabel ? `${visitLabel} No` : "Visit No",
+          value: receipt.visitNo || receipt.ipdNo || receipt.opdNo,
+        },
         { label: "Date",       value: receipt.date
             ? new Date(receipt.date).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
             : new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },

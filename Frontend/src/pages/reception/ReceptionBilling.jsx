@@ -1042,7 +1042,10 @@ export default function ReceptionBilling() {
       receiptNo:    `${bill.billNumber}-P${(bill.payments || []).length || 1}`,
       patientName:  patient?.fullName || bill.patientName,
       uhid:         patient?.UHID || bill.UHID,
-      ipdNo:        bill.admissionNumber,
+      // R7hb — pass visitType so the template labels the No. row
+      // correctly (OPD No / IPD No / Daycare No / Emergency No).
+      visitType:    bill.visitType,
+      visitNo:      bill.admissionNumber,
       age:          patient?.age,
       gender:       patient?.gender,
       amount:       Number(pay.amount || 0),
@@ -1089,8 +1092,9 @@ export default function ReceptionBilling() {
       receiptNo:    `${bill.billNumber}-R${refundCount}`,
       patientName:  patient?.fullName || bill.patientName,
       uhid:         patient?.UHID || bill.UHID,
-      ipdNo:        bill.admissionNumber,
-      opdNo:        bill.opdNumber,
+      // R7hb — pass visitType for the dynamic No. label
+      visitType:    bill.visitType,
+      visitNo:      bill.admissionNumber || bill.opdNumber,
       date:         new Date().toISOString(),
       approvedBy:   refundInfo.refundedBy || "Reception",
       refundedBy:   refundInfo.refundedBy || "Reception",

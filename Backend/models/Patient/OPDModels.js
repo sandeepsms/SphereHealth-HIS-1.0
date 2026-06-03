@@ -349,9 +349,12 @@ OPDSchema.pre("validate", async function (next) {
   try {
     if (this.isNew) {
       if (!this.visitNumber) {
-        const year = new Date().getFullYear();
-        const seq = await nextSequence(`opd:${year}`);
-        this.visitNumber = `OPD-${year}-${String(seq).padStart(6, "0")}`;
+        // R7hb — Short OPD visit number: OPD-YY-NN. Pre-R7hb this was
+        // OPD-YYYY-NNNNNN which read poorly on every receipt + ledger
+        // row. Year-keyed counter so fiscal-year tracking still works.
+        const yy = String(new Date().getFullYear()).slice(-2);
+        const seq = await nextSequence(`opd-visit:${yy}`);
+        this.visitNumber = `OPD-${yy}-${String(seq).padStart(2, "0")}`;
       }
       if (!this.tokenNumber) {
         const dateKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
