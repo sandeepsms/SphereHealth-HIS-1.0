@@ -235,7 +235,11 @@ PatientSchema.pre("save", async function (next) {
           Patient.countDocuments(),
         );
         const seq = await nextSeqPatient(uhidKey, seed);
-        this.UHID = `UH${String(seq).padStart(8, "0")}`;
+        // R7ha — UHID format: UH01, UH02, ..., UH99, UH100, UH101 (auto-grows).
+        // Previously zero-padded to 8 digits (UH00000001) — admin readability
+        // was poor. The 2-digit minimum keeps the early IDs neat; once we
+        // cross 100 the prefix naturally widens.
+        this.UHID = `UH${String(seq).padStart(2, "0")}`;
       }
     } catch (error) {
       return next(error);

@@ -2178,12 +2178,29 @@ async function printReceipt({ patient, visitType, opd, ipd, dayCare, er, service
     <style>
       *{box-sizing:border-box;font-family:'DM Sans',Arial,sans-serif}
       body{margin:0;padding:24px;color:#0f172a}
-      .wrap{max-width:760px;margin:0 auto;border:2px solid ${color};border-radius:10px;overflow:hidden}
-      .hd{padding:20px;background:linear-gradient(135deg,${color},${color}cc);color:#fff;display:flex;justify-content:space-between;align-items:center}
-      .hd-title{font-size:18px;font-weight:800;margin:0}
-      .hd-sub{font-size:11px;opacity:.85}
-      .badge{padding:5px 14px;background:#fff;color:${color};border-radius:20px;font-weight:800;font-size:12px}
-      .body{padding:20px}
+      .wrap{max-width:760px;margin:0 auto;border:2px solid ${color};border-radius:10px;overflow:hidden;background:#fff}
+      /* R7ha — Hospital header. Mirrors PrintShell.jsx layout:
+         logo + body on the left, accreditation/GSTIN block on the right,
+         clean white background, accent border-bottom. The visit-type
+         pill + document title moves to a dedicated title bar (below)
+         instead of being crammed into the sub-line. */
+      .hd{padding:14px 20px;background:#fff;display:flex;align-items:flex-start;gap:14px;border-bottom:2px solid ${color}}
+      .hd-body{flex:1;min-width:0}
+      .hd-title{font-size:18px;font-weight:800;color:${color};margin:0;line-height:1.2}
+      .hd-tag{font-size:11.5px;color:#475569;margin-top:2px}
+      .hd-addr{font-size:11px;color:#64748b;margin-top:3px;line-height:1.4}
+      .hd-meta{font-size:10.5px;color:#475569;text-align:right;min-width:140px;line-height:1.5}
+      .hd-meta strong{color:#0f172a}
+      /* Title bar — document type + serial + visit-type pill on the right.
+         Style mirrors .pr-title-bar from print.css so the slip matches the
+         IPD interim bill, OPD receipt, etc. */
+      .title-bar{display:flex;align-items:center;justify-content:space-between;margin:8px 14px 14px;padding:9px 14px;background:${color};color:#fff;border-radius:6px}
+      .title-bar__title{font-size:13px;font-weight:800;letter-spacing:.4px;text-transform:uppercase}
+      .title-bar__meta{display:flex;align-items:center;gap:10px}
+      .title-bar__no{font-size:11px;font-weight:700;background:rgba(255,255,255,.2);padding:3px 10px;border-radius:4px;letter-spacing:.3px;font-family:'DM Mono',monospace}
+      .title-bar__date{font-size:10.5px;font-weight:600;opacity:.9}
+      .title-bar__pill{padding:4px 12px;background:#fff;color:${color};border-radius:20px;font-weight:800;font-size:11px;letter-spacing:.4px}
+      .body{padding:6px 20px 20px}
       .sec{margin-bottom:18px}
       .sec-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:${color};padding-bottom:6px;border-bottom:1.5px solid ${color}30;margin-bottom:8px}
       table{width:100%;border-collapse:collapse;font-size:12px}
@@ -2201,17 +2218,26 @@ async function printReceipt({ patient, visitType, opd, ipd, dayCare, er, service
       @media print{body{padding:0} .wrap{border:0}}
     </style></head><body><div class="wrap">
       <div class="hd">
-        <div style="display:flex;align-items:center;gap:12px">
-          ${hs.logo ? `<img src="${hs.logo}" alt="" style="max-height:46px;background:#fff;border-radius:6px;padding:4px"/>` : ""}
-          <div>
-            <div class="hd-title">${esc(_hospName)}</div>
-            <div class="hd-sub">${_hospTagline ? esc(_hospTagline) + " · " : ""}Registration Receipt · ${fmt(now)}</div>
-            ${_addrLine ? `<div class="hd-sub">${esc(_addrLine)}</div>` : ""}
-            ${_phoneLine ? `<div class="hd-sub">${esc(_phoneLine)}</div>` : ""}
-            ${hs.gstin ? `<div class="hd-sub">GSTIN: ${esc(hs.gstin)}</div>` : ""}
-          </div>
+        ${hs.logo ? `<img src="${hs.logo}" alt="" style="height:54px;width:auto;border-radius:6px"/>` : ""}
+        <div class="hd-body">
+          <h1 class="hd-title">${esc(_hospName)}</h1>
+          ${_hospTagline ? `<div class="hd-tag">${esc(_hospTagline)}</div>` : ""}
+          ${_addrLine ? `<div class="hd-addr">${esc(_addrLine)}</div>` : ""}
+          ${_phoneLine ? `<div class="hd-addr">${esc(_phoneLine)}</div>` : ""}
         </div>
-        <div class="badge">${visitType.toUpperCase()}</div>
+        <div class="hd-meta">
+          ${hs.gstin ? `<div><strong>GSTIN:</strong> ${esc(hs.gstin)}</div>` : ""}
+          ${hs.registrationNo ? `<div><strong>Reg No:</strong> ${esc(hs.registrationNo)}</div>` : ""}
+          ${hs.panNumber ? `<div><strong>PAN:</strong> ${esc(hs.panNumber)}</div>` : ""}
+        </div>
+      </div>
+      <div class="title-bar">
+        <div class="title-bar__title">Registration Receipt</div>
+        <div class="title-bar__meta">
+          ${patient.UHID ? `<span class="title-bar__no">${esc(patient.UHID)}</span>` : ""}
+          <span class="title-bar__date">${fmt(now)}</span>
+          <span class="title-bar__pill">${visitType.toUpperCase()}</span>
+        </div>
       </div>
       <div class="body">
         ${visitType === "OPD" && tokenNumber ? `
