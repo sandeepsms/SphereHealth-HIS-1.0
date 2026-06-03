@@ -354,6 +354,10 @@ export const ACTIONS = {
   "compliance.firedrill.read":     ["Admin", "Security"],
   // R7bo — NABH Inspection Dashboard (RBS / Emergency / Blood Transfusion).
   "compliance.read":               ["Admin", "Doctor", "Nurse", "MRD"],
+  // R7gw-B9 — NABH register surface gates (mirror of backend); Sentinel,
+  // Hand-Hygiene, HAI, Med-Error, etc.
+  "compliance.nabh.read":          ["Admin", "Doctor", "Nurse", "MRD"],
+  "compliance.nabh.write":         ["Admin", "Doctor", "Nurse", "MRD"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 
   // ── R7bh-F6 — Accountant regulatory + cold-chain (mirror of backend) ─

@@ -626,6 +626,31 @@ async function emitFallRisk(args = {}) {
         ...actorMeta,
       }, ...(highRisk ? [{ action: "ESCALATED", at: new Date(), ...actorMeta }] : [])],
     });
+    // R7gw-B9-T01 — auto-trigger Sentinel-event register when a fall
+    // actually occurred AND a major injury was recorded. Non-blocking.
+    const fallOccurred = !!(data.fallOccurred || data.fallEvent);
+    const majorInjury = !!(data.majorInjury || data.injurySeverity === "Major" || data.injurySeverity === "Severe");
+    if (fallOccurred && majorInjury) {
+      try {
+        await emitSentinelEvent({
+          UHID: assessment.UHID,
+          patientId: assessment.patientId || null,
+          patientName: assessment.patientName || "",
+          admissionId: canonicalAdmissionId,
+          eventType: "Fall-with-Major-Injury",
+          discoveredAt: assessment.recordedAt || new Date(),
+          discoveredByEmpId: assessment.recordedBy || actorMeta.byName || "",
+          severity: "Critical",
+          immediateAction: data.postFallActions || "Post-fall huddle activated; vitals + neuro check; imaging ordered; doctor informed",
+          rcaInitiated: false,
+          sourceRef: `FallRisk:${row._id}`,
+          autoTriggeredFrom: "emitFallRisk",
+          actor: actor || {},
+        });
+      } catch (sentinelErr) {
+        console.error("[nabhRegisterEmitter] emitFallRisk → emitSentinelEvent chain failed:", sentinelErr.message);
+      }
+    }
     return row;
   } catch (e) {
     console.error("[nabhRegisterEmitter] emitFallRisk:", e.message);
@@ -715,6 +740,30 @@ async function emitPressureUlcer(args = {}) {
         ...actorMeta,
       }],
     });
+    // R7gw-B9-T01 — auto-trigger Sentinel-event register when HAPU is
+    // stage III+. Non-blocking — the pressure-ulcer write must succeed
+    // even if the sentinel emit fails.
+    if (sentinel) {
+      try {
+        await emitSentinelEvent({
+          UHID: assessment.UHID,
+          patientId: assessment.patientId || null,
+          patientName: assessment.patientName || "",
+          admissionId: canonicalAdmissionId,
+          eventType: "HAPU-stage3-4",
+          discoveredAt: assessment.recordedAt || new Date(),
+          discoveredByEmpId: assessment.recordedBy || actorMeta.byName || "",
+          severity: "Critical",
+          immediateAction: `HAPU detected stage ${ulcerStage} at ${data.ulcerSite || "site unknown"}; repositioning bundle activated; wound care + nutrition consult triggered`,
+          rcaInitiated: false,
+          sourceRef: `PressureUlcer:${row._id}`,
+          autoTriggeredFrom: "emitPressureUlcer",
+          actor: actor || {},
+        });
+      } catch (sentinelErr) {
+        console.error("[nabhRegisterEmitter] emitPressureUlcer → emitSentinelEvent chain failed:", sentinelErr.message);
+      }
+    }
     return row;
   } catch (e) {
     console.error("[nabhRegisterEmitter] emitPressureUlcer:", e.message);
@@ -1842,6 +1891,679 @@ async function emitAntimicrobial(args = {}) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+// R7gw-B9-T01 — emitSentinelEvent (NABH AAC.7 + MOM.4)
+// ═════════════════════════════════════════════════════════════════════════
+// Sentinel-event registry. Auto-triggered from emitPressureUlcer (HAPU
+// stage III+) and any emitFallRisk caller that records a major-injury fall.
+// Also callable manually by the route layer for incidents not surfaced by
+// existing emit hooks.
+//
+// Idempotency: keyed on sourceRef (server-generated UUID via crypto.randomUUID
+// or caller-supplied "{originatingModel}:{originatingId}:{eventType}" string).
+// ═════════════════════════════════════════════════════════════════════════
+const SentinelEventRegister = require("../../models/Compliance/SentinelEventRegisterModel");
+const _crypto = require("crypto");
+
+async function emitSentinelEvent(payload = {}) {
+  try {
+    if (!payload.UHID) return null;
+    if (!payload.eventType) return null;
+
+    const sourceRef = payload.sourceRef || _crypto.randomUUID();
+
+    // Idempotency by sourceRef
+    try {
+      const existing = await SentinelEventRegister.findOne({ sourceRef }).lean();
+      if (existing) return existing;
+    } catch (lookupErr) {
+      // non-fatal — fall through and attempt the create
+    }
+
+    const actorMeta = _actor(payload.actor || {});
+    const discoveredAt = payload.discoveredAt ? new Date(payload.discoveredAt) : new Date();
+
+    const row = await SentinelEventRegister.create({
+      patientId: payload.patientId || null,
+      UHID: String(payload.UHID).toUpperCase().trim(),
+      patientName: payload.patientName || "",
+      admissionId: payload.admissionId || null,
+      eventType: payload.eventType,
+      discoveredAt,
+      discoveredByEmpId: payload.discoveredByEmpId || actorMeta.byName || "",
+      severity: payload.severity || "Critical",
+      immediateAction: payload.immediateAction || "",
+      rcaInitiated: !!payload.rcaInitiated,
+      rcaId: payload.rcaId || null,
+      status: payload.status || "Open",
+      sourceRef,
+      hospitalId: payload.hospitalId || null,
+      emittedAt: new Date(),
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        byUserId: actorMeta.byUserId,
+        byName: actorMeta.byName,
+        byRole: actorMeta.byRole,
+        notes: `eventType=${payload.eventType} severity=${payload.severity || "Critical"}${payload.autoTriggeredFrom ? ` autoFrom=${payload.autoTriggeredFrom}` : ""}`,
+      }, ...(payload.rcaInitiated ? [{
+        action: "RCA_INITIATED",
+        at: new Date(),
+        byUserId: actorMeta.byUserId,
+        byName: actorMeta.byName,
+        byRole: actorMeta.byRole,
+      }] : [])],
+    });
+    return row;
+  } catch (e) {
+    if (e?.code === 11000) return null;
+    // eslint-disable-next-line no-console
+    console.error("[nabhRegisterEmitter] emitSentinelEvent FAILED:", e.message, "— UHID:", payload?.UHID, "eventType:", payload?.eventType);
+    return null;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// R7gw-B9-B9-T06 — emitHandHygiene (NABH HIC.3 — Hand Hygiene Compliance)
+// ═════════════════════════════════════════════════════════════════════════
+// IC officer fills via mobile-friendly observation form. No auto-trigger from
+// upstream clinical writes — every row is a manual POST. UHID is OPTIONAL
+// because most HH observations are anonymous (HCW × moment × ward). When the
+// observer chose to attribute the row to a specific patient (e.g. isolation-
+// case audit) we link by UHID + admissionId for filter-by-patient queries.
+const HandHygieneRegister = require("../../models/Compliance/HandHygieneRegisterModel");
+const _crypto_HH_R7gwT06 = require("crypto");
+
+async function emitHandHygiene(args = {}) {
+  try {
+    const { observation = {}, actor = {} } = args;
+    if (!observation.role || !observation.moment) return null;
+    if (typeof observation.complied !== "boolean") return null;
+
+    // Idempotency: server-generated UUID if caller didn't supply one; lets
+    // mobile-form retries coalesce into a single row.
+    const sourceRef = observation.sourceRef || _crypto_HH_R7gwT06.randomUUID();
+    try {
+      const existing = await HandHygieneRegister.findOne({ sourceRef }).lean();
+      if (existing) return existing;
+    } catch (_) { /* non-fatal */ }
+
+    const actorMeta = _actor(actor);
+    const observedAtVal = observation.observedAt ? new Date(observation.observedAt) : new Date();
+
+    // UHID is optional; only resolve canonical admission when present.
+    let canonicalAdmissionId = null;
+    if (observation.UHID) {
+      canonicalAdmissionId = await _resolveCanonicalAdmissionId(
+        observation.UHID,
+        observation.admissionId || null,
+      );
+    }
+
+    const row = await HandHygieneRegister.create({
+      patientId: observation.patientId || null,
+      UHID: observation.UHID || "",
+      patientName: observation.patientName || "",
+      admissionId: canonicalAdmissionId,
+      observedAt: observedAtVal,
+      observedByEmpId: observation.observedByEmpId || actor.empId || "",
+      observedByName: observation.observedByName || actorMeta.byName || "",
+      observedByUserId: actorMeta.byUserId,
+      ward: observation.ward || "",
+      role: observation.role,
+      moment: observation.moment,
+      complied: !!observation.complied,
+      technique: observation.technique || (observation.complied ? "Rub" : "NotDone"),
+      notes: observation.notes || "",
+      status: observation.status || "Closed",
+      sourceRef,
+      sourceType: observation.sourceType || "Manual",
+      emittedAt: new Date(),
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `role=${observation.role} moment=${observation.moment} complied=${observation.complied}`,
+      }],
+      hospitalId: observation.hospitalId || null,
+    });
+    return row;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error("[nabhRegisterEmitter] emitHandHygiene FAILED:", e.message);
+    return null;
+  }
+}
+
+// R7gw-B9-T02 — emitNearMissEvent — NABH QPS.5 near-miss register
+// Manual-entry only — no auto-trigger from existing emit* chain. The route
+// layer calls this directly when the compliance page submits a new row.
+// Bails silently on missing eventType/observedAt/severityIfMissed/observedByEmpId
+// because the schema requires them and an incomplete payload would throw a
+// ValidationError that masks the real caller bug. UHID is optional (some
+// near-misses pre-date positive ID).
+async function emitNearMissEvent(payload = {}) {
+  try {
+    const NearMissEventRegister = require("../../models/Compliance/NearMissEventRegisterModel");
+    if (!payload.eventType) return null;
+    if (!payload.observedAt) return null;
+    if (!payload.severityIfMissed) return null;
+    if (!payload.observedByEmpId) return null;
+
+    // Idempotency — find-or-create by sourceRef. Pre-existing rows are
+    // returned unchanged so a duplicate POST never doubles a near-miss.
+    if (payload.sourceRef) {
+      try {
+        const existing = await NearMissEventRegister.findOne({ sourceRef: payload.sourceRef }).lean();
+        if (existing) return existing;
+      } catch (_) { /* non-fatal — fall through to create */ }
+    }
+
+    const actorMeta = _actor(payload.actor || {});
+    const canonicalAdmissionId = payload.UHID
+      ? await _resolveCanonicalAdmissionId(payload.UHID, payload.admissionId || null)
+      : (payload.admissionId || null);
+
+    const row = await NearMissEventRegister.create({
+      patientId: payload.patientId || null,
+      UHID: payload.UHID || "",
+      patientName: payload.patientName || "",
+      admissionId: canonicalAdmissionId,
+      eventType: payload.eventType,
+      observedAt: new Date(payload.observedAt),
+      observedByEmpId: String(payload.observedByEmpId).trim(),
+      observedByName: payload.observedByName || actorMeta.byName || "",
+      observedByRole: payload.observedByRole || actorMeta.byRole || "",
+      observedByUserId: _asObjectId(payload.observedByUserId) || _asObjectId(actorMeta.byUserId),
+      severityIfMissed: payload.severityIfMissed,
+      interventionTaken: String(payload.interventionTaken || "").trim(),
+      recommendation: String(payload.recommendation || "").trim(),
+      linkedSentinelId: _asObjectId(payload.linkedSentinelId),
+      status: payload.status || "Open",
+      sourceRef: payload.sourceRef || undefined, // let schema default → crypto.randomUUID()
+      sourceType: payload.sourceType || "Manual",
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        reason: `eventType=${payload.eventType} severity=${payload.severityIfMissed}`,
+      }, ...(payload.linkedSentinelId ? [{
+        action: "LINKED_TO_SENTINEL",
+        at: new Date(),
+        ...actorMeta,
+        reason: `linked sentinelId=${payload.linkedSentinelId}`,
+      }] : [])],
+      hospitalId: payload.hospitalId || null,
+    });
+    return row;
+  } catch (e) {
+    if (e?.code === 11000) return null; // unique sourceRef collision — idempotent no-op
+    // eslint-disable-next-line no-console
+    console.error("[nabhRegisterEmitter] emitNearMissEvent FAILED:", e.message);
+    return null;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// R7gw-B9-T04 — emitMedicationError (NABH MOM.4)
+// ═════════════════════════════════════════════════════════════════════════
+// Auto-triggered from MAR controller when administrationRecord.nurseError is
+// true on a dose. Severity NCC E-I additionally chains to emitSentinelEvent
+// with eventType="Medication-Error-NCC-E-plus".
+//
+// Idempotency: sourceRef (server-generated UUID via crypto.randomUUID when
+// the caller did not supply one). _crypto is already required by the
+// SentinelEvent block above — reuse it.
+// ═════════════════════════════════════════════════════════════════════════
+const MedicationErrorRegister = require("../../models/Compliance/MedicationErrorRegisterModel");
+
+async function emitMedicationError(args = {}) {
+  try {
+    const { patient = {}, admission = null, error = {}, actor = {} } = args;
+    if (!patient.UHID) return null;
+    if (!error.errorPhase || !error.severityNCC) return null;
+
+    const actorMeta = _actor(actor);
+    const canonicalAdmissionId = await _resolveCanonicalAdmissionId(
+      patient.UHID,
+      admission?._id || error.admissionId || null,
+    );
+
+    // Idempotency by sourceRef (server-generated UUID when absent)
+    const sourceRef = error.sourceRef || _crypto.randomUUID();
+    try {
+      const existing = await MedicationErrorRegister.findOne({ sourceRef }).lean();
+      if (existing) return existing;
+    } catch (_) { /* non-fatal */ }
+
+    const severity = String(error.severityNCC).toUpperCase();
+    const sentinelEligible = ["E", "F", "G", "H", "I"].includes(severity);
+
+    // Auto-derive harm class when not passed explicitly
+    const patientHarm = error.patientHarm
+      || (severity === "I" ? "Death"
+        : ["G", "H"].includes(severity) ? "Major"
+        : ["E", "F"].includes(severity) ? "Minor"
+        : "None");
+
+    const row = await MedicationErrorRegister.create({
+      patientId: patient._id || null,
+      UHID: String(patient.UHID).toUpperCase().trim(),
+      patientName: patient.fullName || patient.name || "",
+      admissionId: canonicalAdmissionId,
+      admissionNumber: admission?.admissionNumber || error.admissionNumber || "",
+      errorPhase: error.errorPhase,
+      medicationName: error.medicationName || "",
+      expectedDose: error.expectedDose || "",
+      actualDose: error.actualDose || "",
+      expectedRoute: error.expectedRoute || "",
+      actualRoute: error.actualRoute || "",
+      severityNCC: severity,
+      actionTakenImmediate: error.actionTakenImmediate || "",
+      patientHarm,
+      reportedByEmpId: error.reportedByEmpId || actor.empId || "",
+      reportedByName: error.reportedByName || actorMeta.byName || "",
+      reportedByUserId: _asObjectId(actorMeta.byUserId),
+      reportedByRole: actorMeta.byRole,
+      reportedAt: error.reportedAt ? new Date(error.reportedAt) : new Date(),
+      sentinelFlag: sentinelEligible,
+      sourceRef,
+      sourceType: error.sourceType || "Manual",
+      status: "Open",
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `phase=${error.errorPhase} severity=${severity} harm=${patientHarm}`,
+      }, ...(sentinelEligible ? [{
+        action: "ESCALATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `auto-escalate severity ${severity} → Sentinel`,
+      }] : [])],
+    });
+
+    // Sentinel-event chain — severity E-I = NABH sentinel per MOM.4. Non-blocking;
+    // the medication-error write must succeed even if the sentinel emit fails.
+    if (sentinelEligible) {
+      try {
+        const sentinelRow = await emitSentinelEvent({
+          UHID: patient.UHID,
+          patientId: patient._id || null,
+          patientName: patient.fullName || patient.name || "",
+          admissionId: canonicalAdmissionId,
+          eventType: "Medication-Error-NCC-E-plus",
+          discoveredAt: error.reportedAt ? new Date(error.reportedAt) : new Date(),
+          discoveredByEmpId: error.reportedByEmpId || actor.empId || actorMeta.byName || "",
+          severity: ["G", "H", "I"].includes(severity) ? "Critical" : "Major",
+          immediateAction: error.actionTakenImmediate
+            || `NCC severity ${severity} medication error · drug=${error.medicationName || "?"} expected=${error.expectedDose || "?"} actual=${error.actualDose || "?"}`,
+          rcaInitiated: false,
+          sourceRef: `MedicationError:${row._id}:${severity}`,
+          autoTriggeredFrom: "MedicationError",
+          actor,
+        });
+        if (sentinelRow?._id) {
+          row.sentinelEventRef = sentinelRow._id;
+          await row.save();
+        }
+      } catch (sentinelErr) {
+        // eslint-disable-next-line no-console
+        console.error("[nabhRegisterEmitter] emitMedicationError → emitSentinelEvent chain failed:", sentinelErr.message);
+      }
+    }
+
+    return row;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error("[nabhRegisterEmitter] emitMedicationError FAILED:", e.message, "— UHID:", args?.patient?.UHID);
+    return null;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// R7gw-B9-B9-T07 — emitLAMA (NABH AAC.4 / Leave Against Medical Advice)
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Auto-populated when a discharge is finalised with disposition === "LAMA"
+// (or dischargeType ∈ {"LAMA","DAMA"} or conditionOnDischarge === "LAMA").
+// The discharge controller force-routes the LAMA capture form before
+// finalize so the payload below is populated by the time we emit.
+//
+// Idempotency: keyed on sourceRef (find-or-create). If the caller doesn't
+// supply one, the schema default mints a UUID — so the row is still unique
+// even on retry storms.
+//
+// Non-blocking: try/catch → returns null on failure. Never rolls back the
+// underlying discharge write. Pairs with emitMortality on the "finalize
+// discharge" rail (death goes to mortality, LAMA goes here).
+
+const LAMARegister = require("../../models/Compliance/LAMARegisterModel");
+
+async function emitLAMA(args = {}) {
+  try {
+    const {
+      patient = {},
+      admission = null,
+      dischargeSummary = null,
+      lama = {},
+      actor = {},
+    } = args;
+
+    if (!patient.UHID) return null;
+
+    const actorMeta = _actor(actor);
+    const canonicalAdmissionId = await _resolveCanonicalAdmissionId(
+      patient.UHID,
+      admission?._id || dischargeSummary?.admissionId || lama?.admissionId || null,
+    );
+
+    // Source-ref preference: explicit lama.sourceRef > deterministic
+    // "discharge:<id>" so a discharge re-finalize finds the same row.
+    // Fall back to the schema's UUID default when neither is available.
+    const sourceRef = lama.sourceRef
+      || (dischargeSummary?._id ? `discharge:${String(dischargeSummary._id)}` : null);
+
+    if (sourceRef) {
+      try {
+        const existing = await LAMARegister.findOne({ sourceRef }).lean();
+        if (existing) return existing;
+      } catch (_) { /* lookup failure → fall through to create */ }
+    }
+
+    const lamaAtVal = lama.lamaAt
+      ? new Date(lama.lamaAt)
+      : (dischargeSummary?.dischargeDate ? new Date(dischargeSummary.dischargeDate) : new Date());
+
+    const row = await LAMARegister.create({
+      patientId: patient._id || null,
+      UHID: patient.UHID,
+      patientName: patient.fullName || patient.name || dischargeSummary?.patientName || "",
+      age: patient.age || dischargeSummary?.age || null,
+      sex: patient.gender || patient.sex || dischargeSummary?.gender || "",
+      admissionId: canonicalAdmissionId,
+      admissionNumber: admission?.admissionNumber || dischargeSummary?.admissionNumber || "",
+
+      lamaAt: lamaAtVal,
+      lamaReason: lama.lamaReason || dischargeSummary?.lamaReason || "",
+
+      patientSignature:  lama.patientSignature  || "",
+      witnessName:       lama.witnessName       || "",
+      witnessSignature:  lama.witnessSignature  || "",
+
+      doctorCounsellingNotes: lama.doctorCounsellingNotes
+        || dischargeSummary?.doctorCounsellingNotes || "",
+      risksExplained:    !!(lama.risksExplained ?? dischargeSummary?.risksExplained),
+      familyInformed:    !!(lama.familyInformed ?? dischargeSummary?.familyInformed),
+
+      policeNotified:    !!(lama.policeNotified ?? dischargeSummary?.policeNotified),
+      policeStation:     lama.policeStation || dischargeSummary?.policeStation || "",
+      policeFIRNo:       lama.policeFIRNo   || dischargeSummary?.policeFIRNo   || "",
+
+      transferRequested: !!(lama.transferRequested ?? dischargeSummary?.transferRequested),
+      transferTo:        lama.transferTo || dischargeSummary?.transferTo || "",
+
+      attendingDoctor:   admission?.attendingDoctor || dischargeSummary?.attendingDoctor || "",
+      attendingDoctorId: _asObjectId(admission?.attendingDoctorId || dischargeSummary?.attendingDoctorId),
+      counsellingDoctor: lama.counsellingDoctor || actorMeta.byName || "",
+      counsellingDoctorId: _asObjectId(lama.counsellingDoctorId) || _asObjectId(actorMeta.byUserId),
+      ward:              admission?.ward || admission?.wardName || "",
+
+      // sourceRef — undefined here means "let schema default mint a UUID".
+      sourceRef:         sourceRef || undefined,
+      sourceType:        lama.sourceType || (dischargeSummary ? "DischargeSummary" : "Manual"),
+      dischargeSummaryId: dischargeSummary?._id || null,
+
+      status:            "Open",
+      emittedAt:         new Date(),
+
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        reason: lama.lamaReason || "LAMA at discharge",
+        notes: `source=${dischargeSummary ? "DischargeSummary" : "Manual"} risks=${!!lama.risksExplained} family=${!!lama.familyInformed} police=${!!lama.policeNotified}`,
+      }],
+
+      hospitalId:        lama.hospitalId || null,
+      createdBy:         _asObjectId(actorMeta.byUserId),
+      createdByName:     actorMeta.byName,
+      createdByRole:     actorMeta.byRole,
+    });
+    return row;
+  } catch (e) {
+    // Duplicate sourceRef (E11000) → treat as no-op + return the existing.
+    if (e?.code === 11000) {
+      try {
+        const sref = args?.lama?.sourceRef
+          || (args?.dischargeSummary?._id ? `discharge:${String(args.dischargeSummary._id)}` : null);
+        if (sref) return await LAMARegister.findOne({ sourceRef: sref }).lean();
+      } catch (_) { /* ignore */ }
+      return null;
+    }
+    console.error("[nabhRegisterEmitter] emitLAMA FAILED:", e.message, "— UHID:", args?.patient?.UHID);
+    return null;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// R7gw-B9-B9-T03 — emitRCA (NABH QPS.1 Root-Cause Analysis register)
+// ═════════════════════════════════════════════════════════════════════════
+// emitRCA creates an RCA workflow row keyed by a server-supplied sourceRef
+// (UUID) for idempotency. Called either:
+//   (a) Automatically from emitSentinelEvent immediately after a sentinel
+//       row lands — pre-creates the RCA in "Initiated" status with the
+//       linkedSentinelId set so the Quality officer sees the task on their
+//       worklist without manually opening it.
+//   (b) Manually from POST /api/rca-register when the QPS chair logs an
+//       RCA triggered by a serious near-miss or recurrent deviation that
+//       didn't trip a sentinel.
+//
+// UHID is optional — many RCAs are systemic (no single patient).
+// ═════════════════════════════════════════════════════════════════════════
+const RCARegister = require("../../models/Compliance/RCARegisterModel");
+const _crypto_RCA_R7gwB9T03 = require("crypto");
+
+async function emitRCA(payload = {}) {
+  try {
+    const {
+      patient = {},
+      admission = null,
+      linkedSentinelId = null,
+      linkedNearMissId = null,
+      initiatedAt = new Date(),
+      initiatedByEmpId = "",
+      initiatedByName = "",
+      teamMembers = [],
+      timeline = [],
+      contributingFactors = [],
+      rootCauses = [],
+      correctiveActions = [],
+      preventiveActions = [],
+      status = "Open",
+      sourceRef = "",
+      sourceType = "Manual",
+      actor = {},
+    } = payload;
+
+    // Idempotency: dedupe by caller-supplied sourceRef when present
+    const finalSourceRef = sourceRef || _crypto_RCA_R7gwB9T03.randomUUID();
+    try {
+      const existing = await RCARegister.findOne({ sourceRef: finalSourceRef }).lean();
+      if (existing) return existing;
+    } catch (_) { /* lookup failure non-fatal */ }
+
+    const actorMeta = _actor(actor);
+
+    // R7bw — resolve canonical admission when UHID is given so the RCA
+    // links to the live admission post-dedupe. RCA may legitimately have
+    // no UHID (systemic root-cause review) so this is conditional.
+    let admissionIdRCA = null;
+    if (patient.UHID) {
+      try {
+        admissionIdRCA = await _resolveCanonicalAdmissionId(
+          patient.UHID,
+          admission?._id || null,
+        );
+      } catch (_) { admissionIdRCA = admission?._id || null; }
+    }
+
+    const row = await RCARegister.create({
+      patientId: patient._id || null,
+      UHID: patient.UHID || "",
+      patientName: patient.fullName || patient.name || "",
+      admissionId: admissionIdRCA,
+      linkedSentinelId: linkedSentinelId || null,
+      linkedNearMissId: linkedNearMissId || null,
+      initiatedAt: new Date(initiatedAt),
+      initiatedByEmpId: initiatedByEmpId || actor.empId || "",
+      initiatedByName: initiatedByName || actorMeta.byName || "",
+      teamMembers: Array.isArray(teamMembers) ? teamMembers : [],
+      timeline: Array.isArray(timeline) ? timeline : [],
+      contributingFactors: Array.isArray(contributingFactors) ? contributingFactors : [],
+      rootCauses: Array.isArray(rootCauses) ? rootCauses : [],
+      correctiveActions: Array.isArray(correctiveActions) ? correctiveActions : [],
+      preventiveActions: Array.isArray(preventiveActions) ? preventiveActions : [],
+      status,
+      sourceRef: finalSourceRef,
+      sourceType,
+      hospitalId: payload.hospitalId || null,
+      emittedAt: new Date(),
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        ...actorMeta,
+        notes: `source=${sourceType} sentinel=${linkedSentinelId || "-"}`,
+      }],
+    });
+    return row;
+  } catch (e) {
+    if (e?.code === 11000) return null; // dupe race
+    // eslint-disable-next-line no-console
+    console.error("[nabhRegisterEmitter] emitRCA FAILED:", e.message);
+    return null;
+  }
+}
+
+// R7gw-B9-B9-T03 — auto-trigger wrapper. Wraps emitSentinelEvent so every
+// sentinel row pre-creates the linked RCA workflow in Initiated status.
+// Route layer / external callers may use this wrapper instead of calling
+// emitSentinelEvent directly when they want the post-sentinel RCA bootstrap.
+//
+// The RCA pre-creation is fire-and-forget; failure never blocks the
+// sentinel row from being returned to the caller.
+async function emitSentinelEventWithRCA(payload = {}) {
+  const sentinelRow = await emitSentinelEvent(payload);
+  if (!sentinelRow?._id) return sentinelRow;
+  // fire-and-forget — RCA pre-creates in the background.
+  emitRCA({
+    patient: {
+      _id: sentinelRow.patientId || null,
+      UHID: sentinelRow.UHID || "",
+      fullName: sentinelRow.patientName || "",
+    },
+    admission: sentinelRow.admissionId ? { _id: sentinelRow.admissionId } : null,
+    linkedSentinelId: sentinelRow._id,
+    initiatedAt: sentinelRow.discoveredAt || sentinelRow.createdAt || new Date(),
+    initiatedByEmpId: sentinelRow.discoveredByEmpId || "",
+    status: "Initiated",
+    sourceRef: `sentinel:${sentinelRow._id.toString()}`,
+    sourceType: "SentinelEvent",
+    actor: payload.actor || {},
+  }).catch((e) => {
+    // eslint-disable-next-line no-console
+    console.error("[nabhRegisterEmitter] emitSentinelEventWithRCA → RCA chain failed:", e.message);
+  });
+  return sentinelRow;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// R7gw-B9-T05 — emitHAISurveillance (NABH HIC.4 — HAI Surveillance)
+// ═════════════════════════════════════════════════════════════════════════
+// Healthcare-Associated Infection surveillance row. Auto-triggered from
+// the ICU-bundle save path when CAUTI compliance <100 AND Foley dwellDays>3
+// AND a positive UTI culture is present; also callable manually for SSI/
+// CDI/MRSA-bacteremia events surfaced from culture-result feeds.
+//
+// Idempotency: keyed on sourceRef. Caller may supply a deterministic
+// "{HAIType}:{ICUBundleId|UHID}:{onsetDate}" string for auto-triggers;
+// default is crypto.randomUUID() for manual entries.
+// ═════════════════════════════════════════════════════════════════════════
+const HAISurveillanceRegister = require("../../models/Compliance/HAISurveillanceRegisterModel");
+// _crypto already required above by Sentinel/MedError emitter; re-use if
+// defined, otherwise pull it fresh. Wrapped in a typeof guard so this
+// module loads cleanly even when sibling sections haven't been merged yet.
+const _haiCrypto = (typeof _crypto !== "undefined" && _crypto && _crypto.randomUUID)
+  ? _crypto
+  : require("crypto");
+
+async function emitHAISurveillance(payload = {}) {
+  try {
+    if (!payload.UHID) return null;
+    if (!payload.HAIType) return null;
+
+    const sourceRef = payload.sourceRef || _haiCrypto.randomUUID();
+
+    // Idempotency by sourceRef — bail to existing row on retry
+    try {
+      const existing = await HAISurveillanceRegister.findOne({ sourceRef }).lean();
+      if (existing) return existing;
+    } catch (_lookupErr) {
+      // non-fatal — fall through and attempt the create
+    }
+
+    const actorMeta = _actor(payload.actor || {});
+    const onsetDate = payload.onsetDate ? new Date(payload.onsetDate) : new Date();
+    const UHID = String(payload.UHID).toUpperCase().trim();
+
+    // Canonical active admission resolution so the row links to the
+    // keeper admission even when the caller carries a stale id (post-dedupe).
+    const canonicalAdmissionId = await _resolveCanonicalAdmissionId(
+      UHID,
+      payload.admissionId || null,
+    );
+
+    const row = await HAISurveillanceRegister.create({
+      patientId: payload.patientId || null,
+      UHID,
+      patientName: payload.patientName || "",
+      admissionId: canonicalAdmissionId,
+      HAIType: payload.HAIType,
+      onsetDate,
+      identifiedByEmpId: payload.identifiedByEmpId || actorMeta.byName || "",
+      deviceDays: payload.deviceDays != null ? Number(payload.deviceDays) : null,
+      cultureSent: !!payload.cultureSent,
+      organismIsolated: payload.organismIsolated || "",
+      antibioticPrescribed: payload.antibioticPrescribed || "",
+      outcome: payload.outcome || "",
+      linkedICUBundleId: payload.linkedICUBundleId || null,
+      status: payload.status || "Open",
+      sourceRef,
+      hospitalId: payload.hospitalId || null,
+      emittedAt: new Date(),
+      auditTrail: [{
+        action: "CREATED",
+        at: new Date(),
+        byUserId: actorMeta.byUserId,
+        byName: actorMeta.byName,
+        byRole: actorMeta.byRole,
+        notes: `HAIType=${payload.HAIType}${payload.linkedICUBundleId ? ` linkedICUBundle=${payload.linkedICUBundleId}` : ""}${payload.autoTriggeredFrom ? ` autoFrom=${payload.autoTriggeredFrom}` : ""}`,
+      }],
+    });
+    return row;
+  } catch (e) {
+    if (e?.code === 11000) return null;
+    // eslint-disable-next-line no-console
+    console.error(
+      "[nabhRegisterEmitter] emitHAISurveillance FAILED:",
+      e.message,
+      "— UHID:", payload?.UHID,
+      "HAIType:", payload?.HAIType,
+    );
+    return null;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 // Exports
 // ═════════════════════════════════════════════════════════════════════════
 
@@ -1866,6 +2588,21 @@ module.exports = {
   emitAntimicrobial,
   // R7en — ECG register
   emitECG,
+  // R7gw-B9-T01 — Sentinel-event register
+  emitSentinelEvent,
+  // R7gw-B9-B9-T06 — Hand Hygiene register (NABH HIC.3)
+  emitHandHygiene,
+  // R7gw-B9-T02 — Near-Miss Event register (NABH QPS.5)
+  emitNearMissEvent,
+  // R7gw-B9-T04 — Medication Error register (NABH MOM.4)
+  emitMedicationError,
+  // R7gw-B9-B9-T07 — LAMA / DAMA register (NABH AAC.4)
+  emitLAMA,
+  // R7gw-B9-B9-T03 — RCA register (NABH QPS.1) + sentinel→RCA wrapper
+  emitRCA,
+  emitSentinelEventWithRCA,
+  // R7gw-B9-T05 — HAI Surveillance register (NABH HIC.4)
+  emitHAISurveillance,
   // Helpers exposed for testing / re-use
   isAntibiotic,
   _deriveEcgFlags,

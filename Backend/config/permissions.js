@@ -499,6 +499,12 @@ const ACTIONS = {
   // by domain: RBS via vitals.write, transfusion via doctor-orders.write,
   // emergency is auto-populated and not user-written.
   "compliance.read":               ["Admin", "Doctor", "Nurse", "MRD"],
+  // R7gw-B9 — NABH register surface gates (Sentinel-Event, Medication-Error,
+  // HAI Surveillance, Hand Hygiene, LAMA, Near-Miss/RCA, etc.). Reads open
+  // to the same surveyor + clinical cohort that uses compliance.read; writes
+  // include bedside clinicians who first detect / log the incident.
+  "compliance.nabh.read":          ["Admin", "Doctor", "Nurse", "MRD"],
+  "compliance.nabh.write":         ["Admin", "Doctor", "Nurse", "MRD"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 
   // ── R7bh-F6 — Accountant regulatory + cold-chain (NABH + GST + IT Act) ─

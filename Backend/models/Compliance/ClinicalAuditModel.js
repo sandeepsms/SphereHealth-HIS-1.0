@@ -108,6 +108,13 @@ const ClinicalAuditSchema = new mongoose.Schema(
         "ICU_BUNDLE_SHIFT_FINALIZED",
         "ICU_BUNDLE_VAP_NON_COMPLIANT",
         "ICU_BUNDLE_CLABSI_NON_COMPLIANT",
+        // R7gw-B9-T08 — extend non-compliance signalling to the remaining
+        // four bundles so HIC.5 captures every per-bundle gap, not just
+        // VAP+CLABSI. CAUTI also feeds the HAI auto-trigger above.
+        "ICU_BUNDLE_CAUTI_NON_COMPLIANT",
+        "ICU_BUNDLE_DVT_NON_COMPLIANT",
+        "ICU_BUNDLE_SEPSIS_NON_COMPLIANT",
+        "ICU_BUNDLE_SUP_NON_COMPLIANT",
 
         // B1-T03 — Medical Certificate forgery guard. Admins may issue
         // a certificate on behalf of a doctor with a written justification;
@@ -115,6 +122,44 @@ const ClinicalAuditSchema = new mongoose.Schema(
         // floor because the cert is a legal instrument (MCI + Indian
         // Medical Records Act 1956 §3).
         "MEDICAL_CERTIFICATE_OVERRIDE_ISSUED",
+
+        // R7gw-B9-T01 — Sentinel Event Register (NABH AAC.7 + MOM.4).
+        // Logged whenever a sentinel event is recorded (auto-emit from
+        // HAPU-stage3+ or fall-with-major-injury, or manual entry by
+        // Quality / Compliance officer).
+        "SENTINEL_EVENT_LOGGED",
+
+        // R7gw-B9-T02 — Near-Miss Event Register (NABH QPS.5). Logged
+        // whenever a near-miss is recorded (manual entry only — wrong-
+        // medication intercepted, prevented fall, equipment-malfunction
+        // detected, etc.). Feeds the QPS Committee safety-culture trend.
+        "NEAR_MISS_EVENT_LOGGED",
+
+        // R7gw-B9-T04 — Medication Error Register (NABH MOM.4). Logged
+        // whenever a medication error is recorded (auto-emit from MAR
+        // nurseError=true or manual compliance-officer entry). NCC-MERP
+        // severity E-I additionally fires SENTINEL_EVENT_LOGGED.
+        "MEDICATION_ERROR_LOGGED",
+
+        // R7gw-B9-B9-T06 — Hand Hygiene observation (NABH HIC.3).
+        // Logged whenever an IC officer records a WHO 5-Moments
+        // observation. Provides chronological surveyor trail of who
+        // observed what, when, complied y/n.
+        "HAND_HYGIENE_OBSERVED",
+
+        // R7gw-B9-B9-T03 — Root Cause Analysis Register (NABH QPS.1).
+        // RCA workflow events — auto-pre-create from sentinel,
+        // manual entry by QPS chair, status transitions through to
+        // Closed with CAPA filed + verified.
+        "RCA_CREATED",
+        "RCA_STATUS_CHANGED",
+        "RCA_CLOSED",
+
+        // R7gw-B9-T05 — HAI Surveillance Register (NABH HIC.4).
+        // Logged whenever an HAI event is recorded (auto-emit from
+        // ICU bundle CAUTI breach + positive UTI culture, or manual
+        // IC-officer entry for SSI/CDI/MRSA-bacteremia from lab feed).
+        "HAI_SURVEILLANCE_LOGGED",
       ],
       index: true,
     },

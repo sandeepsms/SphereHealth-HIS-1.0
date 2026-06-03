@@ -18,6 +18,15 @@ const ICUBundle      = require("../../models/Clinical/ICUBundleModel");
 const Admission      = require("../../models/Patient/admissionModel");
 const retryVersionError = require("../../utils/retryVersionError");
 const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+// R7gw-B9-T05 — HAI Surveillance auto-trigger from the ICU bundle path.
+// When CAUTI compliance <100 AND Foley dwellDays>3 AND a positive UTI
+// culture is present, emit an HAI surveillance row (HIC.4). Wrapped in
+// a try/require so a half-merged emitter doesn't crash boot here.
+let _emitHAISurveillance = null;
+try {
+  // eslint-disable-next-line global-require
+  _emitHAISurveillance = require("../../services/Compliance/nabhRegisterEmitter").emitHAISurveillance || null;
+} catch (_) { /* emitter not present yet */ }
 
 const BUNDLE_KEYS = ICUBundle.BUNDLE_KEYS;
 const DEFAULT_ITEMS = ICUBundle.DEFAULT_ITEMS;
@@ -407,43 +416,90 @@ exports.finalize = async (req, res) => {
       },
     });
 
-    // Per-bundle non-compliance signals — VAP and CLABSI specifically
-    // because those two have the highest mortality + are the marquee
-    // metrics on the NABH HIC.5 register. Fire only when the bundle
-    // was *applicable* (skip patients not on vent / no central line).
-    if (sheet.vap?.applicable && (sheet.vap.compliancePct ?? 0) < 100) {
-      emitClinicalAudit({
-        req,
-        event: "ICU_BUNDLE_VAP_NON_COMPLIANT",
-        UHID: sheet.UHID,
-        admissionId: sheet.admissionId,
-        patientId: sheet.patientId,
-        patientName: sheet.patientName,
-        targetType: "ICUBundle",
-        targetId: sheet._id,
-        after: {
-          date: sheet.date, shift: sheet.shift,
-          compliancePct: sheet.vap.compliancePct,
-          missed: (sheet.vap.items || []).filter(i => !i.checked).map(i => i.key),
-        },
-      });
+    // R7gw-B9-T08 — Per-bundle non-compliance signals for ALL six bundles
+    // (VAP, CAUTI, CLABSI, DVT, Sepsis, SUP). Previously only VAP+CLABSI
+    // were emitted, which left CAUTI / DVT / Sepsis / SUP missed-items
+    // invisible to the NABH HIC.5 Infection-Control register downstream.
+    // Fire only when the bundle was *applicable* (skip patients not on
+    // vent / no foley / no central line / etc) and compliancePct < 100.
+    // Each per-bundle emit is try/wrapped so an enum/audit failure on
+    // one bundle never blocks the others (defensive — the controller
+    // already returned the finalized sheet to the client).
+    const BUNDLE_KEYS = ["vap", "cauti", "clabsi", "dvt", "sepsis", "sup"];
+    for (const key of BUNDLE_KEYS) {
+      const bundle = sheet[key];
+      if (bundle?.applicable && (bundle.compliancePct ?? 0) < 100) {
+        try {
+          await emitClinicalAudit({
+            req,
+            event: `ICU_BUNDLE_${key.toUpperCase()}_NON_COMPLIANT`,
+            UHID: sheet.UHID,
+            admissionId: sheet.admissionId,
+            patientId: sheet.patientId,
+            patientName: sheet.patientName,
+            targetType: "ICUBundle",
+            targetId: sheet._id,
+            after: {
+              date: sheet.date, shift: sheet.shift,
+              bundleKey: key,
+              compliancePct: bundle.compliancePct,
+              missed: (bundle.items || []).filter((i) => !i.checked).map((i) => i.key),
+            },
+          });
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn(`[icu-bundle:${key}] audit emit failed:`, e?.message || e);
+        }
+      }
     }
-    if (sheet.clabsi?.applicable && (sheet.clabsi.compliancePct ?? 0) < 100) {
-      emitClinicalAudit({
-        req,
-        event: "ICU_BUNDLE_CLABSI_NON_COMPLIANT",
-        UHID: sheet.UHID,
-        admissionId: sheet.admissionId,
-        patientId: sheet.patientId,
-        patientName: sheet.patientName,
-        targetType: "ICUBundle",
-        targetId: sheet._id,
-        after: {
-          date: sheet.date, shift: sheet.shift,
-          compliancePct: sheet.clabsi.compliancePct,
-          missed: (sheet.clabsi.items || []).filter(i => !i.checked).map(i => i.key),
-        },
-      });
+
+    // R7gw-B9-T05 — Auto-trigger HAI Surveillance row when CAUTI bundle
+    // signals an event: cauti.applicable && cauti.compliancePct<100 AND
+    // the request body reports Foley dwellDays>3 AND a positive UTI
+    // culture (cultureSent=true with a non-empty organismIsolated string
+    // mentioning a urinary pathogen). The dwellDays / culture inputs come
+    // from req.body since the bundle schema doesn't carry them itself —
+    // forward-compat with the upcoming HIC.4 form. Fire-and-forget; failure
+    // never blocks the bundle finalize response.
+    try {
+      const dwellDays = Number(req.body?.foleyDwellDays);
+      const cultureSent = !!req.body?.cultureSent;
+      const organismIsolated = String(req.body?.organismIsolated || "").trim();
+      const cautiSignal = !!(sheet.cauti?.applicable && (sheet.cauti.compliancePct ?? 0) < 100);
+      const dwellExceeded = Number.isFinite(dwellDays) && dwellDays > 3;
+      const positiveUtiCulture = cultureSent && organismIsolated.length > 0;
+
+      if (cautiSignal && dwellExceeded && positiveUtiCulture && typeof _emitHAISurveillance === "function") {
+        // Deterministic sourceRef so a retry of the same finalize doesn't
+        // double-write the surveillance row.
+        const sourceRef = `CAUTI:ICUBundle:${sheet._id}:${sheet.date}:${sheet.shift}`;
+        // eslint-disable-next-line no-unused-vars
+        const haiRow = await _emitHAISurveillance({
+          UHID: sheet.UHID,
+          patientId: sheet.patientId,
+          patientName: sheet.patientName,
+          admissionId: sheet.admissionId,
+          HAIType: "CAUTI",
+          onsetDate: new Date(),
+          identifiedByEmpId: sheet.finalizedBy || "",
+          deviceDays: dwellDays,
+          cultureSent: true,
+          organismIsolated,
+          antibioticPrescribed: req.body?.antibioticPrescribed || "",
+          outcome: "",
+          linkedICUBundleId: sheet._id,
+          status: "Open",
+          sourceRef,
+          autoTriggeredFrom: "ICUBundle.finalize.cauti",
+          actor: req.user || {},
+        });
+      }
+    } catch (haiErr) {
+      // eslint-disable-next-line no-console
+      console.error(
+        "[icuBundleController] HAI Surveillance auto-trigger failed:",
+        haiErr?.message || haiErr,
+      );
     }
 
     res.json({ success: true, data: sheet });

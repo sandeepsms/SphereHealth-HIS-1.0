@@ -352,6 +352,83 @@ router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
 // Surveyors ask for these as chronological audit-grade logs; the registers
 // are auto-populated from existing clinical flows via nabhRegisterEmitter.
 router.use("/registers/nabh",        require("./Compliance/nabhRegisterRoutes"));
+// R7gw-B9-T01 — NABH sentinel-event register (AAC.7 + MOM.4). Auto-emitted
+// from HAPU stage III+ and fall-with-major-injury; manual entries allowed.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/sentinel-events", require("./Compliance/nabhRegisters/sentineleventRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] sentinel-events mount failed:", e.message);
+  }
+}
+// R7gw-B9-B9-T06 — NABH Hand Hygiene Compliance register (HIC.3). IC-officer
+// driven observation log (WHO 5-Moments × role × technique). Manual-entry only.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/handhygiene", require("./Compliance/nabhRegisters/handhygieneRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] handhygiene mount failed:", e.message);
+  }
+}
+// R7gw-B9-T02 — NABH Near-Miss Event register (QPS.5). Manual-entry log
+// of intercepted wrong-meds, prevented falls, caught equipment failures
+// etc. Powers the QPS Committee's safety-culture trend chart.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/near-miss-events", require("./Compliance/nabhRegisters/nearmisseventRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] near-miss-events mount failed:", e.message);
+  }
+}
+// R7gw-B9-T04 — NABH Medication Error register (MOM.4). Auto-emit from
+// MAR.administrationRecord.nurseError=true; severity E-I additionally
+// chains to emitSentinelEvent. Manual entries allowed for compliance officer.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/medicationerror", require("./Compliance/nabhRegisters/medicationerrorRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] medicationerror mount failed:", e.message);
+  }
+}
+// R7gw-B9-B9-T07 — NABH LAMA / DAMA register (AAC.4). Auto-emit when a
+// discharge is finalised with disposition === "LAMA"; manual POST for
+// Compliance / MRD backfill.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/lama", require("./Compliance/nabhRegisters/lamaRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] lama mount failed:", e.message);
+  }
+}
+// R7gw-B9-B9-T03 — NABH Root Cause Analysis register (QPS.1 + AAC.7).
+// Auto-pre-created from emitSentinelEvent (linkedSentinelId set, status
+// Initiated). QPS chair / Quality Committee can POST a manual RCA for
+// serious near-miss or recurrent-deviation triggers.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/rca-register", require("./Compliance/nabhRegisters/rcaRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] rca-register mount failed:", e.message);
+  }
+}
+// R7gw-B9-T05 — NABH HAI Surveillance register (HIC.4). Auto-emitted from
+// the ICU-bundle finalize path when CAUTI compliance <100, Foley dwell>3d
+// and a positive UTI culture is present; manual POST for SSI / CDI /
+// MRSA-bacteremia events surfaced from the lab feed.
+try {
+  // eslint-disable-next-line global-require
+  router.use("/nabh-registers/hai-surveillance", require("./Compliance/nabhRegisters/haisurveillanceRegisterRoutes"));
+} catch (e) {
+  if (!/Cannot find module/i.test(e.message || "")) {
+    console.warn("[routes] hai-surveillance mount failed:", e.message);
+  }
+}
 // R7en — ECG Register (NABH AAC.4 + IPSG.2 + COP.7). Manual + auto-emit
 // from DoctorOrder (Investigation/ECG). Surveyor reads via dashboard-summary
 // above; this mount is the write surface (entry + report + cardio review).

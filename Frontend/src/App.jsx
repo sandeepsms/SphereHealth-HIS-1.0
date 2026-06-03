@@ -193,6 +193,32 @@ const InspectionDashboardPage = lazy(() => import("./pages/compliance/Inspection
 // /compliance/nabh-registers#ecg via the consolidated landing page, but
 // also gets a direct deep-link route for quick access.
 const ECGRegisterPage               = lazy(() => import("./pages/compliance/ECGRegisterPage"));
+// R7gw-B9-T01 — NABH Sentinel-Event Register (AAC.7 + MOM.4). Auto-emitted
+// from HAPU stage III+ and fall-with-major-injury; manual entries allowed.
+const SentinelEventRegisterPage     = lazy(() => import("./pages/compliance/SentinelEventRegisterPage"));
+// R7gw-B9-B9-T06 — NABH Hand Hygiene Compliance Register (HIC.3). IC-officer
+// driven WHO 5-Moments observation log; mobile-friendly tap-to-record UI.
+const HandHygieneRegisterPage       = lazy(() => import("./pages/compliance/HandHygieneRegisterPage"));
+// R7gw-B9-T02 — NABH Near-Miss Event Register (QPS.5). Manual-entry log
+// of intercepted wrong-meds, prevented falls, caught equipment failures.
+const NearMissEventRegisterPage     = lazy(() => import("./pages/compliance/NearMissEventRegisterPage"));
+// R7gw-B9-T04 — NABH Medication Error Register (MOM.4). NCC-MERP-classified
+// medication errors with phase/dose/route mismatch. Severity E-I auto-emits
+// Sentinel Event via backend chain; auto-populated from MAR nurseError=true.
+const MedicationErrorRegisterPage   = lazy(() => import("./pages/compliance/MedicationErrorRegisterPage"));
+// R7gw-B9-B9-T07 — NABH LAMA / DAMA Register (AAC.4). Auto-emit when a
+// discharge is finalised with disposition === "LAMA"; manual entries for
+// Compliance / MRD backfill.
+const LAMARegisterPage              = lazy(() => import("./pages/compliance/LAMARegisterPage"));
+// R7gw-B9-B9-T03 — NABH Root Cause Analysis Register (QPS.1 + AAC.7).
+// Auto-pre-created from sentinel events (linkedSentinelId set, status
+// Initiated). QPS chair files manual entries for serious near-miss or
+// recurrent-deviation triggers.
+const RCARegisterPage               = lazy(() => import("./pages/compliance/RCARegisterPage"));
+// R7gw-B9-T05 — NABH HAI Surveillance Register (HIC.4). Auto-emitted from
+// the ICU bundle finalize path when CAUTI compliance <100, Foley dwell>3d,
+// positive UTI culture; manual entries for SSI / CDI / MRSA-bacteremia.
+const HAISurveillanceRegisterPage   = lazy(() => import("./pages/compliance/HAISurveillanceRegisterPage"));
 // R7bx — six new surveyor-facing NABH registers (COP.10/13/16/17/18 + MOM.7).
 const OTRegisterPage                = lazy(() => import("./pages/nabh/OTRegisterPage"));
 const ASARegisterPage               = lazy(() => import("./pages/nabh/ASARegisterPage"));
@@ -671,6 +697,52 @@ function AppLayout({ collapsed, setCollapsed }) {
                 Registers landing page via #ecg hash. */}
             <Route path="/compliance/nabh/ecg-register" element={
               <RoleGuard action="compliance.read"><ECGRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-T01 — Sentinel-Event Register (NABH AAC.7 + MOM.4).
+                Auto-emitted from HAPU stage III+ and fall-with-major-injury;
+                Quality / Compliance officers log other sentinels manually. */}
+            <Route path="/compliance/nabh-registers/sentinelevent" element={
+              <RoleGuard action="compliance.nabh.read"><SentinelEventRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-B9-T06 — Hand Hygiene Register (NABH HIC.3). IC-officer
+                driven WHO 5-Moments observation log; mobile-friendly tap-to-
+                record UI for compliance % reporting per ward / role / moment. */}
+            <Route path="/compliance/nabh-registers/handhygiene" element={
+              <RoleGuard action="compliance.nabh.read"><HandHygieneRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-T02 — Near-Miss Event Register (NABH QPS.5). Manual-
+                entry log of intercepted wrong-med / wrong-patient / wrong-
+                site / extravasation / fall / equipment-failure events. */}
+            <Route path="/compliance/nabh-registers/nearmissevent" element={
+              <RoleGuard action="compliance.nabh.read"><NearMissEventRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-T04 — Medication Error Register (NABH MOM.4). NCC-MERP
+                classified medication errors per phase (Prescribing → Monitoring),
+                dose / route mismatch, harm class. Severity E-I auto-emits
+                Sentinel via backend chain. */}
+            <Route path="/compliance/nabh-registers/medicationerror" element={
+              <RoleGuard action="compliance.nabh.read"><MedicationErrorRegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-B9-T07 — LAMA / DAMA Register (NABH AAC.4). Auto-emit
+                when a discharge is finalised with disposition === "LAMA";
+                manual POST for compliance / MRD backfill. */}
+            <Route path="/compliance/nabh-registers/lama" element={
+              <RoleGuard action="compliance.nabh.read"><LAMARegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-B9-T03 — Root Cause Analysis Register (NABH QPS.1).
+                Auto-pre-created from sentinel events; QPS chair / Quality
+                committee can also file manual RCAs for serious near-miss
+                or recurrent-deviation triggers. */}
+            <Route path="/compliance/nabh-registers/rca" element={
+              <RoleGuard action="compliance.nabh.read"><RCARegisterPage /></RoleGuard>
+            } />
+            {/* R7gw-B9-T05 — HAI Surveillance Register (NABH HIC.4). Auto-
+                emitted from the ICU bundle finalize path when CAUTI compli-
+                ance <100, Foley dwell>3d, positive UTI culture; manual
+                entries for SSI / CDI / MRSA-bacteremia events surfaced
+                from the lab feed. */}
+            <Route path="/compliance/nabh-registers/haisurveillance" element={
+              <RoleGuard action="compliance.nabh.read"><HAISurveillanceRegisterPage /></RoleGuard>
             } />
             {/* R7eg — NABH HIC.5 Infection Control register: ICU care-bundle
                 compliance aggregated over time (VAP / CAUTI / CLABSI / DVT

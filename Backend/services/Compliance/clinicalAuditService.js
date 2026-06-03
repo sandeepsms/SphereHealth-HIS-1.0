@@ -73,6 +73,12 @@ const LONG_RETENTION_EVENTS = new Set([
   "ICU_BUNDLE_SHIFT_FINALIZED",
   "ICU_BUNDLE_VAP_NON_COMPLIANT",
   "ICU_BUNDLE_CLABSI_NON_COMPLIANT",
+  // R7gw-B9-T08 — extend non-compliance signalling to the remaining four
+  // bundles. Same 7y NABH IPSG.6 / HIC.5 retention floor as VAP+CLABSI.
+  "ICU_BUNDLE_CAUTI_NON_COMPLIANT",
+  "ICU_BUNDLE_DVT_NON_COMPLIANT",
+  "ICU_BUNDLE_SEPSIS_NON_COMPLIANT",
+  "ICU_BUNDLE_SUP_NON_COMPLIANT",
   // B1-T03 — Medical Certificate override audit (legal instrument, 7y floor).
   "MEDICAL_CERTIFICATE_OVERRIDE_ISSUED",
 ]);
@@ -175,11 +181,11 @@ async function emitClinicalAudit(opts) {
 //     for non-applicable bundles, so the > -1 guard preserves the
 //     "skip non-applicable" denominator semantics.
 //
-// We aggregate from ICUBundle (not ClinicalAudit) because the audit
-// collection only emits *non-compliance* signals for VAP+CLABSI; the
-// canonical per-bundle compliancePct lives on the sheet. The audit
-// collection remains the source of truth for *drill-down* event listings
-// (see listIcuBundleEvents below).
+// We aggregate from ICUBundle (not ClinicalAudit) because the canonical
+// per-bundle compliancePct lives on the sheet. As of R7gw-B9-T08 the
+// audit collection emits *non-compliance* signals for ALL six bundles
+// (VAP, CAUTI, CLABSI, DVT, Sepsis, SUP) and remains the source of truth
+// for *drill-down* event listings (see listIcuBundleEvents below).
 //
 // Returns the shape documented in HIC5InfectionControlPage:
 //   { range, groupBy, buckets: [{ period, vap:{...}, ..., overall:{...} }],
@@ -337,14 +343,24 @@ async function listIcuBundleEvents({ from, to, bundleKey, eventType, limit = 200
         "ICU_BUNDLE_SHIFT_FINALIZED",
         "ICU_BUNDLE_VAP_NON_COMPLIANT",
         "ICU_BUNDLE_CLABSI_NON_COMPLIANT",
+        // R7gw-B9-T08 — drill-down listing now surfaces all six bundles.
+        "ICU_BUNDLE_CAUTI_NON_COMPLIANT",
+        "ICU_BUNDLE_DVT_NON_COMPLIANT",
+        "ICU_BUNDLE_SEPSIS_NON_COMPLIANT",
+        "ICU_BUNDLE_SUP_NON_COMPLIANT",
       ],
     },
   };
   if (eventType) q.event = eventType;
-  // bundleKey is a hint for VAP/CLABSI non-compliance filtering only;
-  // the SAVED/FINALIZED events apply to the whole sheet.
+  // bundleKey filters the listing to a single bundle's non-compliance
+  // event (one of the six). The SAVED/FINALIZED events apply to the
+  // whole sheet and are returned only when no bundleKey is passed.
   if (bundleKey === "vap")    q.event = "ICU_BUNDLE_VAP_NON_COMPLIANT";
+  if (bundleKey === "cauti")  q.event = "ICU_BUNDLE_CAUTI_NON_COMPLIANT";
   if (bundleKey === "clabsi") q.event = "ICU_BUNDLE_CLABSI_NON_COMPLIANT";
+  if (bundleKey === "dvt")    q.event = "ICU_BUNDLE_DVT_NON_COMPLIANT";
+  if (bundleKey === "sepsis") q.event = "ICU_BUNDLE_SEPSIS_NON_COMPLIANT";
+  if (bundleKey === "sup")    q.event = "ICU_BUNDLE_SUP_NON_COMPLIANT";
 
   const rows = await ClinicalAudit.find(q)
     .sort({ createdAt: -1 })

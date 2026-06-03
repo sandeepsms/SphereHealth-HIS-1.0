@@ -19,6 +19,7 @@ import {
   AdminPage, Hero, Card, Table, EmptyRow, Badge, C,
 } from "../../Components/admin-theme";
 import { API_BASE_URL as API } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
 
 /* ════════════════════════════════════════════════════════════════
    R7ej — REGISTER TILES
@@ -89,6 +90,27 @@ const LIVE_REGISTERS = [
 ];
 const LIVE_ACCENT = "#0891b2";
 
+/* ════════════════════════════════════════════════════════════════
+   R7gw — INCIDENT REPORTING & SURVEILLANCE REGISTERS (B9-T01..T07)
+   Seven NABH-mandated registers built in sprint R7em→R7er covering
+   sentinel events, near-miss tracking, RCA, medication errors,
+   HAI surveillance, hand hygiene, and LAMA/DAMA. Each tile shows a
+   recent row count fetched from the corresponding list endpoint
+   (falls back to "—" on auth/network failure). Role-gated to
+   Admin / ComplianceOfficer / MRD; the route guard still applies
+   to the destination page.
+══════════════════════════════════════════════════════════════ */
+const INCIDENT_REGISTERS = [
+  { id: "sentinel-events",  label: "Sentinel Event",       icon: "pi-exclamation-triangle", path: "/compliance/nabh-registers/sentinelevent",   apiPath: "nabh-registers/sentinel-events",    nabhRef: "PSQ.4",  desc: "Sentinel events — never-events + serious safety incidents" },
+  { id: "near-miss-events", label: "Near-Miss Event",      icon: "pi-eye",                  path: "/compliance/nabh-registers/nearmissevent",   apiPath: "nabh-registers/near-miss-events",   nabhRef: "PSQ.4",  desc: "Near-miss tracking — caught-before-harm safety events" },
+  { id: "rca",              label: "Root Cause Analysis",  icon: "pi-sitemap",              path: "/compliance/nabh-registers/rca",             apiPath: "rca-register",                      nabhRef: "PSQ.4",  desc: "RCA investigations linked to sentinel + near-miss events" },
+  { id: "medication-error", label: "Medication Error",     icon: "pi-pause-circle",         path: "/compliance/nabh-registers/medicationerror", apiPath: "nabh-registers/medicationerror",    nabhRef: "MOM.7",  desc: "Prescribing / dispensing / administration errors" },
+  { id: "hai-surveillance", label: "HAI Surveillance",     icon: "pi-search",               path: "/compliance/nabh-registers/haisurveillance", apiPath: "nabh-registers/hai-surveillance",   nabhRef: "HIC.5",  desc: "Healthcare-associated infection surveillance + device-day rates" },
+  { id: "hand-hygiene",     label: "Hand Hygiene",         icon: "pi-thumbs-up",            path: "/compliance/nabh-registers/handhygiene",     apiPath: "nabh-registers/handhygiene",        nabhRef: "HIC.3",  desc: "5-moments hand-hygiene observations + compliance rate" },
+  { id: "lama",             label: "LAMA / DAMA",          icon: "pi-sign-out",             path: "/compliance/nabh-registers/lama",            apiPath: "nabh-registers/lama",               nabhRef: "AAC.13", desc: "Leave Against / Discharge Against Medical Advice" },
+];
+const INCIDENT_ACCENT = "#b45309";
+
 const tileStyle = {
   display: "flex", flexDirection: "column", gap: 8,
   padding: 14, borderRadius: 10,
@@ -118,6 +140,10 @@ const VALID_LIVE_IDS = new Set(LIVE_REGISTERS.map((r) => r.id));
 export default function NABHRegistersDashboard() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { hasRole } = useAuth();
+  // R7gw — Incident registers tile group is visible only to Admin /
+  // ComplianceOfficer / MRD. Route guards still apply on click.
+  const canSeeIncidents = hasRole("Admin", "ComplianceOfficer", "MRD");
   // R7ek — active = currently-expanded live register, or null if just
   // showing the tile grid. Deep-link via URL hash (#blood-sugar etc.)
   // from the Inspection Dashboard's "Open →" buttons.
@@ -129,6 +155,38 @@ export default function NABHRegistersDashboard() {
   const [endDate, setEndDate] = useState(todayISO());
   const [criticalOnly, setCriticalOnly] = useState(false);
   const tableRef = React.useRef(null);
+  // R7gw — Counts for the 7 incident registers. Key = register id, value =
+  // number-or-"—". Best-effort: try the dedicated /count endpoint first,
+  // then fall back to the list endpoint's `count` field. Failures stay "—".
+  const [incidentCounts, setIncidentCounts] = useState(
+    () => Object.fromEntries(INCIDENT_REGISTERS.map((r) => [r.id, "—"])),
+  );
+
+  useEffect(() => {
+    if (!canSeeIncidents) return;
+    let alive = true;
+    (async () => {
+      const results = await Promise.all(
+        INCIDENT_REGISTERS.map(async (reg) => {
+          // Try /count first (preferred, cheap). Fall back to list endpoint.
+          try {
+            const r = await axios.get(`${API}/${reg.apiPath}/count`, authHdr());
+            const c = r.data?.count ?? r.data?.data?.count;
+            if (typeof c === "number") return [reg.id, c];
+          } catch (_) { /* /count probably 404 — fall through */ }
+          try {
+            const r = await axios.get(`${API}/${reg.apiPath}?limit=1000`, authHdr());
+            const c = r.data?.count ?? (Array.isArray(r.data?.data) ? r.data.data.length : null);
+            return [reg.id, typeof c === "number" ? c : "—"];
+          } catch (_) {
+            return [reg.id, "—"];
+          }
+        }),
+      );
+      if (alive) setIncidentCounts(Object.fromEntries(results));
+    })();
+    return () => { alive = false; };
+  }, [canSeeIncidents]);
 
   const fetchList = useCallback(async (registerId) => {
     if (!registerId) return;
@@ -256,6 +314,77 @@ export default function NABHRegistersDashboard() {
           </div>
         </Card>
       ))}
+
+      {/* R7gw — Incident Reporting & Surveillance tiles (B9-T01..T07).
+          Role-gated to Admin / ComplianceOfficer / MRD; route guards on
+          each destination still apply. Counts are best-effort live and
+          fall back to "—" when an endpoint is unreachable. */}
+      {canSeeIncidents && (
+        <Card title="Incident Reporting & Surveillance">
+          <div style={{ fontSize: 12, color: C.muted, marginBottom: 12, marginTop: -4 }}>
+            Patient-safety, infection-control, and discharge-risk registers added in the
+            B9 sprint. Auto-populated from clinical save paths plus manual entry by
+            compliance officers / IC nurses.
+          </div>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+            gap: 10,
+          }}>
+            {INCIDENT_REGISTERS.map((reg) => (
+              <button
+                key={reg.id}
+                type="button"
+                onClick={() => navigate(reg.path)}
+                style={tileStyle}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                  e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)";
+                  e.currentTarget.style.borderColor = INCIDENT_ACCENT;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.boxShadow = "none";
+                  e.currentTarget.style.borderColor = C.border;
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{
+                    width: 36, height: 36, borderRadius: 8,
+                    background: `${INCIDENT_ACCENT}15`, color: INCIDENT_ACCENT,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 18,
+                  }}>
+                    <i className={`pi ${reg.icon}`} />
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: C.text }}>
+                      {reg.label}
+                    </div>
+                    <div style={{ marginTop: 2, display: "flex", gap: 6, alignItems: "center" }}>
+                      <Badge value={reg.nabhRef} palette="blue" />
+                      <span style={{
+                        fontSize: 11, color: C.muted, fontWeight: 600,
+                      }}>
+                        Rows: <span style={{ color: C.text }}>{incidentCounts[reg.id]}</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.4 }}>
+                  {reg.desc}
+                </div>
+                <div style={{
+                  marginTop: "auto", paddingTop: 4,
+                  fontSize: 11, color: INCIDENT_ACCENT, fontWeight: 600,
+                }}>
+                  Open →
+                </div>
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* R7ek — Live Clinical Registers as tiles (replaces tab bar). */}
       <Card title="Live Clinical Registers">
