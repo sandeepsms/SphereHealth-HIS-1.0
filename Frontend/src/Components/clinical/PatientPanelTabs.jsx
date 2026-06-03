@@ -586,41 +586,183 @@ export function BloodTransfusionRecordsTab({ nursingNotes = [] }) {
     <div className="ppt-tab">
       <div className="ppt-tab-header">
         <h2 className="ppt-tab-title">🩸 Blood Transfusion Records</h2>
-        <p className="ppt-tab-sub">NABH COP.7 · {records.length} transfusion record(s)</p>
+        <p className="ppt-tab-sub">NABH COP.7 / MOM.4 · {records.length} transfusion record(s)</p>
       </div>
       {records.length === 0 ? (
         <div className="ppt-empty">No blood transfusion records on file.</div>
       ) : (
-        records.map((n) => {
-          const d = n.noteData?.bloodTransfusion || n.noteData || {};
-          return (
-            <div key={n._id} className="ppt-card ppt-card--blood">
-              <div className="ppt-section-title">
-                <span className="ppt-section-icon">🩸</span>
-                {d.component || "Blood Product"} — {fmtDateTime(n.noteDate || n.createdAt)}
-                <span className="ppt-badge ppt-badge--info">By {n.nurseName || "Nurse"}</span>
-              </div>
-              <div className="ppt-detail-grid">
-                <Field label="Component"          value={d.component} />
-                <Field label="Blood Group"        value={d.bloodGroup} />
-                <Field label="Units / Bag No."    value={d.unitNumber || d.bagNumber} />
-                <Field label="Volume"             value={d.volume ? `${d.volume} mL` : null} />
-                <Field label="Cross-match Done"   value={d.crossMatchDone == null ? null : (d.crossMatchDone ? "Yes" : "No")} />
-                <Field label="Consent Taken"      value={d.consentTaken == null ? null : (d.consentTaken ? "Yes" : "No")} />
-                <Field label="Start Time"         value={fmtDateTime(d.startTime)} />
-                <Field label="End Time"           value={fmtDateTime(d.endTime)} />
-                <Field label="Pre-Vitals"         value={d.preVitals} wide />
-                <Field label="Post-Vitals"        value={d.postVitals} wide />
-                <Field label="Reactions Observed" value={d.reactions} wide danger={!!d.reactions && d.reactions.toLowerCase() !== "nil"} />
-                <Field label="Doctor Notified"    value={d.doctorNotified} />
-                <Field label="Remarks"            value={d.remarks || n.remarks} wide />
-              </div>
-            </div>
-          );
-        })
+        records.map((n) => (
+          <BloodTransfusionCard key={n._id} note={n} />
+        ))
       )}
     </div>
   );
+}
+
+/* R7gy — Normalises BOTH stored shapes the nursing note can carry:
+   - FORM shape (NursingNotes.jsx "blood" modal):
+       { product, bagNo, crossMatchNo, volume, preBP_sys, preBP_dia,
+         prePulse, preTemp, postBP_sys, postBP_dia, postPulse, postTemp,
+         reactionType, status, secondNurse, groupVerified, intra: [...] }
+   - REGISTER / seed shape (BloodTransfusionRegister + emitter):
+       { component, bagNumber, bloodGroup, volumeMl,
+         preVitalsBP, preVitalsPulse, preVitalsTemp,
+         postVitalsBP, postVitalsPulse, postVitalsTemp,
+         reaction, givenBy, witnessedBy, startTime, endTime }
+   Pre-R7gy the renderer only knew the seed shape's labels but read with
+   the form shape's keys → almost every field rendered "—" even when the
+   data was present. Now we coalesce both into one canonical view.
+*/
+function BloodTransfusionCard({ note }) {
+  const d = note.noteData?.bloodTransfusion || note.noteData || {};
+  const component = d.component || d.product || "Blood Product";
+  const bagNo     = d.bagNumber || d.bagNo || d.unitNumber;
+  const crossNo   = d.crossMatchNo || d.crossMatchNumber;
+  const volume    = d.volumeMl ?? d.volume;
+  const bg        = d.bloodGroup || d.group;
+  const preBP     = d.preVitalsBP  || (d.preBP_sys && d.preBP_dia ? `${d.preBP_sys}/${d.preBP_dia}` : "");
+  const prePulse  = d.preVitalsPulse ?? d.prePulse;
+  const preTemp   = d.preVitalsTemp  ?? d.preTemp;
+  const postBP    = d.postVitalsBP || (d.postBP_sys && d.postBP_dia ? `${d.postBP_sys}/${d.postBP_dia}` : "");
+  const postPulse = d.postVitalsPulse ?? d.postPulse;
+  const postTemp  = d.postVitalsTemp  ?? d.postTemp;
+  const reaction  = d.reaction || d.reactionType || d.reactions;
+  const reactionDesc = d.reactionDescription || d.reactionNotes;
+  const givenBy   = d.givenBy || d.transfusedByName || d.administeredBy || note.nurseName;
+  const witness   = d.witnessedBy || d.secondNurse || d.secondNurseName;
+  const groupVer  = d.groupVerified;
+  const status    = d.status;
+  const consent   = d.consentTaken ?? d.consentSigned;
+  const crossDone = d.crossMatchDone ?? (crossNo ? true : null);
+  const docNotified = d.doctorNotified || d.doctorInformed;
+  const intraVitals = Array.isArray(d.intra) ? d.intra : Array.isArray(d.intraVitals) ? d.intraVitals : [];
+  const hasReaction = reaction && String(reaction).toLowerCase() !== "nil" && String(reaction).toLowerCase() !== "none";
+
+  return (
+    <div className="ppt-card ppt-card--blood">
+      <div className="ppt-section-title">
+        <span className="ppt-section-icon">🩸</span>
+        {component} — {fmtDateTime(note.noteDate || note.createdAt)}
+        {bg && <span className="ppt-badge ppt-badge--info" style={{ background: "#fee2e2", color: "#991b1b" }}>{bg}</span>}
+        {status && <span className="ppt-badge ppt-badge--info">{status}</span>}
+        <span className="ppt-badge ppt-badge--info">By {givenBy || "Nurse"}</span>
+        {hasReaction && <span className="ppt-badge" style={{ background: "#fef2f2", color: "#dc2626", fontWeight: 700 }}>⚠ REACTION</span>}
+      </div>
+
+      {/* Bag info row */}
+      <div className="ppt-bt-row" style={{ marginBottom: 12 }}>
+        <strong style={{ fontSize: 12, color: "#475569", textTransform: "uppercase", letterSpacing: ".4px" }}>Bag / Unit Details</strong>
+        <div className="ppt-detail-grid" style={{ marginTop: 6 }}>
+          <Field label="Component"        value={component} />
+          <Field label="Blood Group"      value={bg} />
+          <Field label="Bag / Unit No."   value={bagNo} mono />
+          <Field label="Volume"           value={volume ? `${volume} mL` : null} />
+          <Field label="Cross-match No."  value={crossNo} mono />
+          <Field label="Cross-match Done" value={crossDone == null ? null : (crossDone ? "✓ Yes" : "✗ No")} />
+          <Field label="Group Verified (2nd nurse)" value={groupVer == null ? null : (groupVer ? "✓ Yes" : "✗ No")} />
+          <Field label="Consent on File"  value={consent == null ? null : (consent ? "✓ Yes" : "✗ No")} />
+        </div>
+      </div>
+
+      {/* Timeline row */}
+      <div className="ppt-bt-row" style={{ marginBottom: 12 }}>
+        <strong style={{ fontSize: 12, color: "#475569", textTransform: "uppercase", letterSpacing: ".4px" }}>Transfusion Timeline</strong>
+        <div className="ppt-detail-grid" style={{ marginTop: 6 }}>
+          <Field label="Start Time" value={fmtDateTime(d.startTime)} />
+          <Field label="End Time"   value={fmtDateTime(d.endTime)} />
+          <Field label="Duration"   value={computeDurationLabel(d.startTime, d.endTime)} />
+        </div>
+      </div>
+
+      {/* Vitals row — pre + post side-by-side */}
+      {(preBP || prePulse || preTemp || postBP || postPulse || postTemp) && (
+        <div className="ppt-bt-row" style={{ marginBottom: 12 }}>
+          <strong style={{ fontSize: 12, color: "#475569", textTransform: "uppercase", letterSpacing: ".4px" }}>Pre / Post Transfusion Vitals</strong>
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 6, fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: "#f1f5f9" }}>
+                <th style={{ padding: "6px 8px", border: "1px solid #cbd5e1", textAlign: "left", color: "#334155" }}>Phase</th>
+                <th style={{ padding: "6px 8px", border: "1px solid #cbd5e1", color: "#334155" }}>BP (mmHg)</th>
+                <th style={{ padding: "6px 8px", border: "1px solid #cbd5e1", color: "#334155" }}>Pulse</th>
+                <th style={{ padding: "6px 8px", border: "1px solid #cbd5e1", color: "#334155" }}>Temp</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", fontWeight: 600 }}>Pre-transfusion</td>
+                <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{preBP || "—"}</td>
+                <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{prePulse != null && prePulse !== "" ? `${prePulse} /min` : "—"}</td>
+                <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{preTemp != null && preTemp !== "" ? `${preTemp}°` : "—"}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", fontWeight: 600 }}>Post-transfusion</td>
+                <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{postBP || "—"}</td>
+                <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{postPulse != null && postPulse !== "" ? `${postPulse} /min` : "—"}</td>
+                <td style={{ padding: "6px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{postTemp != null && postTemp !== "" ? `${postTemp}°` : "—"}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Intra-transfusion monitoring (Q15min × 1h then Q1h per NABH COP.7) */}
+      {intraVitals.length > 0 && (
+        <div className="ppt-bt-row" style={{ marginBottom: 12 }}>
+          <strong style={{ fontSize: 12, color: "#475569", textTransform: "uppercase", letterSpacing: ".4px" }}>Intra-Transfusion Monitoring ({intraVitals.length} readings)</strong>
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 6, fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: "#f1f5f9" }}>
+                <th style={{ padding: "5px 8px", border: "1px solid #cbd5e1", color: "#334155" }}>At (min)</th>
+                <th style={{ padding: "5px 8px", border: "1px solid #cbd5e1", color: "#334155" }}>BP</th>
+                <th style={{ padding: "5px 8px", border: "1px solid #cbd5e1", color: "#334155" }}>Pulse</th>
+                <th style={{ padding: "5px 8px", border: "1px solid #cbd5e1", color: "#334155" }}>Temp</th>
+              </tr>
+            </thead>
+            <tbody>
+              {intraVitals.map((iv, idx) => {
+                const ivBP = iv.bp || (iv.bp_sys && iv.bp_dia ? `${iv.bp_sys}/${iv.bp_dia}` : "—");
+                return (
+                  <tr key={idx}>
+                    <td style={{ padding: "5px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{iv.atMin ?? iv.at ?? "—"}</td>
+                    <td style={{ padding: "5px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{ivBP}</td>
+                    <td style={{ padding: "5px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{iv.pulse ?? "—"}</td>
+                    <td style={{ padding: "5px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{iv.temp ?? "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Reaction + witness row */}
+      <div className="ppt-bt-row" style={{ marginBottom: 12 }}>
+        <strong style={{ fontSize: 12, color: "#475569", textTransform: "uppercase", letterSpacing: ".4px" }}>Reaction Monitoring & Sign-off (NABH MOM.4)</strong>
+        <div className="ppt-detail-grid" style={{ marginTop: 6 }}>
+          <Field label="Reaction"          value={reaction} danger={hasReaction} />
+          <Field label="Reaction Notes"    value={reactionDesc} wide danger={hasReaction} />
+          <Field label="Doctor Notified"   value={docNotified === true ? "✓ Yes" : docNotified === false ? "✗ No" : docNotified} />
+          <Field label="Administered By"   value={givenBy} />
+          <Field label="Witnessed By (2nd nurse)" value={witness} />
+        </div>
+      </div>
+
+      {(d.remarks || note.remarks) && (
+        <Field label="Remarks" value={d.remarks || note.remarks} wide />
+      )}
+    </div>
+  );
+}
+
+/* Pretty duration "1h 30m" / "45m" — empty if either side missing or invalid. */
+function computeDurationLabel(start, end) {
+  if (!start || !end) return null;
+  const ms = new Date(end) - new Date(start);
+  if (!isFinite(ms) || ms <= 0) return null;
+  const mins = Math.round(ms / 60000);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h ? `${h}h ${m}m` : `${m}m`;
 }
 
 /* ────────────────────────────────────────────────────────────────
