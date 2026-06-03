@@ -2397,32 +2397,6 @@ export default function OPDAssessmentPage() {
             </div>
           </Card>
 
-          {/* R7hk — Advice & Follow-up. Lifted out of the SOAP card so
-              these always-relevant workflow fields stay visible even
-              when SOAP is collapsed (default since R7hj). State still
-              lives on soap.advice / soap.followUpDate / soap.doctorNotes
-              and the save payload + print template mappings already
-              forward them — purely a layout move. */}
-          <Card title="Advice & Follow-up" icon="pi-calendar-plus" color="#0d9488">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <Field label="General Advice">
-                <Textarea value={soap.advice} onChange={v => setSoap(p => ({ ...p, advice: v }))}
-                  placeholder="Lifestyle / diet / activity advice, warning signs to watch for…" rows={3} />
-              </Field>
-              <Field label="Follow-up Date">
-                <input type="date" value={soap.followUpDate}
-                  onChange={e => setSoap(p => ({ ...p, followUpDate: e.target.value }))}
-                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 13, color: C.dark, background: C.card, boxSizing: "border-box", outline: "none", fontFamily: "inherit" }} />
-              </Field>
-            </div>
-            <div style={{ marginTop: 14 }}>
-              <Field label="Doctor Notes (Follow-up / Misc)">
-                <Textarea value={soap.doctorNotes} onChange={v => setSoap(p => ({ ...p, doctorNotes: v }))}
-                  placeholder="Private notes for next visit, special instructions for the patient…" rows={3} />
-              </Field>
-            </div>
-          </Card>
-
           {/* ─── Diagnosis (Provisional → Working → Final) ──────────
               Per user's clinical convention, the OPD/IPD chart should
               carry THREE distinct diagnosis tiers:
@@ -2539,6 +2513,32 @@ export default function OPDAssessmentPage() {
                   {s}
                 </button>
               ))}
+            </div>
+          </Card>
+
+          {/* R7hl — Advice & Follow-up moved here (was after Clinical
+              Examination in R7hk). Logical flow: assess the patient,
+              decide the diagnosis, then capture the advice + follow-up
+              + free-text notes BEFORE writing the prescription. State
+              still lives on soap.* and the save / print payloads are
+              unchanged. */}
+          <Card title="Advice & Follow-up" icon="pi-calendar-plus" color="#0d9488">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <Field label="General Advice">
+                <Textarea value={soap.advice} onChange={v => setSoap(p => ({ ...p, advice: v }))}
+                  placeholder="Lifestyle / diet / activity advice, warning signs to watch for…" rows={3} />
+              </Field>
+              <Field label="Follow-up Date">
+                <input type="date" value={soap.followUpDate}
+                  onChange={e => setSoap(p => ({ ...p, followUpDate: e.target.value }))}
+                  style={{ width: "100%", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 12px", fontSize: 13, color: C.dark, background: C.card, boxSizing: "border-box", outline: "none", fontFamily: "inherit" }} />
+              </Field>
+            </div>
+            <div style={{ marginTop: 14 }}>
+              <Field label="Doctor Notes (Follow-up / Misc)">
+                <Textarea value={soap.doctorNotes} onChange={v => setSoap(p => ({ ...p, doctorNotes: v }))}
+                  placeholder="Private notes for next visit, special instructions for the patient…" rows={3} />
+              </Field>
             </div>
           </Card>
 
