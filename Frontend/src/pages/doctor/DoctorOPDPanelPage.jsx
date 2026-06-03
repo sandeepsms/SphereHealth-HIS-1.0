@@ -199,54 +199,136 @@ export default function DoctorOPDPanelPage() {
   const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
 
   return (
-    <div>
+    <div style={{ padding: "16px 20px 60px", background: "#f8fafc", minHeight: "100vh" }}>
       <Toast ref={toast} />
 
-      {/* Header */}
-      <div style={{ background: "linear-gradient(135deg,#14b8a6,#0d9488)", borderRadius: 14, padding: "20px 24px", marginBottom: 20, color: "#fff" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <i className="pi pi-stop-circle" style={{ fontSize: 26 }} />
-            <div>
-              <div style={{ fontSize: 20, fontWeight: 700 }}>My OPD Panel</div>
-              <div style={{ opacity: .8, fontSize: 13 }}>
-                {user?.name && <span>Dr. {user.name} · </span>}
-                {today}
+      {/* ── Hero (R7hh — matches system UI / IPD Live Ledger pattern) ── */}
+      <div style={{
+        background: "#ffffff",
+        border: "1px solid #e2e8f0",
+        borderRadius: 12,
+        padding: "14px 18px",
+        marginBottom: 12,
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        boxShadow: "0 1px 2px rgba(15,23,42,.04)",
+        fontFamily: "'DM Sans',sans-serif",
+      }}>
+        {/* Accent left strip */}
+        <div style={{
+          width: 4, alignSelf: "stretch", borderRadius: 4,
+          background: "linear-gradient(180deg,#0f766e,#0d9488)",
+        }} />
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "#0f766e", letterSpacing: ".7px", textTransform: "uppercase" }}>
+            Doctor · OPD Panel
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a", marginTop: 2, letterSpacing: "-.2px" }}>
+            My OPD Panel
+          </div>
+          <div style={{ fontSize: 11, color: "#64748b", marginTop: 3, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <i className="pi pi-calendar" style={{ fontSize: 10 }} />
+            {today}
+            {user?.name && (
+              <>
+                <span style={{ color: "#cbd5e1" }}>·</span>
+                <span>Dr. {user.name}</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ position: "relative" }}>
+            <i className="pi pi-search" style={{
+              position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)",
+              color: "#94a3b8", fontSize: 12, pointerEvents: "none",
+            }} />
+            <InputText
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search UHID, complaint…"
+              style={{
+                paddingLeft: 32,
+                paddingRight: 12,
+                paddingTop: 7,
+                paddingBottom: 7,
+                fontSize: 12,
+                borderRadius: 8,
+                border: "1px solid #e2e8f0",
+                background: "#fff",
+                color: "#0f172a",
+                width: 240,
+                outline: "none",
+                fontFamily: "'DM Sans',sans-serif",
+              }}
+            />
+          </div>
+          <Button
+            label="Refresh"
+            icon="pi pi-refresh"
+            onClick={() => { setAllVisits([]); setFollowups([]); loadToday(); }}
+            style={{
+              padding: "7px 14px",
+              borderRadius: 8,
+              border: "1px solid #e2e8f0",
+              background: "#fff",
+              color: "#0f172a",
+              fontWeight: 600,
+              fontSize: 12,
+              fontFamily: "'DM Sans',sans-serif",
+            }}
+          />
+          {/* R7cn: top-right "Print" button removed — printing the whole
+              OPD queue list isn't a real clinical action. The new Print
+              button on each row prints THAT patient's full assessment
+              (SOAP + Rx + investigations) which is what the doctor
+              actually needs to hand to the patient. */}
+        </div>
+      </div>
+
+      {/* ── KPI strip (R7hh) ── */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", fontFamily: "'DM Sans',sans-serif" }}>
+        {[
+          { label: "Today's Patients", val: todayVisits.length,                                                  icon: "pi-users",            tone: "#0f766e", tint: "#f0fdfa", border: "#a7f3d0" },
+          { label: "Waiting",          val: todayVisits.filter(v => v.status === "Waiting").length,             icon: "pi-clock",            tone: "#d97706", tint: "#fffbeb", border: "#fde68a" },
+          { label: "In Progress",      val: todayVisits.filter(v => v.status === "In Progress").length,          icon: "pi-spin pi-spinner",  tone: "#1d4ed8", tint: "#eff6ff", border: "#bfdbfe" },
+          { label: "Completed",        val: todayVisits.filter(v => v.status === "Completed").length,            icon: "pi-check-circle",     tone: "#16a34a", tint: "#dcfce7", border: "#bbf7d0" },
+          { label: "Vitals Pending",   val: todayVisits.filter(v => v.vitalsStatus === "Pending").length,        icon: "pi-heart",            tone: "#dc2626", tint: "#fef2f2", border: "#fecaca" },
+        ].map(({ label, val, icon, tone, tint, border }) => (
+          <div key={label} style={{
+            flex: "1 1 150px",
+            minWidth: 130,
+            background: "#ffffff",
+            border: "1px solid #e2e8f0",
+            borderRadius: 12,
+            padding: "12px 14px",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            boxShadow: "0 1px 2px rgba(15,23,42,.03)",
+          }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 10,
+              background: tint,
+              border: `1px solid ${border}`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0,
+            }}>
+              <i className={`pi ${icon}`} style={{ fontSize: 14, color: tone }} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: ".4px" }}>
+                {label}
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: tone, lineHeight: 1.1, marginTop: 1 }}>
+                {val}
               </div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <span className="p-input-icon-left">
-              <i className="pi pi-search" style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }} />
-              <InputText value={search} onChange={e => setSearch(e.target.value)} placeholder="Search UHID, complaint…"
-                style={{ paddingLeft: 34, background: "rgba(255,255,255,.15)", border: "1px solid rgba(255,255,255,.3)", color: "#fff", "::placeholder": { color: "rgba(255,255,255,.6)" } }} />
-            </span>
-            <Button label="Refresh" icon="pi pi-refresh" className="p-button-outlined"
-              style={{ color: "#fff", border: "1px solid rgba(255,255,255,.5)" }}
-              onClick={() => { setAllVisits([]); setFollowups([]); loadToday(); }} />
-            {/* R7cn: top-right "Print" button removed — printing the whole
-                OPD queue list isn't a real clinical action. The new Print
-                button on each row prints THAT patient's full assessment
-                (SOAP + Rx + investigations) which is what the doctor
-                actually needs to hand to the patient. */}
-          </div>
-        </div>
-
-        {/* Today stats */}
-        <div style={{ display: "flex", gap: 16, marginTop: 16, flexWrap: "wrap" }}>
-          {[
-            ["Today's Patients", todayVisits.length, "#fff"],
-            ["Waiting", todayVisits.filter(v => v.status === "Waiting").length, "#fbbf24"],
-            ["In Progress", todayVisits.filter(v => v.status === "In Progress").length, "#60a5fa"],
-            ["Completed", todayVisits.filter(v => v.status === "Completed").length, "#4ade80"],
-            ["Vitals Pending", todayVisits.filter(v => v.vitalsStatus === "Pending").length, "#f87171"],
-          ].map(([k, v, c]) => (
-            <div key={k} style={{ background: "rgba(255,255,255,.15)", borderRadius: 8, padding: "8px 16px", textAlign: "center" }}>
-              <div style={{ fontSize: 22, fontWeight: 700, color: c }}>{v}</div>
-              <div style={{ fontSize: 11, opacity: .85 }}>{k}</div>
-            </div>
-          ))}
-        </div>
+        ))}
       </div>
 
       <TabView activeIndex={activeTab} onTabChange={onTabChange}>
