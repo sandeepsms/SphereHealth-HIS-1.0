@@ -33,9 +33,11 @@ const DrugSchema = new mongoose.Schema(
       // masks, catheters, IV sets, electrodes, etc.). Keeping both in the
       // same collection lets the pharmacist run a single dispense flow
       // for any item — drug or device — without a second app.
-      enum: ["Antibiotic","Analgesic","Antipyretic","Antihypertensive","Antidiabetic",
+      enum: ["Antibiotic","Antiviral","Antifungal","Antiparasitic",
+             "Analgesic","Antipyretic","Antihypertensive","Antidiabetic",
              "Cardiac","Respiratory","Neuro","Gastro","Steroid","Vitamin","Insulin",
-             "IV Fluid","Topical","Surgical","Consumable","Other"],
+             "IV Fluid","Hematology","Anesthesia","Emergency","Oncology",
+             "Hormone","Ophthalmic","ENT","Topical","Surgical","Consumable","Other"],
       default: "Other",
       index: true,
     },

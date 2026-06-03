@@ -1762,6 +1762,23 @@ exports.returnItems = async (req, res) => {
 
     await sale.save();
 
+    // R7gz — Cascade the return into the IPD ledger. The matching
+    // MAR_RESERVATION BillingTrigger (emitted by onIndentReleased when
+    // the pharmacy first dispensed this drug) needs to be voided so
+    // the PHARM category total on /ipd-ledger reflects the refund.
+    // The pharmacy counter handles the actual money flow via
+    // PharmacySale.balanceDue / patientCredit above — this is the
+    // cost-view side. Best-effort: a failure here does NOT roll back
+    // the return (stock is already credited, refund slip is issued).
+    try {
+      const autoBilling = require("../../services/Billing/autoBillingService");
+      if (typeof autoBilling.onPharmacyReturn === "function") {
+        await autoBilling.onPharmacyReturn(sale, returnRecord);
+      }
+    } catch (e) {
+      console.error("[Pharmacy] returnItems → onPharmacyReturn cascade failed:", e.message);
+    }
+
     // B6-T05 — ClinicalAudit emit on partial / full return (NABH MOM.4 +
     // drug-control trail). Captures refund slip + amount + refund mode so
     // a register query can reconstruct the reversal trail per UHID.

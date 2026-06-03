@@ -2821,6 +2821,91 @@ async function onMARNonAdminister(marDoc, medication, statusReason) {
 }
 
 /**
+ * R7gz — Pharmacy return → IPD ledger refund cascade.
+ *
+ * When the pharmacist processes a return on a PharmacySale that
+ * originated from an IPD indent, two things need to happen on the
+ * billing side:
+ *
+ *   1. PharmacySale.balanceDue / patientCredit adjust — handled
+ *      inline in pharmacyController.returnItems (pharmacy counter is
+ *      where the money flow lives — payment is collected there, refund
+ *      is paid out there).
+ *
+ *   2. The corresponding MAR_RESERVATION BillingTrigger sitting on the
+ *      patient's IPD ledger (created by onIndentReleased) needs to
+ *      reduce by the returned quantity / amount — otherwise the IPD
+ *      ledger's PHARM category total over-states actual consumption
+ *      and the patient appears to owe money for medicine they returned.
+ *
+ * Strategy: find the matching reservation triggers for each returned
+ * line and cancel them. For partial returns we still cancel the full
+ * trigger (one trigger per indent line) — the dispensed remainder is
+ * already reflected in PharmacySale.amountPaid which the pharmacy
+ * counter handles separately. The IPD ledger's PHARM total is a
+ * COST-VIEW only — it is not the payment instrument (pharmacy is).
+ *
+ * Idempotent — re-running on an already-cancelled trigger is a no-op.
+ */
+async function onPharmacyReturn(sale, returnRecord) {
+  if (!sale || !returnRecord) return;
+  const admissionId = sale.admissionId;
+  // OPD / non-admission sales don't have an IPD ledger to update
+  if (!admissionId) return;
+
+  const items = Array.isArray(returnRecord.refundedItems) ? returnRecord.refundedItems : [];
+  if (!items.length) return;
+
+  for (const it of items) {
+    const drugName = it.drugName || it.medicineName || "";
+    if (!drugName) continue;
+
+    // Resolve service code the same way onIndentReleased did.
+    let serviceCode = it.serviceCode;
+    if (!serviceCode) {
+      const drugCode = it.drugCode || drugName;
+      serviceCode = `PHARM-${String(drugCode).toUpperCase().replace(/\s+/g, "-").slice(0, 24)}`;
+    }
+
+    try {
+      // Match the MAR reservation trigger that paid for this line.
+      // Use a wide-ish window — pharmacy returns can land days after
+      // the original dispense.
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const reservations = await BillingTrigger.find({
+        admissionId,
+        serviceCode,
+        $or: [
+          { sourceType: "MAR_RESERVATION" },
+          { sourceType: "MAR", sourceDocumentModel: "PharmacyIndent" }, // legacy
+        ],
+        status: { $in: ["completed", "billed", "pending"] },
+        createdAt: { $gte: since },
+      }).sort({ createdAt: -1 });
+
+      if (!reservations.length) {
+        console.log(`[AutoBilling] onPharmacyReturn no live reservation for ${serviceCode} (${admissionId}) — nothing to void`);
+        continue;
+      }
+
+      for (const r of reservations) {
+        try {
+          await cancelTrigger(r._id, {
+            reason: `Pharmacy return ${returnRecord.refundSlipNumber || ""} — reservation voided`,
+            user: { fullName: "AutoBilling (return)", role: "System" },
+          });
+        } catch (e) {
+          if (e.code === "ALREADY_CLOSED") continue;
+          console.error(`[AutoBilling] onPharmacyReturn cancelTrigger ${r._id} failed:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.error(`[AutoBilling] onPharmacyReturn ${serviceCode} error:`, e.message);
+    }
+  }
+}
+
+/**
  * R7az-CRIT-7 (D6-CRIT-7): order-cancellation refund cascade.
  *
  * When a DoctorOrder is cancelled (mid-treatment, in error, replaced
@@ -3769,6 +3854,8 @@ module.exports = {
   onMARAdministration,
   // R7az-CRIT-6: MAR HELD/REFUSED/MISSED voids the pharmacy reservation
   onMARNonAdminister,
+  // R7gz: Pharmacy return voids the matching IPD ledger PHARM trigger
+  onPharmacyReturn,
   onInvestigationOrdered,
   onInvestigationResulted,
   onEquipmentCharged,
