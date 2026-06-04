@@ -54,6 +54,13 @@ const scheduleXRegister = require("../../services/Pharmacy/scheduleXRegister");
 // audit row so the NABH register can reconstruct "who dispensed what to
 // whom, and when" without scraping individual Sale docs.
 const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+// R7hr-29: Drug Master category="Antibiotic" → auto Antimicrobial Use
+// Register row on every dispense (Walk-in/OPD/Homecare; IPD already emits
+// via the doctor-order POST). Lazy-imported so a missing emitter module
+// never breaks dispense.
+let _emitAntimicrobialForSale = null;
+try { _emitAntimicrobialForSale = require("../../services/Compliance/nabhRegisterEmitter").emitAntimicrobialForSale; }
+catch (_) { /* emitter missing → no AMU register row; dispense still succeeds */ }
 // R7cu — pulled to module scope so collectCredit() can convert payment
 // amounts to Decimal128 + retry on VersionError races (two cashiers
 // collecting on the same sale simultaneously).
@@ -1350,6 +1357,36 @@ exports.dispense = async (req, res) => {
         },
       });
     } catch (_) { /* silent — audit emit is non-blocking */ }
+
+    // R7hr-29: NABH MOM.7 — Antimicrobial Use Register auto-population.
+    // For every dispensed item whose Drug Master category falls in the
+    // antimicrobial family {Antibiotic, Antiviral, Antifungal, Antiparasitic},
+    // create an AMU register row. Pharmacy counter is the "administration"
+    // moment for Walk-in/OPD/Homecare; IPD skipped because the doctor-order
+    // POST already emits a row keyed to doctorOrderId. Best-effort — register
+    // write must NEVER roll back the sale.
+    if (_emitAntimicrobialForSale && sale.saleType !== "IPD") {
+      try {
+        let patientDoc = {};
+        if (sale.patientUHID) {
+          const Patient = require("../../models/Patient/PatientModel");
+          patientDoc = await Patient.findOne({ UHID: sale.patientUHID })
+            .select("UHID fullName age gender _id")
+            .lean() || { UHID: sale.patientUHID, fullName: sale.patientName, age: sale.age, gender: sale.gender };
+        } else {
+          patientDoc = { UHID: "", fullName: sale.patientName, age: sale.age, gender: sale.gender };
+        }
+        await _emitAntimicrobialForSale({
+          sale,
+          patient: patientDoc,
+          actor: {
+            byUserId: req.user?._id,
+            byName:   req.user?.fullName || sale.createdBy,
+            byRole:   req.user?.role || "Pharmacist",
+          },
+        });
+      } catch (_) { /* AMU emit is non-blocking */ }
+    }
 
     // R7bf-H A6-HIGH-2: bust pharmacy revenue trend cache so the chart
     // doesn't lag the dashboard by up to 24h after a bulk sale.

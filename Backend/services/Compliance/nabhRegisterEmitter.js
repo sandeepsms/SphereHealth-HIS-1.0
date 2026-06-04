@@ -1793,6 +1793,59 @@ function isAntibiotic(name) {
   return ANTIBIOTIC_STEMS.some((stem) => n.includes(stem));
 }
 
+// R7hr-29: Drug Master is the source of truth for "is this an antibiotic"
+// — Drug.category === "Antibiotic" beats a hardcoded stem-list every time
+// (pharmacist sets it once on the drug record, then EVERY downstream
+// hook honours it: register emit, formulary report, stewardship review).
+//
+// Tiny in-process Map cache keyed by drugId (string) avoids hammering the
+// Drug collection on bulk dispense. 10-min TTL; if a pharmacist re-classifies
+// a drug, the cached "Antibiotic" decision invalidates within 10 minutes —
+// well under the cadence at which the AMSC reviews the register.
+//
+// Antibiotic family pulled by treating ANY of {Antibiotic, Antiviral,
+// Antifungal, Antiparasitic} as AMU-tracked. NABH MOM.7 + WHO AWaRe both
+// scope all antimicrobials, not just antibacterials.
+const _DRUG_AMU_CACHE = new Map();   // drugId-string → { isAmu, category, hit-at }
+const _DRUG_AMU_TTL_MS = 10 * 60 * 1000;
+const _AMU_CATEGORIES  = new Set(["Antibiotic", "Antiviral", "Antifungal", "Antiparasitic"]);
+
+async function isAntibioticByDrugId(drugId) {
+  if (!drugId) return false;
+  const key = String(drugId);
+  const cached = _DRUG_AMU_CACHE.get(key);
+  if (cached && Date.now() - cached.at < _DRUG_AMU_TTL_MS) return !!cached.isAmu;
+  try {
+    const Drug = require("../../models/Pharmacy/DrugModel");
+    const d = await Drug.findById(key).select("category").lean();
+    const cat = d?.category || "";
+    const isAmu = _AMU_CATEGORIES.has(cat);
+    _DRUG_AMU_CACHE.set(key, { isAmu, category: cat, at: Date.now() });
+    return isAmu;
+  } catch (_) {
+    return false;
+  }
+}
+
+// R7hr-29: When the only signal is a free-typed drug name (e.g. legacy
+// DoctorOrder.orderDetails.medicineName), try a Drug Master lookup first
+// (so the pharmacist's category="Antibiotic" decision still wins) and
+// only fall back to the stem regex when no drug record matches.
+async function isAntibioticByName(name) {
+  if (!name) return false;
+  try {
+    const Drug = require("../../models/Pharmacy/DrugModel");
+    const safe = String(name).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!safe) return false;
+    const rx = new RegExp("^" + safe + "$", "i");
+    const d = await Drug.findOne({
+      $or: [{ name: rx }, { genericName: rx }, { brandName: rx }],
+    }).select("category").lean();
+    if (d) return _AMU_CATEGORIES.has(d.category || "");
+  } catch (_) { /* fall through to stems */ }
+  return isAntibiotic(name);
+}
+
 /**
  * Emit an antimicrobial-use register row when a Medication order matches
  * the antibiotic list. Called from doctorOrderRoutes after the order is
@@ -1812,7 +1865,15 @@ async function emitAntimicrobial(args = {}) {
 
     const details = order.orderDetails || {};
     const medName = details.medicineName || details.displayName || "";
-    if (!isAntibiotic(medName)) return null;
+    // R7hr-29: Drug Master category wins over stems. If the order carries a
+    // resolvable drugId, isAntibioticByDrugId checks Drug.category directly.
+    // Otherwise isAntibioticByName tries a name match against the master,
+    // then falls back to the curated stem list — so brand names + generics
+    // outside the stem list still emit when the pharmacist has set category.
+    const isAmu = details.drugId
+      ? await isAntibioticByDrugId(details.drugId)
+      : await isAntibioticByName(medName);
+    if (!isAmu) return null;
 
     // Idempotency: one row per DoctorOrder (also enforced by unique sparse index)
     const existing = await AntimicrobialUseRegister.findOne({ doctorOrderId: order._id }).lean();
@@ -1888,6 +1949,124 @@ async function emitAntimicrobial(args = {}) {
     console.error("[nabhRegisterEmitter] emitAntimicrobial FAILED:", e.message, "— orderId:", args?.order?._id);
     return null;
   }
+}
+
+/**
+ * R7hr-29: AMU emit from a PharmacySale.
+ *
+ * Drug Master `.category === "Antibiotic"` (or Antiviral/Antifungal/
+ * Antiparasitic) on any dispensed item triggers an Antimicrobial Use
+ * Register row keyed to the sale + item. Counts the pharmacy counter as
+ * the "administration" moment for Walk-in / OPD / Homecare sales — the
+ * register row is the audit anchor the IC officer reviews at 48-72h.
+ *
+ * IPD sales are intentionally skipped: the doctor-order POST already
+ * emits an AMU row keyed to doctorOrderId (unique sparse index), and
+ * the pharmacy dispense is just fulfillment — emitting twice would
+ * double-count the IPD course in stewardship reports.
+ *
+ * Caller is non-blocking; failure here never rolls back the sale.
+ *
+ * @param {object} args
+ * @param {object} args.sale        — PharmacySale doc (must be persisted)
+ * @param {object} [args.patient]   — Patient doc for UHID/age/sex/name
+ * @param {object} [args.admission] — Admission doc (only IPD/Homecare)
+ * @param {object} [args.actor]     — { byUserId, byName, byRole }
+ * @returns {Promise<object[]>}    — array of created AMU rows (empty if none)
+ */
+async function emitAntimicrobialForSale(args = {}) {
+  const created = [];
+  try {
+    const { sale, patient = {}, admission = null, actor = {} } = args;
+    if (!sale?._id) return created;
+    if (sale.saleType === "IPD") return created;       // doctor-order already emitted
+    if (!sale.patientUHID && !patient.UHID) {
+      // Walk-in anonymous: still emit (NABH wants every Sch H antibiotic
+      // dispense logged, even OTC counter sales) — just with empty patient.
+    }
+    const items = Array.isArray(sale.items) ? sale.items : [];
+    if (items.length === 0) return created;
+
+    const actorMeta = _actor(actor);
+    const admId = patient.UHID
+      ? await _resolveCanonicalAdmissionId(patient.UHID, admission?._id || sale.admissionId)
+      : null;
+
+    for (const it of items) {
+      if (!it.drugId) continue;
+      const isAmu = await isAntibioticByDrugId(it.drugId);
+      if (!isAmu) continue;
+
+      const drugName = String(it.drugName || it.genericName || it.brandName || "").trim();
+      const aware = _classifyAware(drugName);
+
+      // Pharmacy-counter dispense → "Outpatient prescription" indication by
+      // default; OPD/Walk-in won't carry a culture flag at the counter. The
+      // IC officer can amend later via the register page.
+      const indicationDefault = sale.saleType === "Walk-in"
+        ? "Walk-in OTC / pharmacy dispense — review with prescriber"
+        : "Outpatient prescription — review with culture/sensitivity at 48-72h";
+
+      try {
+        const row = await AntimicrobialUseRegister.create({
+          patientId:   patient._id || null,
+          UHID:        (patient.UHID || sale.patientUHID || "").toString().toUpperCase().trim() || "WALK-IN",
+          patientName: patient.fullName || patient.name || sale.patientName || "",
+          age:         Number.isFinite(Number(patient.age || sale.age)) ? Number(patient.age || sale.age) : null,
+          sex:         patient.gender || patient.sex || sale.gender || "",
+          admissionId: admId,
+          admissionNumber: admission?.admissionNumber || sale.admissionNumber || "",
+          ward:        admission?.ward || admission?.wardName || sale.wardName || "",
+
+          antibiotic:        drugName,
+          antibioticClass:   "",
+          watchAccessReserve: aware,
+          dose:              "",          // pharmacy line items don't carry sig
+          route:             "",
+          frequency:          "",
+          duration:           "",
+          startedAt:          sale.createdAt || new Date(),
+
+          indication:        indicationDefault,
+          indicationType:    "Empirical",
+          suspectedSite:     "",
+          prophylactic:      false,
+          prophylaxisType:   "",
+          prophylaxisDurationHours: null,
+          cultureSent:       false,
+          cultureResultPending: true,
+
+          orderingDoctor:    sale.doctorName || "",
+          orderingDoctorId:  null,
+          doctorOrderId:     null,         // pharmacy-driven row — sparse index allows null
+
+          status:     "Active",
+          sourceRef:  sale._id,
+          sourceType: "PharmacySale",
+          occurredAt: sale.createdAt || new Date(),
+          auditTrail: [{
+            action: "ORDERED",
+            at: new Date(),
+            ...actorMeta,
+            notes: `pharmacy-dispense saleType=${sale.saleType} bill=${sale.billNumber} drug=${drugName} aware=${aware || "?"}`,
+          }],
+          createdBy:     _asObjectId(actorMeta.byUserId),
+          createdByName: actorMeta.byName,
+          createdByRole: actorMeta.byRole,
+        });
+        created.push(row);
+      } catch (rowErr) {
+        if (rowErr?.code !== 11000) {
+          console.error("[nabhRegisterEmitter] emitAntimicrobialForSale row FAILED:",
+            rowErr.message, "— saleId:", sale._id, "drug:", drugName);
+        }
+      }
+    }
+  } catch (e) {
+    console.error("[nabhRegisterEmitter] emitAntimicrobialForSale FAILED:", e.message,
+      "— saleId:", args?.sale?._id);
+  }
+  return created;
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -3099,6 +3278,10 @@ module.exports = {
   emitMortality,
   emitRestraint,
   emitAntimicrobial,
+  // R7hr-29 — pharmacy-dispense path: Drug Master category=Antibiotic →
+  // auto AMU register row for Walk-in/OPD/Homecare sales (IPD already
+  // emits via the doctor-order POST).
+  emitAntimicrobialForSale,
   // R7en — ECG register
   emitECG,
   // R7gw-B9-T01 — Sentinel-event register
