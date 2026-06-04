@@ -336,16 +336,42 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
             ? [{ label: "Address", value: patientAddress }]
             : []),
         ]
-      : [
-          { label: "Bill No",  value: r.billNumber || r.invoiceNo || "—" },
-          { label: "UHID",     value: r.UHID || r.uhid || r.patientUHID || "—" },
-          { label: "Patient",  value: r.patientName || r.fullName || "—" },
-          { label: "Age/Sex",  value: genderAge || "—" },
-          { label: "Contact",  value: r.contactNumber || r.mobile || r.phone || "—" },
-          ...(patientAddress
-            ? [{ label: "Address", value: patientAddress }]
-            : []),
-        ];
+      : isIPD
+        ? [
+            // R7hr-19 (user feedback): collapse UHID + IPD No into a single
+            // "UHID / IPD" row with combined value (e.g. "UH01 / IPD-26-02")
+            // so the left strip carries the IPD context — saves a row on the
+            // right and reads more naturally as a single patient identifier
+            // pair. Ward also moves to the LEFT under Contact (same reason —
+            // ward is patient-context, not bill-meta, so it belongs with the
+            // identity block).
+            { label: "Bill No",   value: r.billNumber || r.invoiceNo || "—" },
+            { label: "UHID / IPD",
+              value: [
+                r.UHID || r.uhid || r.patientUHID || "—",
+                r.admissionNumber || r.ipdNo || r.ipdNumber || "—",
+              ].join(" / "),
+            },
+            { label: "Patient",   value: r.patientName || r.fullName || "—" },
+            { label: "Age/Sex",   value: genderAge || "—" },
+            { label: "Contact",   value: r.contactNumber || r.mobile || r.phone || "—" },
+            ...((r.wardName || r.ward)
+              ? [{ label: "Ward", value: r.wardName || r.ward }]
+              : []),
+            ...(patientAddress
+              ? [{ label: "Address", value: patientAddress }]
+              : []),
+          ]
+        : [
+            { label: "Bill No",  value: r.billNumber || r.invoiceNo || "—" },
+            { label: "UHID",     value: r.UHID || r.uhid || r.patientUHID || "—" },
+            { label: "Patient",  value: r.patientName || r.fullName || "—" },
+            { label: "Age/Sex",  value: genderAge || "—" },
+            { label: "Contact",  value: r.contactNumber || r.mobile || r.phone || "—" },
+            ...(patientAddress
+              ? [{ label: "Address", value: patientAddress }]
+              : []),
+          ];
   // R7hr-15-OPD (knownIssue #2): for OPD bills, append prescriber reg
   // when present so the doctor cell prints "Dr. R. Kapoor · Reg. KMC-…"
   // — NABH MOM.4 + Sch H/H1/X register need identifiable + registered
@@ -423,21 +449,13 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
     // buyer-snapshot data and TPA reconciliation needs the LoS window.
     // Only render when a value resolves so we don't paint dashed rows on
     // legacy callers that don't pass these fields yet.
-    // R7hr-18: only render IPD No/Bed/Ward rows when a value actually
-    // resolves. R7hr-15 used "—" stub which painted dashed rows for old
-    // sales without admission-snapshot fields. Server-side enrichment in
-    // listSales (R7hr-18) now fills these from Admission master, so the
-    // common case has real values; legacy sales (admissionId orphaned)
-    // skip the row instead of showing "—".
+    // R7hr-18 / R7hr-19: IPD No collapsed into LEFT "UHID / IPD" row,
+    // Ward moved to LEFT under Contact. Keep Bed on RIGHT (with Doctor /
+    // Counter / Payer) since the bed number is bill-meta the cashier and
+    // the discharging nurse cross-reference, not patient identity.
     ...(isIPD ? [
-      ...((r.admissionNumber || r.ipdNo || r.ipdNumber)
-        ? [{ label: "IPD No", value: r.admissionNumber || r.ipdNo || r.ipdNumber }]
-        : []),
       ...((r.bedNumber || r.bed || r.bedNo)
         ? [{ label: "Bed",    value: r.bedNumber || r.bed || r.bedNo }]
-        : []),
-      ...((r.wardName || r.ward)
-        ? [{ label: "Ward",   value: r.wardName || r.ward }]
         : []),
     ] : []),
     ...((isIPD && (r.admissionDate || r.dateOfAdmission))
