@@ -1718,7 +1718,12 @@ function DispenseTab() {
                 autoComplete="off"
                 placeholder={["Walk-in", "Homecare"].includes(saleType) ? "Type 4+ digits to find past customers…" : ""}
               />
-              {walkInDropdownOpen && walkInMatches.length > 0 && (
+              {/* R7hr-33 (audit P2-6): show the dropdown when the query is
+                  long enough — even when empty — so the cashier sees
+                  "No previous customers" instead of wondering whether the
+                  server replied at all. Only renders for Walk-in/Homecare
+                  with ≥4 typed digits (matches backend RX_LEN guard). */}
+              {walkInDropdownOpen && ["Walk-in", "Homecare"].includes(saleType) && String(patient.contactNumber || "").trim().length >= 4 && (
                 <div
                   style={{
                     position: "absolute",
@@ -1736,7 +1741,9 @@ function DispenseTab() {
                   }}
                 >
                   <div style={{ padding: "6px 10px", fontSize: 11, color: "#64748b", borderBottom: "1px solid #e5e7eb", background: "#f8fafc" }}>
-                    {walkInMatches.length} previous customer{walkInMatches.length === 1 ? "" : "s"} found
+                    {walkInMatches.length === 0
+                      ? "No previous customers with this number"
+                      : `${walkInMatches.length} previous customer${walkInMatches.length === 1 ? "" : "s"} found`}
                   </div>
                   {walkInMatches.map((m, ix) => {
                     const last = m.lastSeen ? new Date(m.lastSeen) : null;
@@ -1753,16 +1760,27 @@ function DispenseTab() {
                         type="button"
                         onMouseDown={(e) => e.preventDefault() /* keep input focus */}
                         onClick={() => {
+                          // R7hr-33 (audit P1-4): "fill blanks" semantics —
+                          // only set fields the cashier hasn't already
+                          // typed. Previously `m.doctorName || p.doctorName`
+                          // meant lookup-doctor always WON over user-typed,
+                          // overwriting today's prescriber for Sch H/H1/X
+                          // bills where the register column needs the
+                          // current Reg-No, not the stale historical one.
+                          // Same rule for every other patient field.
                           setPatient(p => ({
                             ...p,
-                            patientName:   m.patientName   || p.patientName,
-                            contactNumber: m.contactNumber || p.contactNumber,
-                            age:           m.age           || p.age,
-                            gender:        m.gender        || p.gender,
-                            doctorName:    m.doctorName    || p.doctorName,
+                            patientName:   p.patientName   || m.patientName   || "",
+                            contactNumber: p.contactNumber || m.contactNumber || "",
+                            age:           p.age           || m.age           || "",
+                            gender:        p.gender        || m.gender        || "",
+                            doctorName:    p.doctorName    || m.doctorName    || "",
                           }));
                           setWalkInDropdownOpen(false);
-                          toast.success(`Loaded ${m.patientName || "customer"} (${m.visits} prior visit${m.visits === 1 ? "" : "s"})`);
+                          // R7hr-33 (audit P2-toast): drop patient name
+                          // from the toast — it's PHI and clinical
+                          // workstations are often shared with patient view.
+                          toast.success(`Loaded prior customer (${m.visits} visit${m.visits === 1 ? "" : "s"})`);
                         }}
                         style={{
                           display: "block",
@@ -4059,12 +4077,18 @@ function Table({ cols, children, compact, sort }) {
 // ("₹120", "12.5") parse to numbers, strings that look like dates parse
 // with Date.parse, everything else falls back to localeCompare.
 function useTableSort(rows, initialKey, initialDir = "asc") {
-  const [key, setKey] = useState(initialKey || null);
+  // R7hr-33 (audit P2-B): use the lazy-init form + functional-set form for
+  // setKey so a function key (e.g. `(r) => r.status || "Hold"`) lands as a
+  // value, not as React's setState updater. Without this, the previous
+  // implementation silently stored the function INVOKED with prev=null,
+  // breaking sort. Now both string keys ("name") and function keys are
+  // first-class.
+  const [key, setKey] = useState(() => initialKey || null);
   const [dir, setDir] = useState(initialDir);
   const onChange = (newKey) => {
     if (!newKey) return;
     if (newKey === key) setDir(d => d === "asc" ? "desc" : "asc");
-    else { setKey(newKey); setDir("asc"); }
+    else { setKey(() => newKey); setDir("asc"); }
   };
   const sorted = useMemo(() => {
     const arr = Array.isArray(rows) ? rows.slice() : [];
@@ -4129,7 +4153,14 @@ function SalesBillsTable({ rows, emptyText, renderRow }) {
         { label: "Items",   key: "items.length" },
         { label: "Grand ₹", key: "grandTotal" },
         { label: "Payment", key: "paymentMode" },
-        { label: "Status",  key: "status" },
+        // R7hr-33 (audit P1-B): a few legacy pre-R7c sales were persisted
+        // with status=null. The renderer falls back to "Hold" via
+        // STATUS_COL[s.status] || STATUS_COL.Hold, but the sort hook
+        // treats null as empty and sinks the row to the bottom of an
+        // ascending sort — confusing because the user sees a row
+        // "Hold" sitting below all real "Hold" rows. Bridge with a
+        // function key so null → "Hold" for sort purposes too.
+        { label: "Status",  key: (r) => r.status || "Hold" },
         "Action",
       ]}
       sort={sort}

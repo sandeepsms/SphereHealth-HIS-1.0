@@ -1827,6 +1827,15 @@ async function isAntibioticByDrugId(drugId) {
   }
 }
 
+// R7hr-33 (audit P1-6): cache-bust hook for when a pharmacist edits
+// `Drug.category`. Without this, up to 10 minutes of dispenses could
+// emit (or fail to emit) AMU rows based on the stale category. Call
+// from drugController.updateDrug whenever the category field is touched.
+function invalidateAmuCache(drugId) {
+  if (!drugId) return;
+  _DRUG_AMU_CACHE.delete(String(drugId));
+}
+
 // R7hr-29: When the only signal is a free-typed drug name (e.g. legacy
 // DoctorOrder.orderDetails.medicineName), try a Drug Master lookup first
 // (so the pharmacist's category="Antibiotic" decision still wins) and
@@ -2067,6 +2076,57 @@ async function emitAntimicrobialForSale(args = {}) {
       "— saleId:", args?.sale?._id);
   }
   return created;
+}
+
+/**
+ * R7hr-33 (audit P0-2 / P0-3): mark every pharmacy-sourced AMU row tied to
+ * a sale as Discontinued. Wired from pharmacyController.cancelSale (full
+ * cancel — discontinue ALL rows for the sale) and returnSaleItems (partial
+ * return — discontinue only the rows whose drugName was returned). Without
+ * this hook, a cancelled/refunded antibiotic stays "Active" in the AMU
+ * register forever and AWaRe stewardship reports over-count consumption.
+ *
+ * @param {object} args
+ * @param {ObjectId|string} args.saleId         — PharmacySale._id
+ * @param {string[]} [args.antibioticNames]    — narrow to specific drugs
+ *                                                (case-insensitive exact); omit to discontinue all
+ * @param {string} [args.reason]               — short audit-trail note
+ * @param {object} [args.actor]
+ * @returns {Promise<number>}                  — number of rows discontinued
+ */
+async function discontinueAntimicrobialForSale(args = {}) {
+  try {
+    const { saleId, antibioticNames = [], reason = "", actor = {} } = args;
+    if (!saleId) return 0;
+    const actorMeta = _actor(actor);
+    const match = {
+      sourceType: "PharmacySale",
+      sourceRef: _asObjectId(saleId) || saleId,
+      status: "Active",
+    };
+    if (Array.isArray(antibioticNames) && antibioticNames.length > 0) {
+      match.antibiotic = { $in: antibioticNames.map(n => new RegExp("^" + String(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i")) };
+    }
+    const res = await AntimicrobialUseRegister.updateMany(match, {
+      $set: {
+        status: "Discontinued",
+        stoppedAt: new Date(),
+      },
+      $push: {
+        auditTrail: {
+          action: "DISCONTINUED",
+          at: new Date(),
+          ...actorMeta,
+          notes: `pharmacy-sale-${reason || "reversed"}`.slice(0, 500),
+        },
+      },
+    });
+    return res?.modifiedCount || 0;
+  } catch (e) {
+    console.error("[nabhRegisterEmitter] discontinueAntimicrobialForSale FAILED:",
+      e.message, "— saleId:", args?.saleId);
+    return 0;
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -3282,6 +3342,10 @@ module.exports = {
   // auto AMU register row for Walk-in/OPD/Homecare sales (IPD already
   // emits via the doctor-order POST).
   emitAntimicrobialForSale,
+  // R7hr-33 — discontinue AMU rows on cancel/refund of a pharmacy sale.
+  discontinueAntimicrobialForSale,
+  // R7hr-33 — cache-bust hook for Drug Master category edits.
+  invalidateAmuCache,
   // R7en — ECG register
   emitECG,
   // R7gw-B9-T01 — Sentinel-event register

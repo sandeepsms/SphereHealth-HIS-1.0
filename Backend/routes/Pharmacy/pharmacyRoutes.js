@@ -75,7 +75,11 @@ router.get   ("/sales/:id",             requireAction("rx.read"),            ctr
 // number; we return every distinct {patientName, age, gender, doctorName}
 // triple ever captured against it. Read-only, gated on rx.read same as
 // /sales. Not validateObjectIdParam — q is a freeform mobile substring.
-router.get   ("/walk-in-patients",      requireAction("rx.read"),            ctrl.lookupWalkInPatients);
+// R7hr-33 (audit P1-1): mount the SAME scope-filter chain as /sales so a
+// Doctor/Nurse rx.read holder only sees walk-in customers from their own
+// panel/ward, not every patient in the hospital. Helpers NO-OP for
+// Admin/Pharmacist/Accountant so the cashier-counter use case is unchanged.
+router.get   ("/walk-in-patients",      requireAction("rx.read"),            attachDoctorProfile, restrictToOwnDoctorPatients, restrictToOwnNurseWard, ctrl.lookupWalkInPatients);
 router.post  ("/sales/:id/cancel",      requireAction("pharmacy.cancel"),    credentialExpiryBlocker("PHARMACIST_REG"), ctrl.cancelSale);
 router.post  ("/sales/:id/return",      requireAction("pharmacy.return"),    credentialExpiryBlocker("PHARMACIST_REG"), ctrl.returnItems);
 router.post  ("/sales/:id/add-items",   requireAction("pharmacy.add-items"), credentialExpiryBlocker("PHARMACIST_REG"), ctrl.addItems);

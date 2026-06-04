@@ -417,4 +417,18 @@ PharmacySaleSchema.index({ status: 1, createdAt: -1 });
 // proportional to the result-size not the full sales history.
 PharmacySaleSchema.index({ status: 1, saleType: 1, admissionId: 1 });
 
+// R7hr-33 (audit P1-2): compound index for the R7hr-28 walk-in patient
+// lookup. The aggregation matches {saleType:{Walk-in,Homecare}, contactNumber:
+// /^digits/, status:{Completed,Partial-Return,Supplemented}} sorted by
+// createdAt desc. Without this index the regex hits a full collection
+// scan on every keystroke (typing 4-7 digits then debouncing fires 1-3
+// queries through 250 ms debounce). Order matters: contactNumber leads
+// because its regex is the most selective predicate (prefix-anchored
+// after R7hr-33), then saleType partitions by 2-bucket cardinality,
+// finally createdAt sorts within the match set.
+PharmacySaleSchema.index(
+  { contactNumber: 1, saleType: 1, createdAt: -1 },
+  { name: "walkin_lookup_v1" },
+);
+
 module.exports = mongoose.model("PharmacySale", PharmacySaleSchema);

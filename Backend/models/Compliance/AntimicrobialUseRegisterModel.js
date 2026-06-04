@@ -164,6 +164,17 @@ AntimicrobialUseRegisterSchema.index(
   { doctorOrderId: 1 },
   { unique: true, sparse: true, name: "uniq_amu_doctor_order" },
 );
+// R7hr-33 (audit P0-1): pharmacy-sourced rows have doctorOrderId=null, so
+// the sparse index above does NOT dedup them. A retry/replay of
+// POST /pharmacy/sales (already-committed Sale, new request reaches the
+// emit hook) would create a second AMU row per item. Compound unique
+// sparse on (sourceType, sourceRef, antibiotic) closes this — same
+// (sale, drugName) tuple can only land once. Sparse on sourceRef means
+// legacy rows with sourceRef=null don't conflict.
+AntimicrobialUseRegisterSchema.index(
+  { sourceType: 1, sourceRef: 1, antibiotic: 1 },
+  { unique: true, sparse: true, name: "uniq_amu_source_drug" },
+);
 
 module.exports =
   mongoose.models.AntimicrobialUseRegister ||

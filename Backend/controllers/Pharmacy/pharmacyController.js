@@ -59,7 +59,15 @@ const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditSe
 // via the doctor-order POST). Lazy-imported so a missing emitter module
 // never breaks dispense.
 let _emitAntimicrobialForSale = null;
-try { _emitAntimicrobialForSale = require("../../services/Compliance/nabhRegisterEmitter").emitAntimicrobialForSale; }
+let _discontinueAntimicrobialForSale = null;
+try {
+  const _amu = require("../../services/Compliance/nabhRegisterEmitter");
+  _emitAntimicrobialForSale       = _amu.emitAntimicrobialForSale;
+  // R7hr-33 (audit P0-2 / P0-3): used by cancelSale + returnItems below
+  // to flip Active AMU rows to Discontinued so the AWaRe consumption
+  // report doesn't over-count cancelled / refunded antibiotics.
+  _discontinueAntimicrobialForSale = _amu.discontinueAntimicrobialForSale;
+}
 catch (_) { /* emitter missing → no AMU register row; dispense still succeeds */ }
 // R7cu — pulled to module scope so collectCredit() can convert payment
 // amounts to Decimal128 + retry on VersionError races (two cashiers
@@ -262,6 +270,17 @@ exports.updateDrug = async (req, res) => {
       { new: true, runValidators: true }
     );
     if (!drug) return res.status(404).json({ success: false, message: "Drug not found", code: "NOT_FOUND" });
+    // R7hr-33 (audit P1-6): if the drug's `category` was just edited (or
+    // could have been edited — we don't compare before/after here, just
+    // assume any update may have touched it), bust the AMU classification
+    // cache so the next dispense re-evaluates from the fresh DB row. The
+    // alternative — wait 10 min for TTL expiry — meant a recategorised
+    // drug would emit (or miss) AMU rows for up to 10 minutes after the
+    // pharmacist's edit.
+    try {
+      const _amu = require("../../services/Compliance/nabhRegisterEmitter");
+      if (typeof _amu.invalidateAmuCache === "function") _amu.invalidateAmuCache(drug._id);
+    } catch (_) { /* AMU module optional — Drug edit must not fail on its absence */ }
     res.json({ success: true, data: drug });
   } catch (e) { sendErr(res, e); }
 };
@@ -1637,19 +1656,32 @@ exports.lookupWalkInPatients = async (req, res) => {
       return res.json({ success: true, data: [] });
     }
     const lim = Math.min(25, Math.max(1, Number(req.query.limit) || 8));
-    // contactNumber is stored as a free-text String on PharmacySale, so
-    // match by suffix/contains; users sometimes prefix +91 or 0 and we
-    // don't want that to silently miss prior visits.
+    // R7hr-33 (audit P1-2): prefix-anchored regex so the
+    // {contactNumber:1, saleType:1, createdAt:-1} compound index can be
+    // used by Mongo's planner. Unanchored `/9876/` becomes a COLLSCAN on
+    // every keystroke; `/^9876/` allows index-prefix scan. Mobile numbers
+    // are digits — `i` flag was always meaningless, removed. The
+    // pharmacist's mental model is "first digits I typed", so prefix
+    // matches the UX expectation too.
     const safe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const rx = new RegExp(safe, "i");
+    const rx = new RegExp("^" + safe);
+    const match = {
+      saleType: { $in: ["Walk-in", "Homecare"] },
+      contactNumber: rx,
+      // R7hr-33 (audit P2-9): drop "Refunded" — a fully-reversed sale
+      // shouldn't count as a returning-customer visit. Customer who came
+      // once and got a complete refund used to appear forever as a
+      // returning customer with visits=1.
+      status: { $in: ["Completed", "Partial-Return", "Supplemented"] },
+    };
+    // R7hr-33 (audit P1-1): honor the scope filter that the route now
+    // attaches for Doctor / Nurse rx.read holders. NO-OP for
+    // Admin/Pharmacist/Accountant (req.scopeFilter undefined / empty).
+    if (req.scopeFilter && Object.keys(req.scopeFilter).length > 0) {
+      Object.assign(match, req.scopeFilter);
+    }
     const rows = await Sale.aggregate([
-      {
-        $match: {
-          saleType: { $in: ["Walk-in", "Homecare"] },
-          contactNumber: rx,
-          status: { $in: ["Completed", "Partial-Return", "Refunded", "Supplemented"] },
-        },
-      },
+      { $match: match },
       { $sort: { createdAt: -1 } },
       {
         // Collapse to one row per {contact, patientName} — same number can
@@ -3024,6 +3056,10 @@ exports.returnItems = async (req, res) => {
       refundedItems.push({
         saleItemId, drugId: orig.drugId, drugName: orig.drugName,
         batchId: orig.batchId, batchNo: orig.batchNo, expiryDate: orig.expiryDate,
+        // R7hr-33 (audit P0 — refund MRP): credit-note rows inherit the
+        // MRP that was on the original sale item so the refund slip can
+        // print MRP alongside Rate. Symmetry with R7hr-31 dispense path.
+        mrp: Number(orig.mrp || 0),
         quantity: qty, unitPrice: unit, gstRate: gst, discountPercent: dPct,
         grossAmount: round2(gross), discountAmount: round2(disc),
         taxableAmount: round2(taxable), gstAmount: round2(gstAmt),
@@ -3215,6 +3251,27 @@ exports.returnItems = async (req, res) => {
       });
     } catch (_) { /* silent — audit emit is non-blocking */ }
 
+    // R7hr-33 (audit P0-3): discontinue the AMU register rows that match
+    // the returned antibiotic lines so the AWaRe consumption report stops
+    // counting refunded doses. Narrow by the returned drugName so a
+    // partial return of Drug A + Drug B leaves any unrelated Active AMU
+    // row from a 3rd drug untouched. Best-effort — register write must
+    // never roll back primary refund.
+    if (_discontinueAntimicrobialForSale && refundedItems.length > 0) {
+      try {
+        await _discontinueAntimicrobialForSale({
+          saleId: sale._id,
+          antibioticNames: refundedItems.map(r => r.drugName).filter(Boolean),
+          reason: "partial-return",
+          actor: {
+            byUserId: req.user?._id,
+            byName:   req.user?.fullName,
+            byRole:   req.user?.role || "Pharmacist",
+          },
+        });
+      } catch (_) { /* AMU discontinue is non-blocking */ }
+    }
+
     // R7hr-12-S3 (D3-10): surface stock-restore fallbacks so the operator can
     // investigate post-stocktake divergence rather than only seeing the
     // failure in the log file. `stockRestoreWarnings` is an empty array on
@@ -3295,6 +3352,12 @@ exports.addItems = async (req, res) => {
         addedItems.push({
           drugId: it.drugId, drugName: it.drugName,
           batchId: u.batch._id, batchNo: u.batch.batchNo, expiryDate: u.batch.expiryDate,
+          // R7hr-33 (audit P0 — supplement MRP): supplementary-invoice
+          // lines snapshot MRP same as the original dispense path. Without
+          // this, supplemented items always render MRP "—" while the
+          // original items show "₹100" — visually inconsistent on the
+          // consolidated reprint.
+          mrp: Number(u.batch.mrp || 0),
           quantity: qty, unitPrice: unit, gstRate: gstR, discountPercent: discR,
           grossAmount: round2(gross),  discountAmount: round2(discAmt),
           taxableAmount: round2(taxable), gstAmount: round2(gstAmt), netAmount: round2(net),
@@ -3731,6 +3794,24 @@ exports.cancelSale = async (req, res) => {
         },
       });
     } catch (_) { /* silent — audit emit is non-blocking */ }
+
+    // R7hr-33 (audit P0-2): discontinue ALL AMU register rows tied to this
+    // sale so the AWaRe consumption report stops counting cancelled
+    // antibiotics as Active. No name filter — the whole sale is reversed.
+    // Best-effort — register write must never roll back primary cancel.
+    if (_discontinueAntimicrobialForSale) {
+      try {
+        await _discontinueAntimicrobialForSale({
+          saleId: s._id,
+          reason: "sale-cancelled",
+          actor: {
+            byUserId: req.user?._id,
+            byName:   cancelledByName,
+            byRole:   req.user?.role || "Pharmacist",
+          },
+        });
+      } catch (_) { /* AMU discontinue is non-blocking */ }
+    }
 
     res.json({
       success: true,
