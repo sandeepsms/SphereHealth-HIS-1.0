@@ -14,12 +14,22 @@
  * outstanding. The pharmacist never sees the complete hospital bill —
  * only what they can act on (medicines + payment + advance).
  *
- * Routed at /pharmacy/ledger/:admissionId. Query params (passed from
- * the Live Indents page) optionally seed patient details so the page
- * renders identity instantly while sales fetch in the background.
+ * Routed at /pharmacy/ledger/:admissionId. The Live Indents page passes
+ * patient identity via React Router history-state (location.state) so
+ * the page renders identity instantly while sales fetch in the
+ * background. On direct navigation / page refresh (no state present)
+ * the page hydrates identity from GET /admissions/:admissionId.
+ *
+ * R7hr-12 (D9-01): patient identifiers (UHID, name, IPD admission no,
+ * bed/ward, consultant) used to ride in the URL query string and were
+ * captured by browser history, access logs and analytics beacons.
+ * Removed — only the opaque admissionId ObjectId remains in the URL.
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams, useNavigate } from "react-router-dom";
+// R7hr-12 (D9-01): switched from useSearchParams → useLocation so the
+// Live-Indents → Live-Ledger seed travels via history-state instead of
+// URL query string. PHI must never appear in window.location.
+import { useParams, useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
@@ -76,7 +86,12 @@ export default function PharmacyLedgerPage({
   onBack,
 } = {}) {
   const routeParams = useParams();
-  const [search] = useSearchParams();
+  // R7hr-12 (D9-01): history-state seed (from PharmacyIndentsPage's
+  // navigate(..., { state: { seedPatient } })). location.state is
+  // attached to the History API entry, NOT the URL — so PHI never
+  // touches window.location, browser history bar, access logs or any
+  // analytics beacon that snapshots the URL.
+  const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth() || {};
 
@@ -85,15 +100,21 @@ export default function PharmacyLedgerPage({
   // the captured segment; the prop is undefined.
   const admissionId = admIdProp || routeParams.admissionId;
 
-  // Patient identity. Seed first from the explicit prop (embedded mode),
-  // then from the URL query string (route mode), then hydrate later from
-  // the first sale row if neither source provided it.
-  const [patient, setPatient] = useState(() => seedPatient || {
-    UHID:            search.get("uhid") || "",
-    patientName:     search.get("name") || "",
-    admissionNumber: search.get("ipd")  || "",
-    bed:             search.get("bed")  || "",
-    consultant:      search.get("doc")  || "",
+  // Patient identity. Seed priority:
+  //   1. Explicit `seedPatient` prop (embedded-tab mode in PharmacyHomePage)
+  //   2. React Router history-state seed (Live-Indents click)
+  //   3. Empty placeholder — load() will hydrate from
+  //      GET /admissions/:admissionId and GET /patients/uhid/:uhid
+  // R7hr-12: removed query-string fallback that previously read
+  // search.get("uhid"|"name"|"ipd"|"bed"|"doc"). PHI in URLs was a P0
+  // leak — see PHARMACY_AUDIT_R7hr-12.json finding D9-01.
+  const stateSeed = location.state?.seedPatient;
+  const [patient, setPatient] = useState(() => seedPatient || stateSeed || {
+    UHID:            "",
+    patientName:     "",
+    admissionNumber: "",
+    bed:             "",
+    consultant:      "",
   });
 
   // Back-button handler: parent callback if embedded, else router pop.
@@ -117,37 +138,85 @@ export default function PharmacyLedgerPage({
   const [advTxn, setAdvTxn]     = useState("");
   const [advSaving, setAdvSaving] = useState(false);
 
+  // R7hr-13 — Refund Advance modal state.
+  // The receptionist /ReceptionBilling already had this flow but the
+  // pharmacist did not — they couldn't return the unspent portion of a
+  // patient's advance without leaving the pharmacy module. The modal
+  // picks one advance row with remaining balance (FIFO default), takes
+  // amount + reason + refund mode, then calls the existing
+  // POST /api/billing/advance/:advanceId/refund endpoint and prints a
+  // refund-receipt slip (same template used by ReceptionBilling +
+  // AccountsConsole — UI consistency for the patient-facing print).
+  const [refOpen, setRefOpen]   = useState(false);
+  const [refAdvId, setRefAdvId] = useState("");      // chosen advance _id
+  const [refAmt, setRefAmt]     = useState("");
+  const [refReason, setRefReason] = useState("");
+  const [refMode, setRefMode]   = useState("CASH");
+  const [refTxn, setRefTxn]     = useState("");
+  const [refSaving, setRefSaving] = useState(false);
+  const refundableAdvances = useMemo(() => advances
+    .filter(a => a && a.status !== "REFUNDED" && a.status !== "CANCELLED")
+    .map(a => {
+      const total    = dec(a.amount);
+      const applied  = dec(a.appliedAmount);
+      const refunded = dec(a.refundedAmount);
+      const remaining = Math.max(0, +(total - applied - refunded).toFixed(2));
+      return { ...a, remaining };
+    })
+    .filter(a => a.remaining > 0)
+    .sort((x, y) => new Date(x.createdAt || x.paidAt || 0) - new Date(y.createdAt || y.paidAt || 0)),
+  [advances]);
+
   const load = async () => {
-    if (!patient.UHID) {
-      // Without a UHID we can't pull sales (the credit endpoint groups
-      // by admissionId but doesn't return the per-sale detail). Show
-      // a banner and the back button.
+    if (!admissionId) {
+      // No admission target at all — render the banner empty + back btn.
       setLoading(false);
       return;
     }
     setLoading(true);
     try {
+      // R7hr-12 (D9-01): fetch the admission FIRST so we can hydrate UHID
+      // from the route param alone. Previously load() bailed early when
+      // `patient.UHID` was empty, but now that the URL no longer carries
+      // PHI, that early-return would have produced a permanent blank
+      // page on direct navigation / refresh. The admission body carries
+      // UHID + patientName + admissionNumber + bedNumber/wardName +
+      // attendingDoctor, so this single fetch is enough to drive
+      // everything downstream.
+      const admR = await axios
+        .get(`${API_ENDPOINTS.BASE}/admissions/${admissionId}`)
+        .catch(() => null);
+      const admBody = admR?.data?.data || admR?.data || null;
+
+      // UHID priority: explicit seed (prop / history-state) wins so we
+      // don't refetch identity the parent already provided; otherwise
+      // pull it from the admission body.
+      const uhid = patient.UHID || admBody?.UHID || "";
+      if (!uhid) {
+        // Admission lookup failed AND no seed — surface a useful error
+        // instead of silently hanging on a blank banner.
+        toast.error("Could not resolve patient for this admission");
+        setLoading(false);
+        return;
+      }
+
       // Pull all pharmacy sales for this UHID, then filter to this
       // admission. Avoids needing a new backend endpoint and keeps
       // the contract identical to the OPD Rx page's dup-dispense
       // lookup added in R7hp-4.
-      // R7hr-7: pull patient identity + admission details too so the
-      // consolidated bill renders Age/Sex/Contact/Doctor instead of "—".
+      // R7hr-7: pull patient identity too so the consolidated bill
+      // renders Age/Sex/Contact/Doctor instead of "—".
       // Both fetches are best-effort — they fall through gracefully
       // when the endpoints don't exist for retail-mode deployments.
-      const [salesR, advR, patR, admR] = await Promise.all([
-        axios.get(`${API_ENDPOINTS.BASE}/pharmacy/sales`, { params: { uhid: patient.UHID, limit: 500 } }),
-        axios.get(`${API_ENDPOINTS.BASE}/billing/advance/uhid/${encodeURIComponent(patient.UHID)}`).catch(() => ({ data: { data: [] } })),
+      const [salesR, advR, patR] = await Promise.all([
+        axios.get(`${API_ENDPOINTS.BASE}/pharmacy/sales`, { params: { uhid, limit: 500 } }),
+        axios.get(`${API_ENDPOINTS.BASE}/billing/advance/uhid/${encodeURIComponent(uhid)}`).catch(() => ({ data: { data: [] } })),
         // R7hr-7-FIX-2: correct path is /patients/uhid/:uhid (was
         // /by-uhid/ — that endpoint doesn't exist and silently 404'd,
         // so AGE/SEX/CONTACT still showed "—" after the first fix.
-        axios.get(`${API_ENDPOINTS.BASE}/patients/uhid/${encodeURIComponent(patient.UHID)}`).catch(() => null),
-        admissionId
-          ? axios.get(`${API_ENDPOINTS.BASE}/admissions/${admissionId}`).catch(() => null)
-          : Promise.resolve(null),
+        axios.get(`${API_ENDPOINTS.BASE}/patients/uhid/${encodeURIComponent(uhid)}`).catch(() => null),
       ]);
       const patBody = patR?.data?.data || patR?.data || null;
-      const admBody = admR?.data?.data || admR?.data || null;
       const allSales = salesR?.data?.data || [];
       // Filter to this admission (sales carry admissionId) and exclude
       // cancelled rows so the ledger reflects active charges only.
@@ -190,11 +259,16 @@ export default function PharmacyLedgerPage({
       };
       setPatient(p => ({
         ...p,
-        patientName:     mine[0]?.patientName     || patBody?.fullName || patBody?.firstName || patBody?.patientName || p.patientName,
+        // R7hr-12 (D9-01): UHID is now hydrated from the admission body
+        // (or first sale) rather than from the URL query string. Falls
+        // back to the seed (prop / history-state) so we don't blank an
+        // already-known UHID if the admission fetch shape changes.
+        UHID:            uhid || admBody?.UHID || mine[0]?.patientUHID || p.UHID,
+        patientName:     mine[0]?.patientName     || patBody?.fullName || patBody?.firstName || patBody?.patientName || admBody?.patientName || p.patientName,
         admissionNumber: mine[0]?.admissionNumber || admBody?.admissionNumber || p.admissionNumber,
         age:             patBody?.age || patBody?.ageYears || ageFromDob(patBody?.dateOfBirth || patBody?.dob) || p.age || "",
         gender:          patBody?.gender || patBody?.sex || p.gender || "",
-        contactNumber:   patBody?.contactNumber || patBody?.mobile || patBody?.phone || patBody?.contact?.mobile || patBody?.contact?.phone || p.contactNumber || "",
+        contactNumber:   patBody?.contactNumber || patBody?.mobile || patBody?.phone || patBody?.contact?.mobile || patBody?.contact?.phone || admBody?.contactNumber || p.contactNumber || "",
         // R7hr-7-FIX3: real admission field is `attendingDoctor`
         // (string name, line 196 of admissionModel.js). The earlier
         // `doctorName` lookup was a comment red-herring — that field
@@ -208,7 +282,12 @@ export default function PharmacyLedgerPage({
       setLoading(false);
     }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [admissionId, patient.UHID]);
+  // R7hr-12 (D9-01): keyed on admissionId alone — load() now derives
+  // UHID from the admission body itself, so we don't need to re-run
+  // when patient.UHID flips from "" → resolved. Previously the deps
+  // included patient.UHID to retry once the URL query string seed
+  // arrived, but that pathway is gone.
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [admissionId]);
 
   /* ── Derived totals (pharmacy only) ─────────────────────────── */
   const totals = useMemo(() => {
@@ -439,6 +518,89 @@ export default function PharmacyLedgerPage({
     } finally { setAdvSaving(false); }
   };
 
+  /* ── R7hr-13: Refund Advance — open + submit + print receipt ─ */
+  // Mirror-mutex against fast double-clicks (same pattern as R7hr-11
+  // applyAdvanceToSale fix). Backend already has idempotencyGuard but
+  // the UI sub-frame race would still create confusing toast spam.
+  const refundMutexRef = useRef(false);
+  const openRefundModal = () => {
+    if (!refundableAdvances.length) {
+      return toast.warn("No refundable advance — patient pool is empty or fully applied");
+    }
+    const first = refundableAdvances[0];
+    setRefAdvId(String(first._id));
+    setRefAmt(first.remaining.toFixed(2));
+    setRefReason("");
+    setRefMode("CASH");
+    setRefTxn("");
+    setRefOpen(true);
+  };
+  const submitRefund = async () => {
+    if (refundMutexRef.current) return;
+    const amt = Number(refAmt);
+    if (!Number.isFinite(amt) || amt <= 0)   return toast.warn("Enter an amount > 0");
+    if (!refReason.trim())                    return toast.warn("Reason is required (NABH audit trail)");
+    if (!refAdvId)                            return toast.warn("Pick an advance row");
+    const chosen = refundableAdvances.find(a => String(a._id) === String(refAdvId));
+    if (!chosen)                              return toast.warn("Selected advance is no longer refundable — refresh");
+    if (amt > chosen.remaining + 0.01)        return toast.warn(`Max refundable on this row is ${fmtINR(chosen.remaining)}`);
+    if ((refMode === "UPI" || refMode === "BANK_TRANSFER") && !refTxn.trim()) {
+      return toast.warn("Transaction reference required for UPI / Bank Transfer");
+    }
+    refundMutexRef.current = true;
+    setRefSaving(true);
+    try {
+      const r = await axios.post(
+        `${API_ENDPOINTS.BASE}/billing/advance/${refAdvId}/refund`,
+        {
+          amount: amt,
+          refundReason: refReason.trim(),
+          mode: refMode,
+          transactionId: refTxn.trim() || undefined,
+        },
+      );
+      const refunded = r?.data?.data || r?.data || chosen;
+      toast.success(`Refunded ${fmtINR(amt)} from advance`);
+      // Print refund slip — matches the "refund-receipt" slug used by
+      // ReceptionBilling's printAdvanceRefundReceipt + AccountsConsole
+      // so the patient-facing print looks identical across all three
+      // origin points.
+      try {
+        openPrint("refund-receipt", {
+          receiptNo:        `${(refunded.receiptNumber || chosen.receiptNumber || "ADV")}-RF`,
+          patientName:      patient.patientName,
+          uhid:             patient.UHID,
+          admissionNumber:  patient.admissionNumber,
+          bedNumber:        patient.bed,
+          consultantName:   patient.consultant,
+          age:              patient.age,
+          gender:           patient.gender,
+          contactNumber:    patient.contactNumber,
+          refundAmount:     amt,
+          refundMode:       refMode,
+          refundReason:     refReason.trim(),
+          transactionId:    refTxn.trim(),
+          refundedAt:       refunded.refundedAt || new Date().toISOString(),
+          sourceReceiptNo:  chosen.receiptNumber,
+          sourceMethod:     chosen.paymentMode,
+          sourceAmount:     dec(chosen.amount),
+          originalApplied:  dec(chosen.appliedAmount),
+          originalRefunded: dec(refunded.refundedAmount ?? amt),
+          refundedBy:       (user && (user.fullName || user.userName)) || "Pharmacy",
+          counterNo:        (user && (user.counter || user.counterNo)) || "PH-1",
+          purpose:          "Pharmacy advance refund",
+        });
+      } catch (_) { /* print failure non-blocking */ }
+      setRefOpen(false);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || e.message);
+    } finally {
+      setRefSaving(false);
+      refundMutexRef.current = false;
+    }
+  };
+
   /* ── Render ─────────────────────────────────────────────────── */
   // In embedded mode the parent tab supplies the page chrome, so we
   // drop the full-page background + min-height + outer padding to avoid
@@ -495,6 +657,27 @@ export default function PharmacyLedgerPage({
               borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: "pointer",
             }}>
               <i className="pi pi-plus-circle" style={{ marginRight: 6 }} /> Take Advance
+            </button>
+            {/* R7hr-13: Refund Advance — surfaces only when the patient
+                pool has an unspent balance. Grey when empty so the slot
+                stays predictable but un-clickable. Print fires on
+                success (same refund-receipt slug as ReceptionBilling). */}
+            <button
+              onClick={openRefundModal}
+              disabled={totals.advanceBalance <= 0}
+              title={totals.advanceBalance > 0
+                ? `Refund up to ${fmtINR(totals.advanceBalance)} from advance pool`
+                : "No unspent advance available to refund"}
+              style={{
+                padding: "9px 16px",
+                background: "#fff",
+                color: totals.advanceBalance > 0 ? "#b45309" : C.muted,
+                border: `1.5px solid ${totals.advanceBalance > 0 ? "#b45309" : C.border}`,
+                borderRadius: 8, fontWeight: 700, fontSize: 12,
+                cursor: totals.advanceBalance > 0 ? "pointer" : "not-allowed",
+                opacity: totals.advanceBalance > 0 ? 1 : 0.55,
+              }}>
+              <i className="pi pi-undo" style={{ marginRight: 6 }} /> Refund Advance
             </button>
             <button onClick={load} style={{
               padding: "9px 14px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
@@ -828,6 +1011,87 @@ export default function PharmacyLedgerPage({
               }}>
                 <i className={`pi ${advSaving ? "pi-spin pi-spinner" : "pi-check"}`} style={{ marginRight: 5 }} />
                 {advSaving ? "Saving…" : "Deposit"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── R7hr-13: Refund Advance modal ── */}
+      {refOpen && (
+        <div onClick={() => !refSaving && setRefOpen(false)} style={{
+          position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", display: "flex",
+          alignItems: "center", justifyContent: "center", zIndex: 50,
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: "#fff", borderRadius: 12, width: 520, maxWidth: "94vw", padding: 22,
+          }}>
+            <h3 style={{ margin: "0 0 4px 0", color: "#b45309", fontSize: 16 }}>
+              <i className="pi pi-undo" style={{ marginRight: 6 }} />
+              Refund Advance
+            </h3>
+            <div style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}>
+              {patient.patientName} · UHID {patient.UHID} · Returns unspent advance + prints receipt
+            </div>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                  Advance row
+                </label>
+                <select value={refAdvId} onChange={e => {
+                  setRefAdvId(e.target.value);
+                  const a = refundableAdvances.find(x => String(x._id) === e.target.value);
+                  if (a) setRefAmt(a.remaining.toFixed(2));
+                }} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, marginTop: 3 }}>
+                  {refundableAdvances.map(a => (
+                    <option key={a._id} value={a._id}>
+                      {(a.receiptNumber || "ADV").toString()} · deposited {fmtINR(dec(a.amount))} · remaining {fmtINR(a.remaining)} · {a.paymentMode || ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Refund amount</label>
+                  <input type="number" autoFocus value={refAmt} onChange={e => setRefAmt(e.target.value)}
+                    style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, fontWeight: 700, marginTop: 3 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Refund mode</label>
+                  <select value={refMode} onChange={e => setRefMode(e.target.value)}
+                    style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, marginTop: 3 }}>
+                    {["CASH", "UPI", "BANK_TRANSFER"].map(m => <option key={m} value={m}>{m.replace("_", " ")}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                  Reason <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input value={refReason} onChange={e => setRefReason(e.target.value.slice(0, 240))}
+                  placeholder="NABH audit trail — e.g. patient discharged with advance unspent"
+                  style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, marginTop: 3 }} />
+              </div>
+              {(refMode === "UPI" || refMode === "BANK_TRANSFER") && (
+                <div>
+                  <label style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                    Txn reference {refMode === "UPI" ? "(UPI ref)" : "(NEFT/IMPS UTR)"}
+                  </label>
+                  <input value={refTxn} onChange={e => setRefTxn(e.target.value.slice(0, 64))}
+                    placeholder={refMode === "UPI" ? "UPI ref" : "NEFT/IMPS UTR"}
+                    style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, marginTop: 3, fontFamily: "'DM Mono', monospace" }} />
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 18, justifyContent: "flex-end" }}>
+              <button onClick={() => setRefOpen(false)} disabled={refSaving} style={{
+                padding: "8px 16px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`, borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: refSaving ? "not-allowed" : "pointer",
+              }}>Cancel</button>
+              <button onClick={submitRefund} disabled={refSaving} style={{
+                padding: "8px 18px", background: "#b45309", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: refSaving ? "not-allowed" : "pointer",
+              }}>
+                <i className={`pi ${refSaving ? "pi-spin pi-spinner" : "pi-print"}`} style={{ marginRight: 5 }} />
+                {refSaving ? "Refunding…" : "Refund + Print"}
               </button>
             </div>
           </div>
