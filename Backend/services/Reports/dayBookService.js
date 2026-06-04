@@ -26,14 +26,26 @@
  *         + reversed refunds (originally negative payment rows that have
  *                              voidedAt set in window — money returns to
  *                              the drawer)
+ *         + pharmacy dispense cash (initial cash leg at counter)
+ *         + pharmacy credit-collections (collectionLog rows in window)
+ *         + pharmacy supplements (addedAt in window, amountPaid)
  *     Cash Out =
  *         + bill refunds (negative non-voided payments)
  *         + advance refunds (PatientAdvance.refundedAmount, status REFUNDED)
+ *         + pharmacy returns (refundedAt in window, refundMode Cash/Card/UPI)
  *     Net Cash = Cash In - Cash Out - TDS deducted
  *
  *   The reversed-refund leg was the missing piece — without it a
  *   cashier who refunded ₹500 in error and then voided it ended the day
  *   with a ₹500 hole in the till.
+ *
+ *   R7hr-12 (D2-05) — pharmacy revenue was over- AND under-reported
+ *   simultaneously: supplements never updated grandTotal (under),
+ *   returns never subtracted from grandTotal (over), credit
+ *   collections were ignored (under), partial-pay sales counted full
+ *   grandTotal (over). The pharmacy block is now four independent
+ *   timestamp-bucketed legs so each event is counted on the day it
+ *   actually happened.
  */
 
 "use strict";
@@ -199,30 +211,108 @@ async function computeDayBook(dayOrStart) {
   // fold pharmacy sales into the same cashIn computation, bucketed by
   // paymentMode for the byMode breakdown.
   //
-  // Status filter mirrors incomeService.todayRevenue: Completed +
-  // Supplemented + Partial-Return all contribute (the partial-return
-  // refund itself is captured on the *original* sale via patientCredit
-  // accounting; the headline grandTotal still reflects the booked
-  // revenue). Cancelled / Refunded are excluded (no cash inflow).
+  // R7hr-12 (D2-05): the pre-fix aggregation summed `grandTotal` of
+  // sales created in window. That was wrong on FOUR legs:
+  //   (a) Supplements — addedTotal never updates grandTotal, so
+  //       supplement revenue (real cash at counter) was invisible.
+  //   (b) Partial-Return — refund cash actually leaves the till but
+  //       grandTotal stays unchanged; over-reported on every refund.
+  //   (c) Credit-collection — when an IPD/credit sale was later paid
+  //       (collectionLog), the cash hit the till but never the
+  //       Day-Book. Worse, collectCredit flips paymentMode from
+  //       "Credit" → Cash/UPI/Mixed on full settlement, so historical
+  //       Day-Book runs MUTATE retroactively (a yesterday's credit
+  //       sale fully cleared today suddenly appears in yesterday's
+  //       cashIn on the next re-run).
+  //   (d) Partial pay (Cash + balanceDue > 0) — counted full
+  //       grandTotal even though only `amountPaid` actually hit the
+  //       till.
   //
-  // paymentMode source is Title-case ("Cash"/"Card"/"UPI"/"Mixed"/
-  // "Credit") — UPPERCASE-normalize before bucketing so PHARMACY rows
-  // collide with the hospital `byMode` keys (CASH / CARD / UPI / …).
-  // R7bg-3-HIGH-1 case-drift fix.
-  const pharmacyAggP = PharmacySale.aggregate([
+  // The fix splits pharmacy cash into FOUR independent legs, each
+  // bucketed by its own timestamp:
+  //   1. dispense — initialCash = amountPaid - sum(collectionLog
+  //      amounts) for the sale; bucketed by current paymentMode but
+  //      ONLY when initialCash > 0 (defangs the paymentMode mutation
+  //      problem because we measure actual money landed, not the
+  //      label).
+  //   2. collections — collectionLog rows with collectedAt in window
+  //      contribute by their own `mode`. This is where the credit
+  //      payments finally show up in cashIn.
+  //   3. returns — returns rows with refundedAt in window AND
+  //      refundMode in {Cash,Card,UPI} contribute to cashOut. Other
+  //      modes ("Adjusted"/"Credit-note") are balance-sheet only.
+  //   4. supplements — supplements rows with addedAt in window
+  //      contribute amountPaid (NOT addedTotal — addedTotal includes
+  //      credit portion) bucketed by their paymentMode.
+  //
+  // paymentMode/mode strings are Title-case — uppercase-normalise
+  // before bucketing so pharmacy collides with hospital keys
+  // (CASH/CARD/UPI/...). R7bg-3-HIGH-1 case-drift fix.
+  const _UC_MODE_PMODE = { $toUpper: { $ifNull: ["$paymentMode", "Cash"] } };
+  const _NUM_GRAND = { $toDouble: { $ifNull: ["$grandTotal", 0] } };
+
+  // Leg 1 — dispense cash leg. Initial cash = amountPaid less every
+  // collectionLog row (irrespective of when collected — those land in
+  // Leg 2 keyed on collectedAt). Only count where initialCash > 0
+  // because credit-only dispenses contribute nothing here.
+  const pharmacyDispenseAggP = PharmacySale.aggregate([
     { $match: {
-        // saleDate isn't a column — createdAt is the truthful event time
-        // for a counter sale (mirrors incomeService).
         createdAt: { $gte: start, $lt: end },
         status: { $in: ["Completed", "Supplemented", "Partial-Return"] },
     } },
     { $addFields: {
-        _amt:  { $toDouble: { $ifNull: ["$grandTotal", 0] } },
-        _mode: { $toUpper: { $ifNull: ["$paymentMode", "Cash"] } },
+        _paid: { $toDouble: { $ifNull: ["$amountPaid", 0] } },
+        _collSum: {
+          $reduce: {
+            input: { $ifNull: ["$collectionLog", []] },
+            initialValue: 0,
+            in: { $add: [
+              "$$value",
+              { $toDouble: { $ifNull: ["$$this.amount", 0] } },
+            ] },
+          },
+        },
+        _mode: _UC_MODE_PMODE,
+        _grandTotal: _NUM_GRAND,
     } },
-    // Credit-mode sales DON'T touch the till — they bump patient
-    // balance only. Same logic as hospital ADVANCE_ADJUSTMENT.
-    { $match: { _mode: { $ne: "CREDIT" }, _amt: { $gt: 0 } } },
+    { $addFields: {
+        _initialCash: { $subtract: ["$_paid", "$_collSum"] },
+    } },
+    // Only the cash that physically landed at dispense. Credit sales
+    // (paymentMode "Credit" at dispense with amountPaid=0) drop out
+    // here via _initialCash <= 0 — they'll show up in Leg 2 when the
+    // patient pays, on the day they pay.
+    { $match: { _initialCash: { $gt: 0 } } },
+    { $facet: {
+        total: [
+          { $group: { _id: null, total: { $sum: "$_initialCash" }, count: { $sum: 1 } } },
+        ],
+        byMode: [
+          { $group: { _id: "$_mode", total: { $sum: "$_initialCash" }, count: { $sum: 1 } } },
+        ],
+    } },
+  ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+
+  // Leg 2 — credit-collection leg. Every collectionLog row whose
+  // collectedAt falls in window contributes real cash today. Bucket
+  // by the row's own mode (Cash/Card/UPI/Mixed). "Advance" and
+  // "Credit" modes are dropped (advance is a balance-sheet transfer
+  // from the patient's prepaid pool — no fresh till hit; "Credit"
+  // here would mean another credit promise, defensively skipped).
+  const pharmacyCollectAggP = PharmacySale.aggregate([
+    { $match: {
+        "collectionLog.collectedAt": { $gte: start, $lt: end },
+    } },
+    { $unwind: "$collectionLog" },
+    { $match: { "collectionLog.collectedAt": { $gte: start, $lt: end } } },
+    { $addFields: {
+        _amt:  { $toDouble: { $ifNull: ["$collectionLog.amount", 0] } },
+        _mode: { $toUpper: { $ifNull: ["$collectionLog.mode", "Cash"] } },
+    } },
+    { $match: {
+        _amt: { $gt: 0 },
+        _mode: { $nin: ["CREDIT", "ADVANCE"] },
+    } },
     { $facet: {
         total: [
           { $group: { _id: null, total: { $sum: "$_amt" }, count: { $sum: 1 } } },
@@ -233,8 +323,62 @@ async function computeDayBook(dayOrStart) {
     } },
   ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
 
-  const [billsAgg, advIn, advOut, pharmacyAgg] = await Promise.all([
-    billsAggP, advanceInAggP, advanceOutAggP, pharmacyAggP,
+  // Leg 3 — returns leg (cash out). Only refundMode in
+  // {Cash,Card,UPI} hits the till; "Credit-note"/"Adjusted" sit on
+  // the patientCredit balance sheet and don't move cash.
+  const pharmacyReturnAggP = PharmacySale.aggregate([
+    { $match: { "returns.refundedAt": { $gte: start, $lt: end } } },
+    { $unwind: "$returns" },
+    { $match: {
+        "returns.refundedAt": { $gte: start, $lt: end },
+        "returns.refundMode": { $in: ["Cash", "Card", "UPI"] },
+    } },
+    { $addFields: {
+        _amt:  { $toDouble: { $ifNull: ["$returns.refundAmount", 0] } },
+        _mode: { $toUpper: { $ifNull: ["$returns.refundMode", "Cash"] } },
+    } },
+    { $match: { _amt: { $gt: 0 } } },
+    { $facet: {
+        total: [
+          { $group: { _id: null, total: { $sum: "$_amt" }, count: { $sum: 1 } } },
+        ],
+        byMode: [
+          { $group: { _id: "$_mode", total: { $sum: "$_amt" }, count: { $sum: 1 } } },
+        ],
+    } },
+  ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+
+  // Leg 4 — supplements leg. The cash leg of a supplement is its own
+  // amountPaid, NOT addedTotal (addedTotal includes credit). Bucket
+  // by the supplement's own paymentMode and skip Credit.
+  const pharmacySupplementAggP = PharmacySale.aggregate([
+    { $match: { "supplements.addedAt": { $gte: start, $lt: end } } },
+    { $unwind: "$supplements" },
+    { $match: { "supplements.addedAt": { $gte: start, $lt: end } } },
+    { $addFields: {
+        _amt:  { $toDouble: { $ifNull: ["$supplements.amountPaid", 0] } },
+        _mode: { $toUpper: { $ifNull: ["$supplements.paymentMode", "Cash"] } },
+    } },
+    { $match: {
+        _amt: { $gt: 0 },
+        _mode: { $ne: "CREDIT" },
+    } },
+    { $facet: {
+        total: [
+          { $group: { _id: null, total: { $sum: "$_amt" }, count: { $sum: 1 } } },
+        ],
+        byMode: [
+          { $group: { _id: "$_mode", total: { $sum: "$_amt" }, count: { $sum: 1 } } },
+        ],
+    } },
+  ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+
+  const [billsAgg, advIn, advOut,
+         pharmacyDispenseAgg, pharmacyCollectAgg,
+         pharmacyReturnAgg, pharmacySupplementAgg] = await Promise.all([
+    billsAggP, advanceInAggP, advanceOutAggP,
+    pharmacyDispenseAggP, pharmacyCollectAggP,
+    pharmacyReturnAggP, pharmacySupplementAggP,
   ]);
   const facet = billsAgg[0] || {};
 
@@ -254,27 +398,59 @@ async function computeDayBook(dayOrStart) {
   const advanceRefundsOut = toNum(advOut[0]?.total);
   const advanceRefundsCount = advOut[0]?.count || 0;
 
-  // ── Pharmacy retail (R7bg-1-CRIT-13) ────────────────────────────
-  const pharmacyFacet     = pharmacyAgg[0] || {};
-  const pharmacyRevenue   = toNum(pharmacyFacet.total?.[0]?.total);
-  const pharmacyCount     = pharmacyFacet.total?.[0]?.count || 0;
-  // Merge pharmacy byMode into the bill byMode list — keyed on the
-  // UPPERCASE paymentMode, sum amount + count where the keys overlap.
+  // ── Pharmacy retail (R7bg-1-CRIT-13, R7hr-12 D2-05) ─────────────
+  // Four separate legs — see comment block above the aggregations
+  // for the why. Each leg has its own `total` (scalar) + `byMode`
+  // (per-mode breakdown). cashIn = dispense + collections + supplements;
+  // cashOut += pharmacy returns.
+  const pharmacyDispenseFacet    = pharmacyDispenseAgg[0]    || {};
+  const pharmacyCollectFacet     = pharmacyCollectAgg[0]     || {};
+  const pharmacyReturnFacet      = pharmacyReturnAgg[0]      || {};
+  const pharmacySupplementFacet  = pharmacySupplementAgg[0]  || {};
+
+  const pharmacyDispenseCash     = toNum(pharmacyDispenseFacet.total?.[0]?.total);
+  const pharmacyDispenseCount    = pharmacyDispenseFacet.total?.[0]?.count || 0;
+  const pharmacyCreditCollected  = toNum(pharmacyCollectFacet.total?.[0]?.total);
+  const pharmacyCollectionsCount = pharmacyCollectFacet.total?.[0]?.count || 0;
+  const pharmacyReturnsCash      = toNum(pharmacyReturnFacet.total?.[0]?.total);
+  const pharmacyReturnsCount     = pharmacyReturnFacet.total?.[0]?.count || 0;
+  const pharmacySupplementsCash  = toNum(pharmacySupplementFacet.total?.[0]?.total);
+  const pharmacySupplementsCount = pharmacySupplementFacet.total?.[0]?.count || 0;
+
+  // Total pharmacy cashIn for backward-compat reporting consumers
+  // that still read `pharmacyRevenue` — sum of all CashIn legs (the
+  // returns leg is netted out separately in cashOut).
+  const pharmacyRevenue = +(
+    pharmacyDispenseCash + pharmacyCreditCollected + pharmacySupplementsCash
+  ).toFixed(2);
+  const pharmacyCount   = pharmacyDispenseCount; // keep old semantic: # of dispense rows
+
+  // Merge pharmacy byMode rows from ALL three cashIn legs into the
+  // bill byMode list (keyed on UPPERCASE mode). Returns leg is NOT
+  // merged here — it nets cashOut, not cashIn.
   const byModeMap = new Map(byMode.map((r) => [r.mode, { ...r }]));
-  for (const r of pharmacyFacet.byMode || []) {
-    const mode = r._id;
-    const existing = byModeMap.get(mode) || { mode, amount: 0, count: 0 };
-    existing.amount = +(existing.amount + toNum(r.total)).toFixed(2);
-    existing.count  = (existing.count || 0) + (r.count || 0);
-    byModeMap.set(mode, existing);
-  }
+  const _mergeInto = (list) => {
+    for (const r of (list || [])) {
+      const mode = r._id;
+      const existing = byModeMap.get(mode) || { mode, amount: 0, count: 0 };
+      existing.amount = +(existing.amount + toNum(r.total)).toFixed(2);
+      existing.count  = (existing.count || 0) + (r.count || 0);
+      byModeMap.set(mode, existing);
+    }
+  };
+  _mergeInto(pharmacyDispenseFacet.byMode);
+  _mergeInto(pharmacyCollectFacet.byMode);
+  _mergeInto(pharmacySupplementFacet.byMode);
   const byModeMerged = Array.from(byModeMap.values()).sort((a, b) => b.amount - a.amount);
 
   // Cash In = collections + advances + reversed refunds + pharmacy
   //   (R7bg-1-CRIT-13 — pharmacy retail cash was missing entirely)
+  //   (R7hr-12 D2-05 — pharmacy split into dispense + credit-collections
+  //    + supplements; returns leg moved to cashOut)
   const cashIn  = +(collections + advanceDepositsIn + reversedRefunds + pharmacyRevenue).toFixed(2);
   // Cash Out = bill refunds + advance refunds + voided positive payments
-  const cashOut = +(billRefundsOut + advanceRefundsOut + reversedPayments).toFixed(2);
+  //          + pharmacy returns (Cash/Card/UPI refund modes only)
+  const cashOut = +(billRefundsOut + advanceRefundsOut + reversedPayments + pharmacyReturnsCash).toFixed(2);
   const netCashFlow = +(cashIn - cashOut - tdsDeducted).toFixed(2);
 
   return {
@@ -292,8 +468,18 @@ async function computeDayBook(dayOrStart) {
       billRefundsOut,
       reversedRefunds,         // R7bf-H A6-CRIT-6
       reversedPayments,
-      pharmacyRevenue,         // R7bh-F2 / R7bg-1-CRIT-13
+      // R7hr-12 D2-05 — pharmacy cash split. `pharmacyRevenue` stays
+      // for backward-compat (= sum of three cashIn legs).
+      pharmacyRevenue,
       pharmacyCount,
+      pharmacyDispenseCash,
+      pharmacyDispenseCount,
+      pharmacyCreditCollected,
+      pharmacyCollectionsCount,
+      pharmacySupplementsCash,
+      pharmacySupplementsCount,
+      pharmacyReturnsCash,
+      pharmacyReturnsCount,
       tdsDeducted,
       cashIn,
       cashOut,

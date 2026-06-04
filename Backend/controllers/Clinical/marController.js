@@ -286,12 +286,27 @@ class MARController {
     const refreshedEntry = refreshedMed?.administrations?.[refreshedMed.administrations.length - 1] || entry;
 
     // ── Auto-billing hook ──────────────────────────────────────
-    // Bill on every GIVEN dose; HELD/REFUSED/MISSED/NOT_AVAILABLE do NOT bill.
+    // Bill on every GIVEN dose; HELD/REFUSED/MISSED/NOT_AVAILABLE/OMITTED
+    // VOID the pharmacy reservation that onIndentReleased created — otherwise
+    // the patient stays billed for a drug that was never administered.
+    //
+    // R7hr-12 / D3-02 / D5-01: wire the missing onMARNonAdminister call.
+    // onMARNonAdminister exists at autoBillingService.js (R7az-CRIT-6) but
+    // until R7hr-12 had ZERO callers — every HELD/REFUSED/MISSED dose left
+    // the MAR_RESERVATION BillingTrigger live on the IPD ledger (revenue
+    // overstatement + NABH MOM.4 audit gap). The void function is idempotent
+    // (ALREADY_CLOSED is swallowed inside it), so a cross-client double-flip
+    // is safe. Stock return stays a separate concern (pharmacyService.returnSale)
+    // because controlled drugs leaving the trolley need a countersigned return.
+    const NON_ADMIN = new Set(["HELD", "REFUSED", "MISSED", "NOT_AVAILABLE", "OMITTED"]);
     try {
       const { logErr } = require("../../utils/logErr");
       const autoBilling = require("../../services/Billing/autoBillingService");
       if (finalStatus === "GIVEN") {
         autoBilling.onMARAdministration(pushResult, refreshedMed, refreshedEntry).catch(logErr("autoBilling", `onMARAdministration ${pushResult?._id} med ${refreshedMed?._id}`));
+      } else if (NON_ADMIN.has(finalStatus)) {
+        // R7hr-12: void the pharmacy reservation for non-administered doses.
+        autoBilling.onMARNonAdminister(pushResult, refreshedMed, finalStatus).catch(logErr("autoBilling", `onMARNonAdminister ${pushResult?._id} med ${refreshedMed?._id} status ${finalStatus}`));
       }
     } catch (e) {
       const { logErr } = require("../../utils/logErr");

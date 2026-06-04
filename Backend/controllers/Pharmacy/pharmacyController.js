@@ -52,7 +52,12 @@ const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditSe
 // R7cu — pulled to module scope so collectCredit() can convert payment
 // amounts to Decimal128 + retry on VersionError races (two cashiers
 // collecting on the same sale simultaneously).
-const { toDec } = require("../../utils/money");
+// R7hr-12 (D2-01/D2-02): toNum coerces Decimal128 → Number safely. Without
+// it, expressions like `(sale.patientCredit || 0) + payable` trigger
+// Decimal128.toString() and become STRING CONCATENATION (`'100.00' + 50`
+// → `'100.0050'` → round2 → 100.01 instead of 150). Used at every read of
+// a Decimal128 money field before arithmetic.
+const { toDec, toNum } = require("../../utils/money");
 const retryVersionError = require("../../utils/retryVersionError");
 
 const todayISO  = () => new Date().toISOString().slice(0, 10);
@@ -994,13 +999,21 @@ exports.getOutstandingForAdmission = async function (admissionId) {
     return { total: 0, count: 0, sales: [], bills: [] };
   }
   // ── A. PharmacySale-based credit (counter dispense + IPD homecare) ──
+  // R7hr-12 (D4-02): include Partial-Return and Supplemented in the
+  // open-status set. Supplemented sales can carry non-zero balanceDue
+  // when the add-on was booked Credit; Partial-Return sales can carry
+  // non-zero balanceDue when the original credit wasn't fully cleared
+  // by the refund. Both were silently passing the discharge gate before
+  // because the filter only honoured "Completed". Cancelled is excluded
+  // (cancelSale zeroes balanceDue atomically); Refunded is excluded
+  // (fully returned ⇒ notional balance only); Hold is excluded (not yet
+  // finalized). Same enum-set is already used at L2828 (salesRegister).
+  const OPEN_BALANCE_STATUSES = ["Completed", "Partial-Return", "Supplemented"];
   const sales = await Sale.find({
     admissionId,
-    // status:"Completed" excludes Cancelled/Refunded sales — they
-    // don't carry real balance even if the field is non-zero.
-    status:    "Completed",
+    status:    { $in: OPEN_BALANCE_STATUSES },
     saleType:  { $in: ["IPD", "Homecare"] },
-  }).select("billNumber grandTotal amountPaid balanceDue items createdAt").lean();
+  }).select("billNumber grandTotal amountPaid balanceDue items createdAt status").lean();
   let total = 0;
   const open = [];
   for (const s of sales) {
@@ -1093,11 +1106,17 @@ exports.listIpdCreditAdmissions = async (req, res) => {
     // the typical active-IPD set is small (< 200) and the JS path keeps
     // the Decimal128-unwrap logic identical to getOutstandingForAdmission
     // (single source of truth).
+    // R7hr-12 (D4-02): mirror the open-balance status set used by
+    // getOutstandingForAdmission. If a Supplemented or Partial-Return sale
+    // still owes money, the pharmacist must be able to see the admission
+    // here and take payment — otherwise the discharge gate blocks with a
+    // 409 PHARMACY_OUTSTANDING but the pharmacist has no UI row to collect
+    // against (deadlocked discharge).
     const rawSales = await Sale.find({
       saleType:    { $in: ["IPD", "Homecare"] },
-      status:      "Completed",
+      status:      { $in: ["Completed", "Partial-Return", "Supplemented"] },
       admissionId: { $ne: null },
-    }).select("admissionId admissionNumber patientUHID patientName balanceDue grandTotal createdAt billNumber").lean();
+    }).select("admissionId admissionNumber patientUHID patientName balanceDue grandTotal createdAt billNumber status").lean();
     const byAdm = new Map();
     for (const s of rawSales) {
       const bal = Number(s.balanceDue?.toString?.() ?? s.balanceDue ?? 0);
@@ -1880,7 +1899,10 @@ exports.returnItems = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid refundMode" });
     }
 
-    const sale = await Sale.findById(req.params.id);
+    // R7hr-12 (D1-01 follow-on): `let` instead of `const` because the
+    // final-stage retryVersionError reload may reassign this binding to
+    // the freshly-saved doc after a VersionError race.
+    let sale = await Sale.findById(req.params.id);
     if (!sale) return res.status(404).json({ success: false, message: "Sale not found" });
     if (!["Completed","Partial-Return"].includes(sale.status)) {
       return res.status(400).json({ success: false, message: `Cannot return items on a ${sale.status} sale` });
@@ -1989,46 +2011,72 @@ exports.returnItems = async (req, res) => {
       refundedBy:      req.user?.fullName || req.user?.name || "System",
       refundedById:    req.user?._id || null,
     };
-    sale.returns.push(returnRecord);
 
-    // Decide new status — fully returned (sum of all returned == sum of all sold)
-    // → Refunded; partially returned → Partial-Return.
-    const totalSoldQty = (sale.items || []).reduce((s, it) => s + Number(it.quantity || 0), 0);
-    const totalReturnedQty = (sale.returns || []).reduce(
-      (s, r) => s + (r.refundedItems || []).reduce((ss, ri) => ss + Number(ri.quantity || 0), 0), 0);
-    sale.status = totalReturnedQty >= totalSoldQty ? "Refunded" : "Partial-Return";
+    // R7hr-12 (D1-01 follow-on): now that PharmacySaleSchema enables
+    // optimisticConcurrency, a concurrent writer (collectCredit etc.) on the
+    // same sale would otherwise throw VersionError here. Wrap the final
+    // commit in retryVersionError and re-apply the diff on the freshly-read
+    // doc each iteration. Stock restore + refund slip seq are above and run
+    // exactly once (idempotent / counter-bumped).
+    // R7hr-12 (D2-01): every Decimal128 read uses toNum() before arithmetic
+    // to avoid string-concat corruption on retry.
+    let appliedSale;
+    let payable = 0;
+    await retryVersionError(async () => {
+      const fresh = await Sale.findById(req.params.id);
+      if (!fresh) {
+        const e = new Error("Sale not found"); e.status = 404; throw e;
+      }
+      // Idempotency guard — if a prior attempt already pushed this slip,
+      // do not double-write. We re-read on each retry so this catches
+      // any committed prior pass.
+      const already = (fresh.returns || []).some(r => r.refundSlipNumber === refundSlipNumber);
+      if (!already) fresh.returns.push(returnRecord);
 
-    // Money flow on refund:
-    //   1. If patient still owed money on this bill (balanceDue > 0),
-    //      first knock that off — patient now owes less.
-    //   2. Any refund amount LEFT OVER after that is money the pharmacy
-    //      must pay back. How we account for it depends on refundMode:
-    //        • Cash / Card / UPI — paid out at counter now, no ledger entry.
-    //        • Credit-note / Adjusted — pharmacy still holds the money
-    //          (will offset future bill or be paid out later), so it goes
-    //          to patientCredit as a positive balance.
-    const due       = Number(sale.balanceDue || 0);
-    const dueOffset = Math.min(due, refundAmount);
-    sale.balanceDue = round2(due - dueOffset);
-    const payable   = round2(refundAmount - dueOffset);
+      // Recompute status from FRESH state (other writers may have added returns).
+      const totalSoldQty = (fresh.items || []).reduce((s, it) => s + Number(it.quantity || 0), 0);
+      const totalReturnedQty = (fresh.returns || []).reduce(
+        (s, r) => s + (r.refundedItems || []).reduce((ss, ri) => ss + Number(ri.quantity || 0), 0), 0);
+      fresh.status = totalReturnedQty >= totalSoldQty ? "Refunded" : "Partial-Return";
 
-    if (payable > 0 && (refundMode === "Credit-note" || refundMode === "Adjusted")) {
-      sale.patientCredit = round2((sale.patientCredit || 0) + payable);
-      sale.patientCreditLog.push({
-        amount: payable,
-        reason: `Refund (${refundMode})`,
-        refSlip: refundSlipNumber,
-        byName: req.user?.fullName || req.user?.name || "System",
-        byId:   req.user?._id || null,
-      });
-    }
+      // Money flow on refund:
+      //   1. If patient still owed money on this bill (balanceDue > 0),
+      //      first knock that off — patient now owes less.
+      //   2. Any refund amount LEFT OVER after that is money the pharmacy
+      //      must pay back. How we account for it depends on refundMode:
+      //        • Cash / Card / UPI — paid out at counter now, no ledger entry.
+      //        • Credit-note / Adjusted — pharmacy still holds the money
+      //          (will offset future bill or be paid out later), so it goes
+      //          to patientCredit as a positive balance.
+      // Compute delta against fresh balanceDue/patientCredit on each retry
+      // so concurrent collectCredit's debit doesn't get clobbered.
+      if (!already) {
+        const due       = toNum(fresh.balanceDue);
+        const dueOffset = Math.min(due, refundAmount);
+        fresh.balanceDue = round2(due - dueOffset);
+        payable          = round2(refundAmount - dueOffset);
+        if (payable > 0 && (refundMode === "Credit-note" || refundMode === "Adjusted")) {
+          fresh.patientCredit = round2(toNum(fresh.patientCredit) + payable);
+          fresh.patientCreditLog.push({
+            amount: payable,
+            reason: `Refund (${refundMode})`,
+            refSlip: refundSlipNumber,
+            byName: req.user?.fullName || req.user?.name || "System",
+            byId:   req.user?._id || null,
+          });
+        }
+        fresh.remarks = (fresh.remarks ? fresh.remarks + " · " : "") +
+          `Returned ${refundedItems.length} line(s) · refund ${refundSlipNumber} · ${fmtINRSimple(refundAmount)} via ${refundMode}` +
+          (payable > 0 && (refundMode === "Credit-note" || refundMode === "Adjusted")
+            ? ` · credit ${fmtINRSimple(payable)} held for patient` : "");
+      }
 
-    sale.remarks = (sale.remarks ? sale.remarks + " · " : "") +
-      `Returned ${refundedItems.length} line(s) · refund ${refundSlipNumber} · ${fmtINRSimple(refundAmount)} via ${refundMode}` +
-      (payable > 0 && (refundMode === "Credit-note" || refundMode === "Adjusted")
-        ? ` · credit ${fmtINRSimple(payable)} held for patient` : "");
-
-    await sale.save();
+      await fresh.save();
+      appliedSale = fresh;
+    }, { label: "returnItems" });
+    // Rebind `sale` to the post-save doc so the rest of this handler sees
+    // the canonical, persisted state for cascades + audit emits.
+    sale = appliedSale;
 
     // R7gz — Cascade the return into the IPD ledger. The matching
     // MAR_RESERVATION BillingTrigger (emitted by onIndentReleased when
@@ -2093,7 +2141,9 @@ exports.addItems = async (req, res) => {
       return res.status(400).json({ success: false, message: "items[] is required — at least one item to add", code: "VALIDATION" });
     }
 
-    const sale = await Sale.findById(req.params.id);
+    // R7hr-12 (D1-01 follow-on): `let` so the final retryVersionError block
+    // can rebind to the freshly-saved doc after a VersionError race.
+    let sale = await Sale.findById(req.params.id);
     if (!sale) return res.status(404).json({ success: false, message: "Sale not found" });
     // Fully refunded sales shouldn't accept additions — that's a new bill.
     // Cancelled bills definitely can't accept additions.
@@ -2174,34 +2224,50 @@ exports.addItems = async (req, res) => {
       addedById:  req.user?._id || null,
       reason, notes,
     };
-    sale.supplements.push(supplementRecord);
-
-    // Roll up balanceDue + patient credit on the parent sale.
-    // Any unpaid portion of the supplement is added to the parent's balanceDue.
-    sale.balanceDue = round2((sale.balanceDue || 0) + Math.max(0, addedTotal - paid));
-    // If the patient over-paid for the supplement, treat the excess as credit.
     const overPaid = Math.max(0, paid - addedTotal);
-    if (overPaid > 0) {
-      sale.patientCredit = round2((sale.patientCredit || 0) + overPaid);
-      sale.patientCreditLog.push({
-        amount: overPaid,
-        reason: "Over-payment on supplementary invoice",
-        refSlip: supplementSlipNumber,
-        byName: req.user?.fullName || "System",
-        byId:   req.user?._id || null,
-      });
-    }
 
-    // Status — if the sale was Completed, mark it Supplemented so the
-    // operator can tell from the register. Partial-Return stays as-is
-    // (a sale can be both partial-returned AND supplemented; the
-    // supplement record is the audit trail).
-    if (sale.status === "Completed") sale.status = "Supplemented";
-
-    sale.remarks = (sale.remarks ? sale.remarks + " · " : "") +
-      `Added ${addedItems.length} line(s) · slip ${supplementSlipNumber} · ${fmtINRSimple(addedTotal)} via ${paymentMode}`;
-
-    await sale.save();
+    // R7hr-12 (D1-01 follow-on): wrap the final commit in retryVersionError.
+    // PharmacySaleSchema now enables optimisticConcurrency so a concurrent
+    // collectCredit/refund would throw VersionError without this. Stock
+    // consume + slip seq above run exactly once (atomic / counter-bumped);
+    // we re-read the doc and re-apply just the supplement diff on each
+    // retry. Idempotency key: supplementSlipNumber (already-pushed check).
+    // R7hr-12 (D2-01): every Decimal128 read uses toNum() before arithmetic.
+    let appliedSale;
+    await retryVersionError(async () => {
+      const fresh = await Sale.findById(req.params.id);
+      if (!fresh) {
+        const e = new Error("Sale not found"); e.status = 404; throw e;
+      }
+      const already = (fresh.supplements || []).some(s => s.supplementSlipNumber === supplementSlipNumber);
+      if (!already) {
+        fresh.supplements.push(supplementRecord);
+        // Roll up balanceDue + patient credit on the parent sale.
+        // Any unpaid portion of the supplement is added to the parent's balanceDue.
+        // Decimal128-safe arithmetic via toNum().
+        fresh.balanceDue = round2(toNum(fresh.balanceDue) + Math.max(0, addedTotal - paid));
+        if (overPaid > 0) {
+          fresh.patientCredit = round2(toNum(fresh.patientCredit) + overPaid);
+          fresh.patientCreditLog.push({
+            amount: overPaid,
+            reason: "Over-payment on supplementary invoice",
+            refSlip: supplementSlipNumber,
+            byName: req.user?.fullName || "System",
+            byId:   req.user?._id || null,
+          });
+        }
+        // Status — if the sale was Completed, mark it Supplemented so the
+        // operator can tell from the register. Partial-Return stays as-is
+        // (a sale can be both partial-returned AND supplemented; the
+        // supplement record is the audit trail).
+        if (fresh.status === "Completed") fresh.status = "Supplemented";
+        fresh.remarks = (fresh.remarks ? fresh.remarks + " · " : "") +
+          `Added ${addedItems.length} line(s) · slip ${supplementSlipNumber} · ${fmtINRSimple(addedTotal)} via ${paymentMode}`;
+      }
+      await fresh.save();
+      appliedSale = fresh;
+    }, { label: "addItems" });
+    sale = appliedSale;
 
     // B6-T05 — ClinicalAudit emit on supplementary invoice (NABH AAC.7).
     // Surfaces post-bill drug additions so the register can flag
@@ -2349,12 +2415,125 @@ exports.cancelSale = async (req, res) => {
       }
     }
 
+    // 4b. R7hr-12 (D4-01): reverse any advance application that settled
+    //     this sale. Pre-fix, cancelSale flipped status + zeroed balanceDue
+    //     + booked the WHOLE amountPaid into patientCredit — but for a sale
+    //     that had been paid from PatientAdvance via applyAdvanceToSale,
+    //     PatientAdvance.appliedAmount stayed inflated AND the same money
+    //     also got parked into PharmacySale.patientCredit. Net: patient
+    //     lost advance balance equal to the cancelled slice, books showed
+    //     the cash twice (advance-spent + pharmacy credit), and the
+    //     `applied + refunded ≤ amount` invariant blocked subsequent
+    //     advance refunds for that slice (stuck-state requiring DB
+    //     surgery).
+    //
+    //     Fix: walk PatientAdvance docs that carry an appliedTo[] row
+    //     keyed on this sale's _id (NOT just the collectionLog's lone
+    //     sourceAdvanceId — FIFO can bleed multiple advances and push a
+    //     row into EACH touched advance, but collectionLog only stores
+    //     the LAST advance id). Decrement appliedAmount by each matched
+    //     row's amount, $pull the row, emit an ADVANCE_APPLY_REVERSED
+    //     audit per advance. Net out the advance-sourced portion from
+    //     `amountPaid` before computing the patientCredit booking below
+    //     so the same money isn't double-counted.
+    //
+    //     OCC: PatientAdvanceSchema enables optimisticConcurrency (L136
+    //     in PatientAdvanceModel.js), so a concurrent applyAdvance/refund
+    //     mid-walk would throw VersionError; retryVersionError handles it
+    //     per-advance. Stock restore above is already committed and
+    //     idempotent, so a partial-failure here doesn't corrupt stock.
+    let advanceReversed = 0;
+    const advanceReversalLog = []; // [{ advanceId, receiptNumber, slice }]
+    try {
+      const uhid = (s.patientUHID || "").toString().toUpperCase();
+      if (uhid) {
+        const touchedAdvs = await PatientAdvance.find({
+          UHID: uhid,
+          "appliedTo.billId": s._id,
+        });
+        for (const adv of touchedAdvs) {
+          // Sum slices applied specifically to this sale on this advance
+          // (handles the rare case where FIFO bled+refilled the same
+          // advance twice — both rows must be reversed).
+          const matchingRows = (adv.appliedTo || []).filter(
+            r => String(r.billId) === String(s._id),
+          );
+          if (!matchingRows.length) continue;
+          const reversalAmt = matchingRows.reduce(
+            (t, r) => t + toNum(r.amount), 0,
+          );
+          if (reversalAmt <= 0) continue;
+          // CAS reversal with retry. Re-read the advance to capture
+          // post-other-writer state, recompute the matching rows on
+          // the FRESH doc, then $pull + decrement + save.
+          await retryVersionError(async () => {
+            const fresh = await PatientAdvance.findById(adv._id);
+            if (!fresh) return;
+            const freshRows = (fresh.appliedTo || []).filter(
+              r => String(r.billId) === String(s._id),
+            );
+            const freshAmt = freshRows.reduce((t, r) => t + toNum(r.amount), 0);
+            if (freshAmt <= 0) return; // already reversed by a prior attempt
+            // Decrement appliedAmount; rely on the pre-save status hook
+            // (already in PatientAdvanceModel) to flip the status enum
+            // appropriately (FULLY_APPLIED → PARTIALLY_APPLIED → ACTIVE).
+            const newApplied = Math.max(0, toNum(fresh.appliedAmount) - freshAmt);
+            fresh.appliedAmount = toDec(newApplied);
+            // $pull matching subdocs by mutating the in-memory array;
+            // Mongoose tracks the change and emits a proper $pull on save.
+            fresh.appliedTo = (fresh.appliedTo || []).filter(
+              r => String(r.billId) !== String(s._id),
+            );
+            await fresh.save();
+            advanceReversalLog.push({
+              advanceId:     adv._id,
+              receiptNumber: adv.receiptNumber || "",
+              slice:         freshAmt,
+            });
+          }, { label: `cancelSale-advance-reverse-${adv._id}` });
+        }
+        advanceReversed = advanceReversalLog.reduce((t, r) => t + r.slice, 0);
+        // Best-effort audit emit per reversed advance.
+        try {
+          const { emit } = require("../../models/Billing/BillingAudit");
+          for (const log of advanceReversalLog) {
+            await emit({
+              event:     "ADVANCE_APPLY_REVERSED",
+              actorId:   cancelledById,
+              actorName: cancelledByName,
+              actorRole: req.user?.role || "",
+              advanceId: log.advanceId,
+              advanceReceiptNumber: log.receiptNumber,
+              UHID:      uhid,
+              admissionId: s.admissionId || null,
+              amount:    log.slice,
+              reason:    `PHARM_SALE_CANCELLED: ${s.billNumber} — advance debit reversed`,
+              before:    { billId: s._id, status: "Completed" },
+              after:     { billId: s._id, status: "Cancelled", reversed: log.slice },
+            }, { req });
+          }
+        } catch (_) { /* best-effort */ }
+      }
+    } catch (advErr) {
+      console.error(
+        "[Pharmacy] cancelSale: advance reversal failed for sale",
+        String(s._id), ":", advErr.message,
+      );
+      // Do NOT abort the cancel — stock is already restored and the sale
+      // is already in status:Cancelled. Surface the failure in remarks
+      // below so accountant reconcile can flag it for manual unblock.
+    }
+
     // 5. Money flow + remarks via versioned save with retry. We touch
     //    patientCredit / patientCreditLog (arrays) so optimistic
     //    concurrency can collide if another endpoint pushed credit
     //    mid-flight.
+    // R7hr-12 (D4-01): subtract the advance-reversed slice from amountPaid
+    // before booking patientCredit — the advance pool already absorbed
+    // its share, so booking it again into patientCredit would double-
+    // count. Only the genuine cash/card/UPI portion should land here.
     const refundedSoFar  = (s.returns || []).reduce((t, r) => t + Number(r.refundAmount || 0), 0);
-    const payable        = Math.max(0, Number(s.amountPaid || 0) - refundedSoFar);
+    const payable        = Math.max(0, Number(s.amountPaid || 0) - refundedSoFar - advanceReversed);
 
     try {
       const retryVersionError = require("../../utils/retryVersionError");
@@ -2362,7 +2541,11 @@ exports.cancelSale = async (req, res) => {
         const fresh = await Sale.findById(s._id);
         if (!fresh) return;
         if (payable > 0) {
-          fresh.patientCredit = round2((fresh.patientCredit || 0) + payable);
+          // R7hr-12 (D2-01): fresh.patientCredit is Decimal128 on the
+          // hydrated doc — `(D128 || 0) + N` is string concat. toNum()
+          // coerces before + so the cancel's held-credit booking lands
+          // as a real number instead of a corrupted string.
+          fresh.patientCredit = round2(toNum(fresh.patientCredit) + payable);
           fresh.patientCreditLog.push({
             amount: payable,
             reason: "Sale cancelled — payment held as credit",
@@ -2374,6 +2557,10 @@ exports.cancelSale = async (req, res) => {
         fresh.remarks = (fresh.remarks ? fresh.remarks + " · " : "") +
           `Cancelled by ${cancelledByName} on ${cancelStamp.toISOString()}` +
           (payable > 0 ? ` · ${fmtINRSimple(payable)} held as credit` : "") +
+          // R7hr-12 (D4-01): surface advance reversal in the audit-trail
+          // remark so an accountant skimming the bill sees the linkage
+          // without spelunking BillingAudit.
+          (advanceReversed > 0 ? ` · ${fmtINRSimple(advanceReversed)} returned to patient advance pool` : "") +
           (isAdminOverride && cancellerId === dispenserId ? " · ADMIN-OVERRIDE self-cancel" : "");
         await fresh.save();
       }, { label: "cancelSale-credit" });
@@ -2420,11 +2607,29 @@ exports.cancelSale = async (req, res) => {
           cancelledAt: cancelStamp,
           adminOverrideSelfCancel: isAdminOverride && cancellerId === dispenserId,
           hamPresent: (s.items || []).some((i) => i.isHAM === true),
+          // R7hr-12 (D4-01): surface advance reversal on the clinical
+          // audit so a per-UHID NABH register can join the two-leg flow.
+          advanceReversedAmount: advanceReversed,
+          advanceReversedCount:  advanceReversalLog.length,
         },
       });
     } catch (_) { /* silent — audit emit is non-blocking */ }
 
-    res.json({ success: true, data: s });
+    res.json({
+      success: true,
+      data: s,
+      // R7hr-12 (D4-01): tell the caller how much (and from which advance
+      // receipt numbers) was returned to the patient's advance pool so
+      // the UI can show a confirmation row instead of silently changing
+      // the advance balance.
+      meta: {
+        advanceReversed,
+        advanceReversals: advanceReversalLog.map(r => ({
+          receiptNumber: r.receiptNumber,
+          amount:        r.slice,
+        })),
+      },
+    });
   } catch (e) { sendErr(res, e); }
 };
 
@@ -2455,19 +2660,62 @@ exports.recordVendorReturn = async (req, res) => {
     if (!Number.isFinite(qtyN) || qtyN <= 0) {
       return res.status(400).json({ success: false, message: "qty must be a positive number" });
     }
-    const batch = await DrugBatch.findById(batchId);
-    if (!batch) return res.status(404).json({ success: false, message: "Batch not found" });
-    const remaining = Math.max(0, (batch.quantityIn || 0) - (batch.quantityOut || 0) - (batch.vendorReturned || 0));
-    if (qtyN > remaining) {
+    // R7hr-12 (D3-01): replace the load-then-save with an atomic
+    // findOneAndUpdate gated on a fresh `remaining >= qtyN` $expr. Pre-fix,
+    // findById + batch.save() raced concurrent dispense $inc decrements
+    // (fifoConsume's atomic update path). Between the read and the save,
+    // dispense decremented quantityOut + remaining; the pre-save hook then
+    // recomputed `remaining = in - out - vendorReturned` from the STALE
+    // in-memory snapshot, silently erasing the concurrent dispense's
+    // decrement and inflating closing stock — patients could be over-
+    // dispensed units that were already sold (controlled-drug compliance
+    // risk + Form 35 stock register corruption).
+    // The atomic update bypasses Mongoose middleware entirely so the
+    // pre-save remaining recompute can't see a stale snapshot. We still
+    // need the pre-read to surface a friendly error message + audit
+    // before/after snapshot, but the source-of-truth decrement is the
+    // atomic $inc gated by $expr.
+    const preBatch = await DrugBatch.findById(batchId);
+    if (!preBatch) return res.status(404).json({ success: false, message: "Batch not found" });
+    const preRemaining = Math.max(0, (preBatch.quantityIn || 0) - (preBatch.quantityOut || 0) - (preBatch.vendorReturned || 0));
+    if (qtyN > preRemaining) {
       return res.status(409).json({
         success: false,
         code: "INSUFFICIENT_STOCK",
-        message: `Cannot return ${qtyN} — only ${remaining} remaining in batch ${batch.batchNo}.`,
+        message: `Cannot return ${qtyN} — only ${preRemaining} remaining in batch ${preBatch.batchNo}.`,
       });
     }
-    batch.vendorReturned = (batch.vendorReturned || 0) + qtyN;
-    // remaining is recomputed by pre-save hook (in - out - vendorReturned).
-    await batch.save();
+    // Atomic, race-safe deduction. The $expr predicate re-checks the
+    // remaining invariant at write time (NOT against the stale read), so a
+    // concurrent dispense that crossed remaining < qtyN between the pre-
+    // read and the write returns null and we fail gracefully. Identical
+    // pattern to fifoConsume() at L480-L484 (proven safe at R7az-CRIT-5).
+    const batch = await DrugBatch.findOneAndUpdate(
+      {
+        _id: batchId,
+        isActive: true,
+        $expr: {
+          $gte: [
+            { $subtract: ["$quantityIn", { $add: ["$quantityOut", "$vendorReturned"] }] },
+            qtyN,
+          ],
+        },
+      },
+      { $inc: { vendorReturned: qtyN, remaining: -qtyN } },
+      { new: true },
+    );
+    if (!batch) {
+      // Concurrent dispense bled the batch dry between the pre-read and
+      // here. Re-read for the up-to-date count + return a 409 with the
+      // fresh remaining so the UI can show the truth.
+      const fresh = await DrugBatch.findById(batchId).lean();
+      const freshRem = Math.max(0, (fresh?.quantityIn || 0) - (fresh?.quantityOut || 0) - (fresh?.vendorReturned || 0));
+      return res.status(409).json({
+        success: false,
+        code: "INSUFFICIENT_STOCK_RACED",
+        message: `Concurrent dispense changed batch ${preBatch.batchNo} — only ${freshRem} remaining now (asked ${qtyN}).`,
+      });
+    }
 
     const row = await PharmacyVendorReturn.create({
       batchId:     batch._id,
@@ -2489,6 +2737,10 @@ exports.recordVendorReturn = async (req, res) => {
     });
 
     // Best-effort audit.
+    // R7hr-12 (D3-01): before-snapshot uses the preBatch read (pre-atomic);
+    // after-snapshot uses the freshly-returned post-update doc. Both come
+    // from independent reads so the audit trail records the actual delta
+    // even when a concurrent dispense moved quantityOut between them.
     try {
       const { emit } = require("../../models/Billing/BillingAudit");
       await emit({
@@ -2498,7 +2750,7 @@ exports.recordVendorReturn = async (req, res) => {
         actorRole: req.user?.role,
         amount:    qtyN * Number(batch.purchaseRate || 0),
         reason:    `VENDOR_RETURN: ${batch.drugName || ""} batch ${batch.batchNo} qty=${qtyN} reason=${reason || "EXPIRED"} (debit-note ${debitNoteNo || "—"})`,
-        before:    { remaining, vendorReturned: (batch.vendorReturned || 0) - qtyN },
+        before:    { remaining: preRemaining, vendorReturned: preBatch.vendorReturned || 0 },
         after:     { remaining: batch.remaining, vendorReturned: batch.vendorReturned, vendorReturnId: row._id },
       }, { req });
     } catch (_) { /* best-effort */ }
@@ -2831,6 +3083,22 @@ exports.salesRegister = async (req, res) => {
     const rows = await Sale.find(where).sort({ createdAt: 1 })
       .skip(skip).limit(limit)
       .lean();
+    // R7hr-12 (D2-02): .lean() bypasses the decimalToNumber toJSON transform,
+    // so subTotal/totalTaxable/totalGst/grandTotal/cgst/sgst/igstAmount come
+    // back as raw Decimal128. `0 + Decimal128('100.00')` is the string
+    // '0100.00' (toString-coerced concat), which after a second row becomes
+    // '0100.00200.00' — and the per-row Decimal128 also JSON-serializes as
+    // {"$numberDecimal":"100.00"} on the wire, breaking every frontend
+    // consumer. toNum() coerces every Decimal128 read to a JS Number, both
+    // in the per-row mapper AND in the totals reducer, so the response is
+    // a clean numeric grid.
+    // R7hr-12 (D8-04): IGST handling — was `cgst: totalGst/2, sgst: totalGst/2`
+    // regardless of placeOfSupply. For inter-state B2B/corporate-panel sales
+    // (dispense() correctly routes the full gstAmt into igstAmount), the
+    // register was printing CGST+SGST while GSTR-1 carries IGST — a filing-
+    // blocking contradiction. Use the stored bill-level cgst/sgst/igstAmount
+    // columns (populated by dispense() per the placeOfSupply split) instead
+    // of hard-half-splitting totalGst.
     const out = rows.map(s => {
       const hsnMap = new Map();
       let totalDisc = 0;
@@ -2838,13 +3106,14 @@ exports.salesRegister = async (req, res) => {
         const key = `${it.gstRate || 12}`;
         if (!hsnMap.has(key)) hsnMap.set(key, { gstRate: Number(key), taxable: 0, tax: 0 });
         const r = hsnMap.get(key);
-        r.taxable += Number(it.taxableAmount || 0);
-        r.tax     += Number(it.gstAmount    || 0);
-        totalDisc += Number(it.discountAmount || 0);
+        r.taxable += toNum(it.taxableAmount);
+        r.tax     += toNum(it.gstAmount);
+        totalDisc += toNum(it.discountAmount);
       }
       const refundAmount     = (s.returns || []).reduce((t, r) => t + Number(r.refundAmount || 0), 0);
       const supplementAmount = (s.supplements || []).reduce((t, x) => t + Number(x.addedTotal || 0), 0);
-      const netEffective     = Math.max(0, Number(s.grandTotal || 0) + supplementAmount - refundAmount);
+      const grandTotalN      = toNum(s.grandTotal);
+      const netEffective     = Math.max(0, grandTotalN + supplementAmount - refundAmount);
       return {
         _id: s._id,
         billNumber: s.billNumber,
@@ -2854,17 +3123,21 @@ exports.salesRegister = async (req, res) => {
         admissionNumber: s.admissionNumber || "",
         saleType: s.saleType,
         paymentMode: s.paymentMode,
+        placeOfSupply: s.placeOfSupply || "",
+        customerGstin: s.customerGstin || "",
         status: s.status,
         itemsCount: s.items?.length || 0,
         returnsCount: (s.returns || []).length,
         supplementsCount: (s.supplements || []).length,
-        subTotal: s.subTotal,
+        subTotal: toNum(s.subTotal),
         discount: totalDisc,
-        taxable: s.totalTaxable,
-        cgst: Math.round(s.totalGst / 2 * 100) / 100,
-        sgst: Math.round(s.totalGst / 2 * 100) / 100,
-        gstTotal: s.totalGst,
-        grandTotal: s.grandTotal,
+        taxable: toNum(s.totalTaxable),
+        // R7hr-12 (D8-04): trust the persisted split, not a /2 fallback.
+        cgst: toNum(s.cgstAmount),
+        sgst: toNum(s.sgstAmount),
+        igst: toNum(s.igstAmount),
+        gstTotal: toNum(s.totalGst),
+        grandTotal: grandTotalN,
         refundAmount,                  // sum of all return slips (credit notes)
         supplementAmount,              // sum of all supplement slips (debit notes)
         netAfterReturns: netEffective, // grandTotal + supplements − refunds
@@ -2874,16 +3147,24 @@ exports.salesRegister = async (req, res) => {
     const totals = rows.reduce((acc, s) => {
       const refundAmount     = (s.returns || []).reduce((t, r) => t + Number(r.refundAmount || 0), 0);
       const supplementAmount = (s.supplements || []).reduce((t, x) => t + Number(x.addedTotal || 0), 0);
+      const grandTotalN      = toNum(s.grandTotal);
       acc.bills += 1;
-      acc.subTotal     += s.subTotal     || 0;
-      acc.taxable      += s.totalTaxable || 0;
-      acc.gstTotal     += s.totalGst     || 0;
-      acc.grandTotal   += s.grandTotal   || 0;
+      // R7hr-12 (D2-02): toNum() before += so Decimal128 totals are summed
+      // numerically instead of string-concatenated.
+      acc.subTotal     += toNum(s.subTotal);
+      acc.taxable      += toNum(s.totalTaxable);
+      acc.gstTotal     += toNum(s.totalGst);
+      acc.grandTotal   += grandTotalN;
+      // R7hr-12 (D8-04): track per-bucket CGST/SGST/IGST so totals reflect
+      // the true intra/inter-state mix instead of a blanket totalGst/2.
+      acc.cgst         += toNum(s.cgstAmount);
+      acc.sgst         += toNum(s.sgstAmount);
+      acc.igst         += toNum(s.igstAmount);
       acc.refunds      += refundAmount;
       acc.supplements  += supplementAmount;
-      acc.net          += Math.max(0, (s.grandTotal || 0) + supplementAmount - refundAmount);
+      acc.net          += Math.max(0, grandTotalN + supplementAmount - refundAmount);
       return acc;
-    }, { bills: 0, subTotal: 0, taxable: 0, gstTotal: 0, grandTotal: 0, refunds: 0, supplements: 0, net: 0 });
+    }, { bills: 0, subTotal: 0, taxable: 0, gstTotal: 0, cgst: 0, sgst: 0, igst: 0, grandTotal: 0, refunds: 0, supplements: 0, net: 0 });
     res.json({ success: true, data: { rows: out, totals } });
   } catch (e) { sendErr(res, e); }
 };
@@ -3156,6 +3437,15 @@ exports.gstSummary = async (req, res) => {
   try {
     const range = _rangeFilter(req);
     const STATUS_IN = ["Completed", "Partial-Return", "Refunded", "Supplemented"];
+    // R7hr-12 (D8-04): also $sum the per-item cgst/sgst/igstAmount columns
+    // that dispense() persists per the intra/inter-state placeOfSupply split.
+    // Pre-fix the bucket emitted cgst = sgst = tax/2 regardless of placeOfSupply,
+    // which silently dropped IGST off the printed register for any inter-state
+    // B2B / corporate-panel sale — the same sale then reconciles as IGST in
+    // GSTR-1 (via gstService.aggregateGSTForMonth), making the printed register
+    // contradict the filing and blocking submission.
+    // R7hr-12 (D2-02 related): $sum on Decimal128 inside aggregation is safe
+    // (Mongo coerces numerically); the issue was only on the Node side.
     const sales = await Sale.aggregate([
       { $match: { status: { $in: STATUS_IN }, ...range } },
       { $unwind: "$items" },
@@ -3163,13 +3453,20 @@ exports.gstSummary = async (req, res) => {
         _id: "$items.gstRate",
         taxable: { $sum: "$items.taxableAmount" },
         tax:     { $sum: "$items.gstAmount" },
+        cgst:    { $sum: { $ifNull: ["$items.cgstAmount", 0] } },
+        sgst:    { $sum: { $ifNull: ["$items.sgstAmount", 0] } },
+        igst:    { $sum: { $ifNull: ["$items.igstAmount", 0] } },
         qty:     { $sum: "$items.quantity" },
         billsArr:{ $addToSet: "$_id" },
       } },
-      { $project: { gstRate: "$_id", _id: 0, taxable: 1, tax: 1, qty: 1, billCount: { $size: "$billsArr" } } },
+      { $project: { gstRate: "$_id", _id: 0, taxable: 1, tax: 1, cgst: 1, sgst: 1, igst: 1, qty: 1, billCount: { $size: "$billsArr" } } },
       { $sort: { gstRate: 1 } },
     ]);
     // Credit-note bucket — refunded items per gstRate.
+    // Returned items in PharmacySaleSchema.returns.refundedItems don't currently
+    // carry the cgst/sgst/igst split (only gstAmount); derive the split from the
+    // parent sale's placeOfSupply by emitting both an interState flag and the
+    // raw tax then splitting on the Node side using the salesMap interState ratio.
     const refunds = await Sale.aggregate([
       { $match: { status: { $in: ["Partial-Return", "Refunded"] }, ...range } },
       { $unwind: "$returns" },
@@ -3203,52 +3500,107 @@ exports.gstSummary = async (req, res) => {
       ...supplements.map(s => Number(s._id)),
     ]);
     const salesMap = new Map(sales.map(s => [Number(s.gstRate), s]));
+    // R7hr-12 (D8-04): coerce every Decimal128 read to Number (Mongo aggregate
+    // returns Decimal128 BSON types when the source fields are Decimal128).
     const buckets = [...allRates].sort((a, b) => a - b).map(rate => {
-      const r = salesMap.get(rate) || { taxable: 0, tax: 0, qty: 0, billCount: 0 };
+      const r = salesMap.get(rate) || { taxable: 0, tax: 0, cgst: 0, sgst: 0, igst: 0, qty: 0, billCount: 0 };
       const ref = refundMap.get(rate) || { taxable: 0, tax: 0, qty: 0 };
       const sup = suppMap.get(rate) || { taxable: 0, tax: 0, qty: 0 };
-      const netTaxable = r.taxable + sup.taxable - ref.taxable;
-      const netTax     = r.tax     + sup.tax     - ref.tax;
+      const rTaxable = toNum(r.taxable),  rTax = toNum(r.tax);
+      const rCgst    = toNum(r.cgst),     rSgst = toNum(r.sgst), rIgst = toNum(r.igst);
+      const refTaxable = toNum(ref.taxable), refTax = toNum(ref.tax);
+      const supTaxable = toNum(sup.taxable), supTax = toNum(sup.tax);
+      // Split refunds/supplements proportionally on the same intra/inter-state
+      // ratio observed in the sales bucket for this rate. If a rate only has
+      // refunds (no matching sales row), fall back to intra-state half-split.
+      const sumSplitSales = rCgst + rSgst + rIgst;
+      const igstShare = sumSplitSales > 0 ? rIgst / sumSplitSales : 0;
+      const refIgst = refTax * igstShare,  refCgst = (refTax - refIgst) / 2, refSgst = (refTax - refIgst) / 2;
+      const supIgst = supTax * igstShare,  supCgst = (supTax - supIgst) / 2, supSgst = (supTax - supIgst) / 2;
+      const netTaxable = rTaxable + supTaxable - refTaxable;
+      const netTax     = rTax     + supTax     - refTax;
+      const netCgst    = rCgst    + supCgst    - refCgst;
+      const netSgst    = rSgst    + supSgst    - refSgst;
+      const netIgst    = rIgst    + supIgst    - refIgst;
       return {
         gstRate:  rate,
         qty:      r.qty,
         billCount: r.billCount,
-        taxable:  Math.round(r.taxable * 100) / 100,
-        tax:      Math.round(r.tax     * 100) / 100,
-        cgst:     Math.round(r.tax / 2 * 100) / 100,
-        sgst:     Math.round(r.tax / 2 * 100) / 100,
+        taxable:  Math.round(rTaxable * 100) / 100,
+        tax:      Math.round(rTax     * 100) / 100,
+        cgst:     Math.round(rCgst    * 100) / 100,
+        sgst:     Math.round(rSgst    * 100) / 100,
+        igst:     Math.round(rIgst    * 100) / 100,
         refundQty:     ref.qty,
-        refundTaxable: Math.round(ref.taxable * 100) / 100,
-        refundTax:     Math.round(ref.tax     * 100) / 100,
+        refundTaxable: Math.round(refTaxable * 100) / 100,
+        refundTax:     Math.round(refTax     * 100) / 100,
+        refundCgst:    Math.round(refCgst    * 100) / 100,
+        refundSgst:    Math.round(refSgst    * 100) / 100,
+        refundIgst:    Math.round(refIgst    * 100) / 100,
         supplementQty:     sup.qty,
-        supplementTaxable: Math.round(sup.taxable * 100) / 100,
-        supplementTax:     Math.round(sup.tax     * 100) / 100,
-        netTaxable:    Math.round(netTaxable  * 100) / 100,
-        netTax:        Math.round(netTax      * 100) / 100,
+        supplementTaxable: Math.round(supTaxable * 100) / 100,
+        supplementTax:     Math.round(supTax     * 100) / 100,
+        supplementCgst:    Math.round(supCgst    * 100) / 100,
+        supplementSgst:    Math.round(supSgst    * 100) / 100,
+        supplementIgst:    Math.round(supIgst    * 100) / 100,
+        netTaxable:    Math.round(netTaxable * 100) / 100,
+        netTax:        Math.round(netTax     * 100) / 100,
+        netCgst:       Math.round(netCgst    * 100) / 100,
+        netSgst:       Math.round(netSgst    * 100) / 100,
+        netIgst:       Math.round(netIgst    * 100) / 100,
       };
     });
     const totals = buckets.reduce((acc, r) => ({
       taxable:           acc.taxable           + r.taxable,
       tax:               acc.tax               + r.tax,
+      cgst:              acc.cgst              + r.cgst,
+      sgst:              acc.sgst              + r.sgst,
+      igst:              acc.igst              + r.igst,
       refundTaxable:     acc.refundTaxable     + r.refundTaxable,
       refundTax:         acc.refundTax         + r.refundTax,
+      refundCgst:        acc.refundCgst        + r.refundCgst,
+      refundSgst:        acc.refundSgst        + r.refundSgst,
+      refundIgst:        acc.refundIgst        + r.refundIgst,
       supplementTaxable: acc.supplementTaxable + r.supplementTaxable,
       supplementTax:     acc.supplementTax     + r.supplementTax,
-    }), { taxable: 0, tax: 0, refundTaxable: 0, refundTax: 0, supplementTaxable: 0, supplementTax: 0 });
+      supplementCgst:    acc.supplementCgst    + r.supplementCgst,
+      supplementSgst:    acc.supplementSgst    + r.supplementSgst,
+      supplementIgst:    acc.supplementIgst    + r.supplementIgst,
+    }), {
+      taxable: 0, tax: 0, cgst: 0, sgst: 0, igst: 0,
+      refundTaxable: 0, refundTax: 0, refundCgst: 0, refundSgst: 0, refundIgst: 0,
+      supplementTaxable: 0, supplementTax: 0, supplementCgst: 0, supplementSgst: 0, supplementIgst: 0,
+    });
     const netTaxable = totals.taxable + totals.supplementTaxable - totals.refundTaxable;
     const netTax     = totals.tax     + totals.supplementTax     - totals.refundTax;
+    const netCgst    = totals.cgst    + totals.supplementCgst    - totals.refundCgst;
+    const netSgst    = totals.sgst    + totals.supplementSgst    - totals.refundSgst;
+    const netIgst    = totals.igst    + totals.supplementIgst    - totals.refundIgst;
     res.json({ success: true, data: {
       buckets,
       grandTaxable:           Math.round(totals.taxable * 100) / 100,
       grandTax:               Math.round(totals.tax     * 100) / 100,
-      grandCGST:              Math.round(totals.tax / 2 * 100) / 100,
-      grandSGST:              Math.round(totals.tax / 2 * 100) / 100,
+      // R7hr-12 (D8-04): publish the true CGST/SGST/IGST grand totals
+      // (sum of bill-level intra/inter-state splits) so the auditor-facing
+      // printout no longer contradicts gstService's GSTR-1 feed.
+      grandCGST:              Math.round(totals.cgst * 100) / 100,
+      grandSGST:              Math.round(totals.sgst * 100) / 100,
+      grandIGST:              Math.round(totals.igst * 100) / 100,
       grandRefundTaxable:     Math.round(totals.refundTaxable     * 100) / 100,
       grandRefundTax:         Math.round(totals.refundTax         * 100) / 100,
+      grandRefundCGST:        Math.round(totals.refundCgst        * 100) / 100,
+      grandRefundSGST:        Math.round(totals.refundSgst        * 100) / 100,
+      grandRefundIGST:        Math.round(totals.refundIgst        * 100) / 100,
       grandSupplementTaxable: Math.round(totals.supplementTaxable * 100) / 100,
       grandSupplementTax:     Math.round(totals.supplementTax     * 100) / 100,
+      grandSupplementCGST:    Math.round(totals.supplementCgst    * 100) / 100,
+      grandSupplementSGST:    Math.round(totals.supplementSgst    * 100) / 100,
+      grandSupplementIGST:    Math.round(totals.supplementIgst    * 100) / 100,
       grandNetTaxable:        Math.round(netTaxable * 100) / 100,
       grandNetTax:            Math.round(netTax     * 100) / 100,
+      grandNetCGST:           Math.round(netCgst    * 100) / 100,
+      grandNetSGST:           Math.round(netSgst    * 100) / 100,
+      grandNetIGST:           Math.round(netIgst    * 100) / 100,
     } });
   } catch (e) { sendErr(res, e); }
 };

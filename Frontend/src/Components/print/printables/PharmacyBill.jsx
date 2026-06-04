@@ -28,7 +28,11 @@ import React from "react";
 import PrintShell from "@/templates/PrintShell";
 import "../print.css";
 import { fmtINR, amountInWords } from "../amountWords";
-import PrintWatermark from "../PrintWatermark";
+// R7hr-12 (D7-01) — PrintWatermark is now rendered by PrintShell itself
+// (Frontend/src/templates/PrintShell.jsx) from meta.printCount /
+// meta.watermarkLabel / meta.watermarkRecipient, so the bespoke import
+// + in-body render that this file carried as the Track-A workaround is
+// removed to avoid a doubled "DUPLICATE" stamp.
 import { toNum } from "../../../utils/printUtils";
 
 const _fmtDate = (d, opts) => d
@@ -231,13 +235,17 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         docNumber: r.billNumber,
         pageOf:    "1 of 1",
         printCount,
+        // R7hr-12 (D7-01) — recipient that PrintShell will splice into
+        // the "DUPLICATE FOR …" stamp. Preserves the prior in-body
+        // workaround's behaviour (patient name, falling back to a
+        // generic "RECIPIENT" label).
+        watermarkRecipient: r.patientName || "RECIPIENT",
       }}
     >
-      {/* DUPLICATE watermark on reprints (GST §48(4)) */}
-      <PrintWatermark
-        printCount={printCount}
-        recipient={r.patientName || "RECIPIENT"}
-      />
+      {/* R7hr-12 (D7-01) — PrintWatermark is now emitted by PrintShell
+          from `meta.printCount` / `meta.watermarkRecipient`. The local
+          render that lived here as the Track-A workaround is removed
+          to avoid double-stamping. */}
 
       {isRevised && (
         <div style={{

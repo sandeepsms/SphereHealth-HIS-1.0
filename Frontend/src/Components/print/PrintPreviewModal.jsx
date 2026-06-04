@@ -31,6 +31,14 @@ const PrintPreviewModal = ({ open, slug, payload, onClose }) => {
   // PrintAudit row landed, DUPLICATE watermark never rendered. Mirror
   // the audit-then-print sequence that PrintPreviewPage already does.
   const [auditing, setAuditing] = useState(false);
+  // R7hr-12 (D7-02): iframe src timestamp lifted into state so we can
+  // mutate it post-audit to force a reload of the embedded
+  // PrintRouterPage with the bumped printCount in sessionStorage.
+  // Re-initialised every time the modal opens for a fresh ts.
+  const [iframeTs, setIframeTs] = useState(() => Date.now());
+  useEffect(() => {
+    if (open) setIframeTs(Date.now());
+  }, [open, slug]);
 
   // Stash the payload in sessionStorage so the iframe-mounted
   // PrintRouterPage picks it up the same way the new-tab path does.
@@ -58,15 +66,58 @@ const PrintPreviewModal = ({ open, slug, payload, onClose }) => {
     const audit = payload?.printAudit;
     if (audit?.entityType && audit?.entityId) {
       setAuditing(true);
-      try { await recordPrintAudit(audit); }
-      catch (_e) { /* swallow — never block print */ }
+      let postBumpCount = null;
+      try {
+        const res = await recordPrintAudit(audit);
+        if (res && Number.isFinite(Number(res.printCount))) {
+          postBumpCount = Number(res.printCount);
+        }
+      } catch (_e) { /* swallow — never block print */ }
       setAuditing(false);
+
+      // R7hr-12 (D7-02): the iframe is a separate document so React
+      // Context cannot reach it (unlike PrintPreviewPage). Instead,
+      // rewrite the sessionStorage payload with the post-bump
+      // printCount and reload the iframe so PrintRouterPage re-mounts
+      // and PharmacyBill / OPDReceipt / etc. re-render PrintWatermark
+      // against the corrected count. Pre-fix the first reprint via
+      // the modal path printed without the GST §48(4) watermark.
+      if (postBumpCount != null && slug) {
+        try {
+          const raw = sessionStorage.getItem(`printPayload-${slug}`);
+          if (raw) {
+            const cur = JSON.parse(raw);
+            const patched = { ...cur, printCount: postBumpCount };
+            sessionStorage.setItem(`printPayload-${slug}`, JSON.stringify(patched));
+          }
+        } catch (_e) { /* sessionStorage unavailable — best effort */ }
+        // Force iframe reload and wait for it to finish painting.
+        await new Promise((resolve) => {
+          const iframe = iframeRef.current;
+          if (!iframe) { resolve(); return; }
+          const onLoad = () => {
+            iframe.removeEventListener("load", onLoad);
+            // Two rAFs after load so React inside the iframe commits
+            // and paints the watermark before window.print() snaps.
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => resolve())
+            );
+          };
+          iframe.addEventListener("load", onLoad);
+          setIframeTs(Date.now());
+          // Safety timeout — never block the user forever.
+          setTimeout(() => {
+            iframe.removeEventListener("load", onLoad);
+            resolve();
+          }, 2500);
+        });
+      }
     }
     try { iframeRef.current?.contentWindow?.print(); } catch (_e) {}
   };
 
   if (!open) return null;
-  const ts = Date.now();
+  const ts = iframeTs;
 
   return (
     <div

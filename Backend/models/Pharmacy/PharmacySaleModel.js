@@ -307,6 +307,15 @@ const PharmacySaleSchema = new mongoose.Schema(
   }
 );
 
+// R7hr-12 (D1-01): enable optimistic concurrency so every save() includes
+// the __v guard. Without this, retryVersionError wrappers in pharmacyController
+// (collectCredit, applyAdvanceToSale fallback, cancelSale credit-update) were
+// dead code — concurrent cashiers/terminals collecting on the same sale
+// silently last-writer-wins on amountPaid/balanceDue/patientCredit/paymentMode
+// while the collectionLog $push survives, producing an over-recorded audit
+// trail and under-recorded accounting. Mirrors PatientBillModel.js:793.
+PharmacySaleSchema.set("optimisticConcurrency", true);
+
 PharmacySaleSchema.index({ createdAt: -1 });
 // R7ap-F14/D8-07: pharmacyController.gstSummary filters by status + createdAt
 // — the previous single-field createdAt index forced a COLLSCAN over the

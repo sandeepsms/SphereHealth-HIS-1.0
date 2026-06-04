@@ -164,14 +164,151 @@ async function aggregateGSTForMonth(periodStart, periodEnd) {
     } },
   ];
 
+  // R7hr-12 (D2-04) — Pharmacy refunds (PharmacySale.returns[]) live as
+  // embedded sub-docs and were silently dropped from the GSTR-1 / GSTR-3B
+  // aggregate. Likewise supplements (PharmacySale.supplements[]) — which
+  // are NEVER folded back into items[] per schema design — were missing
+  // entirely. We emit two more streams that share the projection shape
+  // so the existing $group buckets add the supplements and subtract the
+  // refunds. The sub-doc's own timestamp (refundedAt / addedAt) drives
+  // the period filter so a refund/supplement issued in month M+1 lands
+  // in M+1, not in the original sale's M.
+  //
+  // Refund / supplement lines may not carry per-line CGST/SGST/IGST split,
+  // so we derive intra-state at the parent-sale level via placeOfSupply
+  // and apply the same gst/2 logic. If items already carry the split
+  // (post-R7hr-12 writers), those win.
+  const _intraStateExpr = {
+    $cond: [
+      { $eq: [hospitalStateCode, ""] },
+      true,
+      { $cond: [
+        { $eq: ["$_pos", ""] }, true,
+        { $eq: ["$_pos", hospitalStateCode] },
+      ] },
+    ],
+  };
+
+  // Refunds → NEGATIVE-signed rows (subtracted from outward).
+  const pharmacyRefundsPipeline = [
+    { $match: { "returns.0": { $exists: true } } },
+    { $unwind: "$returns" },
+    { $match: {
+        "returns.refundedAt": { $gte: periodStart, $lt: periodEnd },
+    } },
+    { $unwind: "$returns.refundedItems" },
+    { $match: { "returns.refundedItems.gstAmount": { $gt: 0 } } },
+    { $lookup: {
+        from: "pharmacydrugs",
+        localField: "returns.refundedItems.drugId",
+        foreignField: "_id",
+        as: "_drug",
+        pipeline: [{ $project: { hsnCode: 1 } }],
+    } },
+    { $addFields: {
+        _gst: { $toDouble: { $ifNull: ["$returns.refundedItems.gstAmount", 0] } },
+        _pos: { $trim: { input: { $ifNull: ["$placeOfSupply", ""] } } },
+        _lineCgst: { $toDouble: { $ifNull: ["$returns.refundedItems.cgstAmount", 0] } },
+        _lineSgst: { $toDouble: { $ifNull: ["$returns.refundedItems.sgstAmount", 0] } },
+        _lineIgst: { $toDouble: { $ifNull: ["$returns.refundedItems.igstAmount", 0] } },
+    } },
+    { $addFields: {
+        _hasLineSplit: { $gt: [{ $add: ["$_lineCgst", "$_lineSgst", "$_lineIgst"] }, 0] },
+        _isIntraState: _intraStateExpr,
+    } },
+    { $project: {
+        _id: 0,
+        source: { $literal: "pharmacy" },
+        rate: { $toDouble: "$returns.refundedItems.gstRate" },
+        // Negative-signed so $sum subtracts.
+        taxableValue: { $multiply: [
+          { $toDouble: { $ifNull: ["$returns.refundedItems.taxableAmount", 0] } },
+          -1,
+        ] },
+        cgst: { $multiply: [
+          { $cond: [
+            "$_hasLineSplit", "$_lineCgst",
+            { $cond: ["$_isIntraState", { $divide: ["$_gst", 2] }, 0] },
+          ] }, -1,
+        ] },
+        sgst: { $multiply: [
+          { $cond: [
+            "$_hasLineSplit", "$_lineSgst",
+            { $cond: ["$_isIntraState", { $divide: ["$_gst", 2] }, 0] },
+          ] }, -1,
+        ] },
+        igst: { $multiply: [
+          { $cond: [
+            "$_hasLineSplit", "$_lineIgst",
+            { $cond: ["$_isIntraState", 0, "$_gst"] },
+          ] }, -1,
+        ] },
+        taxAmount: { $multiply: ["$_gst", -1] },
+        hsnSac: { $ifNull: [{ $arrayElemAt: ["$_drug.hsnCode", 0] }, ""] },
+    } },
+  ];
+
+  // Supplements → POSITIVE-signed rows (added to outward).
+  const pharmacySupplementsPipeline = [
+    { $match: { "supplements.0": { $exists: true } } },
+    { $unwind: "$supplements" },
+    { $match: {
+        "supplements.addedAt": { $gte: periodStart, $lt: periodEnd },
+    } },
+    { $unwind: "$supplements.addedItems" },
+    { $match: { "supplements.addedItems.gstAmount": { $gt: 0 } } },
+    { $lookup: {
+        from: "pharmacydrugs",
+        localField: "supplements.addedItems.drugId",
+        foreignField: "_id",
+        as: "_drug",
+        pipeline: [{ $project: { hsnCode: 1 } }],
+    } },
+    { $addFields: {
+        _gst: { $toDouble: { $ifNull: ["$supplements.addedItems.gstAmount", 0] } },
+        _pos: { $trim: { input: { $ifNull: ["$placeOfSupply", ""] } } },
+        _lineCgst: { $toDouble: { $ifNull: ["$supplements.addedItems.cgstAmount", 0] } },
+        _lineSgst: { $toDouble: { $ifNull: ["$supplements.addedItems.sgstAmount", 0] } },
+        _lineIgst: { $toDouble: { $ifNull: ["$supplements.addedItems.igstAmount", 0] } },
+    } },
+    { $addFields: {
+        _hasLineSplit: { $gt: [{ $add: ["$_lineCgst", "$_lineSgst", "$_lineIgst"] }, 0] },
+        _isIntraState: _intraStateExpr,
+    } },
+    { $project: {
+        _id: 0,
+        source: { $literal: "pharmacy" },
+        rate: { $toDouble: "$supplements.addedItems.gstRate" },
+        taxableValue: { $toDouble: { $ifNull: ["$supplements.addedItems.taxableAmount", 0] } },
+        cgst: { $cond: [
+          "$_hasLineSplit", "$_lineCgst",
+          { $cond: ["$_isIntraState", { $divide: ["$_gst", 2] }, 0] },
+        ] },
+        sgst: { $cond: [
+          "$_hasLineSplit", "$_lineSgst",
+          { $cond: ["$_isIntraState", { $divide: ["$_gst", 2] }, 0] },
+        ] },
+        igst: { $cond: [
+          "$_hasLineSplit", "$_lineIgst",
+          { $cond: ["$_isIntraState", 0, "$_gst"] },
+        ] },
+        taxAmount: "$_gst",
+        hsnSac: { $ifNull: [{ $arrayElemAt: ["$_drug.hsnCode", 0] }, ""] },
+    } },
+  ];
+
   // ── Combined facet on the merged stream ────────────────────────
   // PatientBill.aggregate is the entry collection; $unionWith pulls the
   // pharmacy stream into the same pipeline. Both project to the same
   // {source, rate, taxableValue, cgst, sgst, igst, taxAmount, hsnSac}
   // shape so downstream $group works uniformly.
+  // R7hr-12 (D2-04): three pharmacy streams now contribute — original
+  // sales (positive), refunds (negative), supplements (positive).
   const combined = await PatientBill.aggregate([
     ...hospitalPipeline,
     { $unionWith: { coll: "pharmacysales", pipeline: pharmacyPipeline } },
+    { $unionWith: { coll: "pharmacysales", pipeline: pharmacyRefundsPipeline } },
+    { $unionWith: { coll: "pharmacysales", pipeline: pharmacySupplementsPipeline } },
     { $facet: {
         buckets: [
           { $group: {

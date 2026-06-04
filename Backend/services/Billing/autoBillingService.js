@@ -2679,6 +2679,13 @@ async function onIndentReleased(indentDoc, releaseItems = []) {
   // Index releaseItems by itemId so we can pull per-item issuedQty.
   const inboundByItemId = new Map((releaseItems || []).map(r => [String(r.itemId), r]));
 
+  // R7hr-12 (D8-01): Schedule-X register cascade on indent release.
+  // Lazy-require to avoid a circular dependency (scheduleXRegister →
+  // Drug → ... and we only need it when at least one Schedule-X item
+  // is in this release).
+  let scheduleXRegister = null;
+  let Drug = null;
+
   for (const item of (indentDoc.items || [])) {
     const released = inboundByItemId.get(String(item._id));
     if (!released) continue;
@@ -2691,9 +2698,46 @@ async function onIndentReleased(indentDoc, releaseItems = []) {
     // is the snapshot stored on the indent item (taken from the
     // pharmacy release payload), so the receipt matches the dispense.
     const unitPrice = Number(released.unitPrice || item.unitPriceSnapshot || 0);
-    if (unitPrice <= 0) continue;       // Nothing meaningful to bill
-
     const code = `PHARM-${(item.drugCode || item.drugName || "DRUG").toUpperCase().replace(/\s+/g, "-").slice(0, 24)}`;
+
+    // R7hr-12 (D5-03): missing unit price → emit pending-review trigger
+    // instead of silently continuing. Pre-R7hr-12 we `continue`d when
+    // unitPrice <= 0, which let the dispensed stock leave the pharmacy
+    // with NO bill artifact (revenue leak). Now the Stuck-Triggers tile
+    // surfaces every missing-price release so the operator can either
+    // (a) edit the indent line with the correct price + retry, or
+    // (b) cancel after manual reconciliation. Mirrors invariant R7
+    // (pending-review fallback on every trigger failure).
+    if (unitPrice <= 0) {
+      try {
+        await BillingTrigger.create({
+          admissionId:         indentDoc.admissionId,
+          patientId:           indentDoc.patientId,
+          UHID:                indentDoc.UHID,
+          patientType:         "IPD",
+          serviceCode:         code,
+          serviceName:         `${item.drugName}${item.dose ? ` ${item.dose}` : ""} (reserved — missing price)`,
+          quantity:            issuedQty,
+          sourceType:          "MAR_RESERVATION",
+          sourceDocumentId:    item._id,
+          sourceDocumentModel: "PharmacyIndent",
+          orderedBy:           indentDoc.raisedBy || "Nurse",
+          orderedById:         indentDoc.raisedById,
+          orderedByRole:       indentDoc.raisedByRole || "Nurse",
+          completedBy:         indentDoc.releasedBy || "Pharmacist",
+          completedByRole:     "Pharmacist",
+          triggeredBy:         indentDoc.releasedBy || "Pharmacist",
+          triggeredByRole:     "Pharmacist",
+          orderDetails:        `Indent ${indentDoc.indentNumber || indentDoc._id} · ${item.drugName} × ${issuedQty} — unit price missing on release payload + indent snapshot`,
+          status:              "pending-review",
+          reviewReason:        `missing-unit-price: indent release for "${item.drugName}" carried no unitPrice (release payload + indent snapshot both 0). Edit the line or set a default price and retry.`,
+        });
+      } catch (createErr) {
+        console.error(`[Indent] R7hr-12 missing-price pending-review create failed for item ${item._id}:`, createErr.message);
+      }
+      continue; // no charge fired, but stock + audit row are durable
+    }
+
     try {
       const result = await createTrigger({
         admissionId:         indentDoc.admissionId,
@@ -2734,6 +2778,118 @@ async function onIndentReleased(indentDoc, releaseItems = []) {
       }
     } catch (e) {
       console.error(`[Indent] reservation trigger for item ${item._id} failed:`, e.message);
+    }
+
+    // R7hr-12 (D8-01): Schedule-X / NDPS register cascade. Pre-R7hr-12
+    // the counter-dispense path (pharmacyController.dispense L840-869)
+    // was the ONLY caller of scheduleXRegister.recordDispense, so every
+    // ward indent of morphine/pethidine/diazepam left the statutory
+    // NDPS register blank — 70–90% of narcotic use in a hospital flows
+    // through IPD, so the register was effectively missing the bulk of
+    // its mandated rows.
+    //
+    // Implementation notes (mirror the counter-dispense pattern at
+    // pharmacyController.js L843-867):
+    //   • Drug.schedule === "X" gates the call — non-Schedule-X items
+    //     skip silently.
+    //   • One recordDispense per picked batch (item.picked[] is the
+    //     FEFO audit ledger written by releaseIndent at L480-486), so
+    //     a single indent line that pulled from multiple batches
+    //     produces one register row per batch — exactly the NDPS
+    //     traceability requirement.
+    //   • Failures are non-fatal: log + log a remark on the indent.
+    //     We DON'T refuse the release on first cut (per refinement)
+    //     because the IPD indent UI doesn't yet collect witnessName/
+    //     witnessId — refusing here would break legitimate ward
+    //     workflow. The recordDispense call will 400 with
+    //     WITNESS_REQUIRED until the UI is updated, and the remark
+    //     surfaces the gap to the operator for manual entry via the
+    //     Schedule-X register page.
+    if (!item.drugId) continue; // legacy / manual line w/o drug master
+    if (!scheduleXRegister) {
+      scheduleXRegister = require("../Pharmacy/scheduleXRegister");
+      Drug = require("../../models/Pharmacy/DrugModel");
+    }
+    let drugMeta = null;
+    try {
+      drugMeta = await Drug.findById(item.drugId).select("schedule name").lean();
+    } catch (lookupErr) {
+      console.error(`[Indent] R7hr-12 Drug lookup failed for ${item.drugId}:`, lookupErr.message);
+      continue;
+    }
+    if (!drugMeta || drugMeta.schedule !== "X") continue;
+
+    const picks = Array.isArray(item.picked) ? item.picked : [];
+    // Only NEW picks from this release land on the register. The
+    // release path at indentService.js L480-486 appends to item.picked
+    // — so on a multi-call PartiallyReleased indent the array may
+    // contain prior-release rows too. Filter by pickedAt >= release
+    // timestamp (or, for the first release, by anything within the
+    // last 10 minutes of this release). Best-effort; over-recording
+    // is preferred to under-recording for NDPS.
+    const releasedAt = indentDoc.releasedAt ? new Date(indentDoc.releasedAt).getTime() : Date.now();
+    const newPicks = picks.length === 0
+      ? [{ batchId: null, qty: issuedQty, batchNo: "" }] // fallback when no FEFO trail
+      : picks.filter((p) => {
+        const t = p.pickedAt ? new Date(p.pickedAt).getTime() : releasedAt;
+        return t >= releasedAt - 60 * 1000; // 1-minute slack for clock skew
+      });
+    const picksToRecord = newPicks.length > 0 ? newPicks : picks;
+
+    for (const p of picksToRecord) {
+      try {
+        await scheduleXRegister.recordDispense({
+          drugId:        item.drugId,
+          batchId:       p.batchId || undefined,
+          qty:           Number(p.qty) || 0,
+          rx:            indentDoc.indentNumber || String(indentDoc._id),
+          doctorName:    "", // doctor identity isn't on the indent header — surface via remarks
+          uhid:          indentDoc.UHID || "",
+          // NDPS two-person rule — IPD indent release payload doesn't
+          // currently carry witness identity. Pass empty so the
+          // service-side check 400s with WITNESS_REQUIRED; we capture
+          // the gap as a remark below so the operator can reconcile
+          // via the Schedule-X register UI. Once the indent-release
+          // UI is updated to collect witnessName/witnessId, plumb
+          // them through releaseItems and read them here.
+          witnessName:   indentDoc.acknowledgedBy || "",
+          witnessId:     indentDoc.acknowledgedById || null,
+          dispensedBy:   indentDoc.releasedBy || "Pharmacist",
+          dispensedById: indentDoc.releasedById || null,
+          remarks:       `Indent ${indentDoc.indentNumber || indentDoc._id} · ward=${indentDoc.wardName || ""} bed=${indentDoc.bedNumber || ""}`,
+        });
+      } catch (sxErr) {
+        // Mirror the pharmacyController.js pattern: don't abort the
+        // release. Log + surface a pending-review BillingTrigger so
+        // the Stuck-Triggers tile carries the regulatory gap.
+        console.error(
+          `[Indent] R7hr-12 Schedule-X recordDispense failed for drug ${item.drugId} batch ${p.batchId || "—"} qty=${p.qty}:`,
+          sxErr.code || sxErr.message,
+        );
+        try {
+          await BillingTrigger.create({
+            admissionId:         indentDoc.admissionId,
+            patientId:           indentDoc.patientId,
+            UHID:                indentDoc.UHID,
+            patientType:         "IPD",
+            serviceName:         `Schedule-X register PENDING — ${drugMeta.name} × ${p.qty}`,
+            quantity:            Number(p.qty) || 0,
+            sourceType:          "MAR_RESERVATION",
+            sourceDocumentId:    item._id,
+            sourceDocumentModel: "PharmacyIndent",
+            orderedBy:           indentDoc.releasedBy || "Pharmacist",
+            orderedById:         indentDoc.releasedById,
+            orderedByRole:       "Pharmacist",
+            triggeredBy:         indentDoc.releasedBy || "Pharmacist",
+            triggeredByRole:     "Pharmacist",
+            status:              "pending-review",
+            reviewReason:        `schedule-x-register-failed: ${sxErr.code || sxErr.message} (drug=${drugMeta.name}, batchId=${p.batchId || "—"}, qty=${p.qty}) — NDPS register row must be entered manually via the Schedule-X register page.`,
+            orderDetails:        `Indent ${indentDoc.indentNumber || indentDoc._id} — Schedule-X dispense not recorded on register; manual reconciliation required.`,
+          });
+        } catch (logErr) {
+          console.error(`[Indent] R7hr-12 pending-review schedule-x trigger create failed:`, logErr.message);
+        }
+      }
     }
   }
 }
@@ -2821,6 +2977,133 @@ async function onMARNonAdminister(marDoc, medication, statusReason) {
 }
 
 /**
+ * R7hr-12 (D2-06): Reduce a reservation trigger's qty/totalAmount in
+ * place — proportional partial-cancel for pharmacy returns. Pre-R7hr-12
+ * onPharmacyReturn always full-cancelled the entire reservation even
+ * when only N units of a M-unit dispense came back, so the patient
+ * lost the (M-N) units of charge from the IPD ledger while only
+ * receiving the cash refund for N units. Direct revenue leak.
+ *
+ * This helper edits BOTH the trigger row (quantity, totalAmount) AND
+ * the linked bill item (quantity) in lock-step, recomputing totals via
+ * the bill's pre-save hook, and stamps an overrideHistory[] entry so
+ * the audit trail shows what changed. If the bill line was already
+ * gone (status:"cancelled" earlier, etc.) the helper still updates the
+ * trigger so the row stays internally consistent.
+ *
+ * @param {ObjectId} triggerId
+ * @param {number}   qtyReturned   units returned (must be < trigger.quantity)
+ * @param {object}   opts          { reason, user, refundSlipNumber }
+ * @returns {Promise<{ status, trigger }>}
+ *      status ∈ "partial" (reduced) | "full" (fully cancelled) | "skipped"
+ */
+async function _partialReduceTrigger(triggerId, qtyReturned, { reason, user, refundSlipNumber } = {}) {
+  const trigger = await BillingTrigger.findById(triggerId);
+  if (!trigger) return { status: "skipped", reason: "trigger-not-found" };
+  if (trigger.status === "voided" || trigger.status === "cancelled") {
+    return { status: "skipped", reason: "already-closed", trigger };
+  }
+
+  const currentQty = Number(trigger.quantity) || 0;
+  const ret = Number(qtyReturned) || 0;
+  if (ret <= 0) return { status: "skipped", reason: "invalid-qty", trigger };
+
+  // Full void path — return ≥ trigger qty means the whole reservation
+  // is going away. Delegate to cancelTrigger so the audit trail + bill
+  // line removal stay consistent with the legacy behaviour.
+  if (ret >= currentQty) {
+    try {
+      const cancelled = await cancelTrigger(triggerId, {
+        reason: `Pharmacy return ${refundSlipNumber || ""} — full reservation voided (${ret}/${currentQty} returned)`.trim(),
+        user:   user || { fullName: "AutoBilling (return)", role: "System" },
+      });
+      return { status: "full", trigger: cancelled };
+    } catch (e) {
+      if (e.code === "ALREADY_CLOSED") return { status: "skipped", reason: "already-closed" };
+      throw e;
+    }
+  }
+
+  // Partial-cancel path — reduce qty + totalAmount in place.
+  const unit = toNum(trigger.unitPrice);
+  const newQty   = currentQty - ret;
+  const newTotal = unit * newQty;
+
+  // Snapshot the before state for overrideHistory.
+  const before = {
+    quantity:    currentQty,
+    unitPrice:   unit,
+    totalAmount: toNum(trigger.totalAmount),
+  };
+
+  // Edit the linked bill item, if any. Mirrors the pattern from
+  // overrideTrigger (L3327-L3348) — set inputs, let the bill's pre-save
+  // hook recompute grossAmount / netAmount / patient + TPA splits.
+  if (trigger.billId && trigger.billItemId) {
+    const retryVE = require("../../utils/retryVersionError");
+    try {
+      await retryVE(async () => {
+        const bill = await PatientBill.findById(trigger.billId);
+        if (!bill) return;
+        if (["PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+          // Closed bill — caller must use the refund flow. We still
+          // reduce the trigger so the row matches reality, but flag
+          // the bill-side residue so the operator can reconcile.
+          return;
+        }
+        const item = bill.billItems.id(trigger.billItemId);
+        if (item) {
+          item.quantity = newQty;
+          // unitPrice unchanged — only qty drops.
+          await bill.save();
+        }
+      }, { label: "_partialReduceTrigger" });
+    } catch (billErr) {
+      console.error(`[AutoBilling] _partialReduceTrigger bill update failed for trigger ${triggerId}:`, billErr.message);
+      // Don't bubble — trigger update below keeps the audit row honest
+      // even if the bill mutation hit a closed-bill or version race.
+    }
+  }
+
+  trigger.quantity    = newQty;
+  trigger.totalAmount = toDec(newTotal);
+  trigger.overrideHistory.push({
+    field:         "qty/totalAmount",
+    oldValue:      before,
+    newValue:      { quantity: newQty, unitPrice: unit, totalAmount: newTotal },
+    reason:        String(reason || `Pharmacy return — ${ret} units returned of ${currentQty}`).trim(),
+    changedBy:     user?.fullName || user?.name || "AutoBilling (return)",
+    changedByRole: user?.role || "System",
+    changedById:   user?._id || user?.id,
+  });
+  await trigger.save();
+
+  // Best-effort audit row — reuse ITEM_PRICE_OVERRIDDEN since the
+  // override path covers qty/price edits and the enum doesn't have a
+  // dedicated "partial-refund" event. The reason text disambiguates.
+  try {
+    const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+    await emitBillingAudit({
+      event:       "ITEM_PRICE_OVERRIDDEN",
+      UHID:        trigger.UHID,
+      admissionId: trigger.admissionId,
+      triggerId:   trigger._id,
+      billId:      trigger.billId,
+      amount:      newTotal,
+      actorName:   user?.fullName || "AutoBilling (return)",
+      actorRole:   user?.role || "System",
+      reason:      `Partial pharmacy return — ${ret}/${currentQty} units returned (slip ${refundSlipNumber || "—"})`,
+      before,
+      after:       { quantity: newQty, unitPrice: unit, totalAmount: newTotal },
+    });
+  } catch (auditErr) {
+    console.warn("[AutoBilling] _partialReduceTrigger audit emit failed (non-fatal):", auditErr.message);
+  }
+
+  return { status: "partial", trigger };
+}
+
+/**
  * R7gz — Pharmacy return → IPD ledger refund cascade.
  *
  * When the pharmacist processes a return on a PharmacySale that
@@ -2838,12 +3121,17 @@ async function onMARNonAdminister(marDoc, medication, statusReason) {
  *      ledger's PHARM category total over-states actual consumption
  *      and the patient appears to owe money for medicine they returned.
  *
- * Strategy: find the matching reservation triggers for each returned
- * line and cancel them. For partial returns we still cancel the full
- * trigger (one trigger per indent line) — the dispensed remainder is
- * already reflected in PharmacySale.amountPaid which the pharmacy
- * counter handles separately. The IPD ledger's PHARM total is a
- * COST-VIEW only — it is not the payment instrument (pharmacy is).
+ * R7hr-12 (D2-06): partial-return support. Pre-R7hr-12 every match was
+ * full-cancelled regardless of `it.quantity`, so a 2-of-10 return wiped
+ * a ₹1000 reservation while only refunding ₹200 cash — patient got 8
+ * units of free medication on every partial return. The cascade now
+ * walks reservations newest-first and consumes `it.quantity` units
+ * across them: full-cancels each trigger it can fully absorb, then
+ * partial-reduces the last one to consume the remainder. Multi-trigger
+ * coverage handles the (uncommon but real) case of an indent line
+ * that was released across two indent calls (PartiallyReleased → second
+ * release), producing two reservation triggers for the same service
+ * code.
  *
  * Idempotent — re-running on an already-cancelled trigger is a no-op.
  */
@@ -2867,6 +3155,11 @@ async function onPharmacyReturn(sale, returnRecord) {
       serviceCode = `PHARM-${String(drugCode).toUpperCase().replace(/\s+/g, "-").slice(0, 24)}`;
     }
 
+    // R7hr-12 (D2-06): the returned quantity for this line — drives
+    // partial-cancel proportionality.
+    const returnedQty = Number(it.quantity) || 0;
+    if (returnedQty <= 0) continue;
+
     try {
       // Match the MAR reservation trigger that paid for this line.
       // Use a wide-ish window — pharmacy returns can land days after
@@ -2888,16 +3181,40 @@ async function onPharmacyReturn(sale, returnRecord) {
         continue;
       }
 
+      // R7hr-12 (D2-06): consume `returnedQty` units across the
+      // reservations (newest first). For each reservation:
+      //   • triggerQty <= remaining → full cancel, decrement remaining
+      //   • triggerQty >  remaining → partial reduce by `remaining`,
+      //                              remaining = 0, stop.
+      let remaining = returnedQty;
       for (const r of reservations) {
+        if (remaining <= 0) break;
+        const triggerQty = Number(r.quantity) || 0;
+        const consumeFromThis = Math.min(triggerQty, remaining);
         try {
-          await cancelTrigger(r._id, {
-            reason: `Pharmacy return ${returnRecord.refundSlipNumber || ""} — reservation voided`,
+          await _partialReduceTrigger(r._id, consumeFromThis, {
+            reason: `Pharmacy return ${returnRecord.refundSlipNumber || ""} — ${consumeFromThis} unit(s) of ${triggerQty} returned`,
             user: { fullName: "AutoBilling (return)", role: "System" },
+            refundSlipNumber: returnRecord.refundSlipNumber || "",
           });
+          remaining -= consumeFromThis;
         } catch (e) {
           if (e.code === "ALREADY_CLOSED") continue;
-          console.error(`[AutoBilling] onPharmacyReturn cancelTrigger ${r._id} failed:`, e.message);
+          console.error(`[AutoBilling] onPharmacyReturn _partialReduceTrigger ${r._id} failed:`, e.message);
         }
+      }
+
+      if (remaining > 0) {
+        // Coverage gap — returned more than the live reservations
+        // accounted for. Could happen if the MAR-administer path
+        // already promoted some reservations to per-dose triggers
+        // (post-dedup-window doses become separate MAR triggers).
+        // Log for the operator; don't fail the return.
+        console.warn(
+          `[AutoBilling] onPharmacyReturn ${serviceCode} (${admissionId}): ` +
+          `${remaining} unit(s) of returned ${returnedQty} found no matching reservation — ` +
+          `MAR per-dose triggers may need manual reconcile.`,
+        );
       }
     } catch (e) {
       console.error(`[AutoBilling] onPharmacyReturn ${serviceCode} error:`, e.message);

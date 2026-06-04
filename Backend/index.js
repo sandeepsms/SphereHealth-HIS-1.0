@@ -940,6 +940,38 @@ const _cancelRetentionReview = scheduleDaily("retention-review", 4, 0, async () 
   }
 })();
 
+// R7hr-12 / D10-01 — Boot-time self-test for cron module dependencies.
+// Pre-fix, the assessment-compliance interval require()d a non-existent
+// './utils/distributedLock' inside its try{} and the MODULE_NOT_FOUND was
+// silently swallowed every 15 min — leaving NABH MOM.4 / AAC.7 assessment
+// cadence unenforced for the entire deploy lifetime. We surface any future
+// cron-dependency drift at boot rather than in a log file no one reads.
+// Mirrors the retention startup-self-test pattern directly above.
+(() => {
+  const cronDeps = [
+    { name: "cronScheduler", path: "./utils/cronScheduler", needs: ["acquireLock", "releaseLock"] },
+  ];
+  const failures = [];
+  for (const dep of cronDeps) {
+    try {
+      const mod = require(dep.path);
+      const missing = (dep.needs || []).filter((k) => typeof mod?.[k] !== "function");
+      if (missing.length) {
+        failures.push({ name: dep.name, reason: `missing exports: ${missing.join(", ")}` });
+      }
+    } catch (e) {
+      failures.push({ name: dep.name, reason: e.message });
+    }
+  }
+  if (failures.length) {
+    for (const f of failures) {
+      console.warn(`[startup:cron-self-test] FAIL ${f.name}: ${f.reason}`);
+    }
+  } else {
+    console.log(`[startup:cron-self-test] OK — ${cronDeps.length} cron module(s) reachable`);
+  }
+})();
+
 // R7bj-F9 — visitor-pass expiry every 5 min (moves expensive updateMany off
 // the visitorPassController hot path). Stale passes auto-flip Active → Expired
 // with autoExpiredAt stamp. setInterval (not IST-anchored cron) — cadence-based.
@@ -1017,7 +1049,12 @@ const _cancelAssessmentComplianceSweeper = (() => {
   const interval = setInterval(async () => {
     const start = Date.now();
     try {
-      const { acquireLock, releaseLock } = require('./utils/distributedLock');
+      // R7hr-12 / D10-01 — was require('./utils/distributedLock') which does
+      // not exist; the distributed-lock helpers live in cronScheduler.js.
+      // Pre-fix, every 15-min tick after boot threw MODULE_NOT_FOUND and was
+      // silently swallowed by the surrounding catch, leaving NABH MOM.4 +
+      // AAC.7 assessment-cadence compliance unenforced.
+      const { acquireLock, releaseLock } = require('./utils/cronScheduler');
       const acquired = await acquireLock('cron:assessment-compliance', 14 * 60);
       if (!acquired) return; // another replica
       try {

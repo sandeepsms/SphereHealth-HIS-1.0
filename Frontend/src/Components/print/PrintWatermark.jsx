@@ -24,13 +24,19 @@
 // ════════════════════════════════════════════════════════════════════
 
 import React from "react";
+import { useEffectivePrintCount } from "./printCountContext";
 
 const PrintWatermark = ({
   printCount = 0,
   label,
   recipient,
 }) => {
-  if (!printCount || printCount <= 1) return null;
+  // R7hr-12 (D7-02): prefer the post-bump count surfaced by
+  // PrintPreviewPage / PrintPreviewModal via PrintCountContext so the
+  // FIRST reprint shows DUPLICATE (pre-fix it read the pre-bump count
+  // from `receipt.printCount` and the watermark gate stayed false).
+  const effectiveCount = useEffectivePrintCount(printCount);
+  if (!effectiveCount || effectiveCount <= 1) return null;
 
   // Compute a sensible label if the caller didn't supply one.
   // 1st print → no watermark (returned above).
@@ -39,9 +45,9 @@ const PrintWatermark = ({
   // 4th+      → COPY N
   let resolved = label;
   if (!resolved) {
-    if (printCount === 2) resolved = "DUPLICATE";
-    else if (printCount === 3) resolved = "TRIPLICATE";
-    else resolved = `COPY ${printCount}`;
+    if (effectiveCount === 2) resolved = "DUPLICATE";
+    else if (effectiveCount === 3) resolved = "TRIPLICATE";
+    else resolved = `COPY ${effectiveCount}`;
   }
 
   const fullLabel = recipient ? `${resolved} FOR ${recipient}` : resolved;

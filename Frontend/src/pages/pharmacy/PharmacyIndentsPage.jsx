@@ -463,14 +463,15 @@ export default function PharmacyIndentsPage({
                       onShowLedger(indent.admissionId, seed);
                       return;
                     }
-                    const qs = new URLSearchParams({
-                      uhid: seed.UHID,
-                      name: seed.patientName,
-                      ipd:  seed.admissionNumber,
-                      bed:  seed.bed,
-                      doc:  seed.consultant,
-                    }).toString();
-                    navigate(`/pharmacy/ledger/${indent.admissionId}?${qs}`);
+                    // R7hr-12 (D9-01): never put PHI (UHID / patient name /
+                    // IPD admission no / bed / consultant) in the URL —
+                    // browser history, server access logs, reverse-proxy
+                    // logs and analytics beacons all capture URLs. Pass the
+                    // seed via React Router's history-state object instead:
+                    // PharmacyLedgerPage hydrates it from useLocation().state
+                    // and falls back to fetching `/admissions/:id` when no
+                    // state is present (deep links / page refresh).
+                    navigate(`/pharmacy/ledger/${indent.admissionId}`, { state: { seedPatient: seed } });
                   }} style={{
                     padding: "6px 14px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
                     borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, fontSize: 12,

@@ -2020,6 +2020,15 @@ function RegistersTab() {
 
     let columns = [], rows = [], totals = {};
     if (reg === "sales") {
+      // R7hr-12 (D8-04): include an IGST column. When all sales in the
+      // range are intra-state (B2C walk-in / same-state OPD) the column
+      // stays as 0 across every row but is shown for parity with the
+      // GSTR-1 filing schema. For any inter-state B2B / corporate-panel
+      // sale (where dispense() routes the gstAmount into igstAmount per
+      // placeOfSupply), this column carries the actual IGST charged and
+      // the CGST/SGST columns sit at 0 — matching the printed register
+      // to the GSTR-1 feed produced by gstService.aggregateGSTForMonth.
+      const totalsHasIgst = Number(data?.totals?.igst || 0) > 0;
       columns = [
         { key: "date",       label: "Date",     nowrap: true, muted: true },
         { key: "billNumber", label: "Bill #",   mono: true,   bold: true },
@@ -2030,6 +2039,7 @@ function RegistersTab() {
         { key: "taxable",    label: "Taxable",  align: "right" },
         { key: "cgst",       label: "CGST",     align: "right", muted: true },
         { key: "sgst",       label: "SGST",     align: "right", muted: true },
+        ...(totalsHasIgst ? [{ key: "igst", label: "IGST", align: "right", muted: true }] : []),
         { key: "grand",      label: "Grand",    align: "right", bold: true },
         { key: "paymentMode",label: "Pay" },
       ];
@@ -2038,12 +2048,20 @@ function RegistersTab() {
         billNumber: r.billNumber, patientName: r.patientName,
         ref: r.admissionNumber || r.patientUHID || "—",
         saleType: r.saleType, itemsCount: r.itemsCount,
-        taxable: fmtMoney(r.taxable), cgst: fmtMoney(r.cgst), sgst: fmtMoney(r.sgst),
+        taxable: fmtMoney(r.taxable),
+        cgst: fmtMoney(r.cgst),
+        sgst: fmtMoney(r.sgst),
+        // R7hr-12 (D8-04): pass IGST through to the print template so the
+        // auditor / GST officer sees the inter-state tax explicitly.
+        igst: fmtMoney(r.igst),
         grand: `₹${fmtMoney(r.grandTotal)}`, paymentMode: r.paymentMode,
       }));
       totals = data.totals && {
         Bills: data.totals.bills,
         "Taxable": `₹${fmtMoney(data.totals.taxable)}`,
+        "CGST": `₹${fmtMoney(data.totals.cgst)}`,
+        "SGST": `₹${fmtMoney(data.totals.sgst)}`,
+        ...(totalsHasIgst ? { "IGST": `₹${fmtMoney(data.totals.igst)}` } : {}),
         "GST": `₹${fmtMoney(data.totals.gstTotal)}`,
         "Grand total": `₹${fmtMoney(data.totals.grandTotal)}`,
       };

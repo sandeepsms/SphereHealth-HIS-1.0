@@ -35,6 +35,14 @@ const BillingAuditSchema = new mongoose.Schema(
         "BILL_ITEM_VOIDED",          // voidPayment
         "ADVANCE_CREATED",           // PatientAdvance create
         "ADVANCE_APPLIED",           // applyAdvanceToBill
+        // R7hr-12 (D4-01): emitted when a pharmacy sale that had been
+        // settled from the patient's advance pool is cancelled — the
+        // advance debit is REVERSED (appliedAmount decremented, the
+        // matching appliedTo[] row $pull'd) so the patient's unspent
+        // advance balance is restored and the books no longer double-
+        // count the same money (once as advance-spent, once as
+        // PharmacySale.patientCredit).
+        "ADVANCE_APPLY_REVERSED",
         "ADVANCE_REFUNDED",          // refundAdvance (R7ao)
         "TPA_PREAUTH_SUBMITTED",     // tpaPreAuthSubmit
         "TPA_APPROVED",              // tpaApprove
@@ -158,6 +166,9 @@ const _FINANCIAL_EVENTS = new Set([
   "BILL_ITEM_VOIDED",
   "ADVANCE_CREATED",
   "ADVANCE_APPLIED",
+  // R7hr-12 (D4-01): pharmacy-sale-cancel-driven reverse leg rides the
+  // 7y financial retention floor (mirror of ADVANCE_APPLIED).
+  "ADVANCE_APPLY_REVERSED",
   "ADVANCE_REFUNDED",
   "TPA_PREAUTH_SUBMITTED",
   "TPA_APPROVED",

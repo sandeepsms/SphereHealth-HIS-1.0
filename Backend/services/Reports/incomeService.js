@@ -28,8 +28,14 @@
  *     • Advance adjustments contribute (advance liability → revenue).
  *     • Pure advance DEPOSITS are tracked separately as `advanceLiability
  *       In` (a balance-sheet movement, not income).
- *     • Pharmacy sales (PharmacySale.grandTotal where status not in
- *       ["Cancelled", "Refunded"]) contribute.
+ *     • Pharmacy sales:
+ *         - dispense grandTotal at sale createdAt (Completed/
+ *           Supplemented/Partial-Return)
+ *         + supplements.addedTotal at supplements.addedAt
+ *         − returns.refundAmount at returns.refundedAt
+ *       (R7hr-12 D2-05 — was bare `sum(grandTotal)`, which ignored
+ *       both supplements and returns and bucketed everything on the
+ *       parent createdAt instead of the event timestamp.)
  *     • Negative payment rows (refunds) net out of bill revenue.
  *     • Refund-of-refund: a voided refund payment must add the cash back
  *       in. That's handled in dayBookService.netCashFlow — not here.
@@ -52,6 +58,12 @@ const { istStartOfToday, istEndOfToday } = require("../../utils/queryGuards");
  *   billPayments: number,
  *   advanceAdjustments: number,
  *   pharmacyRevenue: number,
+ *   pharmacyDispenseRevenue: number,
+ *   pharmacySupplementRevenue: number,
+ *   pharmacyReturnReversal: number,
+ *   pharmacyCount: number,
+ *   pharmacySupplementsCount: number,
+ *   pharmacyReturnsCount: number,
  *   billRefundsOut: number,
  *   revenue: number,
  *   advanceLiabilityIn: number,
@@ -103,14 +115,37 @@ async function todayRevenue(opts = {}) {
   // R7bh-F2: explicit allowlist instead of $nin so future statuses
   // (e.g. a "Quarantined" state) don't accidentally book as revenue.
   // Mirrors dayBookService.computeDayBook for ledger parity:
-  //   Completed       — sale finalised, money in drawer
-  //   Supplemented    — sale + addendum, money in drawer
+  //   Completed       — sale finalised
+  //   Supplemented    — sale + addendum
   //   Partial-Return  — partial return; original headline grandTotal
-  //                     still books, the refund leg is netted via the
-  //                     patientCredit accounting (per R7c-design).
-  // Excludes: Cancelled (no revenue), Refunded (fully reversed), Hold
-  // (sale not yet released to the till).
-  const pharmacyAggP = PharmacySale.aggregate([
+  //                     still books at sale time, the refund itself
+  //                     is timestamp-bucketed below via returns[]
+  // Excludes: Cancelled (no revenue), Refunded (fully reversed; the
+  // refund leg below subtracts it on the day it was refunded), Hold
+  // (sale not yet released).
+  //
+  // R7hr-12 (D2-05) — the previous single-pipeline sum of grandTotal
+  // for sales created in window was wrong on three legs:
+  //   (a) supplements: addedTotal never lifts grandTotal — supplement
+  //       revenue invisible.
+  //   (b) partial returns: refundAmount never subtracted, even though
+  //       the refund actually reverses revenue.
+  //   (c) Credit-mode sales: the original code summed every status
+  //       including Credit — that's accrual revenue, so it's correct
+  //       (revenue is earned when the goods leave, not when cash
+  //       arrives). That part stays. But supplements/returns weren't
+  //       contributing on the date they happened — they were stuck
+  //       on the date the parent sale was created.
+  //
+  // Fix: split into three timestamp-bucketed legs.
+  //   Leg A — dispense grandTotal at sale createdAt (revenue earned)
+  //   Leg B — supplements.addedTotal at supplements.addedAt (additional
+  //           revenue earned at supplement time, on a possibly later day)
+  //   Leg C — returns.refundAmount at returns.refundedAt (revenue
+  //           reversed; subtract regardless of refundMode — refundMode
+  //           is a till question, revenue is accrual)
+  // Final pharmacy revenue = Leg A + Leg B − Leg C.
+  const pharmacyDispenseAggP = PharmacySale.aggregate([
     { $match: {
         createdAt: { $gte: from, $lt: to },
         status:    { $in: ["Completed", "Supplemented", "Partial-Return"] },
@@ -118,6 +153,28 @@ async function todayRevenue(opts = {}) {
     { $group: {
         _id: null,
         gross: { $sum: { $toDouble: { $ifNull: ["$grandTotal", 0] } } },
+        count: { $sum: 1 },
+    } },
+  ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+
+  const pharmacySupplementAggP = PharmacySale.aggregate([
+    { $match: { "supplements.addedAt": { $gte: from, $lt: to } } },
+    { $unwind: "$supplements" },
+    { $match: { "supplements.addedAt": { $gte: from, $lt: to } } },
+    { $group: {
+        _id: null,
+        gross: { $sum: { $toDouble: { $ifNull: ["$supplements.addedTotal", 0] } } },
+        count: { $sum: 1 },
+    } },
+  ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+
+  const pharmacyReturnAggP = PharmacySale.aggregate([
+    { $match: { "returns.refundedAt": { $gte: from, $lt: to } } },
+    { $unwind: "$returns" },
+    { $match: { "returns.refundedAt": { $gte: from, $lt: to } } },
+    { $group: {
+        _id: null,
+        gross: { $sum: { $toDouble: { $ifNull: ["$returns.refundAmount", 0] } } },
         count: { $sum: 1 },
     } },
   ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
@@ -142,18 +199,34 @@ async function todayRevenue(opts = {}) {
     { $group: { _id: null, advanceRefundOut: { $sum: { $toDouble: { $ifNull: ["$refundedAmount", 0] } } } } },
   ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
 
-  const [billPaymentsAgg, pharmacyAgg, advanceInAgg, advanceOutAgg] =
-    await Promise.all([billPaymentsAggP, pharmacyAggP, advanceInAggP, advanceOutAggP]);
+  const [billPaymentsAgg, pharmacyDispenseAgg, pharmacySupplementAgg,
+         pharmacyReturnAgg, advanceInAgg, advanceOutAgg] =
+    await Promise.all([
+      billPaymentsAggP, pharmacyDispenseAggP, pharmacySupplementAggP,
+      pharmacyReturnAggP, advanceInAggP, advanceOutAggP,
+    ]);
 
-  const bp = billPaymentsAgg[0] || { billPayments: 0, advanceAdjustments: 0, billRefundsOut: 0 };
-  const ph = pharmacyAgg[0]    || { gross: 0, count: 0 };
-  const ai = advanceInAgg[0]   || { advanceIn: 0 };
-  const ao = advanceOutAgg[0]  || { advanceRefundOut: 0 };
+  const bp  = billPaymentsAgg[0]        || { billPayments: 0, advanceAdjustments: 0, billRefundsOut: 0 };
+  const phD = pharmacyDispenseAgg[0]    || { gross: 0, count: 0 };
+  const phS = pharmacySupplementAgg[0]  || { gross: 0, count: 0 };
+  const phR = pharmacyReturnAgg[0]      || { gross: 0, count: 0 };
+  const ai  = advanceInAgg[0]           || { advanceIn: 0 };
+  const ao  = advanceOutAgg[0]          || { advanceRefundOut: 0 };
 
   const billPayments       = toNum(bp.billPayments);
   const advanceAdjustments = toNum(bp.advanceAdjustments);
   const billRefundsOut     = toNum(bp.billRefundsOut);
-  const pharmacyRevenue    = toNum(ph.gross);
+
+  // R7hr-12 (D2-05) — pharmacyRevenue is now the accrual-basis sum:
+  //   dispense grandTotal in window
+  // + supplements.addedTotal added in window
+  // - returns.refundAmount refunded in window
+  const pharmacyDispenseRevenue   = toNum(phD.gross);
+  const pharmacySupplementRevenue = toNum(phS.gross);
+  const pharmacyReturnReversal    = toNum(phR.gross);
+  const pharmacyRevenue = +(
+    pharmacyDispenseRevenue + pharmacySupplementRevenue - pharmacyReturnReversal
+  ).toFixed(2);
 
   // ── Revenue: bill payments + advance adjustments + pharmacy, minus refunds.
   const revenue = +(billPayments + advanceAdjustments + pharmacyRevenue - billRefundsOut).toFixed(2);
@@ -163,7 +236,13 @@ async function todayRevenue(opts = {}) {
     billPayments,
     advanceAdjustments,
     pharmacyRevenue,
-    pharmacyCount:      ph.count || 0,
+    // R7hr-12 D2-05 — expose the per-leg breakdown for reconciliation.
+    pharmacyDispenseRevenue,
+    pharmacySupplementRevenue,
+    pharmacyReturnReversal,
+    pharmacyCount:      phD.count || 0,
+    pharmacySupplementsCount: phS.count || 0,
+    pharmacyReturnsCount:     phR.count || 0,
     billRefundsOut,
     revenue,
     advanceLiabilityIn: toNum(ai.advanceIn),
