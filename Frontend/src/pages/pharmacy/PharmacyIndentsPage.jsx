@@ -437,7 +437,22 @@ export default function PharmacyIndentsPage({ embedded = false } = {}) {
                       <i className="pi pi-send" style={{ marginRight: 4 }} /> Release stock
                     </button>
                   )}
-                  <button onClick={() => navigate(`/billing/ipd/${indent.admissionId}`)} style={{
+                  {/* R7hr-3: route to the pharmacist-scoped ledger
+                      (pharmacy slice only). Was /billing/ipd/:admId which
+                      surfaced the full hospital bill — pharmacist shouldn't
+                      see bed/doctor/services. Pass patient identity via
+                      query string so the new page renders the banner
+                      without a second fetch. */}
+                  <button onClick={() => {
+                    const qs = new URLSearchParams({
+                      uhid: indent.patientUHID || "",
+                      name: indent.patientName || "",
+                      ipd:  indent.admissionNumber || "",
+                      bed:  indent.bedNumber ? `${indent.bedNumber}${indent.wardName ? ` · ${indent.wardName}` : ""}` : "",
+                      doc:  indent.consultantName || "",
+                    }).toString();
+                    navigate(`/pharmacy/ledger/${indent.admissionId}?${qs}`);
+                  }} style={{
                     padding: "6px 14px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
                     borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, fontSize: 12,
                   }}>

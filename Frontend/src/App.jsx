@@ -98,6 +98,8 @@ const IPDBillingLedger = lazy(() => import("./pages/billing/IPDBillingLedger"));
 // Nurse → Pharmacy indent workflow
 const IndentRaisePage     = lazy(() => import("./pages/nursing/IndentRaisePage"));
 const PharmacyIndentsPage = lazy(() => import("./pages/pharmacy/PharmacyIndentsPage"));
+// R7hr-3: pharmacist-scoped ledger (pharmacy slice only, no full hospital bill).
+const PharmacyLedgerPage = lazy(() => import("./pages/pharmacy/PharmacyLedgerPage"));
 
 // Vitals
 const UpdateVitalSheet = lazy(() => import("./Components/vital/UpdateVitalSheet"));
@@ -634,6 +636,13 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/pharmacy/indents" element={
               <RoleGuard action="indent.read"><PharmacyIndentsPage /></RoleGuard>
+            } />
+            {/* R7hr-3 — Pharmacist's scoped ledger. rx.read gate keeps it
+                inside the pharmacy role; the page itself never reads bed/
+                doctor/services data so even an over-broad role wouldn't
+                see the hospital ledger here. */}
+            <Route path="/pharmacy/ledger/:admissionId" element={
+              <RoleGuard action="rx.read"><PharmacyLedgerPage /></RoleGuard>
             } />
 
             {/* ── Main / Default ───────────────────────────────── */}
