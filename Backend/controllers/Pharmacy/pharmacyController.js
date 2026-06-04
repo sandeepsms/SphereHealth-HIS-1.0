@@ -1406,6 +1406,77 @@ exports.listSales = async (req, res) => {
     const sales = await Sale.find(where).sort({ createdAt: -1 })
       .skip(skip).limit(limit)
       .lean();
+
+    // R7hr-18: enrich each sale with patient (age/gender/contact) and
+    // admission (bed/ward/doctor) so the Sales Register Print can render
+    // a complete OPD/IPD/Walk-in variant without the client doing extra
+    // round-trips (which would also break the user-activation window for
+    // window.open() — see R7hr-17). Old sales created before R7hr-12-S3's
+    // D7-06 denormalisation don't have these fields snapshotted; this
+    // enrichment fills them on-the-fly at read time.
+    //
+    // Two batch fetches keep this O(1) round-trips regardless of result
+    // size: distinct UHIDs from Patient master, distinct admissionIds
+    // from Admission. Sale doc fields ALWAYS win over the lookups —
+    // existing snapshotted values (e.g. patientName, doctorName already
+    // captured at dispense) must not be overwritten by stale master data.
+    try {
+      const uhids = [...new Set(sales.map(s => s.patientUHID).filter(Boolean))];
+      const admIds = [...new Set(sales.map(s => s.admissionId).filter(Boolean)
+        .map(id => String(id)))];
+
+      let patMap = new Map();
+      let admMap = new Map();
+
+      if (uhids.length) {
+        const Patient = require("../../models/Patient/patientModel");
+        const pats = await Patient.find(
+          { UHID: { $in: uhids } },
+          { UHID: 1, fullName: 1, age: 1, gender: 1, contactNumber: 1, phone: 1 }
+        ).lean();
+        patMap = new Map(pats.map(p => [p.UHID, p]));
+      }
+
+      if (admIds.length) {
+        const Admission = require("../../models/Patient/admissionModel");
+        const adms = await Admission.find(
+          { _id: { $in: admIds } },
+          { _id: 1, admissionNumber: 1, admissionType: 1, attendingDoctor: 1,
+            bedNumber: 1, wardName: 1, admissionDate: 1, dateOfAdmission: 1,
+            diagnosis: 1, provisionalDiagnosis: 1, icdCode: 1, icd10: 1 }
+        ).lean();
+        admMap = new Map(adms.map(a => [String(a._id), a]));
+      }
+
+      for (const s of sales) {
+        const p = s.patientUHID ? patMap.get(s.patientUHID) : null;
+        const a = s.admissionId ? admMap.get(String(s.admissionId)) : null;
+        if (p) {
+          // Patient master fields — only fill when sale didn't snapshot.
+          if (!s.patientName) s.patientName = p.fullName;
+          if (s.age == null || s.age === "") s.age = p.age;
+          if (!s.gender) s.gender = p.gender;
+          if (!s.contactNumber) s.contactNumber = p.contactNumber || p.phone;
+        }
+        if (a) {
+          if (!s.admissionNumber) s.admissionNumber = a.admissionNumber;
+          if (!s.doctorName) s.doctorName = a.attendingDoctor || s.doctorName;
+          if (!s.attendingDoctor) s.attendingDoctor = a.attendingDoctor;
+          if (!s.bedNumber) s.bedNumber = a.bedNumber;
+          if (!s.wardName) s.wardName = a.wardName;
+          if (!s.admissionDate) s.admissionDate = a.admissionDate || a.dateOfAdmission;
+          if (!s.diagnosis) s.diagnosis = a.diagnosis || a.provisionalDiagnosis;
+          if (!s.icd10 && !s.icdCode) {
+            s.icd10 = a.icd10 || a.icdCode;
+          }
+        }
+      }
+    } catch (enrichErr) {
+      // Enrichment is best-effort — never block the register if a master
+      // collection hiccups. Log and ship the raw sales.
+      console.warn("[Pharmacy] listSales enrich failed:", enrichErr?.message);
+    }
+
     res.json({ success: true, data: sales });
   } catch (e) { sendErr(res, e); }
 };

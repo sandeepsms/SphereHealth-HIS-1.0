@@ -148,10 +148,29 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   // dispensed item is Sch H/H1/X (controlled-drug sale becomes a regulated
   // tax invoice regardless of buyer identity). Caller-supplied billLabel
   // still wins.
-  const docTitle = r.billLabel
+  // R7hr-18: variant-explicit base title so the operator immediately sees
+  // which bill type they're looking at — "OPD PHARMACY BILL",
+  // "IPD PHARMACY BILL", "WALK-IN PHARMACY BILL". The regulatory promotion
+  // (Tax Invoice when GSTIN or Sch-H present) is preserved by keeping
+  // the original logic and prefixing with the variant. Note: isIPD is
+  // declared further down (L259) so we inline the IPD check here to
+  // avoid a TDZ ref.
+  const _isIpdLike = ["IPD", "Daycare", "Day Care", "Emergency"].includes(String(r.saleType || "").trim());
+  const _variantTag = _isIpdLike ? "IPD"
+                    : isWalkIn ? "WALK-IN"
+                    : isOPD ? "OPD"
+                    : "";
+  const _baseTitle = r.billLabel
     || (isWalkIn
         ? ((r.customerGstin || _hasSchOnTitle) ? "Tax Invoice" : "Cash Memo")
         : (isOPD && (r.customerGstin || _opdSchOnTitle) ? "Tax Invoice" : "Pharmacy Bill"));
+  // Only prefix when (a) we have a variant tag, AND (b) the base title
+  // is one of our defaults — never prefix a caller-supplied custom
+  // billLabel (would read awkwardly as "OPD Tax Invoice").
+  const _isDefaultTitle = /^(Pharmacy Bill|Cash Memo|Tax Invoice)$/i.test(_baseTitle);
+  const docTitle = (_variantTag && _isDefaultTitle)
+    ? `${_variantTag} ${_baseTitle.toUpperCase()}`
+    : _baseTitle;
 
   /* Tax + HSN ─────────────────────────────────────────────────── */
   const customerState = String(r.customerState || id._stateForGst || "").trim().toLowerCase();
@@ -390,9 +409,10 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
     // every anonymous cash sale. OPD/IPD keep emitting GSTIN row (legacy
     // payer-facing contract) — they get `""` when not B2B which renders
     // an empty value cell rather than dropping a row.
-    ...(isWalkIn
-      ? (r.customerGstin ? [{ label: "GSTIN", value: r.customerGstin }] : [])
-      : [{ label: "GSTIN", value: r.customerGstin || "" }]),
+    // R7hr-18: drop empty GSTIN row across all variants — an empty
+    // "GSTIN:" label on a Self/cash OPD bill is visual noise. Only
+    // render when buyer supplied one (B2B sale).
+    ...(r.customerGstin ? [{ label: "GSTIN", value: r.customerGstin }] : []),
     // R7hr-12-S2 (D7-04): IPD/Daycare/Emergency context — bed +
     // admission identifiers required for NABH-compliant patient-facing
     // documents and for TPA/insurance reconciliation of per-admission
@@ -403,10 +423,22 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
     // buyer-snapshot data and TPA reconciliation needs the LoS window.
     // Only render when a value resolves so we don't paint dashed rows on
     // legacy callers that don't pass these fields yet.
+    // R7hr-18: only render IPD No/Bed/Ward rows when a value actually
+    // resolves. R7hr-15 used "—" stub which painted dashed rows for old
+    // sales without admission-snapshot fields. Server-side enrichment in
+    // listSales (R7hr-18) now fills these from Admission master, so the
+    // common case has real values; legacy sales (admissionId orphaned)
+    // skip the row instead of showing "—".
     ...(isIPD ? [
-      { label: "IPD No", value: r.admissionNumber || r.ipdNo || r.ipdNumber || "—" },
-      { label: "Bed",    value: r.bedNumber || r.bed || r.bedNo || "—" },
-      { label: "Ward",   value: r.wardName || r.ward || "—" },
+      ...((r.admissionNumber || r.ipdNo || r.ipdNumber)
+        ? [{ label: "IPD No", value: r.admissionNumber || r.ipdNo || r.ipdNumber }]
+        : []),
+      ...((r.bedNumber || r.bed || r.bedNo)
+        ? [{ label: "Bed",    value: r.bedNumber || r.bed || r.bedNo }]
+        : []),
+      ...((r.wardName || r.ward)
+        ? [{ label: "Ward",   value: r.wardName || r.ward }]
+        : []),
     ] : []),
     ...((isIPD && (r.admissionDate || r.dateOfAdmission))
       ? [{ label: "Admission Date", value: _fmtDate(r.admissionDate || r.dateOfAdmission) }]
