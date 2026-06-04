@@ -358,6 +358,13 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
             ...((r.wardName || r.ward)
               ? [{ label: "Ward", value: r.wardName || r.ward }]
               : []),
+            // R7hr-21 (user feedback): Bed moves to LEFT under Ward so the
+            // two columns balance row-for-row (each side ends up ~7 rows
+            // for the common IPD case). Reads more naturally too — Ward
+            // and Bed are physical-location pair, belong together.
+            ...((r.bedNumber || r.bed || r.bedNo)
+              ? [{ label: "Bed", value: r.bedNumber || r.bed || r.bedNo }]
+              : []),
             ...(patientAddress
               ? [{ label: "Address", value: patientAddress }]
               : []),
@@ -460,15 +467,10 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
     // buyer-snapshot data and TPA reconciliation needs the LoS window.
     // Only render when a value resolves so we don't paint dashed rows on
     // legacy callers that don't pass these fields yet.
-    // R7hr-18 / R7hr-19: IPD No collapsed into LEFT "UHID / IPD" row,
-    // Ward moved to LEFT under Contact. Keep Bed on RIGHT (with Doctor /
-    // Counter / Payer) since the bed number is bill-meta the cashier and
-    // the discharging nurse cross-reference, not patient identity.
-    ...(isIPD ? [
-      ...((r.bedNumber || r.bed || r.bedNo)
-        ? [{ label: "Bed",    value: r.bedNumber || r.bed || r.bedNo }]
-        : []),
-    ] : []),
+    // R7hr-18 / R7hr-19 / R7hr-21: IPD No collapsed into LEFT "UHID /
+    // IPD" row; Ward + Bed moved to LEFT under Contact so the two columns
+    // balance row-for-row and Ward+Bed read as a single location pair.
+    // (Admission Date + Diagnosis continue on the RIGHT below.)
     ...((isIPD && (r.admissionDate || r.dateOfAdmission))
       ? [{ label: "Admission Date", value: _fmtDate(r.admissionDate || r.dateOfAdmission) }]
       : []),
