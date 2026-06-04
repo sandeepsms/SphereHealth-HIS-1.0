@@ -18,7 +18,7 @@
  * the Live Indents page) optionally seed patient details so the page
  * renders identity instantly while sales fetch in the background.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
@@ -262,7 +262,17 @@ export default function PharmacyLedgerPage({
   // pool atomically and pushes a "Advance" row into the sale's
   // collectionLog (sourceAdvanceId back-link).
   const [applyingId, setApplyingId] = useState(null);
+  // R7hr-11: state-based `applyingId` only gates AFTER React re-renders;
+  // a fast double-click before the next frame can still fire the handler
+  // twice. The synchronous ref-mutex below short-circuits the 2nd call
+  // immediately. Backend is also transactional now (R7hr-11 controller
+  // refactor) so a slipped duplicate would just throw ALREADY_PAID without
+  // over-debiting the advance, but defence-in-depth at the UI gives the
+  // user a clean "already in flight" experience.
+  const applyMutexRef   = React.useRef(new Set());
   const applyAdvanceToSale = async (sale, applyAmount /* optional */) => {
+    if (applyMutexRef.current.has(String(sale._id))) return;
+    applyMutexRef.current.add(String(sale._id));
     setApplyingId(sale._id);
     try {
       const body = applyAmount != null ? { amount: applyAmount } : {};
@@ -277,6 +287,7 @@ export default function PharmacyLedgerPage({
       toast.error(e?.response?.data?.message || e.message);
     } finally {
       setApplyingId(null);
+      applyMutexRef.current.delete(String(sale._id));
     }
   };
 

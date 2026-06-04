@@ -1651,8 +1651,18 @@ exports.collectCredit = async (req, res) => {
 //     sourceAdvanceId pointer to the LAST advance we touched (the audit
 //     trail can fan out via the per-advance appliedAmount delta).
 //
-// The whole thing runs inside retryVersionError so concurrent applies
-// against the same advance pool don't corrupt running totals.
+// R7hr-11 ────────────────────────────────────────────────────────────
+//   Pre-R7hr-11 the advance debits + sale write ran outside a session.
+//   If the user double-clicked Apply Adv or two requests landed close
+//   together, the optimistic-lock retry would re-read the sale (now
+//   fully paid) and throw ALREADY_PAID — but the ADVANCE saves from
+//   the failed attempt had ALREADY committed. Net effect on the field:
+//   advance.appliedAmount climbed by N×slice per click, sale was paid
+//   once. Patient lost balance with no provenance.
+//
+//   Fix: run advance + sale saves inside `session.withTransaction` so
+//   either both commit or both roll back. The dispense() / sale code
+//   in this controller already uses the same pattern.
 exports.applyAdvanceToSale = async (req, res) => {
   try {
     const saleId = req.params.id;
@@ -1667,8 +1677,20 @@ exports.applyAdvanceToSale = async (req, res) => {
       });
     }
 
-    const result = await retryVersionError(async () => {
-      const sale = await Sale.findById(saleId);
+    // R7hr-11: open a mongoose session. If the cluster is a replica set
+    // (transactions supported) we wrap reads + writes in withTransaction;
+    // otherwise we fall back to non-transactional with a defence-in-depth
+    // CAS pattern (single-document optimisticConcurrency on advance saves
+    // means a concurrent over-debit will throw VersionError and bubble up).
+    const session = await mongoose.startSession().catch(() => null);
+    const useTx = !!session && !!(
+      session.client?.s?.options?.replicaSet ||
+      session.client?.options?.replicaSet ||
+      session.client?.topology?.s?.options?.replicaSet
+    );
+
+    const doApply = async (s) => {
+      const sale = await Sale.findById(saleId).session(s || undefined);
       if (!sale) {
         const e = new Error("Sale not found"); e.status = 404; throw e;
       }
@@ -1691,7 +1713,8 @@ exports.applyAdvanceToSale = async (req, res) => {
       // deposit order (oldest first) so the audit log reads naturally.
       const advances = await PatientAdvance
         .find({ UHID: uhid, status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] } })
-        .sort({ createdAt: 1 });
+        .sort({ createdAt: 1 })
+        .session(s || undefined);
       const remainingByAdv = advances.map(a => {
         const amt   = Number(a.amount?.toString?.() ?? a.amount ?? 0);
         const appl  = Number(a.appliedAmount?.toString?.() ?? a.appliedAmount ?? 0);
@@ -1713,40 +1736,60 @@ exports.applyAdvanceToSale = async (req, res) => {
         e.code = "ZERO_APPLY"; throw e;
       }
 
-      // Bleed advances FIFO until we've sucked `toApply` out of the pool.
-      let need = toApply;
-      let lastAdvId = null;
-      for (let i = 0; i < advances.length && need > 0; i++) {
-        const adv = advances[i];
-        const slice = Math.min(need, remainingByAdv[i]);
-        if (slice <= 0) continue;
-        const newApplied = Number(adv.appliedAmount?.toString?.() ?? adv.appliedAmount ?? 0) + slice;
-        adv.appliedAmount = toDec(newApplied);
-        const total = Number(adv.amount?.toString?.() ?? adv.amount ?? 0);
-        const refd  = Number(adv.refundedAmount?.toString?.() ?? adv.refundedAmount ?? 0);
-        adv.status  = (newApplied + refd) >= total - 0.01 ? "FULLY_APPLIED" : "PARTIALLY_APPLIED";
-        await adv.save();
-        need -= slice;
-        lastAdvId = adv._id;
-      }
-
-      // Now mirror the change onto the sale + receipt log.
+      // Build sale mutation FIRST so we have a receiptNumber + collectionLog
+      // entry id for the appliedTo[] provenance row on each advance.
       const round2 = (n) => Math.round(n * 100) / 100;
       const newPaid = Number(sale.amountPaid?.toString?.() ?? sale.amountPaid ?? 0) + toApply;
       const newBal  = round2(bal - toApply);
-      sale.amountPaid = toDec(newPaid);
-      sale.balanceDue = toDec(newBal);
       let receiptNumber = "";
       try {
         const Counter = require("../../models/CounterModel");
         const c = await Counter.findOneAndUpdate(
           { _id: "pharmacyCreditCollection" },
           { $inc: { seq: 1 } },
-          { upsert: true, new: true, setDefaultsOnInsert: true },
+          { upsert: true, new: true, setDefaultsOnInsert: true, session: s || undefined },
         );
         const yy = String(new Date().getFullYear()).slice(-2);
         receiptNumber = `PHM-COLL-${yy}-${String(c.seq).padStart(4, "0")}`;
       } catch (_) { /* non-fatal */ }
+
+      // Bleed advances FIFO until we've sucked `toApply` out of the pool.
+      // For each touched advance, push an appliedTo[] entry pointing at the
+      // sale (provenance) so reconcile + day-book queries can fan out.
+      let need = toApply;
+      let lastAdvId = null;
+      const advanceSlices = []; // collected for emit + UI message
+      for (let i = 0; i < advances.length && need > 0; i++) {
+        const adv = advances[i];
+        const slice = Math.min(need, remainingByAdv[i]);
+        if (slice <= 0) continue;
+        const newApplied = Number(adv.appliedAmount?.toString?.() ?? adv.appliedAmount ?? 0) + slice;
+        adv.appliedAmount = toDec(newApplied);
+        // The pre-save status hook auto-flips ACTIVE→PARTIAL→FULLY based on
+        // appliedAmount vs amount-refunded, so we don't need to set it here.
+        // R7hr-11: also record provenance — appliedTo[] is required for
+        // accountant reconcile + advance refund eligibility checks.
+        // billId is the saleId because the appliedTo subdoc schema marks
+        // it required; billNumber carries the human-readable PHM-* code
+        // so it reads naturally in the day-book UI.
+        adv.appliedTo.push({
+          billId:        sale._id,
+          billNumber:    sale.billNumber || "",
+          amount:        toDec(slice),
+          appliedAt:     new Date(),
+          appliedBy:     req.user?.fullName || req.user?.userName || "System",
+          appliedById:   req.user?._id || null,
+          billPaymentId: null, // collectionLog _id assigned after sale.save()
+        });
+        await adv.save({ session: s || undefined });
+        need -= slice;
+        lastAdvId = adv._id;
+        advanceSlices.push({ advId: adv._id, slice });
+      }
+
+      // Now apply the sale-side mutation atomically with the advance saves.
+      sale.amountPaid = toDec(newPaid);
+      sale.balanceDue = toDec(newBal);
       sale.collectionLog = sale.collectionLog || [];
       sale.collectionLog.push({
         amount: toDec(toApply),
@@ -1763,10 +1806,28 @@ exports.applyAdvanceToSale = async (req, res) => {
         const modes = new Set(sale.collectionLog.map(c => c.mode));
         sale.paymentMode = modes.size > 1 ? "Mixed" : "Advance";
       }
-      await sale.save();
+      await sale.save({ session: s || undefined });
 
-      return { sale: sale.toObject(), applied: toApply, advanceRemaining: totalAvailable - toApply };
-    });
+      return {
+        sale: sale.toObject(),
+        applied: toApply,
+        advanceRemaining: totalAvailable - toApply,
+        slices: advanceSlices,
+      };
+    };
+
+    let result;
+    try {
+      if (useTx) {
+        await session.withTransaction(async () => { result = await doApply(session); });
+      } else {
+        // Non-replica-set fallback: retry on VersionError so a concurrent
+        // race that bumped __v on advance OR sale starts fresh.
+        result = await retryVersionError(() => doApply(null));
+      }
+    } finally {
+      if (session) session.endSession();
+    }
 
     try {
       emitClinicalAudit({
