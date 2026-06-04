@@ -122,7 +122,10 @@ const BASE_TABS = [
   // R7cu — IPD Credit Ledger: pharmacist sees every active IPD admission
   // with pharmacy outstanding > 0, drills in to collect payment. The
   // discharge flow is HARD-blocked at the backend until this clears.
-  { key: "ipdcredit", label: "IPD Credit", icon: "pi-credit-card" },
+  // R7hr-8: was "IPD Credit". Renamed to match the actual surface
+  // pharmacists use — the per-admission ledger (KPI strip + day-wise
+  // medicines + Collect + Apply-advance + Interim/Final bill print).
+  { key: "ipdcredit", label: "IPD Ledger", icon: "pi-credit-card" },
   { key: "indents",   label: "Live Indents", icon: "pi-inbox" }, // badge + tone wired dynamically
   { key: "sales",     label: "Sales Register", icon: "pi-receipt" },
   { key: "registers", label: "Registers",  icon: "pi-book" },
@@ -289,8 +292,25 @@ export default function PharmacyHomePage() {
 
         {/* Tab strip — shared admin TabStrip for design consistency.
             The Live Indents tab carries a dynamic badge + tone so the
-            pharmacist can spot STAT/urgent work from any other tab. */}
-        <TabStrip tabs={tabs} value={tab} onChange={setTab} accent={C.orange} accentL={C.orangeL} />
+            pharmacist can spot STAT/urgent work from any other tab.
+            R7hr-8: sticky so the pills stay anchored to the viewport
+            even when the user scrolls deep into the IPD Ledger drill-in
+            (the inner ledger page is tall — without this the tab strip
+            scrolls out of sight and the pharmacist loses orientation). */}
+        <div style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 20,
+          background: C.bg,
+          paddingTop: 4,
+          paddingBottom: 4,
+          marginLeft: -4,
+          marginRight: -4,
+          paddingLeft: 4,
+          paddingRight: 4,
+        }}>
+          <TabStrip tabs={tabs} value={tab} onChange={setTab} accent={C.orange} accentL={C.orangeL} />
+        </div>
 
         {/* Tab body */}
         {tab === "dashboard" && <DashboardTab />}
