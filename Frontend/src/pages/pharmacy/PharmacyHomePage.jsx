@@ -28,7 +28,7 @@ import { IS_PHARMACY_STANDALONE, PHARMACY_MODE_LABEL } from "../../config/pharma
 import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
-  recordGRN, listBatches, stockRollup,
+  recordGRN, listBatches, stockRollup, parseInvoice,  // R7hr-16: invoice auto-fill
   dispense, listSales, cancelSale, returnSaleItems, addItemsToSale,
   getStats, getAlerts,
   getPharmacySettings, updatePharmacySettings,
@@ -213,6 +213,13 @@ function indentBadgeFor(stats) {
 
 export default function PharmacyHomePage() {
   const [tab, setTab] = useState("dashboard");
+
+  // R7hr-17: Warm the pharmacy-settings cache on mount so every Print
+  // click handler in this page can read it synchronously (Chrome blocks
+  // window.open after `await` — the user-activation flag is consumed
+  // by the microtask boundary, popup gets silently dropped). Fire-and-
+  // forget — no awaiting required, the cache fills in the background.
+  useEffect(() => { warmCachedPhSettings(); }, []);
 
   // R7hr-4 — Shared state so the Live Indents tab and the IPD Credit
   // tab can cross-talk without a URL change. When the pharmacist clicks
@@ -706,6 +713,16 @@ function GRNTab() {
 
   const [drugs, setDrugs] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  // R7hr-16: invoice upload helper state — kept ABOVE the manual form
+  // state so it's obvious the upload is a pre-fill helper, not a
+  // replacement. The manual form below remains the source of truth and
+  // the only path that calls /grn (which fires Schedule-X register,
+  // credentialExpiryBlocker, and nextSeq("pharmacyGRN")).
+  const [parsing, setParsing]         = useState(false);
+  const [parsed, setParsed]           = useState(null);  // { parsedInvoiceId, supplier, lines, ... }
+  const [bulkSaving, setBulkSaving]   = useState(false);
+  const fileInputRef                  = useRef(null);
+  const [dragOver, setDragOver]       = useState(false);
   const [form, setForm] = useState(blankForm());
   const [drugQuery, setDrugQuery] = useState("");
   const [saving, setSaving] = useState(false);
@@ -793,6 +810,90 @@ function GRNTab() {
   // Sale > MRP is illegal in India
   const saleAboveMrp = mrp > 0 && sale > mrp;
 
+  // R7hr-16: confidence display helpers — shared across the parsed
+  // header strip and per-line table so colour thresholds stay in lock-step.
+  const confColor = (c) => c >= 0.95 ? C.green : c >= 0.7 ? C.amber : C.red;
+  const confLabel = (c) => c >= 0.95 ? "High"  : c >= 0.7 ? "Med"   : "Low";
+
+  // R7hr-16: drop / click handler — uploads to /grn/parse-invoice and,
+  // on success, pushes the supplier + invoice header into the manual form
+  // so the operator sees what would auto-fill immediately. Per-line drug
+  // pre-fill happens via applyLineToForm below.
+  const onPickFile = async (file) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { toast.warn("File too large (5 MB max)"); return; }
+    setParsing(true); setParsed(null);
+    try {
+      const r = await parseInvoice(file);
+      setParsed(r);
+      if (r.supplier?.match?._id) {
+        setForm(p => ({
+          ...p,
+          supplierId:  r.supplier.match._id,
+          invoiceNo:   r.invoiceNo   || p.invoiceNo,
+          invoiceDate: r.invoiceDate ? new Date(r.invoiceDate).toISOString().slice(0, 10) : p.invoiceDate,
+        }));
+      }
+      toast.success(`Parsed ${r.lines?.length || 0} line(s) from invoice`);
+    } catch (e) { toast.error(e.message); }
+    finally { setParsing(false); }
+  };
+
+  // R7hr-16: copy one parsed line into the manual form so the operator
+  // can review/edit before committing. Light up the green drugLabel hint
+  // by setting drugQuery to the canonical label of the matched drug.
+  const applyLineToForm = (line) => {
+    if (!line.match?._id) { toast.warn("No drug match — choose one from the alternatives or pick manually"); return; }
+    const d = drugs.find(x => x._id === line.match._id);
+    if (d) setDrugQuery(`${d.name}${d.strength ? " · " + d.strength : ""}`);
+    setForm(p => ({
+      ...p,
+      drugId:       line.match._id,
+      batchNo:      line.extracted.batch || p.batchNo,
+      expiryDate:   line.extracted.expiry ? new Date(line.extracted.expiry).toISOString().slice(0, 10) : p.expiryDate,
+      quantityIn:   String(line.extracted.qty          || ""),
+      purchaseRate: String(line.extracted.purchaseRate || ""),
+      mrp:          String(line.extracted.mrp          || ""),
+    }));
+    setAutoSalePrice(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // R7hr-16: bulk-add ALL high-confidence rows. Each row is committed
+  // through the existing recordGRN service so Schedule-X register entries,
+  // credentialExpiryBlocker, and audit emits all fire as if the operator
+  // had clicked Save 30 times. NEVER bypass /grn.
+  const applyAllLines = async () => {
+    if (!parsed?.lines?.length) return;
+    const greenLines = parsed.lines.filter(l => l.confidence >= 0.7 && l.match?._id);
+    if (greenLines.length === 0) { toast.warn("No high-confidence rows to bulk-add — review individually"); return; }
+    if (!window.confirm(`Add ${greenLines.length} of ${parsed.lines.length} rows as separate GRN batches? Low-confidence (<70%) rows are skipped.`)) return;
+    setBulkSaving(true);
+    const supplier = suppliers.find(s => s._id === parsed.supplier?.match?._id);
+    let ok = 0, fail = 0;
+    for (const line of greenLines) {
+      try {
+        await recordGRN({
+          drugId:       line.match._id,
+          supplierId:   parsed.supplier?.match?._id || "",
+          supplierName: supplier?.name || "",
+          batchNo:      line.extracted.batch || "NA",
+          expiryDate:   line.extracted.expiry ? new Date(line.extracted.expiry).toISOString().slice(0, 10) : "",
+          quantityIn:   Number(line.extracted.qty          || 0),
+          purchaseRate: Number(line.extracted.purchaseRate || 0),
+          mrp:          Number(line.extracted.mrp          || 0),
+          salePrice:    Number(line.extracted.mrp          || 0) * 0.9,
+          invoiceNo:    parsed.invoiceNo   || "",
+          invoiceDate:  parsed.invoiceDate ? new Date(parsed.invoiceDate).toISOString().slice(0, 10) : "",
+        });
+        ok++;
+      } catch (e) { fail++; console.error("[bulk-grn]", line.extracted.extractedName, e); }
+    }
+    setBulkSaving(false);
+    toast[fail ? "warn" : "success"](`Bulk GRN done — ${ok} added${fail ? `, ${fail} failed (check console)` : ""}`);
+    setParsed(null);
+  };
+
   const submit = async (addAnother) => {
     if (!form.drugId)       { toast.warn("Select a drug from the list");     return; }
     if (!form.batchNo)      { toast.warn("Batch number is required");        return; }
@@ -857,6 +958,188 @@ function GRNTab() {
           </button>
         </div>
       )}
+
+      {/* R7hr-16: invoice auto-fill helper. Sits ABOVE the manual form
+          on purpose — it pre-fills the form below; the operator still
+          reviews each row and commits via the existing /grn pathway so
+          Schedule-X, credentialExpiryBlocker, and audit semantics are
+          preserved. NEVER bypass the manual form. */}
+      <Card title="Upload supplier invoice (auto-fill GRN)" color={C.purple} icon="pi-cloud-upload">
+        <GRNSection icon="pi-file" text="Drop file or click to pick" />
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; onPickFile(f); }}
+          onClick={() => fileInputRef.current?.click()}
+          style={{ border: `2px dashed ${dragOver ? C.purple : C.border}`, borderRadius: 10, padding: 24, textAlign: "center", cursor: "pointer", background: dragOver ? C.purpleL : "#fff" }}
+        >
+          <i className="pi pi-cloud-upload" style={{ color: C.purple, fontSize: 28 }} />
+          <div style={{ marginTop: 8, fontWeight: 700, color: C.text, fontSize: 13 }}>Drop GSTN .json or supplier .pdf here, or click to pick</div>
+          <div style={{ marginTop: 4, fontSize: 11, color: C.muted }}>JSON = perfect accuracy · PDF = AI-extracted with confidence per field · 5 MB max</div>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,.pdf,application/json,application/pdf"
+          style={{ display: "none" }}
+          onChange={(e) => onPickFile(e.target.files?.[0])}
+        />
+
+        {/* R7hr-16: parsing spinner */}
+        {parsing && (
+          <div style={{ marginTop: 12, padding: "10px 14px", background: C.subtle, border: `1px solid ${C.border}`, borderRadius: 8, display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: C.muted }}>
+            <i className="pi pi-spin pi-spinner" style={{ color: C.purple }} />
+            Reading invoice…
+          </div>
+        )}
+
+        {/* R7hr-16: parsed-invoice review panel */}
+        {parsed && (
+          <div style={{ marginTop: 14 }}>
+            {/* Header strip: invoice header + supplier match */}
+            <div style={{ padding: "10px 14px", background: C.subtle, border: `1px solid ${C.border}`, borderRadius: 10, display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center", marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700 }}>Invoice #</div>
+                <div style={{ fontWeight: 800, color: C.text, fontSize: 13, marginTop: 2, fontFamily: "DM Mono, monospace" }}>{parsed.invoiceNo || "—"}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700 }}>Invoice date</div>
+                <div style={{ fontWeight: 800, color: C.text, fontSize: 13, marginTop: 2 }}>
+                  {parsed.invoiceDate ? new Date(parsed.invoiceDate).toISOString().slice(0, 10) : "—"}
+                </div>
+              </div>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700 }}>Supplier match</div>
+                <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 800, color: C.text, fontSize: 13 }}>
+                    {parsed.supplier?.match?.name || parsed.supplier?.extracted?.name || "Unrecognised"}
+                  </span>
+                  {typeof parsed.supplier?.confidence === "number" && (
+                    <span style={{ padding: "2px 8px", borderRadius: 999, background: confColor(parsed.supplier.confidence) + "1a", color: confColor(parsed.supplier.confidence), fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px" }}>
+                      {confLabel(parsed.supplier.confidence)} · {Math.round(parsed.supplier.confidence * 100)}%
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Line table */}
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                <thead>
+                  <tr style={{ background: C.subtle, borderBottom: `1.5px solid ${C.border}` }}>
+                    {["Matched drug","Extracted name","Qty","Rate","MRP","Batch","Expiry","Confidence","Action"].map(c => (
+                      <th key={c} style={{ padding: "7px 10px", textAlign: "left", fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontSize: 10, whiteSpace: "nowrap" }}>{c}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(parsed.lines || []).map((line, idx) => {
+                    const c = Number(line.confidence) || 0;
+                    const low = c < 0.7;
+                    const alts = Array.isArray(line.alternatives) ? line.alternatives : [];
+                    return (
+                      <tr key={idx} style={{ borderBottom: `1px solid ${C.border}`, borderLeft: low ? `3px solid ${C.red}` : "3px solid transparent" }}>
+                        <td style={{ padding: "7px 10px", fontWeight: 700, color: line.match?._id ? C.text : C.muted }}>
+                          {line.match?.name || "—"}
+                          {line.match?.strength && <span style={{ color: C.muted, fontWeight: 500 }}> · {line.match.strength}</span>}
+                        </td>
+                        <td style={{ padding: "7px 10px", color: C.muted, fontStyle: "italic" }}>{line.extracted?.extractedName || "—"}</td>
+                        <td style={{ padding: "7px 10px", color: C.text }}>{line.extracted?.qty ?? "—"}</td>
+                        <td style={{ padding: "7px 10px", color: C.text }}>{line.extracted?.purchaseRate ?? "—"}</td>
+                        <td style={{ padding: "7px 10px", color: C.text }}>{line.extracted?.mrp ?? "—"}</td>
+                        <td style={{ padding: "7px 10px", color: C.text, fontFamily: "DM Mono, monospace" }}>{line.extracted?.batch || "—"}</td>
+                        <td style={{ padding: "7px 10px", color: C.text }}>
+                          {line.extracted?.expiry ? new Date(line.extracted.expiry).toISOString().slice(0, 10) : "—"}
+                        </td>
+                        <td style={{ padding: "7px 10px" }}>
+                          <span style={{ padding: "2px 8px", borderRadius: 999, background: confColor(c) + "1a", color: confColor(c), fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px" }}>
+                            {confLabel(c)} · {Math.round(c * 100)}%
+                          </span>
+                          {low && <div style={{ marginTop: 4, fontSize: 10, color: C.red, fontWeight: 600 }}>Pick manually</div>}
+                        </td>
+                        <td style={{ padding: "7px 10px", whiteSpace: "nowrap" }}>
+                          {line.match?._id ? (
+                            <button
+                              onClick={() => applyLineToForm(line)}
+                              disabled={bulkSaving}
+                              style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.purple}40`, background: "#fff", color: C.purple, fontSize: 10.5, fontWeight: 700, cursor: bulkSaving ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
+                            >
+                              <i className="pi pi-arrow-up" style={{ fontSize: 10 }} />Pre-fill form
+                            </button>
+                          ) : alts.length > 0 ? (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <select
+                                className="his-select"
+                                style={{ fontSize: 11, padding: "3px 6px", maxWidth: 180 }}
+                                defaultValue=""
+                                onChange={(e) => {
+                                  const id = e.target.value;
+                                  if (!id) return;
+                                  const alt = alts.find(a => (a._id || a.id) === id);
+                                  if (alt) applyLineToForm({ ...line, match: { _id: alt._id || alt.id, name: alt.name, strength: alt.strength } });
+                                }}
+                              >
+                                <option value="">choose alternative…</option>
+                                {alts.map(a => (
+                                  <option key={a._id || a.id} value={a._id || a.id}>
+                                    {a.name}{a.strength ? " · " + a.strength : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: 10.5, color: C.muted, fontStyle: "italic" }}>Pick manually</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {(!parsed.lines || parsed.lines.length === 0) && (
+                    <tr><td colSpan={9} style={{ padding: "20px 14px", textAlign: "center", color: C.muted, fontStyle: "italic", fontSize: 12 }}>No line items extracted.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer with counts + actions */}
+            {(() => {
+              const lines = parsed.lines || [];
+              const green  = lines.filter(l => (l.confidence || 0) >= 0.95).length;
+              const yellow = lines.filter(l => (l.confidence || 0) >= 0.7 && (l.confidence || 0) < 0.95).length;
+              const red    = lines.filter(l => (l.confidence || 0) < 0.7).length;
+              const bulkCount = lines.filter(l => (l.confidence || 0) >= 0.7 && l.match?._id).length;
+              return (
+                <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 11.5, color: C.muted, fontWeight: 600 }}>
+                    <span style={{ color: C.green, fontWeight: 800 }}>Green: {green}</span>
+                    <span style={{ margin: "0 6px" }}>·</span>
+                    <span style={{ color: C.amber, fontWeight: 800 }}>Yellow: {yellow}</span>
+                    <span style={{ margin: "0 6px" }}>·</span>
+                    <span style={{ color: C.red, fontWeight: 800 }}>Red: {red}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      onClick={() => setParsed(null)}
+                      disabled={bulkSaving}
+                      style={{ padding: "8px 14px", borderRadius: 7, border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12, cursor: bulkSaving ? "not-allowed" : "pointer" }}
+                    >
+                      <i className="pi pi-times" style={{ marginRight: 6 }} />Clear
+                    </button>
+                    <button
+                      onClick={applyAllLines}
+                      disabled={bulkSaving || bulkCount === 0}
+                      style={{ padding: "8px 16px", borderRadius: 7, border: "none", background: bulkSaving || bulkCount === 0 ? "#94a3b8" : C.purple, color: "#fff", fontWeight: 800, fontSize: 12, cursor: (bulkSaving || bulkCount === 0) ? "not-allowed" : "pointer" }}
+                    >
+                      {bulkSaving ? "Adding…" : <><i className="pi pi-bolt" style={{ marginRight: 6 }} />Add ALL green rows ({bulkCount})</>}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </Card>
 
       <Card title="Record Goods Receipt (GRN)" color={C.purple} icon="pi-download">
         {/* ── Section 1: Drug & Supplier ─────────────────────────── */}
@@ -1008,11 +1291,32 @@ function GRNSection({ icon, text }) {
 // Module-level cache for pharmacy settings so we don't re-fetch on every
 // dispense / sales print. Cleared when Settings tab saves a change.
 let _phSettings = null;
+let _phSettingsLoading = null;     // Promise dedup so concurrent callers share one fetch.
 async function getCachedPhSettings() {
   if (_phSettings) return _phSettings;
-  try { _phSettings = (await getPharmacySettings()).data || null; } catch { _phSettings = null; }
-  return _phSettings;
+  if (!_phSettingsLoading) {
+    _phSettingsLoading = (async () => {
+      try { _phSettings = (await getPharmacySettings()).data || null; }
+      catch { _phSettings = null; }
+      finally { _phSettingsLoading = null; }
+      return _phSettings;
+    })();
+  }
+  return _phSettingsLoading;
 }
+// R7hr-17: SYNC accessor used in click handlers. Chrome blocks
+// window.open() that runs after an `await` because user-activation is
+// stripped across microtask boundaries. So every print onClick MUST
+// be synchronous; we read the warmed cache directly (falling back to
+// {} if not yet warm — only happens on the very first click of the
+// session, before warmCachedPhSettings() has resolved). Sales tab,
+// dispense flow, IPD ledger, Walk-in print — all callers now use this
+// instead of awaiting in the handler.
+function getCachedPhSettingsSync() { return _phSettings || {}; }
+// R7hr-17: kicked off on PharmacyHomePage mount so subsequent click
+// handlers can read the cache synchronously. Best-effort — failure is
+// silently absorbed (cached as null, sync getter returns {}).
+function warmCachedPhSettings() { getCachedPhSettings().catch(() => {}); }
 function invalidatePhSettings() { _phSettings = null; }
 
 function DispenseTab() {
@@ -1141,7 +1445,7 @@ function DispenseTab() {
       // the print window toolbar (half-A4 default for pharmacy).
       // Pharmacy settings travel with the payload so the bill renders
       // the right header/footer (hospital vs outsourced).
-      const phSet = await getCachedPhSettings();
+      const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
       // R7eo-B — Pattern B caller payload gap fix: derive billLabel +
       // forward customer GST identity so the pharmacy template can title
       // it Cash Memo / Tax Invoice / Pharmacy Bill and render the B2B
@@ -1437,7 +1741,7 @@ function SalesTab() {
               <td style={{ padding: "8px 12px" }}>
                 <RowAction icon="pi-print" color={C.blue}
                   onClick={async () => {
-                    const phSet = await getCachedPhSettings();
+                    const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
                     // R7eo-B — Pattern B caller payload gap fix: forward
                     // billLabel + B2B GST identity so the reprint shows
                     // the same title and GST block as the original.
@@ -1562,7 +1866,7 @@ function ReturnModal({ sale, onClose, onDone }) {
       toast.success(`Refund ${rec.refundSlipNumber} · ₹${rec.refundAmount.toLocaleString("en-IN")} via ${refundMode}`);
 
       // Print refund slip + revised bill — both honour current pharmacy settings
-      const phSet = await getCachedPhSettings();
+      const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
       openPrint("refund-receipt", {
         receiptNo: rec.refundSlipNumber,
         patientName: updated.patientName, uhid: updated.patientUHID, ipdNo: updated.admissionNumber,
@@ -1815,7 +2119,7 @@ function AddItemsModal({ sale, onClose, onDone }) {
       toast.success(`Addendum ${rec.supplementSlipNumber} · ${fmtINR(rec.addedTotal)} added to ${sale.billNumber}`);
 
       // Auto-print revised tax invoice — patient + pharmacy each need a copy
-      const phSet = await getCachedPhSettings();
+      const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
       setTimeout(() => {
         // R7eo-B — Pattern B caller payload gap fix: forward B2B GST
         // identity onto the supplementary reprint so the debit-note
@@ -2028,7 +2332,7 @@ function RegistersTab() {
      standard print window with paper-size + hospital header. */
   const printRegister = async () => {
     if (!data) { toast.warn("No data to print"); return; }
-    const phSet = await getCachedPhSettings();
+    const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
     const meta  = REGISTER_DEFS.find(r => r.key === reg);
     const subtitle = reg === "expiry"
       ? "Batches expiring within 90 days"
@@ -3827,7 +4131,7 @@ function OPDRxTab() {
       // outsourced pharmacy identity).
       try {
         const saleDoc = r?.data?.data || r?.data || {};
-        const phSet = await getCachedPhSettings();
+        const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
         openPrint("pharmacy-bill", {
           ...saleDoc,
           template:         phSet?.billTemplate || 1,
