@@ -140,7 +140,17 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   // signal is derived inline from `items` because the outer `hasControlled`
   // flag is computed further down (post-totals). Caller-supplied
   // billLabel still wins so cash-memo / credit-note reprints are unaffected.
-  const _hasSchOnTitle = items.some(it => it.schedule && /^(H|H1|X)$/i.test(it.schedule));
+  // R7hr-27: schedule is NOT snapshotted on SALE_ITEM (lives only on the
+  // Drug master). Pre-R7hr-24 the per-item check would always miss and
+  // a Walk-in Sch H sale would (a) print as "Cash Memo" instead of
+  // "Tax Invoice" and (b) drop the prescriber Reg suffix on the doctor
+  // cell. R7hr-24 added `r.schedules` (sale-level array enriched from the
+  // Drug master at read time); prefer it. Falls back to the per-item
+  // check for any client that bypasses listSales (e.g. fresh dispense
+  // response on the success-print path).
+  const _saleSchedules = Array.isArray(r.schedules) ? r.schedules : [];
+  const _hasSchOnTitle = _saleSchedules.some(s => /^(H|H1|X)$/i.test(String(s || "")))
+    || items.some(it => it.schedule && /^(H|H1|X)$/i.test(it.schedule));
   const _opdSchOnTitle = isOPD && _hasSchOnTitle;
   // R7hr-15-Walk-in (layoutNotes): Walk-in defaults to "Cash Memo" per
   // PharmacyHomePage L1154. The B2C cash memo is promoted to "Tax Invoice"
@@ -402,11 +412,17 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   // a controlled drug, suffix the doctor name with the prescriber reg
   // (mirrors the OPD branch); otherwise legitimate OTC walk-in leaves
   // the cell as-is so the strip can hide it when no value resolves.
+  // R7hr-27: relax the Walk-in clause. On a Walk-in sale the prescriber Reg
+  // is only captured by the R7hr-23 Sch H attestation modal, so its
+  // presence is by definition a Sch H/H1/X signal — no need to also
+  // recompute `_hasSchOnTitle` (which depended on per-item schedule
+  // snapshot that doesn't exist on SALE_ITEM). Show the Reg suffix
+  // whenever it's set on a Walk-in bill.
   const doctorCell = (isOPD && prescriberReg && doctorNameRaw !== "—")
     ? `${doctorNameRaw} · Reg. ${prescriberReg}`
     : (isIPD && consultantReg && doctorNameRaw !== "—")
       ? `${doctorNameRaw} · Reg. ${consultantReg}`
-      : (isWalkIn && _hasSchOnTitle && prescriberReg && doctorNameRaw !== "—")
+      : (isWalkIn && prescriberReg && doctorNameRaw !== "—")
         ? `${doctorNameRaw} · Reg. ${prescriberReg}`
         : doctorNameRaw;
   const patientRight = [
