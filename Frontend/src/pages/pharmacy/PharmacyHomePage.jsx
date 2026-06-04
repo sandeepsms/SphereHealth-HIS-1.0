@@ -7,7 +7,7 @@
  * Theme matches the rest of the HIS: gradient hero, KPI strip,
  * sectioned cards, his-field inputs, tight modals.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import "../../Components/clinical/clinical-forms.css";
 import { toast } from "react-toastify";
@@ -1026,6 +1026,13 @@ function DispenseTab() {
   const [saleType, setSaleType] = useState("Walk-in");
   const [paymentMode, setPaymentMode] = useState("Cash");
   const [saving, setSaving] = useState(false);
+  // R7hr-12-S2 (D9-07): Synchronous mutex against fast double-clicks on the
+  // Save/Submit button. State-based `saving` only gates AFTER React re-renders
+  // (one frame later); a quick double-tap fires the handler twice and the
+  // backend dispense() has no body-hash idempotency, so a slipped duplicate
+  // double-debits stock + double-charges the patient. Mirrors the pattern
+  // shipped in PharmacyLedgerPage.applyAdvanceToSale (R7hr-11).
+  const submitMutexRef = useRef(false);
   const [drugSearch, setDrugSearch] = useState("");
 
   // Pull HIS patient from UHID — auto-fills name/age/gender/contact/doctor
@@ -1113,6 +1120,11 @@ function DispenseTab() {
 
   const submit = async () => {
     if (items.length === 0) { toast.warn("Add at least one item"); return; }
+    // R7hr-12-S2 (D9-07): Synchronous re-entry guard. If the previous click's
+    // dispense() POST is still in flight, swallow the duplicate immediately
+    // (no toast — same UX as PharmacyLedgerPage.applyAdvanceToSale).
+    if (submitMutexRef.current) return;
+    submitMutexRef.current = true;
     setSaving(true);
     try {
       const r = await dispense({
@@ -1161,7 +1173,13 @@ function DispenseTab() {
       clearLink();
       setRollup((await stockRollup()).data || []);
     } catch (e) { toast.error(e.message); }
-    finally { setSaving(false); }
+    finally {
+      // R7hr-12-S2 (D9-07): release the synchronous mutex AFTER the network
+      // round-trip completes so a fast double-click during the in-flight POST
+      // can't fire a second dispense() call.
+      submitMutexRef.current = false;
+      setSaving(false);
+    }
   };
 
   return (
@@ -2400,11 +2418,16 @@ function StockRegisterTbl({ data, loading }) {
 function ScheduleHRegisterTbl({ data, loading }) {
   if (loading) return null;
   const rows = data?.rows || [];
+  // R7hr-12-S2 (D8-07): add prescriber Reg-No column. D&C Form 2 + Schedule H1
+  // register explicitly mandate "the name, address and registration number
+  // of the prescriber" — the inspector marks the register non-compliant
+  // when the column is missing. Backend now emits prescriberRegistrationNo
+  // per row; UI surfaces it next to the doctor name.
   return (
     <_RegisterShell title="Schedule H / H1 / X Register" color={C.red}
       totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{rows.length} prescription-mandatory dispenses</span>}>
-      <Table cols={["Date","Bill #","Patient","UHID","Doctor","Rx Ref","Drug","Schedule","Batch","Expiry","Qty","Flags"]} compact>
-        {rows.length === 0 ? <EmptyRow span={12} text="No Schedule H drugs dispensed in this range." /> :
+      <Table cols={["Date","Bill #","Patient","UHID","Doctor","Rx Reg No","Rx Ref","Drug","Schedule","Batch","Expiry","Qty","Flags"]} compact>
+        {rows.length === 0 ? <EmptyRow span={13} text="No Schedule H drugs dispensed in this range." /> :
           rows.map((r, i) => (
             <tr key={i} style={{ borderTop: `1px solid ${C.border}` }}>
               <td style={{ padding: "6px 10px", color: C.muted }}>{new Date(r.date).toLocaleString("en-IN")}</td>
@@ -2412,6 +2435,8 @@ function ScheduleHRegisterTbl({ data, loading }) {
               <td style={{ padding: "6px 10px", fontWeight: 600 }}>{r.patientName}</td>
               <td style={{ padding: "6px 10px" }}>{r.patientUHID}</td>
               <td style={{ padding: "6px 10px" }}>{r.doctorName}</td>
+              {/* R7hr-12-S2 (D8-07): prescriber registration number column. */}
+              <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 10.5 }}>{r.prescriberRegistrationNo || "—"}</td>
               <td style={{ padding: "6px 10px", fontSize: 10.5 }}>{r.prescriptionRef}</td>
               <td style={{ padding: "6px 10px", fontWeight: 600 }}>{r.drugName}</td>
               <td style={{ padding: "6px 10px" }}>
@@ -3248,6 +3273,13 @@ function OPDRxTab() {
   const [qdUnitPrice, setQdUnitPrice] = useState(0);
   const [qdPaymentMode, setQdPaymentMode] = useState("Cash");
   const [qdSaving, setQdSaving]     = useState(false);
+  // R7hr-12-S2 (D9-07): Synchronous mutex against fast double-clicks on the
+  // quick-dispense Save button. `qdSaving` only gates AFTER React re-renders;
+  // a 1-frame double-tap fires the handler twice, and the backend dispense()
+  // has no body-hash idempotency, so a duplicate would decrement stock from
+  // FEFO twice and create two PharmacySale rows. Mirrors the ref-mutex
+  // pattern in PharmacyLedgerPage.applyAdvanceToSale (R7hr-11).
+  const qdSubmitMutexRef = useRef(false);
   // R7cy — FEFO batch info for the selected drug. The drug master does
   // NOT carry a reliable sellPrice — the real price lives on each
   // PharmacyDrugBatch row (set at GRN time, varies by purchase lot).
@@ -3280,6 +3312,11 @@ function OPDRxTab() {
     { mode: "Card", amount: "", txnRef: "" },
   ]);
   const [daSaving, setDaSaving]         = useState(false);
+  // R7hr-12-S2 (D9-07): Synchronous mutex for the Dispense-All flow. Same
+  // rationale as qdSubmitMutexRef above — backend dispense() has no
+  // idempotency hash, so a double-click on the multi-item Submit button
+  // would create two sales each consuming FEFO stock for every line.
+  const daSubmitMutexRef = useRef(false);
   // R7hp-4 — duplicate-dispense indicator keyed by visitNumber. Set when
   // the Rx loader detects an existing OPD pharmacy sale referencing the
   // same visit. UI surfaces a warning banner on the visit row.
@@ -3376,6 +3413,27 @@ function OPDRxTab() {
     }
   };
 
+  // R7hr-14 — Walk-in extra item. Patient asks for "ek paracetamol bhi
+  // dena", "isi ke sath ek bandage", "ek extra glucon-D" — items beyond
+  // the doctor's Rx. Same backend dispense() flow, same drug autocomplete,
+  // same FEFO batch pricing — only difference is medicineRef stays
+  // empty (no Rx row backing) so the sale ledger can distinguish
+  // prescribed vs walk-in sales for audit + analytics later. _walkIn
+  // flag is consumed by the modal header to switch the orange Rx-context
+  // card to a "Walk-in extra" affordance instead of trying to render
+  // empty medicineName / dosage / frequency cells.
+  const openWalkInExtra = (visit) => {
+    setQdMed({ _walkIn: true, _visit: visit });
+    setQdDrug(null);
+    setQdQty(1);
+    setQdUnitPrice(0);
+    setQdPaymentMode("Cash");
+    setQdDrugSearch("");
+    setQdMatches([]);
+    setQdFefoBatch(null);
+    setQdOpen(true);
+  };
+
   // Debounced drug search inside the modal (250ms — same as Dispense tab).
   const debouncedSearch = useDebounce(qdDrugSearch, 250);
   useEffect(() => {
@@ -3443,6 +3501,10 @@ function OPDRxTab() {
     if (!Number.isFinite(qty) || qty <= 0) { toast.warn("Quantity must be > 0"); return; }
     const price = Number(qdUnitPrice);
     if (!Number.isFinite(price) || price < 0) { toast.warn("Invalid unit price"); return; }
+    // R7hr-12-S2 (D9-07): Synchronous re-entry guard. Swallow duplicates
+    // arriving inside the same React tick so they never reach dispense().
+    if (qdSubmitMutexRef.current) return;
+    qdSubmitMutexRef.current = true;
     setQdSaving(true);
     // R7cz — Resolve doctor name + prescription ref ONCE so the same
     // values flow both to the top-level sale and to the per-item Rx
@@ -3503,6 +3565,10 @@ function OPDRxTab() {
       const msg = e?.response?.data?.message || e.message || "Dispense failed";
       toast.error(msg);
     } finally {
+      // R7hr-12-S2 (D9-07): release mutex AFTER the in-flight POST resolves,
+      // not before — otherwise a fast double-click during the network round
+      // trip would still fire a second dispense().
+      qdSubmitMutexRef.current = false;
       setQdSaving(false);
     }
   };
@@ -3693,6 +3759,11 @@ function OPDRxTab() {
 
   const submitDispenseAll = async () => {
     if (daSellable.length === 0) { toast.warn("Nothing to dispense — every row is skipped"); return; }
+    // R7hr-12-S2 (D9-07): Synchronous re-entry guard. Without this a fast
+    // double-tap on the Dispense-All button creates two identical multi-item
+    // sales — each consuming FEFO stock for every line.
+    if (daSubmitMutexRef.current) return;
+    daSubmitMutexRef.current = true;
     const visit = daVisit || {};
     const docName = visit.consultantName ||
       (visit.doctorId?.personalInfo
@@ -3801,6 +3872,10 @@ function OPDRxTab() {
       const msg = e?.response?.data?.message || e.message || "Dispense failed";
       toast.error(msg);
     } finally {
+      // R7hr-12-S2 (D9-07): release mutex AFTER the network round trip so an
+      // in-flight POST can't be duplicated by a second click before its
+      // response arrives.
+      daSubmitMutexRef.current = false;
       setDaSaving(false);
     }
   };
@@ -4053,6 +4128,19 @@ function OPDRxTab() {
             {meds.length === 0 ? (
               <div style={{ padding: 18, textAlign: "center", color: C.muted, fontSize: 12, fontStyle: "italic" }}>
                 No medicines prescribed in this visit.
+                {/* R7hr-14: even when no Rx is on file the pharmacist may
+                    still need to sell a walk-in extra (e.g. patient came
+                    in for a consultation only but now asks for paracetamol
+                    on the way out). Surface the same affordance here. */}
+                <div style={{ marginTop: 10 }}>
+                  <button onClick={() => openWalkInExtra(v)} style={{
+                    padding: "6px 14px", background: "#fff", color: "#059669", border: "1.5px solid #a7f3d0",
+                    borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                  }}>
+                    <i className="pi pi-plus-circle" style={{ marginRight: 5, fontSize: 11 }} />
+                    Add walk-in item
+                  </button>
+                </div>
               </div>
             ) : (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -4100,6 +4188,34 @@ function OPDRxTab() {
               </table>
             )}
 
+            {/* R7hr-14: Walk-in extras strip — patient asks for items
+                beyond the doctor's Rx (extra tablet, injection, surgical
+                consumable, ORS, etc.). One click opens the standard
+                quick-dispense modal with no Rx context; the pharmacist
+                picks any drug + qty + payment mode and the sale is
+                attached to THIS visit (so the patient bill aggregates
+                cleanly) but flagged as a walk-in extra in the audit
+                trail (medicineRef stays empty). */}
+            {meds.length > 0 && (
+              <div style={{
+                padding: "8px 14px", background: "#f0fdf4", borderTop: `1px dashed ${C.border}`,
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                fontSize: 11, color: "#065f46",
+              }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <i className="pi pi-info-circle" style={{ fontSize: 11, color: "#059669" }} />
+                  Patient asking for extras (tablet / injection / surgical / consumable)? Add here — same bill, FEFO batch, audit-tracked.
+                </span>
+                <button onClick={() => openWalkInExtra(v)} style={{
+                  padding: "5px 12px", background: "#059669", color: "#fff", border: "none",
+                  borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                }}>
+                  <i className="pi pi-plus-circle" style={{ marginRight: 4, fontSize: 10 }} />
+                  Add walk-in item
+                </button>
+              </div>
+            )}
+
             {v.advice && (
               <div style={{ padding: "10px 14px", background: "#fffbeb", borderTop: `1px solid ${C.border}`, fontSize: 11, color: "#a16207" }}>
                 <strong>Advice: </strong>{v.advice}
@@ -4132,12 +4248,30 @@ function OPDRxTab() {
             {/* Doctor's prescription block — reminds the pharmacist what's
                 being sold so they can sanity-check qty (e.g. 5 days × TDS
                 = 15 tabs, not 5). */}
-            <div style={{ background: "#fff7ed", border: `1px solid #fed7aa`, borderRadius: 8, padding: "8px 12px", fontSize: 11.5, color: C.text, marginBottom: 14 }}>
-              <div><strong>{qdMed?.medicineName}</strong></div>
-              <div style={{ color: C.muted, marginTop: 2 }}>
-                {[qdMed?.dosage, qdMed?.frequency, qdMed?.duration, qdMed?.mealStatus].filter(Boolean).join(" · ")}
-              </div>
-              {qdMed?.instructions && <div style={{ color: C.muted, marginTop: 2, fontStyle: "italic" }}>{qdMed.instructions}</div>}
+            <div style={{ background: qdMed?._walkIn ? "#ecfdf5" : "#fff7ed", border: `1px solid ${qdMed?._walkIn ? "#a7f3d0" : "#fed7aa"}`, borderRadius: 8, padding: "8px 12px", fontSize: 11.5, color: C.text, marginBottom: 14 }}>
+              {/* R7hr-14: when launched from "Add walk-in item" the modal
+                  has no prescribed medicine context, so swap the orange
+                  Rx-context card for a green "Walk-in extra" affordance
+                  that explains why nothing is preselected. */}
+              {qdMed?._walkIn ? (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <i className="pi pi-plus-circle" style={{ color: "#059669", fontSize: 13 }} />
+                    <strong style={{ color: "#065f46" }}>Walk-in extra item</strong>
+                  </div>
+                  <div style={{ color: C.muted, marginTop: 2, fontSize: 11 }}>
+                    Patient-requested add-on — not on the doctor's Rx. Pick any drug, surgical, or consumable below.
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div><strong>{qdMed?.medicineName}</strong></div>
+                  <div style={{ color: C.muted, marginTop: 2 }}>
+                    {[qdMed?.dosage, qdMed?.frequency, qdMed?.duration, qdMed?.mealStatus].filter(Boolean).join(" · ")}
+                  </div>
+                  {qdMed?.instructions && <div style={{ color: C.muted, marginTop: 2, fontStyle: "italic" }}>{qdMed.instructions}</div>}
+                </>
+              )}
             </div>
 
             {/* Inventory drug picker */}
