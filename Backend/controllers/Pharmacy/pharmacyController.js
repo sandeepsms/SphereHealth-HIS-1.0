@@ -1492,6 +1492,36 @@ exports.listSales = async (req, res) => {
         admMap = new Map(adms.map(a => [String(a._id), a]));
       }
 
+      // R7hr-24: batch-fetch drug schedules and decorate each sale with
+      // schedules[] so the SalesTab Schedule filter can match. Same shape
+      // as the salesRegister endpoint — single drug-master fetch covers
+      // legacy + new sales (schedule isn't snapshotted on SALE_ITEM).
+      const _schedDrugIds2 = new Set();
+      for (const s of sales) {
+        for (const it of (s.items || [])) {
+          if (it.drugId) _schedDrugIds2.add(String(it.drugId));
+        }
+      }
+      let _schedMap2 = new Map();
+      if (_schedDrugIds2.size) {
+        try {
+          const Drug = require("../../models/Pharmacy/DrugModel");
+          const sched = await Drug.find(
+            { _id: { $in: [..._schedDrugIds2] } },
+            { schedule: 1 }
+          ).lean();
+          _schedMap2 = new Map(sched.map(d => [String(d._id), String(d.schedule || "G")]));
+        } catch (_) { /* leave map empty */ }
+      }
+      for (const s of sales) {
+        const set = new Set();
+        for (const it of (s.items || [])) {
+          const sch = _schedMap2.get(String(it.drugId)) || "";
+          if (sch) set.add(sch);
+        }
+        s.schedules = [...set];
+      }
+
       for (const s of sales) {
         const p = s.patientUHID ? patMap.get(s.patientUHID) : null;
         const a = s.admissionId ? admMap.get(String(s.admissionId)) : null;
@@ -4120,6 +4150,29 @@ exports.salesRegister = async (req, res) => {
     const rows = await Sale.find(where).sort({ createdAt: 1 })
       .skip(skip).limit(limit)
       .lean();
+
+    // R7hr-24: batch-fetch drug schedules so each register row can carry
+    // a `schedules: ["H", "G", ...]` array — the frontend Sales Register
+    // filter ("show only Sch H/H1/X sales") needs it. Sch is NOT
+    // snapshotted on SALE_ITEM at dispense time (only on the Drug master),
+    // so a single drug-master fetch per dispensed drugId covers legacy +
+    // new sales alike. O(1) extra round-trip per registerLoad.
+    const _schedDrugIds = new Set();
+    for (const s of rows) {
+      for (const it of (s.items || [])) {
+        if (it.drugId) _schedDrugIds.add(String(it.drugId));
+      }
+    }
+    let _schedMap = new Map();
+    if (_schedDrugIds.size) {
+      try {
+        const sched = await Drug.find(
+          { _id: { $in: [..._schedDrugIds] } },
+          { schedule: 1 }
+        ).lean();
+        _schedMap = new Map(sched.map(d => [String(d._id), String(d.schedule || "G")]));
+      } catch (_) { /* leave map empty — schedules column degrades to "" */ }
+    }
     // R7hr-12 (D2-02): .lean() bypasses the decimalToNumber toJSON transform,
     // so subTotal/totalTaxable/totalGst/grandTotal/cgst/sgst/igstAmount come
     // back as raw Decimal128. `0 + Decimal128('100.00')` is the string
@@ -4139,6 +4192,9 @@ exports.salesRegister = async (req, res) => {
     const out = rows.map(s => {
       const hsnMap = new Map();
       let totalDisc = 0;
+      // R7hr-24: collect the unique drug-schedule labels present on this
+      // sale (e.g. ["H","G"]) so the frontend Schedule filter can match.
+      const schedSet = new Set();
       for (const it of (s.items || [])) {
         const key = `${it.gstRate || 12}`;
         if (!hsnMap.has(key)) hsnMap.set(key, { gstRate: Number(key), taxable: 0, tax: 0 });
@@ -4146,6 +4202,8 @@ exports.salesRegister = async (req, res) => {
         r.taxable += toNum(it.taxableAmount);
         r.tax     += toNum(it.gstAmount);
         totalDisc += toNum(it.discountAmount);
+        const sch = _schedMap.get(String(it.drugId)) || "";
+        if (sch) schedSet.add(sch);
       }
       const refundAmount     = (s.returns || []).reduce((t, r) => t + Number(r.refundAmount || 0), 0);
       const supplementAmount = (s.supplements || []).reduce((t, x) => t + Number(x.addedTotal || 0), 0);
@@ -4181,6 +4239,10 @@ exports.salesRegister = async (req, res) => {
         supplementAmount,              // sum of all supplement slips (debit notes)
         netAfterReturns: netEffective, // grandTotal + supplements − refunds
         hsnBreakup: [...hsnMap.values()],
+        // R7hr-24: schedules array drives the Schedule filter dropdown in
+        // the frontend Sales Register. Empty array → "Unscheduled" (i.e. G
+        // / OTC). A bill with both Sch H + Sch G items lights up the H pill.
+        schedules: [...schedSet],
       };
     });
     const totals = rows.reduce((acc, s) => {

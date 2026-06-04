@@ -1798,6 +1798,12 @@ function SalesTab() {
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo]     = useState("");
+  // R7hr-24: Sale Type + Schedule narrowing on the Sales Register tab.
+  // Sale Type maps 1:1 to PharmacySale.saleType ("Walk-in"/"OPD"/"IPD"/
+  // "Homecare"). Schedule matches any of the row's schedules[] array
+  // populated by listSales (drug-master join — covers H/H1/X/G/N).
+  const [typeFilter,  setTypeFilter]  = useState("All");
+  const [schedFilter, setSchedFilter] = useState("All");
   const [returnSale, setReturnSale] = useState(null);    // the bill being returned
   const [addItemsSale, setAddItemsSale] = useState(null); // the bill to add items to
   // R7bh-F9 / R7bg-4-HIGH-1 — debounce the bill / patient / UHID search.
@@ -1848,13 +1854,55 @@ function SalesTab() {
         <input className="his-field" placeholder="Search bill / patient / UHID…" style={{ width: 260, padding: "6px 10px", fontSize: 12 }} value={q} onChange={e => setQ(e.target.value)} />
         <Field label="From"><input type="date" className="his-field" value={from} onChange={e => setFrom(e.target.value)} /></Field>
         <Field label="To"><input type="date" className="his-field" value={to} onChange={e => setTo(e.target.value)} /></Field>
+        {/* R7hr-24: Sale Type + Schedule filters. Backend already filters
+            by from/to + UHID (when the q field is a UHID); these two are
+            applied client-side over the returned rows so the result count
+            in the strip reflects what's actually visible. */}
+        <Field label="Sale type">
+          <select className="his-select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
+            {["All","Walk-in","OPD","IPD","Homecare"].map(o => <option key={o}>{o}</option>)}
+          </select>
+        </Field>
+        <Field label="Schedule">
+          <select className="his-select" value={schedFilter} onChange={e => setSchedFilter(e.target.value)}>
+            {["All","H","H1","X","G","N"].map(o => <option key={o}>{o}</option>)}
+          </select>
+        </Field>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, color: C.muted, fontWeight: 700 }}>{rows.length} bills</span>
+        <span style={{ fontSize: 12, color: C.muted, fontWeight: 700 }}>
+          {(() => {
+            const filt = rows.filter(s => {
+              if (typeFilter !== "All" && String(s.saleType||"") !== typeFilter) return false;
+              if (schedFilter !== "All") {
+                const sx = Array.isArray(s.schedules) ? s.schedules : [];
+                if (!sx.includes(schedFilter)) return false;
+              }
+              return true;
+            });
+            return filt.length === rows.length
+              ? `${rows.length} bills`
+              : `${filt.length} / ${rows.length} bills`;
+          })()}
+        </span>
       </div>
 
-      <Table cols={["Bill #","Date","Patient","Type","Items","Grand ₹","Payment","Status","Action"]}>
-        {rows.length === 0 ? <EmptyRow span={9} text="No sales for the selected filters." /> :
-          rows.map((s, i) => (
+      <Table cols={["Bill #","Date","Patient","Type","Sch","Items","Grand ₹","Payment","Status","Action"]}>
+        {(() => {
+          // R7hr-24: client-side Sale Type + Schedule filter. Match logic
+          // mirrors the toolbar counter above so the visible rows and the
+          // bills strip always agree.
+          const filteredRows = rows.filter(s => {
+            if (typeFilter !== "All" && String(s.saleType||"") !== typeFilter) return false;
+            if (schedFilter !== "All") {
+              const sx = Array.isArray(s.schedules) ? s.schedules : [];
+              if (!sx.includes(schedFilter)) return false;
+            }
+            return true;
+          });
+          if (filteredRows.length === 0) {
+            return <EmptyRow span={10} text={rows.length === 0 ? "No sales for the selected filters." : "No bills match Sale Type / Schedule filter."} />;
+          }
+          return filteredRows.map((s, i) => (
             <tr key={s._id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "#fff" }}>
               <td style={{ padding: "9px 12px", fontFamily: "DM Mono, monospace", fontSize: 11 }}>{s.billNumber}</td>
               <td style={{ padding: "9px 12px", color: C.muted }}>{new Date(s.createdAt).toLocaleString("en-IN")}</td>
@@ -1863,6 +1911,18 @@ function SalesTab() {
                 <div style={{ fontSize: 10.5, color: C.muted }}>{s.patientUHID || "—"}</div>
               </td>
               <td style={{ padding: "9px 12px" }}>{s.saleType}</td>
+              {/* R7hr-24: schedule chips per bill — H/H1/X show amber
+                  (controlled), G/N show green (over-the-counter). */}
+              <td style={{ padding: "9px 12px" }}>
+                {(s.schedules || []).length === 0 ? <span style={{ color: C.muted }}>—</span> :
+                  (s.schedules || []).map(sch => {
+                    const isCtrl = ["H","H1","X"].includes(sch);
+                    return (
+                      <span key={sch} style={{ display: "inline-block", padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700, marginRight: 4,
+                        background: isCtrl ? "#fef3c7" : "#dcfce7", color: isCtrl ? "#92400e" : "#166534" }}>{sch}</span>
+                    );
+                  })}
+              </td>
               <td style={{ padding: "9px 12px" }}>{s.items?.length || 0}</td>
               <td style={{ padding: "9px 12px", fontWeight: 800 }}>{fmtINR(s.grandTotal)}</td>
               <td style={{ padding: "9px 12px" }}>{s.paymentMode}</td>
@@ -1923,7 +1983,8 @@ function SalesTab() {
                 )}
               </td>
             </tr>
-          ))}
+          ));
+        })()}
       </Table>
 
       {returnSale && (
@@ -2458,6 +2519,12 @@ function RegistersTab() {
   const [to,   setTo]   = useState(today);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  // R7hr-24: Sales Register narrowing filters. "All" leaves rows untouched.
+  // Sale Type covers the four PharmacySale.saleType enum values; Schedule
+  // covers the D&C drug schedules carried on row.schedules[] (H/H1/X are
+  // the controlled ones; G is OTC; "" means no schedule on the master).
+  const [typeFilter,  setTypeFilter]  = useState("All");
+  const [schedFilter, setSchedFilter] = useState("All");
 
   const fetchers = {
     sales:        getSalesRegister,
@@ -2727,6 +2794,26 @@ function RegistersTab() {
         <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <Field label="From"><input type="date" className="his-field" value={from} onChange={e => setFrom(e.target.value)} /></Field>
           <Field label="To"><input type="date" className="his-field" value={to} onChange={e => setTo(e.target.value)} /></Field>
+          {/* R7hr-24: Sale Type + Schedule filters surface only on the Sales
+              Register — the other registers either don't have saleType
+              (Purchase/Stock/Expiry) or already drill into one schedule
+              class (Schedule H register). Client-side filtering — the
+              backend already paginates within the date range, so this just
+              narrows what the operator sees + recomputes totals. */}
+          {reg === "sales" && (
+            <>
+              <Field label="Sale type">
+                <select className="his-select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
+                  {["All","Walk-in","OPD","IPD","Homecare"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+              <Field label="Schedule">
+                <select className="his-select" value={schedFilter} onChange={e => setSchedFilter(e.target.value)}>
+                  {["All","H","H1","X","G","N"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+            </>
+          )}
           <div style={{ flex: 1 }} />
           <button onClick={load} disabled={loading}
             style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: loading ? "#94a3b8" : C.orange, color: "#fff", fontWeight: 700, fontSize: 12, cursor: loading ? "not-allowed" : "pointer" }}>
@@ -2740,7 +2827,7 @@ function RegistersTab() {
       )}
 
       {/* Body per register */}
-      {reg === "sales"      && <SalesRegisterTbl      data={data} loading={loading} />}
+      {reg === "sales"      && <SalesRegisterTbl      data={data} loading={loading} typeFilter={typeFilter} schedFilter={schedFilter} />}
       {reg === "purchase"   && <PurchaseRegisterTbl   data={data} loading={loading} />}
       {reg === "stock"      && <StockRegisterTbl      data={data} loading={loading} />}
       {reg === "schedule-h" && <ScheduleHRegisterTbl  data={data} loading={loading} />}
@@ -2763,17 +2850,45 @@ function _RegisterShell({ title, color, totals, children }) {
   );
 }
 
-function SalesRegisterTbl({ data, loading }) {
+function SalesRegisterTbl({ data, loading, typeFilter = "All", schedFilter = "All" }) {
   if (loading) return <Card title="Loading…" color={C.green} icon="pi-spin pi-spinner"><div /></Card>;
-  const rows = data?.rows || [];
-  const t = data?.totals;
+  const allRows = data?.rows || [];
+  // R7hr-24: apply Sale Type + Schedule narrowing client-side. Backend
+  // already paginates within the date range so the filter set is bounded;
+  // recomputing totals on the filtered subset keeps the strip header in
+  // sync with what's actually visible.
+  const rows = allRows.filter(r => {
+    if (typeFilter !== "All" && String(r.saleType || "") !== typeFilter) return false;
+    if (schedFilter !== "All") {
+      const sx = Array.isArray(r.schedules) ? r.schedules : [];
+      if (!sx.includes(schedFilter)) return false;
+    }
+    return true;
+  });
+  // Recompute totals from filtered rows so the header strip matches the
+  // body. Falls back to server totals when no narrowing is in effect to
+  // preserve the historical numbers (covers refunds/supplements that the
+  // per-row mapper doesn't carry).
+  const t = (typeFilter === "All" && schedFilter === "All")
+    ? data?.totals
+    : {
+        bills:      rows.length,
+        taxable:    rows.reduce((s, r) => s + Number(r.taxable || 0), 0),
+        gstTotal:   rows.reduce((s, r) => s + Number(r.gstTotal || ((Number(r.cgst||0)+Number(r.sgst||0)+Number(r.igst||0)))), 0),
+        grandTotal: rows.reduce((s, r) => s + Number(r.grandTotal || 0), 0),
+      };
   return (
     <_RegisterShell title="Sales Register" color={C.green}
       totals={t && <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>
+        {(typeFilter !== "All" || schedFilter !== "All") && (
+          <span style={{ background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 999, fontWeight: 700, marginRight: 8 }}>
+            Filtered{typeFilter !== "All" ? ` · ${typeFilter}` : ""}{schedFilter !== "All" ? ` · Sch ${schedFilter}` : ""}
+          </span>
+        )}
         {t.bills} bills · taxable {fmtINR(t.taxable)} · GST {fmtINR(t.gstTotal)} · <b style={{ color: C.green }}>{fmtINR(t.grandTotal)}</b>
       </span>}>
-      <Table cols={["Date","Bill #","Patient","UHID/Adm","Type","Items","Taxable","CGST","SGST","Total","Pay"]} compact>
-        {rows.length === 0 ? <EmptyRow span={11} text="No bills in this range." /> :
+      <Table cols={["Date","Bill #","Patient","UHID/Adm","Type","Sch","Items","Taxable","CGST","SGST","Total","Pay"]} compact>
+        {rows.length === 0 ? <EmptyRow span={12} text={allRows.length === 0 ? "No bills in this range." : "No bills match the filter."} /> :
           rows.map(r => (
             <tr key={r._id} style={{ borderTop: `1px solid ${C.border}` }}>
               <td style={{ padding: "6px 10px", color: C.muted }}>{new Date(r.date).toLocaleDateString("en-IN")}</td>
@@ -2781,6 +2896,18 @@ function SalesRegisterTbl({ data, loading }) {
               <td style={{ padding: "6px 10px" }}>{r.patientName}</td>
               <td style={{ padding: "6px 10px", color: C.muted, fontSize: 11 }}>{r.admissionNumber || r.patientUHID || "—"}</td>
               <td style={{ padding: "6px 10px" }}>{r.saleType}</td>
+              {/* R7hr-24: render the schedule chips so the operator can see
+                  why a row matched / what controlled drugs it contains. */}
+              <td style={{ padding: "6px 10px" }}>
+                {(r.schedules || []).length === 0 ? <span style={{ color: C.muted }}>—</span> :
+                  (r.schedules || []).map(s => {
+                    const isCtrl = ["H","H1","X"].includes(s);
+                    return (
+                      <span key={s} style={{ display: "inline-block", padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700, marginRight: 4,
+                        background: isCtrl ? "#fef3c7" : "#dcfce7", color: isCtrl ? "#92400e" : "#166534" }}>{s}</span>
+                    );
+                  })}
+              </td>
               <td style={{ padding: "6px 10px" }}>{r.itemsCount}</td>
               <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtINR(r.taxable)}</td>
               <td style={{ padding: "6px 10px", textAlign: "right", color: C.muted }}>{fmtINR(r.cgst)}</td>
