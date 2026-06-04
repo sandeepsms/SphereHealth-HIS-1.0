@@ -138,7 +138,10 @@ export default function PharmacyLedgerPage({
       const [salesR, advR, patR, admR] = await Promise.all([
         axios.get(`${API_ENDPOINTS.BASE}/pharmacy/sales`, { params: { uhid: patient.UHID, limit: 500 } }),
         axios.get(`${API_ENDPOINTS.BASE}/billing/advance/uhid/${encodeURIComponent(patient.UHID)}`).catch(() => ({ data: { data: [] } })),
-        axios.get(`${API_ENDPOINTS.BASE}/patients/by-uhid/${encodeURIComponent(patient.UHID)}`).catch(() => null),
+        // R7hr-7-FIX-2: correct path is /patients/uhid/:uhid (was
+        // /by-uhid/ — that endpoint doesn't exist and silently 404'd,
+        // so AGE/SEX/CONTACT still showed "—" after the first fix.
+        axios.get(`${API_ENDPOINTS.BASE}/patients/uhid/${encodeURIComponent(patient.UHID)}`).catch(() => null),
         admissionId
           ? axios.get(`${API_ENDPOINTS.BASE}/admissions/${admissionId}`).catch(() => null)
           : Promise.resolve(null),
@@ -172,14 +175,27 @@ export default function PharmacyLedgerPage({
       // consolidated bill print showed AGE/SEX "—", CONTACT "—", DOCTOR
       // "—" because the page only carried what the indent button passed
       // via query string.
+      // R7hr-7-FIX-2: Admission model stores the attending doctor in
+      // `doctorName` (line 16 of admissionModel.js), NOT `consultantName`.
+      // Without this alias the consolidated bill still showed
+      // DOCTOR "—" even after the patient lookup was fixed.
+      // Also walk `patBody.contact?.mobile` / `.email` / `.address.city`
+      // and `patBody.dateOfBirth` → age, since the patient master nests
+      // these instead of keeping them flat at the root.
+      const ageFromDob = (dob) => {
+        if (!dob) return "";
+        const d = new Date(dob); if (isNaN(d)) return "";
+        const ms = Date.now() - d.getTime();
+        return String(Math.max(0, Math.floor(ms / (365.25 * 24 * 3600 * 1000))));
+      };
       setPatient(p => ({
         ...p,
-        patientName:     mine[0]?.patientName     || patBody?.fullName || patBody?.patientName || p.patientName,
+        patientName:     mine[0]?.patientName     || patBody?.fullName || patBody?.firstName || patBody?.patientName || p.patientName,
         admissionNumber: mine[0]?.admissionNumber || admBody?.admissionNumber || p.admissionNumber,
-        age:             patBody?.age || patBody?.ageYears || p.age || "",
+        age:             patBody?.age || patBody?.ageYears || ageFromDob(patBody?.dateOfBirth || patBody?.dob) || p.age || "",
         gender:          patBody?.gender || patBody?.sex || p.gender || "",
-        contactNumber:   patBody?.contactNumber || patBody?.mobile || patBody?.phone || p.contactNumber || "",
-        consultant:      admBody?.consultantName || admBody?.doctorName || admBody?.consultingDoctor || p.consultant || "",
+        contactNumber:   patBody?.contactNumber || patBody?.mobile || patBody?.phone || patBody?.contact?.mobile || patBody?.contact?.phone || p.contactNumber || "",
+        consultant:      admBody?.doctorName || admBody?.consultantName || admBody?.consultingDoctor || admBody?.attendingDoctorName || p.consultant || "",
         bed:             p.bed || [admBody?.bedNumber, admBody?.wardName].filter(Boolean).join(" · "),
       }));
     } catch (e) {
