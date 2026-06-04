@@ -49,19 +49,46 @@ const dec = (v) => {
 const dateKey = (d) => new Date(d).toLocaleDateString("en-CA"); // YYYY-MM-DD for sorting
 const dateLabel = (d) => new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", weekday: "short" });
 
-export default function PharmacyLedgerPage() {
-  const { admissionId } = useParams();
+/**
+ * Props (all optional — page works as both a route and an embedded tab):
+ *   embedded     — when true, the back button calls onBack() instead of
+ *                  navigate(-1) so the parent tab strip stays in control.
+ *   admissionId  — wins over the route param when present. Lets the parent
+ *                  (PharmacyHomePage / IPDCreditTab) mount this component
+ *                  for any selected admission without changing the URL.
+ *   seedPatient  — { UHID, patientName, admissionNumber, bed, consultant }
+ *                  initial banner identity; falls back to URL query string
+ *                  parsing in route-mode, then to first-sale hydration.
+ *   onBack       — called by the back button in embedded mode.
+ */
+export default function PharmacyLedgerPage({
+  embedded = false,
+  admissionId: admIdProp,
+  seedPatient,
+  onBack,
+} = {}) {
+  const routeParams = useParams();
   const [search] = useSearchParams();
   const navigate = useNavigate();
 
-  // Patient identity (seeded from query string when available)
-  const [patient, setPatient] = useState({
+  // Prop wins over route param so the parent can mount any admission's
+  // ledger in-place. Both are present in route mode — useParams() returns
+  // the captured segment; the prop is undefined.
+  const admissionId = admIdProp || routeParams.admissionId;
+
+  // Patient identity. Seed first from the explicit prop (embedded mode),
+  // then from the URL query string (route mode), then hydrate later from
+  // the first sale row if neither source provided it.
+  const [patient, setPatient] = useState(() => seedPatient || {
     UHID:            search.get("uhid") || "",
     patientName:     search.get("name") || "",
     admissionNumber: search.get("ipd")  || "",
     bed:             search.get("bed")  || "",
     consultant:      search.get("doc")  || "",
   });
+
+  // Back-button handler: parent callback if embedded, else router pop.
+  const goBack = () => (onBack ? onBack() : navigate(-1));
 
   const [sales, setSales]       = useState([]);
   const [advances, setAdvances] = useState([]);
@@ -206,17 +233,22 @@ export default function PharmacyLedgerPage() {
   };
 
   /* ── Render ─────────────────────────────────────────────────── */
+  // In embedded mode the parent tab supplies the page chrome, so we
+  // drop the full-page background + min-height + outer padding to avoid
+  // a "page-inside-page" double frame.
   return (
-    <div style={{ padding: 18, background: C.bg, minHeight: "100vh" }}>
-      <div style={{ maxWidth: 1280, margin: "0 auto" }}>
+    <div style={embedded
+      ? { padding: 0, background: "transparent" }
+      : { padding: 18, background: C.bg, minHeight: "100vh" }}>
+      <div style={embedded ? { width: "100%" } : { maxWidth: 1280, margin: "0 auto" }}>
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
           <div>
-            <button onClick={() => navigate(-1)} style={{
+            <button onClick={goBack} style={{
               padding: "5px 12px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
               borderRadius: 6, fontSize: 12, cursor: "pointer", fontWeight: 600, marginBottom: 10,
             }}>
-              <i className="pi pi-arrow-left" style={{ marginRight: 5 }} /> Back
+              <i className="pi pi-arrow-left" style={{ marginRight: 5 }} /> {embedded ? "Back to list" : "Back"}
             </button>
             <h1 style={{ margin: 0, fontSize: 22, color: C.text, fontWeight: 800 }}>
               <i className="pi pi-receipt" style={{ marginRight: 8, color: C.orange }} />

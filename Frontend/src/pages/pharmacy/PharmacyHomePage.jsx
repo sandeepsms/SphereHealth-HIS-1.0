@@ -19,6 +19,10 @@ import TEMPLATES from "../../Components/print/printables/PharmacyBillTemplates";
 import PharmacyBill from "../../Components/print/printables/PharmacyBill";
 import PharmacyRegister, { REGISTER_HEADERS } from "../../Components/print/printables/PharmacyRegister";
 import PharmacyIndentsPage from "./PharmacyIndentsPage";
+// R7hr-4 — pharmacist-scoped per-admission ledger, mounted in-place
+// inside IPDCreditTab so the IPD Credit pill never has to navigate
+// away to /pharmacy/ledger/:admissionId.
+import PharmacyLedgerPage from "./PharmacyLedgerPage";
 import opdService from "../../Services/patient/opdService";
 import { IS_PHARMACY_STANDALONE, PHARMACY_MODE_LABEL } from "../../config/pharmacyMode";
 import {
@@ -207,6 +211,18 @@ function indentBadgeFor(stats) {
 export default function PharmacyHomePage() {
   const [tab, setTab] = useState("dashboard");
 
+  // R7hr-4 — Shared state so the Live Indents tab and the IPD Credit
+  // tab can cross-talk without a URL change. When the pharmacist clicks
+  // "Live Ledger" inside the embedded indents queue, we flip the tab to
+  // ipdcredit and pre-seed the selection so IPDCreditTab opens that
+  // admission's embedded ledger straight away. Object identity (`null`
+  // vs `{...}`) drives the IPDCreditTab effect that pulls the focus.
+  const [ledgerFocus, setLedgerFocus] = useState(null); // { admissionId, seed } | null
+  const handleShowLedger = (admissionId, seed) => {
+    setLedgerFocus({ admissionId, seed });
+    setTab("ipdcredit");
+  };
+
   // Poll open indents and recompute the Live Indents tab badge/tone every
   // render. useMemo keeps the array reference stable when counts haven't
   // changed so TabStrip doesn't re-mount its buttons unnecessarily.
@@ -283,8 +299,15 @@ export default function PharmacyHomePage() {
         {tab === "grn"       && <GRNTab />}
         {tab === "dispense"  && <DispenseTab />}
         {tab === "opdrx"     && <OPDRxTab />}
-        {tab === "ipdcredit" && <IPDCreditTab />}
-        {tab === "indents"   && <PharmacyIndentsPage embedded />}
+        {tab === "ipdcredit" && (
+          <IPDCreditTab
+            focus={ledgerFocus}
+            onClearFocus={() => setLedgerFocus(null)}
+          />
+        )}
+        {tab === "indents"   && (
+          <PharmacyIndentsPage embedded onShowLedger={handleShowLedger} />
+        )}
         {tab === "sales"     && <SalesTab />}
         {tab === "registers" && <RegistersTab />}
         {tab === "suppliers" && <SuppliersTab />}
@@ -4475,12 +4498,45 @@ function OPDRxTab() {
    on the same outstanding > 0 condition, so this tab is the
    only place that credit can be cleared before discharge.
 ══════════════════════════════════════════════════════════════════ */
-function IPDCreditTab() {
+// R7hr-4 props:
+//   focus         — { admissionId, seed } pushed in by PharmacyHomePage
+//                   when the user clicked "Live Ledger" in the Live
+//                   Indents tab. Triggers an auto-open of the embedded
+//                   per-admission ledger view.
+//   onClearFocus  — called when the user clicks "Back to list" so the
+//                   parent's ledgerFocus state resets and re-clicking
+//                   the same admission opens it again.
+function IPDCreditTab({ focus, onClearFocus } = {}) {
   const [loading, setLoading]   = useState(false);
   const [rows, setRows]         = useState([]);
   const [summary, setSummary]   = useState({ admissions: 0, totalOutstanding: 0 });
   const [openAdm, setOpenAdm]   = useState(null);  // selected admission detail blob
   const [openLoading, setOpenLoading] = useState(false);
+
+  // R7hr-4 — Selected admission for the embedded ledger view. When set,
+  // the tab swaps the table for <PharmacyLedgerPage embedded ...>.
+  // Distinct from `openAdm` (which drives the legacy per-bill drawer
+  // that's still wired below) so the two render paths don't fight.
+  const [ledgerAdm, setLedgerAdm] = useState(null); // { admissionId, seed } | null
+
+  // When the parent pushes a focus (Live Ledger click in Live Indents),
+  // hoist it into local ledger state so the same back/close lifecycle
+  // applies. We also pre-seed the rows fetch as usual.
+  useEffect(() => {
+    if (focus?.admissionId) {
+      setLedgerAdm({ admissionId: String(focus.admissionId), seed: focus.seed || null });
+    }
+  }, [focus]);
+
+  // Resolve the seed for the embedded ledger from either the parent
+  // focus push OR the row the user clicked locally on the table.
+  const openLedger = (admissionId, seed) => {
+    setLedgerAdm({ admissionId: String(admissionId), seed: seed || null });
+  };
+  const closeLedger = () => {
+    setLedgerAdm(null);
+    if (typeof onClearFocus === "function") onClearFocus();
+  };
 
   // R7cv — Per-day history of all IPD credit sales (both outstanding +
   // already-paid). Pharmacist asked for "every IPD jisme pharmacy se
@@ -4582,6 +4638,23 @@ function IPDCreditTab() {
     } finally { setColSaving(false); }
   };
 
+  // R7hr-4 — When an admission is selected, replace the entire tab body
+  // with the embedded pharmacist ledger (KPIs + day-wise meds + Collect +
+  // Take Advance + explicit "no hospital bill" notice). Keeps everything
+  // inside the same /pharmacy screen — no route change.
+  if (ledgerAdm) {
+    return (
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+        <PharmacyLedgerPage
+          embedded
+          admissionId={ledgerAdm.admissionId}
+          seedPatient={ledgerAdm.seed || undefined}
+          onBack={closeLedger}
+        />
+      </div>
+    );
+  }
+
   return (
     <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
       {/* Hero strip */}
@@ -4669,12 +4742,23 @@ function IPDCreditTab() {
                   {fmtINR(r.outstanding)}
                 </td>
                 <td style={{ padding: "8px 12px", textAlign: "right" }}>
-                  <button onClick={() => openAdmission(r)} style={{
+                  {/* R7hr-4 — Open in the embedded ledger view (KPI strip
+                      + day-wise meds + Collect + Take Advance). Was the
+                      per-bill drawer (openAdmission). The drawer is
+                      retained as a fallback for older code paths but no
+                      longer the default entry. */}
+                  <button onClick={() => openLedger(r.admissionId, {
+                    UHID:            r.UHID || "",
+                    patientName:     r.patientFullName || "",
+                    admissionNumber: r.admissionNumber || "",
+                    bed:             [r.bedNumber, r.wardName].filter(Boolean).join(" · "),
+                    consultant:      r.consultantName || "",
+                  })} style={{
                     padding: "5px 12px", background: C.orange, color: "#fff", border: "none",
                     borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
                   }}>
                     <i className="pi pi-arrow-right" style={{ marginRight: 4, fontSize: 10 }} />
-                    Collect
+                    Open Ledger
                   </button>
                 </td>
               </tr>

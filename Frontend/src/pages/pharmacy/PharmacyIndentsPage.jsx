@@ -65,7 +65,15 @@ function playChime() {
   } catch (_) { /* ignored — user hasn't interacted yet */ }
 }
 
-export default function PharmacyIndentsPage({ embedded = false } = {}) {
+// R7hr-4 — `onShowLedger(admissionId, seedPatient)` lets the parent
+// (PharmacyHomePage) handle the Live Ledger button without changing the
+// URL. When provided we call it instead of navigate(...) so the IPD
+// Credit tab can render the embedded ledger in-place. In standalone
+// route mode it stays undefined and the original route fallback runs.
+export default function PharmacyIndentsPage({
+  embedded = false,
+  onShowLedger,
+} = {}) {
   const navigate = useNavigate();
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -437,19 +445,30 @@ export default function PharmacyIndentsPage({ embedded = false } = {}) {
                       <i className="pi pi-send" style={{ marginRight: 4 }} /> Release stock
                     </button>
                   )}
-                  {/* R7hr-3: route to the pharmacist-scoped ledger
-                      (pharmacy slice only). Was /billing/ipd/:admId which
-                      surfaced the full hospital bill — pharmacist shouldn't
-                      see bed/doctor/services. Pass patient identity via
-                      query string so the new page renders the banner
-                      without a second fetch. */}
+                  {/* R7hr-3: pharmacist-scoped ledger (pharmacy slice only).
+                      R7hr-4: when the parent provides onShowLedger we call
+                      it so the IPD Credit tab can render the ledger in-
+                      place — no URL change, user stays inside /pharmacy.
+                      The route-based fallback still works for standalone
+                      navigation. */}
                   <button onClick={() => {
+                    const seed = {
+                      UHID:            indent.patientUHID || "",
+                      patientName:     indent.patientName || "",
+                      admissionNumber: indent.admissionNumber || "",
+                      bed:             indent.bedNumber ? `${indent.bedNumber}${indent.wardName ? ` · ${indent.wardName}` : ""}` : "",
+                      consultant:      indent.consultantName || "",
+                    };
+                    if (typeof onShowLedger === "function") {
+                      onShowLedger(indent.admissionId, seed);
+                      return;
+                    }
                     const qs = new URLSearchParams({
-                      uhid: indent.patientUHID || "",
-                      name: indent.patientName || "",
-                      ipd:  indent.admissionNumber || "",
-                      bed:  indent.bedNumber ? `${indent.bedNumber}${indent.wardName ? ` · ${indent.wardName}` : ""}` : "",
-                      doc:  indent.consultantName || "",
+                      uhid: seed.UHID,
+                      name: seed.patientName,
+                      ipd:  seed.admissionNumber,
+                      bed:  seed.bed,
+                      doc:  seed.consultant,
                     }).toString();
                     navigate(`/pharmacy/ledger/${indent.admissionId}?${qs}`);
                   }} style={{
