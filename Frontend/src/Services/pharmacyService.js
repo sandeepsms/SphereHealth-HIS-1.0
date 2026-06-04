@@ -44,6 +44,18 @@ export const recordGRN     = (b)               => _post(`/grn`, b);
 export const listBatches   = (params = {})     => _get(`/batches${_qs(params)}`);
 export const stockRollup   = ()                => _get(`/stock`);
 
+// R7hr-16: parse supplier invoice (PDF/JSON) → pre-fills GRN form. Multipart
+// upload — purposely do NOT set Content-Type (browser sets the multipart
+// boundary; authFetch only injects Authorization, never overrides headers).
+export const parseInvoice = async (file) => {
+  const fd = new FormData();
+  fd.append("file", file, file.name);
+  const r = await authFetch(`${BASE}/grn/parse-invoice`, { method: "POST", body: fd });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d?.message || `HTTP ${r.status}`);
+  return d;
+};
+
 // Sales
 export const dispense      = (b)               => _post(`/sales`, b);
 export const listSales     = (params = {}, opts) => _get(`/sales${_qs(params)}`, opts);
@@ -76,7 +88,7 @@ export const SALE_TYPES    = ["Walk-in","OPD","IPD","Homecare"];
 export default {
   listDrugs, searchDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
-  recordGRN, listBatches, stockRollup,
+  recordGRN, listBatches, stockRollup, parseInvoice,  // R7hr-16
   dispense, listSales, getSale, cancelSale, returnSaleItems, addItemsToSale,
   getStats, getAlerts,
   getPharmacySettings, updatePharmacySettings,

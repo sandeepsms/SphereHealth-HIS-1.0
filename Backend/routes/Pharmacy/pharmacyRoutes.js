@@ -133,4 +133,31 @@ router.get   ("/registers/schedule-h", requireAction("rx.read"),      ctrl.sched
 router.get   ("/registers/expiry",     requireAction("rx.read"),      ctrl.expiryRegister);
 router.get   ("/registers/gst",        requireAction("rx.read"),      ctrl.gstSummary);
 
+// R7hr-16: Parse supplier invoice (JSON or PDF) → pre-fill GRN form.
+// memoryStorage so the buffer stays in RAM for hashing + parsing (no
+// disk roundtrip). 5 MB ceiling matches safeUpload's default. We
+// accept .json + .pdf only — controller does a second MIME/extension
+// check before any work runs.
+const multer = require("multer");
+const _parseInvoiceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits:  { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    const mt  = (file.mimetype || "").toLowerCase();
+    const ext = (file.originalname || "").toLowerCase().split(".").pop();
+    if (mt === "application/json" || mt === "application/pdf" ||
+        ext === "json" || ext === "pdf") {
+      return cb(null, true);
+    }
+    cb(null, false);   // silently drop; controller surfaces BAD_MIME 400
+  },
+});
+router.post(
+  "/grn/parse-invoice",
+  requireAction("pharmacy.grn"),
+  credentialExpiryBlocker("PHARMACIST_REG"),
+  _parseInvoiceUpload.single("file"),
+  ctrl.parseInvoice,
+);
+
 module.exports = router;

@@ -4599,3 +4599,222 @@ exports.alerts = async (req, res) => {
     res.json({ success: true, data: { lowStock: rollup, outOfStock, expiringSoon, expired } });
   } catch (e) { sendErr(res, e); }
 };
+
+// ═══════════════════════════════════════════════════════════════════
+// R7hr-16 — Parse supplier invoice (JSON or PDF) → pre-fill GRN form.
+// Orchestrates the 4 service modules into the canonical shape the
+// frontend GRN upload card expects + persists a ParsedInvoice audit
+// row on EVERY parse attempt (success or failure).
+// ═══════════════════════════════════════════════════════════════════
+const _crypto             = require("crypto");
+const ParsedInvoice       = require("../../models/Pharmacy/ParsedInvoiceModel");
+const drugMatcher         = require("../../services/Pharmacy/drugMatcher");
+const supplierMatcher     = require("../../services/Pharmacy/supplierMatcher");
+const einvoiceJsonParser  = require("../../services/Pharmacy/einvoiceJsonParser");
+const pdfTextExtractor    = require("../../services/Pharmacy/pdfTextExtractor");
+const llmInvoiceExtractor = require("../../services/Pharmacy/llmInvoiceExtractor");
+
+// R7hr-16: service-code → HTTP status. Anything not mapped falls
+// through to 500 via sendErr. Keep aligned with the docstrings of
+// the four service modules.
+const _PARSE_HTTP = {
+  BAD_INPUT:                    400,
+  BAD_MIME:                     400,
+  PDF_PARSE_FAILED:             400,
+  PDF_HAS_NO_TEXT:              422,
+  SIGNED_INVOICE_NOT_UNWRAPPED: 422,
+  NOT_GSTN_EINVOICE:            422,
+  LLM_NOT_CONFIGURED:           503,
+  LLM_EXTRACT_FAILED:           502,
+};
+
+// R7hr-16: try-decode an IRP "SignedInvoice" envelope. Most supplier
+// portals hand the buyer { Irn, SignedInvoice, SignedQRCode } —
+// SignedInvoice is a JWS whose middle Base64URL segment is the actual
+// invoice JSON. Unwrap defensively before handing to the parser.
+function _unwrapSignedInvoiceIfNeeded(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  if (!obj.SignedInvoice || typeof obj.SignedInvoice !== "string") return obj;
+  try {
+    const seg = obj.SignedInvoice.split(".")[1];
+    if (!seg) return obj;
+    const pad = "=".repeat((4 - (seg.length % 4)) % 4);
+    const json = Buffer
+      .from(seg.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64")
+      .toString("utf8");
+    return JSON.parse(json);
+  } catch (_) {
+    return obj;  // parser will throw SIGNED_INVOICE_NOT_UNWRAPPED
+  }
+}
+
+function _trimDrug(d) {
+  if (!d || !d._id) return null;
+  return {
+    _id:         d._id,
+    name:        d.name,
+    genericName: d.genericName,
+    strength:    d.strength,
+    dosageForm:  d.dosageForm,
+    hsnCode:     d.hsnCode,
+  };
+}
+function _trimSupplier(s) {
+  if (!s || !s._id) return null;
+  return {
+    _id: s._id, name: s.name, gstin: s.gstin,
+    address: s.address, city: s.city, state: s.state,
+  };
+}
+
+exports.parseInvoice = async (req, res) => {
+  if (!req.file || !req.file.buffer) {
+    return res.status(400).json({
+      success: false, code: "BAD_INPUT",
+      message: "No file uploaded — attach a JSON or PDF supplier invoice.",
+    });
+  }
+  const buffer   = req.file.buffer;
+  const mimetype = (req.file.mimetype || "").toLowerCase();
+  const filename = req.file.originalname || "";
+  const ext      = filename.toLowerCase().split(".").pop() || "";
+  const fileHash = _crypto.createHash("sha256").update(buffer).digest("hex");
+
+  let fileType;
+  if (mimetype === "application/json" || ext === "json")     fileType = "JSON";
+  else if (mimetype === "application/pdf" || ext === "pdf")  fileType = "PDF";
+  else {
+    // R7hr-16: still write an audit row for BAD_MIME — model invariant
+    // says "every parse attempt, success or failure".
+    try {
+      await ParsedInvoice.create({
+        fileHash, fileType: "JSON", sourceFilename: filename,
+        rawText: "", extracted: {}, lineMatches: [], supplierMatch: {},
+        status: "rejected",
+        uploadedById:   req.user?._id || null,
+        uploadedByName: req.user?.fullName || req.user?.userName || "",
+        error: `BAD_MIME: ${mimetype || "(none)"} / ext=${ext}`,
+      });
+    } catch (_) { /* audit best-effort */ }
+    return res.status(400).json({
+      success: false, code: "BAD_MIME",
+      message: `Unsupported file type: ${mimetype || ext || "unknown"}. Upload a GSTN e-invoice JSON or a PDF.`,
+    });
+  }
+
+  let extracted   = null;
+  let rawText     = "";
+  let serviceCode = null;
+  try {
+    if (fileType === "JSON") {
+      const text = buffer.toString("utf8");
+      let json;
+      try { json = JSON.parse(text); }
+      catch (_) {
+        const e = new Error("Invalid JSON syntax in uploaded file");
+        e.code = "BAD_INPUT"; throw e;
+      }
+      const unwrapped = _unwrapSignedInvoiceIfNeeded(json);
+      extracted = einvoiceJsonParser.parseEInvoiceJson(unwrapped);
+    } else {
+      const pdf = await pdfTextExtractor.extractPdfText(buffer);
+      rawText   = (pdf.text || "").slice(0, 200000);
+      extracted = await llmInvoiceExtractor.extractInvoiceFromText(pdf.text, { fileHash });
+    }
+  } catch (e) {
+    serviceCode = e?.code || "PARSE_FAILED";
+    try {
+      await ParsedInvoice.create({
+        fileHash, fileType, sourceFilename: filename,
+        rawText, extracted: {}, lineMatches: [], supplierMatch: {},
+        status: "rejected",
+        uploadedById:   req.user?._id || null,
+        uploadedByName: req.user?.fullName || req.user?.userName || "",
+        error: `${serviceCode}: ${(e.message || "").slice(0, 500)}`,
+      });
+    } catch (_) { /* audit best-effort */ }
+    const status = _PARSE_HTTP[serviceCode] || 500;
+    return res.status(status).json({
+      success: false, code: serviceCode, message: e.message || "Parse failed",
+    });
+  }
+
+  // R7hr-16: per-line drug match + supplier match. Both best-effort
+  // — a matcher error degrades to "no match" rather than failing.
+  const lines = Array.isArray(extracted?.lines) ? extracted.lines : [];
+  const lineMatches = [];
+  for (const line of lines) {
+    let m = { drug: null, confidence: 0, alternatives: [] };
+    try {
+      m = await drugMatcher.findDrug(
+        line.extractedName || line.name || line.drugName || "",
+      );
+    } catch (_) { /* keep empty */ }
+    lineMatches.push({
+      extractedName:   line.extractedName || line.name || line.drugName || "",
+      matchedDrugId:   m.drug?._id || null,
+      matchedDrugName: m.drug?.name || "",
+      confidence:      Number(m.confidence) || 0,
+      alternatives:    (m.alternatives || []).map(a => ({
+        drugId: a.drug?._id, name: a.drug?.name, score: a.score,
+      })),
+    });
+  }
+
+  let supplierMatch = { supplier: null, confidence: 0, alternatives: [] };
+  try {
+    supplierMatch = await supplierMatcher.findSupplier({
+      name:  extracted?.supplier?.name  || "",
+      gstin: extracted?.supplier?.gstin || "",
+    });
+  } catch (_) { /* keep empty */ }
+
+  // R7hr-16: persist the parsed audit row. status='parsed' regardless
+  // of confidence — operator decides apply/reject in the UI later.
+  let parsedInvoiceId = null;
+  try {
+    const doc = await ParsedInvoice.create({
+      fileHash, fileType, sourceFilename: filename,
+      rawText,
+      extracted,
+      lineMatches,
+      supplierMatch: {
+        matchedSupplierId:   supplierMatch.supplier?._id || null,
+        matchedSupplierName: supplierMatch.supplier?.name || "",
+        confidence:          Number(supplierMatch.confidence) || 0,
+      },
+      status: "parsed",
+      uploadedById:   req.user?._id || null,
+      uploadedByName: req.user?.fullName || req.user?.userName || "",
+      error: "",
+    });
+    parsedInvoiceId = doc._id;
+  } catch (_) { /* audit best-effort */ }
+
+  // R7hr-16: response shape consumed by Frontend C8 GRN upload card.
+  return res.json({
+    success: true,
+    data: {
+      parsedInvoiceId,
+      fileType,
+      supplier: {
+        extracted:  extracted?.supplier || null,
+        match:      _trimSupplier(supplierMatch.supplier),
+        confidence: Number(supplierMatch.confidence) || 0,
+        alternatives: (supplierMatch.alternatives || []).map(a => ({
+          supplier: _trimSupplier(a.supplier),
+          score:    a.score,
+        })),
+      },
+      invoiceNo:   extracted?.invoiceNo   || "",
+      invoiceDate: extracted?.invoiceDate || null,
+      totals:      extracted?.totals || {},
+      lines: lineMatches.map((m, i) => ({
+        extracted:    lines[i] || {},
+        match:        _trimDrug({ _id: m.matchedDrugId, name: m.matchedDrugName }),
+        confidence:   m.confidence,
+        alternatives: m.alternatives,
+      })),
+    },
+  });
+};
