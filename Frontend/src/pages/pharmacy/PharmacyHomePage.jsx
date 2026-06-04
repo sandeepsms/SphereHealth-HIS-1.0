@@ -1615,50 +1615,16 @@ function DispenseTab() {
       <Card title="Patient & Payment" color={C.blue} icon="pi-user">
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
 
-          {/* R7cs — UHID lookup is HIS-only. In a retail/standalone
-              pharmacy deployment there's no Patient or Admission DB to
-              query, so we hide the field entirely. The dispense flow
-              then takes the walk-in path by default — pharmacist
-              optionally types patient name / contact below if they
-              want to capture it for a Schedule H register entry. */}
-          {!IS_PHARMACY_STANDALONE && (
-            <Field label="UHID — pull from HIS">
-              <div style={{ display: "flex", gap: 6 }}>
-                <input className="his-field" style={{ flex: 1, fontFamily: "DM Mono, monospace" }}
-                  value={patient.patientUHID}
-                  placeholder="UH00000001 (or leave empty for walk-in)"
-                  onChange={e => setPatient(p => ({ ...p, patientUHID: e.target.value }))}
-                  onKeyDown={e => { if (e.key === "Enter") fetchByUHID(); }} />
-                <button onClick={fetchByUHID} disabled={lookupBusy || !patient.patientUHID.trim()}
-                  style={{ padding: "8px 14px", borderRadius: 7, border: "none",
-                    background: lookupBusy ? "#94a3b8" : C.blue, color: "#fff",
-                    fontWeight: 700, fontSize: 11.5,
-                    cursor: lookupBusy || !patient.patientUHID.trim() ? "not-allowed" : "pointer",
-                    whiteSpace: "nowrap" }}>
-                  {lookupBusy ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 10 }} />
-                              : <><i className="pi pi-search" style={{ fontSize: 10, marginRight: 4 }} />Fetch</>}
-                </button>
-              </div>
-            </Field>
-          )}
-
-          {hisLinked && !IS_PHARMACY_STANDALONE && (
-            <div style={{
-              padding: "9px 12px", background: C.greenL, border: `1.5px solid ${C.green}40`,
-              borderRadius: 7, display: "flex", alignItems: "center", gap: 8,
-            }}>
-              <i className="pi pi-link" style={{ color: C.green, fontSize: 12 }} />
-              <div style={{ flex: 1, fontSize: 11.5, fontWeight: 700, color: "#166534" }}>
-                Linked to HIS · {saleType}
-                {admissionNumber && <span style={{ marginLeft: 6, fontFamily: "DM Mono, monospace", color: C.green }}>{admissionNumber}</span>}
-              </div>
-              <button onClick={clearLink} title="Unlink"
-                style={{ width: 22, height: 22, borderRadius: 5, border: "none", background: "#fff", color: C.muted, cursor: "pointer", fontSize: 10 }}>
-                <i className="pi pi-times" />
-              </button>
-            </div>
-          )}
-
+          {/* R7hr-25: Removed the "UHID — pull from HIS" lookup block.
+              The Dispense tab is now restricted to Walk-in + Homecare
+              (see R7hr-22) — neither flow needs to resolve a HIS
+              patient or admission, so the field was dead UX. OPD
+              dispense goes through the OPD Rx tab (Rx-linked); IPD
+              dispense goes through the IPD Ledger tab (credit-linked).
+              All the manual patient fields below stay — pharmacist
+              optionally captures name/age/sex/contact/doctor for the
+              statutory Schedule H register column on a Sch H/H1/X
+              Walk-in sale (D&C Rules 65). */}
           <Field label="Patient name"><input className="his-field" value={patient.patientName} onChange={e => setPatient(p => ({ ...p, patientName: e.target.value }))} /></Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <Field label="Age"><input className="his-field" value={patient.age || ""} onChange={e => setPatient(p => ({ ...p, age: e.target.value }))} /></Field>
