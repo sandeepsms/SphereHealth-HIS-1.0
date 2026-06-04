@@ -74,4 +74,79 @@ async function notifyLowStock(items = [], recipients = []) {
   };
 }
 
-module.exports = { notifyLowStock };
+// R7hr-12-S2 (D8-10): pre-expiry batch notifier. Mirrors notifyLowStock —
+// console.log + one BillingAudit summary row per cron run. NABH MOM.4
+// requires "systems to identify and remove expired/recalled medications
+// BEFORE administration" — a proactive cron sweep (separate from the
+// on-demand /api/pharmacy/alerts dashboard tile) ensures procurement +
+// pharmacy supervisor get a daily push even when no one opens the page.
+//
+// items shape (per the audit's suggested refinement):
+//   { drugId, drugName, batchNo, expiryDate, daysToExpiry, remaining,
+//     supplierName?, salePrice? }
+//
+// Caller is the new `pharmacy-expiry-watch` cron in Backend/index.js. It
+// buckets items into urgent (≤30d), soon (≤60d), watch (≤90d), expired
+// (<0d) on the way in; we surface bucket counts in the audit summary.
+async function notifyExpiry(items = [], recipients = []) {
+  const arr = Array.isArray(items) ? items : [];
+  if (arr.length === 0) {
+    return { sent: 0, channel: "noop", note: "no batches within expiry horizon" };
+  }
+  // Bucket counts for the summary line + audit row.
+  const buckets = { expired: 0, urgent: 0, soon: 0, watch: 0 };
+  for (const x of arr) {
+    const d = Number(x.daysToExpiry);
+    if (!Number.isFinite(d))     continue;
+    if (d < 0)                   buckets.expired++;
+    else if (d <= 30)            buckets.urgent++;
+    else if (d <= 60)            buckets.soon++;
+    else                         buckets.watch++;
+  }
+  const summary = arr
+    .slice(0, 25)
+    .map((x) => `${x.drugName}[${x.batchNo}](exp ${String(x.expiryDate).slice(0, 10)}/${x.daysToExpiry}d, rem ${x.remaining})`)
+    .join(", ");
+  // eslint-disable-next-line no-console
+  console.log(
+    `[expiry-notifier] ${arr.length} batch(es) within expiry horizon ` +
+    `(expired=${buckets.expired}, ≤30d=${buckets.urgent}, ≤60d=${buckets.soon}, ≤90d=${buckets.watch}) → ` +
+    `${summary}${arr.length > 25 ? " …+" + (arr.length - 25) : ""}. ` +
+    `Recipients: ${recipients.length || "(none configured)"}.`,
+  );
+
+  // BillingAudit best-effort. Same retention pattern as notifyLowStock —
+  // ride MASTER_DRUG_PRICE_CHANGED until a dedicated NOTIFY_BATCH_EXPIRY
+  // enum value lands. Master-data class → 3y retention which is well
+  // within NABH MOM.4 expectations for this signal.
+  try {
+    if (BillingAudit && typeof BillingAudit.emitBillingAudit === "function") {
+      await BillingAudit.emitBillingAudit({
+        event:     "MASTER_DRUG_PRICE_CHANGED",
+        actorName: "System (pharmacy-expiry-watch)",
+        reason:    `Pharmacy expiry sweep: expired=${buckets.expired}, ≤30d=${buckets.urgent}, ` +
+                   `≤60d=${buckets.soon}, ≤90d=${buckets.watch}. Total=${arr.length}. ` +
+                   `Recipients: ${recipients.length}.`,
+        after: {
+          buckets,
+          items:      arr.slice(0, 50),
+          itemsCount: arr.length,
+          recipients: recipients.slice(0, 25),
+        },
+      });
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(`[expiry-notifier] audit emit failed: ${e.message}`);
+  }
+
+  return {
+    sent: arr.length,
+    channel: "log",
+    recipients: recipients.length,
+    buckets,
+    note: "stub — real SMS/email/Slack delivery deferred",
+  };
+}
+
+module.exports = { notifyLowStock, notifyExpiry };

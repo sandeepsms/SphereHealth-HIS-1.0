@@ -588,6 +588,27 @@ async function cancelIndent(indentId, { reason, user = {} } = {}) {
     err.statusCode = 409;
     throw err;
   }
+  // R7hr-12-S2 (D5-10): ack-ownership guard mirrors releaseIndent L342-355.
+  // Once a Pharmacist has Acknowledged an indent they own the pick. A ward
+  // nurse cancelling mid-pick races the release call into a 409
+  // ALREADY_CLOSED and wastes the dispense effort. So when status ==
+  // 'Acknowledged', only the acknowledger (or an Admin) may cancel — the
+  // permission registry already allows the role tier at indent.cancel, but
+  // that's intentionally per-role; this is the per-actor lockout that
+  // mirrors the release-side ACK_OWNERSHIP_MISMATCH invariant.
+  if (doc.status === "Acknowledged") {
+    const ackId      = doc.acknowledgedById && String(doc.acknowledgedById);
+    const cancelerId = String(user._id || user.id || "");
+    if (ackId && cancelerId && ackId !== cancelerId && user.role !== "Admin") {
+      const err = new Error(
+        `Acknowledged by ${doc.acknowledgedBy || "another pharmacist"} — only they (or an Admin) can cancel.`,
+      );
+      err.code       = "ACK_OWNERSHIP_MISMATCH";
+      err.status     = 409;
+      err.statusCode = 409;
+      throw err;
+    }
+  }
   doc.status        = "Cancelled";
   doc.cancelledBy   = user.fullName || user.name || "User";
   doc.cancelledById = user._id || user.id;
@@ -597,6 +618,284 @@ async function cancelIndent(indentId, { reason, user = {} } = {}) {
   return doc;
 }
 
+// ── R7hr-12-S2 (D3-03): returnIndent ──────────────────────────────
+//
+// Reverse a ward indent dispense: restore stock to the originating
+// FEFO batches, decrement item.issuedQty, and void the matching
+// MAR_RESERVATION trigger so the patient's bill stops carrying the
+// charge for drug they never received.
+//
+// Pre-R7hr-12-S2 the cancelIndent guard above promised callers a
+// "returnIndent / void-sale flow" but the function did not exist —
+// `grep returnIndent Backend/` returned only the error string itself
+// (verdict §1 of D3-03). Released ward stock could not be returned
+// to the batch through any software path, so operators either hand-
+// edited Mongo or let DrugBatch.remaining drift down on every wasted
+// dose (D3-03 verdict §5: "stock drift is cumulative and silent").
+//
+// Invariants:
+//   • Only Released / PartiallyReleased indents are eligible — Raised
+//     and Acknowledged indents have no stock to return; Cancelled
+//     indents are terminal (state machine rejects the move anyway).
+//   • returnQty must NOT exceed item.issuedQty (cumulative across all
+//     prior returns is enforced via issuedQty reads).
+//   • Stock restoration reads item.picked[] (the FEFO audit ledger
+//     stamped by releaseIndent at L480-486) and proportionally
+//     decrements quantityOut + bumps remaining per batch — preserving
+//     the DrugBatch invariant remaining = quantityIn - quantityOut -
+//     vendorReturned at every step. Mirrors the reversal pattern at
+//     pharmacyController.returnItems L1980-L1984 and addItems rollback
+//     L2299-L2310.
+//   • The CAS predicate on each batch is `quantityOut >= take` so a
+//     concurrent dispense racing the return can't drive quantityOut
+//     negative.
+//   • Indent.status is NOT changed (Released stays Released, ditto
+//     PartiallyReleased). The state machine guard at
+//     statusTransitionGuard.js L181-187 leaves Released terminal —
+//     the return is treated as a metadata mutation that records the
+//     reverse-FEFO trail without violating the lifecycle. A future
+//     R7-* sprint may add an explicit "Returned" terminal state if
+//     downstream reporting needs to distinguish full returns; for now
+//     issuedQty=0 across every item is the marker.
+//   • autoBillingService.onIndentReturned voids the matching MAR
+//     reservation trigger using the same partial-reduce pattern as
+//     onPharmacyReturn — so the IPD ledger refund + GST CN flow
+//     mirrors what cancelSale + returnItems already do for OPD/walk-in
+//     sales.
+async function returnIndent(indentId, { items = [], reason, user = {} } = {}) {
+  if (!reason || !String(reason).trim()) {
+    const err = new Error("Reason is required for return-indent");
+    err.code = "ARG_MISSING";
+    err.status = 400;
+    throw err;
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    const err = new Error("At least one item with returnQty > 0 required");
+    err.code = "ARG_MISSING";
+    err.status = 400;
+    throw err;
+  }
+
+  // Preflight — eligibility gate. Reading the doc once outside the
+  // retry loop is cheap and gives a clean 404 / 409 without holding a
+  // version lock open.
+  const preflight = await PharmacyIndent.findById(indentId).lean();
+  if (!preflight) {
+    const err = new Error("Indent not found");
+    err.status = 404;
+    throw err;
+  }
+  if (preflight.status !== "Released" && preflight.status !== "PartiallyReleased") {
+    const err = new Error(
+      `Cannot return on a ${preflight.status} indent — nothing has been dispensed yet. ` +
+      `Use cancelIndent for Raised / Acknowledged indents instead.`,
+    );
+    err.code = "NOT_RELEASED";
+    err.status = 409;
+    throw err;
+  }
+
+  // Normalize the request into a Map keyed by itemId; clamp returnQty
+  // to issuedQty so the caller can't drive issuedQty negative.
+  const returnMap = new Map();
+  for (const r of items) {
+    const itemId = String(r.itemId || "");
+    const qty    = Number(r.returnQty || 0);
+    if (!itemId) {
+      const err = new Error("Each return item needs an itemId");
+      err.code = "ARG_MISSING";
+      err.status = 400;
+      throw err;
+    }
+    if (!Number.isFinite(qty) || qty <= 0) {
+      const err = new Error(`Item ${itemId}: returnQty must be > 0`);
+      err.code = "INVALID_QTY";
+      err.status = 400;
+      throw err;
+    }
+    returnMap.set(itemId, qty);
+  }
+
+  // Validate every requested itemId exists on the indent AND has
+  // enough issuedQty to satisfy the return. Bundled into one pass so
+  // the caller gets a single 409 with all the offending lines (rather
+  // than aborting on the first one and dribbling errors).
+  const violations = [];
+  for (const [itemId, qty] of returnMap) {
+    const item = (preflight.items || []).find((it) => String(it._id) === itemId);
+    if (!item) {
+      violations.push(`item ${itemId}: not found on this indent`);
+      continue;
+    }
+    const issued = Number(item.issuedQty || 0);
+    if (qty > issued) {
+      violations.push(
+        `${item.drugName}: cannot return ${qty} — only ${issued} unit(s) issued on this indent`,
+      );
+    }
+  }
+  if (violations.length > 0) {
+    const err = new Error(`Return rejected: ${violations.join("; ")}`);
+    err.code = "EXCEEDS_ISSUED";
+    err.status = 409;
+    throw err;
+  }
+
+  // Reverse-FEFO stock restoration — for each item, walk picked[]
+  // newest-first and proportionally decrement quantityOut + bump
+  // remaining per batch. We don't reverse the FEFO pick ledger
+  // (item.picked[] is append-only, audit-grade), but we DO record a
+  // separate "returnedPicks" trail on the item so a downstream report
+  // can show net-dispensed = sum(picked.qty) - sum(returnedPicks.qty)
+  // per batch. (Item-schema migration to add `returnedPicks[]` is a
+  // separate, lazy concern — for the first cut we record the trail in
+  // the audit row via the controller's INDENT_RETURNED emit.)
+  const allRestored = []; // [{ itemId, batchId, qty }]
+  for (const [itemId, returnQty] of returnMap) {
+    const item = (preflight.items || []).find((it) => String(it._id) === itemId);
+    if (!item) continue;
+    const picks = Array.isArray(item.picked) ? item.picked : [];
+
+    // Sum picks for THIS item's outstanding balance — if picks were
+    // never recorded (legacy / manual line without drugId), we can't
+    // reverse stock atomically, but we can still let the issuedQty
+    // decrement + billing void happen. Surface a warn via err.code
+    // so the controller can include it in the audit reason.
+    let remaining = returnQty;
+
+    // Walk picks newest-first so the most recent batch absorbs the
+    // return — preserves FEFO for the next dispense (oldest batches
+    // stay drawn down first). Stable sort fallback for legacy picks
+    // missing pickedAt.
+    const sortedPicks = picks
+      .map((p, idx) => ({ p, idx, t: p.pickedAt ? new Date(p.pickedAt).getTime() : -idx }))
+      .sort((a, b) => b.t - a.t);
+
+    for (const { p } of sortedPicks) {
+      if (remaining <= 0) break;
+      if (!p.batchId) continue;
+      const take = Math.min(Number(p.qty || 0), remaining);
+      if (take <= 0) continue;
+
+      // CAS predicate: only restore if quantityOut still has enough
+      // to give back. Defends against concurrent vendor-returns or
+      // hand-edits.
+      const updated = await DrugBatch.findOneAndUpdate(
+        { _id: p.batchId, quantityOut: { $gte: take } },
+        { $inc: { quantityOut: -take, remaining: take } },
+        { new: true },
+      ).catch(() => null);
+      if (!updated) {
+        // Best-effort: log and continue. The issuedQty still decrements
+        // below — physical stock that can't be restored to the batch
+        // (deleted/inactive/CAS-missed) becomes a separate reconciliation
+        // problem the operator sees via DrugBatch.remaining anomalies.
+        console.error(
+          `[Indent] returnIndent: batch ${p.batchId} restore qty=${take} failed (CAS missed or batch missing) ` +
+          `for item ${itemId}. Indent ${indentId} return continues — stock drift may need manual reconcile.`,
+        );
+        continue;
+      }
+      allRestored.push({ itemId, batchId: p.batchId, qty: take });
+      remaining -= take;
+    }
+    // Leftover `remaining` (no picks / all picks failed CAS) — the
+    // controller's audit row carries the gap so an operator can chase it.
+  }
+
+  // Persist the issuedQty decrement under VersionError retry. Stock
+  // CAS already landed above, so the retry is bounded to the indent
+  // doc itself — concurrent ack races / parallel returns are the
+  // only contenders.
+  let savedDoc;
+  try {
+    savedDoc = await retryVersionError(async () => {
+      const doc = await PharmacyIndent.findById(indentId);
+      if (!doc) {
+        const err = new Error("Indent not found");
+        err.status = 404;
+        throw err;
+      }
+      if (doc.status !== "Released" && doc.status !== "PartiallyReleased") {
+        // State changed under us (someone cancelled mid-flight is not
+        // legal per the matrix, but defensive nonetheless).
+        const err = new Error(`Indent is ${doc.status} — cannot return`);
+        err.code = "NOT_RELEASED";
+        throw err;
+      }
+      for (const item of doc.items) {
+        const ret = returnMap.get(String(item._id));
+        if (!ret) continue;
+        const newIssued = Math.max(0, Number(item.issuedQty || 0) - ret);
+        item.issuedQty = newIssued;
+      }
+      await doc.save();
+      return doc;
+    }, { label: "returnIndent" });
+  } catch (saveErr) {
+    // Roll back the stock restoration we already committed — return
+    // is all-or-nothing. Best-effort because the dominant failure
+    // mode here is VersionError exhaustion, not a Mongo connectivity
+    // problem.
+    for (const r of allRestored) {
+      await DrugBatch.findByIdAndUpdate(r.batchId, {
+        $inc: { quantityOut: r.qty, remaining: -r.qty },
+      }).catch(() => { /* best-effort rollback */ });
+    }
+    throw saveErr;
+  }
+
+  // Bill side: void the matching MAR_RESERVATION trigger(s). Pattern
+  // mirrors autoBillingService.onPharmacyReturn (the OPD/walk-in
+  // counterpart). The release path stamped the indent itemId into
+  // sourceDocumentId at autoBillingService.js L2722, so we have a
+  // strong join key. Best-effort throughout: a billing-side failure
+  // doesn't roll back the stock (the operator can manually void via
+  // the IPD Live Ledger's Stuck-Triggers tile if this hiccups).
+  try {
+    const autoBilling = require("../Billing/autoBillingService");
+    if (typeof autoBilling.onIndentReturned === "function") {
+      await autoBilling.onIndentReturned(savedDoc, {
+        items: [...returnMap.entries()].map(([itemId, returnQty]) => ({ itemId, returnQty })),
+        reason,
+        user,
+      });
+    } else {
+      console.warn("[Indent] autoBillingService.onIndentReturned not exported — bill side not voided");
+    }
+  } catch (e) {
+    console.error("[Indent] returnIndent bill-side void failed:", e.message);
+    // Pending-review BillingTrigger so the Stuck-Triggers tile surfaces
+    // the gap. Mirrors the releaseIndent pending-review fallback above.
+    try {
+      const BillingTrigger = require("../../models/Billing/BillingTrigger");
+      await BillingTrigger.create({
+        admissionId:         savedDoc.admissionId,
+        patientId:           savedDoc.patientId,
+        UHID:                savedDoc.UHID,
+        patientType:         "IPD",
+        serviceName:         `Indent ${savedDoc.indentNumber || savedDoc._id} — return-bill-void failed`,
+        quantity:            1,
+        sourceType:          "MAR_RESERVATION",
+        sourceDocumentId:    savedDoc._id,
+        sourceDocumentModel: "PharmacyIndent",
+        orderedBy:           user.fullName || user.name || "Pharmacist",
+        orderedById:         user._id || user.id || null,
+        orderedByRole:       user.role || "Pharmacist",
+        triggeredBy:         "indent-return",
+        triggeredByRole:     "System",
+        status:              "pending-review",
+        reviewReason:        `indent-return-bill-void-failed: ${e.message}`,
+        orderDetails:        `Indent ${savedDoc._id} returned — autoBilling.onIndentReturned threw. Operator must void the matching MAR_RESERVATION trigger manually.`,
+      });
+    } catch (logErr) {
+      console.error("[Indent] returnIndent could not log pending-review trigger:", logErr.message);
+    }
+  }
+
+  return savedDoc;
+}
+
 module.exports = {
   createIndent,
   listIndents,
@@ -604,4 +903,7 @@ module.exports = {
   acknowledgeIndent,
   releaseIndent,
   cancelIndent,
+  // R7hr-12-S2 (D3-03): ward-stock restore endpoint — reverses release
+  // stock + voids the matching MAR_RESERVATION trigger.
+  returnIndent,
 };

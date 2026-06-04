@@ -41,6 +41,17 @@ const StockTakeLineSchema = new Schema(
     },
 
     adjustedAt:  { type: Date, default: null },                // when verifyAndAdjust posted this line
+
+    // R7hr-12-S2 (D6-04): per-line actor stamp for the pharmacist who
+    // walked the shelf and entered the physical count. Pre-R7hr-12 the
+    // physical-count entry was attributed implicitly to countedBy (the
+    // creator of the stock-take), so a second-shift pharmacist who
+    // actually counted the stock left no trace. NABH AAC.7 SOD relies
+    // on this for the verify-time check — verifier must not equal
+    // either the creator OR any per-line entrant.
+    enteredBy:    { type: String, default: "" },
+    enteredById:  { type: Schema.Types.ObjectId, ref: "User", default: null },
+    enteredAt:    { type: Date,   default: null },
   },
   { _id: true },
 );

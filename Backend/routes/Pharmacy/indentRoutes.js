@@ -35,5 +35,11 @@ router.post("/:id/release",       validateObjectIdParam("id"), requireAction("in
 // Cancel is shared — either side (nurse raised it in error / pharmacist
 // rejects). Permission lets both through; controller logs who did it.
 router.post("/:id/cancel",        validateObjectIdParam("id"), requireAction("indent.cancel"),   ctrl.cancel);
+// R7hr-12-S2 (D3-03): ward-stock-return endpoint. Reverses stock to the
+// originating FEFO batches, decrements item.issuedQty, and voids the
+// matching MAR_RESERVATION trigger. Gated on indent.return (Admin +
+// Pharmacist only — Nurse cannot reverse a dispense unilaterally).
+// Body: { items: [{ itemId, returnQty }], reason }.
+router.post("/:id/return",        validateObjectIdParam("id"), requireAction("indent.return"),   ctrl.return);
 
 module.exports = router;

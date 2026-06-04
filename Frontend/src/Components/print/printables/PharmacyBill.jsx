@@ -199,8 +199,21 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
      resolve Counter from cashier/preparedBy/createdBy when no explicit
      counter is set. Pre-fix the strip showed UHID="—" / Age-Sex="—" /
      Contact="—" / Counter="—" on every dispense print because the
-     template was reading the wrong field names. */
+     template was reading the wrong field names.
+
+     R7hr-12-S2 (D7-04): when the bill is tied to an admission
+     (saleType IPD/Daycare/Emergency), surface IPD No, Bed, Ward on
+     the strip so the printed bill carries the bed + admission ID
+     NABH HIC.4/IPC.2 expect on every patient-facing encounter
+     document. Walk-in/OPD bills must NOT carry dashed IPD fields
+     so we gate the three KVs on `isIPD`. Fallback chain mirrors the
+     existing chain-of-fallbacks idiom already used on lines 205-214
+     and covers both `bedNumber` (sent by PharmacyLedgerPage's
+     `buildConsolidatedPayload`) and `bed`/`bedNo` (legacy callers). */
   const genderAge = [r.gender, r.age && `${r.age}Y`].filter(Boolean).join(" ");
+  const isIPD = ["IPD", "Daycare", "Day Care", "Emergency"].includes(
+    String(r.saleType || "").trim()
+  );
   const patientLeft = [
     { label: "Bill No",  value: r.billNumber || r.invoiceNo || "—" },
     { label: "UHID",     value: r.UHID || r.uhid || r.patientUHID || "—" },
@@ -214,6 +227,15 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
     { label: "Counter",   value: r.counter || r.pharmacyCounter || r.cashier || r.preparedBy || r.createdBy || "—" },
     { label: "Payer",     value: r.payer || (r.tpaName ? r.tpaName : "Self") },
     { label: "GSTIN",     value: r.customerGstin || "" },
+    // R7hr-12-S2 (D7-04): IPD/Daycare/Emergency context — bed +
+    // admission identifiers required for NABH-compliant patient-facing
+    // documents and for TPA/insurance reconciliation of per-admission
+    // pharmacy spend.
+    ...(isIPD ? [
+      { label: "IPD No", value: r.admissionNumber || r.ipdNo || r.ipdNumber || "—" },
+      { label: "Bed",    value: r.bedNumber || r.bed || r.bedNo || "—" },
+      { label: "Ward",   value: r.wardName || r.ward || "—" },
+    ] : []),
   ];
 
   return (

@@ -52,12 +52,20 @@ exports.getOne = async (req, res, next) => {
 };
 
 // PUT /api/pharmacy/stock-take/:id/line  { batchId, physicalQty, reason }
+// R7hr-12-S2 (D6-04): forward req.user so the service can stamp the
+// per-line entrant (enteredBy / enteredById / enteredAt). Pre-fix this
+// controller silently dropped req.user — the physical-count entry was
+// attributed implicitly to the stock-take creator (countedBy stamped at
+// createCount-time), so a second-shift pharmacist who walked the shelf
+// left no audit trace. Compare with exports.verify below, which has
+// always extracted req.user for verifierId/verifierName.
 exports.enterPhysical = async (req, res, next) => {
   try {
     const doc = await svc.enterPhysical(req.params.id, {
       batchId:     req.body?.batchId,
       physicalQty: req.body?.physicalQty,
       reason:      req.body?.reason,
+      user:        req.user || {},
     });
     return sendOk(res, doc);
   } catch (e) {

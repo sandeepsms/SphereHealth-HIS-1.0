@@ -1,7 +1,17 @@
 const express = require("express");
 const router  = express.Router();
 const ctrl    = require("../../controllers/Pharmacy/pharmacyController");
-const { requireAction } = require("../../middleware/auth");
+const {
+  requireAction,
+  // R7hr-12-S2 (D6-03): scope-filter middleware so Doctor / Nurse rx.read
+  // holders only see their own panel / ward, not every patient in the
+  // hospital. attachDoctorProfile loads req.doctorProfile; the two
+  // restrictTo helpers attach req.scopeFilter for the controller to merge
+  // into its Mongo where{}. Both NO-OP for Admin/Pharmacist/Accountant.
+  attachDoctorProfile,
+  restrictToOwnDoctorPatients,
+  restrictToOwnNurseWard,
+} = require("../../middleware/auth");
 // R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
@@ -30,7 +40,9 @@ router.get   ("/stock",          requireAction("rx.read"),            ctrl.stock
 
 // Sales
 router.post  ("/sales",                 requireAction("pharmacy.dispense"),  ctrl.dispense);
-router.get   ("/sales",                 requireAction("rx.read"),            ctrl.listSales);
+// R7hr-12-S2 (D6-03): scope-filter listSales by Doctor's panel / Nurse's
+// ward when applicable. Helpers NO-OP for Admin/Pharmacist/Accountant.
+router.get   ("/sales",                 requireAction("rx.read"),            attachDoctorProfile, restrictToOwnDoctorPatients, restrictToOwnNurseWard, ctrl.listSales);
 router.get   ("/sales/:id",             requireAction("rx.read"),            ctrl.getSale);
 router.post  ("/sales/:id/cancel",      requireAction("pharmacy.cancel"),    ctrl.cancelSale);
 router.post  ("/sales/:id/return",      requireAction("pharmacy.return"),    ctrl.returnItems);
@@ -43,8 +55,11 @@ router.post  ("/sales/:id/add-items",   requireAction("pharmacy.add-items"), ctr
 // pharmacy.dispense covers Pharmacist + Admin (the two roles that run a
 // pharmacy counter); both list endpoints use rx.read so Receptionist
 // can also see outstanding totals before billing-counter discharge.
-router.get   ("/credit/ipd-admissions",         requireAction("rx.read"),            ctrl.listIpdCreditAdmissions);
-router.get   ("/credit/admission/:admissionId", validateObjectIdParam("admissionId"), requireAction("rx.read"),            ctrl.getCreditByAdmission);
+// R7hr-12-S2 (D6-03): IPD credit ledger endpoints surface patientName,
+// UHID, drug items, and doctor-name across every admission. Doctor / Nurse
+// rx.read holders must only see their own panel / ward, not every patient.
+router.get   ("/credit/ipd-admissions",         requireAction("rx.read"),            attachDoctorProfile, restrictToOwnDoctorPatients, restrictToOwnNurseWard, ctrl.listIpdCreditAdmissions);
+router.get   ("/credit/admission/:admissionId", validateObjectIdParam("admissionId"), requireAction("rx.read"),            attachDoctorProfile, restrictToOwnDoctorPatients, restrictToOwnNurseWard, ctrl.getCreditByAdmission);
 router.post  ("/sales/:id/collect-credit",      validateObjectIdParam("id"),          requireAction("pharmacy.dispense"),  ctrl.collectCredit);
 // R7hr-5: apply patient advance pool against an outstanding sale —
 // gated on pharmacy.dispense same as collectCredit (debits balance
@@ -53,7 +68,7 @@ router.post  ("/sales/:id/apply-advance",       validateObjectIdParam("id"),    
 // R7cv — Day-wise audit log of every IPD credit sale (outstanding +
 // already-cleared) — pharmacist needs to see "what went out on
 // credit historically" not just "what's currently blocking".
-router.get   ("/credit/ipd-history",            requireAction("rx.read"),            ctrl.getIpdCreditHistory);
+router.get   ("/credit/ipd-history",            requireAction("rx.read"),            attachDoctorProfile, restrictToOwnDoctorPatients, restrictToOwnNurseWard, ctrl.getIpdCreditHistory);
 
 // Settings (in-house vs outsourced print identity)
 router.get   ("/settings",       requireAction("rx.read"),            ctrl.getSettings);

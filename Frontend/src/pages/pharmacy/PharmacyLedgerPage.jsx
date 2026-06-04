@@ -321,12 +321,83 @@ export default function PharmacyLedgerPage({
     const amt = Number(colAmt);
     if (!Number.isFinite(amt) || amt <= 0) return toast.warn("Enter an amount > 0");
     if (collect && amt > collect.max + 0.01) return toast.warn(`Amount exceeds bill outstanding (${fmtINR(collect.max)})`);
+    // R7hr-12-S2 (D9-03): require a txn-ref for any non-cash mode so the
+    // collection row is reconciliable against bank/PSP statements. Empty
+    // colTxn on a Card/UPI/Mixed receipt creates a permanent unverifiable
+    // audit row (the value is persisted into Sale.collectionLog[].txnRef
+    // and emitted into ClinicalAudit.after.txnRef) — exactly the NABH
+    // MOM.4 / GST §35 evidentiary gap the audit flagged. UI already hides
+    // the field for Cash; this guard makes it mandatory for everything
+    // else.
+    if (colMode !== "Cash" && !String(colTxn || "").trim()) {
+      return toast.warn(`Txn reference required for ${colMode} collection`);
+    }
     setColSaving(true);
     try {
-      await axios.post(`${API_ENDPOINTS.BASE}/pharmacy/sales/${collect.sale._id}/collect-credit`, {
-        amount: amt, mode: colMode, txnRef: colTxn,
-      });
+      // R7hr-12-S2 (D4-04): capture the response so we can extract the
+      // freshly-pushed collectionLog row (carries the backend-issued
+      // PHM-COLL-YY-NNNN receiptNumber generated atomically inside the
+      // retryVersionError block in pharmacyController.collectCredit).
+      // Mirrors the reception payment-receipt flow at ReceptionBilling
+      // L1207-L1249 — every payment recorded must hand the patient a
+      // printable slip (NABH AAC.7 / IMS.2). Pre-R7hr-12 the receipt
+      // number was generated, stored, and silently discarded.
+      const r = await axios.post(
+        `${API_ENDPOINTS.BASE}/pharmacy/sales/${collect.sale._id}/collect-credit`,
+        { amount: amt, mode: colMode, txnRef: colTxn },
+      );
+      const updatedSale = r?.data?.data || r?.data || null;
       toast.success(`Collected ${fmtINR(amt)} via ${colMode}`);
+      // Fire the payment receipt before clearing modal state so we keep
+      // a reference to the collected sale + amount. openPrint stashes the
+      // payload into sessionStorage + opens a new tab, so it's safe to
+      // continue with state resets immediately after the call returns.
+      try {
+        const lastCol = Array.isArray(updatedSale?.collectionLog) && updatedSale.collectionLog.length
+          ? updatedSale.collectionLog[updatedSale.collectionLog.length - 1]
+          : null;
+        const receiptNo =
+          (lastCol && lastCol.receiptNumber) ||
+          `${updatedSale?.billNumber || collect.sale.billNumber}-COLL`;
+        const newBalance = Number(
+          updatedSale?.balanceDue?.$numberDecimal ??
+          updatedSale?.balanceDue ??
+          Math.max(0, collect.max - amt),
+        );
+        openPrint("payment-receipt", {
+          receiptNo,
+          patientName:  patient.patientName,
+          uhid:         patient.UHID,
+          visitType:    "IPD",
+          visitNo:      patient.admissionNumber,
+          ipdNo:        patient.admissionNumber,
+          age:          patient.age,
+          gender:       patient.gender,
+          amount:       amt,
+          method:       colMode,
+          refNo:        colTxn || "",
+          receivedBy:   user?.fullName || user?.name || "Pharmacy",
+          paidAt:       new Date().toISOString(),
+          purpose:      newBalance <= 0.005
+            ? `Full settlement of pharmacy bill ${updatedSale?.billNumber || collect.sale.billNumber}`
+            : `Part-payment towards pharmacy bill ${updatedSale?.billNumber || collect.sale.billNumber}`,
+          billTotal:    Number(updatedSale?.grandTotal?.$numberDecimal ?? updatedSale?.grandTotal ?? collect.sale.grandTotal ?? 0),
+          totalPaid:    Number(updatedSale?.amountPaid?.$numberDecimal ?? updatedSale?.amountPaid ?? 0),
+          runningBalance: newBalance,
+          remarks:      "",
+          // PrintAudit anchor — use the existing PharmacyBill entity type
+          // so PharmacySale.printCount tracks per-bill reprints. The
+          // entityNumber carries the receipt number so the audit row is
+          // unambiguous in the print register.
+          printAudit: {
+            entityType:   "PharmacyBill",
+            entityId:     updatedSale?._id || collect.sale._id,
+            entityNumber: receiptNo,
+            UHID:         patient.UHID,
+            patientName:  patient.patientName,
+          },
+        });
+      } catch (_) { /* print failure non-blocking */ }
       setCollect(null); setColAmt(""); setColTxn("");
       load();
     } catch (e) {
@@ -360,7 +431,65 @@ export default function PharmacyLedgerPage({
         body,
       );
       const applied = r?.data?.meta?.applied ?? 0;
+      const advanceRemaining = r?.data?.meta?.advanceRemaining ?? 0;
       toast.success(`Applied ${fmtINR(applied)} from advance`);
+      // R7hr-12-S2 (D4-04): print a payment receipt after a successful
+      // advance application. Backend pushes a {mode:"Advance"} row onto
+      // sale.collectionLog with a fresh PHM-COLL-YY-NNNN receiptNumber
+      // (atomic counter inside the withTransaction block at
+      // pharmacyController.applyAdvanceToSale L1744-L1804) — that receipt
+      // was being generated and silently discarded. Patient now walks
+      // away from the credit-clearance counter with paper proof of the
+      // advance-deduction, closing the NABH AAC.7 / IMS.2 audit gap.
+      try {
+        const updatedSale = r?.data?.data || null;
+        const lastCol = Array.isArray(updatedSale?.collectionLog) && updatedSale.collectionLog.length
+          ? updatedSale.collectionLog[updatedSale.collectionLog.length - 1]
+          : null;
+        const receiptNo =
+          (lastCol && lastCol.receiptNumber) ||
+          `${updatedSale?.billNumber || sale.billNumber}-ADV`;
+        const newBalance = Number(
+          updatedSale?.balanceDue?.$numberDecimal ??
+          updatedSale?.balanceDue ??
+          Math.max(0, dec(sale.balanceDue) - applied),
+        );
+        if (applied > 0) {
+          openPrint("payment-receipt", {
+            receiptNo,
+            patientName:  patient.patientName,
+            uhid:         patient.UHID,
+            visitType:    "IPD",
+            visitNo:      patient.admissionNumber,
+            ipdNo:        patient.admissionNumber,
+            age:          patient.age,
+            gender:       patient.gender,
+            amount:       applied,
+            method:       "cash", // method drives the styling chip; "Advance"
+                                  // isn't a METHOD_STYLE key in PaymentReceipt
+                                  // so we tag the purpose line with the
+                                  // ADVANCE-APPLIED context instead.
+            refNo:        "",
+            receivedBy:   user?.fullName || user?.name || "Pharmacy",
+            paidAt:       new Date().toISOString(),
+            purpose:      newBalance <= 0.005
+              ? `Advance applied — full settlement of pharmacy bill ${updatedSale?.billNumber || sale.billNumber}`
+              : `Advance applied towards pharmacy bill ${updatedSale?.billNumber || sale.billNumber}`,
+            billTotal:    Number(updatedSale?.grandTotal?.$numberDecimal ?? updatedSale?.grandTotal ?? sale.grandTotal ?? 0),
+            totalPaid:    Number(updatedSale?.amountPaid?.$numberDecimal ?? updatedSale?.amountPaid ?? 0),
+            runningBalance: newBalance,
+            remarks:      `Advance pool remaining: ${fmtINR(advanceRemaining)}`,
+            // PrintAudit anchor — see comment in submitCollect above.
+            printAudit: {
+              entityType:   "PharmacyBill",
+              entityId:     updatedSale?._id || sale._id,
+              entityNumber: receiptNo,
+              UHID:         patient.UHID,
+              patientName:  patient.patientName,
+            },
+          });
+        }
+      } catch (_) { /* print failure non-blocking */ }
       await load();
     } catch (e) {
       toast.error(e?.response?.data?.message || e.message);
@@ -383,6 +512,10 @@ export default function PharmacyLedgerPage({
       patientUHID:     sale.patientUHID     || sale.UHID || patient.UHID,
       admissionNumber: sale.admissionNumber || patient.admissionNumber,
       bedNumber:       sale.bedNumber       || patient.bed,
+      // R7hr-12-S2 (D7-04): forward ward + saleType so the IPD-context
+      // strip in PharmacyBill surfaces Ward and gates correctly on IPD.
+      wardName:        sale.wardName        || patient.wardName || patient.ward,
+      saleType:        sale.saleType        || "IPD",
       consultantName:  sale.consultantName  || patient.consultant,
       doctorName:      sale.doctorName      || patient.consultant,
       // R7hr-7: same patient + preparer enrichment as the consolidated
@@ -392,6 +525,23 @@ export default function PharmacyLedgerPage({
       contactNumber:   sale.contactNumber || patient.contactNumber,
       preparedBy:      sale.preparedBy    || user?.fullName || user?.name || "",
       counter:         sale.counter       || user?.fullName || user?.employeeId || "",
+      // R7hr-12-S2 (D7-05): PrintAudit anchor for per-sale reprints from
+      // the ledger. Pre-fix the spread `...sale` carried the stored
+      // printCount snapshot but reprints from THIS page never POST'd to
+      // /api/print-audit (no printAudit block on the payload), so the
+      // counter never advanced — the same audit row was reproducible
+      // indefinitely. Anchoring on PharmacySale._id makes
+      // pharmacy-bill reprints from the ledger bump
+      // PharmacySale.printCount and surface the DUPLICATE watermark on
+      // every reprint past the first. Mirrors the pattern at
+      // PharmacyHomePage L1152/L1441/L1564/L1594/L1821.
+      printAudit: {
+        entityType:   "PharmacyBill",
+        entityId:     sale._id,
+        entityNumber: sale.billNumber,
+        UHID:         sale.patientUHID || sale.UHID || patient.UHID,
+        patientName:  sale.patientName  || patient.patientName,
+      },
     });
   };
 
@@ -459,6 +609,9 @@ export default function PharmacyLedgerPage({
       consultantName:  patient.consultant,
       admissionNumber: patient.admissionNumber,
       bedNumber:       patient.bed,
+      // R7hr-12-S2 (D7-04): pass wardName too so the PharmacyBill's
+      // IPD-context strip renders Ward instead of perpetual "—".
+      wardName:        patient.wardName || patient.ward,
       // R7hr-7: "Prepared by" + "Counter" from the logged-in user so
       // the print carries real provenance instead of "Pharmacist"
       // placeholder text.
@@ -477,6 +630,26 @@ export default function PharmacyLedgerPage({
       note: label.startsWith("FINAL")
         ? `Final settlement bill — consolidated of ${sales.length} dispense(s) on this admission.`
         : `Running total · ${sales.length} dispense(s) to date · final bill issued at settlement.`,
+      // R7hr-12-S2 (D7-05): PrintAudit anchor. Consolidated INT/FNL
+      // bills span multiple PharmacySale rows so they have no single
+      // backing entity. We register a new `PharmacyConsolidatedBill`
+      // entity type in PrintAuditModel/ENTITY_MODEL (backend) that
+      // anchors on admissionId. ENTITY_MODEL maps it to `null` so
+      // printCount falls back to a count of prior PrintAudit rows for
+      // the same admission anchor — i.e. each admission has its own
+      // duplicate counter for the INT/FNL document family without
+      // polluting Admission.printCount (which IPDFile/MARSheet use).
+      // Pre-R7hr-12 these reprints silently skipped audit entirely:
+      // FINAL PHARMACY BILL could be reprinted 30 times without a
+      // single audit row or DUPLICATE watermark — exactly the GST
+      // §48(4) / NABH duplicate-copy violation the audit flagged.
+      printAudit: {
+        entityType:   "PharmacyConsolidatedBill",
+        entityId:     admissionId,
+        entityNumber: `${prefix}-PHM-${admSlug || fallback}`,
+        UHID:         patient.UHID,
+        patientName:  patient.patientName,
+      },
     };
   };
   const printInterimBill = () => {
@@ -499,6 +672,17 @@ export default function PharmacyLedgerPage({
   const submitAdvance = async () => {
     const amt = Number(advAmt);
     if (!Number.isFinite(amt) || amt <= 0) return toast.warn("Enter an amount > 0");
+    // R7hr-12-S2 (D9-03): require a txn-ref for any non-cash advance so
+    // the deposit row is reconciliable against bank/PSP statements. Same
+    // rationale as submitCollect — empty advTxn on a cashless advance
+    // creates a permanent unverifiable audit row (NABH MOM.4 / GST §35
+    // evidentiary gap). The patientAdvanceService backend currently only
+    // "soft-warns" on missing transactionId (services/Billing/
+    // patientAdvanceService.js L65-L70), so this UI guard is the first
+    // enforceable gate.
+    if (advMode !== "Cash" && !String(advTxn || "").trim()) {
+      return toast.warn(`Txn reference required for ${advMode} advance`);
+    }
     setAdvSaving(true);
     try {
       await axios.post(`${API_ENDPOINTS.BASE}/billing/advance`, {
@@ -938,8 +1122,13 @@ export default function PharmacyLedgerPage({
               </div>
               {colMode !== "Cash" && (
                 <div>
+                  {/* R7hr-12-S2 (D9-03): show explicit "Required" on the
+                      label so the cashier sees the validation rule before
+                      hitting Submit. submitCollect blocks empty values
+                      for any non-Cash mode. */}
                   <label style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
                     {colMode === "Card" ? "Card last-4 / ref" : "Txn reference"}
+                    <span style={{ color: "#dc2626", marginLeft: 4 }}>* Required</span>
                   </label>
                   <input value={colTxn} onChange={e => setColTxn(e.target.value.slice(0, 64))}
                     placeholder={colMode === "Card" ? "•••• 1234" : "UTR / VPA / PSP ref"}
@@ -993,8 +1182,13 @@ export default function PharmacyLedgerPage({
               </div>
               {advMode !== "Cash" && (
                 <div>
+                  {/* R7hr-12-S2 (D9-03): show explicit "Required" on the
+                      label so the cashier sees the validation rule
+                      before hitting Submit. submitAdvance blocks empty
+                      values for any non-Cash mode. */}
                   <label style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
                     {advMode === "Card" ? "Card last-4 / ref" : "Txn reference"}
+                    <span style={{ color: "#dc2626", marginLeft: 4 }}>* Required</span>
                   </label>
                   <input value={advTxn} onChange={e => setAdvTxn(e.target.value.slice(0, 64))}
                     placeholder={advMode === "Card" ? "•••• 1234" : "UTR / VPA / PSP ref"}

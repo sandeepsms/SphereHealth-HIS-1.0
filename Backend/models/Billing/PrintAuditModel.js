@@ -29,6 +29,14 @@ const PrintAuditSchema = new mongoose.Schema(
         "DischargeSummary",
         "Prescription",
         "PharmacyBill",
+        // R7hr-12-S2 (D7-05): consolidated/interim/final pharmacy bill is a
+        // virtual aggregate spanning multiple PharmacySale rows (one per
+        // dispense) — it has no single backing model. Register the entity
+        // type here so PharmacyLedgerPage's INT-PHM-… / FNL-PHM-… reprints
+        // can record an audit row and surface the DUPLICATE watermark.
+        // ENTITY_MODEL maps this to null so printCount falls back to a
+        // count of prior PrintAudit rows for the same admission anchor.
+        "PharmacyConsolidatedBill",
         "ConsentForm",
         "MedicalCertificate",
         "TPAAuthorization",

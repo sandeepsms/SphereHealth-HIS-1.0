@@ -55,6 +55,22 @@ const LONG_RETENTION_EVENTS = new Set([
   "PHARMACY_RETURNED",
   "PHARMACY_ITEMS_ADDED",
   "PHARMACY_CREDIT_COLLECTED",
+  // R7hr-12-S2 (D8-02): money mutation — applyAdvanceToSale rides the same
+  // 7y NABH MOM.4 + GST §35 retention floor as the other pharmacy money
+  // events above. Pre-fix the event was missing from the ClinicalAudit
+  // enum entirely (Sprint 1 added it); without this LONG_RETENTION entry
+  // the row would archive at 3y rather than the financial 7y floor.
+  "PHARMACY_ADVANCE_APPLIED",
+  // R7hr-12-S2 (D5-04): Indent state transitions are part of the same
+  // HAM drug trail — every raise/ack/release/cancel/return must survive
+  // 7y for NABH MOM.4 + IPSG.3 surveyor reconstruction. The release row
+  // is especially load-bearing (FEFO pick log + reservation trigger id);
+  // INDENT_RETURNED carries the reverse-FEFO restoration audit from D3-03.
+  "INDENT_RAISED",
+  "INDENT_ACKNOWLEDGED",
+  "INDENT_RELEASED",
+  "INDENT_CANCELLED",
+  "INDENT_RETURNED",
   "MLC_CREATED",
   "MLC_FINALIZED",
   "MLC_CLOSED",

@@ -49,6 +49,15 @@ const SALE_ITEM = new mongoose.Schema(
     // changed (e.g. CBIC reclassifies a product). GSTR-1 line 12
     // HSN-summary block reads this column.
     hsnCode:    { type: String, default: "" },
+    // R7hr-12-S2 (D8-07): per-item prescriber identity snapshot. Sch H/H1/X
+    // dispense requires the script-writer's name + MCI/state-council
+    // registration number on the statutory register (D&C Form 2 / Sch H1).
+    // Per-item because a single sale may carry items from multiple
+    // prescribers; if blank, the top-level prescriberName /
+    // prescriberRegistrationNo on the sale doc is the authority. Captured
+    // at dispense time from the Doctor master when the prescriber resolves.
+    prescriberName:             { type: String, default: "" },
+    prescriberRegistrationNo:   { type: String, default: "" },
     // R7bg-1-HIGH-1: constrain gstRate to the legal Indian slabs. The
     // previous `default: 12, type: Number` would silently accept a
     // decimal typo (180 instead of 18) and over-tax the patient by 10x.
@@ -91,6 +100,15 @@ const PharmacySaleSchema = new mongoose.Schema(
     age:         { type: Number, default: null },
     gender:      { type: String, default: "" },
     doctorName:  { type: String, default: "" },
+    // R7hr-12-S2 (D8-07): top-level prescriber registration number for
+    // Schedule H / H1 / X register completeness. D&C Form 2 + Schedule H1
+    // register explicitly mandate "the name, address and registration
+    // number of the prescriber" for every prescription-mandatory dispense.
+    // Auto-populated from Doctor master at dispense time when the prescriber
+    // resolves; otherwise required from req.body for H/H1/X items. Kept as
+    // free-text (not ref) because legacy/external prescribers don't have
+    // Doctor master rows but still must carry their MCI/state-council reg.
+    prescriberRegistrationNo: { type: String, default: "", trim: true },
 
     // Source
     saleType: {
@@ -321,5 +339,13 @@ PharmacySaleSchema.index({ createdAt: -1 });
 // — the previous single-field createdAt index forced a COLLSCAN over the
 // status filter. Compound covers it.
 PharmacySaleSchema.index({ status: 1, createdAt: -1 });
+// R7hr-12-S2 (D10-02): pharmacyController.listIpdCreditAdmissions runs
+// `Sale.find({ saleType: $in, status: $in, admissionId: $ne null })` on every
+// IPD-credit-pill open. Pre-fix only single-field indexes existed on
+// saleType/admissionId/status, forcing the planner to pick one and filter
+// the rest in memory (effectively partial collection scan). Compound
+// covers all three predicates so the query hits a single B-tree walk
+// proportional to the result-size not the full sales history.
+PharmacySaleSchema.index({ status: 1, saleType: 1, admissionId: 1 });
 
 module.exports = mongoose.model("PharmacySale", PharmacySaleSchema);

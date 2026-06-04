@@ -544,6 +544,27 @@ const icuBundleByIdResolver = async (req) => {
 // returns) bypass via the rule.condition predicate.
 const pharmacyIpdResolver = (req) => req.body?.admissionId || null;
 
+// R7hr-12-S2 (D6-01): /pharmacy/sales/:id/add-items mutates an EXISTING
+// PharmacySale — items[] is consumed from inventory and the parent sale's
+// balanceDue / supplementRecord is mutated. The body carries NO saleType
+// and NO admissionId, so the existing pharmacyIpdResolver + saleType=IPD
+// condition pair leaks the supplement past the discharge gate. We resolve
+// admissionId by looking up the parent Sale doc (admissionId is indexed
+// on PharmacySaleSchema L102). enforceStrict so an unresolvable parent
+// (deleted/garbage id) fails closed rather than being waved through.
+const pharmacySaleByIdResolver = async (req) => {
+  const m = req.path.match(/^\/pharmacy\/sales\/([^/]+)\/add-items/);
+  if (!m) return null;
+  try {
+    const PharmacySale = require("../models/Pharmacy/PharmacySaleModel");
+    const doc = await PharmacySale.findById(m[1]).select("admissionId").lean();
+    return doc?.admissionId || null;
+  } catch (e) {
+    console.warn("[discharge-gate] pharmacySaleByIdResolver failed:", e.message);
+    return null;
+  }
+};
+
 // B3-T09 / PART B — UHID-path resolver. Real frontend prescription &
 // nursing-assessment writes hit /prescriptions/uhid/:uhid (and similar)
 // rather than the bare /prescriptions form. Pre-T09 the rule used
@@ -634,6 +655,17 @@ const ENFORCE_DISCHARGE_WRITE_RULES = [
 
   // Bed transfers — body.admissionId.
   { method: "POST",   regex: /\/bed-transfers(\/|$|\?)/,                       resolveAdmissionId: defaultResolver },
+
+  // R7hr-12-S2 (D6-01): Pharmacy sale supplements — POST /pharmacy/sales/:id/add-items
+  // is a "supplement to an existing bill" verb. The body carries no saleType
+  // and no admissionId, so the broad /pharmacy/sales rule below would either
+  // (a) not fire at all because its condition predicate requires
+  // body.saleType === "IPD", or (b) mis-resolve to null. We need a dedicated
+  // rule that ALWAYS fires and resolves the admission via the parent Sale
+  // doc. enforceStrict so an unresolvable parent fails closed. MUST be
+  // placed BEFORE the /pharmacy/sales catch-all because ENFORCE_DISCHARGE_WRITE_RULES
+  // uses Array.find — first regex+method match wins.
+  { method: "POST",   regex: /\/pharmacy\/sales\/[^/]+\/add-items(\/|$|\?)/,   resolveAdmissionId: pharmacySaleByIdResolver, enforceStrict: true },
 
   // Pharmacy sales — only when saleType=IPD (OPD walk-in sales legitimately
   // happen without an admission). enforceStrict:true so a malformed IPD

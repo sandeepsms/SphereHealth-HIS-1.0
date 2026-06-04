@@ -45,6 +45,15 @@ const DrugBatchSchema = new mongoose.Schema(
 
 DrugBatchSchema.index({ drugId: 1, expiryDate: 1, remaining: 1 });
 DrugBatchSchema.index({ drugId: 1, batchNo: 1 }, { unique: true });
+// R7hr-12-S2 (D8-06): unique grnNumber so the monotonic Counter-driven
+// GRN sequence (pharmacyController.recordGRN) detects collisions and the
+// D&C "sequential purchase register" assumption holds. Partial filter
+// expression skips legacy rows with empty grnNumber so the new index
+// doesn't collide on the pre-fix Math.random()-suffix history.
+DrugBatchSchema.index(
+  { grnNumber: 1 },
+  { unique: true, partialFilterExpression: { grnNumber: { $gt: "" } } },
+);
 
 // Auto-compute remaining on save.
 // R7bb-FIX-E-11: include vendorReturned in the consumption side so a

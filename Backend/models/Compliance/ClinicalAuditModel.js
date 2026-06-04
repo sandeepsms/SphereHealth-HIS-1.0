@@ -50,6 +50,32 @@ const ClinicalAuditSchema = new mongoose.Schema(
         "PHARMACY_RETURNED",
         "PHARMACY_ITEMS_ADDED",
         "PHARMACY_CREDIT_COLLECTED",
+        // R7hr-12-S2 (D8-02): pharmacy applyAdvanceToSale emits this event
+        // (controller L1832-L1848). Pre-fix the value was missing from the
+        // enum, so the ClinicalAudit.create rejected with ValidationError,
+        // emitClinicalAudit swallowed the error in its try/catch, and ZERO
+        // audit rows landed for every advance-applied operation — the entire
+        // pharmacy-side advance-application audit trail was silently absent
+        // (verified live in .backend-r7hr5b.log:29 "PHARMACY_ADVANCE_APPLIED
+        // is not a valid enum value for path event"). NABH AAC.7 + GST §35
+        // require an immutable money-movement timeline.
+        "PHARMACY_ADVANCE_APPLIED",
+
+        // R7hr-12-S2 (D5-04): Indent lifecycle audit trail (NABH MOM.4 +
+        // IPSG.3). Pre-R7hr-12-S2 the dispense pipeline had audit on the
+        // BILLING side only (autoBilling._emitTrigger emits BillingAudit);
+        // the CLINICAL side — who raised / ack'd / released / cancelled
+        // which indent — left no immutable footprint. Surveyors investigating
+        // a discrepancy (wrong patient, wrong dose, allergy override) need a
+        // single timeline; PharmacyIndent doc-level fields are mutable, so
+        // a dedicated audit row is required for tamper-evident reconstruction.
+        // INDENT_RETURNED carries the per-batch reverse-FEFO trail set by
+        // D3-03's returnIndent endpoint.
+        "INDENT_RAISED",
+        "INDENT_ACKNOWLEDGED",
+        "INDENT_RELEASED",
+        "INDENT_CANCELLED",
+        "INDENT_RETURNED",
 
         // Initial Assessment gate (NABH COP.1 / COP.2)
         "INITIAL_ASSESSMENT_DOCTOR_SIGNED",

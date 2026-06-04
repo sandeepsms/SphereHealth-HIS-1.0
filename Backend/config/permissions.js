@@ -152,6 +152,11 @@ const ACTIONS = {
   "indent.read":           ["Admin", "Nurse", "Doctor", "Pharmacist", "Receptionist"],
   "indent.fulfill":        ["Admin", "Pharmacist"],
   "indent.cancel":         ["Admin", "Nurse", "Pharmacist"],
+  // R7hr-12-S2 (D3-03): ward-stock-return endpoint. Same tier as
+  // pharmacy.return (Admin + Pharmacist only) — Nurse cannot reverse
+  // a dispense unilaterally because returning to the batch + voiding
+  // the MAR_RESERVATION trigger has stock + billing side-effects.
+  "indent.return":         ["Admin", "Pharmacist"],
   "pharmacy.grn":          ["Admin", "Pharmacist"],
   "pharmacy.return":       ["Admin", "Pharmacist"],
   "pharmacy.add-items":    ["Admin", "Pharmacist"],
