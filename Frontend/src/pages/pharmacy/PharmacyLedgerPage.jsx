@@ -28,6 +28,10 @@ import { fmtINR } from "../../Components/print/amountWords";
 // cache. Same hook the Dispense flow uses so the bill comes out identical
 // to the one issued at counter time.
 import { openPrint } from "../../Components/print/openPrint";
+// R7hr-7: surface the logged-in user as "Prepared by" + "Counter" on
+// re-prints so the bill carries real provenance instead of "Pharmacist"
+// placeholder text.
+import { useAuth } from "../../context/AuthContext";
 
 const C = {
   bg:     "#f8fafc",
@@ -74,6 +78,7 @@ export default function PharmacyLedgerPage({
   const routeParams = useParams();
   const [search] = useSearchParams();
   const navigate = useNavigate();
+  const { user } = useAuth() || {};
 
   // Prop wins over route param so the parent can mount any admission's
   // ledger in-place. Both are present in route mode — useParams() returns
@@ -126,10 +131,20 @@ export default function PharmacyLedgerPage({
       // admission. Avoids needing a new backend endpoint and keeps
       // the contract identical to the OPD Rx page's dup-dispense
       // lookup added in R7hp-4.
-      const [salesR, advR] = await Promise.all([
+      // R7hr-7: pull patient identity + admission details too so the
+      // consolidated bill renders Age/Sex/Contact/Doctor instead of "—".
+      // Both fetches are best-effort — they fall through gracefully
+      // when the endpoints don't exist for retail-mode deployments.
+      const [salesR, advR, patR, admR] = await Promise.all([
         axios.get(`${API_ENDPOINTS.BASE}/pharmacy/sales`, { params: { uhid: patient.UHID, limit: 500 } }),
         axios.get(`${API_ENDPOINTS.BASE}/billing/advance/uhid/${encodeURIComponent(patient.UHID)}`).catch(() => ({ data: { data: [] } })),
+        axios.get(`${API_ENDPOINTS.BASE}/patients/by-uhid/${encodeURIComponent(patient.UHID)}`).catch(() => null),
+        admissionId
+          ? axios.get(`${API_ENDPOINTS.BASE}/admissions/${admissionId}`).catch(() => null)
+          : Promise.resolve(null),
       ]);
+      const patBody = patR?.data?.data || patR?.data || null;
+      const admBody = admR?.data?.data || admR?.data || null;
       const allSales = salesR?.data?.data || [];
       // Filter to this admission (sales carry admissionId) and exclude
       // cancelled rows so the ledger reflects active charges only.
@@ -152,14 +167,21 @@ export default function PharmacyLedgerPage({
           ? [advRaw]   // single summary object — wrap so KPI shows it
           : [];
       setAdvances(advArr);
-      // If patient identity wasn't passed, hydrate from the first sale.
-      if (mine[0] && !patient.patientName) {
-        setPatient(p => ({
-          ...p,
-          patientName: mine[0].patientName || p.patientName,
-          admissionNumber: mine[0].admissionNumber || p.admissionNumber,
-        }));
-      }
+      // R7hr-7: Enrich patient state with age/sex/contact (from Patient
+      // master) + consulting doctor (from Admission). Without these the
+      // consolidated bill print showed AGE/SEX "—", CONTACT "—", DOCTOR
+      // "—" because the page only carried what the indent button passed
+      // via query string.
+      setPatient(p => ({
+        ...p,
+        patientName:     mine[0]?.patientName     || patBody?.fullName || patBody?.patientName || p.patientName,
+        admissionNumber: mine[0]?.admissionNumber || admBody?.admissionNumber || p.admissionNumber,
+        age:             patBody?.age || patBody?.ageYears || p.age || "",
+        gender:          patBody?.gender || patBody?.sex || p.gender || "",
+        contactNumber:   patBody?.contactNumber || patBody?.mobile || patBody?.phone || p.contactNumber || "",
+        consultant:      admBody?.consultantName || admBody?.doctorName || admBody?.consultingDoctor || p.consultant || "",
+        bed:             p.bed || [admBody?.bedNumber, admBody?.wardName].filter(Boolean).join(" · "),
+      }));
     } catch (e) {
       toast.error(e?.response?.data?.message || e.message || "Failed to load pharmacy ledger");
     } finally {
@@ -247,11 +269,19 @@ export default function PharmacyLedgerPage({
   const printSaleBill = (sale) => {
     openPrint("pharmacy-bill", {
       ...sale,
-      patientName: sale.patientName || patient.patientName,
-      patientUHID: sale.patientUHID || sale.UHID || patient.UHID,
+      patientName:     sale.patientName     || patient.patientName,
+      patientUHID:     sale.patientUHID     || sale.UHID || patient.UHID,
       admissionNumber: sale.admissionNumber || patient.admissionNumber,
-      bedNumber: sale.bedNumber || patient.bed,
-      consultantName: sale.consultantName || patient.consultant,
+      bedNumber:       sale.bedNumber       || patient.bed,
+      consultantName:  sale.consultantName  || patient.consultant,
+      doctorName:      sale.doctorName      || patient.consultant,
+      // R7hr-7: same patient + preparer enrichment as the consolidated
+      // print so individual re-prints aren't degraded vs counter receipts.
+      age:             sale.age           || patient.age,
+      gender:          sale.gender        || patient.gender,
+      contactNumber:   sale.contactNumber || patient.contactNumber,
+      preparedBy:      sale.preparedBy    || user?.fullName || user?.name || "",
+      counter:         sale.counter       || user?.fullName || user?.employeeId || "",
     });
   };
 
@@ -267,6 +297,19 @@ export default function PharmacyLedgerPage({
       .filter(s => s.status !== "Cancelled")
       .flatMap(s => (s.items || []).map(it => ({
         ...it,
+        // R7hr-7: PharmacySale.items defaults discountAmount /
+        // taxableAmount / gstAmount to Decimal128(0) and stores batch
+        // under `batchNumber`. The template's `!= null` ternary was
+        // accepting the 0 as a literal — strip those Decimal128(0)
+        // fields here so per-line Amount and totalTaxable/GST are
+        // computed from gross instead of frozen at ₹0. We also alias
+        // batchNumber → batchNo and expiryDate → expiry so the columns
+        // populate (template fallback chain now covers both).
+        discountAmount: undefined,
+        taxableAmount:  undefined,
+        gstAmount:      undefined,
+        batchNo:        it.batchNo || it.batchNumber,
+        expiry:         it.expiry || it.expiryDate,
         // Stamp the source bill on each line so the consolidated
         // print can show "Paracetamol 1g × 6 (PHM-26-0007, 04 Jun)"
         // without losing the per-dispense breadcrumb.
@@ -280,19 +323,30 @@ export default function PharmacyLedgerPage({
     const collectionLog = sales.flatMap(s => s.collectionLog || []);
     const yymmdd = new Date().toISOString().slice(2, 10).replace(/-/g, "");
     const prefix = label.startsWith("FINAL") ? "FNL" : "INT";
+    // R7hr-7: bill number now `FNL-PHM-IPD2602-260604` (strip the hyphen
+    // inside the admission number so the document slug stays scannable).
+    const admSlug = (patient.admissionNumber || "").replace(/[^A-Z0-9]/gi, "");
     return {
       billLabel: label,
-      // Synthetic bill number so re-prints don't collide with real
-      // PHM-YY-NNNN ledger rows. The base counter sequence keeps
-      // working for actual dispense receipts.
-      billNumber: `${prefix}-PHM-${(patient.admissionNumber || yymmdd).replace(/[^A-Z0-9-]/gi, "")}-${yymmdd}`,
+      billNumber: `${prefix}-PHM-${admSlug || yymmdd}-${yymmdd}`,
       saleType: "IPD",
       patientName:     patient.patientName,
       patientUHID:     patient.UHID,
       UHID:            patient.UHID,
+      // R7hr-7: pass age/sex/contact/doctor so the patient strip on the
+      // print shows real values instead of "—".
+      age:             patient.age,
+      gender:          patient.gender,
+      contactNumber:   patient.contactNumber,
+      doctorName:      patient.consultant,
+      consultantName:  patient.consultant,
       admissionNumber: patient.admissionNumber,
       bedNumber:       patient.bed,
-      consultantName:  patient.consultant,
+      // R7hr-7: "Prepared by" + "Counter" from the logged-in user so
+      // the print carries real provenance instead of "Pharmacist"
+      // placeholder text.
+      preparedBy:      user?.fullName || user?.name || "",
+      counter:         user?.fullName || user?.employeeId || "",
       items,
       subTotal,
       grandTotal,

@@ -122,6 +122,18 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const hospState     = String(id._stateForGst || "").trim().toLowerCase();
   const isInterState  = !!customerState && !!hospState && customerState !== hospState;
 
+  // R7hr-7 Fix #1+#2: PharmacySale.items defaults `discountAmount`,
+  // `taxableAmount`, `gstAmount` to Decimal128(0). The previous
+  // `it.taxableAmount != null` check accepted that zero as a literal
+  // override and forced totalTaxable / totalTax to ₹0 for any sale
+  // that didn't write those fields explicitly (every IPD release +
+  // every consolidated reprint). Result: every "Final Pharmacy Bill"
+  // showed Taxable ₹0 / CGST ₹0 / SGST ₹0 and per-line Amount ₹0
+  // even though qty × rate was perfectly readable.
+  // Treat 0 as "missing → compute from gross" so a default-valued
+  // schema field falls through to the derived value. Real, non-zero
+  // overrides still win.
+  const _present = (v) => _dec(v) > 0; // any non-zero, decimal-aware presence test
   const hsnMap = new Map();
   let subTotal = 0, totalDisc = 0, totalTaxable = 0, totalTax = 0;
   for (const it of items) {
@@ -129,9 +141,15 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
     const rate  = toNum(it.unitPrice || it.rate);
     const gst   = toNum(it.gstRate ?? 12);
     const gross = qty * rate;
-    const disc  = toNum(it.discountAmount != null ? it.discountAmount : gross * (toNum(it.discountPercent) / 100));
-    const taxable = toNum(it.taxableAmount != null ? it.taxableAmount : gross - disc);
-    const tax     = toNum(it.gstAmount != null ? it.gstAmount : taxable * (gst / 100));
+    const disc  = _present(it.discountAmount)
+      ? toNum(it.discountAmount)
+      : gross * (toNum(it.discountPercent) / 100);
+    const taxable = _present(it.taxableAmount)
+      ? toNum(it.taxableAmount)
+      : Math.max(0, gross - disc);
+    const tax = _present(it.gstAmount)
+      ? toNum(it.gstAmount)
+      : taxable * (gst / 100);
     subTotal += gross; totalDisc += disc; totalTaxable += taxable; totalTax += tax;
     const hsn = it.hsnCode || "30049099";
     const key = `${hsn}__${gst}`;
@@ -140,11 +158,25 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
     row.taxable += taxable; row.tax += tax; row.qty += qty;
   }
   const hsnRows = [...hsnMap.values()];
-  const grandRaw   = totalTaxable + totalTax;
-  const grandTotal = toNum(r.grandTotal != null ? r.grandTotal : Math.round(grandRaw));
-  const roundOff   = toNum(r.roundOff != null ? r.roundOff : grandTotal - grandRaw);
-  const paid       = toNum(r.amountPaid != null ? r.amountPaid : grandTotal);
-  const balance    = Math.max(0, grandTotal - paid);
+  // R7hr-7 Fix #3: if the caller-supplied grandTotal disagrees with the
+  // taxable+tax derivation, trust the computed math (it's the GST audit
+  // trail) and treat the difference as round-off — but only when it's
+  // actually a rounding-sized delta (< ₹1). A bill that says grandRaw=0
+  // and grandTotal=175 isn't "rounded" — the math is simply missing, so
+  // we recompute grandTotal as subTotal-disc+tax for safety and skip
+  // showing a misleading Round-off line.
+  const grandRaw      = totalTaxable + totalTax;
+  const callerGrand   = r.grandTotal != null ? toNum(r.grandTotal) : null;
+  const grandTotal    = grandRaw > 0
+    ? toNum(callerGrand != null ? callerGrand : Math.round(grandRaw))
+    : (callerGrand != null ? callerGrand : Math.round(subTotal - totalDisc));
+  const rawRoundOff   = r.roundOff != null ? toNum(r.roundOff) : grandTotal - grandRaw;
+  // Hide Round-off if it would be a full-amount surprise — the math
+  // didn't round, it failed entirely.
+  const showRoundOff  = grandRaw > 0 && Math.abs(rawRoundOff) >= 0.01 && Math.abs(rawRoundOff) < 1;
+  const roundOff      = showRoundOff ? rawRoundOff : 0;
+  const paid          = toNum(r.amountPaid != null ? r.amountPaid : grandTotal);
+  const balance       = Math.max(0, grandTotal - paid);
   const hasControlled = items.some(it => it.schedule && /^(H|H1|X)$/i.test(it.schedule));
 
   /* Returns / supplements / revised state ──────────────────────── */
@@ -269,9 +301,19 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
             const rate = toNum(it.unitPrice || it.rate);
             const gst = toNum(it.gstRate ?? 12);
             const gross = qty * rate;
-            const disc = toNum(it.discountAmount != null ? it.discountAmount : gross * (toNum(it.discountPercent) / 100));
-            const taxable = toNum(it.taxableAmount != null ? it.taxableAmount : gross - disc);
-            const tax = toNum(it.gstAmount != null ? it.gstAmount : taxable * (gst / 100));
+            // R7hr-7 Fix #1: same 0-treated-as-missing rule as the
+            // outer aggregator so per-line Amount ≠ ₹0 when the schema
+            // wrote Decimal128(0) defaults for taxableAmount/discount/
+            // gstAmount.
+            const disc = _present(it.discountAmount)
+              ? toNum(it.discountAmount)
+              : gross * (toNum(it.discountPercent) / 100);
+            const taxable = _present(it.taxableAmount)
+              ? toNum(it.taxableAmount)
+              : Math.max(0, gross - disc);
+            const tax = _present(it.gstAmount)
+              ? toNum(it.gstAmount)
+              : taxable * (gst / 100);
             const lineNet = taxable + tax;
             return (
               <tr key={i}>
@@ -283,8 +325,12 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
                     <div style={{ fontSize: 9, color: "#b91c1c", fontWeight: 700 }}>Sch {it.schedule}</div>
                   )}
                 </td>
-                <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{it.batchNo || "—"}</td>
-                <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{_fmtDate(it.expiry || it.expDate, { month: "short", year: "2-digit" })}</td>
+                {/* R7hr-7 Fix #4: PharmacySale.items uses `batchNumber`
+                    (Mongoose schema field); legacy callers passed `batchNo`.
+                    Without the alias the consolidated reprint showed every
+                    Batch column as "—". */}
+                <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{it.batchNo || it.batchNumber || "—"}</td>
+                <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{_fmtDate(it.expiry || it.expDate || it.expiryDate, { month: "short", year: "2-digit" })}</td>
                 <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{it.hsnCode || "30049099"}</td>
                 <td className="right">{qty}</td>
                 <td className="right">{fmtINR(rate)}</td>
@@ -370,7 +416,10 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: 6,
         fontSize: 11, fontStyle: "italic",
       }}>
-        <b>Amount in words:</b> {amountInWords(grandTotal)} only.
+        {/* R7hr-7 Fix #5: amountInWords() already returns
+            "…Rupees Only"; the trailing " only." double-stamped it as
+            "Rupees Only only." Just terminate with a period. */}
+        <b>Amount in words:</b> {amountInWords(grandTotal)}.
       </div>
 
       {/* ── Payment method chip + R7hp-2 structured details ──
