@@ -4530,6 +4530,10 @@ function IPDCreditTab({ focus, onClearFocus } = {}) {
   const [loading, setLoading]   = useState(false);
   const [rows, setRows]         = useState([]);
   const [summary, setSummary]   = useState({ admissions: 0, totalOutstanding: 0 });
+  // R7hr-10: list of ALL active IPD admissions (not just ones with
+  // pharmacy outstanding) — the pharmacist asked for "active
+  // admissions ki list". Click any row to open its embedded ledger.
+  const [activeAdms, setActiveAdms] = useState([]);
   const [openAdm, setOpenAdm]   = useState(null);  // selected admission detail blob
   const [openLoading, setOpenLoading] = useState(false);
 
@@ -4581,53 +4585,10 @@ function IPDCreditTab({ focus, onClearFocus } = {}) {
   const [histDays, setHistDays]       = useState(30);                // window selector
   const [expandedDay, setExpandedDay] = useState(null);              // dateKey of the open day-card
 
-  // R7hr-9: As soon as the admissions-with-outstanding list arrives,
-  // auto-open the FIRST admission's embedded ledger so the pharmacist
-  // sees Take Advance + Interim Bill + Final Bill immediately on
-  // clicking the IPD Ledger pill — no extra "Open Ledger" click needed.
-  // Skipped when:
-  //   • the parent already pushed a focus (Live Indents path),
-  //   • the user has already drilled in once this session,
-  //   • both rows AND history are empty (nothing to open).
-  useEffect(() => {
-    if (didAutoOpen) return;
-    if (ledgerAdm) return;
-    const r = rows[0];
-    if (r) {
-      setLedgerAdm({
-        admissionId: String(r.admissionId),
-        seed: {
-          UHID:            r.UHID || "",
-          patientName:     r.patientFullName || "",
-          admissionNumber: r.admissionNumber || "",
-          bed:             [r.bedNumber, r.wardName].filter(Boolean).join(" · "),
-          consultant:      r.consultantName || "",
-        },
-      });
-      setDidAutoOpen(true);
-      return;
-    }
-    // R7hr-9-FIX: when there's no outstanding (the common steady-state
-    // for healthy ledgers), fall back to the most recent admission that
-    // had ANY pharmacy activity. hist[0].bills[0] is sorted by date
-    // descending so the head is the freshest. This keeps the IPD Ledger
-    // pill useful (showing the last-active patient's ledger with Take
-    // Advance / Interim / Final controls) even when no money is owed.
-    const lastBill = hist?.[0]?.bills?.[0];
-    if (lastBill?.admissionId) {
-      setLedgerAdm({
-        admissionId: String(lastBill.admissionId),
-        seed: {
-          UHID:            lastBill.UHID || "",
-          patientName:     lastBill.patientName || "",
-          admissionNumber: lastBill.admissionNumber || "",
-          bed:             "",
-          consultant:      "",
-        },
-      });
-      setDidAutoOpen(true);
-    }
-  }, [rows, hist, ledgerAdm, didAutoOpen]);
+  // R7hr-10: auto-open removed — the pill now defaults to the active
+  // admissions LIST so the pharmacist can pick which patient to act
+  // on. The parent-pushed focus path (Live Indents → Live Ledger)
+  // still opens directly via the focus useEffect above.
 
   // Per-bill collection modal — open with `setCollect({sale, max})`.
   const [collect, setCollect] = useState(null);
@@ -4640,9 +4601,25 @@ function IPDCreditTab({ focus, onClearFocus } = {}) {
   const load = async () => {
     setLoading(true);
     try {
-      const r = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/credit/ipd-admissions`);
-      setRows(r?.data?.data || []);
-      setSummary(r?.data?.summary || { admissions: 0, totalOutstanding: 0 });
+      // R7hr-10: fetch both the outstanding-pharmacy list (for KPIs +
+      // discharge gate) AND the full active-admissions list (for the
+      // picker the pharmacist actually clicks through). Active list
+      // gets filtered down to IPD admissions only — OPD visits live
+      // in the same collection but don't belong on this ledger.
+      const [credR, actR] = await Promise.all([
+        axios.get(`${API_ENDPOINTS.BASE}/pharmacy/credit/ipd-admissions`),
+        axios.get(`${API_ENDPOINTS.BASE}/admissions/active`).catch(() => null),
+      ]);
+      setRows(credR?.data?.data || []);
+      setSummary(credR?.data?.summary || { admissions: 0, totalOutstanding: 0 });
+      const allAct = Array.isArray(actR?.data) ? actR.data : (actR?.data?.data || []);
+      const ipdOnly = allAct.filter(a => {
+        const n = String(a.admissionNumber || "").toUpperCase();
+        // Keep rows that look like a real IPD admission. OPD/ER/DC
+        // visits create their own admission rows with non-IPD slugs.
+        return n.startsWith("IPD");
+      });
+      setActiveAdms(ipdOnly);
     } catch (e) {
       // R7cv: if the new credit route 404s, the backend likely needs
       // restart — make the message actionable instead of just relaying
@@ -4776,6 +4753,87 @@ function IPDCreditTab({ focus, onClearFocus } = {}) {
       }}>
         <i className="pi pi-lock" style={{ fontSize: 12 }} />
         <span><strong>Discharge gate active.</strong> Until every row below shows ₹0 outstanding, the receptionist cannot clear the patient's final bill — they'll see a 409 with a deep-link to this tab.</span>
+      </div>
+
+      {/* R7hr-10: Active admissions picker. Lists EVERY active IPD
+          admission (regardless of pharmacy outstanding) so the
+          pharmacist can drill into any patient's ledger to take
+          advance, collect, or re-print the interim/final bill. */}
+      <div style={{ marginBottom: 18 }}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, marginBottom: 8,
+          fontSize: 13, fontWeight: 800, color: C.text,
+        }}>
+          <i className="pi pi-users" style={{ color: C.orange }} />
+          Active IPD Admissions
+          <span style={{
+            background: "#f1f5f9", color: C.muted, fontSize: 10.5,
+            padding: "1px 8px", borderRadius: 10, fontWeight: 700,
+          }}>{activeAdms.length}</span>
+        </div>
+        {activeAdms.length === 0 ? (
+          <div style={{ padding: 20, textAlign: "center", background: "#f8fafc", border: `1px dashed ${C.border}`, borderRadius: 8, color: C.muted, fontSize: 12 }}>
+            No active IPD admissions right now.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
+            {activeAdms.map(a => {
+              // Map credit-summary row by admissionId so we can show
+              // outstanding ₹X right on the picker card.
+              const credit = rows.find(r => String(r.admissionId) === String(a._id));
+              const outstanding = credit ? Number(credit.outstanding || 0) : 0;
+              return (
+                <button key={a._id} onClick={() => openLedger(a._id, {
+                  UHID:            a.UHID || "",
+                  patientName:     a.patientName || a.fullName || "",
+                  admissionNumber: a.admissionNumber || "",
+                  bed:             [a.bedNumber, a.wardName].filter(Boolean).join(" · "),
+                  consultant:      a.attendingDoctor || a.doctorName || "",
+                })} style={{
+                  textAlign: "left", background: "#fff",
+                  border: `1px solid ${outstanding > 0 ? "#fde68a" : C.border}`,
+                  borderLeft: `4px solid ${outstanding > 0 ? "#f59e0b" : C.orange}`,
+                  borderRadius: 10, padding: "10px 12px", cursor: "pointer",
+                  display: "flex", flexDirection: "column", gap: 4,
+                  transition: "transform 0.08s, box-shadow 0.08s",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,.08)"; }}
+                onMouseLeave={e => { e.currentTarget.style.boxShadow = "none"; }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
+                      {a.patientName || a.fullName || "—"}
+                    </span>
+                    <span style={{ fontSize: 9.5, color: C.muted, fontFamily: "'DM Mono', monospace" }}>
+                      {a.UHID || ""}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
+                    {a.admissionNumber}
+                    {a.bedNumber && <span style={{ color: C.text, fontWeight: 500 }}> · {a.bedNumber}</span>}
+                    {a.wardName && <span style={{ color: C.muted, fontWeight: 500 }}> · {a.wardName}</span>}
+                  </div>
+                  {(a.attendingDoctor || a.doctorName) && (
+                    <div style={{ fontSize: 11, color: C.muted }}>
+                      <i className="pi pi-user-edit" style={{ marginRight: 4, fontSize: 9 }} />
+                      {a.attendingDoctor || a.doctorName}
+                    </div>
+                  )}
+                  {outstanding > 0 && (
+                    <div style={{
+                      marginTop: 2, fontSize: 10.5, fontWeight: 800,
+                      color: "#b45309", background: "#fffbeb",
+                      border: "1px solid #fde68a", borderRadius: 4,
+                      padding: "1px 6px", alignSelf: "flex-start",
+                    }}>
+                      ⚠ Outstanding {fmtINR(outstanding)}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {loading && rows.length === 0 ? (
