@@ -32,6 +32,11 @@ const Sale        = require("../../models/Pharmacy/PharmacySaleModel");
 // doc). Without PatientBill in the credit ledger, the IPD Credit tab is
 // blind to the entire indent-released drug-charge category.
 const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+// R7hr-5: pharmacist Live Ledger can settle an outstanding sale from the
+// patient's advance pool — exact mirror of the IPD ledger's apply-advance
+// flow. PatientAdvance is the source-of-truth balance; we mutate that +
+// the sale's collectionLog atomically.
+const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
 const Settings    = require("../../models/Pharmacy/PharmacySettingsModel");
 const PharmacyDayClose = require("../../models/Pharmacy/PharmacyDayCloseModel");
 const Counter     = require("../../models/CounterModel");
@@ -1625,6 +1630,175 @@ exports.collectCredit = async (req, res) => {
     res.status(status).json({
       success: false,
       code:    e.code || "COLLECT_FAILED",
+      message: e.message,
+    });
+  }
+};
+
+// R7hr-5 ════════════════════════════════════════════════════════════
+// POST /api/pharmacy/sales/:id/apply-advance
+//
+// Consumes the patient's PatientAdvance balance against an outstanding
+// pharmacy sale. Mirrors the IPD Live Ledger's applyAdvanceToBill flow:
+//
+//   • Sum every ACTIVE/PARTIALLY_APPLIED advance row for the sale's UHID
+//     (advances aren't auto-targeted at a single bill — they're a pool).
+//   • Apply MIN(advance_remaining, sale_balance) — caller can pass an
+//     explicit `amount` to apply less.
+//   • Decrement each advance row's appliedAmount in deposit order
+//     (oldest first) and flip status to PARTIALLY_APPLIED / FULLY_APPLIED.
+//   • Append a collectionLog row to the sale with mode="Advance" + a
+//     sourceAdvanceId pointer to the LAST advance we touched (the audit
+//     trail can fan out via the per-advance appliedAmount delta).
+//
+// The whole thing runs inside retryVersionError so concurrent applies
+// against the same advance pool don't corrupt running totals.
+exports.applyAdvanceToSale = async (req, res) => {
+  try {
+    const saleId = req.params.id;
+    if (!isOid(saleId)) {
+      return res.status(400).json({ success: false, message: "Invalid sale id" });
+    }
+    const requested = req.body?.amount != null ? Number(req.body.amount) : null;
+    if (requested != null && (!Number.isFinite(requested) || requested <= 0)) {
+      return res.status(400).json({
+        success: false, code: "INVALID_AMOUNT",
+        message: "amount, when provided, must be > 0",
+      });
+    }
+
+    const result = await retryVersionError(async () => {
+      const sale = await Sale.findById(saleId);
+      if (!sale) {
+        const e = new Error("Sale not found"); e.status = 404; throw e;
+      }
+      if (sale.status !== "Completed") {
+        const e = new Error(`Cannot apply advance on a ${sale.status} sale`);
+        e.status = 409; e.code = "SALE_NOT_COLLECTABLE"; throw e;
+      }
+      const bal = Number(sale.balanceDue?.toString?.() ?? sale.balanceDue ?? 0);
+      if (bal <= 0) {
+        const e = new Error("Sale is already fully paid"); e.status = 409;
+        e.code = "ALREADY_PAID"; throw e;
+      }
+      const uhid = (sale.patientUHID || sale.UHID || "").toString().toUpperCase();
+      if (!uhid) {
+        const e = new Error("Sale has no UHID — cannot resolve patient advance pool");
+        e.status = 400; e.code = "MISSING_UHID"; throw e;
+      }
+
+      // Pull all advance rows that still carry an unspent balance, in
+      // deposit order (oldest first) so the audit log reads naturally.
+      const advances = await PatientAdvance
+        .find({ UHID: uhid, status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] } })
+        .sort({ createdAt: 1 });
+      const remainingByAdv = advances.map(a => {
+        const amt   = Number(a.amount?.toString?.() ?? a.amount ?? 0);
+        const appl  = Number(a.appliedAmount?.toString?.() ?? a.appliedAmount ?? 0);
+        const refd  = Number(a.refundedAmount?.toString?.() ?? a.refundedAmount ?? 0);
+        return Math.max(0, amt - appl - refd);
+      });
+      const totalAvailable = remainingByAdv.reduce((s, n) => s + n, 0);
+      if (totalAvailable <= 0) {
+        const e = new Error("No unspent advance balance for this patient");
+        e.status = 409; e.code = "NO_ADVANCE"; throw e;
+      }
+
+      // Cap at the LESSER of sale balance and advance pool, then clamp
+      // any explicit caller-supplied request to that ceiling.
+      const cap   = Math.min(bal, totalAvailable);
+      const toApply = requested == null ? cap : Math.min(requested, cap);
+      if (toApply <= 0) {
+        const e = new Error("Nothing to apply"); e.status = 400;
+        e.code = "ZERO_APPLY"; throw e;
+      }
+
+      // Bleed advances FIFO until we've sucked `toApply` out of the pool.
+      let need = toApply;
+      let lastAdvId = null;
+      for (let i = 0; i < advances.length && need > 0; i++) {
+        const adv = advances[i];
+        const slice = Math.min(need, remainingByAdv[i]);
+        if (slice <= 0) continue;
+        const newApplied = Number(adv.appliedAmount?.toString?.() ?? adv.appliedAmount ?? 0) + slice;
+        adv.appliedAmount = toDec(newApplied);
+        const total = Number(adv.amount?.toString?.() ?? adv.amount ?? 0);
+        const refd  = Number(adv.refundedAmount?.toString?.() ?? adv.refundedAmount ?? 0);
+        adv.status  = (newApplied + refd) >= total - 0.01 ? "FULLY_APPLIED" : "PARTIALLY_APPLIED";
+        await adv.save();
+        need -= slice;
+        lastAdvId = adv._id;
+      }
+
+      // Now mirror the change onto the sale + receipt log.
+      const round2 = (n) => Math.round(n * 100) / 100;
+      const newPaid = Number(sale.amountPaid?.toString?.() ?? sale.amountPaid ?? 0) + toApply;
+      const newBal  = round2(bal - toApply);
+      sale.amountPaid = toDec(newPaid);
+      sale.balanceDue = toDec(newBal);
+      let receiptNumber = "";
+      try {
+        const Counter = require("../../models/CounterModel");
+        const c = await Counter.findOneAndUpdate(
+          { _id: "pharmacyCreditCollection" },
+          { $inc: { seq: 1 } },
+          { upsert: true, new: true, setDefaultsOnInsert: true },
+        );
+        const yy = String(new Date().getFullYear()).slice(-2);
+        receiptNumber = `PHM-COLL-${yy}-${String(c.seq).padStart(4, "0")}`;
+      } catch (_) { /* non-fatal */ }
+      sale.collectionLog = sale.collectionLog || [];
+      sale.collectionLog.push({
+        amount: toDec(toApply),
+        mode: "Advance",
+        txnRef: "",
+        receiptNumber,
+        collectedAt: new Date(),
+        collectedBy: req.user?.fullName || "System",
+        collectedById: req.user?._id || null,
+        sourceAdvanceId: lastAdvId,
+        notes: "Auto-applied from patient advance pool",
+      });
+      if (newBal === 0) {
+        const modes = new Set(sale.collectionLog.map(c => c.mode));
+        sale.paymentMode = modes.size > 1 ? "Mixed" : "Advance";
+      }
+      await sale.save();
+
+      return { sale: sale.toObject(), applied: toApply, advanceRemaining: totalAvailable - toApply };
+    });
+
+    try {
+      emitClinicalAudit({
+        req,
+        event: "PHARMACY_ADVANCE_APPLIED",
+        UHID: result.sale.patientUHID || "",
+        admissionId: result.sale.admissionId || null,
+        patientName: result.sale.patientName || "",
+        targetType: "PharmacySale",
+        targetId: result.sale._id,
+        after: {
+          billNumber: result.sale.billNumber,
+          amount: result.applied,
+          balanceDueRemaining: Number(result.sale.balanceDue?.toString?.() ?? result.sale.balanceDue ?? 0),
+          advancePoolRemaining: result.advanceRemaining,
+        },
+      });
+    } catch (_) { /* non-fatal */ }
+
+    res.json({
+      success: true,
+      message: result.sale.balanceDue.toString() === "0"
+        ? `Cleared ₹${result.applied.toFixed(2)} from advance — bill fully paid`
+        : `Applied ₹${result.applied.toFixed(2)} from advance — ₹${Number(result.sale.balanceDue.toString()).toFixed(2)} still outstanding`,
+      data: result.sale,
+      meta: { applied: result.applied, advanceRemaining: result.advanceRemaining },
+    });
+  } catch (e) {
+    const status = e.status || 500;
+    res.status(status).json({
+      success: false,
+      code: e.code || "APPLY_ADVANCE_FAILED",
       message: e.message,
     });
   }

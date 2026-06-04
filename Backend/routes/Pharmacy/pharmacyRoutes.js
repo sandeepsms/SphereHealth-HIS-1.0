@@ -46,6 +46,10 @@ router.post  ("/sales/:id/add-items",   requireAction("pharmacy.add-items"), ctr
 router.get   ("/credit/ipd-admissions",         requireAction("rx.read"),            ctrl.listIpdCreditAdmissions);
 router.get   ("/credit/admission/:admissionId", validateObjectIdParam("admissionId"), requireAction("rx.read"),            ctrl.getCreditByAdmission);
 router.post  ("/sales/:id/collect-credit",      validateObjectIdParam("id"),          requireAction("pharmacy.dispense"),  ctrl.collectCredit);
+// R7hr-5: apply patient advance pool against an outstanding sale —
+// gated on pharmacy.dispense same as collectCredit (debits balance
+// even though the cash flow is internal).
+router.post  ("/sales/:id/apply-advance",       validateObjectIdParam("id"),          requireAction("pharmacy.dispense"),  ctrl.applyAdvanceToSale);
 // R7cv — Day-wise audit log of every IPD credit sale (outstanding +
 // already-cleared) — pharmacist needs to see "what went out on
 // credit historically" not just "what's currently blocking".

@@ -132,7 +132,10 @@ const PharmacySaleSchema = new mongoose.Schema(
     igstAmount:       { type: Dec, default: () => toDec(0) },
 
     // Payment
-    paymentMode: { type: String, enum: ["Cash","Card","UPI","Mixed","Credit"], default: "Cash" },
+    // R7hr-5: "Advance" lets a sale that was settled entirely from the
+    // patient's advance pool surface the correct top-level mode so prints
+    // and analytics don't mis-label it as "Cash" or "Credit".
+    paymentMode: { type: String, enum: ["Cash","Card","UPI","Mixed","Credit","Advance"], default: "Cash" },
     amountPaid:  { type: Dec, default: () => toDec(0) },
     balanceDue:  { type: Dec, default: () => toDec(0) },
     // R7hp-2: structured payment-mode metadata.
@@ -171,12 +174,19 @@ const PharmacySaleSchema = new mongoose.Schema(
       type: [{
         _id: false,
         amount:        { type: Dec, required: true },
-        mode:          { type: String, enum: ["Cash","Card","UPI","Mixed","Credit"], default: "Cash" },
+        // R7hr-5: "Advance" mode lets the pharmacist apply patient
+        // advance against an outstanding pharmacy bill — the row's
+        // sourceAdvanceId then back-references the PatientAdvance row
+        // we consumed so audit / refund flows can walk the link.
+        mode:          { type: String, enum: ["Cash","Card","UPI","Mixed","Credit","Advance"], default: "Cash" },
         txnRef:        { type: String, default: "" },
         receiptNumber: { type: String, default: "" }, // PHM-COLL-... if generated
         collectedAt:   { type: Date, default: Date.now },
         collectedBy:   { type: String, default: "" },
         collectedById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        // R7hr-5: optional back-link to the PatientAdvance row this
+        // collection consumed (only set when mode === "Advance").
+        sourceAdvanceId: { type: mongoose.Schema.Types.ObjectId, ref: "PatientAdvance", default: null },
         notes:         { type: String, default: "" },
       }],
       default: [],

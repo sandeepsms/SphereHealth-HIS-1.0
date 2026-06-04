@@ -24,6 +24,10 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { fmtINR } from "../../Components/print/amountWords";
+// R7hr-5: re-print a single sale and pre-warm the pharmacy-bill template
+// cache. Same hook the Dispense flow uses so the bill comes out identical
+// to the one issued at counter time.
+import { openPrint } from "../../Components/print/openPrint";
 
 const C = {
   bg:     "#f8fafc",
@@ -209,6 +213,48 @@ export default function PharmacyLedgerPage({
     } finally { setColSaving(false); }
   };
 
+  /* ── R7hr-5: Apply advance against an outstanding bill ───────── */
+  // `applyingId` tracks the in-flight sale to disable the button + show a
+  // spinner; null when idle. We call the new POST /pharmacy/sales/:id/
+  // apply-advance endpoint, which decrements the patient's PatientAdvance
+  // pool atomically and pushes a "Advance" row into the sale's
+  // collectionLog (sourceAdvanceId back-link).
+  const [applyingId, setApplyingId] = useState(null);
+  const applyAdvanceToSale = async (sale, applyAmount /* optional */) => {
+    setApplyingId(sale._id);
+    try {
+      const body = applyAmount != null ? { amount: applyAmount } : {};
+      const r = await axios.post(
+        `${API_ENDPOINTS.BASE}/pharmacy/sales/${sale._id}/apply-advance`,
+        body,
+      );
+      const applied = r?.data?.meta?.applied ?? 0;
+      toast.success(`Applied ${fmtINR(applied)} from advance`);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || e.message);
+    } finally {
+      setApplyingId(null);
+    }
+  };
+
+  /* ── R7hr-5: Re-print a pharmacy bill ────────────────────────── */
+  // Same hook the Dispense flow uses (openPrint("pharmacy-bill", …))
+  // so a re-print from the ledger comes out identical to the original
+  // bill issued at counter time. We pass the seed patient identity so
+  // the header is filled even when the sale record doesn't carry every
+  // patient field.
+  const printSaleBill = (sale) => {
+    openPrint("pharmacy-bill", {
+      ...sale,
+      patientName: sale.patientName || patient.patientName,
+      patientUHID: sale.patientUHID || sale.UHID || patient.UHID,
+      admissionNumber: sale.admissionNumber || patient.admissionNumber,
+      bedNumber: sale.bedNumber || patient.bed,
+      consultantName: sale.consultantName || patient.consultant,
+    });
+  };
+
   /* ── Take Advance Deposit submit ────────────────────────────── */
   const submitAdvance = async () => {
     const amt = Number(advAmt);
@@ -325,6 +371,51 @@ export default function PharmacyLedgerPage({
           ))}
         </div>
 
+        {/* R7hr-5: Auto-suggest advance application when there's both
+            outstanding pharmacy charges AND an advance balance available.
+            One-click [Apply ₹X] surfaces a Cash-flow that mirrors what the
+            IPD Live Ledger does for ward-level bills. */}
+        {totals.advanceBalance > 0 && totals.outstanding > 0 && (() => {
+          const applyAmt = Math.min(totals.advanceBalance, totals.outstanding);
+          // Pick the oldest outstanding sale to consume first — matches
+          // the FIFO behaviour the backend uses internally.
+          const targetSale = sales
+            .filter(s => dec(s.balanceDue) > 0)
+            .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))[0];
+          return (
+            <div style={{
+              background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 10,
+              padding: "12px 16px", marginBottom: 14, display: "flex",
+              alignItems: "center", gap: 12, flexWrap: "wrap",
+            }}>
+              <i className="pi pi-wallet" style={{ fontSize: 18, color: "#a16207" }} />
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#78350f" }}>
+                  Patient has {fmtINR(totals.advanceBalance)} advance available
+                </div>
+                <div style={{ fontSize: 11.5, color: "#92400e", marginTop: 2 }}>
+                  Outstanding {fmtINR(totals.outstanding)} — apply {fmtINR(applyAmt)} from
+                  advance to clear {applyAmt >= totals.outstanding ? "the full bill" : "the oldest bill first"}.
+                </div>
+              </div>
+              {targetSale && (
+                <button
+                  onClick={() => applyAdvanceToSale(targetSale, applyAmt)}
+                  disabled={applyingId === targetSale._id}
+                  style={{
+                    padding: "9px 18px", background: "#a16207", color: "#fff", border: "none",
+                    borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: "pointer",
+                    minWidth: 150,
+                  }}
+                >
+                  <i className={`pi ${applyingId === targetSale._id ? "pi-spin pi-spinner" : "pi-check-circle"}`} style={{ marginRight: 6 }} />
+                  {applyingId === targetSale._id ? "Applying…" : `Apply ${fmtINR(applyAmt)}`}
+                </button>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Day-wise medicines */}
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
           <div style={{
@@ -394,6 +485,23 @@ export default function PharmacyLedgerPage({
                             Paid <strong style={{ color: C.green, marginLeft: 4 }}>{fmtINR(sale.amountPaid)}</strong> ·
                             Due <strong style={{ color: due > 0 ? C.red : C.muted, marginLeft: 4 }}>{fmtINR(due)}</strong>
                           </span>
+                          {/* R7hr-5: per-row Apply-advance shortcut.
+                              Shown only when this bill is unpaid AND the
+                              patient has any advance balance. Mirrors the
+                              IPD Live Ledger's per-row action affordance. */}
+                          {due > 0 && totals.advanceBalance > 0 && (
+                            <button
+                              onClick={() => applyAdvanceToSale(sale, Math.min(due, totals.advanceBalance))}
+                              disabled={applyingId === sale._id}
+                              title={`Apply ${fmtINR(Math.min(due, totals.advanceBalance))} from advance`}
+                              style={{
+                                padding: "4px 10px", background: "#a16207", color: "#fff", border: "none",
+                                borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                              }}>
+                              <i className={`pi ${applyingId === sale._id ? "pi-spin pi-spinner" : "pi-wallet"}`} style={{ marginRight: 4, fontSize: 10 }} />
+                              {applyingId === sale._id ? "…" : "Apply Adv"}
+                            </button>
+                          )}
                           {due > 0 && (
                             <button onClick={() => { setCollect({ sale, max: due }); setColAmt(due.toFixed(2)); }} style={{
                               padding: "4px 12px", background: C.green, color: "#fff", border: "none",
@@ -402,6 +510,15 @@ export default function PharmacyLedgerPage({
                               <i className="pi pi-money-bill" style={{ marginRight: 4, fontSize: 10 }} /> Collect
                             </button>
                           )}
+                          {/* R7hr-5: re-print the pharmacy bill regardless
+                              of paid/due — pharmacist may need a duplicate
+                              for a returning patient or ward audit. */}
+                          <button onClick={() => printSaleBill(sale)} title="Print pharmacy bill" style={{
+                            padding: "4px 10px", background: "#fff", color: C.blue, border: `1px solid ${C.blue}`,
+                            borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                          }}>
+                            <i className="pi pi-print" style={{ marginRight: 4, fontSize: 10 }} /> Print
+                          </button>
                         </div>
                       </div>
                       {Array.isArray(sale.items) && sale.items.length > 0 && (
