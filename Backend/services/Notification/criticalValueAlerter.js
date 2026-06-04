@@ -225,13 +225,31 @@ async function escalateOverdue() {
     }
   } catch (_) { /* best-effort */ }
 
-  let escalated = 0;
+  // R7hr-12-S3: collapse N sequential updateOne calls into one updateMany per
+  // distinct slaMinutes value (typically 3-4 values: 10/15/30/60/120). The
+  // old per-row loop fired 200 sequential writes on a busy tick (10-15s
+  // latency) and risked overrunning the 4-min lock TTL. Grouping by
+  // slaMinutes means the candidates list is now only used to decide WHICH
+  // cutoffs to write — the actual writes are bulk filtered server-side via
+  // emittedAt < cutoff, so we no longer pay one round-trip per alert.
+  const slaBuckets = new Map(); // slaMinutes -> [_id, _id, ...]
   for (const a of candidates) {
     const ageMs = now.getTime() - new Date(a.emittedAt).getTime();
-    if (ageMs < (a.slaMinutes || 30) * 60 * 1000) continue;
-    // CAS — only flip if still OPEN.
-    const r = await CriticalValueAlert.updateOne(
-      { _id: a._id, status: "OPEN" },
+    const sla = a.slaMinutes || 30;
+    if (ageMs < sla * 60 * 1000) continue;
+    if (!slaBuckets.has(sla)) slaBuckets.set(sla, []);
+    slaBuckets.get(sla).push(a._id);
+  }
+
+  let escalated = 0;
+  for (const [sla, ids] of slaBuckets) {
+    if (ids.length === 0) continue;
+    // R7hr-12-S3: one updateMany per slaMinutes bucket. The CAS predicate
+    // status:"OPEN" still prevents double-escalation under concurrent ticks,
+    // and scoping by _id $in ensures we only touch the candidates we sampled
+    // (cheap covered query — _id index).
+    const r = await CriticalValueAlert.updateMany(
+      { _id: { $in: ids }, status: "OPEN" },
       {
         $set: {
           status: "ESCALATED",
@@ -242,12 +260,12 @@ async function escalateOverdue() {
         $push: {
           auditTrail: _audit("ESCALATED", {
             byName: "system (escalateOverdue)",
-            reason: `SLA ${a.slaMinutes || 30}m breached — escalated to ${_escalateTo}.`,
+            reason: `SLA ${sla}m breached — escalated to ${_escalateTo}.`,
           }),
         },
       },
     );
-    if (r.modifiedCount > 0) escalated += 1;
+    escalated += r.modifiedCount || 0;
   }
   return { scanned: candidates.length, escalated };
 }

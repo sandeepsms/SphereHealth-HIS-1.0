@@ -902,6 +902,42 @@ class AdmissionController {
       });
     }
 
+    // R7hr-12-S3 (D4-12): TOCTOU re-check — close the race window between
+    // the pharmacy-outstanding read at L852 and the CAS at L881. A ward
+    // indent that releases between those two ops creates a fresh PHARM-*
+    // line item on the IPD PatientBill via autoBillingService.onIndentReleased,
+    // which the L852 check could not see. We now re-read outstanding ONCE
+    // more here — if it became >0 in the sub-second window, REVERT the
+    // stage back to DoctorApproved (atomic CAS, no risk to a parallel
+    // doctor-approval flow because the stage is already BillCleared) and
+    // surface a 409. This is the exact failure mode R7cu was designed to
+    // eliminate; without this re-check the gate could leak a freshly-
+    // dispensed indent past the receptionist's hand-off.
+    const phRecheck = await pharmacyCtrl.getOutstandingForAdmission(req.params.id);
+    if (phRecheck.total > 0) {
+      // Revert the stage — only flip back if WE were the one that set it
+      // to BillCleared in this request (guard against a concurrent
+      // gate-pass that already advanced past us). Stage flip back to
+      // DoctorApproved + clear the bill-cleared marker fields.
+      await Admission.findOneAndUpdate(
+        { _id: req.params.id, "dischargeWorkflow.stage": "BillCleared" },
+        { $set: {
+          "dischargeWorkflow.stage":         "DoctorApproved",
+          "dischargeWorkflow.billClearedAt": null,
+          "dischargeWorkflow.billClearedBy": null,
+        } },
+      );
+      return res.status(409).json({
+        success: false,
+        code:    "PHARMACY_OUTSTANDING_RACED",
+        message: `Pharmacy outstanding ₹${phRecheck.total.toFixed(2)} on ${phRecheck.count} bill(s) was raised between the gate read and the bill-clear commit. ` +
+                 `Collect via Pharmacy → IPD Credit and retry.`,
+        pharmacyOutstanding: phRecheck.total,
+        pharmacyBillCount:   phRecheck.count,
+        pharmacyBillNumbers: phRecheck.sales.map(s => s.billNumber).filter(Boolean),
+      });
+    }
+
     // Also push a payment row onto the linked IPD/DAYCARE bill so the
     // patient's outstanding balance reflects the final-bill clearance.
     // We try (a) admission link, (b) admissionNumber denorm, then

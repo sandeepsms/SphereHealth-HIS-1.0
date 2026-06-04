@@ -180,7 +180,20 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const showRoundOff  = grandRaw > 0 && Math.abs(rawRoundOff) >= 0.01 && Math.abs(rawRoundOff) < 1;
   const roundOff      = showRoundOff ? rawRoundOff : 0;
   const paid          = toNum(r.amountPaid != null ? r.amountPaid : grandTotal);
-  const balance       = Math.max(0, grandTotal - paid);
+  // R7hr-12-S3 (D7-09): Prefer caller-supplied r.balanceDue when it is
+  // explicitly present and a finite number — that field is the source of
+  // truth the IPD pharmacy ledger (PharmacyLedgerPage) and the
+  // PharmacySale schema (PharmacySaleModel.js L140) both read. Falling
+  // back to a local grandTotal-paid recompute is only safe when
+  // balanceDue is missing/NaN (legacy rows or pre-credit-collection
+  // intermediate prints), otherwise bill print and pharmacy ledger can
+  // disagree after partial collection/refund. Mirrors the precedence
+  // pattern used for grandTotal (L173-L176).
+  const _hasBalance   = r.balanceDue != null
+    && Number.isFinite(_dec(r.balanceDue));
+  const balance       = _hasBalance
+    ? Math.max(0, toNum(r.balanceDue))
+    : Math.max(0, grandTotal - paid);
   const hasControlled = items.some(it => it.schedule && /^(H|H1|X)$/i.test(it.schedule));
 
   /* Returns / supplements / revised state ──────────────────────── */
@@ -225,7 +238,21 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
     { label: "Bill Date", value: _fmtDate(r.createdAt || r.billDate || new Date(), { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
     { label: "Doctor",    value: r.doctorName || r.prescribingDoctor || r.consultantName || "—" },
     { label: "Counter",   value: r.counter || r.pharmacyCounter || r.cashier || r.preparedBy || r.createdBy || "—" },
-    { label: "Payer",     value: r.payer || (r.tpaName ? r.tpaName : "Self") },
+    // R7hr-12-S3 (D7-08): Extend payer fallback chain to surface TPA /
+    // panel attribution when the PharmacySale row carries any of the
+    // admission-derived hints. Schema-level persistence (payer/tpaName
+    // on PharmacySale, populated from Admission.tpaProvider /
+    // Admission.payerType / Admission.scheme at dispense time) is the
+    // longer-term fix tracked separately, but the template should
+    // already render whichever of these the caller passes, so an IPD
+    // bill billed to MediCare TPA does not print "Self".
+    { label: "Payer",     value: r.payer
+        || r.tpaName
+        || r.tpaProvider
+        || r.panelName
+        || r.scheme
+        || (r.payerType && r.payerType !== "Self" ? r.payerType : null)
+        || "Self" },
     { label: "GSTIN",     value: r.customerGstin || "" },
     // R7hr-12-S2 (D7-04): IPD/Daycare/Emergency context — bed +
     // admission identifiers required for NABH-compliant patient-facing
@@ -247,8 +274,27 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
       signatures={{
         type: "prepared-by",
         preparedBy: {
-          name: r.preparedBy || r.cashier || r.pharmacist || "Pharmacist",
-          role: "Pharmacist",
+          // R7hr-12-S3 (D8-11): Extend the signatory fallback chain so
+          // an identified pharmacist's name + registration number print
+          // on the bill (NABH MOM.4 + Drugs & Cosmetics Form 5 require
+          // an identifiable registered-pharmacist signatory on every
+          // dispensed prescription / Schedule H sale). Order:
+          //   pharmacistName → preparedBy → cashier → counter →
+          //   pharmacist → createdBy → generic "Pharmacist" only as the
+          //   last-resort legacy fallback for pre-pharmacist-tracking
+          //   rows. The dedicated pharmacistId/pharmacistName/
+          //   pharmacistRegistrationNo schema fields land separately;
+          //   the template surfaces whichever the caller passes today.
+          name: r.pharmacistName
+            || r.preparedBy
+            || r.cashier
+            || r.counter
+            || r.pharmacist
+            || r.createdBy
+            || "Pharmacist",
+          role: r.pharmacistRegistrationNo
+            ? `Pharmacist · Reg. ${r.pharmacistRegistrationNo}`
+            : "Pharmacist",
         },
         showAttestedStamp: true,
       }}

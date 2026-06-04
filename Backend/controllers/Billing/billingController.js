@@ -352,6 +352,12 @@ exports.generateBill = async (req, res) => {
       req.params.billId,
       generatedBy,
     );
+    // R7hr-12-S3 (D10-10): bill generation flips a DRAFT row into the aging
+    // window — invalidate the aging caches on both this controller (local)
+    // and the dashboards controller (separate LRU instance) so the AR-aging
+    // tile doesn't lag for up to 5min after a new bill lands.
+    try { _agingCache.clear(); } catch (_) { /* best-effort */ }
+    try { require("../Reports/dashboardsController").invalidateAgingCache?.(); } catch (_) { /* best-effort */ }
     res.json({
       success: true,
       data,
@@ -395,6 +401,12 @@ exports.recordPayment = async (req, res) => {
         receivedByRole: req.user?.role,
       },
     );
+    // R7hr-12-S3 (D10-10): payment moves a bill toward / out of the aging
+    // buckets — invalidate the aging caches on both this controller and
+    // the dashboards controller so a settled bill doesn't linger in the
+    // 30d+ bucket for up to 5min after the cashier collects.
+    try { _agingCache.clear(); } catch (_) { /* best-effort */ }
+    try { require("../Reports/dashboardsController").invalidateAgingCache?.(); } catch (_) { /* best-effort */ }
     res.json({ success: true, data });
   } catch (e) {
     // R7bh-F10: respect typed-error status/code (DUPLICATE_TRANSACTION 409,
@@ -499,7 +511,9 @@ exports.getSummary = async (req, res) => {
 const _revenueCache  = require("../../utils/lruCache")({ max: 30, ttlMs: 60_000 });
 const _agingCache    = require("../../utils/lruCache")({ max: 30, ttlMs: 60_000 });
 const _gstRegCache   = require("../../utils/lruCache")({ max: 30, ttlMs: 5 * 60_000 });
-const _cnListCache   = require("../../utils/lruCache")({ max: 30, ttlMs: 60_000 });
+// R7hr-12-S3 (D10-10): removed unused `_cnListCache` declaration — it was
+// allocated here but never referenced anywhere in the codebase (grep
+// confirmed). Dead allocation removed.
 const _gstSnapCache  = require("../../utils/lruCache")({ max: 30, ttlMs: 5 * 60_000 });
 function _safeRange(req, opts) {
   const { parseHospitalDateRange } = require("../../utils/queryGuards");

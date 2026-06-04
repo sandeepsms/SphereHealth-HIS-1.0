@@ -313,6 +313,34 @@ const PharmacySaleSchema = new mongoose.Schema(
     createdBy:   { type: String, default: "" },
     createdById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     remarks:     { type: String, default: "" },
+
+    // R7hr-12-S3 (D1-02): cancel audit anchor. Pre-fix, cancelSale wrote
+    // `cancelledById`/`cancelledByName`/`cancelledAt` via $set on findOneAndUpdate
+    // but the schema declared none of these paths — Mongoose default strict
+    // mode silently stripped them, leaving the status flip and balanceDue
+    // zeroing in place but losing the actor/timestamp on the doc itself.
+    // Audit redundancy in ClinicalAudit + remarks + (admin-override) BillingAudit
+    // already covered the NABH AAC.7 trail, but per-bill schema-hygiene matters
+    // (mirrors PharmacyIndentModel / KitchenIndentModel / PatientBillModel which
+    // all declare these fields explicitly). cancelReason added so a future UI
+    // dropdown ("Wrong patient", "Customer changed mind", etc.) lands cleanly.
+    cancelledById:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    cancelledByName:{ type: String, default: "" },
+    cancelledAt:    { type: Date, default: null },
+    cancelReason:   { type: String, default: "" },
+
+    // R7hr-12-S3 (D7-06): encounter context snapshot at billing time. Pre-fix,
+    // PharmacySale persisted only patientUHID + admissionNumber — bed / ward /
+    // attending consultant lived only on the live Admission doc, so a re-print
+    // after a bed transfer or consultant change showed the CURRENT context, not
+    // the encounter context at issue time. GST §31 expects a tax invoice to
+    // snapshot the buyer's address (i.e. bed) at issue, not retro-hydrate from
+    // a live source. Denormalised here at dispense for IPD/Homecare sales;
+    // walk-in / OPD legitimately leave these blank and the printable falls
+    // back to "—". Schema additions are zero-risk for legacy rows (default "").
+    bedNumber:      { type: String, default: "" },
+    wardName:       { type: String, default: "" },
+    consultantName: { type: String, default: "" },
   },
   {
     timestamps: true,
@@ -333,6 +361,28 @@ const PharmacySaleSchema = new mongoose.Schema(
 // while the collectionLog $push survives, producing an over-recorded audit
 // trail and under-recorded accounting. Mirrors PatientBillModel.js:793.
 PharmacySaleSchema.set("optimisticConcurrency", true);
+
+// R7hr-12-S3 (D1-09): conditional-required for patientUHID + admissionNumber
+// on IPD/Homecare sales. Defence-in-depth alongside the controller checks in
+// pharmacyController.createSale (L709/L719) so any future write path (direct
+// service call, migration, console fix) still anchors IPD/Homecare dispenses
+// to a patient. NABH MOM.4 expects every IPD pharmacy dispense to link to a
+// patient identity; blank UHID rows break the R7hr-10 IPD Ledger dedup key
+// (admissionNumber + UHID) and disappear from outstanding lists. Walk-in /
+// OPD legitimately allow blanks (anonymous counter sale), so a blanket
+// `required: true` would break those flows — pre('validate') hook is the
+// right granularity.
+PharmacySaleSchema.pre("validate", function (next) {
+  if (this.saleType === "IPD" || this.saleType === "Homecare") {
+    if (!this.patientUHID || !String(this.patientUHID).trim()) {
+      return next(new Error("patientUHID required for IPD/Homecare sales"));
+    }
+    if (!this.admissionNumber || !String(this.admissionNumber).trim()) {
+      return next(new Error("admissionNumber required for IPD/Homecare sales"));
+    }
+  }
+  next();
+});
 
 PharmacySaleSchema.index({ createdAt: -1 });
 // R7ap-F14/D8-07: pharmacyController.gstSummary filters by status + createdAt

@@ -30,7 +30,9 @@ const PharmacyIndent = require("../../models/Pharmacy/PharmacyIndentModel");
 const Admission      = require("../../models/Patient/admissionModel");
 const DrugBatch      = require("../../models/Pharmacy/DrugBatchModel");
 const Patient        = require("../../models/Patient/patientModel");
-const { istStartOfToday } = require("../../utils/queryGuards");
+// R7hr-12-S3 (D6-02): import safeRegex to harden listIndents wardName filter
+// against ReDoS / regex-injection via the unsanitised query.ward string.
+const { istStartOfToday, safeRegex } = require("../../utils/queryGuards");
 const retryVersionError   = require("../../utils/retryVersionError");
 const { assertDrugSafeOrOverride } = require("../../utils/allergyCheck");
 
@@ -143,7 +145,12 @@ async function listIndents(query = {}) {
   if (query.urgency) filter.urgency = query.urgency;
   if (query.admissionId) filter.admissionId = query.admissionId;
   if (query.UHID) filter.UHID = query.UHID;
-  if (query.ward) filter.wardName = new RegExp(query.ward, "i");
+  // R7hr-12-S3 (D6-02): safeRegex caps the input at 80 chars and escapes
+  // every regex metachar so a caller can't ship `(a+)+a$`-style catastrophic
+  // backtracking patterns into Mongo's regex engine (event-loop CPU pin) or
+  // a `.*` wildcard to short-circuit the per-ward scope filter. Mirrors the
+  // pattern already used by pharmacyController.listDrugs/searchDrugs.
+  if (query.ward) filter.wardName = safeRegex(query.ward);
 
   // Sort: STAT > Urgent > Routine, then oldest-first within each tier.
   // Mongo can't sort enum by custom order natively, so we compute a
@@ -470,7 +477,19 @@ async function releaseIndent(indentId, { items = [], user = {}, adminOverride = 
             item.substitutedFromCode = r.substitutedFromCode || "";
             item.substitutionReason  = r.substitutionReason  || "";
           }
-          if (r.unitPrice != null) item.unitPriceSnapshot = Number(r.unitPrice) || item.unitPriceSnapshot;
+          // R7hr-12-S3 (D1-11): clamp client-supplied unitPrice to a sane
+          // [0, 99999.99] range BEFORE writing the snapshot. Pre-R7hr-12-S3
+          // a tampered release payload (Pharmacist-role required, but
+          // defence-in-depth) could send unitPrice=-100 (under-bill the
+          // reservation) or 999999 (over-bill the reservation). The schema
+          // (PharmacyIndentModel.js:83) is Decimal128 with no min validator
+          // — Mongoose 8 doesn't enforce min on Decimal128 anyway — so the
+          // clamp has to live at the write site. Same ceiling matches the
+          // counter-dispense snapshot precedent (see autoBillingService).
+          if (r.unitPrice != null) {
+            const px = Math.max(0, Math.min(99999.99, Number(r.unitPrice) || 0));
+            if (px > 0) item.unitPriceSnapshot = px;
+          }
 
           // R7az-CRIT-5/D7-CRIT-3 + MED-6: stamp FEFO picks + typed
           // batchId mirror (first pick is the canonical "primary" batch

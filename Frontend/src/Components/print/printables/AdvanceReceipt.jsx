@@ -38,7 +38,15 @@ const AdvanceReceipt = ({ settings = {}, receipt = {} }) => {
   // 2026 GST circular — advances ≥ ₹50,000 must capture customer GSTIN.
   const HIGH_VALUE_GST_THRESHOLD = 50000;
   const customerGstin = receipt.customerGstin || receipt.gstin;
-  const requiresGstin = amount >= HIGH_VALUE_GST_THRESHOLD;
+  // R7hr-12-S3 (D7-11): an amended/refunded advance can retain amount=0
+  // for audit while the *original* deposit was ≥ ₹50k. Check the original
+  // amount when present so amendments preserve the GST compliance flag.
+  // Also treat `depositTier === 'high-value'` as an explicit trigger for
+  // upstream callers that pre-classify the receipt.
+  const thresholdAmount = toNum(receipt.originalAmount ?? receipt.amount);
+  const requiresGstin =
+    thresholdAmount >= HIGH_VALUE_GST_THRESHOLD ||
+    receipt.depositTier === "high-value";
   const missingGstinForHighValue = requiresGstin && !customerGstin;
 
   const receiptNo = receipt.receiptNo || "—";

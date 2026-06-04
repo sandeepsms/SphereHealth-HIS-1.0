@@ -657,6 +657,11 @@ const _cancelStuckTrigger = scheduleDaily("stuck-trigger-sweeper", 1, 0, async (
   const cutoff = new Date(Date.now() - 60 * 60 * 1000);
   // Pull at most 50 stuck triggers — bigger backlogs likely indicate a
   // systemic issue that needs a human-in-the-loop investigation.
+  // R7hr-12-S3 / D10-09: both this find() and the multi-status aggregate
+  // below are backed by the new {status:1, updatedAt:1} index on
+  // BillingTriggerSchema (was: status equality used {status,createdAt}
+  // index and then in-memory filtered on updatedAt — collscan-ish at
+  // 1M+ rows).
   const stuck = await BillingTrigger.find({
     status:    "pending-review",
     updatedAt: { $lt: cutoff },

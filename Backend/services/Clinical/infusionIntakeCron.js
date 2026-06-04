@@ -68,6 +68,40 @@ async function tickOnce() {
       $or: [{ infusionStopped: null }, { infusionStopped: { $exists: false } }],
     }).lean();
 
+    // R7hr-12-S3: Collapse per-order N+1 aggregation into a single $in query
+    // grouped by meta.orderId, then look up per-order via Map inside the loop.
+    // Previously each running infusion triggered its own aggregation round-trip;
+    // at 50+ concurrent IV infusions that became a measurable sweep cost. The
+    // partial compound index on { meta.orderId, meta.hourBucket } with
+    // partialFilterExpression source=INFUSION_CRON still serves this single
+    // grouped aggregation efficiently.
+    const orderIds = orders.map((o) => o._id);
+    const infusedByOrder = new Map();
+    if (orderIds.length > 0) {
+      try {
+        const aggAll = await IntakeOutputEntry.aggregate([
+          {
+            $match: {
+              source: "INFUSION_CRON",
+              voided: { $ne: true },
+              "meta.orderId": { $in: orderIds },
+            },
+          },
+          { $group: { _id: "$meta.orderId", sum: { $sum: "$volumeML" } } },
+        ]);
+        for (const row of aggAll || []) {
+          // _id may be ObjectId; stringify for consistent Map lookups regardless
+          // of how the order._id is shaped downstream.
+          infusedByOrder.set(String(row._id), row.sum || 0);
+        }
+      } catch (e) {
+        // Non-fatal: fall through with empty Map; per-order loop will treat each
+        // as alreadyInfused=0 and continue. The partial unique index on
+        // (meta.orderId, meta.hourBucket) still prevents double-writes.
+        logErr("infusionIntakeCron", "prior-infusion sum aggregation")(e);
+      }
+    }
+
     for (const order of orders) {
       processed++;
       try {
@@ -80,17 +114,8 @@ async function tickOnce() {
         const total = parseRate(order.orderDetails?.totalVolume) || Infinity;
 
         // 3) How much have we logged from this order so far?
-        const aggResult = await IntakeOutputEntry.aggregate([
-          {
-            $match: {
-              source: "INFUSION_CRON",
-              "meta.orderId": order._id,
-              voided: { $ne: true },
-            },
-          },
-          { $group: { _id: null, sum: { $sum: "$volumeML" } } },
-        ]);
-        const alreadyInfused = aggResult?.[0]?.sum || 0;
+        // R7hr-12-S3: Map lookup replaces per-order aggregation (see batch above).
+        const alreadyInfused = infusedByOrder.get(String(order._id)) || 0;
 
         // 4) Remaining capacity — never write past totalVolume.
         const remaining = total - alreadyInfused;

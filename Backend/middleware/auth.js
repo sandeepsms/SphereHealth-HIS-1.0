@@ -540,8 +540,11 @@ const icuBundleByIdResolver = async (req) => {
   }
 };
 
-// Pharmacy IPD sales only — saleType !== 'IPD' rows (OPD walk-in, vendor
-// returns) bypass via the rule.condition predicate.
+// Pharmacy admission-linked sales (IPD + Homecare) — saleType not in
+// {IPD, Homecare} rows (OPD walk-in, vendor returns) bypass via the
+// rule.condition predicate. R7hr-12-S3 (D6-08): name kept as
+// pharmacyIpdResolver for git-blame stability; resolver logic itself
+// (read body.admissionId) is identical for IPD and Homecare.
 const pharmacyIpdResolver = (req) => req.body?.admissionId || null;
 
 // R7hr-12-S2 (D6-01): /pharmacy/sales/:id/add-items mutates an EXISTING
@@ -667,11 +670,15 @@ const ENFORCE_DISCHARGE_WRITE_RULES = [
   // uses Array.find — first regex+method match wins.
   { method: "POST",   regex: /\/pharmacy\/sales\/[^/]+\/add-items(\/|$|\?)/,   resolveAdmissionId: pharmacySaleByIdResolver, enforceStrict: true },
 
-  // Pharmacy sales — only when saleType=IPD (OPD walk-in sales legitimately
-  // happen without an admission). enforceStrict:true so a malformed IPD
-  // request without admissionId is REJECTED rather than waved through.
+  // Pharmacy sales — only when saleType=IPD or Homecare (OPD walk-in sales
+  // legitimately happen without an admission). enforceStrict:true so a malformed
+  // IPD/Homecare request without admissionId is REJECTED rather than waved
+  // through.
+  // R7hr-12-S3 (D6-08): Extend discharge gate to Homecare sales — discharged-
+  // admission Homecare sales would otherwise silently re-open the IPD credit
+  // ledger. Same shape as D6-01.
   { method: "POST",   regex: /\/pharmacy\/sales(\/|$|\?)/,                     resolveAdmissionId: pharmacyIpdResolver,
-    condition: (req) => req.body?.saleType === "IPD", enforceStrict: true },
+    condition: (req) => ["IPD", "Homecare"].includes(req.body?.saleType), enforceStrict: true },
 
   // MAR per-medication administer/discontinue — URL is /mar/:marId/medication/:medId/<verb>,
   // resolve via MAR document. enforceStrict so an unresolved MAR fails closed

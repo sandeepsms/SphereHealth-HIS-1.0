@@ -45,7 +45,22 @@ const DrugSchema = new mongoose.Schema(
 
     // Tax & GST
     hsnCode:      { type: String, default: "" },
-    gstRate:      { type: Number, default: 12 },        // %
+    // R7hr-12-S3 (D1-08): constrain gstRate to the legal Indian GST slabs at
+    // the drug-master step (defence-in-depth — mirrors PharmacySaleModel.items
+    // .gstRate). Pre-R7hr-12 the master accepted any Number, so an admin
+    // editing /api/pharmacy/drugs/:id with a decimal typo (180 instead of 18)
+    // would silently land and the failure surfaced only at the next sale —
+    // a cryptic ValidationError at dispense time instead of at the source
+    // of the bad data. Slab list matches PharmacySaleModel.items.gstRate
+    // (0.25% covers rough/sketched diamonds in DGFT; harmless for symmetry).
+    gstRate:      {
+      type: Number,
+      default: 12,
+      enum: {
+        values: [0, 0.25, 3, 5, 12, 18, 28],
+        message: "gstRate {VALUE} is not a valid GST slab (0, 0.25, 3, 5, 12, 18, 28)",
+      },
+    },        // %
 
     // Stock policy
     reorderLevel: { type: Number, default: 10 },        // alert threshold (units)

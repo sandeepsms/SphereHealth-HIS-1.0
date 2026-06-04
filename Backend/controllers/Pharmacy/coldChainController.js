@@ -52,14 +52,24 @@ exports.listBreaches = async (req, res) => {
   }
 };
 
+// R7hr-12-S3 (D6-12): cap correctiveAction at 500 chars to prevent
+// audit-trail bloat / accidental dangerouslySetInnerHTML payloads from
+// reaching the print preview. Trim at the controller boundary so the
+// service's required-field check still rejects whitespace-only input.
+const CORRECTIVE_ACTION_MAX = 500;
+
 exports.acknowledgeBreach = async (req, res) => {
   try {
     const u = req.user || {};
+    // R7hr-12-S3: trim + cap correctiveAction at controller boundary.
+    const correctiveAction = req.body?.correctiveAction
+      ? String(req.body.correctiveAction).trim().slice(0, CORRECTIVE_ACTION_MAX)
+      : "";
     const doc = await svc.acknowledgeBreach(
       req.params.id,
       u._id || u.id,
       u.fullName || u.name,
-      req.body?.correctiveAction
+      correctiveAction
     );
     return envelope.sendOk(res, doc);
   } catch (e) {

@@ -1699,37 +1699,88 @@ const SERVICES = [
 ];
 
 // ── Seed function ─────────────────────────────────────────────
+// R7hr-12-S3: Refactored from sequential per-service findOne+create+create
+// (≈3 round-trips × ~500 services = ~1500 RTTs, 30–60 s on a busy DB) to a
+// bulkWrite-based upsert flow. Total round-trips collapse to ~4 regardless
+// of catalogue size:
+//   1. ServiceMaster.bulkWrite        — upsert all services in one shot
+//   2. ServiceMaster.find             — fetch ids for the seeded serviceCodes
+//   3. ServicePricing.find            — find which services already have CASH pricing (skip those)
+//   4. ServicePricing.bulkWrite       — insert default CASH pricing for the rest
+// Idempotent: re-running against a populated DB is a no-op (no duplicates).
 async function seedServices() {
   let created = 0,
     skipped = 0,
     errors = 0;
 
-  for (const svc of SERVICES) {
-    try {
-      const exists = await ServiceMaster.findOne({
-        serviceCode: svc.serviceCode,
+  try {
+    // ── Step 1: bulk-upsert ServiceMaster rows (single round-trip) ──
+    // $setOnInsert ensures existing rows are NOT overwritten — preserves any
+    // manual price/displayOrder edits made after the first seed.
+    const masterOps = SERVICES.map((svc) => ({
+      updateOne: {
+        filter: { serviceCode: svc.serviceCode },
+        update: { $setOnInsert: svc },
+        upsert: true,
+      },
+    }));
+
+    const masterResult = await ServiceMaster.bulkWrite(masterOps, {
+      ordered: false,
+    });
+
+    // upsertedCount counts only newly-inserted rows; the rest were pre-existing.
+    created = masterResult.upsertedCount || 0;
+    skipped = SERVICES.length - created;
+
+    // ── Step 2: fetch ids of all services in the catalogue (single round-trip) ──
+    const codes = SERVICES.map((s) => s.serviceCode);
+    const services = await ServiceMaster.find(
+      { serviceCode: { $in: codes } },
+      { _id: 1, serviceCode: 1 },
+    ).lean();
+
+    const codeToId = new Map(services.map((s) => [s.serviceCode, s._id]));
+
+    // ── Step 3: figure out which services already have CASH pricing ──
+    // We must not duplicate CASH rows for services seeded in a previous run.
+    const allIds = services.map((s) => s._id);
+    const existingPricings = await ServicePricing.find(
+      { serviceId: { $in: allIds }, tariffType: "CASH" },
+      { serviceId: 1 },
+    ).lean();
+    const haveCash = new Set(
+      existingPricings.map((p) => String(p.serviceId)),
+    );
+
+    // ── Step 4: bulk-insert missing default CASH pricing rows ──
+    // We bypass the pre-save hook by computing finalPrice inline (= price for
+    // discount=0). insertOne is fine here because the haveCash filter
+    // guarantees uniqueness on (serviceId, tariffType=CASH).
+    const pricingOps = [];
+    for (const svc of SERVICES) {
+      const sid = codeToId.get(svc.serviceCode);
+      if (!sid) continue;
+      if (haveCash.has(String(sid))) continue;
+      pricingOps.push({
+        insertOne: {
+          document: {
+            serviceId: sid,
+            tariffType: "CASH",
+            price: svc.defaultPrice,
+            discount: 0,
+            finalPrice: svc.defaultPrice,
+          },
+        },
       });
-      if (exists) {
-        skipped++;
-        continue;
-      }
-
-      const service = await ServiceMaster.create(svc);
-
-      // Auto-create default CASH pricing record
-      await ServicePricing.create({
-        serviceId: service._id,
-        tariffType: "CASH",
-        price: svc.defaultPrice,
-        discount: 0,
-        finalPrice: svc.defaultPrice,
-      });
-
-      created++;
-    } catch (e) {
-      console.error(`Seed error [${svc.serviceCode}]:`, e.message);
-      errors++;
     }
+
+    if (pricingOps.length > 0) {
+      await ServicePricing.bulkWrite(pricingOps, { ordered: false });
+    }
+  } catch (e) {
+    console.error("Seed error (bulk):", e.message);
+    errors++;
   }
 
   return { created, skipped, errors, total: SERVICES.length };

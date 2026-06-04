@@ -46,7 +46,18 @@ const PatientAdvanceSchema = new mongoose.Schema(
     receiptNumber: { type: String, unique: true, sparse: true },
 
     // ── Money + mode ───────────────────────────────────────────────
-    amount:        { type: mongoose.Schema.Types.Decimal128, required: true, min: 0 },
+    // R7hr-12-S3 / D1-05: Mongoose 8 silently ignores `min`/`max` on
+    // Decimal128 paths (no `prototype.min` defined in lib/schema/decimal128.js).
+    // Replace with a custom validator that stringifies the Decimal128 before
+    // numeric comparison so a stray `amount: -500` payload is actually rejected.
+    amount:        {
+      type: mongoose.Schema.Types.Decimal128,
+      required: true,
+      validate: {
+        validator: v => v != null && Number(v.toString()) >= 0,
+        message: "{PATH} cannot be negative",
+      },
+    },
     paymentMode:   {
       type: String,
       required: true,
@@ -64,11 +75,30 @@ const PatientAdvanceSchema = new mongoose.Schema(
     // ── Application tracking ───────────────────────────────────────
     // appliedAmount accumulates as the advance is consumed by bills.
     // Each application pushes a row into appliedTo[].
-    appliedAmount: { type: mongoose.Schema.Types.Decimal128, default: 0, min: 0 },
+    // R7hr-12-S3 / D1-05: `min: 0` on Decimal128 is a no-op in Mongoose 8.
+    // Use a custom validator instead. Also switch `default: 0` (Number) to
+    // a Decimal128 factory so in-memory unsaved docs match the on-disk type
+    // (mirrors PharmacySaleModel's `default: () => toDec(0)` pattern).
+    appliedAmount: {
+      type: mongoose.Schema.Types.Decimal128,
+      default: () => mongoose.Types.Decimal128.fromString("0"),
+      validate: {
+        validator: v => v != null && Number(v.toString()) >= 0,
+        message: "{PATH} cannot be negative",
+      },
+    },
     appliedTo: [{
       billId:        { type: mongoose.Schema.Types.ObjectId, ref: "PatientBill", required: true },
       billNumber:    { type: String, trim: true },
-      amount:        { type: mongoose.Schema.Types.Decimal128, required: true, min: 0 },
+      // R7hr-12-S3 / D1-05: same Mongoose 8 quirk on Decimal128 — min:0 is a no-op.
+      amount:        {
+        type: mongoose.Schema.Types.Decimal128,
+        required: true,
+        validate: {
+          validator: v => v != null && Number(v.toString()) >= 0,
+          message: "{PATH} cannot be negative",
+        },
+      },
       appliedAt:     { type: Date, default: Date.now },
       appliedBy:     { type: String, trim: true },
       appliedById:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
@@ -96,7 +126,17 @@ const PatientAdvanceSchema = new mongoose.Schema(
     refundedBy:            { type: String, trim: true, default: null },
     refundedById:          { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     refundReason:          { type: String, trim: true, default: null },
-    refundedAmount:        { type: mongoose.Schema.Types.Decimal128, default: 0, min: 0 },
+    // R7hr-12-S3 / D1-05: see note on `amount` above — Mongoose 8 ignores
+    // min:0 on Decimal128. Custom validator + Decimal128 default for type
+    // consistency.
+    refundedAmount:        {
+      type: mongoose.Schema.Types.Decimal128,
+      default: () => mongoose.Types.Decimal128.fromString("0"),
+      validate: {
+        validator: v => v != null && Number(v.toString()) >= 0,
+        message: "{PATH} cannot be negative",
+      },
+    },
     refundMode:            { type: String, trim: true, default: null }, // CASH/UPI/BANK_TRANSFER
     refundTransactionId:   { type: String, trim: true, default: null },
     // R7bb-FIX-E-3 / D3-CRIT-3: Admin-only override slot. When a refund

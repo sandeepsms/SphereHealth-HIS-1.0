@@ -167,12 +167,28 @@ export default function PharmacyLedgerPage({
     .sort((x, y) => new Date(x.createdAt || x.paidAt || 0) - new Date(y.createdAt || y.paidAt || 0)),
   [advances]);
 
+  // R7hr-12-S3 (D9-04): AbortController for the 4-way load() fetch.
+  // Mirrors PharmacyIndentsPage.jsx L96-L143 — abort any in-flight
+  // request before kicking off a new one (route param change, manual
+  // Refresh click) and on unmount, so a slow first-admission fetch
+  // can't paint stale patientName/admissionNumber over a freshly-
+  // selected second admission. In React 19 unmounted state setters
+  // are silent no-ops (no console warning), but the brief
+  // wrong-banner flash on a route-mode admission switch was still
+  // worth closing for hygiene + parity with the rest of the
+  // pharmacy module.
+  const loadAbortRef = useRef(null);
+
   const load = async () => {
     if (!admissionId) {
       // No admission target at all — render the banner empty + back btn.
       setLoading(false);
       return;
     }
+    // Cancel any prior in-flight load before launching a new one.
+    if (loadAbortRef.current) { try { loadAbortRef.current.abort(); } catch (_) {} }
+    const ctrl = new AbortController();
+    loadAbortRef.current = ctrl;
     setLoading(true);
     try {
       // R7hr-12 (D9-01): fetch the admission FIRST so we can hydrate UHID
@@ -184,8 +200,13 @@ export default function PharmacyLedgerPage({
       // attendingDoctor, so this single fetch is enough to drive
       // everything downstream.
       const admR = await axios
-        .get(`${API_ENDPOINTS.BASE}/admissions/${admissionId}`)
-        .catch(() => null);
+        .get(`${API_ENDPOINTS.BASE}/admissions/${admissionId}`, { signal: ctrl.signal })
+        .catch((e) => {
+          // Re-throw abort so the outer catch can swallow it silently;
+          // other failures still resolve to null (legacy fallback).
+          if (e?.name === "CanceledError" || e?.name === "AbortError" || axios.isCancel?.(e)) throw e;
+          return null;
+        });
       const admBody = admR?.data?.data || admR?.data || null;
 
       // UHID priority: explicit seed (prop / history-state) wins so we
@@ -208,13 +229,33 @@ export default function PharmacyLedgerPage({
       // renders Age/Sex/Contact/Doctor instead of "—".
       // Both fetches are best-effort — they fall through gracefully
       // when the endpoints don't exist for retail-mode deployments.
+      // R7hr-12-S3 (D9-09): pass `admissionId` to the sales fetch so
+      // long-stay patients (oncology, dialysis, chronic geriatrics)
+      // with > 500 lifetime sales can't have their oldest IPD days
+      // silently dropped by the limit=500 ceiling — we then only
+      // pull rows for THIS admission instead of the patient's full
+      // history. The client still keeps the post-fetch
+      // String(s.admissionId) === adm filter for defence-in-depth in
+      // case the deployed backend hasn't been updated yet to honour
+      // the param (the param is additive — older backends ignore it).
       const [salesR, advR, patR] = await Promise.all([
-        axios.get(`${API_ENDPOINTS.BASE}/pharmacy/sales`, { params: { uhid, limit: 500 } }),
-        axios.get(`${API_ENDPOINTS.BASE}/billing/advance/uhid/${encodeURIComponent(uhid)}`).catch(() => ({ data: { data: [] } })),
+        axios.get(`${API_ENDPOINTS.BASE}/pharmacy/sales`, {
+          params: { uhid, admissionId, limit: 500 },
+          signal: ctrl.signal,
+        }),
+        axios.get(`${API_ENDPOINTS.BASE}/billing/advance/uhid/${encodeURIComponent(uhid)}`, { signal: ctrl.signal })
+          .catch((e) => {
+            if (e?.name === "CanceledError" || e?.name === "AbortError" || axios.isCancel?.(e)) throw e;
+            return { data: { data: [] } };
+          }),
         // R7hr-7-FIX-2: correct path is /patients/uhid/:uhid (was
         // /by-uhid/ — that endpoint doesn't exist and silently 404'd,
         // so AGE/SEX/CONTACT still showed "—" after the first fix.
-        axios.get(`${API_ENDPOINTS.BASE}/patients/uhid/${encodeURIComponent(uhid)}`).catch(() => null),
+        axios.get(`${API_ENDPOINTS.BASE}/patients/uhid/${encodeURIComponent(uhid)}`, { signal: ctrl.signal })
+          .catch((e) => {
+            if (e?.name === "CanceledError" || e?.name === "AbortError" || axios.isCancel?.(e)) throw e;
+            return null;
+          }),
       ]);
       const patBody = patR?.data?.data || patR?.data || null;
       const allSales = salesR?.data?.data || [];
@@ -277,9 +318,15 @@ export default function PharmacyLedgerPage({
         bed:             p.bed || [admBody?.bedNumber, admBody?.wardName].filter(Boolean).join(" · "),
       }));
     } catch (e) {
+      // R7hr-12-S3 (D9-04): silently swallow aborted requests — they're
+      // the expected outcome of a re-fired load() or unmount, not a
+      // user-facing error.
+      if (e?.name === "CanceledError" || e?.name === "AbortError" || axios.isCancel?.(e)) return;
       toast.error(e?.response?.data?.message || e.message || "Failed to load pharmacy ledger");
     } finally {
-      setLoading(false);
+      // Only flip loading off when this controller is still the active
+      // one — otherwise a fresh load() already turned it back on.
+      if (loadAbortRef.current === ctrl) setLoading(false);
     }
   };
   // R7hr-12 (D9-01): keyed on admissionId alone — load() now derives
@@ -287,7 +334,16 @@ export default function PharmacyLedgerPage({
   // when patient.UHID flips from "" → resolved. Previously the deps
   // included patient.UHID to retry once the URL query string seed
   // arrived, but that pathway is gone.
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [admissionId]);
+  // R7hr-12-S3 (D9-04): cleanup returns an abort so a slow fetch
+  // mid-unmount can't write to dead state. Mirrors the pattern at
+  // PharmacyIndentsPage.jsx L143.
+  useEffect(() => {
+    load();
+    return () => {
+      if (loadAbortRef.current) { try { loadAbortRef.current.abort(); } catch (_) {} }
+    };
+    /* eslint-disable-next-line */
+  }, [admissionId]);
 
   /* ── Derived totals (pharmacy only) ─────────────────────────── */
   const totals = useMemo(() => {
@@ -582,20 +638,30 @@ export default function PharmacyLedgerPage({
     const balanceDue  = sales.reduce((acc, s) => acc + dec(s.balanceDue), 0);
     const collectionLog = sales.flatMap(s => s.collectionLog || []);
     const prefix = label.startsWith("FINAL") ? "FNL" : "INT";
-    // R7hr-7-FIX3: simplified bill number. Was
-    // `INT-PHM-IPD2602-260604` (16 chars + date suffix) — user asked
-    // to simplify. We take the trailing 4 chars of the admission slug
-    // ("26-02" → "2602") so the result is just `INT-PHM-2602` /
-    // `FNL-PHM-2602`. Re-prints of an interim carry the same number
-    // (it's a running snapshot, not a new document); a final is
-    // issued once per admission so no collision risk. The print
-    // header still shows the full IPD No in the patient strip for
-    // unambiguous identification.
-    const admSlug = (patient.admissionNumber || "").replace(/[^A-Z0-9]/gi, "").slice(-4);
-    const fallback = new Date().toISOString().slice(5, 10).replace(/-/g, ""); // MMDD if no IPD
+    // R7hr-12-S3 (D7-12): use the FULL sanitized admission number after
+    // the prefix instead of a 4-char trailing slice. The earlier
+    // "trailing 4 chars" approach (R7hr-7-FIX3) collided on two scenarios:
+    //   1. Cross-year same-day: IPD-26-0102 vs IPD-27-0102 both → "0102"
+    //      → `INT-PHM-0102` on both bills.
+    //   2. Blank admissionNumber: the MMDD fallback collides every year
+    //      on the same calendar day for any walk-in/anonymous record.
+    // Full sanitized admission number (`INT-PHM-IPD26-0102`) is unique
+    // by construction. When admissionNumber is unavailable we widen the
+    // fallback to YYMMDD+HHMM so two same-day reprints for two different
+    // blank-IPD records still get distinct numbers. Reprints of the same
+    // running interim still resolve to the same admission-based number
+    // (it IS the same document); a final is issued once per admission so
+    // no collision risk on that side either.
+    const admSlug = (patient.admissionNumber || "").replace(/[^A-Z0-9]/gi, "").toUpperCase();
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    // YYMMDDHHMM — finer than the prior MMDD fallback so anonymous
+    // records minted minutes apart don't share a bill number.
+    const fallback = `${String(now.getFullYear()).slice(-2)}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const billNumber = `${prefix}-PHM-${admSlug || fallback}`;
     return {
       billLabel: label,
-      billNumber: `${prefix}-PHM-${admSlug || fallback}`,
+      billNumber,
       saleType: "IPD",
       patientName:     patient.patientName,
       patientUHID:     patient.UHID,
@@ -646,7 +712,9 @@ export default function PharmacyLedgerPage({
       printAudit: {
         entityType:   "PharmacyConsolidatedBill",
         entityId:     admissionId,
-        entityNumber: `${prefix}-PHM-${admSlug || fallback}`,
+        // R7hr-12-S3 (D7-12): use the same hoisted billNumber so the
+        // PrintAudit row matches the document header verbatim.
+        entityNumber: billNumber,
         UHID:         patient.UHID,
         patientName:  patient.patientName,
       },
@@ -685,7 +753,7 @@ export default function PharmacyLedgerPage({
     }
     setAdvSaving(true);
     try {
-      await axios.post(`${API_ENDPOINTS.BASE}/billing/advance`, {
+      const r = await axios.post(`${API_ENDPOINTS.BASE}/billing/advance`, {
         UHID: patient.UHID,
         admissionId,
         amount: amt,
@@ -695,6 +763,52 @@ export default function PharmacyLedgerPage({
         source: "Pharmacy",
       });
       toast.success(`Advance ${fmtINR(amt)} deposited`);
+      // R7hr-12-S3 (D9-10): auto-print the AdvanceReceipt after a
+      // successful deposit. Every other money-mutating action in the
+      // module (dispense, refund, collect-credit, apply-advance) auto-
+      // prints — advance deposit was the lone hole. A patient handing
+      // over cash for an advance expects paper proof for their records,
+      // for corporate / TPA settlement, and for the pharmacist to
+      // attach to the day-end register (NABH MOM.4 / AAC.7). Payload
+      // mirrors ReceptionBilling's printAdvanceReceipt at L148-L179
+      // so the print looks identical regardless of origin. Wrapped in
+      // try/catch so a popup-blocked print failure doesn't surface as
+      // a deposit error.
+      try {
+        const adv = r?.data?.data || r?.data || null;
+        const receiptNo  = adv?.receiptNumber || `ADV-${Date.now()}`;
+        const paidAt     = adv?.paidAt || adv?.createdAt || new Date().toISOString();
+        const fullName   = [patient.title, patient.patientName].filter(Boolean).join(" ");
+        openPrint("advance-receipt", {
+          receiptNo,
+          patientName:   fullName || patient.patientName,
+          uhid:          patient.UHID,
+          ipdNo:         patient.admissionNumber,
+          admissionDate: patient.admissionDate || null,
+          bedNumber:     patient.bed || null,
+          wardName:      patient.wardName || patient.ward || null,
+          gender:        patient.gender || "",
+          age:           patient.age || "",
+          contactNumber: patient.contactNumber || "",
+          doctor:        patient.consultant || "",
+          date:          paidAt,
+          amount:        amt,
+          method:        advMode,
+          refNo:         advTxn || "",
+          depositPurpose: "Pharmacy advance",
+          preparedBy:    user?.fullName || user?.name || "Pharmacy",
+          // R7bh-F1 / META-1: PrintAudit anchor — bumps printCount on the
+          // underlying PatientAdvance so reprints render the DUPLICATE
+          // watermark and a row lands in the PrintAudit register.
+          printAudit: {
+            entityType:   "AdvanceReceipt",
+            entityId:     adv?._id,
+            entityNumber: receiptNo,
+            UHID:         patient.UHID,
+            patientName:  fullName || patient.patientName,
+          },
+        });
+      } catch (_) { /* print failure non-blocking */ }
       setAdvOpen(false); setAdvAmt(""); setAdvTxn("");
       load();
     } catch (e) {

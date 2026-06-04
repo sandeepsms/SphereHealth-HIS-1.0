@@ -3026,48 +3026,155 @@ async function onIndentReleased(indentDoc, releaseItems = []) {
     }
 
     try {
-      const result = await createTrigger({
-        admissionId:         indentDoc.admissionId,
-        patientId:           indentDoc.patientId,
-        UHID:                indentDoc.UHID,
-        patientType:         "IPD",
-        // R7hr-12-S2 (D5-02): pass through the master service id when the
-        // symmetrization lookup above hit a row — keeps the bill line
-        // tagged with the ServiceMaster category/billingType and lets the
-        // MAR-side serviceCode comparison match exactly.
-        serviceId:           resolvedMasterService?._id,
-        serviceCode:         code,
-        serviceName:         resolvedMasterService?.serviceName
-          || `${item.drugName}${item.dose ? ` ${item.dose}` : ""} (reserved)`,
-        quantity:            issuedQty,
-        unitPriceOverride:   unitPrice,
-        // R7az-CRIT-1 (D6-CRIT-1): canonical sourceType for the
-        // pharmacy reservation row. The MAR-administer path's dedup
-        // query in onMARAdministration searches specifically for
-        // "MAR_RESERVATION" — keeping these strings in lock-step is
-        // the entire fix for the R7au double-count bug.
-        sourceType:          "MAR_RESERVATION",
-        sourceDocumentId:    item._id,          // Points back at the indent item for MAR↔reservation lookup
-        sourceDocumentModel: "PharmacyIndent",
-        orderedBy:           indentDoc.raisedBy || "Nurse",
-        orderedById:         indentDoc.raisedById,
-        orderedByRole:       indentDoc.raisedByRole || "Nurse",
-        completedBy:         indentDoc.releasedBy || "Pharmacist",
-        completedByRole:     "Pharmacist",
-        orderDetails:        `Indent ${indentDoc.indentNumber} · ${item.drugName} × ${issuedQty}`,
-        autoCharge:          true,
-        dailyDedup:          false,
-      });
-      // Stamp the trigger id back onto the indent item so the MAR
-      // consumption path can find it later. We use a direct $set on
-      // the subdoc rather than re-save() to keep the indent-write
-      // optimistically concurrent.
-      if (result?.trigger?._id) {
-        const PharmacyIndent = require("../../models/Pharmacy/PharmacyIndentModel");
-        await PharmacyIndent.findOneAndUpdate(
-          { _id: indentDoc._id, "items._id": item._id },
-          { $set: { "items.$.reservationTriggerId": result.trigger._id } },
-        );
+      // R7hr-12-S3 (D5-12): upsert-by-indent-item on partial release.
+      //
+      // Pre-S3 each release call wrote a FRESH MAR_RESERVATION trigger
+      // with quantity = issuedQty for THIS call only — so a second
+      // partial release of the same indent line emitted a SECOND
+      // PHARM-* trigger carrying just the delta. The MAR-side 2h
+      // dedup (autoBillingService.js L1340-1387) looks back on
+      // serviceCode + admissionId and would find the OLDER trigger
+      // first, skipping the new delta entirely when both releases
+      // landed within 2h. Net effect: under-bill of the second batch
+      // during high-tempo shifts (pharmacist splits a 10-unit indent
+      // into two 5-unit releases within the same hour).
+      //
+      // The fix mirrors the audit's suggested option (a): query for an
+      // existing reservation trigger keyed by sourceType +
+      // sourceDocumentId (the indent item _id is unique per line, so
+      // this is a single-row lookup), and:
+      //   • if found AND still UNCONSUMED by MAR (status pending /
+      //     completed / billed; finalTriggerId on the indent item not
+      //     yet stamped) → GROW quantity + totalAmount + originalQuantity
+      //     in-place, append an overrideHistory row for the audit trail,
+      //     and reuse the existing reservationTriggerId on the indent
+      //     item (already pointed at the same row).
+      //   • otherwise → fall through to the existing createTrigger path
+      //     (first release, or the prior reservation was already
+      //     consumed/voided and a new one is the correct shape).
+      //
+      // This collapses each indent line down to ONE reservation trigger
+      // regardless of release-call count, which is also what the
+      // S2 (D5-08) two-dimensional MAR dedup join already assumed.
+      let existingResv = null;
+      try {
+        existingResv = await BillingTrigger.findOne({
+          sourceType:       "MAR_RESERVATION",
+          sourceDocumentId: item._id,
+          status:           { $in: ["completed", "billed", "pending"] },
+        });
+      } catch (lookupErr) {
+        // Non-fatal — fall through to a fresh create. Worst case the
+        // second release writes a new trigger (legacy pre-S3 behaviour).
+        console.warn(`[Indent] R7hr-12-S3 reservation upsert lookup skipped for item ${item._id}:`, lookupErr.message);
+      }
+
+      // If the prior reservation was already consumed by a MAR-given
+      // dose (finalTriggerId stamped — see autoBillingService.js
+      // L1374-1378 in the MAR dedup path), we MUST emit a fresh
+      // trigger for the new delta — the old row is "spoken for" by
+      // the dose that already administered, and growing it would
+      // retroactively change a billed line. The cheap check is on the
+      // indent subdoc the prior release stamped.
+      let priorConsumed = false;
+      if (existingResv) {
+        try {
+          const PharmacyIndent = require("../../models/Pharmacy/PharmacyIndentModel");
+          const parent = await PharmacyIndent.findOne(
+            { _id: indentDoc._id, "items._id": item._id },
+            { "items.$": 1 },
+          ).lean();
+          const sub = parent?.items?.[0];
+          if (sub?.finalTriggerId) priorConsumed = true;
+        } catch (consumedErr) {
+          // Bias toward the safer FRESH create when the lookup fails.
+          priorConsumed = true;
+          console.warn(`[Indent] R7hr-12-S3 indent-consumed check skipped for item ${item._id}:`, consumedErr.message);
+        }
+      }
+
+      if (existingResv && !priorConsumed) {
+        // Partial-release growth path. Quantity / totalAmount /
+        // originalQuantity all grow by the new issuedQty; the
+        // overrideHistory row carries the audit trail (who grew it,
+        // when, by how much) so /admin/audit-trail can replay the
+        // sequence of partial releases on a single ledger line.
+        const oldQty   = Number(existingResv.quantity) || 0;
+        const newQty   = oldQty + issuedQty;
+        const oldTotal = toNum(existingResv.totalAmount) || 0;
+        const newTotal = oldTotal + (issuedQty * unitPrice);
+        existingResv.quantity         = newQty;
+        // Decimal128 fields — wrap so the setter doesn't lose precision on
+        // long-stay admissions where many partial releases accumulate.
+        existingResv.originalQuantity = toDec(newQty);
+        existingResv.totalAmount      = toDec(newTotal);
+        existingResv.orderDetails     = `Indent ${indentDoc.indentNumber} · ${item.drugName} × ${newQty} (partial releases summed)`;
+        existingResv.overrideHistory  = existingResv.overrideHistory || [];
+        existingResv.overrideHistory.push({
+          field:     "quantity",
+          oldValue:  String(oldQty),
+          newValue:  String(newQty),
+          reason:    `R7hr-12-S3: partial release added ${issuedQty} unit(s) — see indent ${indentDoc.indentNumber}`,
+          changedBy: indentDoc.releasedBy || "Pharmacist",
+          changedAt: new Date(),
+        });
+        await existingResv.save();
+        // Indent item already carries reservationTriggerId from the
+        // first release — no re-stamp needed. Safety net: ensure the
+        // pointer is set even if the first stamp had failed.
+        try {
+          const PharmacyIndent = require("../../models/Pharmacy/PharmacyIndentModel");
+          await PharmacyIndent.findOneAndUpdate(
+            { _id: indentDoc._id, "items._id": item._id, "items.reservationTriggerId": null },
+            { $set: { "items.$.reservationTriggerId": existingResv._id } },
+          );
+        } catch (stampErr) {
+          console.warn(`[Indent] R7hr-12-S3 reservation re-stamp skipped for item ${item._id}:`, stampErr.message);
+        }
+      } else {
+        const result = await createTrigger({
+          admissionId:         indentDoc.admissionId,
+          patientId:           indentDoc.patientId,
+          UHID:                indentDoc.UHID,
+          patientType:         "IPD",
+          // R7hr-12-S2 (D5-02): pass through the master service id when the
+          // symmetrization lookup above hit a row — keeps the bill line
+          // tagged with the ServiceMaster category/billingType and lets the
+          // MAR-side serviceCode comparison match exactly.
+          serviceId:           resolvedMasterService?._id,
+          serviceCode:         code,
+          serviceName:         resolvedMasterService?.serviceName
+            || `${item.drugName}${item.dose ? ` ${item.dose}` : ""} (reserved)`,
+          quantity:            issuedQty,
+          unitPriceOverride:   unitPrice,
+          // R7az-CRIT-1 (D6-CRIT-1): canonical sourceType for the
+          // pharmacy reservation row. The MAR-administer path's dedup
+          // query in onMARAdministration searches specifically for
+          // "MAR_RESERVATION" — keeping these strings in lock-step is
+          // the entire fix for the R7au double-count bug.
+          sourceType:          "MAR_RESERVATION",
+          sourceDocumentId:    item._id,          // Points back at the indent item for MAR↔reservation lookup
+          sourceDocumentModel: "PharmacyIndent",
+          orderedBy:           indentDoc.raisedBy || "Nurse",
+          orderedById:         indentDoc.raisedById,
+          orderedByRole:       indentDoc.raisedByRole || "Nurse",
+          completedBy:         indentDoc.releasedBy || "Pharmacist",
+          completedByRole:     "Pharmacist",
+          orderDetails:        `Indent ${indentDoc.indentNumber} · ${item.drugName} × ${issuedQty}`,
+          autoCharge:          true,
+          dailyDedup:          false,
+        });
+        // Stamp the trigger id back onto the indent item so the MAR
+        // consumption path can find it later. We use a direct $set on
+        // the subdoc rather than re-save() to keep the indent-write
+        // optimistically concurrent.
+        if (result?.trigger?._id) {
+          const PharmacyIndent = require("../../models/Pharmacy/PharmacyIndentModel");
+          await PharmacyIndent.findOneAndUpdate(
+            { _id: indentDoc._id, "items._id": item._id },
+            { $set: { "items.$.reservationTriggerId": result.trigger._id } },
+          );
+        }
       }
     } catch (e) {
       console.error(`[Indent] reservation trigger for item ${item._id} failed:`, e.message);

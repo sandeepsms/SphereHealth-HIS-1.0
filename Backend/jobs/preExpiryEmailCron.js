@@ -178,6 +178,30 @@ async function runPreExpirySweep() {
     }
     out[w.bucket].scanned = rows.length;
 
+    // R7hr-12-S3 (D10-08): Batch-hydrate users up-front instead of one
+    // findById per credential. At quarterly licence renewal peaks (NMC /
+    // IAP / FSSAI / BMW) a single bucket can hold 100+ rows — sequential
+    // findById turned the cron into a multi-minute round-trip storm.
+    // One $in query → Map → lookup mirrors the listIpdCreditAdmissions
+    // admMap pattern.
+    let userMap = new Map();
+    if (User) {
+      const userIds = rows.map(r => r.userId).filter(Boolean);
+      if (userIds.length) {
+        try {
+          const users = await User.find({ _id: { $in: userIds } })
+            .select("fullName email employeeId")
+            .lean();
+          userMap = new Map(users.map(u => [String(u._id), u]));
+        } catch (e) {
+          // Hydration failure is non-fatal — _sendOne falls back to the
+          // denormalised fields stamped on the credential row itself.
+          // eslint-disable-next-line no-console
+          console.warn(`[preExpiryEmailCron] batch user hydrate failed for ${w.bucket}: ${e.message}`);
+        }
+      }
+    }
+
     for (const row of rows) {
       // Dedup — upsert the (credentialId, bucket) row. E11000 means we
       // already sent it, so skip.
@@ -190,13 +214,9 @@ async function runPreExpirySweep() {
         continue;
       }
 
-      // Hydrate the user for email / name.
-      let user = null;
-      if (User && row.userId) {
-        try {
-          user = await User.findById(row.userId).select("fullName email employeeId").lean();
-        } catch (_) { user = null; }
-      }
+      // R7hr-12-S3 (D10-08): O(1) lookup against the pre-hydrated map
+      // instead of a per-row findById round-trip.
+      const user = row.userId ? (userMap.get(String(row.userId)) || null) : null;
 
       try {
         await _sendOne({ credential: row, user, bucket: w.bucket });
