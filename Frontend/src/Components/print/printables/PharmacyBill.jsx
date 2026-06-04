@@ -108,6 +108,20 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const id = resolveIdentityForShell(settings, receipt.pharmacySettings);
   const r = receipt;
   const items = Array.isArray(r.items) ? r.items : [];
+  // R7hr-15-OPD: explicit OPD flag, hoisted ahead of docTitle so the
+  // regulatory-aware Tax-Invoice default below can reference it. Treats
+  // both literal "OPD" and the empty/missing saleType as OPD (legacy
+  // callers that hit the cart-based New Sale flow at PharmacyHomePage
+  // L1131 didn't always tag saleType). Also gates OPD-only strip
+  // additions (Rx Ref + prescriber reg) further down.
+  const isOPD = String(r.saleType || "OPD").trim() === "OPD";
+  // R7hr-15-Walk-in: explicit Walk-in flag for the cash-memo / OTC path.
+  // Drives (a) the default docTitle to "Cash Memo" when no billLabel set
+  // and the bill is not a B2B/controlled-drug tax invoice, (b) the
+  // anonymous-buyer collapse of the patient strip, (c) the PAN-cash-
+  // threshold reminder (Income Tax Rule 114B, bills > ₹2L), and (d) the
+  // DUPLICATE watermark recipient label.
+  const isWalkIn = String(r.saleType || "").trim() === "Walk-in";
 
   // R7eo-A — billLabel override drives the document title (Cash Memo,
   // Credit Note, Pharmacy Bill, etc.) and the browser document.title
@@ -119,7 +133,25 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
     document.title = String(r.billLabel);
     return () => { document.title = prev; };
   }, [r.billLabel]);
-  const docTitle = r.billLabel || "Pharmacy Bill";
+  // R7hr-15-OPD (knownIssue #5): regulatory-aware default. When the caller
+  // didn't pass an explicit billLabel and the OPD bill is either B2B
+  // (customerGstin present) or carries Sch H/H1/X items, the document is
+  // a Tax Invoice under GST §31 — not a generic "Pharmacy Bill". The Sch
+  // signal is derived inline from `items` because the outer `hasControlled`
+  // flag is computed further down (post-totals). Caller-supplied
+  // billLabel still wins so cash-memo / credit-note reprints are unaffected.
+  const _hasSchOnTitle = items.some(it => it.schedule && /^(H|H1|X)$/i.test(it.schedule));
+  const _opdSchOnTitle = isOPD && _hasSchOnTitle;
+  // R7hr-15-Walk-in (layoutNotes): Walk-in defaults to "Cash Memo" per
+  // PharmacyHomePage L1154. The B2C cash memo is promoted to "Tax Invoice"
+  // when the buyer supplies a GSTIN (corporate walk-in / B2B) or when any
+  // dispensed item is Sch H/H1/X (controlled-drug sale becomes a regulated
+  // tax invoice regardless of buyer identity). Caller-supplied billLabel
+  // still wins.
+  const docTitle = r.billLabel
+    || (isWalkIn
+        ? ((r.customerGstin || _hasSchOnTitle) ? "Tax Invoice" : "Cash Memo")
+        : (isOPD && (r.customerGstin || _opdSchOnTitle) ? "Tax Invoice" : "Pharmacy Bill"));
 
   /* Tax + HSN ─────────────────────────────────────────────────── */
   const customerState = String(r.customerState || id._stateForGst || "").trim().toLowerCase();
@@ -227,16 +259,115 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const isIPD = ["IPD", "Daycare", "Day Care", "Emergency"].includes(
     String(r.saleType || "").trim()
   );
-  const patientLeft = [
-    { label: "Bill No",  value: r.billNumber || r.invoiceNo || "—" },
-    { label: "UHID",     value: r.UHID || r.uhid || r.patientUHID || "—" },
-    { label: "Patient",  value: r.patientName || r.fullName || "—" },
-    { label: "Age/Sex",  value: genderAge || "—" },
-    { label: "Contact",  value: r.contactNumber || r.mobile || r.phone || "—" },
-  ];
+  // R7hr-15-OPD (knownIssue #2): top-level prescriberRegistrationNo
+  // (PharmacySale schema L111 — D8-07 Sch H register completeness). Surface
+  // it next to the doctor name so the dispense bill carries the prescriber's
+  // MCI/state-council reg as D&C Schedule H/H1/X register mandates.
+  // `isOPD` is hoisted to the top of the component (see L113) so the
+  // regulatory-aware docTitle above can use it; do not re-declare here.
+  const prescriberReg = r.prescriberRegistrationNo
+    || r.doctorRegistrationNo
+    || r.prescriberRegNo
+    || "";
+  // R7hr-15-IPD (knownIssue #5): IPD bills SHOULD carry patient address
+  // when available — GST §31 supplier-buyer-address snapshot + NABH IPC.2
+  // patient identification on encounter documents. Only render when the
+  // caller passes an address (PharmacySale schema doesn't persist it yet
+  // — once admissionPatient.address is forwarded into the payload, the
+  // strip light up automatically). Walk-in / OPD skip this row.
+  const patientAddress = isIPD
+    ? (r.patientAddress
+        || r.address
+        || _fmtAddr({
+            addressLine1: r.addressLine1,
+            addressLine2: r.addressLine2,
+            city:         r.city,
+            state:        r.state,
+            pincode:      r.pincode,
+          }) || "")
+    : "";
+  // R7hr-15-Walk-in (knownIssue #1): collapse 5 dashed identity rows on
+  // anonymous walk-in sales (OTC cash sale with no buyer identity captured).
+  // For Walk-in we only include each KV when an actual value resolves so
+  // the strip naturally shrinks; if literally no buyer fields are present
+  // we emit a single "Customer · Walk-in (anonymous)" line so the strip
+  // still anchors the bill against the right column without painting 4-5
+  // empty dashes. When ANY buyer identity (UHID/Patient/Contact) IS
+  // present (e.g. controlled-drug Walk-in where Sch H controller forces
+  // patient capture, or B2B with customerLegalName) those rows are shown.
+  // OPD/IPD strips are untouched — they still get the full 5-row identity
+  // block (statutory for prescription/admission paths).
+  const _walkInPatient = r.patientName || r.fullName || r.customerLegalName || "";
+  const _walkInUHID    = r.UHID || r.uhid || r.patientUHID || "";
+  const _walkInContact = r.contactNumber || r.mobile || r.phone || "";
+  const _walkInHasIdentity = !!(_walkInPatient || _walkInUHID || _walkInContact || genderAge);
+  const patientLeft = isWalkIn && !_walkInHasIdentity
+    ? [
+        { label: "Bill No",  value: r.billNumber || r.invoiceNo || "—" },
+        { label: "Customer", value: "Walk-in (anonymous)" },
+      ]
+    : isWalkIn
+      ? [
+          { label: "Bill No",  value: r.billNumber || r.invoiceNo || "—" },
+          ...(_walkInUHID    ? [{ label: "UHID",    value: _walkInUHID }]    : []),
+          ...(_walkInPatient ? [{ label: "Patient", value: _walkInPatient }] : [{ label: "Customer", value: "Walk-in" }]),
+          ...(genderAge      ? [{ label: "Age/Sex", value: genderAge }]      : []),
+          ...(_walkInContact ? [{ label: "Contact", value: _walkInContact }] : []),
+          ...(patientAddress
+            ? [{ label: "Address", value: patientAddress }]
+            : []),
+        ]
+      : [
+          { label: "Bill No",  value: r.billNumber || r.invoiceNo || "—" },
+          { label: "UHID",     value: r.UHID || r.uhid || r.patientUHID || "—" },
+          { label: "Patient",  value: r.patientName || r.fullName || "—" },
+          { label: "Age/Sex",  value: genderAge || "—" },
+          { label: "Contact",  value: r.contactNumber || r.mobile || r.phone || "—" },
+          ...(patientAddress
+            ? [{ label: "Address", value: patientAddress }]
+            : []),
+        ];
+  // R7hr-15-OPD (knownIssue #2): for OPD bills, append prescriber reg
+  // when present so the doctor cell prints "Dr. R. Kapoor · Reg. KMC-…"
+  // — NABH MOM.4 + Sch H/H1/X register need identifiable + registered
+  // prescriber on the dispense document. IPD/Walk-in keep the bare name.
+  // R7hr-15-IPD (knownIssue #8): IPD bills SHOULD also surface attending
+  // consultant's registration number (NABH MOM.4 identifiable prescriber)
+  // — prefer consultantName over doctorName per spec layoutNotes; append
+  // reg when consultantRegistrationNo / doctorRegistrationNo is present.
+  const doctorNameRaw = isIPD
+    ? (r.consultantName || r.doctorName || r.prescribingDoctor || "—")
+    : (r.doctorName || r.prescribingDoctor || r.consultantName || "—");
+  const consultantReg = isIPD
+    ? (r.consultantRegistrationNo
+        || r.doctorRegistrationNo
+        || r.prescriberRegistrationNo
+        || "")
+    : "";
+  // R7hr-15-Walk-in (knownIssue #5): Walk-in dispenses carrying Sch
+  // H/H1/X items MUST show prescriber identity (D&C Act §65; controller
+  // PharmacySaleController L844-849 enforces capture). When the bill has
+  // a controlled drug, suffix the doctor name with the prescriber reg
+  // (mirrors the OPD branch); otherwise legitimate OTC walk-in leaves
+  // the cell as-is so the strip can hide it when no value resolves.
+  const doctorCell = (isOPD && prescriberReg && doctorNameRaw !== "—")
+    ? `${doctorNameRaw} · Reg. ${prescriberReg}`
+    : (isIPD && consultantReg && doctorNameRaw !== "—")
+      ? `${doctorNameRaw} · Reg. ${consultantReg}`
+      : (isWalkIn && _hasSchOnTitle && prescriberReg && doctorNameRaw !== "—")
+        ? `${doctorNameRaw} · Reg. ${prescriberReg}`
+        : doctorNameRaw;
   const patientRight = [
     { label: "Bill Date", value: _fmtDate(r.createdAt || r.billDate || new Date(), { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
-    { label: "Doctor",    value: r.doctorName || r.prescribingDoctor || r.consultantName || "—" },
+    // R7hr-15-Walk-in (knownIssue #1 + layoutNotes): OTC walk-in
+    // legitimately has no prescriber — only emit Doctor row when a real
+    // value resolves OR when the bill carries Sch H/H1/X items (then
+    // doctorName is statutorily required and even an "—" placeholder
+    // signals "MISSING" alongside the controlled-drug banner). OPD/IPD
+    // always render the row (existing contract).
+    ...((!isWalkIn || doctorNameRaw !== "—" || _hasSchOnTitle)
+      ? [{ label: "Doctor", value: doctorCell }]
+      : []),
     { label: "Counter",   value: r.counter || r.pharmacyCounter || r.cashier || r.preparedBy || r.createdBy || "—" },
     // R7hr-12-S3 (D7-08): Extend payer fallback chain to surface TPA /
     // panel attribution when the PharmacySale row carries any of the
@@ -253,16 +384,53 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         || r.scheme
         || (r.payerType && r.payerType !== "Self" ? r.payerType : null)
         || "Self" },
-    { label: "GSTIN",     value: r.customerGstin || "" },
+    // R7hr-15-Walk-in (knownIssue #1 + layoutNotes): only emit GSTIN row
+    // when the buyer actually supplied one (B2B walk-in / corporate buy).
+    // The pre-fix unconditional row painted an empty label+value pair on
+    // every anonymous cash sale. OPD/IPD keep emitting GSTIN row (legacy
+    // payer-facing contract) — they get `""` when not B2B which renders
+    // an empty value cell rather than dropping a row.
+    ...(isWalkIn
+      ? (r.customerGstin ? [{ label: "GSTIN", value: r.customerGstin }] : [])
+      : [{ label: "GSTIN", value: r.customerGstin || "" }]),
     // R7hr-12-S2 (D7-04): IPD/Daycare/Emergency context — bed +
     // admission identifiers required for NABH-compliant patient-facing
     // documents and for TPA/insurance reconciliation of per-admission
     // pharmacy spend.
+    // R7hr-15-IPD (knownIssue #6 + #7): also surface Admission Date and
+    // Diagnosis/ICD-10 in the same context strip — NABH MOM.4 expects
+    // diagnosis context on IPD pharmacy docs; admission date is GST §31
+    // buyer-snapshot data and TPA reconciliation needs the LoS window.
+    // Only render when a value resolves so we don't paint dashed rows on
+    // legacy callers that don't pass these fields yet.
     ...(isIPD ? [
       { label: "IPD No", value: r.admissionNumber || r.ipdNo || r.ipdNumber || "—" },
       { label: "Bed",    value: r.bedNumber || r.bed || r.bedNo || "—" },
       { label: "Ward",   value: r.wardName || r.ward || "—" },
     ] : []),
+    ...((isIPD && (r.admissionDate || r.dateOfAdmission))
+      ? [{ label: "Admission Date", value: _fmtDate(r.admissionDate || r.dateOfAdmission) }]
+      : []),
+    ...((isIPD && (r.diagnosis || r.icd10 || r.icdCode || r.provisionalDiagnosis))
+      ? [{
+          label: "Diagnosis",
+          value: [r.diagnosis || r.provisionalDiagnosis, r.icd10 || r.icdCode]
+            .filter(Boolean)
+            .join(" · "),
+        }]
+      : []),
+    // R7hr-15-OPD (knownIssue #1): surface the prescription/visit ref so
+    // an OPD dispense bill can be reconciled back to its script. Schema
+    // stores it at PharmacySale.prescriptionRef (L122) — Dispense-All sets
+    // it to visit.visitNumber (PharmacyHomePage L3772). Only render when
+    // a value resolves so non-Rx walk-up cash sales don't carry a dashed
+    // row. Gated on isOPD so IPD/Walk-in strips are untouched.
+    ...((isOPD && (r.prescriptionRef || r.visitNumber || r.rxRef || r.visitId))
+      ? [{
+          label: "Rx Ref",
+          value: r.prescriptionRef || r.visitNumber || r.rxRef || r.visitId,
+        }]
+      : []),
   ];
 
   return (
@@ -307,7 +475,14 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         // the "DUPLICATE FOR …" stamp. Preserves the prior in-body
         // workaround's behaviour (patient name, falling back to a
         // generic "RECIPIENT" label).
-        watermarkRecipient: r.patientName || "RECIPIENT",
+        // R7hr-15-Walk-in (knownIssue #4): for Walk-in we prefer
+        // patientName → customerLegalName (B2B walk-in) → "WALK-IN
+        // CUSTOMER" as the recipient label so the reprint stamps
+        // "DUPLICATE FOR WALK-IN CUSTOMER" instead of the generic
+        // "RECIPIENT" placeholder. Non-Walk-in keeps the existing chain.
+        watermarkRecipient: isWalkIn
+          ? (r.patientName || r.customerLegalName || "WALK-IN CUSTOMER")
+          : (r.patientName || "RECIPIENT"),
       }}
     >
       {/* R7hr-12 (D7-01) — PrintWatermark is now emitted by PrintShell
@@ -341,6 +516,46 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         </div>
       )}
 
+      {/* R7hr-15-IPD (knownIssue #2): consolidated INTERIM/FINAL banner.
+          PharmacyLedgerPage.buildConsolidatedPayload stamps
+          `isConsolidated` + `consolidatedFrom` (sale count) + `note` on
+          the payload but the pre-R7hr-15 template ignored them — a 7-
+          dispense FINAL bill looked identical to a single counter sale.
+          The banner surfaces the consolidation context so the discharge
+          cashier knows it is a settlement aggregate and how many dispense
+          rows it covers. Gated on isIPD because only the IPD ledger path
+          mints consolidated bills today; consolidatedFrom > 1 keeps OPD/
+          Walk-in (which never pass these fields) silent and also
+          suppresses single-bill IPD prints that just happen to set the
+          flag. */}
+      {isIPD && r.isConsolidated && toNum(r.consolidatedFrom) > 0 && (
+        <div style={{
+          margin: "0 0 10px", padding: "7px 12px",
+          background: "#eff6ff", border: "1.5px solid #93c5fd",
+          borderRadius: 6, fontSize: 10.5, color: "#1e3a8a",
+          display: "flex", justifyContent: "space-between",
+          alignItems: "center", gap: 12,
+        }}>
+          <span>
+            <b>
+              {String(r.billLabel || "").toUpperCase().includes("FINAL")
+                ? "FINAL CONSOLIDATED BILL"
+                : String(r.billLabel || "").toUpperCase().includes("INTERIM")
+                  ? "INTERIM CONSOLIDATED BILL"
+                  : "CONSOLIDATED PHARMACY BILL"}
+            </b>
+            {" · "}
+            Aggregates <b>{toNum(r.consolidatedFrom)}</b> dispense
+            {toNum(r.consolidatedFrom) === 1 ? "" : "s"} on this admission
+          </span>
+          {r.note && (
+            <span style={{ fontSize: 10, fontStyle: "italic", textAlign: "right", maxWidth: "55%" }}>
+              {r.note}
+            </span>
+          )}
+        </div>
+      )}
+
       {hasControlled && (
         <div style={{
           margin: "0 0 10px", padding: "7px 12px",
@@ -350,6 +565,26 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         }}>
           ⚠ This bill contains Schedule H/H1/X controlled drugs. Sale recorded under
           Drugs &amp; Cosmetics Act §65 — prescription mandatory.
+          {/* R7hr-15-Walk-in (knownIssue #5): on a Walk-in Sch H/H1/X
+              sale the controller (PharmacySaleController L844-849) gates
+              patient + prescriber + Rx ref capture. If the payload still
+              reaches the template missing any of them (legacy override
+              or backdated re-print), flag the specific missing field
+              inline so the audit/pharmacist signing the bill knows what
+              to chase. OPD/IPD skip this callout — their separate
+              identity rows already make the gap visible. */}
+          {isWalkIn && (() => {
+            const _missing = [];
+            if (!_walkInPatient && !_walkInUHID) _missing.push("Patient identity");
+            if (doctorNameRaw === "—") _missing.push("Prescriber name");
+            if (!prescriberReg) _missing.push("Prescriber Reg. No");
+            if (!r.prescriptionRef && !r.rxRef) _missing.push("Rx reference");
+            return _missing.length > 0 ? (
+              <div style={{ marginTop: 4, fontSize: 10, fontWeight: 600, color: "#b91c1c" }}>
+                Missing statutory field{_missing.length === 1 ? "" : "s"}: {_missing.join(" · ")}
+              </div>
+            ) : null;
+          })()}
         </div>
       )}
 
@@ -399,6 +634,23 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
                   {it.generic && <div className="muted" style={{ fontSize: 9.5 }}>({it.generic})</div>}
                   {it.schedule && /^(H|H1|X)$/i.test(it.schedule) && (
                     <div style={{ fontSize: 9, color: "#b91c1c", fontWeight: 700 }}>Sch {it.schedule}</div>
+                  )}
+                  {/* R7hr-15-IPD (knownIssue #3): per-line source-bill
+                      breadcrumb on consolidated IPD bills.
+                      PharmacyLedgerPage.buildConsolidatedPayload (L632-633)
+                      stamps `sourceBillNumber` + `sourceDate` on each line
+                      so the discharge cashier can reconcile each line back
+                      to its original dispense. Only render on IPD
+                      consolidated prints (single-dispense bills already
+                      carry the bill no in the header). */}
+                  {isIPD && r.isConsolidated && it.sourceBillNumber && (
+                    <div style={{
+                      fontSize: 9, color: "#475569", marginTop: 2,
+                      fontFamily: "'DM Mono', monospace",
+                    }}>
+                      {it.sourceBillNumber}
+                      {it.sourceDate && <> · {_fmtDate(it.sourceDate)}</>}
+                    </div>
                   )}
                 </td>
                 {/* R7hr-7 Fix #4: PharmacySale.items uses `batchNumber`
@@ -498,6 +750,96 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         <b>Amount in words:</b> {amountInWords(grandTotal)}.
       </div>
 
+      {/* R7hr-15-Walk-in (knownIssue #2): PAN-cash-threshold reminder
+          (Income Tax Rule 114B). For any walk-in / B2C cash sale where
+          grandTotal exceeds ₹2,00,000 the seller is statutorily required
+          to capture and quote the buyer's PAN on the invoice. Until the
+          form-side flow surfaces a PAN field we render a visible audit-
+          trail reminder so the cashier captures it before handing the
+          bill over. When buyerPan is supplied on the payload we render
+          it as compliance evidence instead of the reminder. Gated to
+          Walk-in so OPD/IPD (which already carry full patient identity +
+          UHID-based PAN trace) stay silent. */}
+      {isWalkIn && grandTotal > 200000 && (
+        <div style={{
+          margin: "0 0 10px", padding: "7px 12px",
+          background: r.buyerPan ? "#f0fdf4" : "#fffbeb",
+          border: `1.5px solid ${r.buyerPan ? "#86efac" : "#fcd34d"}`,
+          borderRadius: 6, fontSize: 10.5,
+          color: r.buyerPan ? "#166534" : "#92400e",
+          display: "flex", justifyContent: "space-between",
+          alignItems: "center", gap: 12,
+        }}>
+          <span>
+            <b>PAN-cash threshold (Income Tax Rule 114B)</b>
+            {" · "}
+            Cash sale exceeds ₹2,00,000 — buyer's PAN is statutorily
+            required on this invoice.
+          </span>
+          <span style={{ fontFamily: "'DM Mono', monospace" }}>
+            {r.buyerPan
+              ? <>Buyer PAN: <b>{r.buyerPan}</b></>
+              : <b style={{ color: "#b45309" }}>PAN: REQUIRED</b>}
+          </span>
+        </div>
+      )}
+
+      {/* R7hr-15-IPD (knownIssue #4): Collection-history strip on IPD
+          bills. PharmacyLedgerPage merges every sale's collectionLog into
+          the payload (L639) but pre-R7hr-15 it was never rendered — in-
+          admission credit collections were invisible on the FINAL bill,
+          making it impossible for the discharge cashier to reconcile what
+          had already been paid against the consolidated balance. Schema
+          shape: collectionLog[] = { amount, mode, txnRef, receiptNumber,
+          collectedAt, collectedBy } (PharmacySaleModel.js L191-211). Gated
+          on isIPD + non-empty array so OPD/Walk-in untouched and a
+          consolidated bill with zero credit collections stays clean. */}
+      {isIPD && Array.isArray(r.collectionLog) && r.collectionLog.length > 0 && (
+        <div style={{
+          marginBottom: 10,
+          border: "1px solid #cbd5e1", borderRadius: 6, overflow: "hidden",
+        }}>
+          <div style={{
+            padding: "5px 10px", background: "#f1f5f9", color: "#0f172a",
+            fontSize: 10, fontWeight: 800, letterSpacing: ".4px",
+            textTransform: "uppercase",
+            display: "flex", justifyContent: "space-between",
+          }}>
+            <span>Credit-Collection History — {r.collectionLog.length} receipt(s)</span>
+            <span>
+              Total collected:{" "}
+              <b>{fmtINR(r.collectionLog.reduce((s, c) => s + _dec(c.amount), 0))}</b>
+            </span>
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+            <thead>
+              <tr>
+                <th style={{ padding: "4px 8px", textAlign: "left", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>#</th>
+                <th style={{ padding: "4px 8px", textAlign: "left", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>Receipt</th>
+                <th style={{ padding: "4px 8px", textAlign: "left", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>Date</th>
+                <th style={{ padding: "4px 8px", textAlign: "left", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>Mode</th>
+                <th style={{ padding: "4px 8px", textAlign: "left", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>Txn Ref</th>
+                <th style={{ padding: "4px 8px", textAlign: "left", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>Collected by</th>
+                <th style={{ padding: "4px 8px", textAlign: "right", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.collectionLog.map((c, i) => (
+                <tr key={i}>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9" }}>{i + 1}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9", fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{c.receiptNumber || "—"}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9" }}>{_fmtDate(c.collectedAt, { day: "2-digit", month: "short", year: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9" }}>{c.mode || "—"}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9", fontFamily: "'DM Mono', monospace", fontSize: 9 }}>{c.txnRef || "—"}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9" }}>{c.collectedBy || "—"}</td>
+                  <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9", textAlign: "right", fontWeight: 700 }}>{fmtINR(_dec(c.amount))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* ── Payment method chip + R7hp-2 structured details ──
            Renders BOTH the legacy `r.method`/`r.refNo` short-form AND
            the new `r.paymentMode` + `r.paymentDetails` shape that the
@@ -559,6 +901,20 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
           )}
           {r.customerLegalName && (
             <div style={{ marginTop: 2 }}><strong>Legal Name:</strong> {r.customerLegalName}</div>
+          )}
+          {/* R7hr-15-Walk-in (optionalFields): customerAddress + state
+              for B2B walk-in — GST §31 buyer-address requirement and
+              the intra/inter-state place-of-supply trail. Only render
+              when caller passes a value so non-B2B (anonymous OTC) and
+              OPD/IPD prints stay untouched. */}
+          {r.customerAddress && (
+            <div style={{ marginTop: 2 }}><strong>Address:</strong> {r.customerAddress}</div>
+          )}
+          {r.customerState && (
+            <div style={{ marginTop: 2 }}>
+              <strong>Place of Supply:</strong> {r.customerState}
+              {isInterState && <span style={{ color: "#b45309", marginLeft: 6 }}>(Inter-State)</span>}
+            </div>
           )}
         </div>
       )}
