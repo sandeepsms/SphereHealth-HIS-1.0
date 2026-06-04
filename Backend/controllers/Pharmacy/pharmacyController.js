@@ -653,8 +653,14 @@ exports.dispense = async (req, res) => {
     }
 
     // Bill number — Counter._id is the scope key, NOT a `name` field.
+    // R7hq: simplified from PHM-YYYYMMDD-NNNN (e.g. PHM-20260604-0002)
+    // to PHM-YY-NNNN (e.g. PHM-26-0002), matching the IPD-YY-NN style.
+    // The seq counter stays continuous (so the audit trail still has a
+    // monotonic per-pharmacy sequence number for GST §31 compliance);
+    // only the human-facing prefix shrinks.
     const seq = await nextSeq("pharmacyBill");
-    const billNumber = `PHM-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
+    const yy = String(new Date().getFullYear()).slice(-2);
+    const billNumber = `PHM-${yy}-${String(seq).padStart(4, "0")}`;
 
     // Stock pre-flight DELETED (business audit F-03). The previous
     // aggregation `$sum` + check happened OUTSIDE the atomic
@@ -1557,7 +1563,9 @@ exports.collectCredit = async (req, res) => {
       let receiptNumber = "";
       try {
         const seq = await nextSeq("pharmacyCreditCollection");
-        receiptNumber = `PHM-COLL-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
+        // R7hq: PHM-COLL-YY-NNNN format (was PHM-COLL-YYYYMMDD-NNNN).
+        const yy = String(new Date().getFullYear()).slice(-2);
+        receiptNumber = `PHM-COLL-${yy}-${String(seq).padStart(4, "0")}`;
       } catch (_) { /* non-fatal */ }
       sale.collectionLog = sale.collectionLog || [];
       sale.collectionLog.push({
@@ -1730,8 +1738,10 @@ exports.returnItems = async (req, res) => {
     }
 
     // Issue a refund slip number via Counter (separate sequence)
+    // R7hq: REF-PHM-YY-NNNN (was REF-PHM-YYYYMMDD-NNNN).
     const seq = await nextSeq("pharmacyRefund");
-    const refundSlipNumber = `REF-PHM-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
+    const yy = String(new Date().getFullYear()).slice(-2);
+    const refundSlipNumber = `REF-PHM-${yy}-${String(seq).padStart(4, "0")}`;
 
     const returnRecord = {
       refundSlipNumber,
@@ -1909,8 +1919,10 @@ exports.addItems = async (req, res) => {
     const paid          = Number(amountPaid != null ? amountPaid : addedTotal);
 
     // Issue supplementary slip number (separate sequence)
+    // R7hq: SUP-PHM-YY-NNNN (was SUP-PHM-YYYYMMDD-NNNN).
     const seq = await nextSeq("pharmacySupplement");
-    const supplementSlipNumber = `SUP-PHM-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
+    const yy = String(new Date().getFullYear()).slice(-2);
+    const supplementSlipNumber = `SUP-PHM-${yy}-${String(seq).padStart(4, "0")}`;
 
     const supplementRecord = {
       supplementSlipNumber,
