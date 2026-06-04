@@ -710,6 +710,14 @@ exports.dispense = async (req, res) => {
       // the Doctor master when the prescriber resolves by name during the
       // pre-flight loop below.
       prescriberRegistrationNo,
+      // R7hr-23: D&C Rules 65 — Walk-in dispense of a Schedule H/H1/X
+      // drug requires the pharmacist on duty to preserve a photocopy of
+      // the prescription for 5 years. The frontend opens an attestation
+      // modal that captures prescriber + Rx ref + this checkbox; we
+      // snapshot the attestation on the sale so the Sch H register and
+      // any subsequent inspector audit can verify it per sale. Falsy on
+      // Walk-in + Sch H lines → RX_PHOTOCOPY_REQUIRED.
+      rxPhotocopyPreserved,
     } = req.body;
 
     // R7bh-F4 / R7bg-3-HIGH-1: normalise paymentMode at the controller boundary
@@ -847,6 +855,13 @@ exports.dispense = async (req, res) => {
             success: false,
             code: "RX_REF_REQUIRED",
             message: `Drug "${meta.name}" is Schedule ${sched} — prescriptionRef + prescriberName are required on the item or sale`,
+            // R7hr-23: structured payload so the frontend attestation modal
+            // knows exactly which fields to collect + which drug triggered.
+            drugName:    meta.name,
+            schedule:    sched,
+            missing:     ["prescriptionRef","prescriberName"]
+                            .filter(k => !String((k === "prescriberName" ? doctorName : prescriptionRef) || "").trim()),
+            saleType,
           });
         }
         // R7hr-12-S2 (D8-07): D&C Form 2 / Schedule H1 register mandates the
@@ -860,6 +875,27 @@ exports.dispense = async (req, res) => {
             success: false,
             code: "RX_REG_REQUIRED",
             message: `Drug "${meta.name}" is Schedule ${sched} — prescriberRegistrationNo is required on the item or sale (D&C Form 2). If the prescriber is in the Doctor master, ensure their professional.registrationNumber is set.`,
+            drugName:    meta.name,
+            schedule:    sched,
+            missing:     ["prescriberRegistrationNo"],
+            saleType,
+          });
+        }
+        // R7hr-23: D&C Rules 65 — Walk-in counter dispense of any Sch H/H1/X
+        // line requires the pharmacist on duty to preserve a photocopy of
+        // the prescription for 5 years. We refuse the sale unless the
+        // frontend attestation modal has been signed off (rxPhotocopyPreserved
+        // = true). OPD/IPD/Homecare exempted — their prescription is
+        // already on the patient file (DoctorOrder / Prescription / Rx-link).
+        if (saleType === "Walk-in" && rxPhotocopyPreserved !== true) {
+          return res.status(400).json({
+            success: false,
+            code: "RX_PHOTOCOPY_REQUIRED",
+            message: `Drug "${meta.name}" is Schedule ${sched} (Walk-in sale). D&C Rules 65 require a photocopy of the prescription to be preserved for 5 years. Please confirm preservation on the attestation prompt to proceed.`,
+            drugName:    meta.name,
+            schedule:    sched,
+            missing:     ["rxPhotocopyPreserved"],
+            saleType,
           });
         }
       }
@@ -1194,6 +1230,12 @@ exports.dispense = async (req, res) => {
       wardName:       snapWardName,
       consultantName: snapConsultantName,
       prescriptionRef: prescriptionRef || "",
+      // R7hr-23: D&C Rules 65 — snapshot the photocopy-preservation
+      // attestation on the sale doc so the Sch H register + any
+      // inspector audit can verify it per dispense. Always written
+      // (default false) — only Sch H/H1/X Walk-in lines actually
+      // require it; everywhere else it's an informational flag.
+      rxPhotocopyPreserved: !!rxPhotocopyPreserved,
       items: saleItems,
       subTotal, totalDiscount: totalDisc, totalTaxable, totalGst,
       roundOff, grandTotal,

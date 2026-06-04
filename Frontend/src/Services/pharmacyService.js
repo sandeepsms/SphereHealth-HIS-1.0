@@ -8,7 +8,22 @@ const BASE = `${API_ENDPOINTS.BASE}/pharmacy`;
 
 const _j = async (r) => {
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d?.message || `HTTP ${r.status}`);
+  if (!r.ok) {
+    // R7hr-23: surface structured error payload (code, drugName, schedule,
+    // missing[], saleType, …) on the thrown Error so callers can branch
+    // on `.code` instead of regex-matching `.message`. Preserves the legacy
+    // human-readable .message so existing toast.error(e.message) keeps
+    // working for callers that haven't migrated to the structured path.
+    const err = new Error(d?.message || `HTTP ${r.status}`);
+    err.code     = d?.code   || null;
+    err.status   = r.status;
+    err.data     = d         || null;
+    err.drugName = d?.drugName || null;
+    err.schedule = d?.schedule || null;
+    err.missing  = Array.isArray(d?.missing) ? d.missing : [];
+    err.saleType = d?.saleType || null;
+    throw err;
+  }
   return d;
 };
 const _qs = (p) => { const s = new URLSearchParams(p).toString(); return s ? "?" + s : ""; };

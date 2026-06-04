@@ -1330,6 +1330,13 @@ function DispenseTab() {
   const [saleType, setSaleType] = useState("Walk-in");
   const [paymentMode, setPaymentMode] = useState("Cash");
   const [saving, setSaving] = useState(false);
+  // R7hr-23: Sch H attestation modal. Opens when the backend rejects a
+  // Walk-in dispense with code RX_REF_REQUIRED / RX_REG_REQUIRED /
+  // RX_PHOTOCOPY_REQUIRED (a Sch H/H1/X line was attempted without the
+  // prescription evidence required by D&C Rules 65). The modal captures
+  // prescriber + Rx ref + photocopy checkbox; on confirm we resubmit
+  // dispense() with rxPhotocopyPreserved=true.
+  const [schHAttest, setSchHAttest] = useState({ open: false, drug: "", schedule: "" });
   // R7hr-12-S2 (D9-07): Synchronous mutex against fast double-clicks on the
   // Save/Submit button. State-based `saving` only gates AFTER React re-renders
   // (one frame later); a quick double-tap fires the handler twice and the
@@ -1436,7 +1443,12 @@ function DispenseTab() {
     return { sub, disc, gst, grand };
   }, [items]);
 
-  const submit = async () => {
+  // R7hr-23: extras carries the Sch H attestation payload when the user
+  // confirmed the photocopy-preserved modal. Empty object on the first
+  // attempt — the backend's RX_*_REQUIRED gate triggers the modal which
+  // re-invokes submit(extras) with prescriptionRef + doctorName +
+  // prescriberRegistrationNo + rxPhotocopyPreserved.
+  const submit = async (extras = {}) => {
     if (items.length === 0) { toast.warn("Add at least one item"); return; }
     // R7hr-12-S2 (D9-07): Synchronous re-entry guard. If the previous click's
     // dispense() POST is still in flight, swallow the duplicate immediately
@@ -1448,6 +1460,13 @@ function DispenseTab() {
       const r = await dispense({
         ...patient, saleType, paymentMode,
         admissionId, admissionNumber,
+        // R7hr-23: forward the Sch H attestation payload when the user
+        // confirmed the photocopy-preserved modal. doctorName wins over
+        // the patient form's doctorName if the modal collected one.
+        ...(extras.doctorName              ? { doctorName:              extras.doctorName } : {}),
+        ...(extras.prescriptionRef         ? { prescriptionRef:         extras.prescriptionRef } : {}),
+        ...(extras.prescriberRegistrationNo? { prescriberRegistrationNo:extras.prescriberRegistrationNo } : {}),
+        ...(extras.rxPhotocopyPreserved === true ? { rxPhotocopyPreserved: true } : {}),
         items: items.map(it => ({
           drugId: it.drugId, drugName: it.drugName,
           quantity: Number(it.quantity), unitPrice: Number(it.unitPrice),
@@ -1490,7 +1509,25 @@ function DispenseTab() {
       setItems([]);
       clearLink();
       setRollup((await stockRollup()).data || []);
-    } catch (e) { toast.error(e.message); }
+    } catch (e) {
+      // R7hr-23: Sch H/H1/X gate from backend — open the attestation modal
+      // instead of a hard toast.error. The modal collects prescriber + Rx
+      // ref + photocopy checkbox; confirm path calls submit({...attest}).
+      // Codes: RX_REF_REQUIRED (prescriptionRef + prescriberName missing),
+      // RX_REG_REQUIRED (council reg # missing), RX_PHOTOCOPY_REQUIRED
+      // (Walk-in Sch H without photocopy attestation).
+      if (e && (e.code === "RX_REF_REQUIRED"
+             || e.code === "RX_REG_REQUIRED"
+             || e.code === "RX_PHOTOCOPY_REQUIRED")) {
+        setSchHAttest({
+          open:     true,
+          drug:     e.drugName || "",
+          schedule: e.schedule || "H",
+        });
+        return;
+      }
+      toast.error(e.message);
+    }
     finally {
       // R7hr-12-S2 (D9-07): release the synchronous mutex AFTER the network
       // round-trip completes so a fast double-click during the in-flight POST
@@ -1651,12 +1688,96 @@ function DispenseTab() {
               {PAYMENT_MODES.map(o => <option key={o}>{o}</option>)}
             </select>
           </Field>
-          <button onClick={submit} disabled={saving || items.length === 0}
+          <button onClick={() => submit()} disabled={saving || items.length === 0}
             style={{ padding: "11px 20px", borderRadius: 8, border: "none", background: saving || items.length === 0 ? "#94a3b8" : C.green, color: "#fff", fontWeight: 800, fontSize: 13, cursor: saving || items.length === 0 ? "not-allowed" : "pointer", marginTop: 6 }}>
             {saving ? "Saving…" : <><i className="pi pi-check" style={{ marginRight: 6 }} />Complete sale · {fmtINR(tot.grand)}</>}
           </button>
         </div>
       </Card>
+      {/* R7hr-23: Schedule H / H1 / X attestation modal. Triggered by the
+         backend gate when the cart includes a controlled drug on a
+         Walk-in sale. The pharmacist must capture prescriber + Rx ref
+         and confirm the photocopy has been preserved for the 5-year
+         D&C Rules 65 audit window. */}
+      {schHAttest.open && (
+        <SchHAttestModal
+          drug={schHAttest.drug}
+          schedule={schHAttest.schedule}
+          initialDoctorName={patient.doctorName || ""}
+          onClose={() => setSchHAttest({ open: false, drug: "", schedule: "" })}
+          onConfirm={(payload) => {
+            setSchHAttest({ open: false, drug: "", schedule: "" });
+            // Persist the entered doctor name into the patient form so
+            // the printed bill carries it too (the form's Doctor field
+            // is what the saleDoc snapshots from when extras isn't set).
+            if (payload.doctorName) setPatient(p => ({ ...p, doctorName: payload.doctorName }));
+            // Resubmit with attestation payload.
+            submit(payload);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// R7hr-23: Schedule H / H1 / X photocopy-attestation modal. Captures the
+// four pieces the backend needs to clear the Sch-H register column +
+// D&C Rules 65 audit:
+//   • Prescriber Name
+//   • Prescriber Registration No (MCI / State Medical Council)
+//   • Prescription Ref (Rx number / clinic name + date)
+//   • Checkbox confirming the photocopy has been preserved for 5 years
+// All four are required before the "Confirm & Dispense" button enables.
+function SchHAttestModal({ drug, schedule, initialDoctorName = "", onClose, onConfirm }) {
+  const [doctorName, setDoctorName] = useState(initialDoctorName);
+  const [regNo,      setRegNo]      = useState("");
+  const [rxRef,      setRxRef]      = useState("");
+  const [preserved,  setPreserved]  = useState(false);
+  const ready = doctorName.trim() && regNo.trim() && rxRef.trim() && preserved;
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 9999, display: "grid", placeItems: "center", padding: 16 }}>
+      <div style={{ background: "#fff", borderRadius: 14, padding: 22, width: "min(560px, 100%)", boxShadow: "0 20px 50px rgba(0,0,0,.25)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <div style={{ background: "#fef3c7", color: "#92400e", padding: "6px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, letterSpacing: 0.5 }}>
+            SCHEDULE {schedule || "H"} · D&C RULES 65
+          </div>
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#0f172a", marginBottom: 4 }}>Prescription attestation required</div>
+        <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 14, lineHeight: 1.55 }}>
+          <b>{drug || "This drug"}</b> is a Schedule {schedule || "H"} controlled medicine. On a Walk-in sale the Drugs &amp; Cosmetics Rules 65 require the pharmacist to <b>preserve a photocopy of the prescription for 5 years</b>. Please confirm the photocopy is on file and capture the prescriber details below before dispensing.
+        </div>
+        <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+          <label style={{ display: "block" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 4, letterSpacing: 0.4 }}>PRESCRIBER NAME *</div>
+            <input className="his-field" value={doctorName} onChange={e => setDoctorName(e.target.value)} placeholder="Dr. R. Kapoor" />
+          </label>
+          <label style={{ display: "block" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 4, letterSpacing: 0.4 }}>PRESCRIBER REG NO *</div>
+            <input className="his-field" value={regNo} onChange={e => setRegNo(e.target.value)} placeholder="MCI / State Council Reg #" />
+          </label>
+          <label style={{ display: "block" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 4, letterSpacing: 0.4 }}>PRESCRIPTION REF *</div>
+            <input className="his-field" value={rxRef} onChange={e => setRxRef(e.target.value)} placeholder="Rx number, clinic + date, etc." />
+          </label>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", padding: "10px 12px", background: preserved ? "#dcfce7" : "#fef9c3", border: `1px solid ${preserved ? "#16a34a" : "#facc15"}`, borderRadius: 8 }}>
+            <input type="checkbox" checked={preserved} onChange={e => setPreserved(e.target.checked)} style={{ marginTop: 3 }} />
+            <span style={{ fontSize: 12.5, color: "#0f172a", lineHeight: 1.5 }}>
+              I confirm that a <b>photocopy of the original prescription</b> has been preserved on file for the <b>5-year D&amp;C Rules 65 audit window</b>. This attestation is recorded against the sale.
+            </span>
+          </label>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onClose}
+            style={{ padding: "9px 16px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#0f172a", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+            Cancel
+          </button>
+          <button onClick={() => onConfirm({ doctorName: doctorName.trim(), prescriberRegistrationNo: regNo.trim(), prescriptionRef: rxRef.trim(), rxPhotocopyPreserved: true })}
+            disabled={!ready}
+            style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: ready ? "#16a34a" : "#94a3b8", color: "#fff", fontWeight: 800, fontSize: 12, cursor: ready ? "pointer" : "not-allowed" }}>
+            <i className="pi pi-check" style={{ marginRight: 6 }} />Confirm &amp; Dispense
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

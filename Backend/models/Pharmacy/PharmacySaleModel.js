@@ -121,6 +121,19 @@ const PharmacySaleSchema = new mongoose.Schema(
     admissionNumber:{ type: String, default: "" },           // denormalised for quick search/display
     prescriptionRef:{ type: String, default: "" },
 
+    // R7hr-23: D&C Rules 65 — when a Walk-in counter dispense includes
+    // any Schedule H / H1 / X drug, the pharmacist must preserve a
+    // photocopy of the prescription for 5 years. The frontend opens an
+    // attestation modal that captures prescriber + Rx ref + a checkbox
+    // signed by the pharmacist on duty; this flag snapshots that
+    // attestation on the sale doc itself so the Sch-H register and any
+    // inspector audit can verify the photocopy-retention claim per sale.
+    // Backend dispense controller refuses Sch H/H1/X Walk-in lines when
+    // this is falsy (code RX_PHOTOCOPY_REQUIRED). OPD/IPD/Homecare sales
+    // are exempt — the prescription is already on the patient file in
+    // those flows.
+    rxPhotocopyPreserved: { type: Boolean, default: false, index: true },
+
     items:       { type: [SALE_ITEM], default: [] },
 
     // Totals
