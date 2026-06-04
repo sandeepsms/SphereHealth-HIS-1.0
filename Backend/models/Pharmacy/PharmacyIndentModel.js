@@ -159,12 +159,18 @@ const PharmacyIndentSchema = new mongoose.Schema({
 });
 
 // ── Pre-save: auto-number ─────────────────────────────────────────
+// R7hr-1: simplified from IND-YYYY-NNNNNN (e.g. IND-2026-000001) to
+// IND-YY-NNNN (e.g. IND-26-0001), matching the IPD-YY-NN / PHM-YY-NNNN
+// family. The per-year counter (`indent:2026`) stays unchanged so the
+// sequence semantics + uniqueness contract are preserved — only the
+// formatted prefix shrinks.
 PharmacyIndentSchema.pre("save", async function (next) {
   if (this.isNew && !this.indentNumber) {
     try {
       const year = new Date().getFullYear();
+      const yy   = String(year).slice(-2);
       const seq  = await nextSequence(`indent:${year}`);
-      this.indentNumber = `IND-${year}-${String(seq).padStart(6, "0")}`;
+      this.indentNumber = `IND-${yy}-${String(seq).padStart(4, "0")}`;
     } catch (e) {
       return next(e);
     }

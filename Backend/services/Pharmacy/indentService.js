@@ -223,7 +223,11 @@ async function acknowledgeIndent(indentId, user = {}) {
 // controllers/Pharmacy/pharmacyController.js so FEFO behaviour is
 // identical across both dispense paths. Re-queries each pass to see
 // live `remaining` after concurrent races.
-async function _fefoPickAndDecrement(drugId, qty) {
+// R7hr-2: optional drugName param so the INSUFFICIENT_STOCK message
+// shows the human-readable name ("Salbutamol Inhaler") instead of the
+// raw ObjectId. Resolves lazily at the throw site if the caller didn't
+// pass one, so existing callers stay correct.
+async function _fefoPickAndDecrement(drugId, qty, drugName = "") {
   if (!drugId) {
     const err = new Error("drugId required for FEFO pick");
     err.code = "ARG_MISSING"; throw err;
@@ -286,13 +290,26 @@ async function _fefoPickAndDecrement(drugId, qty) {
         $inc: { quantityOut: -u.qty, remaining: u.qty },
       }).catch(() => { /* best-effort rollback */ });
     }
+    // R7hr-2: prefer human-readable drug name in the message. Lazy
+    // lookup when the caller didn't pass one (release/dispense path).
+    let label = drugName;
+    if (!label) {
+      try {
+        const Drug = require("../../models/Pharmacy/DrugModel");
+        const d = await Drug.findById(drugId).select("name brandName").lean();
+        label = d ? (d.brandName ? `${d.name} (${d.brandName})` : d.name) : `drug ${drugId}`;
+      } catch { label = `drug ${drugId}`; }
+    }
     const err = new Error(
-      `Insufficient stock for drug ${drugId} — short by ${need} unit(s)` +
-      (triedBatchIds.size > 0 ? ` (${triedBatchIds.size} batches tried + skipped)` : ""),
+      `${label} is out of stock — short by ${need} unit(s).` +
+      (triedBatchIds.size > 0
+        ? ` (${triedBatchIds.size} expired/locked batch${triedBatchIds.size === 1 ? "" : "es"} skipped.)`
+        : " No usable batch found — raise a GRN or type a manual batch + price to override."),
     );
     err.code = "INSUFFICIENT_STOCK";
     err.status = 409;
     err.shortBy = need;
+    err.drugName = label;
     err.triedBatchIds = [...triedBatchIds];
     throw err;
   }
@@ -386,15 +403,17 @@ async function releaseIndent(indentId, { items = [], user = {}, adminOverride = 
       allPicks.set(String(item._id), []);
       continue;
     }
-    fefoTasks.push({ itemId: String(item._id), drugId: item.drugId, qty: issuedClamped });
+    fefoTasks.push({ itemId: String(item._id), drugId: item.drugId, qty: issuedClamped, drugName: item.drugName });
   }
 
   // Use Promise.allSettled so even if one task rejects, the others'
   // successful reservations are still tracked and rolled back. With
   // plain Promise.all we'd lose track of in-flight successes when one
   // task threw — stock would silently leak.
+  // R7hr-2: pass drugName so the INSUFFICIENT_STOCK error shows the
+  // human-readable name instead of an ObjectId.
   const settled = await Promise.allSettled(
-    fefoTasks.map((t) => _fefoPickAndDecrement(t.drugId, t.qty)
+    fefoTasks.map((t) => _fefoPickAndDecrement(t.drugId, t.qty, t.drugName)
       .then((picks) => ({ itemId: t.itemId, picks }))),
   );
   const firstReject = settled.find((s) => s.status === "rejected");
