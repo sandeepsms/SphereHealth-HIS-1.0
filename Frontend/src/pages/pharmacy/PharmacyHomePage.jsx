@@ -4548,6 +4548,16 @@ function IPDCreditTab({ focus, onClearFocus } = {}) {
     }
   }, [focus]);
 
+  // R7hr-9: One-shot guard so the auto-open only fires the FIRST time
+  // the rows finish loading after the pill is clicked. After the user
+  // explicitly hits "Back to list" we set this to true so the list view
+  // is honoured until they pick a row themselves.
+  const [didAutoOpen, setDidAutoOpen] = useState(false);
+
+  // (auto-open useEffect lives BELOW the hist state declaration so it
+  //  can safely reference hist — declaring this above the hist state
+  //  triggered a TDZ "Cannot access 'hist' before initialization".)
+
   // Resolve the seed for the embedded ledger from either the parent
   // focus push OR the row the user clicked locally on the table.
   const openLedger = (admissionId, seed) => {
@@ -4555,6 +4565,10 @@ function IPDCreditTab({ focus, onClearFocus } = {}) {
   };
   const closeLedger = () => {
     setLedgerAdm(null);
+    // R7hr-9: mark "already auto-opened" so subsequent rows-state
+    // changes don't yank the user back into the embedded ledger
+    // after they explicitly hit "Back to list".
+    setDidAutoOpen(true);
     if (typeof onClearFocus === "function") onClearFocus();
   };
 
@@ -4566,6 +4580,54 @@ function IPDCreditTab({ focus, onClearFocus } = {}) {
   const [histSummary, setHistSummary] = useState({ days: 0, bills: 0, totalDispensed: 0, totalCollected: 0, totalOutstanding: 0 });
   const [histDays, setHistDays]       = useState(30);                // window selector
   const [expandedDay, setExpandedDay] = useState(null);              // dateKey of the open day-card
+
+  // R7hr-9: As soon as the admissions-with-outstanding list arrives,
+  // auto-open the FIRST admission's embedded ledger so the pharmacist
+  // sees Take Advance + Interim Bill + Final Bill immediately on
+  // clicking the IPD Ledger pill — no extra "Open Ledger" click needed.
+  // Skipped when:
+  //   • the parent already pushed a focus (Live Indents path),
+  //   • the user has already drilled in once this session,
+  //   • both rows AND history are empty (nothing to open).
+  useEffect(() => {
+    if (didAutoOpen) return;
+    if (ledgerAdm) return;
+    const r = rows[0];
+    if (r) {
+      setLedgerAdm({
+        admissionId: String(r.admissionId),
+        seed: {
+          UHID:            r.UHID || "",
+          patientName:     r.patientFullName || "",
+          admissionNumber: r.admissionNumber || "",
+          bed:             [r.bedNumber, r.wardName].filter(Boolean).join(" · "),
+          consultant:      r.consultantName || "",
+        },
+      });
+      setDidAutoOpen(true);
+      return;
+    }
+    // R7hr-9-FIX: when there's no outstanding (the common steady-state
+    // for healthy ledgers), fall back to the most recent admission that
+    // had ANY pharmacy activity. hist[0].bills[0] is sorted by date
+    // descending so the head is the freshest. This keeps the IPD Ledger
+    // pill useful (showing the last-active patient's ledger with Take
+    // Advance / Interim / Final controls) even when no money is owed.
+    const lastBill = hist?.[0]?.bills?.[0];
+    if (lastBill?.admissionId) {
+      setLedgerAdm({
+        admissionId: String(lastBill.admissionId),
+        seed: {
+          UHID:            lastBill.UHID || "",
+          patientName:     lastBill.patientName || "",
+          admissionNumber: lastBill.admissionNumber || "",
+          bed:             "",
+          consultant:      "",
+        },
+      });
+      setDidAutoOpen(true);
+    }
+  }, [rows, hist, ledgerAdm, didAutoOpen]);
 
   // Per-bill collection modal — open with `setCollect({sale, max})`.
   const [collect, setCollect] = useState(null);
