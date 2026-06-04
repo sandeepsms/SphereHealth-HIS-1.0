@@ -3075,14 +3075,34 @@ function SalesRegisterTbl({ data, loading, typeFilter = "All", schedFilter = "Al
 function PurchaseRegisterTbl({ data, loading }) {
   if (loading) return null;
   const rows = data?.rows || []; const t = data?.totals;
+  // R7hr-32: click-to-sort. Default newest GRN first.
+  const { sorted, sort } = useTableSort(rows, "invoiceDate", "desc");
   return (
     <_RegisterShell title="Purchase Register" color={C.purple}
       totals={t && <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>
         {t.grnCount} GRNs · taxable {fmtINR(t.taxable)} · input GST {fmtINR(t.tax)} · gross <b style={{ color: C.purple }}>{fmtINR(t.gross)}</b>
       </span>}>
-      <Table cols={["GRN Date","GRN #","Invoice #","Supplier","Drug","HSN","Batch","Expiry","Qty","Rate","Taxable","GST","Gross"]} compact>
-        {rows.length === 0 ? <EmptyRow span={13} text="No purchases recorded in this range." /> :
-          rows.map(r => (
+      <Table
+        cols={[
+          { label: "GRN Date",  key: "invoiceDate" },
+          { label: "GRN #",     key: "grnNumber" },
+          { label: "Invoice #", key: "invoiceNo" },
+          { label: "Supplier",  key: "supplier" },
+          { label: "Drug",      key: "drug" },
+          { label: "HSN",       key: "hsn" },
+          { label: "Batch",     key: "batch" },
+          { label: "Expiry",    key: "expiry" },
+          { label: "Qty",       key: "qty" },
+          { label: "Rate",      key: "rate" },
+          { label: "Taxable",   key: "taxable" },
+          { label: "GST",       key: "tax" },
+          { label: "Gross",     key: "gross" },
+        ]}
+        sort={sort}
+        compact
+      >
+        {sorted.length === 0 ? <EmptyRow span={13} text="No purchases recorded in this range." /> :
+          sorted.map(r => (
             <tr key={r._id} style={{ borderTop: `1px solid ${C.border}` }}>
               <td style={{ padding: "6px 10px", color: C.muted }}>{new Date(r.invoiceDate).toLocaleDateString("en-IN")}</td>
               <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 10.5 }}>{r.grnNumber}</td>
@@ -3107,12 +3127,28 @@ function PurchaseRegisterTbl({ data, loading }) {
 function StockRegisterTbl({ data, loading }) {
   if (loading) return null;
   const rows = data?.rows || [];
+  // R7hr-32: click-to-sort. Default by drug name asc (Form 35 convention).
+  const { sorted, sort } = useTableSort(rows, "drugName", "asc");
   return (
     <_RegisterShell title="Stock Register · Form 35" color={C.blue}
       totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{rows.length} drugs with movement</span>}>
-      <Table cols={["Drug","Category","HSN","Opening","Receipts","Issued","Closing","Reorder","Status"]} compact>
-        {rows.length === 0 ? <EmptyRow span={9} text="No stock movement in this range." /> :
-          rows.map(r => {
+      <Table
+        cols={[
+          { label: "Drug",     key: "drugName" },
+          { label: "Category", key: "category" },
+          { label: "HSN",      key: "hsn" },
+          { label: "Opening",  key: "opening" },
+          { label: "Receipts", key: "receipts" },
+          { label: "Issued",   key: "issued" },
+          { label: "Closing",  key: "closing" },
+          { label: "Reorder",  key: "reorderLevel" },
+          "Status",
+        ]}
+        sort={sort}
+        compact
+      >
+        {sorted.length === 0 ? <EmptyRow span={9} text="No stock movement in this range." /> :
+          sorted.map(r => {
             const low = r.closing < r.reorderLevel;
             return (
               <tr key={r.drugId} style={{ borderTop: `1px solid ${C.border}` }}>
@@ -3147,12 +3183,32 @@ function ScheduleHRegisterTbl({ data, loading }) {
   // of the prescriber" — the inspector marks the register non-compliant
   // when the column is missing. Backend now emits prescriberRegistrationNo
   // per row; UI surfaces it next to the doctor name.
+  // R7hr-32: click-to-sort. Default newest dispense first.
+  const { sorted, sort } = useTableSort(rows, "date", "desc");
   return (
     <_RegisterShell title="Schedule H / H1 / X Register" color={C.red}
       totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{rows.length} prescription-mandatory dispenses</span>}>
-      <Table cols={["Date","Bill #","Patient","UHID","Doctor","Rx Reg No","Rx Ref","Drug","Schedule","Batch","Expiry","Qty","Flags"]} compact>
-        {rows.length === 0 ? <EmptyRow span={13} text="No Schedule H drugs dispensed in this range." /> :
-          rows.map((r, i) => (
+      <Table
+        cols={[
+          { label: "Date",      key: "date" },
+          { label: "Bill #",    key: "billNumber" },
+          { label: "Patient",   key: "patientName" },
+          { label: "UHID",      key: "patientUHID" },
+          { label: "Doctor",    key: "doctorName" },
+          { label: "Rx Reg No", key: "prescriberRegistrationNo" },
+          { label: "Rx Ref",    key: "prescriptionRef" },
+          { label: "Drug",      key: "drugName" },
+          { label: "Schedule",  key: "schedule" },
+          { label: "Batch",     key: "batchNo" },
+          { label: "Expiry",    key: "expiryDate" },
+          { label: "Qty",       key: "quantity" },
+          "Flags",
+        ]}
+        sort={sort}
+        compact
+      >
+        {sorted.length === 0 ? <EmptyRow span={13} text="No Schedule H drugs dispensed in this range." /> :
+          sorted.map((r, i) => (
             <tr key={i} style={{ borderTop: `1px solid ${C.border}` }}>
               <td style={{ padding: "6px 10px", color: C.muted }}>{new Date(r.date).toLocaleString("en-IN")}</td>
               <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 10.5 }}>{r.billNumber}</td>
@@ -3192,12 +3248,31 @@ function ExpiryRegisterTbl({ data, loading }) {
     SOON:    { c: C.amber, bg: C.amberL },
     WATCH:   { c: C.blue,  bg: C.blueL },
   };
+  // R7hr-32: click-to-sort. Default by days-to-expiry ascending so the most
+  // urgent batches surface at the top (matches the existing "next 90 days" mental
+  // model). Pharmacist can flip to descending to scan least-urgent first.
+  const { sorted, sort } = useTableSort(rows, "daysToExpiry", "asc");
   return (
     <_RegisterShell title="Expiry Register · next 90 days" color={C.amber}
       totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{rows.length} batches · value <b style={{ color: C.amber }}>{fmtINR(totalValue)}</b></span>}>
-      <Table cols={["Drug","Category","Batch","Supplier","Expiry","Days","Remaining","Sale ₹","Value","Status"]} compact>
-        {rows.length === 0 ? <EmptyRow span={10} text="No batches expiring within 90 days." /> :
-          rows.map((r, i) => {
+      <Table
+        cols={[
+          { label: "Drug",      key: "drug" },
+          { label: "Category",  key: "category" },
+          { label: "Batch",     key: "batchNo" },
+          { label: "Supplier",  key: "supplier" },
+          { label: "Expiry",    key: "expiryDate" },
+          { label: "Days",      key: "daysToExpiry" },
+          { label: "Remaining", key: "remaining" },
+          { label: "Sale ₹",    key: "salePrice" },
+          { label: "Value",     key: "value" },
+          { label: "Status",    key: "status" },
+        ]}
+        sort={sort}
+        compact
+      >
+        {sorted.length === 0 ? <EmptyRow span={10} text="No batches expiring within 90 days." /> :
+          sorted.map((r, i) => {
             const st = statusC[r.status] || statusC.WATCH;
             return (
               <tr key={i} style={{ borderTop: `1px solid ${C.border}` }}>
@@ -3224,14 +3299,35 @@ function ExpiryRegisterTbl({ data, loading }) {
 function GstSummaryTbl({ data, loading }) {
   if (loading) return null;
   const buckets = data?.buckets || [];
+  // R7hr-32: click-to-sort. Default by GST slab asc (GSTR-1 §13 convention,
+  // 0% → 5% → 12% → 18% → 28%). For a derived Gross column we extend each
+  // bucket with `gross = taxable + tax` so the sort hook can read it.
+  const bucketsWithGross = useMemo(
+    () => buckets.map(b => ({ ...b, gross: Number(b.taxable || 0) + Number(b.tax || 0) })),
+    [buckets],
+  );
+  const { sorted, sort } = useTableSort(bucketsWithGross, "gstRate", "asc");
   return (
     <_RegisterShell title="GST Summary · GSTR-1 / GSTR-3B feeder" color={C.pink}
       totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>
         Taxable <b>{fmtINR(data?.grandTaxable)}</b> · CGST {fmtINR(data?.grandCGST)} · SGST {fmtINR(data?.grandSGST)} · Total tax <b style={{ color: C.pink }}>{fmtINR(data?.grandTax)}</b>
       </span>}>
-      <Table cols={["GST Slab","Bills","Qty","Taxable","CGST","SGST","Total Tax","Gross"]} compact>
-        {buckets.length === 0 ? <EmptyRow span={8} text="No taxable sales in this range." /> :
-          buckets.map(b => (
+      <Table
+        cols={[
+          { label: "GST Slab",  key: "gstRate" },
+          { label: "Bills",     key: "billCount" },
+          { label: "Qty",       key: "qty" },
+          { label: "Taxable",   key: "taxable" },
+          { label: "CGST",      key: "cgst" },
+          { label: "SGST",      key: "sgst" },
+          { label: "Total Tax", key: "tax" },
+          { label: "Gross",     key: "gross" },
+        ]}
+        sort={sort}
+        compact
+      >
+        {sorted.length === 0 ? <EmptyRow span={8} text="No taxable sales in this range." /> :
+          sorted.map(b => (
             <tr key={b.gstRate} style={{ borderTop: `1px solid ${C.border}` }}>
               <td style={{ padding: "7px 10px", fontWeight: 800, color: C.pink }}>{b.gstRate}%</td>
               <td style={{ padding: "7px 10px" }}>{b.billCount}</td>
@@ -3240,7 +3336,7 @@ function GstSummaryTbl({ data, loading }) {
               <td style={{ padding: "7px 10px", textAlign: "right" }}>{fmtINR(b.cgst)}</td>
               <td style={{ padding: "7px 10px", textAlign: "right" }}>{fmtINR(b.sgst)}</td>
               <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700 }}>{fmtINR(b.tax)}</td>
-              <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700 }}>{fmtINR(b.taxable + b.tax)}</td>
+              <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700 }}>{fmtINR(b.gross)}</td>
             </tr>
           ))}
       </Table>

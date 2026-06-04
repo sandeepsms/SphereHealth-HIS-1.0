@@ -1132,6 +1132,12 @@ exports.dispense = async (req, res) => {
         saleItems.push({
           drugId: it.drugId, drugName: it.drugName,
           batchId: u.batch._id, batchNo: u.batch.batchNo, expiryDate: u.batch.expiryDate,
+          // R7hr-31: snapshot the batch MRP onto the sale item so the
+          // Pharmacy Bill print can show MRP alongside sale RATE — Legal
+          // Metrology Rules + consumer-transparency expectation. Without
+          // this snapshot a later MRP revision on the batch (e.g. mfg
+          // revision) would rewrite history on every reprint.
+          mrp: Number(u.batch.mrp || 0),
           quantity: qty, unitPrice: unit, gstRate: gstR, discountPercent: discR,
           hsnCode: hsnSnap,
           grossAmount:    round2(gross),

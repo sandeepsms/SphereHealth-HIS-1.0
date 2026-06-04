@@ -674,9 +674,17 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
             <th style={{ width: 26 }}>#</th>
             <th>Drug</th>
             <th style={{ width: 70 }}>Batch</th>
-            <th style={{ width: 64 }}>Expiry</th>
+            {/* R7hr-31: column widened from 64→74px to fit the unambiguous
+                "MMM YYYY" expiry (e.g. "Jul 2029" replaces the old
+                "Jul 29" which read as either July 2029 or 29 July). */}
+            <th style={{ width: 74 }}>Expiry</th>
             <th style={{ width: 60 }}>HSN</th>
             <th style={{ width: 36 }} className="right">Qty</th>
+            {/* R7hr-31: MRP column — Legal Metrology Rules + consumer
+                transparency require MRP visible on every retail bill.
+                Snapshotted on the sale item (item.mrp) at dispense time
+                so a later batch MRP change doesn't rewrite history. */}
+            <th style={{ width: 56 }} className="right">MRP</th>
             <th style={{ width: 60 }} className="right">Rate</th>
             <th style={{ width: 48 }} className="right">Disc</th>
             <th style={{ width: 48 }} className="right">GST%</th>
@@ -685,7 +693,7 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         </thead>
         <tbody>
           {items.length === 0 ? (
-            <tr><td colSpan={10} style={{ textAlign: "center", padding: 18, color: "#94a3b8" }}>No items on this bill</td></tr>
+            <tr><td colSpan={11} style={{ textAlign: "center", padding: 18, color: "#94a3b8" }}>No items on this bill</td></tr>
           ) : items.map((it, i) => {
             const qty = toNum(it.quantity || it.qty);
             const rate = toNum(it.unitPrice || it.rate);
@@ -737,9 +745,20 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
                     Without the alias the consolidated reprint showed every
                     Batch column as "—". */}
                 <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{it.batchNo || it.batchNumber || "—"}</td>
-                <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{_fmtDate(it.expiry || it.expDate || it.expiryDate, { month: "short", year: "2-digit" })}</td>
+                {/* R7hr-31: full 4-digit year ("Jul 2029" not "Jul 29")
+                    to remove the day-vs-year ambiguity on retail bills. */}
+                <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{_fmtDate(it.expiry || it.expDate || it.expiryDate, { month: "short", year: "numeric" })}</td>
                 <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 9.5 }}>{it.hsnCode || "30049099"}</td>
                 <td className="right">{qty}</td>
+                {/* R7hr-31: MRP cell — strike-through styling when MRP > Rate
+                    so the customer sees the discount-off-MRP signal at a
+                    glance; falls back to "—" when MRP wasn't snapshotted
+                    (legacy bills pre-R7hr-31 won't have item.mrp). */}
+                <td className="right" style={{
+                  fontSize: 9.5,
+                  color: toNum(it.mrp) > rate ? "#64748b" : "#0f172a",
+                  textDecoration: toNum(it.mrp) > rate ? "line-through" : "none",
+                }}>{toNum(it.mrp) > 0 ? fmtINR(it.mrp) : "—"}</td>
                 <td className="right">{fmtINR(rate)}</td>
                 <td className="right">{disc > 0 ? fmtINR(disc) : "—"}</td>
                 <td className="right">{gst}%</td>

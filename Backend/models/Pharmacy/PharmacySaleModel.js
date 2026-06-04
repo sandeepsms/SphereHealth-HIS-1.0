@@ -40,6 +40,12 @@ const SALE_ITEM = new mongoose.Schema(
     batchId:    { type: mongoose.Schema.Types.ObjectId, ref: "PharmacyDrugBatch", default: null },
     batchNo:    { type: String, default: "" },
     expiryDate: { type: Date, default: null },
+    // R7hr-31: MRP snapshot from the batch (DrugBatch.mrp) at dispense
+    // time. The bill print shows MRP alongside Rate so the customer sees
+    // the discount-off-MRP signal — Legal Metrology Rules expect MRP on
+    // every retail bill. Snapshotting here (not reading the batch live)
+    // preserves the MRP-at-billing-time even if mfg later revises it.
+    mrp:        { type: Number, default: 0, min: 0 },
 
     quantity:   { type: Number, required: true, min: 1 },
     unitPrice:  { type: Dec, required: true },
