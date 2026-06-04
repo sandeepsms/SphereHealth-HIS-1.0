@@ -70,6 +70,12 @@ router.post  ("/sales",                 requireAction("pharmacy.dispense"),  cre
 // ward when applicable. Helpers NO-OP for Admin/Pharmacist/Accountant.
 router.get   ("/sales",                 requireAction("rx.read"),            attachDoctorProfile, restrictToOwnDoctorPatients, restrictToOwnNurseWard, ctrl.listSales);
 router.get   ("/sales/:id",             requireAction("rx.read"),            ctrl.getSale);
+
+// R7hr-28: Walk-in / Homecare patient memory. Pharmacist types a mobile
+// number; we return every distinct {patientName, age, gender, doctorName}
+// triple ever captured against it. Read-only, gated on rx.read same as
+// /sales. Not validateObjectIdParam — q is a freeform mobile substring.
+router.get   ("/walk-in-patients",      requireAction("rx.read"),            ctrl.lookupWalkInPatients);
 router.post  ("/sales/:id/cancel",      requireAction("pharmacy.cancel"),    credentialExpiryBlocker("PHARMACIST_REG"), ctrl.cancelSale);
 router.post  ("/sales/:id/return",      requireAction("pharmacy.return"),    credentialExpiryBlocker("PHARMACIST_REG"), ctrl.returnItems);
 router.post  ("/sales/:id/add-items",   requireAction("pharmacy.add-items"), credentialExpiryBlocker("PHARMACIST_REG"), ctrl.addItems);

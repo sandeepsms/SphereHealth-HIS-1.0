@@ -75,6 +75,9 @@ export const parseInvoice = async (file) => {
 export const dispense      = (b)               => _post(`/sales`, b);
 export const listSales     = (params = {}, opts) => _get(`/sales${_qs(params)}`, opts);
 export const getSale       = (id)              => _get(`/sales/${id}`);
+// R7hr-28: lookup previously-registered Walk-in / Homecare patients by
+// mobile-number prefix. Returns up to 8 matches, latest-seen first.
+export const lookupWalkInPatients = (q, opts)  => _get(`/walk-in-patients?q=${encodeURIComponent(q)}`, opts);
 export const cancelSale    = (id)              => _post(`/sales/${id}/cancel`);
 export const returnSaleItems = (id, body)       => _post(`/sales/${id}/return`, body);
 export const addItemsToSale  = (id, body)       => _post(`/sales/${id}/add-items`, body);

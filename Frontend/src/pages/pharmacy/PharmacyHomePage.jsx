@@ -29,7 +29,7 @@ import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
   recordGRN, listBatches, stockRollup, parseInvoice,  // R7hr-16: invoice auto-fill
-  dispense, listSales, cancelSale, returnSaleItems, addItemsToSale,
+  dispense, listSales, cancelSale, returnSaleItems, addItemsToSale, lookupWalkInPatients,
   getStats, getAlerts,
   getPharmacySettings, updatePharmacySettings,
   getSalesRegister, getPurchaseRegister, getStockRegister,
@@ -1337,6 +1337,13 @@ function DispenseTab() {
   // prescriber + Rx ref + photocopy checkbox; on confirm we resubmit
   // dispense() with rxPhotocopyPreserved=true.
   const [schHAttest, setSchHAttest] = useState({ open: false, drug: "", schedule: "" });
+  // R7hr-28: Walk-in / Homecare patient memory. As the pharmacist types the
+  // contact number, debounced lookup against past walk-in sales surfaces
+  // every distinct {patientName, age, gender, doctorName} ever captured
+  // against it. Click → patient fields auto-fill so a returning customer
+  // never has to retype their details.
+  const [walkInMatches,      setWalkInMatches]      = useState([]);
+  const [walkInDropdownOpen, setWalkInDropdownOpen] = useState(false);
   // R7hr-12-S2 (D9-07): Synchronous mutex against fast double-clicks on the
   // Save/Submit button. State-based `saving` only gates AFTER React re-renders
   // (one frame later); a quick double-tap fires the handler twice and the
@@ -1412,6 +1419,33 @@ function DispenseTab() {
     const rx = new RegExp(drugSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
     return rollup.filter(r => rx.test(r.drugName || "")).slice(0, 8);
   }, [drugSearch, rollup]);
+
+  // R7hr-28: Walk-in patient memory by mobile-number prefix. We debounce
+  // 250 ms (typical search-as-you-type) and AbortController-cancel the
+  // previous fetch so a fast typist doesn't get a stale "last completed
+  // wins" response stomping on the fresh keystroke. Min 4 chars matches
+  // the backend's RX_LEN guard (refuses shorter queries to prevent
+  // full-table scans). Only fires for Walk-in / Homecare — IPD/OPD sales
+  // were filtered out of SALE_TYPES by R7hr-22, but we still defensive-
+  // guard on saleType in case that's ever relaxed.
+  useEffect(() => {
+    const q = String(patient.contactNumber || "").trim();
+    if (!["Walk-in", "Homecare"].includes(saleType)) { setWalkInMatches([]); return; }
+    if (q.length < 4) { setWalkInMatches([]); setWalkInDropdownOpen(false); return; }
+    const ac = new AbortController();
+    const id = setTimeout(async () => {
+      try {
+        const r = await lookupWalkInPatients(q, { signal: ac.signal });
+        if (!ac.signal.aborted) {
+          setWalkInMatches(Array.isArray(r?.data) ? r.data : []);
+          setWalkInDropdownOpen(true);
+        }
+      } catch (e) {
+        if (e.name !== "AbortError") setWalkInMatches([]);
+      }
+    }, 250);
+    return () => { clearTimeout(id); ac.abort(); };
+  }, [patient.contactNumber, saleType]);
 
   const addItem = (r) => {
     if (items.some(it => it.drugId === r.drugId)) {
@@ -1635,7 +1669,101 @@ function DispenseTab() {
               </select>
             </Field>
           </div>
-          <Field label="Contact"><input className="his-field" value={patient.contactNumber} onChange={e => setPatient(p => ({ ...p, contactNumber: e.target.value }))} /></Field>
+          {/* R7hr-28: Contact field doubles as a returning-customer
+              lookup. As the pharmacist types 4+ digits, the debounced
+              effect above queries past Walk-in / Homecare sales and
+              renders a dropdown of every distinct
+              {patientName, age, gender, doctorName} ever captured
+              against that mobile number. Click a row → all 5 fields
+              auto-fill; a returning customer never has to retype. */}
+          <Field label="Contact">
+            <div style={{ position: "relative" }}>
+              <input
+                className="his-field"
+                value={patient.contactNumber}
+                onChange={e => setPatient(p => ({ ...p, contactNumber: e.target.value }))}
+                onFocus={() => { if (walkInMatches.length) setWalkInDropdownOpen(true); }}
+                onBlur={() => setTimeout(() => setWalkInDropdownOpen(false), 200)}
+                autoComplete="off"
+                placeholder={["Walk-in", "Homecare"].includes(saleType) ? "Type 4+ digits to find past customers…" : ""}
+              />
+              {walkInDropdownOpen && walkInMatches.length > 0 && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "100%",
+                    left: 0,
+                    right: 0,
+                    marginTop: 4,
+                    background: "#fff",
+                    border: "1px solid #d1d5db",
+                    borderRadius: 6,
+                    boxShadow: "0 6px 16px rgba(15,23,42,0.12)",
+                    zIndex: 40,
+                    maxHeight: 280,
+                    overflowY: "auto",
+                  }}
+                >
+                  <div style={{ padding: "6px 10px", fontSize: 11, color: "#64748b", borderBottom: "1px solid #e5e7eb", background: "#f8fafc" }}>
+                    {walkInMatches.length} previous customer{walkInMatches.length === 1 ? "" : "s"} found
+                  </div>
+                  {walkInMatches.map((m, ix) => {
+                    const last = m.lastSeen ? new Date(m.lastSeen) : null;
+                    const days = last ? Math.max(0, Math.floor((Date.now() - last.getTime()) / 86400000)) : null;
+                    const ago  = days === null ? ""
+                                : days === 0 ? "today"
+                                : days === 1 ? "yesterday"
+                                : days < 30  ? `${days} days ago`
+                                : days < 365 ? `${Math.floor(days / 30)} mo ago`
+                                : `${Math.floor(days / 365)} yr ago`;
+                    return (
+                      <button
+                        key={`${m.contactNumber}-${m.patientName}-${ix}`}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault() /* keep input focus */}
+                        onClick={() => {
+                          setPatient(p => ({
+                            ...p,
+                            patientName:   m.patientName   || p.patientName,
+                            contactNumber: m.contactNumber || p.contactNumber,
+                            age:           m.age           || p.age,
+                            gender:        m.gender        || p.gender,
+                            doctorName:    m.doctorName    || p.doctorName,
+                          }));
+                          setWalkInDropdownOpen(false);
+                          toast.success(`Loaded ${m.patientName || "customer"} (${m.visits} prior visit${m.visits === 1 ? "" : "s"})`);
+                        }}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "8px 10px",
+                          background: "#fff",
+                          border: "none",
+                          borderBottom: ix === walkInMatches.length - 1 ? "none" : "1px solid #f1f5f9",
+                          cursor: "pointer",
+                          fontSize: 13,
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "#f8fafc"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "#fff"; }}
+                      >
+                        <div style={{ fontWeight: 600, color: "#0f172a" }}>
+                          {m.patientName || "(no name)"}
+                          {m.age ? <span style={{ fontWeight: 400, color: "#64748b" }}> · {m.age}{m.gender ? "/" + m.gender.charAt(0) : ""}</span> : null}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                          📱 {m.contactNumber}
+                          {m.doctorName ? <> · 🩺 {m.doctorName}</> : null}
+                          {ago ? <> · last seen {ago}</> : null}
+                          <> · {m.visits} visit{m.visits === 1 ? "" : "s"}</>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </Field>
           <Field label="Doctor"><input className="his-field" value={patient.doctorName} onChange={e => setPatient(p => ({ ...p, doctorName: e.target.value }))} /></Field>
           <Field label="Sale type">
             <select className="his-select" value={saleType} onChange={e => setSaleType(e.target.value)}>

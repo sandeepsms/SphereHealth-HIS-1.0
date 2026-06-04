@@ -1566,6 +1566,84 @@ exports.getSale = async (req, res) => {
   } catch (e) { sendErr(res, e); }
 };
 
+/*
+ * R7hr-28 — Walk-in / Homecare patient memory by mobile number.
+ *
+ * When a Walk-in patient comes back, the pharmacist types their mobile
+ * number; we return every distinct {patientName, age, gender, doctorName}
+ * triple that was ever captured against that contact, latest-seen first.
+ * The frontend renders them as a dropdown so the pharmacist can click
+ * the right name and skip retyping age / sex / doctor. The Sch H
+ * register also benefits — same prescriber details get carried forward
+ * across visits.
+ *
+ * Query param `q` accepts either a full mobile number or a 4+ digit
+ * prefix; we 400 on shorter inputs so we don't fan out a "send me every
+ * Walk-in patient" scan. Pulls only Walk-in + Homecare sales — OPD/IPD
+ * patients live in the Patient master and are resolved via /patients
+ * search, so mirroring them here would just create cache drift.
+ *
+ * Limit defaults to 8 (modal-sized) and is capped at 25.
+ */
+exports.lookupWalkInPatients = async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    // 4 digits is the smallest prefix that's still selective enough to
+    // avoid scanning the entire walk-in history on every keystroke.
+    if (q.length < 4) {
+      return res.json({ success: true, data: [] });
+    }
+    const lim = Math.min(25, Math.max(1, Number(req.query.limit) || 8));
+    // contactNumber is stored as a free-text String on PharmacySale, so
+    // match by suffix/contains; users sometimes prefix +91 or 0 and we
+    // don't want that to silently miss prior visits.
+    const safe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const rx = new RegExp(safe, "i");
+    const rows = await Sale.aggregate([
+      {
+        $match: {
+          saleType: { $in: ["Walk-in", "Homecare"] },
+          contactNumber: rx,
+          status: { $in: ["Completed", "Partial-Return", "Refunded", "Supplemented"] },
+        },
+      },
+      { $sort: { createdAt: -1 } },
+      {
+        // Collapse to one row per {contact, patientName} — same number can
+        // legitimately have multiple family members.
+        $group: {
+          _id: {
+            contact: "$contactNumber",
+            name: { $ifNull: ["$patientName", ""] },
+          },
+          patientName:   { $first: "$patientName" },
+          contactNumber: { $first: "$contactNumber" },
+          age:           { $first: "$age" },
+          gender:        { $first: "$gender" },
+          doctorName:    { $first: "$doctorName" },
+          lastSeen:      { $first: "$createdAt" },
+          visits:        { $sum: 1 },
+        },
+      },
+      { $sort: { lastSeen: -1 } },
+      { $limit: lim },
+      {
+        $project: {
+          _id: 0,
+          patientName: 1,
+          contactNumber: 1,
+          age: 1,
+          gender: 1,
+          doctorName: 1,
+          lastSeen: 1,
+          visits: 1,
+        },
+      },
+    ]);
+    res.json({ success: true, data: rows });
+  } catch (e) { sendErr(res, e); }
+};
+
 /* ════════════════════════════════════════════════════════════════
    R7cu — IPD PHARMACY CREDIT LEDGER
    ──────────────────────────────────────────────────────────────
