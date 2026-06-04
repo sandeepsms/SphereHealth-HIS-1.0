@@ -195,7 +195,11 @@ export default function PharmacyLedgerPage({
         age:             patBody?.age || patBody?.ageYears || ageFromDob(patBody?.dateOfBirth || patBody?.dob) || p.age || "",
         gender:          patBody?.gender || patBody?.sex || p.gender || "",
         contactNumber:   patBody?.contactNumber || patBody?.mobile || patBody?.phone || patBody?.contact?.mobile || patBody?.contact?.phone || p.contactNumber || "",
-        consultant:      admBody?.doctorName || admBody?.consultantName || admBody?.consultingDoctor || admBody?.attendingDoctorName || p.consultant || "",
+        // R7hr-7-FIX3: real admission field is `attendingDoctor`
+        // (string name, line 196 of admissionModel.js). The earlier
+        // `doctorName` lookup was a comment red-herring — that field
+        // only exists nested inside treatmentTeam[].doctorName.
+        consultant:      admBody?.attendingDoctor || admBody?.doctorName || admBody?.consultantName || admBody?.consultingDoctor || (admBody?.treatmentTeam?.[0]?.doctorName) || p.consultant || "",
         bed:             p.bed || [admBody?.bedNumber, admBody?.wardName].filter(Boolean).join(" · "),
       }));
     } catch (e) {
@@ -337,14 +341,21 @@ export default function PharmacyLedgerPage({
     const amountPaid  = sales.reduce((acc, s) => acc + dec(s.amountPaid), 0);
     const balanceDue  = sales.reduce((acc, s) => acc + dec(s.balanceDue), 0);
     const collectionLog = sales.flatMap(s => s.collectionLog || []);
-    const yymmdd = new Date().toISOString().slice(2, 10).replace(/-/g, "");
     const prefix = label.startsWith("FINAL") ? "FNL" : "INT";
-    // R7hr-7: bill number now `FNL-PHM-IPD2602-260604` (strip the hyphen
-    // inside the admission number so the document slug stays scannable).
-    const admSlug = (patient.admissionNumber || "").replace(/[^A-Z0-9]/gi, "");
+    // R7hr-7-FIX3: simplified bill number. Was
+    // `INT-PHM-IPD2602-260604` (16 chars + date suffix) — user asked
+    // to simplify. We take the trailing 4 chars of the admission slug
+    // ("26-02" → "2602") so the result is just `INT-PHM-2602` /
+    // `FNL-PHM-2602`. Re-prints of an interim carry the same number
+    // (it's a running snapshot, not a new document); a final is
+    // issued once per admission so no collision risk. The print
+    // header still shows the full IPD No in the patient strip for
+    // unambiguous identification.
+    const admSlug = (patient.admissionNumber || "").replace(/[^A-Z0-9]/gi, "").slice(-4);
+    const fallback = new Date().toISOString().slice(5, 10).replace(/-/g, ""); // MMDD if no IPD
     return {
       billLabel: label,
-      billNumber: `${prefix}-PHM-${admSlug || yymmdd}-${yymmdd}`,
+      billNumber: `${prefix}-PHM-${admSlug || fallback}`,
       saleType: "IPD",
       patientName:     patient.patientName,
       patientUHID:     patient.UHID,
