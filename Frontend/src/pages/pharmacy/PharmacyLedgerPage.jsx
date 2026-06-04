@@ -255,6 +255,75 @@ export default function PharmacyLedgerPage({
     });
   };
 
+  /* ── R7hr-6: Consolidated interim / final pharmacy bill ──────── */
+  // Flattens every dispense for this admission into a single payload
+  // the existing PharmacyBill template can render. `billLabel` drives
+  // the document header — "INTERIM PHARMACY BILL" (running total
+  // printable at any time) vs "FINAL PHARMACY BILL" (issued at
+  // settlement, locked tone). Mirrors the IPD Live Ledger's
+  // interim-vs-final flow.
+  const buildConsolidatedPayload = (label) => {
+    const items = sales
+      .filter(s => s.status !== "Cancelled")
+      .flatMap(s => (s.items || []).map(it => ({
+        ...it,
+        // Stamp the source bill on each line so the consolidated
+        // print can show "Paracetamol 1g × 6 (PHM-26-0007, 04 Jun)"
+        // without losing the per-dispense breadcrumb.
+        sourceBillNumber: s.billNumber,
+        sourceDate: s.createdAt,
+      })));
+    const subTotal    = sales.reduce((acc, s) => acc + dec(s.subTotal),   0);
+    const grandTotal  = sales.reduce((acc, s) => acc + dec(s.grandTotal), 0);
+    const amountPaid  = sales.reduce((acc, s) => acc + dec(s.amountPaid), 0);
+    const balanceDue  = sales.reduce((acc, s) => acc + dec(s.balanceDue), 0);
+    const collectionLog = sales.flatMap(s => s.collectionLog || []);
+    const yymmdd = new Date().toISOString().slice(2, 10).replace(/-/g, "");
+    const prefix = label.startsWith("FINAL") ? "FNL" : "INT";
+    return {
+      billLabel: label,
+      // Synthetic bill number so re-prints don't collide with real
+      // PHM-YY-NNNN ledger rows. The base counter sequence keeps
+      // working for actual dispense receipts.
+      billNumber: `${prefix}-PHM-${(patient.admissionNumber || yymmdd).replace(/[^A-Z0-9-]/gi, "")}-${yymmdd}`,
+      saleType: "IPD",
+      patientName:     patient.patientName,
+      patientUHID:     patient.UHID,
+      UHID:            patient.UHID,
+      admissionNumber: patient.admissionNumber,
+      bedNumber:       patient.bed,
+      consultantName:  patient.consultant,
+      items,
+      subTotal,
+      grandTotal,
+      amountPaid,
+      balanceDue,
+      collectionLog,
+      paymentMode: balanceDue > 0 ? "Credit" : "Mixed",
+      createdAt: new Date(),
+      isConsolidated: true,
+      consolidatedFrom: sales.length,
+      note: label.startsWith("FINAL")
+        ? `Final settlement bill — consolidated of ${sales.length} dispense(s) on this admission.`
+        : `Running total · ${sales.length} dispense(s) to date · final bill issued at settlement.`,
+    };
+  };
+  const printInterimBill = () => {
+    if (!sales.length) return toast.warn("No pharmacy charges yet — nothing to print");
+    openPrint("pharmacy-bill", buildConsolidatedPayload("INTERIM PHARMACY BILL"));
+  };
+  const printFinalBill = () => {
+    if (!sales.length) return toast.warn("No pharmacy charges yet — nothing to print");
+    if (totals.outstanding > 0) {
+      const ok = window.confirm(
+        `Outstanding ${fmtINR(totals.outstanding)} still pending.\n` +
+        `A "Final" bill normally means everything is settled.\n\nPrint Final anyway?`
+      );
+      if (!ok) return;
+    }
+    openPrint("pharmacy-bill", buildConsolidatedPayload("FINAL PHARMACY BILL"));
+  };
+
   /* ── Take Advance Deposit submit ────────────────────────────── */
   const submitAdvance = async () => {
     const amt = Number(advAmt);
@@ -304,7 +373,31 @@ export default function PharmacyLedgerPage({
               Pharmacy charges only · Hospital-wide bill is not visible here
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {/* R7hr-6: Interim Bill — running total of every dispense
+                printable any time. Greyed when there's nothing on the
+                ledger yet. */}
+            <button onClick={printInterimBill} disabled={!sales.length} style={{
+              padding: "9px 14px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
+              borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: sales.length ? "pointer" : "not-allowed",
+              opacity: sales.length ? 1 : 0.55,
+            }}>
+              <i className="pi pi-file" style={{ marginRight: 5 }} /> Interim Bill
+            </button>
+            {/* R7hr-6: Final Bill — consolidated settlement print.
+                Highlighted green when outstanding === 0 (the natural
+                "ready to issue" moment); muted otherwise but still
+                callable behind a confirm() guard for edge cases. */}
+            <button onClick={printFinalBill} disabled={!sales.length} style={{
+              padding: "9px 16px",
+              background: totals.outstanding === 0 && sales.length ? C.green : "#fff",
+              color:      totals.outstanding === 0 && sales.length ? "#fff"   : C.green,
+              border: `1.5px solid ${C.green}`,
+              borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: sales.length ? "pointer" : "not-allowed",
+              opacity: sales.length ? 1 : 0.55,
+            }}>
+              <i className="pi pi-check-square" style={{ marginRight: 5 }} /> Final Bill
+            </button>
             <button onClick={() => setAdvOpen(true)} style={{
               padding: "9px 16px", background: "#fff", color: C.blue, border: `1.5px solid ${C.blue}`,
               borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: "pointer",
