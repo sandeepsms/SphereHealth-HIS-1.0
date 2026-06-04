@@ -1369,9 +1369,23 @@ function DispenseTab() {
       });
       setAdmissionId(hit.admissionId);
       setAdmissionNumber(hit.admissionNumber || "");
-      setSaleType(hit.saleType || "OPD");
+      // R7hr-22: Dispense tab tab is restricted to Walk-in + Homecare. Don't
+      // auto-flip to OPD/IPD on UHID fetch — the resolved patient may live
+      // in HIS but the sale itself flows through here as a Walk-in OTC
+      // dispense (over-the-counter cash sale to a registered patient).
+      // For Rx-linked OPD dispensing use the OPD Rx tab; for credit-
+      // linked IPD dispensing use the IPD Ledger tab.
+      setSaleType("Walk-in");
       setHisLinked(true);
       toast.success(`Linked ${hit.patientName} (${hit.source === "admission" ? `IPD · ${hit.admissionNumber || hit.admissionId}` : "OPD"})`);
+      // R7hr-22: gentle guidance — the patient is OPD/IPD in HIS but the
+      // tab is restricted to OTC. Nudge the pharmacist to the right tab
+      // for the workflow they probably intended.
+      if (hit.source === "admission") {
+        toast(`💡 Tip: For IPD credit-linked billing use the "IPD Ledger" tab. Dispense tab will record this as a Walk-in OTC sale.`, { duration: 6000 });
+      } else if (hit.source === "patient") {
+        toast(`💡 Tip: For Rx-linked OPD dispense (Schedule-H + prescriber capture) use the "OPD Rx" tab. Dispense tab will record this as a Walk-in OTC sale.`, { duration: 6000 });
+      }
     } catch (e) {
       toast.error(e.message || "UHID lookup failed");
     } finally { setLookupBusy(false); }
@@ -1622,7 +1636,14 @@ function DispenseTab() {
           <Field label="Doctor"><input className="his-field" value={patient.doctorName} onChange={e => setPatient(p => ({ ...p, doctorName: e.target.value }))} /></Field>
           <Field label="Sale type">
             <select className="his-select" value={saleType} onChange={e => setSaleType(e.target.value)}>
-              {SALE_TYPES.map(o => <option key={o}>{o}</option>)}
+              {/* R7hr-22: Dispense tab is for Walk-in + Homecare only.
+                 OPD dispense flows through the OPD Rx tab (Rx-linked, with
+                 prescriber reg + Schedule-H validation); IPD dispense flows
+                 through the IPD Ledger tab (credit-linked, posts to the
+                 admission ledger). Filtering OPD/IPD out of this dropdown
+                 prevents the wrong-tab landing pattern. Sales Register
+                 still filters all four types — see registerTypeFilter. */}
+              {SALE_TYPES.filter(o => o === "Walk-in" || o === "Homecare").map(o => <option key={o}>{o}</option>)}
             </select>
           </Field>
           <Field label="Payment mode">
