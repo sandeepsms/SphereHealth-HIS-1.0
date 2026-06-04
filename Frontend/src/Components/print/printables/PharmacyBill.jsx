@@ -157,19 +157,25 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const patientCred     = toNum(r.patientCredit);
   const printCount      = toNum(r.printCount);
 
-  /* Patient-strip mapping — Track-B contract */
+  /* Patient-strip mapping — Track-B contract.
+     R7hp-1: extend fallback chain to include `patientUHID` (the field
+     name PharmacySale actually stores), `patientName`/`patientName` and
+     resolve Counter from cashier/preparedBy/createdBy when no explicit
+     counter is set. Pre-fix the strip showed UHID="—" / Age-Sex="—" /
+     Contact="—" / Counter="—" on every dispense print because the
+     template was reading the wrong field names. */
   const genderAge = [r.gender, r.age && `${r.age}Y`].filter(Boolean).join(" ");
   const patientLeft = [
-    { label: "Bill No",  value: r.billNumber || "—" },
-    { label: "UHID",     value: r.UHID || r.uhid || "—" },
+    { label: "Bill No",  value: r.billNumber || r.invoiceNo || "—" },
+    { label: "UHID",     value: r.UHID || r.uhid || r.patientUHID || "—" },
     { label: "Patient",  value: r.patientName || r.fullName || "—" },
     { label: "Age/Sex",  value: genderAge || "—" },
-    { label: "Contact",  value: r.contactNumber || r.mobile || "—" },
+    { label: "Contact",  value: r.contactNumber || r.mobile || r.phone || "—" },
   ];
   const patientRight = [
-    { label: "Bill Date", value: _fmtDate(r.createdAt || r.billDate || new Date()) },
-    { label: "Doctor",    value: r.doctorName || r.prescribingDoctor || "—" },
-    { label: "Counter",   value: r.counter || r.pharmacyCounter || "—" },
+    { label: "Bill Date", value: _fmtDate(r.createdAt || r.billDate || new Date(), { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
+    { label: "Doctor",    value: r.doctorName || r.prescribingDoctor || r.consultantName || "—" },
+    { label: "Counter",   value: r.counter || r.pharmacyCounter || r.cashier || r.preparedBy || r.createdBy || "—" },
     { label: "Payer",     value: r.payer || (r.tpaName ? r.tpaName : "Self") },
     { label: "GSTIN",     value: r.customerGstin || "" },
   ];
@@ -367,14 +373,50 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         <b>Amount in words:</b> {amountInWords(grandTotal)} only.
       </div>
 
-      {/* ── Payment method chip ── */}
-      {r.method && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, fontSize: 11 }}>
-          <span style={{ color: "#475569", fontWeight: 700 }}>Paid via:</span>
-          <span className={`pr-paymethod pr-paymethod--${String(r.method).toLowerCase()}`}>
-            {String(r.method).toUpperCase()}
-          </span>
-          {r.refNo && <span style={{ color: "#64748b", fontSize: 10.5 }}>Ref: {r.refNo}</span>}
+      {/* ── Payment method chip + R7hp-2 structured details ──
+           Renders BOTH the legacy `r.method`/`r.refNo` short-form AND
+           the new `r.paymentMode` + `r.paymentDetails` shape that the
+           Dispense All flow now ships. Card last-4, UPI txn ref and
+           Mix-mode splits get itemised so the patient sees exactly
+           which slice of the bill was settled by which mode. */}
+      {(r.method || r.paymentMode) && (
+        <div style={{ marginBottom: 10, fontSize: 11 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ color: "#475569", fontWeight: 700 }}>Paid via:</span>
+            <span className={`pr-paymethod pr-paymethod--${String(r.method || r.paymentMode).toLowerCase()}`}>
+              {String(r.method || r.paymentMode).toUpperCase()}
+            </span>
+            {r.refNo && <span style={{ color: "#64748b", fontSize: 10.5 }}>Ref: {r.refNo}</span>}
+            {/* Card last-4 — masked PAN format */}
+            {r.paymentDetails?.cardLast4 && (
+              <span style={{ color: "#64748b", fontSize: 10.5 }}>
+                Card: <span style={{ fontFamily: "'DM Mono', monospace" }}>•••• {r.paymentDetails.cardLast4}</span>
+                {r.paymentDetails.cardHolderName && ` · ${r.paymentDetails.cardHolderName}`}
+              </span>
+            )}
+            {/* UPI txn ref */}
+            {r.paymentDetails?.upiTxnRef && (
+              <span style={{ color: "#64748b", fontSize: 10.5 }}>
+                UPI Ref: <span style={{ fontFamily: "'DM Mono', monospace" }}>{r.paymentDetails.upiTxnRef}</span>
+              </span>
+            )}
+          </div>
+          {/* Mix-mode split breakdown */}
+          {Array.isArray(r.paymentDetails?.splits) && r.paymentDetails.splits.length > 0 && (
+            <div style={{
+              marginTop: 4, paddingLeft: 8,
+              borderLeft: "2px solid #cbd5e1",
+              fontSize: 10.5, color: "#475569",
+              display: "flex", gap: 14, flexWrap: "wrap",
+            }}>
+              {r.paymentDetails.splits.map((s, i) => (
+                <span key={i}>
+                  <strong>{s.mode}:</strong> {fmtINR(_dec(s.amount))}
+                  {s.txnRef && <span style={{ color: "#64748b", marginLeft: 4 }}>({s.txnRef})</span>}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -513,6 +513,12 @@ exports.dispense = async (req, res) => {
       // GSTR-1 schema. Both optional — when blank, intra-state default
       // (CGST+SGST = gst/2 each) applies and B2C bucket is used.
       placeOfSupply, customerGstin,
+      // R7hp-2: structured payment metadata (Card last-4, UPI txn ref,
+      // Mix splits). Whitelisted here so the service layer can persist
+      // it on the Sale doc without a downstream schema change.
+      paymentDetails,
+      // R7hp-1: pharmacist counter identity for the bill footer.
+      counter,
     } = req.body;
 
     // R7bh-F4 / R7bg-3-HIGH-1: normalise paymentMode at the controller boundary
@@ -788,6 +794,23 @@ exports.dispense = async (req, res) => {
       igstAmount: totalIgst,
       paymentMode, amountPaid: paid,
       balanceDue,
+      // R7hp-2: shape-defensive whitelist on the payment metadata so
+      // garbage from an old client can't sneak unknown fields onto the
+      // sub-doc.
+      paymentDetails: paymentDetails && typeof paymentDetails === "object" ? {
+        cardLast4:      String(paymentDetails.cardLast4 || "").slice(0, 4),
+        cardHolderName: String(paymentDetails.cardHolderName || "").slice(0, 80),
+        upiTxnRef:      String(paymentDetails.upiTxnRef || "").slice(0, 64),
+        splits: Array.isArray(paymentDetails.splits) ? paymentDetails.splits
+          .filter(s => s && ["Cash","Card","UPI"].includes(s.mode))
+          .map(s => ({
+            mode:   s.mode,
+            amount: Math.max(0, Number(s.amount) || 0),
+            txnRef: String(s.txnRef || "").slice(0, 64),
+          })) : [],
+      } : undefined,
+      // R7hp-1: counter identity — falls back to actor name when blank.
+      counter: String(counter || req.user?.fullName || "").slice(0, 60),
       patientCredit:    round2(overPaid),
       patientCreditLog: creditLog,
       status: "Completed",

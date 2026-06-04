@@ -3206,7 +3206,23 @@ function OPDRxTab() {
   const [daVisit, setDaVisit]           = useState(null);
   const [daItems, setDaItems]           = useState([]); // [{med, drug, batch, needed, qty, unitPrice, status, note}]
   const [daPaymentMode, setDaPaymentMode] = useState("Cash");
+  // R7hp-2 — structured payment-mode capture for the Dispense All modal.
+  // Card: last-4 + cardholder name. UPI: txn ref. Mix: split rows with
+  // per-row mode + amount + ref. Persisted on PharmacySale.paymentDetails
+  // so the bill (and any future GST audit) can show exactly how the
+  // bill was settled.
+  const [daCardLast4, setDaCardLast4]   = useState("");
+  const [daCardHolder, setDaCardHolder] = useState("");
+  const [daUpiTxnRef, setDaUpiTxnRef]   = useState("");
+  const [daSplits, setDaSplits]         = useState([
+    { mode: "Cash", amount: "", txnRef: "" },
+    { mode: "Card", amount: "", txnRef: "" },
+  ]);
   const [daSaving, setDaSaving]         = useState(false);
+  // R7hp-4 — duplicate-dispense indicator keyed by visitNumber. Set when
+  // the Rx loader detects an existing OPD pharmacy sale referencing the
+  // same visit. UI surfaces a warning banner on the visit row.
+  const [daDispenseStatus, setDaDispenseStatus] = useState({});
   const [daPreparing, setDaPreparing]   = useState(false);
 
   const today = new Date().toLocaleDateString("en-IN", {
@@ -3228,6 +3244,31 @@ function OPDRxTab() {
       setPatient(list[0]?.patientId || null);
       if (list.length === 0) {
         toast.info(`No OPD visit in last ${d} day${d === 1 ? "" : "s"} for ${u}`);
+      }
+      // R7hp-4 — duplicate-dispense detection. Pull every pharmacy
+      // sale for this UHID once, then build a {visitNumber → {sale}}
+      // map so each visit card can flag whether its Rx has already
+      // been dispensed (and by whom + when). Failure is non-fatal:
+      // the modal still works, just without the warning banner.
+      try {
+        const sr = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/sales`, { params: { uhid: u, limit: 200 } });
+        const sales = sr?.data?.data || [];
+        const byVisit = {};
+        for (const s of sales) {
+          const rx = String(s.prescriptionRef || "").trim();
+          if (!rx) continue;
+          if (s.status === "Cancelled") continue;
+          if (!byVisit[rx]) byVisit[rx] = {
+            dispensed: true,
+            billNumber: s.billNumber,
+            when: s.createdAt,
+            by: s.createdBy || s.counter || "Pharmacist",
+            grandTotal: s.grandTotal,
+          };
+        }
+        setDaDispenseStatus(byVisit);
+      } catch (e) {
+        // silent — warning banner is a nice-to-have, not a blocker
       }
     } catch (e) {
       // R7cw: distinguish missing-route (backend restart needed) from
@@ -3531,6 +3572,15 @@ function OPDRxTab() {
       status: "matching", note: "",
     })));
     setDaPaymentMode("Cash");
+    // R7hp-2 — reset payment-mode metadata so a previous sale's card
+    // last-4 / UPI ref doesn't bleed onto the next bill.
+    setDaCardLast4("");
+    setDaCardHolder("");
+    setDaUpiTxnRef("");
+    setDaSplits([
+      { mode: "Cash", amount: "", txnRef: "" },
+      { mode: "Card", amount: "", txnRef: "" },
+    ]);
     setDaOpen(true);
     setDaPreparing(true);
 
@@ -3588,6 +3638,22 @@ function OPDRxTab() {
         ? `Dr. ${visit.doctorId.personalInfo.firstName || ""} ${visit.doctorId.personalInfo.lastName || ""}`.trim()
         : "");
     const rxRef = visit.visitNumber || "";
+    // R7hp-2 — assemble structured paymentDetails per selected mode.
+    // Backend whitelist drops anything off-shape, but we ship only
+    // the fields that the mode actually uses so we don't pollute the
+    // sale doc with empty Card last-4 on a UPI sale.
+    const paymentDetails =
+        daPaymentMode === "Card"  ? { cardLast4: daCardLast4.trim().slice(0,4), cardHolderName: daCardHolder.trim() }
+      : daPaymentMode === "UPI"   ? { upiTxnRef: daUpiTxnRef.trim() }
+      : daPaymentMode === "Mixed" ? { splits: daSplits.filter(s => Number(s.amount) > 0).map(s => ({
+          mode: s.mode, amount: Number(s.amount) || 0, txnRef: s.txnRef.trim(),
+        })) }
+      : undefined; // Cash / Credit have no extra fields
+    // R7hp-1 — pharmacist counter identity. Pull from session so the
+    // bill footer's COUNTER cell renders the actual cashier name.
+    let counter = "";
+    try { counter = (JSON.parse(sessionStorage.getItem("his_user") || "{}")?.fullName) || ""; } catch {}
+
     setDaSaving(true);
     try {
       const r = await dispense({
@@ -3600,6 +3666,8 @@ function OPDRxTab() {
         prescriptionRef: rxRef,
         saleType:        "OPD",
         paymentMode:     daPaymentMode,
+        paymentDetails,
+        counter,
         items: daSellable.map(it => ({
           drugId:          it.drug._id,
           drugName:        it.drug.brandName || it.drug.genericName || it.drug.name,
@@ -3618,6 +3686,53 @@ function OPDRxTab() {
       });
       const billNo = r?.data?.billNumber || r?.data?.data?.billNumber || "";
       toast.success(`Dispensed ${daSellable.length} item${daSellable.length === 1 ? "" : "s"} — Bill ${billNo}`);
+
+      // R7hp-3 — auto-open the Pharmacy Bill print right after a
+      // successful Dispense All save. Mirrors the existing line-1094
+      // print trigger from the cart-based New Sale flow. Pharmacy
+      // settings load through the same cached helper so the bill
+      // shell paints with the right header/footer (hospital vs
+      // outsourced pharmacy identity).
+      try {
+        const saleDoc = r?.data?.data || r?.data || {};
+        const phSet = await getCachedPhSettings();
+        openPrint("pharmacy-bill", {
+          ...saleDoc,
+          template:         phSet?.billTemplate || 1,
+          defaultPaper:     phSet?.defaultPaper || "half-a4",
+          pharmacySettings: phSet,
+          billLabel:        "Pharmacy Bill",
+          customerGstin:    saleDoc.customerGstin     || null,
+          customerLegalName:saleDoc.customerLegalName || null,
+          customerAddress:  saleDoc.customerAddress   || null,
+          customerState:    saleDoc.customerState     || null,
+          placeOfSupply:    saleDoc.placeOfSupply     || null,
+          saleType:         saleDoc.saleType          || "OPD",
+          printAudit: {
+            entityType:   "PharmacyBill",
+            entityId:     saleDoc._id,
+            entityNumber: saleDoc.billNumber,
+            UHID:         saleDoc.patientUHID || saleDoc.UHID,
+            patientName:  saleDoc.patientName,
+          },
+        });
+      } catch (printErr) {
+        // Don't let a print-window failure mask the successful sale.
+        console.warn("[Dispense All] print failed:", printErr);
+      }
+
+      // R7hp-4 — mark this visit as dispensed so the warning banner
+      // surfaces if a family member walks back in and the pharmacist
+      // re-loads the same UHID without a hard refresh.
+      if (rxRef) {
+        setDaDispenseStatus(prev => ({ ...prev, [rxRef]: {
+          dispensed: true,
+          billNumber: billNo,
+          when: new Date().toISOString(),
+          by: counter || "Pharmacist",
+        }}));
+      }
+
       setDaOpen(false);
       setDaVisit(null);
       setDaItems([]);
@@ -3771,6 +3886,8 @@ function OPDRxTab() {
           ? `Dr. ${v.doctorId.personalInfo.firstName || ""} ${v.doctorId.personalInfo.lastName || ""}`.trim()
           : "—");
         const deptName = v.departmentId?.departmentName || v.department || "—";
+        // R7hp-4 — already-dispensed lookup for this visit's prescription.
+        const dispenseInfo = daDispenseStatus[v.visitNumber] || null;
         const dxParts = [
           v.provisionalDiagnosis && `Provisional: ${v.provisionalDiagnosis}`,
           v.workingDiagnosis     && `Working: ${v.workingDiagnosis}`,
@@ -3802,18 +3919,50 @@ function OPDRxTab() {
                     textTransform: "uppercase", letterSpacing: ".4px",
                   }}>{v.status}</span>
                 )}
+                {/* R7hp-4 — Already-dispensed pill */}
+                {dispenseInfo && (
+                  <span style={{
+                    padding: "2px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700,
+                    background: "#fef3c7", color: "#92400e",
+                    border: "1px solid #fcd34d",
+                    textTransform: "uppercase", letterSpacing: ".4px",
+                  }} title={`Bill ${dispenseInfo.billNumber} · ${dispenseInfo.when ? new Date(dispenseInfo.when).toLocaleString("en-IN") : ""} · by ${dispenseInfo.by}`}>
+                    ⚠ Already dispensed
+                  </span>
+                )}
                 {meds.length > 0 && (
                   <button
-                    onClick={() => openDispenseAll(v)}
+                    onClick={() => {
+                      // R7hp-4 — block accidental re-dispense; confirm if family
+                      // member walks in or pharmacist re-clicks by mistake.
+                      if (dispenseInfo) {
+                        const when = dispenseInfo.when ? new Date(dispenseInfo.when).toLocaleString("en-IN", {
+                          day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+                        }) : "earlier";
+                        const ok = window.confirm(
+                          `⚠ This prescription was already dispensed on ${when}\n` +
+                          `(Bill ${dispenseInfo.billNumber}, by ${dispenseInfo.by}).\n\n` +
+                          `Dispensing again will create a second sale and consume stock again.\n\n` +
+                          `Continue only if the patient genuinely needs a re-fill (lost medicines, family pickup, etc.).\n\n` +
+                          `Proceed with re-dispense?`
+                        );
+                        if (!ok) return;
+                      }
+                      openDispenseAll(v);
+                    }}
                     style={{
-                      padding: "5px 14px", background: C.orange, color: "#fff", border: "none",
+                      padding: "5px 14px",
+                      background: dispenseInfo ? "#94a3b8" : C.orange,
+                      color: "#fff", border: "none",
                       borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: "pointer",
                       boxShadow: "0 1px 3px rgba(234,88,12,.3)",
                     }}
-                    title="Auto-match all prescribed medicines against inventory, cap quantities at stock, and confirm in one shot"
+                    title={dispenseInfo
+                      ? `Already dispensed via ${dispenseInfo.billNumber} — re-dispense will require confirmation`
+                      : "Auto-match all prescribed medicines against inventory, cap quantities at stock, and confirm in one shot"}
                   >
                     <i className="pi pi-bolt" style={{ marginRight: 5, fontSize: 11 }} />
-                    Dispense All ({meds.length})
+                    {dispenseInfo ? `Re-dispense (${meds.length})` : `Dispense All (${meds.length})`}
                   </button>
                 )}
               </div>
@@ -4192,29 +4341,30 @@ function OPDRxTab() {
             {/* Footer */}
             <div style={{
               padding: "14px 22px", borderTop: `1px solid ${C.border}`, background: "#f8fafc",
-              display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap",
+              display: "flex", flexDirection: "column", gap: 10,
             }}>
-              <div style={{ display: "flex", gap: 24, alignItems: "center", fontSize: 12 }}>
-                <div>
-                  <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>Items</div>
-                  <div style={{ color: C.text, fontWeight: 800, fontSize: 15, marginTop: 1 }}>
-                    {daSellable.length}<span style={{ color: C.muted, fontSize: 11, fontWeight: 600 }}> / {daItems.length}</span>
-                    {daSkipped > 0 && <span style={{ marginLeft: 8, fontSize: 10.5, color: C.amber, fontWeight: 700 }}>({daSkipped} skipped)</span>}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 24, alignItems: "center", fontSize: 12 }}>
+                  <div>
+                    <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>Items</div>
+                    <div style={{ color: C.text, fontWeight: 800, fontSize: 15, marginTop: 1 }}>
+                      {daSellable.length}<span style={{ color: C.muted, fontSize: 11, fontWeight: 600 }}> / {daItems.length}</span>
+                      {daSkipped > 0 && <span style={{ marginLeft: 8, fontSize: 10.5, color: C.amber, fontWeight: 700 }}>({daSkipped} skipped)</span>}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>Total</div>
+                    <div style={{ color: C.orange, fontWeight: 800, fontSize: 17, marginTop: 1 }}>{fmtINR(daTotal)}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase", marginBottom: 3 }}>Payment</div>
+                    <select className="his-select" value={daPaymentMode} onChange={(e) => setDaPaymentMode(e.target.value)}
+                      style={{ fontSize: 12, padding: "5px 8px", minWidth: 100 }}>
+                      {["Cash","Card","UPI","Mixed","Credit"].map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
                   </div>
                 </div>
-                <div>
-                  <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>Total</div>
-                  <div style={{ color: C.orange, fontWeight: 800, fontSize: 17, marginTop: 1 }}>{fmtINR(daTotal)}</div>
-                </div>
-                <div>
-                  <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase", marginBottom: 3 }}>Payment</div>
-                  <select className="his-select" value={daPaymentMode} onChange={(e) => setDaPaymentMode(e.target.value)}
-                    style={{ fontSize: 12, padding: "5px 8px", minWidth: 100 }}>
-                    {(PAYMENT_MODES || ["Cash", "Card", "UPI"]).map((m) => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ display: "flex", gap: 10 }}>
                 <button onClick={() => !daSaving && setDaOpen(false)} disabled={daSaving} style={{
                   padding: "9px 18px", background: "#fff", color: C.muted, border: `1.5px solid ${C.border}`,
                   borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: daSaving ? "not-allowed" : "pointer",
@@ -4229,7 +4379,86 @@ function OPDRxTab() {
                   <i className={`pi ${daSaving ? "pi-spin pi-spinner" : "pi-check-circle"}`} style={{ marginRight: 6 }} />
                   {daSaving ? "Dispensing…" : `Confirm & Sell ${daSellable.length} item${daSellable.length === 1 ? "" : "s"}`}
                 </button>
+                </div>
               </div>
+
+              {/* R7hp-2 — conditional payment-mode detail fields. Card →
+                  last-4 + cardholder. UPI → txn ref. Mixed → split
+                  rows. Collapses when paymentMode is Cash/Credit so the
+                  modal footer stays compact. */}
+              {daPaymentMode === "Card" && (
+                <div style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 11, flexWrap: "wrap" }}>
+                  <div style={{ color: C.muted, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Card</div>
+                  <input
+                    placeholder="Last 4 digits"
+                    value={daCardLast4}
+                    onChange={e => setDaCardLast4(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
+                    maxLength={4}
+                    style={{ width: 110, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, fontFamily: "'DM Mono', monospace" }}
+                  />
+                  <input
+                    placeholder="Cardholder name (optional)"
+                    value={daCardHolder}
+                    onChange={e => setDaCardHolder(e.target.value.slice(0, 80))}
+                    style={{ flex: 1, minWidth: 180, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}
+                  />
+                </div>
+              )}
+              {daPaymentMode === "UPI" && (
+                <div style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 11 }}>
+                  <div style={{ color: C.muted, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>UPI</div>
+                  <input
+                    placeholder="Transaction reference (UTR / VPA / PSP ref)"
+                    value={daUpiTxnRef}
+                    onChange={e => setDaUpiTxnRef(e.target.value.slice(0, 64))}
+                    style={{ flex: 1, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, fontFamily: "'DM Mono', monospace" }}
+                  />
+                </div>
+              )}
+              {daPaymentMode === "Mixed" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 11 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ color: C.muted, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Split payment {(() => {
+                        const sum = daSplits.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+                        const diff = daTotal - sum;
+                        return Math.abs(diff) < 0.01
+                          ? <span style={{ color: "#15803d", marginLeft: 6 }}>· balanced</span>
+                          : <span style={{ color: diff > 0 ? "#a16207" : "#b91c1c", marginLeft: 6 }}>· {diff > 0 ? `short ${fmtINR(diff)}` : `over ${fmtINR(-diff)}`}</span>;
+                      })()}
+                    </div>
+                    <button onClick={() => setDaSplits(prev => [...prev, { mode: "Cash", amount: "", txnRef: "" }])}
+                      style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.muted, padding: "2px 8px", borderRadius: 6, fontSize: 10.5, cursor: "pointer", fontWeight: 600 }}>
+                      + Add row
+                    </button>
+                  </div>
+                  {daSplits.map((s, i) => (
+                    <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <select value={s.mode}
+                        onChange={e => setDaSplits(prev => prev.map((x, j) => j === i ? { ...x, mode: e.target.value } : x))}
+                        style={{ width: 90, padding: "6px 8px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}>
+                        {["Cash","Card","UPI"].map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                      <input
+                        type="number" placeholder="Amount"
+                        value={s.amount}
+                        onChange={e => setDaSplits(prev => prev.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
+                        style={{ width: 100, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, fontFamily: "'DM Mono', monospace", textAlign: "right" }}
+                      />
+                      <input
+                        placeholder={s.mode === "Card" ? "Last 4 / ref" : s.mode === "UPI" ? "Txn ref" : "Notes (optional)"}
+                        value={s.txnRef}
+                        onChange={e => setDaSplits(prev => prev.map((x, j) => j === i ? { ...x, txnRef: e.target.value.slice(0, 64) } : x))}
+                        style={{ flex: 1, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}
+                      />
+                      {daSplits.length > 1 && (
+                        <button onClick={() => setDaSplits(prev => prev.filter((_, j) => j !== i))}
+                          style={{ width: 28, height: 28, border: `1px solid ${C.border}`, background: "#fff", color: "#dc2626", borderRadius: 6, fontSize: 14, cursor: "pointer", fontWeight: 700 }}>×</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

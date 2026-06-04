@@ -135,6 +135,30 @@ const PharmacySaleSchema = new mongoose.Schema(
     paymentMode: { type: String, enum: ["Cash","Card","UPI","Mixed","Credit"], default: "Cash" },
     amountPaid:  { type: Dec, default: () => toDec(0) },
     balanceDue:  { type: Dec, default: () => toDec(0) },
+    // R7hp-2: structured payment-mode metadata.
+    // - Card sales capture last-4 + cardholder name (PCI-DSS safe — no PAN).
+    // - UPI sales capture txnRef (UTR / VPA / PSP reference).
+    // - Mixed sales carry a splits[] array — Cash + Card + UPI portions
+    //   with per-row amount + ref. The sum must equal amountPaid; the
+    //   service trusts the client today, hard-enforces in a follow-up.
+    paymentDetails: {
+      type: new mongoose.Schema({
+        cardLast4:       { type: String, default: "" },
+        cardHolderName:  { type: String, default: "" },
+        upiTxnRef:       { type: String, default: "" },
+        splits: {
+          type: [ new mongoose.Schema({
+            mode:   { type: String, enum: ["Cash","Card","UPI"], required: true },
+            amount: { type: Dec, default: () => toDec(0) },
+            txnRef: { type: String, default: "" },
+          }, { _id: false }) ],
+          default: [],
+        },
+      }, { _id: false }),
+      default: () => ({ cardLast4: "", cardHolderName: "", upiTxnRef: "", splits: [] }),
+    },
+    // R7hp-1: pharmacist counter identity for the bill footer.
+    counter: { type: String, default: "" },
     // R7cu — Credit-collection log. Every payment received AFTER the
     // original dispense (i.e. against an IPD/Credit sale that was
     // booked with balanceDue > 0) appends a row here so the pharmacy
