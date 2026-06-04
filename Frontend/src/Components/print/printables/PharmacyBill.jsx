@@ -404,6 +404,17 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         : doctorNameRaw;
   const patientRight = [
     { label: "Bill Date", value: _fmtDate(r.createdAt || r.billDate || new Date(), { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
+    // R7hr-20 (user feedback): surface Department above Doctor on the IPD
+    // strip so the dispense desk + the receiving ward can both see which
+    // service the patient is admitted under (Surgery / Medicine / OBG /
+    // Paediatrics …). Only emit when a value resolves so legacy IPD bills
+    // without department snapshot don't paint a dashed row. Scoped to IPD
+    // — OPD doctor row already carries the specialty implicitly via the
+    // OPD doctor's department in the prescription header, and Walk-in
+    // doesn't have a treating department.
+    ...((isIPD && (r.department || r.specialization))
+      ? [{ label: "Department", value: r.department || r.specialization }]
+      : []),
     // R7hr-15-Walk-in (knownIssue #1 + layoutNotes): OTC walk-in
     // legitimately has no prescriber — only emit Doctor row when a real
     // value resolves OR when the bill carries Sch H/H1/X items (then

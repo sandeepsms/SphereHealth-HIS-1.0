@@ -1443,7 +1443,9 @@ exports.listSales = async (req, res) => {
           { _id: { $in: admIds } },
           { _id: 1, admissionNumber: 1, admissionType: 1, attendingDoctor: 1,
             bedNumber: 1, wardName: 1, admissionDate: 1, dateOfAdmission: 1,
-            diagnosis: 1, provisionalDiagnosis: 1, icdCode: 1, icd10: 1 }
+            diagnosis: 1, provisionalDiagnosis: 1, icdCode: 1, icd10: 1,
+            // R7hr-20: department/specialization for IPD pharmacy bill header
+            department: 1, specialization: 1 }
         ).lean();
         admMap = new Map(adms.map(a => [String(a._id), a]));
       }
@@ -1469,6 +1471,8 @@ exports.listSales = async (req, res) => {
           if (!s.icd10 && !s.icdCode) {
             s.icd10 = a.icd10 || a.icdCode;
           }
+          // R7hr-20: forward department/specialization to the IPD print header.
+          if (!s.department) s.department = a.department || a.specialization || "";
         }
       }
     } catch (enrichErr) {
