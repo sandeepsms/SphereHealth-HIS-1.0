@@ -1831,7 +1831,11 @@ function SalesTab() {
         </Field>
         <Field label="Schedule">
           <select className="his-select" value={schedFilter} onChange={e => setSchedFilter(e.target.value)}>
-            {["All","H","H1","X","G","N"].map(o => <option key={o}>{o}</option>)}
+            {/* R7hr-26: align with DrugModel.schedule enum
+                ["G","H","H1","X","OTC",""]. Master uses "OTC" (not "N")
+                for over-the-counter so the dropdown must offer it too —
+                otherwise picking G/N never matches OTC-tagged drugs. */}
+            {["All","H","H1","X","G","OTC"].map(o => <option key={o}>{o}</option>)}
           </select>
         </Field>
         <div style={{ flex: 1 }} />
@@ -2775,7 +2779,11 @@ function RegistersTab() {
               </Field>
               <Field label="Schedule">
                 <select className="his-select" value={schedFilter} onChange={e => setSchedFilter(e.target.value)}>
-                  {["All","H","H1","X","G","N"].map(o => <option key={o}>{o}</option>)}
+                  {/* R7hr-26: align with DrugModel.schedule enum
+                ["G","H","H1","X","OTC",""]. Master uses "OTC" (not "N")
+                for over-the-counter so the dropdown must offer it too —
+                otherwise picking G/N never matches OTC-tagged drugs. */}
+            {["All","H","H1","X","G","OTC"].map(o => <option key={o}>{o}</option>)}
                 </select>
               </Field>
             </>
