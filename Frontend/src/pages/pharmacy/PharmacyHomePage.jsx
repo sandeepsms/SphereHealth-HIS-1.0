@@ -496,6 +496,10 @@ function DrugsTab() {
     catch (e) { toast.error(e.message); }
   };
 
+  // R7hr-30: Windows-explorer-style click-to-sort. Default sort by drug
+  // name ascending; clicking any other column header sorts by that column.
+  const { sorted: sortedDrugs, sort } = useTableSort(drugs, "name", "asc");
+
   return (
     <div>
       {/* Filters */}
@@ -514,9 +518,21 @@ function DrugsTab() {
         </button>
       </div>
 
-      <Table cols={["Drug / Generic","Form / Strength","Category","Manufacturer","Reorder @","GST","Sale ₹","Action"]}>
-        {drugs.length === 0 ? <EmptyRow span={8} text="No drugs match." /> :
-          drugs.map((d, i) => (
+      <Table
+        cols={[
+          { label: "Drug / Generic",   key: "name" },
+          { label: "Form / Strength",  key: "form" },
+          { label: "Category",         key: "category" },
+          { label: "Manufacturer",     key: "manufacturer" },
+          { label: "Reorder @",        key: "reorderLevel" },
+          { label: "GST",              key: "gstRate" },
+          { label: "Sale ₹",           key: "defaultSalePrice" },
+          "Action",
+        ]}
+        sort={sort}
+      >
+        {sortedDrugs.length === 0 ? <EmptyRow span={8} text="No drugs match." /> :
+          sortedDrugs.map((d, i) => (
             <tr key={d._id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "#fff" }}>
               <td style={{ padding: "9px 12px" }}>
                 <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
@@ -639,11 +655,26 @@ function InventoryTab() {
     } catch (e) { toast.error(e.message); }
   };
 
+  // R7hr-30: Windows-style click-to-sort. Default sort by drug name asc.
+  const { sorted: sortedRollup, sort } = useTableSort(rollup, "drugName", "asc");
+
   return (
     <div>
-      <Table cols={["Drug","Category","On hand","Batches","Nearest expiry","Reorder @","Sale ₹","Action"]}>
-        {rollup.length === 0 ? <EmptyRow span={8} text="No stock yet — record a GRN to add inventory." /> :
-          rollup.map((r, i) => {
+      <Table
+        cols={[
+          { label: "Drug",           key: "drugName" },
+          { label: "Category",       key: "category" },
+          { label: "On hand",        key: "totalRemaining" },
+          { label: "Batches",        key: "batchCount" },
+          { label: "Nearest expiry", key: "nearestExpiry" },
+          { label: "Reorder @",      key: "reorderLevel" },
+          { label: "Sale ₹",         key: "latestSale" },
+          "Action",
+        ]}
+        sort={sort}
+      >
+        {sortedRollup.length === 0 ? <EmptyRow span={8} text="No stock yet — record a GRN to add inventory." /> :
+          sortedRollup.map((r, i) => {
             const low = r.totalRemaining <= (r.reorderLevel || 10);
             const expSoon = r.nearestExpiry && new Date(r.nearestExpiry) <= new Date(Date.now() + 90 * 86400000);
             return (
@@ -1984,23 +2015,21 @@ function SalesTab() {
         </span>
       </div>
 
-      <Table cols={["Bill #","Date","Patient","Type","Sch","Items","Grand ₹","Payment","Status","Action"]}>
-        {(() => {
-          // R7hr-24: client-side Sale Type + Schedule filter. Match logic
-          // mirrors the toolbar counter above so the visible rows and the
-          // bills strip always agree.
-          const filteredRows = rows.filter(s => {
-            if (typeFilter !== "All" && String(s.saleType||"") !== typeFilter) return false;
-            if (schedFilter !== "All") {
-              const sx = Array.isArray(s.schedules) ? s.schedules : [];
-              if (!sx.includes(schedFilter)) return false;
-            }
-            return true;
-          });
-          if (filteredRows.length === 0) {
-            return <EmptyRow span={10} text={rows.length === 0 ? "No sales for the selected filters." : "No bills match Sale Type / Schedule filter."} />;
+      {(() => {
+        // R7hr-24/R7hr-30: filter THEN sort the bills.
+        const filteredRows = rows.filter(s => {
+          if (typeFilter !== "All" && String(s.saleType||"") !== typeFilter) return false;
+          if (schedFilter !== "All") {
+            const sx = Array.isArray(s.schedules) ? s.schedules : [];
+            if (!sx.includes(schedFilter)) return false;
           }
-          return filteredRows.map((s, i) => (
+          return true;
+        });
+        return (
+      <SalesBillsTable
+        rows={filteredRows}
+        emptyText={rows.length === 0 ? "No sales for the selected filters." : "No bills match Sale Type / Schedule filter."}
+        renderRow={(s, i) => (
             <tr key={s._id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "#fff" }}>
               <td style={{ padding: "9px 12px", fontFamily: "DM Mono, monospace", fontSize: 11 }}>{s.billNumber}</td>
               <td style={{ padding: "9px 12px", color: C.muted }}>{new Date(s.createdAt).toLocaleString("en-IN")}</td>
@@ -2081,9 +2110,10 @@ function SalesTab() {
                 )}
               </td>
             </tr>
-          ));
-        })()}
-      </Table>
+          )}
+      />
+        );
+      })()}
 
       {returnSale && (
         <ReturnModal sale={returnSale}
@@ -2979,6 +3009,8 @@ function SalesRegisterTbl({ data, loading, typeFilter = "All", schedFilter = "Al
         gstTotal:   rows.reduce((s, r) => s + Number(r.gstTotal || ((Number(r.cgst||0)+Number(r.sgst||0)+Number(r.igst||0)))), 0),
         grandTotal: rows.reduce((s, r) => s + Number(r.grandTotal || 0), 0),
       };
+  // R7hr-30: click-to-sort. Date desc by default so newest bills land on top.
+  const { sorted: sortedRows, sort } = useTableSort(rows, "date", "desc");
   return (
     <_RegisterShell title="Sales Register" color={C.green}
       totals={t && <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>
@@ -2989,9 +3021,26 @@ function SalesRegisterTbl({ data, loading, typeFilter = "All", schedFilter = "Al
         )}
         {t.bills} bills · taxable {fmtINR(t.taxable)} · GST {fmtINR(t.gstTotal)} · <b style={{ color: C.green }}>{fmtINR(t.grandTotal)}</b>
       </span>}>
-      <Table cols={["Date","Bill #","Patient","UHID/Adm","Type","Sch","Items","Taxable","CGST","SGST","Total","Pay"]} compact>
-        {rows.length === 0 ? <EmptyRow span={12} text={allRows.length === 0 ? "No bills in this range." : "No bills match the filter."} /> :
-          rows.map(r => (
+      <Table
+        cols={[
+          { label: "Date",     key: "date" },
+          { label: "Bill #",   key: "billNumber" },
+          { label: "Patient",  key: "patientName" },
+          { label: "UHID/Adm", key: "admissionNumber" },
+          { label: "Type",     key: "saleType" },
+          "Sch",
+          { label: "Items",    key: "itemsCount" },
+          { label: "Taxable",  key: "taxable" },
+          { label: "CGST",     key: "cgst" },
+          { label: "SGST",     key: "sgst" },
+          { label: "Total",    key: "grandTotal" },
+          { label: "Pay",      key: "paymentMode" },
+        ]}
+        sort={sort}
+        compact
+      >
+        {sortedRows.length === 0 ? <EmptyRow span={12} text={allRows.length === 0 ? "No bills in this range." : "No bills match the filter."} /> :
+          sortedRows.map(r => (
             <tr key={r._id} style={{ borderTop: `1px solid ${C.border}` }}>
               <td style={{ padding: "6px 10px", color: C.muted }}>{new Date(r.date).toLocaleDateString("en-IN")}</td>
               <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 11 }}>{r.billNumber}</td>
@@ -3731,6 +3780,8 @@ function SuppliersTab() {
     try { await deleteSupplier(s._id); toast.success("Supplier deactivated"); refresh(); }
     catch (e) { toast.error(e.message); }
   };
+  // R7hr-30: click-to-sort. Default by supplier name ascending.
+  const { sorted: sortedRows, sort } = useTableSort(rows, "name", "asc");
   return (
     <div>
       <div style={{ marginBottom: 12, display: "flex", justifyContent: "flex-end" }}>
@@ -3738,9 +3789,20 @@ function SuppliersTab() {
           <i className="pi pi-plus" style={{ marginRight: 6 }} />Add Supplier
         </button>
       </div>
-      <Table cols={["Name","Contact","Phone","GSTIN","Drug Licence","Credit days","Action"]}>
-        {rows.length === 0 ? <EmptyRow span={7} text="No suppliers yet." /> :
-          rows.map((s, i) => (
+      <Table
+        cols={[
+          { label: "Name",         key: "name" },
+          { label: "Contact",      key: "contactPerson" },
+          { label: "Phone",        key: "phone" },
+          { label: "GSTIN",        key: "gstin" },
+          { label: "Drug Licence", key: "drugLicenseNo" },
+          { label: "Credit days",  key: "creditDays" },
+          "Action",
+        ]}
+        sort={sort}
+      >
+        {sortedRows.length === 0 ? <EmptyRow span={7} text="No suppliers yet." /> :
+          sortedRows.map((s, i) => (
             <tr key={s._id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "#fff" }}>
               <td style={{ padding: "9px 12px", fontWeight: 700 }}>{s.name}</td>
               <td style={{ padding: "9px 12px", color: C.muted }}>{s.contactPerson || "—"}</td>
@@ -3832,15 +3894,62 @@ function Card({ title, color, icon, children }) {
   );
 }
 
-function Table({ cols, children, compact }) {
+// R7hr-30: Generic Windows-explorer-style click-to-sort. Pass `cols` either
+// as plain strings (legacy — header is just a label) or as
+// `{ label, key }` to make it sortable. When `sort = { key, dir, onChange }`
+// is provided, clicking a sortable header calls onChange(colKey); the active
+// column shows a ▲ / ▼ caret and the inactive sortable columns show a faint
+// dotted hint so the user discovers they're clickable.
+function Table({ cols, children, compact, sort }) {
   return (
     <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: compact ? 11.5 : 12 }}>
         <thead>
           <tr style={{ background: C.subtle, borderBottom: `1.5px solid ${C.border}` }}>
-            {cols.map(c => (
-              <th key={c} style={{ padding: compact ? "7px 10px" : "9px 12px", textAlign: "left", fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontSize: 10, whiteSpace: "nowrap" }}>{c}</th>
-            ))}
+            {cols.map((c, idx) => {
+              const isObj   = c && typeof c === "object";
+              const label   = isObj ? c.label : c;
+              const sortKey = isObj ? c.key   : null;
+              const sortable = !!sortKey && !!sort?.onChange;
+              const active   = sortable && sort?.key === sortKey;
+              const dir      = active ? sort?.dir : null;
+              return (
+                <th
+                  key={`${label}-${idx}`}
+                  onClick={sortable ? () => sort.onChange(sortKey) : undefined}
+                  title={sortable ? "Click to sort" : undefined}
+                  style={{
+                    padding: compact ? "7px 10px" : "9px 12px",
+                    textAlign: "left",
+                    fontWeight: 800,
+                    color: active ? C.green : C.muted,
+                    textTransform: "uppercase",
+                    letterSpacing: ".5px",
+                    fontSize: 10,
+                    whiteSpace: "nowrap",
+                    cursor: sortable ? "pointer" : "default",
+                    userSelect: sortable ? "none" : "auto",
+                    background: active ? `${C.green}0d` : "transparent",
+                    transition: "background 120ms ease",
+                  }}
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    {label}
+                    {sortable && (
+                      <span style={{
+                        fontSize: 8,
+                        color: active ? C.green : "#cbd5e1",
+                        fontWeight: 900,
+                        lineHeight: 1,
+                        letterSpacing: "-1px",
+                      }}>
+                        {dir === "asc" ? "▲" : dir === "desc" ? "▼" : "▲▼"}
+                      </span>
+                    )}
+                  </span>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>{children}</tbody>
@@ -3849,8 +3958,91 @@ function Table({ cols, children, compact }) {
   );
 }
 
+// R7hr-30: useTableSort — state + memoised sorter for any data array.
+// Smart compare: numbers compare numerically, strings that look numeric
+// ("₹120", "12.5") parse to numbers, strings that look like dates parse
+// with Date.parse, everything else falls back to localeCompare.
+function useTableSort(rows, initialKey, initialDir = "asc") {
+  const [key, setKey] = useState(initialKey || null);
+  const [dir, setDir] = useState(initialDir);
+  const onChange = (newKey) => {
+    if (!newKey) return;
+    if (newKey === key) setDir(d => d === "asc" ? "desc" : "asc");
+    else { setKey(newKey); setDir("asc"); }
+  };
+  const sorted = useMemo(() => {
+    const arr = Array.isArray(rows) ? rows.slice() : [];
+    if (!key) return arr;
+    const getter = typeof key === "function" ? key : (row) => {
+      // Support dotted paths like "items.length" or "patient.name"
+      const parts = String(key).split(".");
+      let v = row;
+      for (const p of parts) {
+        if (v == null) return null;
+        v = v[p];
+      }
+      return v;
+    };
+    arr.sort((a, b) => {
+      let av = getter(a), bv = getter(b);
+      // null/undefined sort LAST regardless of direction (so empty rows
+      // don't hijack the top of the list when sorting ascending)
+      const aEmpty = av == null || av === "";
+      const bEmpty = bv == null || bv === "";
+      if (aEmpty && bEmpty) return 0;
+      if (aEmpty) return 1;
+      if (bEmpty) return -1;
+      // Numeric
+      if (typeof av === "number" && typeof bv === "number") return av - bv;
+      // String-with-money-or-percent: extract leading number
+      const as = String(av), bs = String(bv);
+      const asNum = Number(as.replace(/[^\d.-]/g, ""));
+      const bsNum = Number(bs.replace(/[^\d.-]/g, ""));
+      if (Number.isFinite(asNum) && Number.isFinite(bsNum) &&
+          /^-?[\d.,₹\s%]+$/.test(as) && /^-?[\d.,₹\s%]+$/.test(bs)) {
+        return asNum - bsNum;
+      }
+      // Date-ISO or date-like
+      const ad = Date.parse(as), bd = Date.parse(bs);
+      if (!Number.isNaN(ad) && !Number.isNaN(bd)) return ad - bd;
+      return as.localeCompare(bs);
+    });
+    if (dir === "desc") arr.reverse();
+    return arr;
+  }, [rows, key, dir]);
+  return { sorted, sort: { key, dir, onChange } };
+}
+
 function EmptyRow({ span, text }) {
   return <tr><td colSpan={span} style={{ padding: "24px 16px", textAlign: "center", color: C.muted, fontSize: 12, fontStyle: "italic" }}>{text}</td></tr>;
+}
+
+// R7hr-30: SalesBillsTable — Sales tab table with click-to-sort headers.
+// Separate component so its useState/useMemo hooks live in their own scope
+// (Sales tab does filtering above before passing in rows; we only sort).
+function SalesBillsTable({ rows, emptyText, renderRow }) {
+  const { sorted, sort } = useTableSort(rows, "createdAt", "desc");
+  return (
+    <Table
+      cols={[
+        { label: "Bill #",  key: "billNumber" },
+        { label: "Date",    key: "createdAt" },
+        { label: "Patient", key: "patientName" },
+        { label: "Type",    key: "saleType" },
+        "Sch",  /* array-valued — not directly sortable */
+        { label: "Items",   key: "items.length" },
+        { label: "Grand ₹", key: "grandTotal" },
+        { label: "Payment", key: "paymentMode" },
+        { label: "Status",  key: "status" },
+        "Action",
+      ]}
+      sort={sort}
+    >
+      {sorted.length === 0
+        ? <EmptyRow span={10} text={emptyText} />
+        : sorted.map((s, i) => renderRow(s, i))}
+    </Table>
+  );
 }
 
 function RowAction({ icon, label, color, onClick }) {
