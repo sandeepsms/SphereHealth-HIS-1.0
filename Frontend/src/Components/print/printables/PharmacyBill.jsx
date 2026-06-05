@@ -115,7 +115,13 @@ function resolveIdentityForShell(hospital = {}, pharmacy = null) {
       website:       pharmacy.website,
       gstin:         pharmacy.gstin,
       printHeaderColor: pharmacy.headerColor || hospital.printHeaderColor || "#1e3a8a",
-      helpline24x7:  hospital.helpline24x7,
+      // R7hr-42 P0-5: privacy leak. An outsourced chemist-shop bill should
+      // surface the pharmacy's own emergency / 24×7 line — NEVER the
+      // hospital's helpline, which is a separate accountable entity.
+      // Hospital's helpline staying in the shell prop here put it in the
+      // PrintShell footer of an outsourced bill, mis-attributing the
+      // hospital as the pharmacy's after-hours contact.
+      helpline24x7:  pharmacy.emergencyNumber || pharmacy.helpline24x7 || "",
       // Pharmacy-specific identifiers — surfaced in footer GSTIN line
       // via NABH cert slot (D.L. is the regulatory pharmacy equivalent).
       nabhCertNumber: pharmacy.drugLicenseNo
@@ -298,7 +304,13 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
     : _baseTitle;
 
   /* Tax + HSN ─────────────────────────────────────────────────── */
-  const customerState = String(r.customerState || id._stateForGst || "").trim().toLowerCase();
+  // R7hr-42 P0-6: IGST detection. Falling back to id._stateForGst when
+  // r.customerState is missing means we silently pretend the buyer is
+  // local — masking inter-state B2B sales as intra-state and printing
+  // CGST+SGST instead of IGST (a GST §31 violation). When the caller
+  // doesn't pass customerState, leave it empty and the isInterState
+  // check below evaluates to false on its own merits.
+  const customerState = String(r.customerState || "").trim().toLowerCase();
   const hospState     = String(id._stateForGst || "").trim().toLowerCase();
   const isInterState  = !!customerState && !!hospState && customerState !== hospState;
 
@@ -378,7 +390,12 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
   const isRevised     = ["Partial-Return", "Refunded", "Cancelled", "Supplemented"].includes(r.status);
   const refundTotal     = returns.reduce((s, x) => s + toNum(x.refundAmount), 0);
   const supplementTotal = supplements.reduce((s, x) => s + toNum(x.addedTotal), 0);
-  const netAfter        = Math.max(0, toNum(r.grandTotal) + supplementTotal - refundTotal);
+  // R7hr-42 P0-7 / P1-9: use the LOCALLY-COMPUTED grandTotal rather than
+  // raw r.grandTotal. The latter can be null (recompute fallback on
+  // line 235), 0 (Decimal128(0) literal), or NaN-poisoned. grandTotal is
+  // the canonical money number — the printed Grand Total cell, the
+  // AmountWords source, and what every other downstream consumer reads.
+  const netAfter        = Math.max(0, grandTotal + supplementTotal - refundTotal);
   const patientCred     = toNum(r.patientCredit);
   const printCount      = toNum(r.printCount);
 

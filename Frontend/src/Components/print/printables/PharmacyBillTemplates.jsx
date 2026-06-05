@@ -17,7 +17,13 @@
  *     COL, fmtINR, amountInWords, _fmtDate, hasControlled }
  */
 import React from "react";
-import { ESCPOS_FEED_CUT } from "../../../utils/printUtils";
+// R7hr-42: toNum is needed at every template render site because
+// PharmacyBill.jsx pre-normalises items in its dispatcher path BUT
+// external callers (Settings thumbnails, future print paths) may
+// hand templates raw Mongoose Decimal128 wrappers. Defending in depth
+// at the template render site means raw {$numberDecimal: "99"} never
+// reaches a `Number()` call site again.
+import { toNum, ESCPOS_FEED_CUT } from "../../../utils/printUtils";
 
 /* ─────────────────────────────────────────────────────────────────
    1. CLASSIC MODERN — gradient masthead + side-by-side HSN/totals
@@ -264,22 +270,37 @@ export function T7_ReceiptStrip(p) {
           Row-based block so a Walk-in / OPD / IPD print on T7 carries
           the same identity intelligence as the PrintShell fallback. */}
       <BilledTo {...p} mode="narrow" />
-      {hasControlled && <div style={{ padding: "4px 0", fontSize: 9, fontWeight: 800, color: "#dc2626", textAlign: "center" }}>⚠ Schedule H — Rx retained</div>}
+      {/* R7hr-42 P1-16: use the shared SchHBanner instead of a bespoke
+          inline text so the regulatory warning reads the same on all 10
+          templates (and is page-break-safe). */}
+      {hasControlled && <SchHBanner />}
       <div style={{ padding: "6px 0", borderBottom: `1px dashed ${COL.mute}` }}>
+        {/* R7hr-42 P1-15: empty-items hint so the operator can tell the
+            difference between "loading" and "0-item void". */}
+        {items.length === 0 && (
+          <div style={{ padding: "8px 0", fontSize: 9.5, color: COL.mute, textAlign: "center", fontStyle: "italic" }}>No items on this bill</div>
+        )}
         {items.map((it, i) => {
-          const qty = Number(it.quantity || it.qty || 0);
-          const rate = Number(it.unitPrice || it.rate || 0);
-          const gst = Number(it.gstRate ?? 12);
-          const net = Number(it.netAmount != null ? it.netAmount : qty * rate * (1 + gst/100));
+          // R7hr-42 P0-2: Decimal128 sweep for T7 inline math.
+          const qty = toNum(it.quantity ?? it.qty);
+          const rate = toNum(it.unitPrice ?? it.rate);
+          const gst = toNum(it.gstRate ?? 12);
+          const net = toNum(it.netAmount) > 0
+            ? toNum(it.netAmount)
+            : qty * rate * (1 + gst / 100);
+          // R7hr-42 P1-32: defensive alias fallback for batch/expiry so T7
+          // works even when fed unnormalised items.
+          const batch = it.batchNo || it.batchNumber || "—";
+          const exp = it.expiryDate || it.expiry || it.expDate;
           return (
-            <div key={i} style={{ marginBottom: 4, fontSize: 10 }}>
+            <div key={i} style={{ marginBottom: 4, fontSize: 10, pageBreakInside: "avoid" }}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ fontWeight: 700 }}>{it.drugName || it.name}</span>
                 <span>{fmtINR(net)}</span>
               </div>
               <div style={{ fontSize: 8.5, color: COL.mute, display: "flex", justifyContent: "space-between" }}>
                 <span>{qty} × {rate.toFixed(2)} · GST {gst}%</span>
-                <span>B:{it.batchNo || "—"} · Exp {it.expiryDate ? _fmtDate(it.expiryDate, { month: "short", year: "2-digit" }) : "—"}</span>
+                <span>B:{batch} · Exp {exp ? _fmtDate(exp, { month: "short", year: "2-digit" }) : "—"}</span>
               </div>
             </div>
           );
@@ -427,13 +448,20 @@ export function T10_LiteQuick(p) {
           </tr>
         </thead>
         <tbody>
+          {/* R7hr-42 P1-14: empty-items placeholder for T10 Lite Quick. */}
+          {items.length === 0 && (
+            <tr><td colSpan={7} style={{ padding: 14, textAlign: "center", color: COL.mute, fontStyle: "italic" }}>No items on this bill</td></tr>
+          )}
           {items.map((it, i) => {
-            const qty = Number(it.quantity || it.qty || 0);
-            const rate = Number(it.unitPrice || it.rate || 0);
-            const gst = Number(it.gstRate ?? 12);
-            const net = Number(it.netAmount != null ? it.netAmount : qty * rate * (1 + gst/100));
+            // R7hr-42 P0-4 / P1-8: Decimal128-safe per-item math.
+            const qty = toNum(it.quantity ?? it.qty);
+            const rate = toNum(it.unitPrice ?? it.rate);
+            const gst = toNum(it.gstRate ?? 12);
+            const net = toNum(it.netAmount) > 0
+              ? toNum(it.netAmount)
+              : qty * rate * (1 + gst / 100);
             return (
-              <tr key={i} style={{ borderBottom: `1px dotted ${COL.line}` }}>
+              <tr key={i} style={{ borderBottom: `1px dotted ${COL.line}`, pageBreakInside: "avoid" }}>
                 <td style={{ padding: "4px 6px", fontSize: 9 }}>{i + 1}</td>
                 <td style={{ padding: "4px 6px", fontSize: 9 }}>{it.drugName || it.name}</td>
                 <td style={{ padding: "4px 6px", fontSize: 8.5, fontFamily: "DM Mono, monospace" }}>{it.batchNo || "—"}{it.expiryDate && ` · ${_fmtDate(it.expiryDate, { month: "short", year: "2-digit" })}`}</td>
@@ -638,7 +666,12 @@ function BilledTo(p) {
   // UH01 / IPD-26-02) so it stands out the way the user already sees
   // on the PrintShell fallback.
   const KV = (kv, i) => {
-    const isMono = kv.value && /^[A-Z]+[\-\d]/.test(String(kv.value));
+    // R7hr-42 P2-40: regex tightened to require an explicit hyphen + digit
+    // (e.g. "PHM-26-0014", "IPD-26-02") so plain words like "UH01" don't
+    // trip the monospace-accent treatment. Composite values like
+    // "UH01 / IPD-26-02" still render normally because the test is anchored
+    // at start-of-string.
+    const isMono = kv.value && /^[A-Z]+-\d/.test(String(kv.value));
     return (
       <div key={i} style={{ display: "grid", gridTemplateColumns: "0.9fr 1.3fr", padding: "2px 0", fontSize: 10, alignItems: "baseline" }}>
         <span style={{ color: COL.mute, fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>{kv.label}</span>
@@ -652,9 +685,12 @@ function BilledTo(p) {
     );
   };
   return (
-    <div className={noPadding ? "" : "pb-billto"} style={{ padding: noPadding ? 0 : undefined }}>
+    // R7hr-42 P1-18: BilledTo wraps a 2-col KV grid that must stay
+    // together — patient context (UHID/Bed) shouldn't split from doc
+    // meta (Bill Date/Doctor).
+    <div className={noPadding ? "" : "pb-billto"} style={{ padding: noPadding ? 0 : undefined, pageBreakInside: "avoid" }}>
       {variantTag && (
-        <div style={{ padding: "5px 12px", marginBottom: 6, background: variantBg, color: variantColor, fontSize: 10, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", borderLeft: `3px solid ${variantColor}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ padding: "5px 12px", marginBottom: 6, background: variantBg, color: variantColor, fontSize: 10, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", borderLeft: `3px solid ${variantColor}`, display: "flex", justifyContent: "space-between", alignItems: "center", pageBreakAfter: "avoid" }}>
           <span>{docTitle || `${variantTag} PHARMACY BILL`}</span>
           {r.billNumber && <span style={{ fontFamily: "DM Mono, monospace", letterSpacing: 0, fontSize: 10, fontWeight: 700, opacity: .8 }}>{r.billNumber}</span>}
         </div>
@@ -672,8 +708,17 @@ function BilledTo(p) {
 }
 
 function SchHBanner() {
+  // R7hr-42 P1-22 + P2-48: page-break-inside avoid so the regulatory
+  // warning doesn't get sliced across pages, plus inline padding so the
+  // text isn't flush against the coloured border (pb-schh class has no
+  // padding rule defined).
   return (
-    <div className="pb-schh" style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderLeft: "4px solid #dc2626", borderRadius: 5, color: "#7f1d1d" }}>
+    <div className="pb-schh" style={{
+      background: "#fef2f2", border: "1.5px solid #fecaca", borderLeft: "4px solid #dc2626",
+      borderRadius: 5, color: "#7f1d1d",
+      padding: "8px 12px", margin: "6px 0",
+      pageBreakInside: "avoid",
+    }}>
       <b>⚠ Schedule H / H1 / X medicines dispensed.</b> Sold only on a registered medical practitioner's prescription. Retained for record per Drugs &amp; Cosmetics Rules.
     </div>
   );
@@ -692,14 +737,28 @@ function ItemsTable(p) {
           </tr>
         </thead>
         <tbody>
+          {/* R7hr-42 P1-12: empty-items placeholder so refund-only / void
+              bills don't render a hollow <tbody>. */}
+          {items.length === 0 && (
+            <tr><td colSpan={10} style={{ padding: 18, textAlign: "center", color: COL.mute, fontStyle: "italic" }}>No items on this bill</td></tr>
+          )}
           {items.map((it, i) => {
-            const qty = Number(it.quantity || it.qty || 0);
-            const rate = Number(it.unitPrice || it.rate || 0);
-            const gst = Number(it.gstRate ?? 12);
+            // R7hr-42 P0-1/2/3: every Number() call here is a NaN landmine
+            // when Mongoose .lean() ships Decimal128 wrappers. toNum() handles
+            // both raw numbers, strings, and {$numberDecimal: "..."} shapes.
+            const qty = toNum(it.quantity ?? it.qty);
+            const rate = toNum(it.unitPrice ?? it.rate);
+            const gst = toNum(it.gstRate ?? 12);
             const gross = qty * rate;
-            const disc = Number(it.discountAmount != null ? it.discountAmount : gross * (Number(it.discountPercent || 0) / 100));
-            const taxable = Number(it.taxableAmount != null ? it.taxableAmount : gross - disc);
-            const net = Number(it.netAmount != null ? it.netAmount : taxable + taxable * gst / 100);
+            const disc = toNum(it.discountAmount) > 0
+              ? toNum(it.discountAmount)
+              : gross * (toNum(it.discountPercent) / 100);
+            const taxable = toNum(it.taxableAmount) > 0
+              ? toNum(it.taxableAmount)
+              : Math.max(0, gross - disc);
+            const net = toNum(it.netAmount) > 0
+              ? toNum(it.netAmount)
+              : taxable + taxable * gst / 100;
             const bg = striped ? (i % 2 ? "#fafbfc" : "#fff") : (bordered ? "#fff" : undefined);
             // R7bf-F / A4-HIGH-10: Schedule-H / H1 / X dispenses must
             // carry the prescriber's name on the bill (Drugs & Cosmetics
@@ -710,7 +769,7 @@ function ItemsTable(p) {
             const isScheduleH = !!(it.schedule && /^(H|H1|X)$/i.test(it.schedule));
             const prescriber  = it.prescriberName || it.prescriber || p.receipt?.doctorName;
             return (
-              <tr key={i} className="bill-line-row" style={{ borderBottom: `1px solid ${COL.line}`, background: bg }}>
+              <tr key={i} className="bill-line-row" style={{ borderBottom: `1px solid ${COL.line}`, background: bg, pageBreakInside: "avoid" }}>
                 <td style={{ padding: "8px 10px", color: COL.mute, border: fullBorders ? `1px solid ${COL.ink}` : undefined }}>{i + 1}</td>
                 <td style={{ padding: "8px 10px", border: fullBorders ? `1px solid ${COL.ink}` : undefined }}>
                   <div style={{ fontWeight: 700 }}>{it.drugName || it.name}</div>
