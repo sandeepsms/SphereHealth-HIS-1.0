@@ -1,11 +1,29 @@
 /**
  * PharmacyBill.jsx
  *
- * R7fr Track B: refactored onto the new shared <PrintShell> contract
- * (templates/PrintShell.jsx). The 10-template visual cascade
- * (PharmacyBillTemplates.jsx) is retired — every pharmacy bill now
- * renders through the same NABH-style triple-zone header + 2-col
- * patient strip + line-items body + GST/HSN/totals + amount-in-words.
+ * R7fr Track B introduced the shared <PrintShell> contract
+ * (templates/PrintShell.jsx) — a single NABH-style triple-zone header
+ * + 2-col patient strip + line-items body + GST/HSN/totals + amount-
+ * in-words that every print can fall back to.
+ *
+ * R7hr-35 — RESTORE the 10-template visual cascade. Production callers
+ * (Dispense / IPD ledger / Walk-in cash memo / Settings thumbnails)
+ * pass `receipt.template = phSet?.billTemplate || 1`, so every bill
+ * carries a template id (1..10) that maps onto one of the Render fns
+ * exported from PharmacyBillTemplates.jsx (T1_ClassicModern,
+ * T2_Minimalist, T3_Heritage, T4_PremiumDark, T5_CardGrid,
+ * T6_RetailExpress, T7_ReceiptStrip, T8_Bilingual, T9_GovernmentGrid,
+ * T10_LiteQuick). When the id resolves to a known template we dispatch
+ * to it — that's how the Settings "Bill print template" thumbnails
+ * paint visually-distinct previews instead of every tile looking like
+ * the same PrintShell layout. The cross-cutting status banners
+ * (DUPLICATE watermark, REVISED/CANCELLED, CONSOLIDATED FINAL, Sch H
+ * missing-fields, PAN-cash threshold, Credit-Collection history,
+ * Supplements, Returns) are wrapped *around* the template body so the
+ * audit + reissue stamps survive whatever template the operator picks.
+ * If `receipt.template` is missing / 0 / invalid we fall back to the
+ * PrintShell layout below — that path stays as the safety net for any
+ * legacy caller that doesn't pass a template id.
  *
  * Preserved unchanged:
  *   • GST + HSN/SAC + line-item compute (sub-total, discount, taxable,
@@ -14,13 +32,20 @@
  *     `.lean()` surfaces { $numberDecimal: "320" } — bare Number()
  *     NaNs and pollutes summations)
  *   • Outsourced-pharmacy identity (pharmacy.mode === "outsourced"
- *     remaps name/GSTIN/D.L./address — those flow into PrintShell's
- *     hospital prop so the shell header carries the pharmacy brand)
- *   • Returns / Supplements / REVISED / CANCELLED watermark sections
+ *     remaps name/GSTIN/D.L./address — those flow into both PrintShell
+ *     and the template id objects so each variant carries the pharmacy
+ *     brand instead of the hospital)
+ *   • Variant-explicit base title (R7hr-18): WALK-IN PHARMACY BILL /
+ *     OPD PHARMACY BILL / IPD PHARMACY BILL → docTitle survives the
+ *     template-dispatch path and lands in the masthead banner
+ *   • Returns / Supplements / REVISED / CANCELLED stamp sections
  *   • billLabel override for Cash Memo / Credit Note reprints
- *   • DUPLICATE watermark on reprints (PrintWatermark)
+ *   • DUPLICATE watermark on reprints (PrintWatermark) — rendered by
+ *     PrintShell on the fallback path, rendered inline on the template-
+ *     dispatch path
  *
- * Patient-strip mapping (Track-B contract):
+ * Patient-strip mapping (PrintShell fallback path only — templates
+ * compose their own billed-to block):
  *   left:  Bill No · UHID · Patient · Age/Sex · Contact
  *   right: Bill Date · Doctor · Counter · Payer · GSTIN
  */
@@ -28,11 +53,17 @@ import React from "react";
 import PrintShell from "@/templates/PrintShell";
 import "../print.css";
 import { fmtINR, amountInWords } from "../amountWords";
-// R7hr-12 (D7-01) — PrintWatermark is now rendered by PrintShell itself
-// (Frontend/src/templates/PrintShell.jsx) from meta.printCount /
-// meta.watermarkLabel / meta.watermarkRecipient, so the bespoke import
-// + in-body render that this file carried as the Track-A workaround is
-// removed to avoid a doubled "DUPLICATE" stamp.
+// R7hr-35: PharmacyBillTemplates.jsx exports 10 Render functions plus a
+// shared TEMPLATES registry — we dispatch on receipt.template here so
+// each Settings-tab thumbnail (and every production print) renders the
+// chosen visual variant instead of every bill looking identical.
+import TEMPLATES from "./PharmacyBillTemplates";
+// R7hr-35: PrintShell mounts PrintWatermark itself on the fallback
+// path. The template-dispatch path runs OUTSIDE PrintShell, so we
+// import the watermark directly and mount it on the template scaffold
+// — otherwise the 2nd-print DUPLICATE stamp would silently disappear
+// whenever a non-default template is selected.
+import PrintWatermark from "../PrintWatermark";
 import { toNum } from "../../../utils/printUtils";
 
 const _fmtDate = (d, opts) => d
@@ -101,6 +132,90 @@ function resolveIdentityForShell(hospital = {}, pharmacy = null) {
     name:         hospital.hospitalName || hospital.name || "Hospital Pharmacy",
     _stateForGst: hospital.state,
     _isOutsourced: false,
+  };
+}
+
+/* R7hr-35 — Template identity adapter.
+ *
+ * PharmacyBillTemplates.jsx expects a different `id` shape than
+ * PrintShell:
+ *   { name, tagline, logo, addressStr, phone, email, gstin,
+ *     drugLicense, color, accent, terms, footerNote, bank }
+ *
+ * `color` / `accent` drive the gradient masthead (T1_ClassicModern,
+ * T4_PremiumDark, T6_RetailExpress…). When the hospital settings doc
+ * doesn't carry an explicit accent we derive a sensible secondary from
+ * the primary printHeaderColor so the gradient still reads as a
+ * gradient rather than a flat band.
+ *
+ * Outsourced-pharmacy override mirrors resolveIdentityForShell — the
+ * pharmacy brand (name/logo/GSTIN/D.L./address) takes precedence over
+ * the hospital identity so a chemist-shop bill carries the chemist's
+ * masthead. */
+const _COL = {
+  ink:  "#0f172a",
+  line: "#e2e8f0",
+  soft: "#f8fafc",
+  mute: "#64748b",
+};
+function _deriveAccent(primary) {
+  // Cheap shade-shift so callers without a saved accent still get a
+  // gradient. Strip a leading "#", parse RGB, lighten ~25%, clamp.
+  const c = String(primary || "#1e3a8a").replace(/^#/, "");
+  if (!/^[0-9a-f]{6}$/i.test(c)) return "#0ea5e9";
+  const n = parseInt(c, 16);
+  const r = Math.min(255, ((n >> 16) & 0xff) + 60);
+  const g = Math.min(255, ((n >>  8) & 0xff) + 40);
+  const b = Math.min(255, ( n        & 0xff) + 20);
+  return "#" + ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0");
+}
+function resolveIdentityForTemplate(hospital = {}, pharmacy = null, idShell = {}) {
+  const isOut    = pharmacy?.mode === "outsourced";
+  const src      = isOut ? pharmacy : hospital;
+  const addrStr  = _fmtAddr({
+    addressLine1: src.addressLine1,
+    addressLine2: src.addressLine2,
+    city:         src.city,
+    state:        src.state,
+    pincode:      src.pincode,
+    country:      src.country,
+  });
+  const primary  = (isOut
+    ? (pharmacy.headerColor || hospital.printHeaderColor)
+    : (hospital.printHeaderColor || hospital.brandColor)) || "#1e3a8a";
+  const accent   = (isOut
+    ? (pharmacy.accentColor)
+    : (hospital.printAccentColor || hospital.accentColor)) || _deriveAccent(primary);
+  // D.L. — outsourced pharmacy carries drugLicenseNo directly; in-house
+  // re-uses the value PrintShell already surfaced via `nabhCertNumber`
+  // ("D.L. ABC123" — strip the prefix).
+  const dlIn = String(hospital.drugLicenseNo
+    || (idShell.nabhCertNumber || "").replace(/^D\.L\.\s*/i, "")
+    || "").trim();
+  const dl   = isOut ? (pharmacy.drugLicenseNo || "") : dlIn;
+  const tagline = (isOut ? pharmacy.tagline : hospital.tagline) || "";
+  const phone   = isOut
+    ? [pharmacy.phone1, pharmacy.phone2].filter(Boolean).join(" · ")
+    : (hospital.phone || hospital.helpline24x7 || "");
+  return {
+    name:        isOut ? (pharmacy.pharmacyName || "Pharmacy")
+                       : (hospital.hospitalName || hospital.name || "Hospital Pharmacy"),
+    tagline,
+    logo:        isOut
+      ? (pharmacy.showLogoInPrint === false ? null : (pharmacy.logo || null))
+      : (hospital.logo || null),
+    addressStr:  addrStr,
+    phone,
+    email:       src.email || "",
+    gstin:       src.gstin || "",
+    drugLicense: dl,
+    color:       primary,
+    accent,
+    terms:       Array.isArray(src.printTerms)
+                  ? src.printTerms
+                  : (Array.isArray(src.terms) ? src.terms : []),
+    footerNote:  src.printFooterNote || src.footerNote || "",
+    bank:        src.bank || {},
   };
 }
 
@@ -511,6 +626,323 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         }]
       : []),
   ];
+
+  /* R7hr-35 — Template-dispatch path.
+   *
+   * Every production caller in PharmacyHomePage.jsx (Dispense, IPD
+   * ledger, Walk-in, Sales Register reprint, Settings thumbnails,
+   * Preview Modal) passes `template: phSet?.billTemplate || 1`. When
+   * the id resolves to one of the 10 Render fns in
+   * PharmacyBillTemplates.jsx we render that template here, wrapped in
+   * a minimal print scaffold that carries:
+   *   • DUPLICATE watermark — PrintShell mounts this itself on the
+   *     fallback path; the template-dispatch path runs OUTSIDE
+   *     PrintShell so we mount PrintWatermark inline.
+   *   • Variant title banner (WALK-IN PHARMACY BILL / OPD … / IPD …)
+   *     — the R7hr-18 docTitle is rendered as a thin ribbon above the
+   *     template's own masthead so the operator still sees the variant
+   *     at a glance even when the template doesn't echo docTitle.
+   *   • Cross-cutting status banners (REVISED / CONSOLIDATED FINAL /
+   *     Sch H missing fields / PAN-cash threshold / Credit-Collection
+   *     history / Supplements / Returns) — emitted around the template
+   *     body so audit + reissue stamps survive whatever template the
+   *     operator picks.
+   *
+   * When `receipt.template` is missing or invalid (legacy/defensive
+   * fallback) we fall through to the existing PrintShell return below.
+   */
+  const _tplId = Number(r.template) || 0;
+  const _tpl   = TEMPLATES.find(t => t.id === _tplId);
+  if (_tpl) {
+    // Normalise items so the templates (which read it.batchNo /
+    // it.expiryDate) see legacy field aliases too — PharmacySale
+    // schema stores batchNumber + expiryDate but older callers pass
+    // batchNo / expiry. Without this the template's Batch · Exp cell
+    // would silently render "—" on every legacy line.
+    const _tplItems = items.map(it => ({
+      ...it,
+      batchNo:    it.batchNo    || it.batchNumber || "",
+      expiryDate: it.expiryDate || it.expiry      || it.expDate || null,
+    }));
+    const _idTpl = resolveIdentityForTemplate(settings, r.pharmacySettings, id);
+    const _totals = {
+      subTotal, totalDisc, totalTaxable, totalTax,
+      grandTotal, paid, balance, roundOff,
+    };
+    const tplProps = {
+      id:        _idTpl,
+      items:     _tplItems,
+      hsnRows,
+      totals:    _totals,
+      isInterState,
+      receipt:   r,
+      COL:       _COL,
+      fmtINR,
+      amountInWords,
+      _fmtDate,
+      hasControlled,
+    };
+    const Tpl = _tpl.Render;
+    return (
+      <div
+        className="pr-pharm-bill"
+        style={{
+          position: "relative",
+          background: "#fff",
+          color: _COL.ink,
+          fontFamily: "Inter, -apple-system, Segoe UI, Roboto, sans-serif",
+          padding: 0,
+          minHeight: "100%",
+        }}
+      >
+        {/* DUPLICATE watermark — preserved across all template variants */}
+        <PrintWatermark
+          printCount={printCount}
+          recipient={isWalkIn
+            ? (r.patientName || r.customerLegalName || "WALK-IN CUSTOMER")
+            : (r.patientName || "RECIPIENT")}
+        />
+
+        {/* Variant title ribbon — sits above the template masthead so
+            the operator immediately sees OPD / IPD / WALK-IN context.
+            Background tints by variant so the three look distinct at a
+            glance during a busy dispense shift. */}
+        <div style={{
+          padding: "6px 14px",
+          fontSize: 10.5,
+          fontWeight: 800,
+          letterSpacing: ".6px",
+          textTransform: "uppercase",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          background: isWalkIn ? "#f0fdf4"
+                     : isIPD   ? "#eff6ff"
+                     : "#fff7ed",
+          color:      isWalkIn ? "#166534"
+                     : isIPD   ? "#1e3a8a"
+                     : "#9a3412",
+          borderBottom: `1.5px solid ${isWalkIn ? "#bbf7d0"
+                                     : isIPD   ? "#bfdbfe"
+                                     : "#fed7aa"}`,
+        }}>
+          <span>{docTitle}</span>
+          <span style={{ fontFamily: "DM Mono, monospace", letterSpacing: 0 }}>
+            {isInterState ? "Inter-State (IGST)" : "Intra-State (CGST + SGST)"}
+            {r.billNumber && <> · {r.billNumber}</>}
+          </span>
+        </div>
+
+        {/* REVISED / CANCELLED / SUPPLEMENTED / PARTIAL-RETURN banner */}
+        {isRevised && (
+          <div style={{
+            margin: "10px 14px 0", padding: "7px 12px",
+            background: r.status === "Cancelled" ? "#fef2f2" : "#fffbeb",
+            border: `1.5px solid ${r.status === "Cancelled" ? "#fecaca" : "#fcd34d"}`,
+            borderRadius: 6, fontSize: 10.5,
+            color: r.status === "Cancelled" ? "#7f1d1d" : "#92400e",
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+          }}>
+            <span>
+              <b>{r.status === "Cancelled" ? "CANCELLED BILL" : "REVISED BILL"}</b>
+              {" · "}
+              {r.status === "Refunded"       && "All items returned"}
+              {r.status === "Partial-Return" && "One or more items returned"}
+              {r.status === "Cancelled"      && "Sale cancelled — invoice retained for audit"}
+              {r.status === "Supplemented"   && `${supplements.length} item${supplements.length === 1 ? "" : "s"} added via supplementary invoice`}
+            </span>
+            <span>
+              Original&nbsp;{fmtINR(r.grandTotal)}
+              {supplementTotal > 0 && <> · Added&nbsp;<b style={{ color: "#15803d" }}>+ {fmtINR(supplementTotal)}</b></>}
+              {refundTotal > 0     && <> · Refund&nbsp;<b style={{ color: "#b45309" }}>− {fmtINR(refundTotal)}</b></>}
+              {(supplementTotal > 0 || refundTotal > 0) && <> · Net&nbsp;<b>{fmtINR(netAfter)}</b></>}
+            </span>
+          </div>
+        )}
+
+        {/* CONSOLIDATED INTERIM/FINAL banner (IPD only) */}
+        {isIPD && r.isConsolidated && toNum(r.consolidatedFrom) > 0 && (
+          <div style={{
+            margin: "10px 14px 0", padding: "7px 12px",
+            background: "#eff6ff", border: "1.5px solid #93c5fd",
+            borderRadius: 6, fontSize: 10.5, color: "#1e3a8a",
+            display: "flex", justifyContent: "space-between",
+            alignItems: "center", gap: 12,
+          }}>
+            <span>
+              <b>
+                {String(r.billLabel || "").toUpperCase().includes("FINAL")
+                  ? "FINAL CONSOLIDATED BILL"
+                  : String(r.billLabel || "").toUpperCase().includes("INTERIM")
+                    ? "INTERIM CONSOLIDATED BILL"
+                    : "CONSOLIDATED PHARMACY BILL"}
+              </b>
+              {" · "}
+              Aggregates <b>{toNum(r.consolidatedFrom)}</b> dispense
+              {toNum(r.consolidatedFrom) === 1 ? "" : "s"} on this admission
+            </span>
+            {r.note && (
+              <span style={{ fontSize: 10, fontStyle: "italic", textAlign: "right", maxWidth: "55%" }}>
+                {r.note}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Walk-in Sch H statutory-field warning */}
+        {hasControlled && isWalkIn && (() => {
+          const _missing = [];
+          if (!_walkInPatient && !_walkInUHID) _missing.push("Patient identity");
+          if (doctorNameRaw === "—") _missing.push("Prescriber name");
+          if (!prescriberReg) _missing.push("Prescriber Reg. No");
+          if (!r.prescriptionRef && !r.rxRef) _missing.push("Rx reference");
+          return _missing.length > 0 ? (
+            <div style={{
+              margin: "10px 14px 0", padding: "7px 12px",
+              background: "#fef2f2", border: "1.5px solid #fecaca",
+              borderRadius: 6, fontSize: 10.5, color: "#b91c1c",
+              fontWeight: 600,
+            }}>
+              <b>⚠ Sch H/H1/X dispense — missing statutory field
+              {_missing.length === 1 ? "" : "s"}:</b> {_missing.join(" · ")}
+            </div>
+          ) : null;
+        })()}
+
+        {/* PAN-cash threshold reminder (Walk-in B2C > ₹2L) */}
+        {isWalkIn && grandTotal > 200000 && (
+          <div style={{
+            margin: "10px 14px 0", padding: "7px 12px",
+            background: r.buyerPan ? "#f0fdf4" : "#fffbeb",
+            border: `1.5px solid ${r.buyerPan ? "#86efac" : "#fcd34d"}`,
+            borderRadius: 6, fontSize: 10.5,
+            color: r.buyerPan ? "#166534" : "#92400e",
+            display: "flex", justifyContent: "space-between",
+            alignItems: "center", gap: 12,
+          }}>
+            <span>
+              <b>PAN-cash threshold (Income Tax Rule 114B)</b>
+              {" · "}Cash sale exceeds ₹2,00,000 — buyer's PAN is
+              statutorily required on this invoice.
+            </span>
+            <span style={{ fontFamily: "DM Mono, monospace" }}>
+              {r.buyerPan
+                ? <>Buyer PAN: <b>{r.buyerPan}</b></>
+                : <b style={{ color: "#b45309" }}>PAN: REQUIRED</b>}
+            </span>
+          </div>
+        )}
+
+        {/* ════════════════════════════════════════════════════
+            TEMPLATE BODY — visual variant (T1..T10) takes over
+            ════════════════════════════════════════════════════ */}
+        <Tpl {...tplProps} />
+
+        {/* ════════════════════════════════════════════════════
+            POST-BODY cross-cutting sections — survive template
+            ════════════════════════════════════════════════════ */}
+
+        {/* IPD Credit-Collection history */}
+        {isIPD && Array.isArray(r.collectionLog) && r.collectionLog.length > 0 && (
+          <div style={{
+            margin: "12px 14px 0",
+            border: "1px solid #cbd5e1", borderRadius: 6, overflow: "hidden",
+          }}>
+            <div style={{
+              padding: "5px 10px", background: "#f1f5f9", color: "#0f172a",
+              fontSize: 10, fontWeight: 800, letterSpacing: ".4px",
+              textTransform: "uppercase",
+              display: "flex", justifyContent: "space-between",
+            }}>
+              <span>Credit-Collection History — {r.collectionLog.length} receipt(s)</span>
+              <span>
+                Total collected:{" "}
+                <b>{fmtINR(r.collectionLog.reduce((s, c) => s + _dec(c.amount), 0))}</b>
+              </span>
+            </div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+              <thead>
+                <tr>
+                  {["#","Receipt","Date","Mode","Txn Ref","Collected by","Amount"].map((h, i) => (
+                    <th key={i} style={{
+                      padding: "4px 8px",
+                      textAlign: i === 6 ? "right" : "left",
+                      background: "#f8fafc",
+                      borderBottom: "1px solid #e2e8f0",
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {r.collectionLog.map((c, i) => (
+                  <tr key={i}>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9" }}>{i + 1}</td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9", fontFamily: "DM Mono, monospace", fontSize: 9.5 }}>{c.receiptNumber || "—"}</td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9" }}>{_fmtDate(c.collectedAt, { day: "2-digit", month: "short", year: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9" }}>{c.mode || "—"}</td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9", fontFamily: "DM Mono, monospace", fontSize: 9 }}>{c.txnRef || "—"}</td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9" }}>{c.collectedBy || "—"}</td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid #f1f5f9", textAlign: "right", fontWeight: 700 }}>{fmtINR(_dec(c.amount))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Supplements (debit-note slips) */}
+        {supplements.length > 0 && (
+          <div style={{ margin: "12px 14px 0", border: "1.5px dashed #16a34a", borderRadius: 8, overflow: "hidden" }}>
+            <div style={{ padding: "7px 12px", background: "#f0fdf4", borderBottom: "1px solid #bbf7d0", fontSize: 10.5, color: "#166534", display: "flex", justifyContent: "space-between" }}>
+              <b>SUPPLEMENTARY INVOICE — {supplements.length} slip(s)</b>
+              <span>Added total: <b>{fmtINR(supplementTotal)}</b></span>
+            </div>
+            {supplements.map((sup, si) => (
+              <SubBillSlip key={si} slip={sup} idx={si} kind="supplement" />
+            ))}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 14, padding: "6px 12px", background: "#f0fdf4", fontSize: 10.5 }}>
+              <span>Paid: <b style={{ color: "#15803d" }}>{fmtINR(supplements.reduce((s, x) => s + _dec(x.amountPaid), 0))}</b></span>
+              <span>Balance due: <b style={{ color: "#dc2626" }}>{fmtINR(supplements.reduce((s, x) => s + _dec(x.balanceDue), 0))}</b></span>
+              <span>Addendum total: <b style={{ color: "#15803d" }}>{fmtINR(supplementTotal)}</b></span>
+            </div>
+          </div>
+        )}
+
+        {/* Returns / refunds */}
+        {returns.length > 0 && (
+          <div style={{ margin: "12px 14px 16px", border: "1.5px dashed #f59e0b", borderRadius: 8, overflow: "hidden" }}>
+            <div style={{ padding: "7px 12px", background: "#fffbeb", borderBottom: "1px solid #fde68a", fontSize: 10.5, color: "#92400e", display: "flex", justifyContent: "space-between" }}>
+              <b>RETURNS &amp; REFUNDS — {returns.length} slip(s)</b>
+              <span>Net of returns: <b>{fmtINR(netAfter)}</b></span>
+            </div>
+            {returns.map((ret, ri) => (
+              <SubBillSlip key={ri} slip={ret} idx={ri} kind="return" />
+            ))}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 14, padding: "6px 12px", background: "#fffbeb", fontSize: 10.5 }}>
+              <span>Total refunded: <b style={{ color: "#b45309" }}>{fmtINR(refundTotal)}</b></span>
+              {patientCred > 0 && <span>Credit held: <b style={{ color: "#0369a1" }}>{fmtINR(patientCred)}</b></span>}
+            </div>
+          </div>
+        )}
+
+        {/* Print-time meta strip — Doc# / printed-at, mirrors
+            PrintShell's footer strip so the operator still sees the
+            bill number + timestamp at the bottom regardless of which
+            template wrapped it. */}
+        <div style={{
+          margin: "10px 14px 14px",
+          padding: "5px 0",
+          borderTop: "1px dashed #cbd5e1",
+          fontSize: 9, color: "#64748b",
+          display: "flex", justifyContent: "space-between",
+        }}>
+          <span>Doc#: {r.billNumber || "—"}</span>
+          <span>{`Printed: ${new Date().toLocaleString("en-IN")}`}</span>
+          <span>Page 1 of 1</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <PrintShell
