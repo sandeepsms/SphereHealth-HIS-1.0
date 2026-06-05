@@ -32,7 +32,7 @@ export function T1_ClassicModern(p) {
         background: `linear-gradient(135deg, ${id.color} 0%, ${id.accent} 100%)`,
         color: "#fff", display: "flex", alignItems: "center",
       }}>
-        {id.logo && <img src={id.logo} alt="" className="pb-mast-logo" style={{ objectFit: "contain", background: "#fff", borderRadius: 10 }} />}
+        {id.logo && <img src={id.logo} alt="" className="pb-mast-logo" style={{ objectFit: "contain", background: "#fff", borderRadius: 10, maxHeight: 56, maxWidth: 72, marginRight: 10 }} />}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="pb-mast-name" style={{ fontWeight: 800, letterSpacing: "-.3px", lineHeight: 1.15 }}>{id.name}</div>
           {id.tagline && <div className="pb-mast-line" style={{ opacity: .9, marginTop: 2 }}>{id.tagline}</div>}
@@ -141,7 +141,7 @@ export function T4_PremiumDark(p) {
     <>
       <div style={{ background: dark, color: "#fff", padding: "18px 22px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          {id.logo && <img src={id.logo} alt="" className="pb-mast-logo" style={{ objectFit: "contain", background: "#fff", borderRadius: 6 }} />}
+          {id.logo && <img src={id.logo} alt="" className="pb-mast-logo" style={{ objectFit: "contain", background: "#fff", borderRadius: 6, maxHeight: 56, maxWidth: 72, marginRight: 10 }} />}
           <div style={{ flex: 1 }}>
             <div className="pb-mast-name" style={{ fontWeight: 800, color: gold, letterSpacing: ".3px" }}>{id.name}</div>
             {id.tagline && <div className="pb-mast-line" style={{ opacity: .85, marginTop: 1 }}>{id.tagline}</div>}
@@ -215,7 +215,7 @@ export function T6_RetailExpress(p) {
         <div style={{ position: "absolute", right: -40, top: -40, width: 140, height: 140, borderRadius: "50%", background: "rgba(255,255,255,.15)" }} />
         <div style={{ position: "absolute", right: -60, bottom: -60, width: 100, height: 100, borderRadius: "50%", background: "rgba(255,255,255,.08)" }} />
         <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 14 }}>
-          {id.logo && <img src={id.logo} alt="" className="pb-mast-logo" style={{ objectFit: "contain", background: "#fff", borderRadius: "50%", padding: 5 }} />}
+          {id.logo && <img src={id.logo} alt="" className="pb-mast-logo" style={{ objectFit: "contain", background: "#fff", borderRadius: "50%", padding: 5, maxHeight: 56, maxWidth: 56, marginRight: 10 }} />}
           <div style={{ flex: 1 }}>
             <div className="pb-mast-name" style={{ fontWeight: 800 }}>{id.name}</div>
             {id.tagline && <div className="pb-mast-line" style={{ opacity: .9, marginTop: 1 }}>★ {id.tagline}</div>}
@@ -334,7 +334,7 @@ export function T8_Bilingual(p) {
         background: `linear-gradient(135deg, ${id.color} 0%, ${id.accent} 100%)`,
         color: "#fff", display: "flex", alignItems: "center",
       }}>
-        {id.logo && <img src={id.logo} alt="" className="pb-mast-logo" style={{ objectFit: "contain", background: "#fff", borderRadius: 10 }} />}
+        {id.logo && <img src={id.logo} alt="" className="pb-mast-logo" style={{ objectFit: "contain", background: "#fff", borderRadius: 10, maxHeight: 56, maxWidth: 72, marginRight: 10 }} />}
         <div style={{ flex: 1 }}>
           <div className="pb-mast-name" style={{ fontWeight: 800 }}>{id.name}</div>
           <div className="pb-mast-line" style={{ opacity: .9, marginTop: 1 }}>कर बिल · TAX INVOICE</div>

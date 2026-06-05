@@ -659,8 +659,29 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
     // schema stores batchNumber + expiryDate but older callers pass
     // batchNo / expiry. Without this the template's Batch · Exp cell
     // would silently render "—" on every legacy line.
+    //
+    // R7hr-41 — also pre-unwrap every money / quantity field via
+    // toNum() so the templates' raw `Number(it.quantity || it.qty)`
+    // doesn't NaN out on Mongoose Decimal128 wrappers (`{ $numberDecimal:
+    // "99" }` — what listSales returns when it uses .lean()). The
+    // PrintShell fallback path uses toNum() everywhere and stayed
+    // clean; the template-dispatch path skipped this normalisation and
+    // every Rate / Disc / Taxable / GST / Net cell on a Decimal128-
+    // backed sale printed as NaN. Pre-flattening here means every
+    // template sees plain JS numbers regardless of source.
     const _tplItems = items.map(it => ({
       ...it,
+      quantity:        toNum(it.quantity ?? it.qty),
+      qty:             toNum(it.quantity ?? it.qty),
+      unitPrice:       toNum(it.unitPrice ?? it.rate),
+      rate:            toNum(it.unitPrice ?? it.rate),
+      gstRate:         toNum(it.gstRate ?? 12),
+      discountAmount:  toNum(it.discountAmount),
+      discountPercent: toNum(it.discountPercent),
+      taxableAmount:   toNum(it.taxableAmount),
+      gstAmount:       toNum(it.gstAmount),
+      netAmount:       toNum(it.netAmount),
+      mrp:             toNum(it.mrp),
       batchNo:    it.batchNo    || it.batchNumber || "",
       expiryDate: it.expiryDate || it.expiry      || it.expDate || null,
     }));
