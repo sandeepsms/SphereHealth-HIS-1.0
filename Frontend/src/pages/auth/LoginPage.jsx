@@ -215,23 +215,29 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={handleSubmit}>
-            {/* Email */}
+            {/* R7hr-37: identity field accepts email, username (email's
+                local part — e.g. "admin"), OR employee ID (e.g. ADM-001).
+                Backend POST /api/auth/login resolves all three to the
+                same User. type="text" so the browser doesn't reject
+                "admin" or "ADM-001" as an invalid email; autoComplete
+                relaxed to "username" so password-managers fill the new
+                shorter forms cleanly. */}
             <div style={{ marginBottom: 18 }}>
               <label style={{ display: "block", fontSize: 11, fontWeight: 700,
                 textTransform: "uppercase", letterSpacing: ".8px", color: "#94a3b8", marginBottom: 7 }}>
-                Email Address
+                Email / Username / Employee ID
               </label>
               <div style={{ position: "relative" }}>
-                <i className="pi pi-envelope" style={{
+                <i className="pi pi-user" style={{
                   position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)",
                   color: "#64748b", fontSize: 14,
                 }} />
                 <input
-                  type="email"
+                  type="text"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
-                  placeholder="you@spherehealth.com"
-                  autoComplete="email"
+                  placeholder="admin · ADM-001 · admin@spherehealth.com"
+                  autoComplete="username"
                   style={{
                     width: "100%", paddingLeft: 38, paddingRight: 14, paddingTop: 11, paddingBottom: 11,
                     background: "rgba(255,255,255,.07)", border: "1.5px solid rgba(255,255,255,.12)",

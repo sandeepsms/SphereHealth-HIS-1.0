@@ -41,11 +41,35 @@ const INVALID_CREDENTIALS = "Invalid email or password";
 // NOT rate-limited here.
 router.post("/login", loginRateLimit, async (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password)
+    // R7hr-37: accept email | username (email's local part) | employeeId.
+    // Frontend posts whichever the operator typed in `email`; we also
+    // accept `username` for clients that name the field differently.
+    // Dr. Sandeep can now log in as any of:
+    //   admin@spherehealth.com  ·  admin  ·  ADM-001
+    //   dr.sandeep@spherehealth.com  ·  dr.sandeep  ·  DOC-2026-00001
+    const raw = String(req.body.email ?? req.body.username ?? "").trim();
+    const password = req.body.password;
+    if (!raw || !password)
       return res.status(400).json({ message: "Email and password are required" });
 
-    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    // Escape regex metachars so an employeeId like "DOC-2026-00001" or a
+    // username with a "." (e.g. "dr.sandeep") doesn't break the query.
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const lc  = raw.toLowerCase();
+    // Three identity buckets — first match wins. We always include the
+    // exact-email branch so a literal "admin@spherehealth.com" matches
+    // its indexed unique field directly (no regex scan). Username branch
+    // matches the part before "@" so "admin" → admin@…; employeeId is
+    // case-insensitive exact match so "adm-001" and "ADM-001" both work.
+    const query = raw.includes("@")
+      ? { email: lc }
+      : {
+          $or: [
+            { email: new RegExp("^" + esc(lc) + "@", "i") },
+            { employeeId: new RegExp("^" + esc(raw) + "$", "i") },
+          ],
+        };
+    const user = await User.findOne(query);
 
     // R7bb-FIX-A-2: NABH HIC.5 account lockout. If the account is currently
     // locked, refuse even with the right password — and short-circuit BEFORE
