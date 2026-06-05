@@ -8,26 +8,47 @@ import { homePathForRole } from "../../config/permissions";
 // from both the Vite dev server and the prod build.
 import { API_BASE_URL } from "../../config/api";
 
+// R7hr-38-FOLLOWUP: ROLE_COLORS / ROLE_ICONS extended to mirror the full
+// 15-role canon defined in config/permissions.js so every active role in
+// the User collection (Accountant, Physiotherapist, Radiologist, Ward Boy,
+// Housekeeping, Security, MRD) has its own pill on the login screen — not
+// just the eight that fit the seed-script's primary personas. Colour /
+// icon picks intentionally re-use the permissions.js palette so the
+// login screen visually rhymes with the admin user-create UI.
 const ROLE_COLORS = {
-  Admin:            "#1e40af",
-  Receptionist:     "#0d9488",
-  Doctor:           "#7c3aed",
-  Nurse:            "#db2777",
-  Dietician:        "#16a34a",
-  "TPA Coordinator":"#d97706",
-  Pharmacist:       "#ea580c",
-  "Lab Technician": "#0891b2",
+  Admin:             "#1e40af",
+  Receptionist:      "#0d9488",
+  Doctor:            "#7c3aed",
+  Nurse:             "#db2777",
+  Dietician:         "#16a34a",
+  "TPA Coordinator": "#d97706",
+  Pharmacist:        "#ea580c",
+  "Lab Technician":  "#0891b2",
+  Accountant:        "#b45309",
+  Physiotherapist:   "#059669",
+  Radiologist:       "#0284c7",
+  "Ward Boy":        "#475569",
+  Housekeeping:      "#64748b",
+  Security:          "#374151",
+  MRD:               "#6366f1",
 };
 
 const ROLE_ICONS = {
-  Admin:            "pi-shield",
-  Receptionist:     "pi-desktop",
-  Doctor:           "pi-heart",
-  Nurse:            "pi-heart-fill",
-  Dietician:        "pi-apple",
-  "TPA Coordinator":"pi-briefcase",
-  Pharmacist:       "pi-inbox",
-  "Lab Technician": "pi-chart-bar",
+  Admin:             "pi-shield",
+  Receptionist:      "pi-desktop",
+  Doctor:            "pi-heart",
+  Nurse:             "pi-heart-fill",
+  Dietician:         "pi-apple",
+  "TPA Coordinator": "pi-briefcase",
+  Pharmacist:        "pi-inbox",
+  "Lab Technician":  "pi-chart-bar",
+  Accountant:        "pi-receipt",
+  Physiotherapist:   "pi-bolt",
+  Radiologist:       "pi-eye",
+  "Ward Boy":        "pi-user",
+  Housekeeping:      "pi-home",
+  Security:          "pi-lock",
+  MRD:               "pi-folder-open",
 };
 
 export default function LoginPage() {
