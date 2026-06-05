@@ -3657,10 +3657,27 @@ function SettingsTab() {
             isActive={(s.billTemplate || 1) === previewTpl}
             settingsDoc={s}
             onClose={() => setPreviewTpl(null)}
-            onUse={() => {
-              setS(p => ({ ...p, billTemplate: previewTpl }));
+            onUse={async () => {
+              // R7hr-40: auto-save the template choice immediately. The
+              // previous two-step ("pick → toast says Save to apply →
+              // operator forgets → next print uses old skin") was a real
+              // workflow bug — operators were correctly picking Premium
+              // Dark / Heritage / etc., printing right after, and getting
+              // the previously-saved Classic Modern. Posting in the same
+              // click closes the loop. Cache invalidation runs after the
+              // POST resolves so the next PharmacyBill render reads the
+              // fresh billTemplate field.
+              const next = { ...s, billTemplate: previewTpl };
+              setS(next);
               setPreviewTpl(null);
-              toast.success(`Template #${previewTpl} selected — Save to apply`);
+              try {
+                const r = await updatePharmacySettings(next);
+                setS(r.data);
+                invalidatePhSettings();
+                toast.success(`Template #${previewTpl} applied · every new print uses it now`);
+              } catch (e) {
+                toast.error(`Couldn't save template: ${e.message}`);
+              }
             }}
           />
         )}
@@ -3746,10 +3763,19 @@ function SettingsTab() {
             isActive={(s.registerHeader || 1) === previewReg}
             settingsDoc={s}
             onClose={() => setPreviewReg(null)}
-            onUse={() => {
-              setS(p => ({ ...p, registerHeader: previewReg }));
+            onUse={async () => {
+              // R7hr-40: auto-save (mirrors the bill-template fix above).
+              const next = { ...s, registerHeader: previewReg };
+              setS(next);
               setPreviewReg(null);
-              toast.success(`Register header style #${previewReg} selected — Save to apply`);
+              try {
+                const r = await updatePharmacySettings(next);
+                setS(r.data);
+                invalidatePhSettings();
+                toast.success(`Register header #${previewReg} applied · next register print uses it now`);
+              } catch (e) {
+                toast.error(`Couldn't save header style: ${e.message}`);
+              }
             }}
           />
         )}
