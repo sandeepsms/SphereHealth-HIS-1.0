@@ -681,6 +681,22 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
       amountInWords,
       _fmtDate,
       hasControlled,
+      // R7hr-39: variant-aware patient strip the templates' BilledTo
+      // block reads. PrintShell fallback already used these arrays;
+      // exposing them to templates means picking Premium Dark for an
+      // IPD bill still surfaces UHID/IPD merge + Ward + Bed +
+      // Department + Admission Date + Diagnosis, and picking Retail
+      // Express for a Walk-in still collapses to anonymous customer
+      // + PAN reminder. Same intelligence, different visual skin.
+      patientLeft,
+      patientRight,
+      docTitle,
+      docSubtitle: isInterState
+        ? "Inter-State (IGST)"
+        : "Intra-State (CGST + SGST)",
+      isOPD,
+      isIPD,
+      isWalkIn,
     };
     const Tpl = _tpl.Render;
     return (

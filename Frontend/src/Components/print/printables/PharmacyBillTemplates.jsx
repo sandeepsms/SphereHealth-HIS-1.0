@@ -260,15 +260,10 @@ export function T7_ReceiptStrip(p) {
         <div style={{ fontSize: 9, marginTop: 4 }}>GSTIN: {id.gstin || "—"}</div>
         <div style={{ fontSize: 9 }}>D.L.: {id.drugLicense || "—"}</div>
       </div>
-      <div style={{ padding: "6px 0", textAlign: "center", fontSize: 11, fontWeight: 800 }}>·· TAX INVOICE ··</div>
-      <div style={{ borderBottom: `1px dashed ${COL.mute}`, paddingBottom: 4 }}>
-        <Row k="Bill #" v={r.billNumber} />
-        <Row k="Date"   v={new Date(r.createdAt || Date.now()).toLocaleString("en-IN")} />
-        <Row k="Patient" v={r.patientName || "Walk-in"} />
-        {r.patientUHID && <Row k="UHID" v={r.patientUHID} />}
-        {r.doctorName  && <Row k="Doctor" v={r.doctorName} />}
-        <Row k="Type" v={r.saleType || "Walk-in"} />
-      </div>
+      {/* R7hr-39: variant-aware narrow strip — replaces the bespoke
+          Row-based block so a Walk-in / OPD / IPD print on T7 carries
+          the same identity intelligence as the PrintShell fallback. */}
+      <BilledTo {...p} mode="narrow" />
       {hasControlled && <div style={{ padding: "4px 0", fontSize: 9, fontWeight: 800, color: "#dc2626", textAlign: "center" }}>⚠ Schedule H — Rx retained</div>}
       <div style={{ padding: "6px 0", borderBottom: `1px dashed ${COL.mute}` }}>
         {items.map((it, i) => {
@@ -350,31 +345,10 @@ export function T8_Bilingual(p) {
           {id.drugLicense && <div style={{ marginTop: 2 }}>औषधि लाइसेंस · <b style={{ fontFamily: "DM Mono, monospace" }}>{id.drugLicense}</b></div>}
         </div>
       </div>
-      <div className="pb-title" style={{ display: "flex", justifyContent: "space-between", background: COL.soft, borderBottom: `1px solid ${COL.line}` }}>
-        <div>
-          <div style={{ fontSize: 8.5, color: COL.mute, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>बिल नं · Bill No</div>
-          <div className="pb-title-no" style={{ fontWeight: 800, color: id.accent, fontFamily: "DM Mono, monospace" }}>{r.billNumber}</div>
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 8.5, color: COL.mute, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>दिनांक · Date</div>
-          <div style={{ fontSize: 10.5, fontWeight: 700, marginTop: 1 }}>{new Date(r.createdAt || Date.now()).toLocaleString("en-IN")}</div>
-        </div>
-      </div>
-      <div className="pb-billto" style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr" }}>
-        <div>
-          <div style={{ fontSize: 8.5, fontWeight: 800, color: COL.mute, letterSpacing: ".5px", textTransform: "uppercase" }}>रोगी का नाम · Patient</div>
-          <div style={{ fontSize: 14, fontWeight: 800, marginTop: 1 }}>{r.patientName || "Walk-in customer"}</div>
-          <div style={{ fontSize: 10, color: COL.mute, marginTop: 1 }}>
-            UHID {r.patientUHID || "—"}{r.age && ` · आयु ${r.age}`}{r.gender && ` · ${r.gender}`}
-            {r.doctorName && <div>डॉक्टर · {r.doctorName}</div>}
-          </div>
-        </div>
-        <div style={{ fontSize: 10, lineHeight: 1.5, background: COL.soft, border: `1px solid ${COL.line}`, borderRadius: 6, padding: "6px 9px" }}>
-          <Row k="भुगतान · Payment" v={r.paymentMode || "Cash"} />
-          <Row k="प्रकार · Type"    v={r.saleType || "Walk-in"} />
-          <Row k="कैशियर · Cashier" v={r.createdBy || "—"} />
-        </div>
-      </div>
+      {/* R7hr-39: bilingual variant-aware identity block. The mode
+          adds Hindi labels alongside English for every patientLeft /
+          patientRight kv pair the dispatcher computed. */}
+      <BilledTo {...p} mode="bilingual" />
       {hasControlled && <SchHBanner />}
       <ItemsTable {...p} headerStyle={{ background: id.color, color: "#fff" }} />
       <HsnTotalsSplit {...p} />
@@ -402,18 +376,12 @@ export function T9_GovernmentGrid(p) {
               <div style={{ fontSize: 9, marginTop: 3, fontWeight: 700 }}>GSTIN: {id.gstin || "—"} · D.L.: {id.drugLicense || "—"}</div>
             </td>
           </tr>
-          <tr>
-            <td style={{ border, padding: "6px 10px", width: "50%" }}>
-              <b>Bill No:</b> {r.billNumber}<br/>
-              <b>Date:</b> {new Date(r.createdAt || Date.now()).toLocaleString("en-IN")}
-            </td>
-            <td style={{ border, padding: "6px 10px" }}>
-              <b>Patient:</b> {r.patientName || "Walk-in"}<br/>
-              <b>UHID:</b> {r.patientUHID || "—"} <b>Doctor:</b> {r.doctorName || "—"}
-            </td>
-          </tr>
         </tbody>
       </table>
+      {/* R7hr-39: variant-aware identity block under the masthead.
+          T9 wraps it in the Courier-mono style via the page-level
+          fontFamily — KV mode renders cleanly inside that scope. */}
+      <BilledTo {...p} flat />
       {hasControlled && <SchHBanner />}
       <ItemsTable {...p} headerStyle={{ background: "#fff", color: COL.ink, borderTop: border, borderBottom: border }} bordered fullBorders />
       <HsnTotalsSplit {...p} flat />
@@ -441,10 +409,10 @@ export function T10_LiteQuick(p) {
           <div style={{ color: COL.mute }}>{new Date(r.createdAt || Date.now()).toLocaleString("en-IN")}</div>
         </div>
       </div>
-      <div style={{ padding: "8px 0", fontSize: 10.5 }}>
-        <b>{r.patientName || "Walk-in"}</b> · UHID {r.patientUHID || "—"}{r.age && ` · ${r.age}Y`}{r.gender && ` ${r.gender}`}
-        {r.doctorName && <> · Dr {r.doctorName}</>}
-      </div>
+      {/* R7hr-39: variant-aware one-liner — pulls the variant tag +
+          top fields from patientLeft/Right rather than a static
+          bespoke string. Still bare-minimum / lite — just smart. */}
+      <BilledTo {...p} mode="compact" />
       {hasControlled && <SchHBanner />}
       <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 4 }}>
         <thead>
@@ -512,25 +480,192 @@ function Row({ k, v }) {
   );
 }
 
+/* R7hr-39 — variant-aware Billed-To block.
+ *
+ * PharmacyBill.jsx dispatcher computes patientLeft + patientRight
+ * already (R7hr-15→21 work — IPD merges UHID/IPD on left + adds
+ * Ward/Bed/Department/Admission Date/Diagnosis; OPD adds Rx Ref;
+ * Walk-in collapses to anonymous customer when no identity). Those
+ * arrays now flow through tplProps and we render them here so every
+ * visual template (Classic, Premium Dark, Heritage, etc.) inherits
+ * the same variant intelligence — same wiring, different skin.
+ *
+ * Mode selector — templates pass `mode` to get a layout that fits
+ * their overall design language:
+ *   • "kv"        (default) — 2-col KV grid, used by T1-T6 + T9
+ *   • "narrow"    — single-column Rx-style strip, used by T7
+ *                   (thermal receipt narrow strip)
+ *   • "bilingual" — Hindi + English labels, used by T8
+ *   • "compact"   — one-line inline, used by T10 lite
+ *
+ * Falls back to the original generic block when no patientLeft is
+ * passed — preserves behaviour for any future caller that doesn't
+ * use the dispatcher flow (none today).
+ */
 function BilledTo(p) {
-  const { receipt: r, id, COL, flat, noPadding } = p;
-  return (
-    <div className={noPadding ? "" : "pb-billto"} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", padding: noPadding ? 0 : undefined, gap: flat ? 12 : undefined }}>
-      <div>
-        <div style={{ fontSize: 8.5, fontWeight: 800, color: COL.mute, letterSpacing: ".5px", textTransform: "uppercase" }}>Billed to</div>
-        <div style={{ fontSize: 13.5, fontWeight: 800, marginTop: 2 }}>{r.patientName || "Walk-in customer"}</div>
-        <div style={{ fontSize: 10, color: COL.mute, marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {r.patientUHID && <span>UHID · {r.patientUHID}</span>}
-          {(r.age || r.gender) && <span>{[r.age && `${r.age}Y`, r.gender].filter(Boolean).join(" / ")}</span>}
-          {r.contactNumber && <span>📞 {r.contactNumber}</span>}
+  const {
+    receipt: r, id, COL,
+    flat, noPadding, mode = "kv",
+    patientLeft, patientRight,
+    docTitle, isOPD, isIPD, isWalkIn,
+  } = p;
+
+  // Legacy generic block — only used if dispatcher didn't pass
+  // variant-aware patientLeft. Real callers always pass it.
+  if (!Array.isArray(patientLeft)) {
+    return (
+      <div className={noPadding ? "" : "pb-billto"} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", padding: noPadding ? 0 : undefined, gap: flat ? 12 : undefined }}>
+        <div>
+          <div style={{ fontSize: 8.5, fontWeight: 800, color: COL.mute, letterSpacing: ".5px", textTransform: "uppercase" }}>Billed to</div>
+          <div style={{ fontSize: 13.5, fontWeight: 800, marginTop: 2 }}>{r.patientName || "Walk-in customer"}</div>
+          <div style={{ fontSize: 10, color: COL.mute, marginTop: 2, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {r.patientUHID && <span>UHID · {r.patientUHID}</span>}
+            {(r.age || r.gender) && <span>{[r.age && `${r.age}Y`, r.gender].filter(Boolean).join(" / ")}</span>}
+            {r.contactNumber && <span>📞 {r.contactNumber}</span>}
+          </div>
+          {r.admissionNumber && <div style={{ marginTop: 4, fontSize: 10 }}><b>IPD · {r.admissionNumber}</b> · {r.doctorName || "—"}</div>}
         </div>
-        {r.admissionNumber && <div style={{ marginTop: 4, fontSize: 10 }}><b>IPD · {r.admissionNumber}</b> · {r.doctorName || "—"}</div>}
+        <div style={{ fontSize: 10, lineHeight: 1.55, background: flat ? "transparent" : COL.soft, border: flat ? "none" : `1px solid ${COL.line}`, borderRadius: 6, padding: flat ? 0 : "8px 10px" }}>
+          <Row k="Sale type"    v={r.saleType || "Walk-in"} />
+          <Row k="Doctor"       v={r.doctorName || "—"} />
+          <Row k="Payment"      v={r.paymentMode || "Cash"} />
+          <Row k="Cashier"      v={r.createdBy || "—"} />
+        </div>
       </div>
-      <div style={{ fontSize: 10, lineHeight: 1.55, background: flat ? "transparent" : COL.soft, border: flat ? "none" : `1px solid ${COL.line}`, borderRadius: 6, padding: flat ? 0 : "8px 10px" }}>
-        <Row k="Sale type"    v={r.saleType || "Walk-in"} />
-        <Row k="Doctor"       v={r.doctorName || "—"} />
-        <Row k="Payment"      v={r.paymentMode || "Cash"} />
-        <Row k="Cashier"      v={r.createdBy || "—"} />
+    );
+  }
+
+  // R7hr-18 variant title — already prefixed in docTitle (e.g.
+  // "IPD PHARMACY BILL"); pull the tag back out for a thin chip.
+  const variantTag = isWalkIn ? "WALK-IN"
+                    : isIPD   ? "IPD"
+                    : isOPD   ? "OPD"
+                    : "";
+  const variantColor = isWalkIn ? "#15803d"
+                      : isIPD   ? "#1e3a8a"
+                      : isOPD   ? "#9a3412"
+                      : COL.mute;
+  const variantBg    = isWalkIn ? "#f0fdf4"
+                      : isIPD   ? "#eff6ff"
+                      : isOPD   ? "#fff7ed"
+                      : COL.soft;
+
+  // ── Compact (T10) ──
+  if (mode === "compact") {
+    const oneLine = [...patientLeft, ...patientRight]
+      .filter((kv) => kv && kv.value && kv.value !== "—")
+      .slice(0, 6)
+      .map((kv) => `${kv.label}: ${kv.value}`)
+      .join("  ·  ");
+    return (
+      <div style={{ padding: "6px 0", fontSize: 10.5, borderBottom: `1px dashed ${COL.line}` }}>
+        {variantTag && (
+          <span style={{ display: "inline-block", padding: "1px 7px", borderRadius: 4, background: variantBg, color: variantColor, fontSize: 9, fontWeight: 800, letterSpacing: ".5px", marginRight: 8 }}>{variantTag}</span>
+        )}
+        {oneLine}
+      </div>
+    );
+  }
+
+  // ── Narrow (T7 thermal strip) ──
+  if (mode === "narrow") {
+    const both = [...patientLeft, ...patientRight].filter(Boolean);
+    return (
+      <div style={{ borderBottom: `1px dashed ${COL.mute}`, paddingBottom: 4 }}>
+        {variantTag && (
+          <div style={{ textAlign: "center", padding: "3px 0", fontSize: 9.5, fontWeight: 800, color: variantColor, letterSpacing: ".8px" }}>
+            ·· {docTitle || `${variantTag} BILL`} ··
+          </div>
+        )}
+        {both.map((kv, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "1px 0" }}>
+            <span style={{ color: COL.mute }}>{kv.label}</span>
+            <span style={{ fontWeight: 700, fontFamily: kv.value && /[A-Z]+-\d/.test(String(kv.value)) ? "DM Mono, monospace" : undefined }}>
+              {kv.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // ── Bilingual (T8) ──
+  if (mode === "bilingual") {
+    const HI = {
+      "Bill No": "बिल नं.",
+      "UHID": "यूएच आईडी",
+      "UHID / IPD": "यूएच / आईपीडी",
+      "Patient": "रोगी",
+      "Customer": "ग्राहक",
+      "Age/Sex": "आयु / लिंग",
+      "Contact": "संपर्क",
+      "Address": "पता",
+      "Ward": "वार्ड",
+      "Bed": "बिस्तर",
+      "Bill Date": "दिनांक",
+      "Department": "विभाग",
+      "Doctor": "डॉक्टर",
+      "Counter": "काउंटर",
+      "Payer": "भुगतानकर्ता",
+      "GSTIN": "जीएसटी",
+      "Admission Date": "भर्ती दिनांक",
+      "Diagnosis": "निदान",
+      "Rx Ref": "नुस्खा संदर्भ",
+    };
+    const Both = (col) => col.map((kv, i) => (
+      <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", padding: "2px 0", fontSize: 10 }}>
+        <span style={{ color: COL.mute }}>{HI[kv.label] ? `${HI[kv.label]} · ${kv.label}` : kv.label}</span>
+        <span style={{ fontWeight: 700 }}>{kv.value}</span>
+      </div>
+    ));
+    return (
+      <div className={noPadding ? "" : "pb-billto"} style={{ padding: noPadding ? 0 : undefined }}>
+        {variantTag && (
+          <div style={{ padding: "5px 11px", background: variantBg, color: variantColor, fontSize: 9.5, fontWeight: 800, letterSpacing: ".5px", textTransform: "uppercase", borderRadius: 4, marginBottom: 6 }}>
+            {docTitle || `${variantTag} फार्मेसी बिल · ${variantTag} PHARMACY BILL`}
+          </div>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div>{Both(patientLeft)}</div>
+          <div>{Both(patientRight)}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── KV (default) — T1-T6, T9 ──
+  // Mono-format any value that looks like a code (e.g. PHM-26-0014,
+  // UH01 / IPD-26-02) so it stands out the way the user already sees
+  // on the PrintShell fallback.
+  const KV = (kv, i) => {
+    const isMono = kv.value && /^[A-Z]+[\-\d]/.test(String(kv.value));
+    return (
+      <div key={i} style={{ display: "grid", gridTemplateColumns: "0.9fr 1.3fr", padding: "2px 0", fontSize: 10, alignItems: "baseline" }}>
+        <span style={{ color: COL.mute, fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>{kv.label}</span>
+        <span style={{
+          fontWeight: 700,
+          fontFamily: isMono ? "DM Mono, monospace" : undefined,
+          color: isMono ? id.accent || id.color : undefined,
+          wordBreak: "break-word",
+        }}>{kv.value}</span>
+      </div>
+    );
+  };
+  return (
+    <div className={noPadding ? "" : "pb-billto"} style={{ padding: noPadding ? 0 : undefined }}>
+      {variantTag && (
+        <div style={{ padding: "5px 12px", marginBottom: 6, background: variantBg, color: variantColor, fontSize: 10, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", borderLeft: `3px solid ${variantColor}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{docTitle || `${variantTag} PHARMACY BILL`}</span>
+          {r.billNumber && <span style={{ fontFamily: "DM Mono, monospace", letterSpacing: 0, fontSize: 10, fontWeight: 700, opacity: .8 }}>{r.billNumber}</span>}
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, padding: flat ? 0 : "0 4px" }}>
+        <div style={{ background: flat ? "transparent" : COL.soft, border: flat ? "none" : `1px solid ${COL.line}`, borderRadius: 6, padding: flat ? 0 : "7px 10px" }}>
+          {patientLeft.map(KV)}
+        </div>
+        <div style={{ background: flat ? "transparent" : COL.soft, border: flat ? "none" : `1px solid ${COL.line}`, borderRadius: 6, padding: flat ? 0 : "7px 10px" }}>
+          {patientRight.map(KV)}
+        </div>
       </div>
     </div>
   );
