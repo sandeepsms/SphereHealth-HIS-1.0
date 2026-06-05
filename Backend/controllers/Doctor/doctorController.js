@@ -78,9 +78,64 @@ exports.getAllDoctors = async (req, res) => {
       filters,
     );
 
+    // R7hr-52 — Compute effectiveStatus per doctor from real-world signals.
+    // The receptionist's Live Queue dropdown only sets availability.status to
+    // "Available" or "OnLeave" (binary on-duty toggle, R7hr-52). The third
+    // surface — "InConsultation" — must be derived because the doctor doesn't
+    // touch the dropdown when they start seeing a patient; OPD.status flipping
+    // to "In Progress" IS the signal. Priority order:
+    //   1. OnLeave  (off-duty wins absolutely)
+    //   2. Offline  (legacy/admin off-duty)
+    //   3. InConsultation  (any OPD visit today with status="In Progress")
+    //   4. Available
+    // This is computed at fetch time so the Live Queue always reflects the
+    // current consultation state without any stale-flag bug.
+    //
+    // IMPORTANT: doctorService.getAllDoctors() returns Mongoose documents
+    // (not .lean()), and Mongoose silently drops nested-key assignments to
+    // sub-paths that aren't in the schema (effectiveStatus is derived, not
+    // persisted). We therefore convert each doc to a plain object first,
+    // then mutate, then ship that array — guaranteeing JSON includes the
+    // derived fields. We do NOT add the field to the schema because it's a
+    // runtime view, not stored state.
+    let docsOut = result.doctors || [];
+    try {
+      const OPD = require("../../models/Patient/OPDModels");
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      const todayEnd   = new Date(todayStart); todayEnd.setDate(todayEnd.getDate() + 1);
+      const inProgress = await OPD.aggregate([
+        { $match: {
+            doctorId: { $in: docsOut.map(d => d._id) },
+            visitDate: { $gte: todayStart, $lt: todayEnd },
+            status: "In Progress",
+        } },
+        { $group: { _id: "$doctorId", n: { $sum: 1 } } },
+      ]);
+      const inProgressMap = new Map(inProgress.map(r => [String(r._id), r.n]));
+      docsOut = docsOut.map(d => {
+        // toObject if Mongoose doc, else clone — handles both shapes
+        const plain = typeof d.toObject === "function" ? d.toObject() : { ...d };
+        const stored = plain.availability?.status || "Available";
+        let effective;
+        if (stored === "OnLeave")            effective = "OnLeave";
+        else if (stored === "Offline")       effective = "Offline";
+        else if (inProgressMap.has(String(plain._id))) effective = "InConsultation";
+        else                                  effective = "Available";
+        plain.availability = {
+          ...(plain.availability || {}),
+          effectiveStatus: effective,
+          inProgressCount: inProgressMap.get(String(plain._id)) || 0,
+        };
+        return plain;
+      });
+    } catch (e) {
+      // Best-effort — never block doctor list rendering on the derivation step
+      console.warn("[getAllDoctors] R7hr-52 effectiveStatus derivation failed:", e.message);
+    }
+
     res.status(200).json({
       success: true,
-      data: result.doctors,
+      data: docsOut,
       pagination: result.pagination,
     });
   } catch (error) {
@@ -378,9 +433,25 @@ const OPDRegistration = require("../../models/Patient/OPDModels");
 exports.setAvailability = async (req, res) => {
   try {
     const { status, note } = req.body;
+    // Full enum kept for system writes (serveNextToken sets InConsultation).
     const valid = ["Available", "InConsultation", "OnBreak", "OnLeave", "Offline"];
     if (status && !valid.includes(status)) {
       return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+    // R7hr-52 — Receptionists may only toggle Available ↔ OnLeave from the
+    // Live Queue dropdown. "InConsultation" is auto-derived from in-progress
+    // OPD visits at list time (see effectiveStatus in getAllDoctors). The
+    // other historical statuses (OnBreak / Offline) are retained at the
+    // schema level for legacy / admin use but are NOT user-settable from
+    // reception — collapsing the dropdown to two options removes the
+    // "what does Offline vs OnBreak vs OnLeave really mean" cognitive cost
+    // for front-desk staff and makes the on-duty signal binary.
+    if (req.user?.role === "Receptionist" && status && !["Available", "OnLeave"].includes(status)) {
+      return res.status(403).json({
+        success: false,
+        message: `Receptionist may only set Available or OnLeave. "${status}" is auto-derived or admin-only.`,
+        code: "RECEPTIONIST_LIMITED_AVAILABILITY",
+      });
     }
     const doctor = await Doctor.findById(req.params.doctorId);
     if (!doctor) return res.status(404).json({ success: false, message: "Doctor not found" });

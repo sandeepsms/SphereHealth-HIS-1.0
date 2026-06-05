@@ -35,6 +35,26 @@ const DrugBatchSchema = new mongoose.Schema(
     mrp:          { type: Number, default: 0 },
     salePrice:    { type: Number, default: 0 },     // per-unit selling rate (post-discount, pre-GST)
 
+    // R7hr-50 — capture the GST rate AT THE TIME OF RECEIPT so the batch
+    // carries an immutable tax classification independent of future Drug
+    // master edits. Pre-R7hr-50 GST was sourced from `Drug.gstRate` at the
+    // moment of dispense, meaning a mid-stream Drug master edit (e.g.,
+    // admin re-classifying HSN) would silently change the tax on stock
+    // already in the building — bad for audit trail. Now each batch
+    // memorialises its own gstRate. recordGRN resolves it from
+    // HSNMasterModel via the linked Drug.hsnCode at receipt time.
+    gstRate:      {
+      type: Number,
+      default: 12,
+      enum: {
+        values: [0, 0.25, 3, 5, 12, 18, 28],
+        message: "gstRate {VALUE} is not a valid GST slab",
+      },
+    },
+    // Snapshot of the HSN at GRN time so a later Drug.hsnCode edit doesn't
+    // rewrite history on the printed GST register.
+    hsnCodeAtReceipt: { type: String, default: "" },
+
     supplierId:   { type: mongoose.Schema.Types.ObjectId, ref: "PharmacySupplier", default: null },
     supplierName: { type: String, default: "" },
     grnNumber:    { type: String, default: "" },

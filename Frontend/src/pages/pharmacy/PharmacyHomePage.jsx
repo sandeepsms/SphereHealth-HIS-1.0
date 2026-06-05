@@ -1550,7 +1550,7 @@ function DispenseTab() {
       // GSTIN block when set.
       openPrint("pharmacy-bill", {
         ...r.data,
-        template:     phSet?.billTemplate || 1,
+        template:     1, /* R7hr-46: locked to Classic Modern */
         defaultPaper: phSet?.defaultPaper || "half-a4",
         pharmacySettings: phSet,
         billLabel:        r.data.saleType === "Walk-in" ? "Cash Memo" : r.data.customerGstin ? "Tax Invoice" : "Pharmacy Bill",
@@ -2094,7 +2094,7 @@ function SalesTab() {
                     // the same title and GST block as the original.
                     openPrint("pharmacy-bill", {
                       ...s,
-                      template:      phSet?.billTemplate || 1,
+                      template:      1, /* R7hr-46: locked to Classic Modern */
                       defaultPaper:  phSet?.defaultPaper || "half-a4",
                       pharmacySettings: phSet,
                       billLabel:         s.saleType === "Walk-in" ? "Cash Memo" : s.customerGstin ? "Tax Invoice" : "Pharmacy Bill",
@@ -2249,7 +2249,7 @@ function ReturnModal({ sale, onClose, onDone }) {
         // INVOICE" — this is the post-return reprint variant.
         openPrint("pharmacy-bill", {
           ...updated,
-          template:     phSet?.billTemplate || 1,
+          template:     1, /* R7hr-46: locked to Classic Modern */
           defaultPaper: phSet?.defaultPaper || "half-a4",
           pharmacySettings: phSet,
           // header overlay so the bill is clearly labelled as REVISED
@@ -2476,7 +2476,7 @@ function AddItemsModal({ sale, onClose, onDone }) {
         // TAX INVOICE" — this is the post-addendum reprint variant.
         openPrint("pharmacy-bill", {
           ...updated,
-          template:     phSet?.billTemplate || 1,
+          template:     1, /* R7hr-46: locked to Classic Modern */
           defaultPaper: phSet?.defaultPaper || "half-a4",
           pharmacySettings: phSet,
           billLabel: "REVISED TAX INVOICE",
@@ -3570,117 +3570,43 @@ function SettingsTab() {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 14 }}>
 
-      {/* TEMPLATE PICKER — top of Settings */}
+      {/* TEMPLATE — locked to Classic Modern (R7hr-46). The historical
+          10-thumbnail picker + preview modal has been removed; pharmacy
+          now uses a single system-wide layout for OPD, IPD and Walk-in
+          bills alike. */}
       <Card title="Bill print template" color={C.purple} icon="pi-palette">
-        <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>
-          Pick a layout for every pharmacy bill. <b>Click any thumbnail to preview at full size</b> — then click "Use this" inside the preview to apply.
-          Templates <b>1-5</b> are tuned for in-house, <b>6-10</b> for outsourced retail pharmacies.
+        <div style={{
+          display: "flex", alignItems: "center", gap: 14,
+          padding: 14, borderRadius: 10,
+          border: `2px solid ${C.blue}`,
+          background: "linear-gradient(135deg, #eff6ff 0%, #fff 100%)",
+        }}>
+          <div style={{
+            width: 60, height: 60, borderRadius: 12,
+            background: C.blue, color: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 22, fontWeight: 800,
+          }}>
+            <i className="pi pi-check" />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Classic Modern</div>
+            <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>
+              Single system-wide layout · gradient masthead · clinical
+            </div>
+            <div style={{ fontSize: 10.5, color: C.muted, marginTop: 6 }}>
+              Used for every OPD, IPD and Walk-in pharmacy bill. The previous
+              10-template picker was retired so prints stay consistent across
+              the hospital.
+            </div>
+          </div>
+          <span style={{
+            fontSize: 9, fontWeight: 800,
+            padding: "3px 8px", borderRadius: 4,
+            background: "#dbeafe", color: "#1e40af",
+            letterSpacing: ".4px", textTransform: "uppercase",
+          }}>Locked</span>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-          {TEMPLATES.map(t => {
-            const active = (s.billTemplate || 1) === t.id;
-            const isInh  = t.audience === "in-house";
-            const accent = isInh ? C.blue : C.orange;
-            return (
-              <div key={t.id}
-                style={{
-                  borderRadius: 10,
-                  border: `2px solid ${active ? accent : C.border}`,
-                  background: "#fff",
-                  overflow: "hidden",
-                  position: "relative",
-                  cursor: "pointer",
-                  boxShadow: active ? `0 6px 18px ${accent}30` : "0 1px 3px rgba(15,23,42,.05)",
-                  transition: "transform .15s, box-shadow .15s",
-                }}
-                onClick={() => setPreviewTpl(t.id)}
-                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = `0 8px 22px ${accent}35`; }}
-                onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = active ? `0 6px 18px ${accent}30` : "0 1px 3px rgba(15,23,42,.05)"; }}
-              >
-                {/* Thumbnail viewport — scales a real PharmacyBill to ~210px wide */}
-                <div style={{
-                  height: 200, overflow: "hidden", position: "relative",
-                  background: "#f1f5f9",
-                  borderBottom: `1px solid ${C.border}`,
-                }}>
-                  <div style={{
-                    transform: "scale(0.27)", transformOrigin: "top left",
-                    width: "370%", pointerEvents: "none",
-                  }}>
-                    <PharmacyBill settings={DEMO_SETTINGS} receipt={{ ...DEMO_BILL, template: t.id }} />
-                  </div>
-                  {active && (
-                    <div style={{
-                      position: "absolute", top: 8, right: 8,
-                      width: 26, height: 26, borderRadius: "50%",
-                      background: accent, color: "#fff",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      boxShadow: "0 2px 8px rgba(0,0,0,.2)",
-                    }}>
-                      <i className="pi pi-check" style={{ fontSize: 12 }} />
-                    </div>
-                  )}
-                  <div style={{
-                    position: "absolute", top: 8, left: 8,
-                    padding: "2px 8px", borderRadius: 4,
-                    background: "rgba(0,0,0,.7)", color: "#fff",
-                    fontSize: 9.5, fontWeight: 800, letterSpacing: ".4px",
-                  }}>#{t.id}</div>
-                </div>
-                {/* Label strip */}
-                <div style={{ padding: "8px 10px" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                    <div style={{ fontSize: 12, fontWeight: 800, color: active ? accent : C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {t.label}
-                    </div>
-                    <span style={{
-                      flexShrink: 0, fontSize: 8.5, fontWeight: 800,
-                      padding: "1px 6px", borderRadius: 3,
-                      background: isInh ? "#dbeafe" : "#fed7aa",
-                      color:      isInh ? "#1e40af" : "#9a3412",
-                      letterSpacing: ".4px", textTransform: "uppercase",
-                    }}>
-                      {isInh ? "In-house" : "Outsourced"}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 10, color: C.muted, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.sub}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Full-size preview modal */}
-        {previewTpl != null && (
-          <TemplatePreviewModal
-            tplId={previewTpl}
-            isActive={(s.billTemplate || 1) === previewTpl}
-            settingsDoc={s}
-            onClose={() => setPreviewTpl(null)}
-            onUse={async () => {
-              // R7hr-40: auto-save the template choice immediately. The
-              // previous two-step ("pick → toast says Save to apply →
-              // operator forgets → next print uses old skin") was a real
-              // workflow bug — operators were correctly picking Premium
-              // Dark / Heritage / etc., printing right after, and getting
-              // the previously-saved Classic Modern. Posting in the same
-              // click closes the loop. Cache invalidation runs after the
-              // POST resolves so the next PharmacyBill render reads the
-              // fresh billTemplate field.
-              const next = { ...s, billTemplate: previewTpl };
-              setS(next);
-              setPreviewTpl(null);
-              try {
-                const r = await updatePharmacySettings(next);
-                setS(r.data);
-                invalidatePhSettings();
-                toast.success(`Template #${previewTpl} applied · every new print uses it now`);
-              } catch (e) {
-                toast.error(`Couldn't save template: ${e.message}`);
-              }
-            }}
-          />
-        )}
         <div style={{ marginTop: 12 }}>
           <Field label="Default paper size">
             <select className="his-select" style={{ width: 200 }} value={s.defaultPaper || "half-a4"} onChange={upd("defaultPaper")}>
@@ -3692,48 +3618,41 @@ function SettingsTab() {
         </div>
       </Card>
 
-      {/* REGISTER HEADER PICKER */}
+      {/* REGISTER HEADER — locked to Compact Strip (R7hr-49). The historical
+          5-style picker has been removed; every statutory register print
+          uses the single Compact Strip layout for consistency. */}
       <Card title="Register print style" color={C.teal} icon="pi-book">
-        <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>
-          Statutory registers (Sales · Purchase · Stock · Schedule H · Expiry · GST) print with the header style picked here.
-          The hospital identity comes from <b>Hospital Settings</b> when in-house, otherwise from the identity fields below.
-          Click any card to preview at full size with sample data.
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
-          {REGISTER_HEADERS.map(h => {
-            const active = (s.registerHeader || 1) === h.id;
-            return (
-              <div key={h.id}
-                onClick={() => setPreviewReg(h.id)}
-                style={{
-                  borderRadius: 10, border: `2px solid ${active ? C.teal : C.border}`,
-                  background: "#fff", overflow: "hidden", cursor: "pointer",
-                  boxShadow: active ? `0 6px 18px ${C.teal}30` : "0 1px 3px rgba(15,23,42,.05)",
-                  transition: "transform .15s, box-shadow .15s",
-                }}
-                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; }}
-                onMouseLeave={e => { e.currentTarget.style.transform = "none"; }}
-              >
-                <div style={{ height: 160, overflow: "hidden", position: "relative", background: "#f1f5f9", borderBottom: `1px solid ${C.border}` }}>
-                  <div style={{ transform: "scale(0.28)", transformOrigin: "top left", width: "360%", pointerEvents: "none" }}>
-                    <PharmacyRegister
-                      settings={DEMO_SETTINGS}
-                      receipt={{ ...DEMO_REGISTER, headerStyle: h.id, pharmacySettings: { ...s, registerHeader: h.id } }} />
-                  </div>
-                  {active && (
-                    <div style={{ position: "absolute", top: 8, right: 8, width: 26, height: 26, borderRadius: "50%", background: C.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,.2)" }}>
-                      <i className="pi pi-check" style={{ fontSize: 12 }} />
-                    </div>
-                  )}
-                  <div style={{ position: "absolute", top: 8, left: 8, padding: "2px 8px", borderRadius: 4, background: "rgba(0,0,0,.7)", color: "#fff", fontSize: 9.5, fontWeight: 800 }}>#{h.id}</div>
-                </div>
-                <div style={{ padding: "8px 10px" }}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: active ? C.teal : C.text }}>{h.label}</div>
-                  <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{h.sub}</div>
-                </div>
-              </div>
-            );
-          })}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 14,
+          padding: 14, borderRadius: 10,
+          border: `2px solid ${C.teal}`,
+          background: "linear-gradient(135deg, #ecfeff 0%, #fff 100%)",
+        }}>
+          <div style={{
+            width: 60, height: 60, borderRadius: 12,
+            background: C.teal, color: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 22, fontWeight: 800,
+          }}>
+            <i className="pi pi-check" />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Compact Strip</div>
+            <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>
+              Single-row inline header · saves space
+            </div>
+            <div style={{ fontSize: 10.5, color: C.muted, marginTop: 6 }}>
+              Used for every statutory register (Sales · Purchase · Stock ·
+              Schedule&nbsp;H · Expiry · GST). The previous 5-style picker was
+              retired so register prints stay uniform across the hospital.
+            </div>
+          </div>
+          <span style={{
+            fontSize: 9, fontWeight: 800,
+            padding: "3px 8px", borderRadius: 4,
+            background: "#ccfbf1", color: "#0f766e",
+            letterSpacing: ".4px", textTransform: "uppercase",
+          }}>Locked</span>
         </div>
 
         {/* Per-register toggles */}
@@ -4850,7 +4769,7 @@ function OPDRxTab() {
         const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
         openPrint("pharmacy-bill", {
           ...saleDoc,
-          template:         phSet?.billTemplate || 1,
+          template:         1, /* R7hr-46: locked to Classic Modern */
           defaultPaper:     phSet?.defaultPaper || "half-a4",
           pharmacySettings: phSet,
           billLabel:        "Pharmacy Bill",

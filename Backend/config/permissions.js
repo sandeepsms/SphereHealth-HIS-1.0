@@ -96,6 +96,12 @@ const ACTIONS = {
   "patient.read":               ["Admin", "Receptionist", "Doctor", "Nurse", "Lab Technician", "Pharmacist", "Dietician", "TPA Coordinator", "Accountant"],
   "patient.read-demographics":  ["Admin", "Receptionist", "Doctor", "Nurse", "Lab Technician", "Pharmacist", "Dietician", "TPA Coordinator", "Accountant"],
   "patient.write-demographics": ["Admin", "Receptionist"],
+  // R7hr-45: NABH AAC.2 mandates allergy capture at registration. The
+  // receptionist verbally records self-reported allergies; clinical staff
+  // later refine severity / classify. Split allergies into their own action
+  // so reception can do their intake job without unlocking blood-group or
+  // DOB edits that have transfusion / paeds-dosing safety implications.
+  "patient.write-allergies":    ["Admin", "Receptionist", "Doctor", "Nurse"],
   "patient.write-clinical":     ["Admin", "Doctor", "Nurse"],
   "patient.delete":             ["Admin"],
   // Full data export (FHIR bundle, complete file dump) — clinical role only,
@@ -388,6 +394,15 @@ const ACTIONS = {
   // serve-next, etc.). Controller-level "you're editing your own row"
   // check remains; this action gate keeps non-doctors out entirely.
   "doctor.self.write":         ["Admin", "Doctor"],
+  // R7hr-52 — Receptionist needs to toggle Available ↔ OnLeave on the
+  // Live Queue dashboard. doctor.self.write is too strict (it covers
+  // bio, fees, schedule edits); split a narrower availability-only action
+  // so front-desk can mark a doctor on leave without unlocking the full
+  // doctor-self profile edit surface. The controller's role-check (R7hr-52)
+  // also restricts Receptionist to {Available, OnLeave} value-set so the
+  // schema enum's other entries (InConsultation/OnBreak/Offline) cannot
+  // be set from reception even with this action.
+  "doctor.availability.write": ["Admin", "Receptionist", "Doctor"],
   // R7bb-FIX-C-15/D4-MED-3: `/api/doctors/me` is matrix-invisible — wrap
   // it in its own read token so the audit can grep the surface. The
   // controller already scopes to req.user.id; this gate just keeps a

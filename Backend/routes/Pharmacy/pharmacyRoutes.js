@@ -121,6 +121,15 @@ router.get   ("/credit/ipd-history",            requireAction("rx.read"),       
 router.get   ("/settings",       requireAction("rx.read"),            ctrl.getSettings);
 router.put   ("/settings",       requireAction("pharmacy.settings"),  ctrl.updateSettings);
 
+// R7hr-50 — HSN → GST canonical lookup. Search by code prefix for
+// autocomplete in Drug Master + GRN forms. Single lookup by exact code
+// returns the canonical { gstRate, description } for that HSN. Both
+// gated on rx.read (the GRN clerk + Drug Master editor are both rx.read
+// holders by permissions.js); write is admin-only via pharmacy.settings.
+router.get   ("/hsn",            requireAction("rx.read"),            ctrl.searchHSN);
+router.get   ("/hsn/:code",      requireAction("rx.read"),            ctrl.getHSNByCode);
+router.post  ("/hsn",            requireAction("pharmacy.settings"),  ctrl.createHSN);
+
 // Dashboard (read for any pharmacy-eligible user)
 router.get   ("/stats",          requireAction("rx.read"),            ctrl.stats);
 router.get   ("/alerts",         requireAction("rx.read"),            ctrl.alerts);

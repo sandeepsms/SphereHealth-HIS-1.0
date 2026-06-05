@@ -451,6 +451,21 @@ exports.recordGRN = async (req, res) => {
     const yy = String(new Date().getFullYear()).slice(-2);
     const grnNumber = `GRN-${yy}-${String(grnSeq).padStart(6, "0")}`;
 
+    // R7hr-50 — Resolve canonical GST rate from HSN master at receipt time.
+    // Drug.gstRate is already kept in sync with HSN via the DrugModel
+    // pre-save hook, so this lookup is the source-of-truth refresh AT THE
+    // MOMENT OF GRN. Once stamped on the batch it becomes immutable for
+    // that stock — a later HSN re-classification on Drug master cannot
+    // rewrite the tax on stock already in the building.
+    let resolvedGstRate = Number(drug.gstRate ?? 12);
+    if (drug.hsnCode) {
+      try {
+        const HSNMaster = require("../../models/Pharmacy/HSNMasterModel");
+        const master = await HSNMaster.findOne({ code: drug.hsnCode, isActive: true }).lean();
+        if (master && master.gstRate != null) resolvedGstRate = Number(master.gstRate);
+      } catch (_) { /* fallback to drug.gstRate */ }
+    }
+
     const batch = await DrugBatch.create({
       drugId, drugName: drug.name,
       batchNo: batchNo.trim(), expiryDate: exp,
@@ -460,6 +475,10 @@ exports.recordGRN = async (req, res) => {
       purchaseRate: Number(purchaseRate || 0),
       mrp:          Number(mrp || 0),
       salePrice:    Number(salePrice || drug.defaultSalePrice || mrp || 0),
+      // R7hr-50 — stamp GST + HSN at receipt time so the batch carries
+      // its own tax classification (independent of future Drug edits).
+      gstRate:          resolvedGstRate,
+      hsnCodeAtReceipt: drug.hsnCode || "",
       supplierId: supplierId || null,
       supplierName: supplierName || "",
       grnNumber,
@@ -468,6 +487,38 @@ exports.recordGRN = async (req, res) => {
       location: location || "Main Pharmacy",
       createdBy: req.user?.fullName || "System",
     });
+
+    // R7hr-50 — Sync purchase-rate intelligence back to Drug master.
+    //   lastPurchaseRate = this GRN's per-unit cost (so admin sees the most
+    //     recent procurement price without scanning batches)
+    //   lastGRNDate      = when that was captured
+    //   wac              = weighted-average cost across ACTIVE batches
+    //     (remaining > 0). Calculation: Σ(remaining × purchaseRate) /
+    //     Σ(remaining). New batch is included since it was just created.
+    //     Falls through to lastPurchaseRate if every active batch lacks a
+    //     purchaseRate. Best-effort — a costing-update failure mustn't
+    //     roll back the procurement.
+    try {
+      const activeBatches = await DrugBatch.find({
+        drugId, isActive: true, remaining: { $gt: 0 },
+      }).select("remaining purchaseRate").lean();
+      let totalQty = 0, totalCost = 0;
+      for (const b of activeBatches) {
+        const r = Number(b.remaining || 0);
+        const p = Number(b.purchaseRate || 0);
+        if (r > 0 && p > 0) { totalQty += r; totalCost += r * p; }
+      }
+      const newWac = totalQty > 0 ? Number((totalCost / totalQty).toFixed(2)) : Number(purchaseRate || 0);
+      await Drug.updateOne({ _id: drugId }, {
+        $set: {
+          lastPurchaseRate: Number(purchaseRate || 0),
+          lastGRNDate:      new Date(),
+          wac:              newWac,
+        },
+      });
+    } catch (e) {
+      console.warn("[recordGRN] R7hr-50 cost-sync failed (non-fatal):", e.message);
+    }
 
     // R7hr-12-S2 (D8-06): BillingAudit emit so the procurement chain has
     // a chronological audit row (D&C Rule §65 + GST Act §35 + NABH AAC.1).
@@ -4242,8 +4293,74 @@ const SETTINGS_ALLOWED_FIELDS = [
 function _pickSettings(body = {}) {
   const out = {};
   for (const k of SETTINGS_ALLOWED_FIELDS) if (body[k] !== undefined) out[k] = body[k];
+  // R7hr-46: pharmacy is now single-template (Classic Modern). The 10-template
+  // picker was retired so OPD / IPD / Walk-in prints stay consistent. Coerce
+  // any incoming billTemplate value to 1 so a stale tab still pinned to an
+  // old saved value (4 / 6 / etc) doesn't reintroduce a removed layout.
+  out.billTemplate = 1;
+  // R7hr-49: register print is also single-template now (Compact Strip · #3).
+  // Same coerce pattern for the 5-style register picker that was retired.
+  out.registerHeader = 3;
   return out;
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// R7hr-50 — HSN → GST canonical lookup endpoints
+// ═══════════════════════════════════════════════════════════════════
+
+// GET /api/pharmacy/hsn?q=3004 — search by code prefix or category for
+// autocomplete in Drug Master + GRN forms. Returns up to 25 rows.
+exports.searchHSN = async (req, res) => {
+  try {
+    const HSNMaster = require("../../models/Pharmacy/HSNMasterModel");
+    const q = String(req.query.q || "").trim().toUpperCase();
+    const cat = String(req.query.category || "").trim();
+    const where = { isActive: true };
+    if (q)   where.code = { $regex: `^${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}` };
+    if (cat) where.category = cat;
+    const rows = await HSNMaster.find(where, "code description gstRate category")
+      .sort({ code: 1 }).limit(25).lean();
+    res.status(200).json({ success: true, data: rows });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// GET /api/pharmacy/hsn/:code — exact code lookup. Returns 404 if not in
+// master, so the UI can prompt the admin to add a new HSN entry.
+exports.getHSNByCode = async (req, res) => {
+  try {
+    const HSNMaster = require("../../models/Pharmacy/HSNMasterModel");
+    const code = String(req.params.code || "").trim().toUpperCase();
+    if (!code) return res.status(400).json({ success: false, message: "HSN code required" });
+    const row = await HSNMaster.findOne({ code, isActive: true }).lean();
+    if (!row) return res.status(404).json({ success: false, message: "HSN code not found in master", code });
+    res.status(200).json({ success: true, data: row });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// POST /api/pharmacy/hsn — admin adds a new HSN entry when an invoice
+// carries a code not yet in the master. Validates gstRate against the
+// CBIC slab enum at the schema level.
+exports.createHSN = async (req, res) => {
+  try {
+    const HSNMaster = require("../../models/Pharmacy/HSNMasterModel");
+    const { code, description, gstRate, category } = req.body || {};
+    if (!code || gstRate == null) {
+      return res.status(400).json({ success: false, message: "code + gstRate required" });
+    }
+    const row = await HSNMaster.findOneAndUpdate(
+      { code: String(code).trim().toUpperCase() },
+      { $set: { description: description || "", gstRate: Number(gstRate), category: category || "Medicines", isActive: true, updatedBy: req.user?.fullName || "Admin" } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    res.status(201).json({ success: true, data: row });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
 
 exports.getSettings = async (req, res) => {
   try {

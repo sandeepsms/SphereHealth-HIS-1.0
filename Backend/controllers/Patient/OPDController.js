@@ -10,7 +10,24 @@ class OPDController {
       const visit = await opdService.createOPDVisit(req.body);
       res.status(201).json({ success: true, message: "OPD visit created successfully", data: visit });
     } catch (error) {
-      res.status(400).json({ success: false, message: error.message });
+      // R7hr-47 / R7hr-51: surface structured rule errors so the reception
+      // UI can render a rich banner. PATIENT_ALREADY_IPD carries the admission
+      // number + ward; DOCTOR_NOT_AVAILABLE carries the doctor name +
+      // availability status so the receptionist sees exactly which doctor +
+      // why before re-picking.
+      const status = error.status || 400;
+      res.status(status).json({
+        success: false,
+        message: error.message,
+        code: error.code || null,
+        // R7hr-47 fields
+        admissionNumber: error.admissionNumber || null,
+        wardName: error.wardName || null,
+        // R7hr-51 fields
+        doctorName:           error.doctorName           || null,
+        availabilityStatus:   error.availabilityStatus   || null,
+        availabilityNote:     error.availabilityNote     || null,
+      });
     }
   }
 

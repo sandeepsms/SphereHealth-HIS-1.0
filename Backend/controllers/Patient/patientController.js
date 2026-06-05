@@ -176,34 +176,68 @@ exports.getPatientByUHID = async (req, res) => {
 // 2026-05-17 A-12 (initial fix) + re-audit H-01 / H-02 (move identity
 // fields back to demographics; deep-scan to defeat the
 // `{ wrapper: { bloodGroup: "X" } }` nested-object bypass).
-const CLINICAL_PATIENT_FIELDS = new Set([
+//
+// R7hr-45 split: allergies are NABH AAC.2 registration-capture data and
+// must be writable by Receptionist at intake. They now live in
+// ALLERGY_FIELDS and gate against the lighter `patient.write-allergies`
+// action. HARD_CLINICAL_FIELDS keep the strict `patient.write-clinical`
+// gate (transfusion-, dosing-, sex-assay-relevant).
+const HARD_CLINICAL_FIELDS = new Set([
   "bloodGroup",
-  "knownAllergies",
-  // R7fl: Typed allergyList[] is the source of truth for the `allergies`
-  // virtual (banners, drug-allergy gate, MAR cross-check). IPD Initial
-  // Assessment writes here at sign-off. Treat as clinical so the
-  // patient.write-clinical gate fires (same audit chain as knownAllergies).
-  "allergyList",
   "dateOfBirth",
   "age",
   "gender",
-  // Identity fields stay under patient.write-demographics so receptionist can
-  // still fix a misspelled name. Name changes are still audit-logged via the
-  // existing activityLogger pipeline.
+]);
+const ALLERGY_FIELDS = new Set([
+  "knownAllergies",
+  // R7fl: Typed allergyList[] is the source of truth for the `allergies`
+  // virtual (banners, drug-allergy gate, MAR cross-check). IPD Initial
+  // Assessment writes here at sign-off.
+  "allergyList",
 ]);
 
-// Recursively scan a request body for any key that lives in
-// CLINICAL_PATIENT_FIELDS. Defeats `{ address: { bloodGroup: "AB+" } }` style
-// nesting attacks where shallow Object.keys() would miss the inner field.
-// Bounded depth (8) prevents stack abuse on pathological payloads.
-function hasClinicalField(obj, depth = 0) {
-  if (!obj || typeof obj !== "object" || depth > 8) return false;
-  if (Array.isArray(obj)) return obj.some((item) => hasClinicalField(item, depth + 1));
-  for (const [k, v] of Object.entries(obj)) {
-    if (CLINICAL_PATIENT_FIELDS.has(k)) return true;
-    if (v && typeof v === "object" && hasClinicalField(v, depth + 1)) return true;
+// R7hr-45: deep-equal helper used to distinguish "field present in form
+// re-submit but unchanged from current value" from "field actually edited."
+// Receptionists re-POST the full patient body on every save; without this
+// diff, a receptionist who only edited the allergies row would still trip
+// the hard-clinical gate because DOB/gender/bloodGroup are echoed back.
+function _valuesEqual(a, b) {
+  if (a === b) return true;
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  // Date stored on the doc vs ISO/date-string in body
+  if (a instanceof Date) return a.toISOString().slice(0, 10) === String(b).slice(0, 10);
+  if (b instanceof Date) return b.toISOString().slice(0, 10) === String(a).slice(0, 10);
+  if (typeof a === "object" || typeof b === "object") {
+    try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
   }
-  return false;
+  // Coerce numeric strings (age may come as "20" vs 20)
+  return String(a) === String(b);
+}
+
+// Recursively scan request body and classify which gate must fire. Returns
+// {hard, allergy} flags. A field counts as a write only if its VALUE differs
+// from the corresponding field on the existing patient document — this lets
+// idempotent form re-submits (full patient body echo) pass without escalating
+// to a higher permission. Defeats nested-object bypasses like
+// `{ wrapper: { bloodGroup: "AB+" } }`. Bounded depth (8) prevents stack abuse.
+function classifyClinicalWrites(body, existing, depth = 0, found = { hard: false, allergy: false }) {
+  if (!body || typeof body !== "object" || depth > 8) return found;
+  if (Array.isArray(body)) {
+    body.forEach((item) => classifyClinicalWrites(item, existing, depth + 1, found));
+    return found;
+  }
+  for (const [k, v] of Object.entries(body)) {
+    if (HARD_CLINICAL_FIELDS.has(k)) {
+      const existingVal = existing ? existing[k] : undefined;
+      if (!_valuesEqual(v, existingVal)) found.hard = true;
+    } else if (ALLERGY_FIELDS.has(k)) {
+      const existingVal = existing ? existing[k] : undefined;
+      if (!_valuesEqual(v, existingVal)) found.allergy = true;
+    }
+    if (v && typeof v === "object") classifyClinicalWrites(v, existing, depth + 1, found);
+  }
+  return found;
 }
 
 exports.updatePatient = async (req, res) => {
@@ -213,10 +247,23 @@ exports.updatePatient = async (req, res) => {
     if (!role) {
       return res.status(401).json({ success: false, message: "Not authenticated" });
     }
-    const touchedClinical = hasClinicalField(req.body);
-    const requiredAction = touchedClinical
-      ? "patient.write-clinical"
-      : "patient.write-demographics";
+
+    // R7hr-45: fetch existing so we can diff — only truly-changed clinical
+    // or allergy fields trigger the higher gate. Form re-submits that echo
+    // unchanged DOB/gender/bloodGroup no longer lock receptionists out of
+    // legitimate demographic + allergy edits.
+    let existing = null;
+    try { existing = await patientService.getPatientById(req.params.id); } catch (e) { /* falls through; controller will 404 below if truly missing */ }
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "Patient not found" });
+    }
+
+    const { hard, allergy } = classifyClinicalWrites(req.body, existing);
+    let requiredAction;
+    if (hard) requiredAction = "patient.write-clinical";
+    else if (allergy) requiredAction = "patient.write-allergies";
+    else requiredAction = "patient.write-demographics";
+
     if (!roleCan(role, requiredAction)) {
       return res.status(403).json({
         success: false,

@@ -668,7 +668,10 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
    * When `receipt.template` is missing or invalid (legacy/defensive
    * fallback) we fall through to the existing PrintShell return below.
    */
-  const _tplId = Number(r.template) || 0;
+  // R7hr-46: pharmacy is now single-template (Classic Modern). Force the
+  // dispatcher to T1 regardless of receipt.template so legacy sales saved
+  // with template=4/6/etc still print in the new system-wide format.
+  const _tplId = 1;
   const _tpl   = TEMPLATES.find(t => t.id === _tplId);
   if (_tpl) {
     // Normalise items so the templates (which read it.batchNo /

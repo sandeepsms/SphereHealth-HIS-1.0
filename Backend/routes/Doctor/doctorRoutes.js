@@ -33,7 +33,13 @@ router.get("/:doctorId/stats",                 validateObjectIdParam("doctorId")
 // availability or skip the queue. Now gated on doctor.self.write
 // (Admin/Doctor). Controller still enforces "this is my record" so a
 // Doctor can't flip someone else's availability.
-router.patch("/:doctorId/availability", validateObjectIdParam("doctorId"), requireAction("doctor.self.write"), doctorController.setAvailability);
+// R7hr-52: availability PATCH uses the narrower doctor.availability.write
+// (Admin + Receptionist + Doctor) — Reception needs to toggle Available ↔
+// OnLeave on the Live Queue. The controller's role check (R7hr-52) restricts
+// Receptionist to those 2 values so the schema's other states remain
+// system/admin-driven only.
+router.patch("/:doctorId/availability", validateObjectIdParam("doctorId"), requireAction("doctor.availability.write"), doctorController.setAvailability);
+// serve-next stays on doctor.self.write — only the doctor (or admin) advances the queue.
 router.post ("/:doctorId/serve-next",   validateObjectIdParam("doctorId"), requireAction("doctor.self.write"), doctorController.serveNextToken);
 
 // ─── Writes (master data) — Admin only ─────────────────────────

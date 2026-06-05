@@ -180,12 +180,12 @@ function HeaderLetterhead({ id, opts, accent }) {
 
 const HEADER_RENDERERS = { 1: HeaderClassic, 2: HeaderGradient, 3: HeaderStrip, 4: HeaderStamp, 5: HeaderLetterhead };
 
+// R7hr-49: register print is now single-template. The picker (and the
+// HEADER_RENDERERS dispatch) both surface only Compact Strip. The other
+// renderer functions (HeaderClassic/Gradient/Stamp/Letterhead) remain in
+// this file as dead code so revert is a one-line registry restore.
 export const REGISTER_HEADERS = [
-  { id: 1, label: "Classic Centred",  sub: "Formal · serif · B&W underline" },
-  { id: 2, label: "Modern Gradient",  sub: "Coloured masthead · with logo" },
-  { id: 3, label: "Compact Strip",    sub: "Single-row inline · saves space" },
-  { id: 4, label: "Government Stamp", sub: "Courier · B&W grid · full document" },
-  { id: 5, label: "Letterhead",       sub: "Centred name + accent rule" },
+  { id: 3, label: "Compact Strip", sub: "Single-row inline · saves space" },
 ];
 
 /* ────────────────────────────────────────────────────────────────
@@ -210,9 +210,13 @@ const PharmacyRegister = ({ settings = {}, receipt = {} }) => {
     receipt.totalForWords
   );
 
-  // Honour per-print override, then settings, then default.
-  const headerStyleId = receipt.headerStyle || ph.registerHeader || 1;
-  const Header = HEADER_RENDERERS[headerStyleId] || HeaderClassic;
+  // R7hr-49: register print is now single-template (Compact Strip · #3).
+  // Force the dispatcher to id=3 regardless of saved settings so legacy
+  // PUTs / old payloads with headerStyle=1/2/4/5 still print as Compact
+  // Strip. Other header renderers (Classic/Gradient/Stamp/Letterhead) are
+  // retired but kept in the codebase as dead exports for clean revert.
+  const headerStyleId = 3;
+  const Header = HEADER_RENDERERS[headerStyleId] || HeaderStrip;
 
   const opts = {
     showLogo:    ph.registerShowLogo    !== false,
