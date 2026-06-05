@@ -33,6 +33,73 @@ const TIMING_DUMMY_HASH =
 
 const INVALID_CREDENTIALS = "Invalid email or password";
 
+/* ── GET /api/auth/users-by-role/:role ─────────────────────────────
+ *
+ * R7hr-38: pre-auth roster helper for the login screen's clickable
+ * role pills. The login UI already advertises which roles exist
+ * (ACCESS ROLES strip is visible without auth), so listing the
+ * identifiers needed to sign in adds minimal incremental info-leak:
+ * we return ONLY {employeeId, firstName, lastName} — no email,
+ * phone, address, role-grants, ward, or anything else that could
+ * help an attacker pivot. Filtered to active users so terminated
+ * staff don't surface on a public page. Capped at 50 per role to
+ * cut payload bloat and limit enumeration. Wrapped in the same IP-
+ * level loginRateLimit as POST /login so it can't be scraped to
+ * build an employee directory.
+ *
+ * Pairs with R7hr-37: the picked employeeId flows straight into the
+ * email field, the existing $or lookup matches it, and login proceeds
+ * normally — no schema or contract change beyond this read endpoint.
+ */
+router.get("/users-by-role/:role", loginRateLimit, async (req, res) => {
+  try {
+    const raw  = String(req.params.role || "").trim();
+    if (!raw) return res.json({ users: [] });
+    // Case-insensitive exact match against the User.role string. We
+    // intentionally do NOT support regex / partial match — the login
+    // UI sends one of the eight ROLE_COLORS keys verbatim, so anything
+    // weird is almost certainly enumeration.
+    const role = new RegExp("^" + raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i");
+    const users = await User.find(
+      {
+        role,
+        // R7bb-A: surface only currently-active staff. The schema uses
+        // `isActive` (bool) + `status` (string) — pre-R7bb users may
+        // carry only one of them. Filter to those that pass BOTH gates
+        // when both are present, otherwise fall through to the present
+        // one. Inactive/Terminated/Suspended stay hidden.
+        $and: [
+          { $or: [{ isActive: { $exists: false } }, { isActive: true }] },
+          {
+            $or: [
+              { status: { $exists: false } },
+              { status: { $in: ["Active", "On Leave", ""] } },
+            ],
+          },
+        ],
+      },
+      // Projection: ONLY what the login-pill needs. No email, phone,
+      // address, ward, JWT-claim fields, or anything else.
+      { employeeId: 1, firstName: 1, lastName: 1, _id: 0 }
+    )
+      .sort({ employeeId: 1 })
+      .limit(50)
+      .lean();
+
+    return res.json({
+      role: raw,
+      users: users.map((u) => ({
+        employeeId: u.employeeId || "",
+        name: [u.firstName, u.lastName].filter(Boolean).join(" ").trim(),
+      })),
+    });
+  } catch (err) {
+    // No stack trace to client — keep the surface minimal even on
+    // errors so probes can't differentiate "DB down" from "bad input".
+    return res.status(500).json({ users: [] });
+  }
+});
+
 /* ── POST /api/auth/login ── */
 // R7bz: loginRateLimit (10 req / 15 min / IP, skipSuccessfulRequests)
 // is applied BEFORE the handler so botnet-driven username spraying gets

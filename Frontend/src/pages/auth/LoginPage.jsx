@@ -3,6 +3,10 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 import { homePathForRole } from "../../config/permissions";
+// R7hr-38: clickable role-pill roster fetch needs the shared base URL
+// (VITE_API_BASE_URL → http://localhost:5050/api fallback) so it works
+// from both the Vite dev server and the prod build.
+import { API_BASE_URL } from "../../config/api";
 
 const ROLE_COLORS = {
   Admin:            "#1e40af",
@@ -55,6 +59,47 @@ export default function LoginPage() {
   // panicked retry doesn't burn another slot once it unlocks.
   const [lockUntil, setLockUntil] = useState(0);   // ms epoch; 0 = unlocked
   const [secondsLeft, setSecondsLeft] = useState(0);
+  // R7hr-38: clickable ACCESS ROLES pills. `openRole` holds the role
+  // string whose dropdown is currently expanded (null = all collapsed).
+  // `rosters` caches the {role: users[]} responses so re-opening the
+  // same pill doesn't re-fetch. `rosterLoading` shows a spinner inside
+  // the pill we're currently fetching.
+  const [openRole, setOpenRole] = useState(null);
+  const [rosters, setRosters] = useState({});
+  const [rosterLoading, setRosterLoading] = useState(null);
+  const passwordRef = React.useRef(null);
+
+  // R7hr-38: lazily fetch the user roster for a role on first open.
+  async function openRolePicker(role) {
+    if (openRole === role) { setOpenRole(null); return; }
+    setOpenRole(role);
+    if (rosters[role]) return;       // cached — skip the fetch
+    try {
+      setRosterLoading(role);
+      const res = await fetch(
+        `${API_BASE_URL}/auth/users-by-role/${encodeURIComponent(role)}`,
+        { headers: { Accept: "application/json" } },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setRosters((prev) => ({ ...prev, [role]: data.users || [] }));
+    } catch (_) {
+      // Network/server error: cache an empty list so the dropdown shows
+      // "No users found" rather than spinning forever. The user can
+      // still type the credential manually.
+      setRosters((prev) => ({ ...prev, [role]: [] }));
+    } finally {
+      setRosterLoading(null);
+    }
+  }
+  function pickUser(u) {
+    if (!u?.employeeId) return;
+    setEmail(u.employeeId);
+    setOpenRole(null);
+    // R7hr-38: hand focus to the password field so the operator's
+    // next keystroke goes into the PIN box, no extra click needed.
+    setTimeout(() => passwordRef.current?.focus(), 0);
+  }
 
   useEffect(() => {
     if (!lockUntil) { setSecondsLeft(0); return; }
@@ -263,6 +308,7 @@ export default function LoginPage() {
                   color: "#64748b", fontSize: 14,
                 }} />
                 <input
+                  ref={passwordRef}
                   type={showPwd ? "text" : "password"}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
@@ -310,25 +356,130 @@ export default function LoginPage() {
           </form>
         </div>
 
-        {/* Role reference */}
+        {/* R7hr-38: Role pills are now interactive. Click a pill →
+            fetches the active staff in that role from /api/auth/users-by-role,
+            expands a dropdown with their names + employee IDs, and clicking
+            a row stuffs that employeeId into the username field and jumps
+            focus to the password box. Cuts a 25-char email typing dance
+            down to two clicks for the common "Doctor → Dr. X" flow. */}
         <div style={{ marginTop: 24, background: "rgba(255,255,255,.03)",
           border: "1px solid rgba(255,255,255,.07)", borderRadius: 14, padding: "16px 20px" }}>
-          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: 1, color: "#475569", marginBottom: 12 }}>
-            Access Roles
+          <div style={{
+            fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: 1, color: "#475569", marginBottom: 12,
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+          }}>
+            <span>Access Roles{" "}
+              <span style={{ fontSize: 9, fontWeight: 500, color: "#64748b", textTransform: "none", letterSpacing: 0 }}>
+                — tap a role to pick a user
+              </span>
+            </span>
+            {openRole && (
+              <button
+                type="button"
+                onClick={() => setOpenRole(null)}
+                style={{
+                  background: "transparent", border: "none", padding: 0,
+                  color: "#64748b", fontSize: 10, fontWeight: 600,
+                  cursor: "pointer", textTransform: "uppercase", letterSpacing: .5,
+                }}
+              >
+                Close ✕
+              </button>
+            )}
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {Object.entries(ROLE_COLORS).map(([role, color]) => (
-              <div key={role} style={{
-                display: "flex", alignItems: "center", gap: 6,
-                background: color + "18", border: `1px solid ${color}30`,
-                borderRadius: 6, padding: "4px 10px",
-              }}>
-                <i className={`pi ${ROLE_ICONS[role] || "pi-user"}`} style={{ fontSize: 11, color }} />
-                <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8" }}>{role}</span>
-              </div>
-            ))}
+            {Object.entries(ROLE_COLORS).map(([role, color]) => {
+              const active = openRole === role;
+              return (
+                <button
+                  key={role}
+                  type="button"
+                  onClick={() => openRolePicker(role)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    background: active ? color + "40" : color + "18",
+                    border: `1px solid ${active ? color + "80" : color + "30"}`,
+                    borderRadius: 6, padding: "4px 10px",
+                    cursor: "pointer", outline: "none",
+                    transition: "background .15s, border-color .15s, transform .1s",
+                    transform: active ? "translateY(-1px)" : "translateY(0)",
+                    boxShadow: active ? `0 2px 8px ${color}33` : "none",
+                  }}
+                  onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = color + "26"; }}
+                  onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = color + "18"; }}
+                >
+                  <i className={`pi ${rosterLoading === role ? "pi-spin pi-spinner" : (ROLE_ICONS[role] || "pi-user")}`} style={{ fontSize: 11, color }} />
+                  <span style={{ fontSize: 11, fontWeight: 600, color: active ? "#e2e8f0" : "#94a3b8" }}>{role}</span>
+                  {rosters[role] && (
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 4,
+                      background: color + "33", color: "#cbd5e1",
+                    }}>{rosters[role].length}</span>
+                  )}
+                </button>
+              );
+            })}
           </div>
+
+          {/* Roster dropdown — appears under the pills row when a role is open. */}
+          {openRole && (
+            <div style={{
+              marginTop: 12, padding: "10px 12px",
+              background: "rgba(15,23,42,.55)",
+              border: `1px solid ${(ROLE_COLORS[openRole] || "#475569") + "44"}`,
+              borderRadius: 8,
+              maxHeight: 220, overflowY: "auto",
+            }}>
+              {rosterLoading === openRole ? (
+                <div style={{ fontSize: 11, color: "#94a3b8", textAlign: "center", padding: 12 }}>
+                  <i className="pi pi-spin pi-spinner" style={{ marginRight: 6 }} />
+                  Loading {openRole}s…
+                </div>
+              ) : rosters[openRole]?.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {rosters[openRole].map((u) => (
+                    <button
+                      key={u.employeeId}
+                      type="button"
+                      onClick={() => pickUser(u)}
+                      style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        gap: 12, padding: "7px 10px",
+                        background: "rgba(255,255,255,.03)",
+                        border: "1px solid rgba(255,255,255,.06)",
+                        borderRadius: 6, cursor: "pointer",
+                        textAlign: "left", outline: "none",
+                        transition: "background .15s, border-color .15s",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = (ROLE_COLORS[openRole] || "#475569") + "1a";
+                        e.currentTarget.style.borderColor = (ROLE_COLORS[openRole] || "#475569") + "44";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = "rgba(255,255,255,.03)";
+                        e.currentTarget.style.borderColor = "rgba(255,255,255,.06)";
+                      }}
+                    >
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>
+                        {u.name || "—"}
+                      </span>
+                      <span style={{
+                        fontSize: 10, fontWeight: 600, color: "#94a3b8",
+                        fontFamily: "'DM Mono', monospace",
+                      }}>
+                        {u.employeeId}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: "#64748b", textAlign: "center", padding: 12 }}>
+                  No active {openRole.toLowerCase()}s found.
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div style={{ textAlign: "center", marginTop: 20, fontSize: 11, color: "#334155" }}>
