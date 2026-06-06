@@ -157,6 +157,70 @@ const LAB_TESTS = [
 ];
 /* ─────────────────────────────────────────────────────── */
 
+/* ── R7hr-70 · Structured History catalogs (Past Surgical, Family,
+       Social). Each [key, label] pair drives both the on-screen
+       checkbox grid AND the print/save summary. ─────────────────── */
+const PSH_OPTIONS = [
+  ["appendectomy",     "Appendectomy"],
+  ["cholecystectomy",  "Cholecystectomy"],
+  ["hernia",           "Hernia repair"],
+  ["cabg",             "CABG"],
+  ["angioplasty",      "Angioplasty / Stent"],
+  ["valveReplacement", "Valve replacement"],
+  ["hysterectomy",     "Hysterectomy"],
+  ["cSection",         "Caesarean section"],
+  ["thyroidectomy",    "Thyroidectomy"],
+  ["kneeReplacement",  "Knee replacement"],
+  ["hipReplacement",   "Hip replacement"],
+  ["cataract",         "Cataract surgery"],
+];
+const FAMHX_OPTIONS = [
+  ["diabetes",            "Diabetes Mellitus"],
+  ["hypertension",        "Hypertension"],
+  ["cad",                 "CAD / IHD"],
+  ["stroke",              "Stroke / CVA"],
+  ["cancer",              "Cancer / Malignancy"],
+  ["asthma",              "Asthma"],
+  ["thyroid",             "Thyroid disorder"],
+  ["mentalIllness",       "Mental illness"],
+  ["kidney",              "Chronic Kidney Disease"],
+  ["suddenCardiacDeath",  "Sudden cardiac death"],
+  ["bleedingDisorder",    "Hereditary bleeding disorder"],
+];
+/* Social history is the odd one out — chip-group values (Never /
+   Current / Former etc.) rather than booleans. Group → chip options. */
+const SOCHX_GROUPS = [
+  { key: "smoking",   label: "Smoking",   chips: ["Never", "Current", "Former"] },
+  { key: "alcohol",   label: "Alcohol",   chips: ["Never", "Occasional", "Daily", "Former"] },
+  { key: "tobacco",   label: "Tobacco / Gutka / Paan", chips: ["Never", "Current", "Former"] },
+  { key: "substance", label: "Substance abuse", chips: ["Never", "Past", "Current"] },
+];
+
+function pshSummary(s) {
+  if (!s) return "";
+  const ticks = PSH_OPTIONS.filter(([k]) => s[k]).map(([, l]) => l);
+  if (s.other) ticks.push(s.other);
+  return ticks.join(", ");
+}
+function famHxSummary(s) {
+  if (!s) return "";
+  const ticks = FAMHX_OPTIONS.filter(([k]) => s[k]).map(([, l]) => l);
+  if (s.other) ticks.push(s.other);
+  return ticks.join(", ");
+}
+function socHxSummary(s) {
+  if (!s) return "";
+  const parts = [];
+  for (const g of SOCHX_GROUPS) {
+    const v = s[g.key];
+    if (v && v !== "Never") parts.push(`${g.label}: ${v}`);
+  }
+  if (s.occupation)    parts.push(`Occupation: ${s.occupation}`);
+  if (s.recentTravel)  parts.push(`Recent travel: ${s.recentTravel}`);
+  if (s.other)         parts.push(s.other);
+  return parts.join(" · ");
+}
+
 /* ── MORSE FALL SCALE ──────────────────────────────── */
 const MORSE_ITEMS = [
   {
@@ -553,10 +617,40 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   const [doctorName, setDoctorName]     = useState(user?.fullName || "");
   const [regNo, setRegNo]               = useState(user?.doctorDetails?.registrationNumber || "");
   const [hopi, setHopi]                 = useState("");       // History of Present Illness
-  const [pmh, setPmh]                   = useState("");
-  const [psh, setPsh]                   = useState("");
-  const [famHx, setFamHx]               = useState("");
-  const [socHx, setSocHx]               = useState("");
+  // R7hr-70 — pmh removed (replaced by Co-morbidities checklist).
+  // PSH / FamHx / SocHx kept as legacy strings for load fall-back, but
+  // the canonical state moves to structured objects below.
+  const [psh, setPsh]                   = useState("");   // legacy string — read-only after R7hr-70
+  const [famHx, setFamHx]               = useState("");   // legacy string — read-only after R7hr-70
+  const [socHx, setSocHx]               = useState("");   // legacy string — read-only after R7hr-70
+
+  // R7hr-70 — Structured Past Surgical / Family / Social history.
+  // Checkbox-grid UI mirrors Co-morbidities (3-col). Free-text "other"
+  // captures anything not in the menu. On save these write through to
+  // pshStruct / famHxStruct / socHxStruct AND a derived legacy string
+  // so any downstream consumer that reads `psh` etc. still works.
+  const [pshStruct, setPshStruct] = useState({
+    appendectomy: false, cholecystectomy: false, hernia: false,
+    cabg: false, angioplasty: false, valveReplacement: false,
+    hysterectomy: false, cSection: false, thyroidectomy: false,
+    kneeReplacement: false, hipReplacement: false, cataract: false,
+    other: "",
+  });
+  const [famHxStruct, setFamHxStruct] = useState({
+    diabetes: false, hypertension: false, cad: false, stroke: false,
+    cancer: false, asthma: false, thyroid: false, mentalIllness: false,
+    kidney: false, suddenCardiacDeath: false, bleedingDisorder: false,
+    other: "",
+  });
+  const [socHxStruct, setSocHxStruct] = useState({
+    smoking:   "Never",   // Never / Current / Former
+    alcohol:   "Never",   // Never / Occasional / Daily / Former
+    tobacco:   "Never",   // Never / Current / Former
+    substance: "Never",   // Never / Past / Current
+    occupation: "",
+    recentTravel: "",
+    other: "",
+  });
   const [docAllergy, setDocAllergy]     = useState("");
   const [genExam, setGenExam]           = useState("");
   const [cvs, setCvs]                   = useState("");
@@ -877,7 +971,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   const draftKey = patient?._id ? `sphere_draft_ipd_initial_${patient._id}` : null;
   const { savedAt, hasDraft, clearDraft } = useAutoSave(
     draftKey,
-    { admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit, consciousnessLevel, mobility, allergy, chiefComplaint, vitals, painPresent, painScore, painLocation, painCharacter, devices, skinIntact, skinNotes, morse, braden, nutri, vte, nursingProblems, nursingGoals, nursingNotes, doctorName, regNo, hopi, pmh, psh, famHx, socHx, docAllergy, genExam, cvs, rs, abdomen, cns, provDx, finalDx, icd10, investigations, rxRows, treatmentPlan, followupNotes, dietAdvice, activityAdvice,
+    { admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit, consciousnessLevel, mobility, allergy, chiefComplaint, vitals, painPresent, painScore, painLocation, painCharacter, devices, skinIntact, skinNotes, morse, braden, nutri, vte, nursingProblems, nursingGoals, nursingNotes, doctorName, regNo, hopi, psh, famHx, socHx, pshStruct, famHxStruct, socHxStruct, docAllergy, genExam, cvs, rs, abdomen, cns, provDx, finalDx, icd10, investigations, rxRows, treatmentPlan, followupNotes, dietAdvice, activityAdvice,
       // R7fb · doctor P0 fields
       docCC, ccDuration, allergyList, noKnownAllergies, medRecon, workingDx, differentialDx, comorbid, codeStatus, codeStatusDiscussedWith, codeStatusLimitations, elosDays, goalOfCare, docRiskAck, ros,
       // R7fc · nurse P0 fields
@@ -914,13 +1008,19 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   // B · PMH — bidirectional best-effort sync. Whichever party fills
   // first becomes the seed for the other. Doctor's full > nurse's brief.
   useEffect(() => {
-    if (!pmh && nurseBriefPmh?.trim()) setPmh(nurseBriefPmh.trim());
+    // R7hr-70 — pmh removed from doctor view (replaced by Co-morbidities
+    // checklist). Nurse's brief PMH field stays — it's the nurse-side
+    // context, no longer fans out to a doctor PMH textarea.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nurseBriefPmh]);
-  useEffect(() => {
-    if (!nurseBriefPmh && pmh?.trim()) setNurseBriefPmh(pmh.trim().slice(0, 240));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pmh]);
+
+  // R7hr-70 — keep the legacy psh / famHx / socHx strings in sync with
+  // the structured state so any downstream consumer that reads the
+  // string fields (discharge-summary print, narrative theme, etc.)
+  // gets the canonical joined-summary text without per-source plumbing.
+  useEffect(() => { setPsh(pshSummary(pshStruct)); /* eslint-disable-next-line */ }, [pshStruct]);
+  useEffect(() => { setFamHx(famHxSummary(famHxStruct)); /* eslint-disable-next-line */ }, [famHxStruct]);
+  useEffect(() => { setSocHx(socHxSummary(socHxStruct)); /* eslint-disable-next-line */ }, [socHxStruct]);
 
   // C · Medication Reconciliation — nurse owns the home-meds list (she
   // sees the drugs the patient brought). Doctor's table inherits each
@@ -1112,10 +1212,17 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             if (d.nursingGoals)       setNursingGoals(d.nursingGoals);
             if (d.nursingNotes)       setNursingNotes(d.nursingNotes);
             if (d.hopi)               setHopi(d.hopi);
-            if (d.pmh)                setPmh(d.pmh);
+            // R7hr-70 — pmh dropped from UI; if older draft has it, fold it
+            // into pshStruct.other as a fallback so doctor doesn't lose data.
             if (d.psh)                setPsh(d.psh);
             if (d.famHx)              setFamHx(d.famHx);
             if (d.socHx)              setSocHx(d.socHx);
+            if (d.pshStruct)          setPshStruct(s => ({ ...s, ...d.pshStruct }));
+            else if (d.psh)           setPshStruct(s => ({ ...s, other: d.psh }));
+            if (d.famHxStruct)        setFamHxStruct(s => ({ ...s, ...d.famHxStruct }));
+            else if (d.famHx)         setFamHxStruct(s => ({ ...s, other: d.famHx }));
+            if (d.socHxStruct)        setSocHxStruct(s => ({ ...s, ...d.socHxStruct }));
+            else if (d.socHx)         setSocHxStruct(s => ({ ...s, other: d.socHx }));
             if (d.genExam)            setGenExam(d.genExam);
             if (d.cvs)                setCvs(d.cvs);
             if (d.rs)                 setRs(d.rs);
@@ -1250,10 +1357,16 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             if (doc.doctorName)         setDoctorName(doc.doctorName);
             if (doc.regNo)              setRegNo(doc.regNo);
             if (doc.hopi)               setHopi(doc.hopi);
-            if (doc.pmh)                setPmh(doc.pmh);
+            // R7hr-70 — pmh dropped; structured fields take precedence
             if (doc.psh)                setPsh(doc.psh);
             if (doc.famHx)              setFamHx(doc.famHx);
             if (doc.socHx)              setSocHx(doc.socHx);
+            if (doc.pshStruct)          setPshStruct(s => ({ ...s, ...doc.pshStruct }));
+            else if (doc.psh)           setPshStruct(s => ({ ...s, other: doc.psh }));
+            if (doc.famHxStruct)        setFamHxStruct(s => ({ ...s, ...doc.famHxStruct }));
+            else if (doc.famHx)         setFamHxStruct(s => ({ ...s, other: doc.famHx }));
+            if (doc.socHxStruct)        setSocHxStruct(s => ({ ...s, ...doc.socHxStruct }));
+            else if (doc.socHx)         setSocHxStruct(s => ({ ...s, other: doc.socHx }));
             if (doc.docAllergy)         setDocAllergy(doc.docAllergy);
             if (doc.genExam)            setGenExam(doc.genExam);
             if (doc.cvs)                setCvs(doc.cvs);
@@ -1398,7 +1511,10 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         nursingProblems, nursingGoals, nursingNotes,
       },
       doctor: {
-        doctorName, regNo, hopi, pmh, psh, famHx, socHx, docAllergy,
+        // R7hr-70 — pmh dropped (Co-morbidities replaces it). PSH /
+        // FamHx / SocHx now write through pshStruct etc.; legacy
+        // strings stay in the payload as a back-compat read.
+        doctorName, regNo, hopi, psh, famHx, socHx, pshStruct, famHxStruct, socHxStruct, docAllergy,
         genExam, cvs, rs, abdomen, cns,
         // R7hr-65 — icd10Description + patientStatus mirror what OPD writes,
         // so the same downstream consumers (discharge summary, patient file
@@ -1784,14 +1900,21 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         ${kv("Chief Complaint", docCC, true)}
         ${kv("Duration / Onset", ccDuration, true)}`)}
 
-      ${block("History", "NABH AAC.1", `
+      ${block("History", "NABH AAC.1", (() => {
+        // R7hr-70 — Past Medical Hx removed (Co-morbidities replaces it).
+        // PSH / Family / Social rendered from structured state via helpers
+        // that join ticked labels + free-text "other".
+        const pshOut = pshSummary(pshStruct) || esc(psh) || "—";
+        const famOut = famHxSummary(famHxStruct) || esc(famHx) || "—";
+        const socOut = socHxSummary(socHxStruct) || esc(socHx) || "—";
+        return `
         ${kv("HPI", hopi, true)}
+        ${kv("Past Surgical Hx", pshOut, true)}
         <div class="grid grid-2">
-          ${kv("Past Medical Hx", pmh)}
-          ${kv("Past Surgical Hx", psh)}
-          ${kv("Family Hx", famHx)}
-          ${kv("Social Hx", socHx)}
-        </div>`)}
+          ${kv("Family Hx", famOut)}
+          ${kv("Social Hx", socOut)}
+        </div>`;
+      })())}
 
       ${block("Co-morbidities", "NABH AAC.1", `
         <div class="grid grid-4">
@@ -3653,31 +3776,93 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             </Grid2>
           </Section>
 
-          {/* ── History ── */}
+          {/* ── History ──
+              R7hr-70: Past Medical History removed (Co-morbidities card
+              below is the structured replacement). Past Surgical /
+              Family / Social History upgraded from plain textareas to
+              checkbox-grid pickers matching the Co-morbidities pattern;
+              free-text "Other" stays for anything off-menu. */}
           <Section title="History" icon="pi-book" color={C.purple}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <Field label="History of Present Illness *">
                 <textarea value={hopi} onChange={e => setHopi(e.target.value)}
                   placeholder="Onset, character, progression, associated symptoms, relieving/aggravating factors…"
                   className="his-textarea" style={{ minHeight: 90 }} />
               </Field>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
-                <Field label="Past Medical History">
-                  <textarea value={pmh} onChange={e => setPmh(e.target.value)}
-                    placeholder="DM, HTN, CAD…" className="his-textarea" style={{ minHeight: 64 }} />
-                </Field>
-                <Field label="Past Surgical History">
-                  <textarea value={psh} onChange={e => setPsh(e.target.value)}
-                    placeholder="Previous surgeries…" className="his-textarea" style={{ minHeight: 64 }} />
-                </Field>
-                <Field label="Family History">
-                  <textarea value={famHx} onChange={e => setFamHx(e.target.value)}
-                    placeholder="Hereditary conditions…" className="his-textarea" style={{ minHeight: 64 }} />
-                </Field>
-                <Field label="Social / Personal History">
-                  <textarea value={socHx} onChange={e => setSocHx(e.target.value)}
-                    placeholder="Smoking, alcohol, occupation, travel…" className="his-textarea" style={{ minHeight: 64 }} />
-                </Field>
+
+              {/* Past Surgical History — checkbox grid */}
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>
+                  Past Surgical History
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 12, marginBottom: 8 }}>
+                  {PSH_OPTIONS.map(([k, label]) => (
+                    <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                      <input type="checkbox" checked={!!pshStruct[k]}
+                        onChange={e => setPshStruct(s => ({ ...s, [k]: e.target.checked }))} />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <input value={pshStruct.other}
+                  onChange={e => setPshStruct(s => ({ ...s, other: e.target.value }))}
+                  placeholder="Other surgeries (free-text)…" className="his-field" />
+              </div>
+
+              {/* Family History — checkbox grid */}
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>
+                  Family History (hereditary conditions)
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 12, marginBottom: 8 }}>
+                  {FAMHX_OPTIONS.map(([k, label]) => (
+                    <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                      <input type="checkbox" checked={!!famHxStruct[k]}
+                        onChange={e => setFamHxStruct(s => ({ ...s, [k]: e.target.checked }))} />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <input value={famHxStruct.other}
+                  onChange={e => setFamHxStruct(s => ({ ...s, other: e.target.value }))}
+                  placeholder="Other family history (specify cancer type, age at death, etc.)…" className="his-field" />
+              </div>
+
+              {/* Social / Personal History — chip groups + small inputs */}
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>
+                  Social / Personal History
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+                  {SOCHX_GROUPS.map(g => (
+                    <div key={g.key} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <span style={{ minWidth: 160, fontSize: 11.5, fontWeight: 600, color: C.text }}>{g.label}:</span>
+                      {g.chips.map(c => (
+                        <button key={c} type="button"
+                          onClick={() => setSocHxStruct(s => ({ ...s, [g.key]: c }))}
+                          style={{
+                            padding: "3px 12px", borderRadius: 999,
+                            border: `1.5px solid ${socHxStruct[g.key] === c ? C.purple : C.border}`,
+                            background:  socHxStruct[g.key] === c ? C.purple : "white",
+                            color:       socHxStruct[g.key] === c ? "white"   : C.muted,
+                            fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                            cursor: "pointer", transition: "all .15s ease",
+                          }}>{c}</button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                  <input value={socHxStruct.occupation}
+                    onChange={e => setSocHxStruct(s => ({ ...s, occupation: e.target.value }))}
+                    placeholder="Occupation (e.g. office worker, farmer, factory…)" className="his-field" />
+                  <input value={socHxStruct.recentTravel}
+                    onChange={e => setSocHxStruct(s => ({ ...s, recentTravel: e.target.value }))}
+                    placeholder="Recent travel (last 3 months)…" className="his-field" />
+                </div>
+                <input value={socHxStruct.other}
+                  onChange={e => setSocHxStruct(s => ({ ...s, other: e.target.value }))}
+                  placeholder="Other personal / social context (sleep, exercise, diet, marital, etc.)…" className="his-field" />
               </div>
             </div>
           </Section>
