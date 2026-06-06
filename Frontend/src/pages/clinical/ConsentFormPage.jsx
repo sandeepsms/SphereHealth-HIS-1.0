@@ -1642,25 +1642,57 @@ export function ConsentFormPageContent({ selectedPatient }) {
             </div>
           </Section>
 
-          {/* Risks */}
-          <Section title="Risks & Potential Complications" icon="pi-exclamation-triangle" color={C.red}>
-            <EditableList items={risks} setItems={setRisks}
-              placeholder="Describe a risk or complication…" color={C.red} />
-          </Section>
+          {/* R7hr-81 — Risks / Benefits / Alternatives shown side-by-side
+              in a polished 3-column card grid (mirrors the patient-panel
+              + preview layout) so the doctor / staff see the same shape
+              they'll explain to the patient. Each card keeps its own
+              colour header + bulleted editable list. */}
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+            gap: 12, marginTop: 14,
+          }}>
+            {/* Risks */}
+            <div style={{
+              background: C.card, borderRadius: 12, padding: "16px 18px",
+              border: `1.5px solid ${C.border}`, borderTop: `4px solid ${C.red}`,
+            }}>
+              <div style={{ fontWeight: 800, fontSize: 13, color: C.red, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                <i className="pi pi-exclamation-triangle" />
+                <span>Risks & Potential Complications</span>
+              </div>
+              <EditableList items={risks} setItems={setRisks}
+                placeholder="Describe a risk or complication…" color={C.red} />
+            </div>
 
-          {/* Benefits */}
-          {selectedType.template.benefits.length > 0 && (
-            <Section title="Expected Benefits" icon="pi-check-circle" color={C.green}>
-              <EditableList items={benefits} setItems={setBenefits}
-                placeholder="Describe an expected benefit…" color={C.green} />
-            </Section>
-          )}
+            {/* Benefits */}
+            {selectedType.template.benefits.length > 0 && (
+              <div style={{
+                background: C.card, borderRadius: 12, padding: "16px 18px",
+                border: `1.5px solid ${C.border}`, borderTop: `4px solid ${C.green}`,
+              }}>
+                <div style={{ fontWeight: 800, fontSize: 13, color: C.green, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                  <i className="pi pi-check-circle" />
+                  <span>Expected Benefits</span>
+                </div>
+                <EditableList items={benefits} setItems={setBenefits}
+                  placeholder="Describe an expected benefit…" color={C.green} />
+              </div>
+            )}
 
-          {/* Alternatives */}
-          <Section title="Alternatives Discussed" icon="pi-arrow-right-arrow-left" color={C.blue}>
-            <EditableList items={alternatives} setItems={setAlternatives}
-              placeholder="Describe an alternative…" color={C.blue} />
-          </Section>
+            {/* Alternatives */}
+            <div style={{
+              background: C.card, borderRadius: 12, padding: "16px 18px",
+              border: `1.5px solid ${C.border}`, borderTop: `4px solid ${C.blue}`,
+            }}>
+              <div style={{ fontWeight: 800, fontSize: 13, color: C.blue, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                <i className="pi pi-arrow-right-arrow-left" />
+                <span>Alternatives Discussed</span>
+              </div>
+              <EditableList items={alternatives} setItems={setAlternatives}
+                placeholder="Describe an alternative…" color={C.blue} />
+            </div>
+          </div>
 
           {/* Communication */}
           <Section title="Communication & Language" icon="pi-comments" color="#0891b2">
