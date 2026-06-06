@@ -24,6 +24,10 @@ import PharmacyIndentsPage from "./PharmacyIndentsPage";
 // away to /pharmacy/ledger/:admissionId.
 import PharmacyLedgerPage from "./PharmacyLedgerPage";
 import opdService from "../../Services/patient/opdService";
+// R7hr-61 — generic presence hook (despite the "Receptionist" name it
+// sends user.role from AuthContext, so Pharmacist heartbeats land with
+// role=Pharmacist on the same /presence/heartbeat endpoint).
+import { useReceptionistPresence } from "../../hooks/useReceptionistPresence";
 import { IS_PHARMACY_STANDALONE, PHARMACY_MODE_LABEL } from "../../config/pharmacyMode";
 import {
   listDrugs, createDrug, updateDrug, deleteDrug,
@@ -348,16 +352,38 @@ export default function PharmacyHomePage() {
    DASHBOARD TAB
 ══════════════════════════════════════════════════════════════════ */
 function DashboardTab() {
+  const { user } = useAuth();
+  const myUserId = user?._id || user?.id;
   const [stats, setStats] = useState(null);
   const [alerts, setAlerts] = useState({ lowStock: [], outOfStock: [], expiringSoon: [], expired: [] });
+  // R7hr-61 — Reception-style "ACTIVE RIGHT NOW" strip. Heartbeat sent
+  // by useReceptionistPresence hook below (role-agnostic — sends
+  // user.role), and the active roster is polled here every 30s.
+  // Filtered to pharmacy-relevant roles (Pharmacist + Admin) so
+  // receptionists/nurses on shift don't clutter this strip.
+  const [presence, setPresence] = useState([]);
+
+  // R7hr-61 — fire heartbeats so OTHER pharmacy windows can see this
+  // operator. resource={ type:"idle", action:"viewing-dashboard" }
+  // matches what the Reception dashboard sends.
+  useReceptionistPresence({ type: "idle", action: "viewing-dashboard" });
 
   const refresh = async () => {
     try {
       const [s, a] = await Promise.all([getStats(), getAlerts()]);
       setStats(s.data); setAlerts(a.data);
     } catch (e) { toast.error(e.message); }
+    // R7hr-61 — separate try so a 403 on presence doesn't break the
+    // existing KPI render. Old deployments where Pharmacist lacks
+    // presence.read will simply hide the Active strip.
+    try {
+      const p = await axios.get(`${API_ENDPOINTS.BASE}/presence/active`);
+      const all = p.data?.data || p.data || [];
+      const PHARM_ROLES = new Set(["Pharmacist", "Admin"]);
+      setPresence(all.filter(x => PHARM_ROLES.has(x.userRole)));
+    } catch (_) { /* silent */ }
   };
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); const t = setInterval(refresh, 30000); return () => clearInterval(t); }, []);
 
   // R7bd-E-8 / A2-MED-7 — clicking the Low Stock KPI tile scrolls down
   // to the corresponding alert section (which already lists each drug
@@ -373,6 +399,72 @@ function DashboardTab() {
 
   return (
     <div>
+      {/* ── R7hr-61: Active Right Now strip (pharmacy-scoped — Pharmacist + Admin) ── */}
+      {presence.length > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          padding: "10px 14px", marginBottom: 12,
+          background: "#f8fafc", border: `1.5px solid ${C.border}`,
+          borderRadius: 10,
+        }}>
+          <i className="pi pi-users" style={{ color: C.purple }} />
+          <span style={{ fontWeight: 800, fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>
+            Active Right Now ({presence.length})
+          </span>
+          {presence.map(p => {
+            const secondsAgo = Math.floor((Date.now() - new Date(p.lastHeartbeatAt)) / 1000);
+            const isMe = String(p.userId) === String(myUserId || "");
+            const ago  = secondsAgo < 60 ? `${secondsAgo}s ago` : `${Math.floor(secondsAgo/60)}m ago`;
+            const doing = p.action === "viewing-dashboard" ? "on dashboard"
+                        : p.action === "dispensing" ? `dispensing${p.currentResource?.label ? ` ${p.currentResource.label}` : ""}`
+                        : p.action === "releasing"  ? `releasing${p.currentResource?.label ? ` ${p.currentResource.label}` : ""}`
+                        : p.action || "idle";
+            return (
+              <div key={p.userId} style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "4px 10px", borderRadius: 999,
+                background: isMe ? `${C.purple}15` : C.card,
+                border: `1px solid ${isMe ? C.purple : C.border}`,
+                fontSize: 11.5, color: C.text,
+              }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.green, display: "inline-block" }} />
+                <span style={{ fontWeight: 700 }}>{p.userName}{isMe ? " (you)" : ""}</span>
+                <span style={{ color: C.muted, fontStyle: "italic" }}>{doing}</span>
+                <span style={{ color: C.muted, fontSize: 10 }}>{ago}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── R7hr-61: pharmacy-scoped collection strip (mirrors Reception
+              ACTIVE/OVERVIEW row but counts Sale rows, not visits) ── */}
+      {stats && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+          {/* Total — net of refunds, includes supplements; matches register. */}
+          <PharmStat
+            accent={C.purple}
+            label="Total Collection"
+            value={fmtINR(stats.todaySales?.net ?? stats.todaySales?.total ?? 0)}
+            sub={`${stats.todaySales?.count || 0} sale${(stats.todaySales?.count || 0) === 1 ? "" : "s"}`}
+          />
+          {/* Per-saleType cards. Render Walk-in / OPD / IPD / Homecare
+              in a fixed order so the strip layout doesn't shuffle as
+              today's mix changes. */}
+          {["Walk-in", "OPD", "IPD", "Homecare"].map(t => {
+            const row = stats.todaySalesByType?.[t] || { count: 0, total: 0 };
+            const accent = t === "Walk-in" ? C.teal
+                         : t === "OPD"     ? C.green
+                         : t === "IPD"     ? C.blue
+                         : t === "Homecare" ? C.amber
+                         : C.muted;
+            return (
+              <PharmStat key={t} accent={accent} label={t} value={fmtINR(row.total)} sub={`${row.count} sale${row.count === 1 ? "" : "s"}`} />
+            );
+          })}
+        </div>
+      )}
+
       {/* KPI strip */}
       {stats && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
@@ -3936,6 +4028,26 @@ function KPI({ label, value, color, icon }) {
       <div>
         <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
         <div style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginTop: 4 }}>{label}</div>
+      </div>
+    </div>
+  );
+}
+
+// R7hr-61 — Reception-style overview card used by the pharmacy
+// Dashboard collection strip. Coloured accent bar across the top
+// matches the screenshot the user shared (Reception Overview tiles).
+function PharmStat({ accent, label, value, sub }) {
+  return (
+    <div style={{
+      background: C.card, border: `1.5px solid ${C.border}`,
+      borderRadius: 12, overflow: "hidden",
+      boxShadow: "0 1px 3px rgba(15,23,42,.04)",
+    }}>
+      <div style={{ height: 4, background: accent }} />
+      <div style={{ padding: "12px 16px" }}>
+        <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: accent, lineHeight: 1.1, marginTop: 4 }}>{value}</div>
+        {sub && <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>{sub}</div>}
       </div>
     </div>
   );

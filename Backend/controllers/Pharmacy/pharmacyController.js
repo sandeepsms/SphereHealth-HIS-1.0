@@ -4172,7 +4172,12 @@ exports.stats = async (req, res) => {
     // Completed + Partial-Return + Refunded. Refunds are subtracted as a
     // separate aggregation so revenue is net of returns (matches register).
     const SALE_STATUSES = ["Completed", "Partial-Return", "Refunded", "Supplemented"];
-    const [drugsCount, batchFacet, todaySalesAgg, monthSalesAgg, todayRefundAgg, monthRefundAgg, todaySuppAgg, monthSuppAgg] = await Promise.all([
+    // R7hr-61: also fetch today's sales grouped by saleType so the
+    // Pharmacy Dashboard can render a Reception-style KPI strip
+    // (Walk-in / OPD / IPD / Homecare). Single extra aggregation —
+    // same $match + $group by saleType, runs in parallel with the
+    // existing 8 promises so dashboard latency is unchanged.
+    const [drugsCount, batchFacet, todaySalesAgg, monthSalesAgg, todayRefundAgg, monthRefundAgg, todaySuppAgg, monthSuppAgg, todaySalesByTypeAgg] = await Promise.all([
       Drug.countDocuments({ isActive: true }),
       // Single facet aggregation — Mongo computes stockValue + expiring +
       // expired + total count in one pipeline pass without ferrying batch
@@ -4228,6 +4233,12 @@ exports.stats = async (req, res) => {
         { $match: { "supplements.addedAt": { $gte: monthStart } } },
         { $group: { _id: null, supp: { $sum: "$supplements.addedTotal" } } },
       ]),
+      // R7hr-61: today's sales grouped by saleType (Walk-in/OPD/IPD/Homecare).
+      // Renders the per-type cards on the Pharmacy Dashboard Overview strip.
+      Sale.aggregate([
+        { $match: { status: { $in: SALE_STATUSES }, createdAt: { $gte: todayStart } } },
+        { $group: { _id: "$saleType", count: { $sum: 1 }, total: { $sum: "$grandTotal" } } },
+      ]),
     ]);
 
     const facet = batchFacet[0] || {};
@@ -4256,6 +4267,15 @@ exports.stats = async (req, res) => {
         supplements: Math.round(tSupp),
         net:    Math.round(Math.max(0, tGross + tSupp - tRefund)),
       },
+      // R7hr-61: per-saleType breakdown for the Overview KPI strip.
+      // Keys mirror PharmacySale.saleType enum (Walk-in/OPD/IPD/Homecare);
+      // any row with a saleType the UI doesn't know about still shows up
+      // — the frontend lays out a fixed 4-card strip and ignores extras.
+      todaySalesByType: (todaySalesByTypeAgg || []).reduce((acc, row) => {
+        const key = row._id || "Unknown";
+        acc[key] = { count: row.count || 0, total: Math.round(row.total || 0) };
+        return acc;
+      }, {}),
       monthSales: {
         count: monthSalesAgg[0]?.count || 0,
         total: Math.round(mGross),

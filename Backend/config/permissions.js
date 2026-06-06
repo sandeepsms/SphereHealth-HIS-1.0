@@ -445,7 +445,9 @@ const ACTIONS = {
   "auth.2fa":                  ["Admin", "Doctor", "Nurse"],
   // Presence heartbeat list (who's online). Admin-only since the
   // active-user roster is operational telemetry, not clinical.
-  "presence.read":             ["Admin"],
+  // R7hr-61: extend to Pharmacist + Receptionist so the Pharmacy +
+  // Reception "Active Right Now" strips can render across roles.
+  "presence.read":             ["Admin", "Pharmacist", "Receptionist"],
   // Self-service password change — every authenticated user can
   // rotate their own password. The controller scopes to req.user.id
   // so this action gate exists for symmetry with the frontend
