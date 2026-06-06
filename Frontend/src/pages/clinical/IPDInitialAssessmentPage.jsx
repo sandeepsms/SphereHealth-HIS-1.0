@@ -1713,7 +1713,15 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
       ${block("Co-morbidities", "NABH AAC.1", `
         <div class="grid grid-4">
           ${["diabetes","hypertension","cad","ckd","copd","asthma","liverDx","cancer","stroke","mentalHealth","hypothyroid","hiv","hepB","hepC"]
-            .map(k => kv(k.replace(/([A-Z])/g, " $1").replace(/^./, c=>c.toUpperCase()), yn(comorbid[k]))).join("")}
+            .map(k => {
+              // R7hr-64: append "(since N yr)" when an onset is captured
+              const yrs = comorbid[`${k}Years`];
+              const label = k.replace(/([A-Z])/g, " $1").replace(/^./, c => c.toUpperCase());
+              const val = comorbid[k]
+                ? (yrs ? `Yes (since ${esc(yrs)} yr)` : "Yes")
+                : "No";
+              return kv(label, val);
+            }).join("")}
           ${kv("Other", comorbid.other, true)}
         </div>`)}
 
@@ -3587,9 +3595,16 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             </div>
           </Section>
 
-          {/* ── D5 · Co-morbidity checklist (NABH AAC.1 / COP.1) ── */}
+          {/* ── D5 · Co-morbidity checklist (NABH AAC.1 / COP.1) ──
+              R7hr-64: each ticked co-morbidity now exposes an inline
+              "since N yr" input. Stored alongside the boolean as
+              `${key}Years` (e.g. comorbid.diabetes=true +
+              comorbid.diabetesYears='5'), so the existing boolean
+              shape survives and the year-of-onset shows up in the
+              print block + downstream consumers without a schema
+              change. */}
           <Section title="Co-morbidities" icon="pi-list-check" color={C.purple} badge="NABH AAC.1">
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, fontSize: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8, fontSize: 12 }}>
               {[
                 ["diabetes", "Diabetes Mellitus"],   ["hypertension", "Hypertension"],
                 ["cad", "CAD / IHD"],                ["ckd", "Chronic Kidney Disease"],
@@ -3598,13 +3613,45 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                 ["stroke", "Stroke / CVA"],          ["mentalHealth", "Mental Health"],
                 ["hypothyroid", "Hypothyroidism"],   ["hiv", "HIV / AIDS"],
                 ["hepB", "Hepatitis B"],             ["hepC", "Hepatitis C"],
-              ].map(([k, label]) => (
-                <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                  <input type="checkbox" checked={!!comorbid[k]}
-                    onChange={e => setComorbid(c => ({ ...c, [k]: e.target.checked }))} />
-                  <span>{label}</span>
-                </label>
-              ))}
+              ].map(([k, label]) => {
+                const yearsKey = `${k}Years`;
+                const ticked = !!comorbid[k];
+                return (
+                  <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 26 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", flex: ticked ? "0 0 auto" : 1, minWidth: 0 }}>
+                      <input type="checkbox" checked={ticked}
+                        onChange={e => setComorbid(c => ({
+                          ...c,
+                          [k]: e.target.checked,
+                          // clear the years field if the box is being un-ticked
+                          ...(e.target.checked ? {} : { [yearsKey]: "" }),
+                        }))} />
+                      <span>{label}</span>
+                    </label>
+                    {ticked && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: C.muted }}>
+                        <span>since</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          inputMode="decimal"
+                          value={comorbid[yearsKey] || ""}
+                          onChange={e => setComorbid(c => ({ ...c, [yearsKey]: e.target.value }))}
+                          placeholder="—"
+                          style={{
+                            width: 56, padding: "3px 6px",
+                            border: `1px solid ${C.border}`, borderRadius: 6,
+                            fontSize: 11.5, fontWeight: 700, color: C.text,
+                            background: "#fff", outline: "none",
+                          }}
+                        />
+                        <span>yr</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             <Field label="Other co-morbidities" style={{ marginTop: 10 }}>
               <input value={comorbid.other}
