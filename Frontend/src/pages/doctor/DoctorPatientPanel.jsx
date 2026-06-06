@@ -1871,12 +1871,13 @@ function EmergencyTab({emergency=[]}) {
 }
 
 /* ═══════════════════════════════════════════════════════ TAB: CONSENT FORMS
-   R7hr-75 — Previously the Consent tab was just a launcher card. Users were
-   confused because a signed consent existed but the tab showed nothing.
-   Now we render the actual list of saved consents (PENDING / SIGNED / REFUSED
-   / REVOKED) with quick metadata + a button that deep-links into the consent
-   module to view / print the form. */
-function ConsentFormsTab({ consents = [], uhid }) {
+   R7hr-75 — Previously the Consent tab was just a launcher card.
+   R7hr-76 — Render the FULL consent document inline (patient particulars,
+   body text, risks/benefits/alternatives, consent-given-by, witness /
+   guardian / interpreter, biometric block, staff signature) so the
+   doctor/nurse can read and verify the whole form without leaving the
+   panel. Replaces the prior single-row summary card. */
+function ConsentFormsTab({ consents = [], uhid, patient, admission }) {
   const STATUS_STYLE = {
     SIGNED:  { bg: C.greenL, color: C.green,  label: "✓ SIGNED"   },
     PENDING: { bg: C.amberL, color: C.amber,  label: "⌛ PENDING"  },
@@ -1904,8 +1905,15 @@ function ConsentFormsTab({ consents = [], uhid }) {
       </div>
     );
   }
+
+  // Patient / admission identifiers used in the inline document header.
+  // Prefer the LIVE admission so even consents saved before R7hr-74 (whose
+  // own copy of these fields is blank) still show the right ward/bed/etc.
+  const liveWardBed = [admission?.wardName, admission?.bedNumber].filter(Boolean).join(" / ");
+  const liveAdmDate = admission?.admissionDate ? new Date(admission.admissionDate).toLocaleDateString("en-IN") : "";
+
   return (
-    <div className="pf-tint--doctor" style={{display:"flex",flexDirection:"column",gap:12}}>
+    <div className="pf-tint--doctor" style={{display:"flex",flexDirection:"column",gap:14}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
         <div>
           <div style={{fontWeight:800,fontSize:15,color:C.dark}}>📜 Consent Forms</div>
@@ -1922,52 +1930,185 @@ function ConsentFormsTab({ consents = [], uhid }) {
       {consents.map((c, i) => {
         const st = STATUS_STYLE[c.status] || STATUS_STYLE.PENDING;
         const ts = c.signedAt || c.createdAt;
+        const wardBed = c.wardBed || liveWardBed || "—";
+        const admDate = c.admissionDate || liveAdmDate || "—";
+        const dept    = c.department    || admission?.department || "—";
+        const doctor  = c.doctorName    || admission?.attendingDoctor || "—";
         return (
           <div
             key={c._id || i}
-            className="pf-section-card"
-            style={{borderLeft:`4px solid ${st.color}`}}
+            style={{
+              background:"#fff", border:`1px solid ${C.border}`,
+              borderLeft:`4px solid ${st.color}`, borderRadius:10,
+              padding:"16px 18px",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+            }}
           >
-            <div className="pf-section-card__head">
-              <span className="pf-section-card__icon">📜</span>
-              <span className="pf-section-card__title">
-                {c.consentTitle || c.consentType || "Consent Form"}
-              </span>
-              <span
-                style={{
-                  marginLeft:"auto", padding:"3px 9px", borderRadius:999,
-                  background:st.bg, color:st.color, fontWeight:800, fontSize:11,
-                }}
-              >{st.label}</span>
+            {/* Header strip — title + status chip + print */}
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,paddingBottom:12,borderBottom:`1px dashed ${C.border}`}}>
+              <span style={{fontSize:22}}>📜</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:800,fontSize:15,color:C.dark}}>{c.consentTitle || c.consentType || "Consent Form"}</div>
+                <div style={{fontSize:11,color:C.muted}}>
+                  NABH {c.consentType || "—"} · Consent ID{" "}
+                  <span style={{fontFamily:"monospace",fontWeight:700,color:C.text}}>{c._id?.slice(-8).toUpperCase() || "—"}</span>
+                  {" · "}{ts ? fmtDT(ts) : "—"}
+                </div>
+              </div>
+              <span style={{padding:"4px 11px",borderRadius:999,background:st.bg,color:st.color,fontWeight:800,fontSize:11}}>{st.label}</span>
+              <button
+                onClick={openConsent}
+                title="Open consent in the standalone module to print or re-sign"
+                style={{background:"#fff",border:`1px solid ${C.border}`,color:C.dark,borderRadius:6,padding:"5px 11px",fontWeight:700,fontSize:11,cursor:"pointer"}}
+              >🖨 Print ↗</button>
             </div>
-            <div className="pf-section-card__body pf-section-card__body--pad">
-              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px 16px",fontSize:12}}>
-                <div>
-                  <div style={{fontSize:10,color:C.muted,fontWeight:700}}>Consent ID</div>
-                  <div style={{fontWeight:700,fontFamily:"monospace"}}>{c._id?.slice(-8).toUpperCase() || "—"}</div>
+
+            {/* Patient particulars */}
+            <div style={{
+              border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 14px",
+              background:"#f8fafc", marginBottom:14,
+              display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"10px 18px",
+            }}>
+              {[
+                ["UHID",              c.UHID || patient?.UHID],
+                ["Patient Name",      c.patientName || patient?.fullName],
+                ["Age / Gender",      `${c.age || patient?.age || "—"} / ${c.gender || patient?.gender || "—"}`],
+                ["IPD / OPD No.",     c.ipdNo || admission?.admissionNumber],
+                ["Ward / Bed",        wardBed],
+                ["Date of Admission", admDate],
+                ["Attending Doctor",  doctor],
+                ["Department",        dept],
+              ].map(([label, value], idx) => (
+                <div key={idx}>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:".3px"}}>{label}</div>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text,marginTop:2}}>{value || "—"}</div>
                 </div>
-                <div>
-                  <div style={{fontSize:10,color:C.muted,fontWeight:700}}>NABH Ref</div>
-                  <div style={{fontWeight:700}}>{c.consentType || "—"}</div>
-                </div>
-                <div>
-                  <div style={{fontSize:10,color:C.muted,fontWeight:700}}>{c.signedAt ? "Signed" : "Created"}</div>
-                  <div style={{fontWeight:700}}>{ts ? fmtDT(ts) : "—"}</div>
-                </div>
-                <div>
-                  <div style={{fontSize:10,color:C.muted,fontWeight:700}}>Signed By</div>
-                  <div style={{fontWeight:700}}>{c.signedByName || c.consentingParty?.name || "—"}</div>
-                </div>
-                {c.biometric?.hardwareVerified && (
-                  <div style={{gridColumn:"1 / -1",marginTop:4}}>
-                    <span style={{
-                      display:"inline-block",padding:"2px 8px",borderRadius:999,
-                      background:C.tealL,color:C.teal,fontSize:10,fontWeight:800,
-                    }}>🔒 HARDWARE BIOMETRIC</span>
+              ))}
+            </div>
+
+            {/* Body text */}
+            {c.procedureDescription && (
+              <div style={{
+                marginBottom:14, padding:"10px 14px",
+                background:"#fafafa", border:`1px solid ${C.border}`, borderRadius:8,
+                lineHeight:1.7, fontSize:13, fontFamily:"serif", whiteSpace:"pre-line",
+              }}>{c.procedureDescription}</div>
+            )}
+
+            {/* Risks / Benefits / Alternatives — 3-column when present */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:14}}>
+              {[
+                {title:"Risks & Complications", icon:"⚠", color:C.red,    items:c.risksDisclosed || []},
+                {title:"Benefits",               icon:"✓", color:C.green,  items:c.benefitsExplained || []},
+                {title:"Alternatives",           icon:"⇄", color:C.blue,   items:c.alternativesDisclosed || []},
+              ].map((sec, ix) => (
+                <div key={ix} style={{border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",background:"#fff"}}>
+                  <div style={{fontWeight:800,fontSize:12,color:sec.color,marginBottom:8,letterSpacing:".2px"}}>
+                    <span style={{marginRight:6}}>{sec.icon}</span>{sec.title}
                   </div>
+                  {sec.items.length ? (
+                    <ul style={{paddingLeft:18,margin:0}}>
+                      {sec.items.map((x, j) => <li key={j} style={{fontSize:12,marginBottom:4,color:C.text,lineHeight:1.5}}>{x}</li>)}
+                    </ul>
+                  ) : (
+                    <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>None recorded</div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Consent-given-by + language + witness + guardian */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px 16px",marginBottom:14}}>
+              <div>
+                <div style={{fontSize:10,color:C.muted,fontWeight:700}}>CONSENT GIVEN BY</div>
+                <div style={{fontSize:13,fontWeight:700}}>{c.consentGivenBy === "GUARDIAN" ? "Guardian / Legal Rep" : "Self (Patient)"}</div>
+              </div>
+              {c.consentGivenBy === "GUARDIAN" && (
+                <>
+                  <div>
+                    <div style={{fontSize:10,color:C.muted,fontWeight:700}}>GUARDIAN NAME</div>
+                    <div style={{fontSize:13,fontWeight:700}}>{c.guardianName || "—"}</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:10,color:C.muted,fontWeight:700}}>RELATION</div>
+                    <div style={{fontSize:13,fontWeight:700}}>{c.guardianRelation || "—"}</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:10,color:C.muted,fontWeight:700}}>GUARDIAN CONTACT</div>
+                    <div style={{fontSize:13,fontWeight:700}}>{c.guardianContact || "—"}</div>
+                  </div>
+                </>
+              )}
+              <div>
+                <div style={{fontSize:10,color:C.muted,fontWeight:700}}>LANGUAGE</div>
+                <div style={{fontSize:13,fontWeight:700}}>{c.languageUsed || "—"}</div>
+              </div>
+              {c.interpreterRequired && (
+                <div>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700}}>INTERPRETER</div>
+                  <div style={{fontSize:13,fontWeight:700}}>{c.interpreterName || "Required"}</div>
+                </div>
+              )}
+              {(c.witnessName || c.witnessRelation) && (
+                <>
+                  <div>
+                    <div style={{fontSize:10,color:C.muted,fontWeight:700}}>WITNESS</div>
+                    <div style={{fontSize:13,fontWeight:700}}>{c.witnessName || "—"}</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:10,color:C.muted,fontWeight:700}}>WITNESS RELATION</div>
+                    <div style={{fontSize:13,fontWeight:700}}>{c.witnessRelation || "—"}</div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Biometric + staff signature ceremony footer */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:8}}>
+              {/* Patient/consenting-party biometric */}
+              <div style={{border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",background:c.biometric?.hardwareVerified?C.tealL:"#fafafa"}}>
+                <div style={{fontWeight:800,fontSize:12,color:c.biometric?.hardwareVerified?C.teal:C.muted,marginBottom:6}}>
+                  🔒 Patient / Consenter Biometric
+                </div>
+                {c.biometric ? (
+                  <div style={{fontSize:11,lineHeight:1.6,color:C.text}}>
+                    <div><b>Vendor:</b> {c.biometric.vendor || c.biometric.authenticatorName || "—"}</div>
+                    <div><b>Hardware verified:</b> {c.biometric.hardwareVerified ? "✓ YES (TPM)" : "✗ Software"}</div>
+                    {c.biometric.aaguid && <div><b>AAGUID:</b> <span style={{fontFamily:"monospace",fontSize:10}}>{String(c.biometric.aaguid).slice(0,18)}…</span></div>}
+                    {c.biometric.capturedAt && <div><b>Captured:</b> {fmtDT(c.biometric.capturedAt)}</div>}
+                  </div>
+                ) : c.bypass ? (
+                  <div style={{fontSize:11,color:C.amber}}>
+                    <b>BYPASS:</b> {c.bypass.reason || "Captured on paper"} ({c.bypass.byName || "—"})
+                  </div>
+                ) : (
+                  <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>No biometric on file</div>
+                )}
+              </div>
+              {/* Staff e-signature */}
+              <div style={{border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",background:c.staffSignature?"#f0fdf4":"#fafafa"}}>
+                <div style={{fontWeight:800,fontSize:12,color:c.staffSignature?C.green:C.muted,marginBottom:6}}>
+                  ✍ Staff e-Signature
+                </div>
+                {c.staffSignature || c.signedByName ? (
+                  <div style={{fontSize:11,lineHeight:1.6,color:C.text}}>
+                    <div><b>Name:</b> {c.staffSignature?.userName || c.signedByName || "—"}</div>
+                    <div><b>Role:</b> {c.staffSignature?.userRole || c.signedByRole || "—"}</div>
+                    {c.staffSignature?.employeeId && <div><b>Emp ID:</b> {c.staffSignature.employeeId}</div>}
+                    {c.signedAt && <div><b>Signed at:</b> {fmtDT(c.signedAt)}</div>}
+                  </div>
+                ) : (
+                  <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>Not signed yet</div>
                 )}
               </div>
             </div>
+
+            {c.additionalNotes && (
+              <div style={{marginTop:12,padding:"10px 12px",background:"#fffbeb",border:`1px solid ${C.amberB}`,borderRadius:8}}>
+                <div style={{fontSize:11,fontWeight:800,color:C.amber,marginBottom:4}}>📝 Additional Notes</div>
+                <div style={{fontSize:12,color:C.text,whiteSpace:"pre-line"}}>{c.additionalNotes}</div>
+              </div>
+            )}
           </div>
         );
       })}
@@ -2350,7 +2491,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       // R7gm — Deep-link tabs that surface previously hidden modules.
       // R7hr-75 — Replaced the bare launcher with a real saved-consent list.
       // User feedback: a SIGNED consent existed but the tab was empty.
-      case "consent":    return <ConsentFormsTab consents={consents} uhid={patient?.UHID || activeUhid}/>;
+      case "consent":    return <ConsentFormsTab consents={consents} uhid={patient?.UHID || activeUhid} patient={patient} admission={admission}/>;
       case "icubundles": return renderLauncher({
         id: "icubundles", icon: "🛡", color: "#0ea5e9",
         title: "Bundles of Care — ICU",
