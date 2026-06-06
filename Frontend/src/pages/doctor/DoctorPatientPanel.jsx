@@ -2063,45 +2063,130 @@ function ConsentFormsTab({ consents = [], uhid, patient, admission }) {
               )}
             </div>
 
-            {/* Biometric + staff signature ceremony footer */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:8}}>
-              {/* Patient/consenting-party biometric */}
-              <div style={{border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",background:c.biometric?.hardwareVerified?C.tealL:"#fafafa"}}>
-                <div style={{fontWeight:800,fontSize:12,color:c.biometric?.hardwareVerified?C.teal:C.muted,marginBottom:6}}>
-                  🔒 Patient / Consenter Biometric
+            {/* R7hr-79 — Digital Authentication · Paperless Consent footer.
+                Mirrors the print preview's ceremony block so the doctor /
+                nurse reading the patient panel sees the SAME forensic record
+                (vendor + hardware pill + AAGUID + IP / UA + cryptographic
+                proof + actual staff signature image) without having to open
+                the print preview. */}
+            {(c.biometric?.captured || c.bypass?.authorisedAt) ? (
+              <div style={{
+                border:`1.5px solid ${C.greenB}`, borderRadius:10,
+                padding:"14px 16px", marginTop:8, background:"#f0fdf4",
+              }}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,paddingBottom:8,borderBottom:`1px dashed ${C.greenB}`}}>
+                  <span style={{fontSize:18}}>🪪</span>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:800,color:C.text}}>Digital Authentication · Paperless Consent</div>
+                    <div style={{fontSize:10,color:C.muted}}>NABH PRE.4 · IT-Act 2000 Sec. 3A · Electronic signature equivalent</div>
+                  </div>
+                  {c.status === "SIGNED" && (
+                    <span style={{marginLeft:"auto",padding:"3px 10px",background:C.green,color:"#fff",borderRadius:6,fontSize:10,fontWeight:800,letterSpacing:".3px"}}>
+                      ✓ SIGNED & LOCKED
+                    </span>
+                  )}
                 </div>
-                {c.biometric ? (
-                  <div style={{fontSize:11,lineHeight:1.6,color:C.text}}>
-                    <div><b>Vendor:</b> {c.biometric.vendor || c.biometric.authenticatorName || "—"}</div>
-                    <div><b>Hardware verified:</b> {c.biometric.hardwareVerified ? "✓ YES (TPM)" : "✗ Software"}</div>
-                    {c.biometric.aaguid && <div><b>AAGUID:</b> <span style={{fontFamily:"monospace",fontSize:10}}>{String(c.biometric.aaguid).slice(0,18)}…</span></div>}
-                    {c.biometric.capturedAt && <div><b>Captured:</b> {fmtDT(c.biometric.capturedAt)}</div>}
+
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,fontSize:11}}>
+                  {/* Fingerprint placed by */}
+                  <div>
+                    <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Fingerprint placed by</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.text}}>{c.consentingParty?.name || c.patientName || "—"}</div>
+                    <div style={{fontSize:10.5,color:C.muted,lineHeight:1.5}}>
+                      Relation: <strong>{c.consentingParty?.relation || "SELF"}</strong>
+                      {c.consentingParty?.contactNumber && <> · {c.consentingParty.contactNumber}</>}
+                      {c.consentingParty?.idProofType && c.consentingParty?.idProofNumber && (
+                        <div>ID: {c.consentingParty.idProofType} ending …{String(c.consentingParty.idProofNumber).slice(-4)}</div>
+                      )}
+                    </div>
                   </div>
-                ) : c.bypass ? (
-                  <div style={{fontSize:11,color:C.amber}}>
-                    <b>BYPASS:</b> {c.bypass.reason || "Captured on paper"} ({c.bypass.byName || "—"})
+                  {/* Scanner */}
+                  <div>
+                    <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Hardware Scanner</div>
+                    {c.bypass?.authorisedAt ? (
+                      <div style={{fontSize:11.5,color:C.amber}}>
+                        ⚠ Biometric bypassed by admin
+                        <div style={{fontSize:10,color:C.muted,marginTop:2}}>Reason: <em>{c.bypass.reason}</em></div>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{fontSize:12,fontWeight:700,color:C.text,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                          {c.biometric?.authenticatorVendor || "Platform authenticator"}
+                          {c.biometric?.isHardwareBacked && (
+                            <span style={{padding:"1px 6px",background:"#0f766e",color:"#fff",borderRadius:4,fontSize:8.5,fontWeight:800,letterSpacing:".3px"}}>HARDWARE</span>
+                          )}
+                        </div>
+                        <div style={{fontSize:9.5,color:C.muted,fontFamily:"monospace",marginTop:2}}>AAGUID {c.biometric?.aaguid || "—"}</div>
+                      </>
+                    )}
                   </div>
-                ) : (
-                  <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>No biometric on file</div>
-                )}
-              </div>
-              {/* Staff e-signature */}
-              <div style={{border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",background:c.staffSignature?"#f0fdf4":"#fafafa"}}>
-                <div style={{fontWeight:800,fontSize:12,color:c.staffSignature?C.green:C.muted,marginBottom:6}}>
-                  ✍ Staff e-Signature
+                  {/* Captured At */}
+                  <div>
+                    <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Captured At</div>
+                    <div style={{fontSize:11.5,color:C.text,fontWeight:600}}>
+                      {c.biometric?.capturedAt
+                        ? new Date(c.biometric.capturedAt).toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"})
+                        : "—"}
+                    </div>
+                    <div style={{fontSize:9.5,color:C.muted,marginTop:1}}>Server-stamped — cannot be forged</div>
+                  </div>
+                  {/* Captured From */}
+                  <div>
+                    <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Captured From</div>
+                    <div style={{fontSize:10.5,color:C.text,fontFamily:"monospace"}}>IP {c.biometric?.capturedFromIp || "—"}</div>
+                    {c.biometric?.capturedUserAgent && (
+                      <div style={{fontSize:9,color:C.muted,fontFamily:"monospace",lineHeight:1.3,marginTop:1}}>
+                        {String(c.biometric.capturedUserAgent).slice(0,100)}
+                      </div>
+                    )}
+                  </div>
+                  {/* Credential ID */}
+                  {c.biometric?.credentialId && (
+                    <div style={{gridColumn:"1 / -1"}}>
+                      <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Credential Fingerprint (cryptographic proof)</div>
+                      <div style={{fontSize:10,color:C.text,fontFamily:"monospace",wordBreak:"break-all"}}>{String(c.biometric.credentialId).slice(0,36)}…</div>
+                      <div style={{fontSize:9.5,color:C.muted,fontStyle:"italic",marginTop:2}}>
+                        Actual fingerprint template stayed inside the device TPM and was never transmitted or stored — privacy preserved per IT-Act DPDP Sensitive Personal Data provisions.
+                      </div>
+                    </div>
+                  )}
                 </div>
-                {c.staffSignature || c.signedByName ? (
-                  <div style={{fontSize:11,lineHeight:1.6,color:C.text}}>
-                    <div><b>Name:</b> {c.staffSignature?.userName || c.signedByName || "—"}</div>
-                    <div><b>Role:</b> {c.staffSignature?.userRole || c.signedByRole || "—"}</div>
-                    {c.staffSignature?.employeeId && <div><b>Emp ID:</b> {c.staffSignature.employeeId}</div>}
-                    {c.signedAt && <div><b>Signed at:</b> {fmtDT(c.signedAt)}</div>}
+
+                {/* Staff facilitator + signature image */}
+                <div style={{marginTop:14,paddingTop:12,borderTop:`1px dashed ${C.greenB}`,display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+                  <div>
+                    <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Explained By / Staff Facilitator</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.text}}>{c.staffSignature?.userName || c.signedByName || c.doctorName || "—"}</div>
+                    <div style={{fontSize:10.5,color:C.muted}}>{c.staffSignature?.userRole || c.signedByRole || c.doctorRegNo || "—"}</div>
+                    {(c.staffSignature?.signedAt || c.signedAt) && (
+                      <div style={{fontSize:10,color:C.muted,marginTop:2}}>
+                        E-signed at {new Date(c.staffSignature?.signedAt || c.signedAt).toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>Not signed yet</div>
-                )}
+                  {c.staffSignature?.signatureImage ? (
+                    <div>
+                      <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Staff Signature</div>
+                      <img src={c.staffSignature.signatureImage} alt="Staff signature"
+                        style={{height:50,maxWidth:220,border:`1px solid ${C.border}`,borderRadius:4,padding:3,background:"#fff"}}/>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Status</div>
+                      <div style={{fontSize:11,color:C.amber}}>⏳ Awaiting staff e-signature</div>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.greenB}`,textAlign:"center",fontSize:9.5,color:C.muted,fontStyle:"italic"}}>
+                  This consent form is valid as per NABH Standards (PRE.3) · Authenticated electronically per IT-Act 2000 Sec. 3A — paper signature not required
+                </div>
               </div>
-            </div>
+            ) : (
+              <div style={{border:`1px dashed ${C.border}`,borderRadius:8,padding:"12px 14px",marginTop:8,background:"#fafafa",fontSize:11,color:C.muted,textAlign:"center"}}>
+                ⏳ Awaiting digital fingerprint capture and staff e-signature
+              </div>
+            )}
 
             {c.additionalNotes && (
               <div style={{marginTop:12,padding:"10px 12px",background:"#fffbeb",border:`1px solid ${C.amberB}`,borderRadius:8}}>
