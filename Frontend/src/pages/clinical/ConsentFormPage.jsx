@@ -1081,7 +1081,12 @@ export function ConsentFormPageContent({ selectedPatient }) {
     setAlternatives([...type.template.alternatives]);
     setConsentData(p => ({
       ...p, consentTitle: type.template.title,
-      doctorName: user?.fullName || user?.firstName || "",
+      // R7hr-74 — Respect the attending doctor already pre-filled from the
+      // loaded admission (`_doctorFromFound(found)` ran in either the patient-
+      // pick or search path). Only fall back to the logged-in user if nothing
+      // is there yet — clobbering this is what caused the preview to show
+      // "System Admin" instead of the actual attending consultant.
+      doctorName: p.doctorName || user?.fullName || user?.firstName || "",
     }));
     setView("form");
   };
@@ -1122,7 +1127,21 @@ export function ConsentFormPageContent({ selectedPatient }) {
           try {
             const { data } = JSON.parse(raw);
             if (data) {
-              if (data.consentData) setConsentData(p => ({ ...p, ...data.consentData }));
+              if (data.consentData) {
+                // R7hr-74 — Never let an older draft override the LIVE admission's
+                // identifiers (UHID/name/age/gender/IPD-no/ward-bed/admission-date/
+                // attending-doctor/department). Those should always reflect the
+                // patient record we just fetched — only user-typed clinical fields
+                // (guardian, witness, language, additional notes, consentBy…) and
+                // the consent title belong in the draft replay.
+                const {
+                  UHID: _u, patientName: _n, age: _a, gender: _g,
+                  ipdNo: _i, wardBed: _w, admissionDate: _d,
+                  doctorName: _dn, department: _dp,
+                  ...userTyped
+                } = data.consentData;
+                setConsentData(p => ({ ...p, ...userTyped }));
+              }
               if (data.body !== undefined) setBody(data.body);
               if (data.risks) setRisks(data.risks);
               if (data.benefits) setBenefits(data.benefits);
