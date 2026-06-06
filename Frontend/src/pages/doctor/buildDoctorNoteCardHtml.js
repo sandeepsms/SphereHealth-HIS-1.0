@@ -76,7 +76,7 @@ const COMPACT_GRID_CSS = `<style>
      Normal / E4 V5 M6 / B/L equal etc.), so 3 columns pack tighter
      without truncation. All other sections (History, Diagnosis,
      Investigations & Plan) stay 2-column because their values are
-     longer free text. `.full` still spans the full row regardless. */
+     longer free text. The .full class still spans the full row. */
   .dfx-grid--3col{grid-template-columns:1fr 1fr 1fr;gap:4px 14px}
   .dfx-grid .lbl{font-weight:800;color:#1e293b;font-size:11px;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:2px}
   .dfx-grid .val{color:#0f172a;font-size:11.5px;white-space:pre-wrap}
