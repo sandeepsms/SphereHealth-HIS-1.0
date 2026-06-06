@@ -3956,16 +3956,24 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             </Field>
           </Section>
 
-          {/* ── R7hr-59 · Structured Investigations (OPD-style) ── */}
+          {/* ── R7hr-59 · Structured Investigations (OPD-style)
+              R7hr-67 polish: subtitle line matches Diagnosis card,
+              urgency dot in form + table, auto-sized + Add button so
+              text never clips, friendly empty state when 0 tests. */}
           <Section title="Investigations Ordered" icon="pi-list-check" color={C.purple} badge={`${invests.length} test${invests.length===1?"":"s"}`}>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
+              Order labs / imaging / procedures — Routine · Urgent · STAT
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 1.2fr 36px", gap: 8, alignItems: "end" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 130px 1.4fr auto", gap: 8, alignItems: "end" }}>
                 <Field label="Test / Investigation Name">
                   <input id="ipd-inv-name" placeholder="e.g. CBC, LFT, RFT, ECG, USG Abdomen…" className="his-field" />
                 </Field>
                 <Field label="Urgency">
                   <select id="ipd-inv-urg" className="his-field" defaultValue="ROUTINE">
-                    <option>ROUTINE</option><option>STAT</option><option>URGENT</option>
+                    <option value="ROUTINE">Routine</option>
+                    <option value="URGENT">Urgent</option>
+                    <option value="STAT">STAT</option>
                   </select>
                 </Field>
                 <Field label="Instructions">
@@ -3978,30 +3986,57 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                   if (!n.value.trim()) return;
                   setInvests(prev => [...prev, { name: n.value.trim(), urgency: u.value, instructions: x.value.trim() }]);
                   n.value = ""; x.value = ""; u.value = "ROUTINE"; n.focus();
-                }} className="his-btn his-btn--primary" style={{ height: 36 }}>+ Add</button>
+                }} style={{
+                  height: 38, padding: "0 18px", minWidth: 96,
+                  border: "none", borderRadius: 8,
+                  background: C.purple, color: "white",
+                  fontFamily: "inherit", fontSize: 12.5, fontWeight: 700,
+                  cursor: "pointer", whiteSpace: "nowrap",
+                  boxShadow: `0 1px 2px ${C.purple}30`,
+                }}>+ Add Test</button>
               </div>
-              {invests.length > 0 && (
-                <div style={{ overflowX: "auto" }}>
+              {invests.length === 0 ? (
+                <div style={{
+                  padding: "14px 16px", borderRadius: 10,
+                  background: `${C.purple}08`, border: `1px dashed ${C.purple}40`,
+                  textAlign: "center", fontSize: 12, color: C.muted, fontStyle: "italic",
+                }}>
+                  <i className="pi pi-info-circle" style={{ marginRight: 6, color: C.purple }} />
+                  No investigations ordered yet — type a test name above and click "+ Add Test".
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: 10 }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead><tr style={{ background: "#f8fafc" }}>
+                    <thead><tr style={{ background: `${C.purple}08` }}>
                       {["#", "Investigation", "Urgency", "Instructions", ""].map(h => (
-                        <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", borderBottom: `1.5px solid ${C.border}` }}>{h}</th>
+                        <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.purple, textTransform: "uppercase", letterSpacing: ".6px", borderBottom: `1.5px solid ${C.purple}20` }}>{h}</th>
                       ))}
                     </tr></thead>
                     <tbody>
-                      {invests.map((inv, i) => (
-                        <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-                          <td style={{ padding: "6px 10px", fontSize: 12, fontWeight: 700, color: C.muted }}>{i+1}</td>
-                          <td style={{ padding: "6px 10px", fontSize: 12, fontWeight: 600 }}>{inv.name}</td>
-                          <td style={{ padding: "6px 10px", fontSize: 11 }}>
-                            <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 8, background: inv.urgency === "STAT" ? "#fef2f2" : inv.urgency === "URGENT" ? "#fef3c7" : "#f1f5f9", color: inv.urgency === "STAT" ? "#b91c1c" : inv.urgency === "URGENT" ? "#a16207" : "#475569", fontWeight: 700 }}>{inv.urgency || "ROUTINE"}</span>
-                          </td>
-                          <td style={{ padding: "6px 10px", fontSize: 11, color: C.muted }}>{inv.instructions || "—"}</td>
-                          <td style={{ padding: "6px 10px", textAlign: "right" }}>
-                            <button type="button" onClick={() => setInvests(prev => prev.filter((_, j) => j !== i))} title="Remove" style={{ border: "none", background: "transparent", cursor: "pointer", color: "#dc2626", fontWeight: 800 }}>✕</button>
-                          </td>
-                        </tr>
-                      ))}
+                      {invests.map((inv, i) => {
+                        const urgColor = inv.urgency === "STAT" ? "#b91c1c"
+                                      : inv.urgency === "URGENT" ? "#a16207"
+                                      : "#475569";
+                        const urgBg    = inv.urgency === "STAT" ? "#fef2f2"
+                                      : inv.urgency === "URGENT" ? "#fef3c7"
+                                      : "#f1f5f9";
+                        return (
+                          <tr key={i} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "white" }}>
+                            <td style={{ padding: "8px 12px", fontSize: 12, fontWeight: 700, color: C.muted, width: 32 }}>{i+1}</td>
+                            <td style={{ padding: "8px 12px", fontSize: 12.5, fontWeight: 600, color: C.text }}>{inv.name}</td>
+                            <td style={{ padding: "8px 12px", fontSize: 11 }}>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 999, background: urgBg, color: urgColor, fontWeight: 700, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: urgColor, flexShrink: 0 }} />
+                                {inv.urgency || "Routine"}
+                              </span>
+                            </td>
+                            <td style={{ padding: "8px 12px", fontSize: 11.5, color: C.muted }}>{inv.instructions || "—"}</td>
+                            <td style={{ padding: "8px 12px", textAlign: "right", width: 36 }}>
+                              <button type="button" onClick={() => setInvests(prev => prev.filter((_, j) => j !== i))} title="Remove" style={{ border: "none", background: "transparent", cursor: "pointer", color: "#dc2626", fontWeight: 800, fontSize: 14 }}>✕</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -4009,13 +4044,25 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             </div>
           </Section>
 
-          {/* ── R7hr-59 · Prescription (shared PrescriptionPanel) ── */}
+          {/* ── R7hr-59 · Prescription (shared PrescriptionPanel)
+              R7hr-67 polish: subtitle bar above the panel for visual
+              parity with Diagnosis. PrescriptionPanel itself is shared
+              with OPD so we don't touch internals — just wrap better. */}
           <Section title="Prescription / Medications" icon="pi-file-edit" color={C.green} badge={`${meds.length} drug${meds.length===1?"":"s"}`}>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
+              Inpatient medications — drug · dose · frequency · meal · duration · route
+            </div>
             <PrescriptionPanel value={meds} onChange={setMeds} />
           </Section>
 
-          {/* ── R7hr-59 · Infusion / IV Fluids (shared InfusionPanel) ── */}
+          {/* ── R7hr-59 · Infusion / IV Fluids (shared InfusionPanel)
+              R7hr-67 polish: subtitle bar. InfusionPanel internals stay
+              untouched (shared with OPD); HAM auto-tag banner lives
+              inside the panel. */}
           <Section title="Infusion / IV Fluids" icon="pi-bolt" color={C.teal} badge={`${infusions.length} order${infusions.length===1?"":"s"}`}>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
+              IV fluids / drips — routes to nurse's Infusion Orders & Monitoring tab on save
+            </div>
             <InfusionPanel value={infusions} onChange={setInfusions} />
           </Section>
 
