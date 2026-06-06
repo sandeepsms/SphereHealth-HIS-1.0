@@ -52,6 +52,25 @@ const CAT_PILL = {
   OTHER:        { bg: C.subtle,  fg: C.muted  },
 };
 
+// ── Doctor-order type pill colour map (12 enum values) ─────────
+// Surfaces the new `doctorOrderCategory` column on the service
+// master so admins can see which billable lines flow into the
+// doctor-order flow (Pharmacy / Lab / Radiology / etc.).
+const DOC_ORDER_PILL = {
+  Medication:        { bg: C.purpleL, fg: C.purple   },
+  IV_Fluid:          { bg: C.blueL,   fg: C.blue     },
+  Lab:               { bg: C.tealL,   fg: C.teal     },
+  Radiology:         { bg: "#eef2ff", fg: "#4338ca"  }, // indigo
+  Procedure:         { bg: C.amberL,  fg: C.amber    },
+  BloodTransfusion:  { bg: C.redL,    fg: "#b91c1c"  },
+  Diet:              { bg: C.greenL,  fg: "#15803d"  },
+  Oxygen:            { bg: "#ecfeff", fg: "#0e7490"  }, // cyan
+  Physiotherapy:     { bg: "#fdf2f8", fg: "#be185d"  }, // pink
+  Activity:          { bg: C.orangeL, fg: C.orange   },
+  Nursing:           { bg: "#fff1f2", fg: "#be123c"  }, // rose
+  Consultation:      { bg: "#f1f5f9", fg: C.slate    }, // slate
+};
+
 // Inline HIS pill (used for domain / category / status badges).
 const Pill = ({ map, value }) => {
   const c = (map && map[value]) || { bg: C.subtle, fg: C.muted };
@@ -152,12 +171,37 @@ const BILLING_TYPES = [
 // CASH auto-set hoti hai service create pe (defaultPrice se) — yahan sirf TPA/CORPORATE
 const TARIFF_TYPES = ["TPA", "CORPORATE"].map((v) => ({ label: v, value: v }));
 
+// 12 doctor-order categories — drives which orderable group a service
+// flows into (Pharmacy / Lab / Radiology / etc.). Optional on every
+// service; null means "not part of doctor-order flow".
+const DOC_ORDER_CATEGORIES = [
+  "Medication",
+  "IV_Fluid",
+  "Lab",
+  "Radiology",
+  "Procedure",
+  "BloodTransfusion",
+  "Diet",
+  "Oxygen",
+  "Physiotherapy",
+  "Activity",
+  "Nursing",
+  "Consultation",
+];
+const DOC_ORDER_OPTIONS = DOC_ORDER_CATEGORIES.map((v) => ({
+  label: v.replace(/_/g, " "),
+  value: v,
+}));
+
 // ── Blank form ─────────────────────────────────────────────────
 const BLANK_SVC = {
   serviceCode: "",
   serviceName: "",
   domain: "OPD",
   category: "REGISTRATION",
+  // Optional — surfaces this service in the matching doctor-order
+  // group (Pharmacy, Lab, Radiology, …). null = not orderable.
+  doctorOrderCategory: null,
   billingType: "ONE_TIME",
   defaultPrice: 0,
   isAutoCharged: false,
@@ -201,6 +245,7 @@ export default function ServiceMasterManager() {
   const [filters, setFilters] = useState({
     category: null,
     domain: null,
+    doctorOrderCategory: null,
     search: "",
   });
 
@@ -223,6 +268,7 @@ export default function ServiceMasterManager() {
         limit: 200,
         ...(filters.category && { category: filters.category }),
         ...(filters.domain && { domain: filters.domain }),
+        ...(filters.doctorOrderCategory && { doctorOrderCategory: filters.doctorOrderCategory }),
         ...(filters.search && { search: filters.search }),
       };
       const result = await billing.getAllServices(params);
@@ -285,6 +331,7 @@ export default function ServiceMasterManager() {
       serviceName: svc.serviceName,
       domain: svc.domain,
       category: svc.category,
+      doctorOrderCategory: svc.doctorOrderCategory || null,
       billingType: svc.billingType,
       defaultPrice: svc.defaultPrice,
       isAutoCharged: svc.isAutoCharged,
@@ -593,9 +640,36 @@ export default function ServiceMasterManager() {
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
-            {(filters.search || filters.domain || filters.category) && (
+            {/* Doctor-order type filter — adds ?doctorOrderCategory=<v>
+               to the list query so admins can scope to just the
+               Medication / Lab / Radiology / … bucket. */}
+            <select
+              value={filters.doctorOrderCategory ?? ""}
+              onChange={(e) => setFilters({ ...filters, doctorOrderCategory: e.target.value || null })}
+              style={{
+                minWidth: 190,
+                height: 42,
+                padding: "0 14px",
+                border: `1.5px solid ${C.border}`,
+                borderRadius: 9,
+                fontSize: 13,
+                fontFamily: "'DM Sans', sans-serif",
+                color: filters.doctorOrderCategory ? C.text : "#94a3b8",
+                background: "#fff",
+                outline: "none",
+                cursor: "pointer",
+                appearance: "auto",
+                boxSizing: "border-box",
+              }}
+            >
+              <option value="">All Doctor Order Types</option>
+              {DOC_ORDER_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            {(filters.search || filters.domain || filters.category || filters.doctorOrderCategory) && (
               <button
-                onClick={() => setFilters({ category: null, domain: null, search: "" })}
+                onClick={() => setFilters({ category: null, domain: null, doctorOrderCategory: null, search: "" })}
                 style={{
                   padding: "7px 12px", background: "#fff", color: C.muted,
                   border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 11,
@@ -631,12 +705,12 @@ export default function ServiceMasterManager() {
             <div style={{ padding: 48, textAlign: "center", color: C.muted }}>
               <i className="pi pi-inbox" style={{ fontSize: 36, color: "#cbd5e1" }} />
               <div style={{ marginTop: 12, fontSize: 14, fontWeight: 600 }}>
-                {filters.search || filters.domain || filters.category
+                {filters.search || filters.domain || filters.category || filters.doctorOrderCategory
                   ? "No services match your filters."
                   : "No services yet."}
               </div>
               <div style={{ marginTop: 4, fontSize: 12 }}>
-                {filters.search || filters.domain || filters.category
+                {filters.search || filters.domain || filters.category || filters.doctorOrderCategory
                   ? "Try clearing the filters above."
                   : "Click \"Seed Default Data\" or \"+ Add Service\" to begin."}
               </div>
@@ -667,6 +741,19 @@ export default function ServiceMasterManager() {
             header="Category"
             body={(r) => <Pill map={CAT_PILL} value={r.category} />}
             headerStyle={{ ...COL_HEADER_STYLE, width: 130 }}
+            bodyStyle={COL_BODY_STYLE}
+          />
+          {/* Doctor-order type pill — null shows muted em-dash so the
+             column is scannable; mapped values use a 12-colour palette
+             aligned with the chip palette elsewhere in the HIS. */}
+          <Column
+            header="Doctor Order Type"
+            body={(r) =>
+              r.doctorOrderCategory
+                ? <Pill map={DOC_ORDER_PILL} value={r.doctorOrderCategory} />
+                : <span style={{ color: C.muted }}>—</span>
+            }
+            headerStyle={{ ...COL_HEADER_STYLE, width: 150 }}
             bodyStyle={COL_BODY_STYLE}
           />
           <Column
@@ -883,6 +970,24 @@ export default function ServiceMasterManager() {
               className="p-inputtext-sm"
               style={{ width: "100%" }}
             />
+          </div>
+          {/* Doctor-order type — optional. Sets which doctor-order bucket
+             this service surfaces in (Pharmacy / Lab / Radiology / …).
+             Leave blank for non-orderable lines (room rent, consult fee). */}
+          <div style={{ gridColumn: "span 2" }}>
+            <label style={HIS_LABEL}>Doctor Order Type (optional)</label>
+            <Dropdown
+              value={svcForm.doctorOrderCategory}
+              options={DOC_ORDER_OPTIONS}
+              onChange={(e) => setSvcForm({ ...svcForm, doctorOrderCategory: e.value })}
+              placeholder="— Not applicable —"
+              showClear
+              className="p-inputtext-sm"
+              style={{ width: "100%" }}
+            />
+            <small style={{ color: C.muted, fontSize: 11 }}>
+              Flags which doctor-order group this service belongs to. Leave blank for non-orderable lines (room rent, consult fee, registration).
+            </small>
           </div>
         </div>
 

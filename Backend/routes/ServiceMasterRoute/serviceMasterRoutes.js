@@ -26,6 +26,11 @@ router.get("/grouped",        requireAction("services.read"), ctrl.getGrouped); 
 router.get ("/price-change-requests",          requireAction("departments.write"), ctrl.listPriceChangeRequests);
 router.post("/price-change-requests/:id/approve", validateObjectIdParam("id"), requireAction("departments.write"), ctrl.approvePriceChangeRequest);
 router.post("/price-change-requests/:id/reject",  validateObjectIdParam("id"), requireAction("departments.write"), ctrl.rejectPriceChangeRequest);
+// R7hr-A2: doctor-order pad lookup. MUST sit above /:id for the same
+// reason as /price-change-requests above — Express matches the first
+// declared route, so a literal /lookup would otherwise be eaten by /:id
+// and trip validateObjectIdParam. `services.read` mirrors getAll.
+router.get("/lookup",         requireAction("services.read"), ctrl.lookup); // GET  /api/services/lookup?doctorOrderCategory=Lab&q=cbc&limit=20
 router.get("/",               requireAction("services.read"), ctrl.getAll); // GET  /api/services?category=ROOM&domain=IPD
 router.get("/:id/pricing",    validateObjectIdParam("id"), requireAction("services.read"), ctrl.getPricing); // GET  /api/services/:id/pricing
 router.get("/:id",            validateObjectIdParam("id"), requireAction("services.read"), ctrl.getById); // GET  /api/services/:id

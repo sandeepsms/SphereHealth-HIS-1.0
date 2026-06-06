@@ -452,6 +452,7 @@ const SERVICES = [
     isAutoCharged: false,
     unitLabel: "one time",
     displayOrder: 409,
+    doctorOrderCategory: "Nursing",
   },
   {
     serviceCode: "IPD-NUR-010",
@@ -465,6 +466,7 @@ const SERVICES = [
     isAutoCharged: false,
     unitLabel: "one time",
     displayOrder: 410,
+    doctorOrderCategory: "Nursing",
   },
   {
     serviceCode: "IPD-NUR-011",
@@ -876,6 +878,7 @@ const SERVICES = [
     isTaxable: true,
     taxPercentage: 18,
     hsnSacCode: "999316",
+    doctorOrderCategory: "Consultation",
   },
   {
     serviceCode: "IPD-SUP-003",
@@ -894,6 +897,7 @@ const SERVICES = [
     isTaxable: true,
     taxPercentage: 18,
     hsnSacCode: "999316",
+    doctorOrderCategory: "Diet",
   },
   // R7bm-F10 / R7bl seed-add: IPD physiotherapy session — referenced by
   // services/Clinical/physioService.js, models/Clinical/PhysioSessionModel.js,
@@ -919,6 +923,7 @@ const SERVICES = [
     hsnSacCode: "999316",
     serviceType: "procedure",
     chargeableBy: ["Doctor", "Nurse"],
+    doctorOrderCategory: "Physiotherapy",
   },
   {
     serviceCode: "IPD-SUP-004",
@@ -1126,6 +1131,7 @@ const SERVICES = [
     isAutoCharged: false,
     unitLabel: "per visit",
     displayOrder: 1201,
+    doctorOrderCategory: "Consultation",
   },
   {
     serviceCode: "OPD-CON-002",
@@ -1139,6 +1145,7 @@ const SERVICES = [
     isAutoCharged: false,
     unitLabel: "per visit",
     displayOrder: 1202,
+    doctorOrderCategory: "Consultation",
   },
   {
     serviceCode: "OPD-CON-003",
@@ -1152,6 +1159,7 @@ const SERVICES = [
     isAutoCharged: false,
     unitLabel: "per visit",
     displayOrder: 1203,
+    doctorOrderCategory: "Consultation",
   },
   {
     serviceCode: "OPD-CON-004",
@@ -1165,6 +1173,7 @@ const SERVICES = [
     isAutoCharged: false,
     unitLabel: "per visit",
     displayOrder: 1204,
+    doctorOrderCategory: "Consultation",
   },
   {
     serviceCode: "OPD-CON-005",
@@ -1178,6 +1187,7 @@ const SERVICES = [
     isAutoCharged: false,
     unitLabel: "per visit",
     displayOrder: 1205,
+    doctorOrderCategory: "Consultation",
   },
   {
     serviceCode: "OPD-CON-006",
@@ -1191,6 +1201,7 @@ const SERVICES = [
     isAutoCharged: false,
     unitLabel: "per session",
     displayOrder: 1206,
+    doctorOrderCategory: "Consultation",
   },
 
   // ────────────────────────────────────────────────────────────
@@ -1580,6 +1591,7 @@ const SERVICES = [
     isAutoCharged: false,
     unitLabel: "per hour",
     displayOrder: 2004,
+    doctorOrderCategory: "Oxygen",
   },
   {
     serviceCode: "ER-NUR-001",
@@ -1681,21 +1693,64 @@ const SERVICES = [
   { serviceCode: "NURSING-DAYCARE",     serviceName: "Nursing — Day Care (Daily)",        domain: "DAYCARE", category: "NURSING", applicableTo: ["DAYCARE"], billingType: "PER_DAY", defaultPrice: 150, isAutoCharged: true, unitLabel: "per day", displayOrder: 9037 },
 
   // ── ER triage + OPD consultation + Doctor visits ─────────────────
-  { serviceCode: "ER-TRIAGE",       serviceName: "Emergency Triage Charge",       domain: "EMERGENCY", category: "CONSULTATION", applicableTo: ["EMERGENCY"], billingType: "ONE_TIME",  defaultPrice: 500,  isAutoCharged: true, unitLabel: "one time", displayOrder: 9040 },
-  { serviceCode: "OPD-CON",         serviceName: "OPD Consultation Fee",          domain: "OPD",       category: "CONSULTATION", applicableTo: ["OPD"],       billingType: "PER_VISIT", defaultPrice: 500, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9041 },
-  { serviceCode: "CON-001",         serviceName: "Doctor Visit / Assessment",     domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD", "DAYCARE"], billingType: "PER_VISIT", defaultPrice: 400, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9042 },
-  { serviceCode: "DOC-CONSULT",     serviceName: "Doctor Consultation",           domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 500, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9043 },
-  { serviceCode: "DOC-MORN-ROUND",  serviceName: "Doctor Morning Round",          domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 400, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9044 },
-  { serviceCode: "DOC-EVE-ROUND",   serviceName: "Doctor Evening Round",          domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 400, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9045 },
-  { serviceCode: "DOC-NIGHT-ROUND", serviceName: "Doctor Night Round",            domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 500, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9046 },
-  { serviceCode: "DOC-ICU-VISIT",   serviceName: "Doctor ICU Visit",              domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 800, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9047 },
+  { serviceCode: "ER-TRIAGE",       serviceName: "Emergency Triage Charge",       domain: "EMERGENCY", category: "CONSULTATION", applicableTo: ["EMERGENCY"], billingType: "ONE_TIME",  defaultPrice: 500,  isAutoCharged: true, unitLabel: "one time", displayOrder: 9040, doctorOrderCategory: "Consultation" },
+  { serviceCode: "OPD-CON",         serviceName: "OPD Consultation Fee",          domain: "OPD",       category: "CONSULTATION", applicableTo: ["OPD"],       billingType: "PER_VISIT", defaultPrice: 500, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9041, doctorOrderCategory: "Consultation" },
+  { serviceCode: "CON-001",         serviceName: "Doctor Visit / Assessment",     domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD", "DAYCARE"], billingType: "PER_VISIT", defaultPrice: 400, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9042, doctorOrderCategory: "Consultation" },
+  { serviceCode: "DOC-CONSULT",     serviceName: "Doctor Consultation",           domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 500, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9043, doctorOrderCategory: "Consultation" },
+  { serviceCode: "DOC-MORN-ROUND",  serviceName: "Doctor Morning Round",          domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 400, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9044, doctorOrderCategory: "Consultation" },
+  { serviceCode: "DOC-EVE-ROUND",   serviceName: "Doctor Evening Round",          domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 400, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9045, doctorOrderCategory: "Consultation" },
+  { serviceCode: "DOC-NIGHT-ROUND", serviceName: "Doctor Night Round",            domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 500, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9046, doctorOrderCategory: "Consultation" },
+  { serviceCode: "DOC-ICU-VISIT",   serviceName: "Doctor ICU Visit",              domain: "IPD",       category: "DOCTOR",       applicableTo: ["IPD"],       billingType: "PER_VISIT", defaultPrice: 800, isAutoCharged: true, unitLabel: "per visit", displayOrder: 9047, doctorOrderCategory: "Consultation" },
 
   // ── Engine-fired nursing codes ───────────────────────────────────
-  { serviceCode: "NRS-001",  serviceName: "IV Cannulation",                domain: "IPD", category: "NURSING", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_PROCEDURE", defaultPrice: 150, isAutoCharged: true, unitLabel: "per procedure", displayOrder: 9050 },
-  { serviceCode: "NRS-004",  serviceName: "Wound Dressing (Nurse)",        domain: "IPD", category: "NURSING", applicableTo: ["IPD", "DAYCARE", "OPD"], billingType: "PER_PROCEDURE", defaultPrice: 200, isAutoCharged: true, unitLabel: "per procedure", displayOrder: 9051 },
-  { serviceCode: "NRS-005",  serviceName: "Skin Care / Pressure Care",     domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_PROCEDURE", defaultPrice: 100, isAutoCharged: true, unitLabel: "per procedure", displayOrder: 9052 },
-  { serviceCode: "NRS-009",  serviceName: "Vitals Monitoring (Daily)",     domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_DAY",       defaultPrice: 100, isAutoCharged: true, unitLabel: "per day",       displayOrder: 9053 },
-  { serviceCode: "NRS-BLD",  serviceName: "Blood Transfusion (Nurse)",     domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_UNIT",      defaultPrice: 500, isAutoCharged: false, unitLabel: "per unit",     displayOrder: 9054 },
+  { serviceCode: "NRS-001",  serviceName: "IV Cannulation",                domain: "IPD", category: "NURSING", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_PROCEDURE", defaultPrice: 150, isAutoCharged: true, unitLabel: "per procedure", displayOrder: 9050, doctorOrderCategory: "Nursing" },
+  { serviceCode: "NRS-004",  serviceName: "Wound Dressing (Nurse)",        domain: "IPD", category: "NURSING", applicableTo: ["IPD", "DAYCARE", "OPD"], billingType: "PER_PROCEDURE", defaultPrice: 200, isAutoCharged: true, unitLabel: "per procedure", displayOrder: 9051, doctorOrderCategory: "Nursing" },
+  { serviceCode: "NRS-005",  serviceName: "Skin Care / Pressure Care",     domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_PROCEDURE", defaultPrice: 100, isAutoCharged: true, unitLabel: "per procedure", displayOrder: 9052, doctorOrderCategory: "Nursing" },
+  { serviceCode: "NRS-009",  serviceName: "Vitals Monitoring (Daily)",     domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_DAY",       defaultPrice: 100, isAutoCharged: true, unitLabel: "per day",       displayOrder: 9053, doctorOrderCategory: "Nursing" },
+  { serviceCode: "NRS-BLD",  serviceName: "Blood Transfusion (Nurse)",     domain: "IPD", category: "NURSING", applicableTo: ["IPD"], billingType: "PER_UNIT",      defaultPrice: 500, isAutoCharged: false, unitLabel: "per unit",     displayOrder: 9054, doctorOrderCategory: "BloodTransfusion" },
+
+  // ════════════════════════════════════════════════════════════════
+  // R7hr-83 / Phase A5 — Doctor-Order starter rows for empty
+  // categories. These give the Phase B autocomplete a starter list
+  // for categories that the catalogue above doesn't already cover
+  // (Diet, Oxygen, Physiotherapy, Activity, Nursing care, Consultation,
+  // IV_Fluid). Upserts in seedServices() are $setOnInsert, so existing
+  // rows with the same serviceCode are left untouched.
+  // ════════════════════════════════════════════════════════════════
+
+  // ── Diet ────────────────────────────────────────────────────────
+  { serviceCode: "DIET-REG",   serviceName: "Regular Diet",   domain: "IPD", category: "SUPPORT", subCategory: "Diet", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 150, isAutoCharged: false, unitLabel: "per day", displayOrder: 9100, doctorOrderCategory: "Diet" },
+  { serviceCode: "DIET-DIAB",  serviceName: "Diabetic Diet",  domain: "IPD", category: "SUPPORT", subCategory: "Diet", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 200, isAutoCharged: false, unitLabel: "per day", displayOrder: 9101, doctorOrderCategory: "Diet" },
+  { serviceCode: "DIET-RENAL", serviceName: "Renal Diet",     domain: "IPD", category: "SUPPORT", subCategory: "Diet", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 250, isAutoCharged: false, unitLabel: "per day", displayOrder: 9102, doctorOrderCategory: "Diet" },
+
+  // ── Oxygen ──────────────────────────────────────────────────────
+  { serviceCode: "OXY-NASAL", serviceName: "Nasal Cannula O2",          domain: "IPD", category: "NURSING", subCategory: "Oxygen", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_HOUR", defaultPrice: 50,   isAutoCharged: false, unitLabel: "per hour", displayOrder: 9110, doctorOrderCategory: "Oxygen" },
+  { serviceCode: "OXY-MASK",  serviceName: "Face Mask O2",              domain: "IPD", category: "NURSING", subCategory: "Oxygen", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_HOUR", defaultPrice: 80,   isAutoCharged: false, unitLabel: "per hour", displayOrder: 9111, doctorOrderCategory: "Oxygen" },
+  { serviceCode: "OXY-HFNC",  serviceName: "HFNC (High-Flow Nasal Cannula)", domain: "IPD", category: "ICU", subCategory: "Oxygen", applicableTo: ["IPD", "EMERGENCY"], billingType: "PER_HOUR", defaultPrice: 500, isAutoCharged: false, unitLabel: "per hour", displayOrder: 9112, doctorOrderCategory: "Oxygen" },
+  { serviceCode: "OXY-VENT",  serviceName: "Mechanical Ventilation",    domain: "IPD", category: "ICU", subCategory: "Oxygen", applicableTo: ["IPD", "EMERGENCY"], billingType: "PER_HOUR", defaultPrice: 1500, isAutoCharged: false, unitLabel: "per hour", displayOrder: 9113, doctorOrderCategory: "Oxygen" },
+
+  // ── Physiotherapy ───────────────────────────────────────────────
+  { serviceCode: "PHYSIO-CHEST", serviceName: "Chest Physiotherapy",       domain: "IPD", category: "PROCEDURE", subCategory: "Physiotherapy", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_SESSION", defaultPrice: 200, isAutoCharged: false, unitLabel: "per session", displayOrder: 9120, doctorOrderCategory: "Physiotherapy" },
+  { serviceCode: "PHYSIO-MOB",   serviceName: "Mobilization Physiotherapy", domain: "IPD", category: "PROCEDURE", subCategory: "Physiotherapy", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_SESSION", defaultPrice: 250, isAutoCharged: false, unitLabel: "per session", displayOrder: 9121, doctorOrderCategory: "Physiotherapy" },
+  { serviceCode: "PHYSIO-RESP",  serviceName: "Respiratory Physiotherapy",  domain: "IPD", category: "PROCEDURE", subCategory: "Physiotherapy", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_SESSION", defaultPrice: 300, isAutoCharged: false, unitLabel: "per session", displayOrder: 9122, doctorOrderCategory: "Physiotherapy" },
+
+  // ── Activity ────────────────────────────────────────────────────
+  { serviceCode: "ACT-AMB", serviceName: "Ambulation Assistance",       domain: "IPD", category: "NURSING", subCategory: "Activity", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_SESSION", defaultPrice: 100, isAutoCharged: false, unitLabel: "per session", displayOrder: 9130, doctorOrderCategory: "Activity" },
+  { serviceCode: "ACT-PSV", serviceName: "Passive Range-of-Motion (ROM)", domain: "IPD", category: "NURSING", subCategory: "Activity", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_SESSION", defaultPrice: 150, isAutoCharged: false, unitLabel: "per session", displayOrder: 9131, doctorOrderCategory: "Activity" },
+
+  // ── Nursing care ────────────────────────────────────────────────
+  { serviceCode: "NURS-WOUND",     serviceName: "Wound Dressing (Nursing)", domain: "IPD", category: "NURSING", subCategory: "Bedside Care",  applicableTo: ["IPD", "DAYCARE", "OPD"], billingType: "PER_PROCEDURE", defaultPrice: 100, isAutoCharged: false, unitLabel: "per episode", displayOrder: 9140, doctorOrderCategory: "Nursing" },
+  { serviceCode: "NURS-VITALS-Q1H", serviceName: "Hourly Vitals Monitoring", domain: "IPD", category: "NURSING", subCategory: "Monitoring",   applicableTo: ["IPD"],          billingType: "PER_DAY",     defaultPrice: 50,  isAutoCharged: false, unitLabel: "per day",     displayOrder: 9141, doctorOrderCategory: "Nursing" },
+  { serviceCode: "NURS-IV-CARE",   serviceName: "IV Site Care",             domain: "IPD", category: "NURSING", subCategory: "Bedside Care", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY",    defaultPrice: 50,  isAutoCharged: false, unitLabel: "per day",     displayOrder: 9142, doctorOrderCategory: "Nursing" },
+
+  // ── Consultation (engine-side starters) ─────────────────────────
+  { serviceCode: "CON-EMERG",    serviceName: "Emergency Consultation", domain: "EMERGENCY", category: "CONSULTATION", subCategory: "Consultation", applicableTo: ["EMERGENCY"],         billingType: "PER_VISIT", defaultPrice: 500, isAutoCharged: false, unitLabel: "per visit", displayOrder: 9150, doctorOrderCategory: "Consultation" },
+  { serviceCode: "CON-FOLLOWUP", serviceName: "Follow-up Consultation", domain: "OPD",       category: "CONSULTATION", subCategory: "Consultation", applicableTo: ["OPD", "IPD"],         billingType: "PER_VISIT", defaultPrice: 300, isAutoCharged: false, unitLabel: "per visit", displayOrder: 9151, doctorOrderCategory: "Consultation" },
+
+  // ── IV Fluid ────────────────────────────────────────────────────
+  { serviceCode: "IVF-NS",  serviceName: "Normal Saline 500ml",            domain: "IPD", category: "PROCEDURE", subCategory: "IV Fluid", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_UNIT", defaultPrice: 80,  isAutoCharged: false, unitLabel: "per bottle", displayOrder: 9160, doctorOrderCategory: "IV_Fluid" },
+  { serviceCode: "IVF-RL",  serviceName: "Ringer Lactate 500ml",           domain: "IPD", category: "PROCEDURE", subCategory: "IV Fluid", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_UNIT", defaultPrice: 90,  isAutoCharged: false, unitLabel: "per bottle", displayOrder: 9161, doctorOrderCategory: "IV_Fluid" },
+  { serviceCode: "IVF-DNS", serviceName: "Dextrose Normal Saline 500ml",   domain: "IPD", category: "PROCEDURE", subCategory: "IV Fluid", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_UNIT", defaultPrice: 100, isAutoCharged: false, unitLabel: "per bottle", displayOrder: 9162, doctorOrderCategory: "IV_Fluid" },
 ];
 
 // ── Seed function ─────────────────────────────────────────────
