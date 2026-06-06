@@ -43,7 +43,17 @@ function getSteps(order) {
     return ["Consent Taken", "Patient Prepped", "Procedure Done"];
   }
   if (type === "Medication") {
-    return ["Prepared", "Administered"];
+    // R7hr-53 [P1-14] — prepend 'Acknowledged' so the medication step flow
+    // mirrors the explicit acknowledge → prepare → administer sequence used
+    // elsewhere on the chart. (Backend /step route must accept these names —
+    // see deferred note re: per-type step allowlist validation.)
+    return ["Acknowledged", "Prepared", "Administered"];
+  }
+  // R7hr-53 [P1-14] — IV_Fluid was falling through to the generic
+  // ['Acknowledged','Done'] flow, hiding bag-spike + monitoring milestones
+  // that the NABH IV register expects. Explicit branch restores the audit trail.
+  if (type === "IV_Fluid") {
+    return ["Acknowledged", "Bag-Spiked", "Started", "Monitoring", "Completed"];
   }
   if (type === "Diet") {
     return ["Ordered", "Prepared", "Delivered"];
@@ -521,8 +531,23 @@ export default function NurseOrdersPanel({ UHID, onConsentRequest, refreshTrigge
   };
 
   // Group orders into buckets
-  const newOrders     = displayOrders.filter(o => o.status === "Pending").sort((a,b) => a.priority === "STAT" ? -1 : b.priority === "STAT" ? 1 : 0);
-  const inProgressAll = displayOrders.filter(o => ["InProgress","OnHold","Acknowledged"].includes(o.status));
+  // R7hr-53 [P1-13] — priority-rank comparator with oldest-first tiebreaker.
+  // Pre-fix the sort was binary (STAT vs not), so Urgent ranked identically to
+  // Routine and queue order within a priority was non-deterministic.
+  const priorityRank = { STAT: 0, Urgent: 1, Routine: 2, Default: 3 };
+  const newOrders     = displayOrders.filter(o => o.status === "Pending").sort((a, b) => {
+    const ra = priorityRank[a.priority] ?? 3;
+    const rb = priorityRank[b.priority] ?? 3;
+    if (ra !== rb) return ra - rb;
+    // tiebreaker: oldest first
+    const ta = new Date(a.orderedAt || a.createdAt || 0).getTime();
+    const tb = new Date(b.orderedAt || b.createdAt || 0).getTime();
+    return ta - tb;
+  });
+  // R7hr-53 [P0-5] — add 'Active' (backend stamp for IV_Fluid) and 'Modified'
+  // (result of doctor 'modify' action) to the in-progress bucket so they
+  // don't silently disappear from the nurse panel.
+  const inProgressAll = displayOrders.filter(o => ["InProgress","OnHold","Acknowledged","Active","Modified"].includes(o.status));
   const inProgress    = inProgressAll.filter(todayActionable);
   const todayDone     = inProgressAll.filter(o => !todayActionable(o));
   const completed     = displayOrders.filter(o => o.status === "Completed");

@@ -751,12 +751,23 @@ function DoctorNotesContent({ selectedPatient }) {
                   hamFlag, twoNurseRequired: hamFlag, highRisk: hamFlag,
                   orderDetails: {
                     medicineName: inf.drugFluid, displayName: inf.drugFluid,
+                    fluidName: inf.drugFluid,
                     dose: inf.volume ? `${inf.volume}ml` : "",
                     route: "IV Infusion",
                     frequency: "Continuous",
                     rate: inf.rate, totalVolume: inf.volume,
                     dilution: inf.dilution, titrationGoal: inf.titrationGoal,
                     startTime: inf.startTime,
+                    // P1-10 — surface MAR/Treatment-Chart fields so nurse sees
+                    // "Dilute in N ml … infuse over M min" and the auto-I/O
+                    // hook can stamp diluent volume. IA infusion state does
+                    // not yet collect these (emptyInfRow lacks them); default
+                    // to "" so payload validates while keys remain present.
+                    dilutionVolume:     inf.dilutionVolume     ?? "",
+                    dilutionFluid:      inf.dilutionFluid      ?? "",
+                    infuseOverMinutes:  inf.infuseOverMinutes  ?? "",
+                    additives:          inf.additives          ?? "",
+                    accessSite:         inf.accessSite         ?? "",
                   },
                   orderedBy: doctorName, orderedByRole: "Doctor", orderedAt: new Date(),
                   currentRate: inf.rate,
@@ -2360,7 +2371,7 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
               <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
                 {isER
                   ? <EmergencyAssessmentPageContent selectedPatient={patient} onSign={handleAssessmentSigned} />
-                  : <IPDInitialAssessmentContent  selectedPatient={patient} onSign={handleAssessmentSigned} />}
+                  : <IPDInitialAssessmentContent  selectedPatient={patient} onSign={handleAssessmentSigned} defaultViewRole="doctor" />}
               </div>
             );
           })()}

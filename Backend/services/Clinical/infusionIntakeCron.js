@@ -121,24 +121,43 @@ async function tickOnce() {
         const remaining = total - alreadyInfused;
         if (remaining <= 0) {
           // Mark the order as Completed and let the nurse confirm. Best-effort,
-          // non-throwing.
+          // non-throwing. Use load + .save() so the DoctorOrderModel pre('save')
+          // hook enforces ALLOWED_TRANSITIONS — findByIdAndUpdate would bypass
+          // the state machine entirely and let an already-Stopped/Cancelled
+          // order flip back to Completed.
           try {
-            await DoctorOrder.findByIdAndUpdate(order._id, {
-              $set: {
-                status: "Completed",
-                infusionStopped: now,
-                stopReason: "Total volume infused (auto by cron)",
-              },
-              $push: {
-                auditLog: {
-                  step: "Infusion auto-stopped — totalVolume reached",
-                  doneBy: "SYSTEM",
-                  doneAt: now,
-                  notes: `cron sweep at ${bucket} — sum=${alreadyInfused}, total=${total}`,
-                },
-              },
-            });
-            completed++;
+            const orderDoc = await DoctorOrder.findById(order._id);
+            if (orderDoc && orderDoc.status !== "Completed") {
+              orderDoc.status = "Completed";
+              orderDoc.infusionStopped = now;
+              orderDoc.stopReason = "Total volume infused (auto by cron)";
+              orderDoc.statusChangedAt = now;
+              orderDoc.completedAt = now;
+              orderDoc.auditLog.push({
+                step: "Infusion auto-stopped — totalVolume reached",
+                doneBy: "SYSTEM",
+                doneAt: now,
+                notes: `cron sweep at ${bucket} — sum=${alreadyInfused}, total=${total}`,
+              });
+              await orderDoc.save();
+              completed++;
+              // Emit a clinical audit row so the surveyor can trace the
+              // auto-stop back to the cron sweep. Non-blocking — never let
+              // an audit failure unwind the status change.
+              try {
+                const { emitClinicalAudit } = require("../Compliance/clinicalAuditService");
+                await emitClinicalAudit({
+                  event: "STATUS_CHANGE",
+                  targetType: "DoctorOrder",
+                  targetId: orderDoc._id,
+                  UHID: orderDoc.UHID,
+                  admissionId: orderDoc.admissionId,
+                  patientId: orderDoc.patientId,
+                  actor: { _id: "SYSTEM", fullName: "infusion-intake-cron" },
+                  after: { status: "Completed", reason: "Total volume infused (auto by cron)" },
+                });
+              } catch (_) { /* silent */ }
+            }
           } catch (e) { /* leave as-is; nurse will see Completed flag next tick */ }
           continue;
         }

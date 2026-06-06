@@ -308,23 +308,59 @@ export default function ReceptionBilling() {
                currentContext: { type: "IPD", admissionNumber: adm } };
     }
 
-    // 2. No active IPD — look for today's OPD/Daycare/Emergency
-    const todayBills = bills.filter(b =>
-      b.visitType !== "IPD" && (isToday(b.createdAt) || isActiveStatus(b.billStatus)));
-    if (todayBills.length > 0) {
-      const past = bills.filter(b => !todayBills.includes(b));
+    // 2. No active IPD — scope to the CURRENT OPD/Daycare/ER visit.
+    //
+    // R7hr-53 — the previous filter (`isToday(createdAt) || isActiveStatus`)
+    // had a fatal OR: any old DRAFT/GENERATED/PARTIAL bill from a prior
+    // visit (same patient, different visitId) leaked into "Current Visit"
+    // because "GENERATED" is an active status. That meant when a patient
+    // was re-registered for a new OPD visit, the unpaid bill from their
+    // earlier visit kept appearing as if it were part of the new visit.
+    //
+    // Bills are linked to OPD via `b.visitId`, and patient.currentVisit._id
+    // is the latest OPD visit (probed at fetch time, see ~line 447). Scope
+    // currentBills strictly to that visitId. Safety fallback: legacy bills
+    // that never got a visitId stamped but were created TODAY still surface
+    // as current — covers walk-in service rows added before R7bw landed
+    // the visitId wiring. Older paid bills, and ALL bills from prior visits
+    // (even today's earlier visit), flow to History.
+    const cvId = patient?.currentVisit?._id
+              || patient?.currentVisit?.visitId
+              || patient?.currentVisit?.id
+              || null;
+    const cvKey = cvId ? String(cvId) : null;
+    const sameVisit = (b) => {
+      if (!cvKey) return false;
+      const bv = b.visitId?._id || b.visitId;
+      return bv ? String(bv) === cvKey : false;
+    };
+    const currentVisitBills = bills.filter(b =>
+      b.visitType !== "IPD" && (
+        sameVisit(b)
+        || (!b.visitId && isToday(b.createdAt))   // unlinked-today fallback
+      ));
+    // Enter the OPD branch if we either found visit-scoped bills OR we have
+    // a known current visit (so an empty Current Visit shows the correct
+    // empty state instead of dumping everything into History).
+    if (currentVisitBills.length > 0 || cvKey) {
+      const past = bills.filter(b => !currentVisitBills.includes(b));
       // OPD advances rarely have admission scoping — keep advances with no
       // admission OR ones created today as "current".
       const curAdv = advances.filter(a => !a.admission || isToday(a.createdAt) || isToday(a.paidAt));
       const pastAdv = advances.filter(a => !curAdv.includes(a));
-      return { currentBills: todayBills, pastBills: past, currentAdvances: curAdv, pastAdvances: pastAdv,
-               currentContext: { type: "OPD" } };
+      return { currentBills: currentVisitBills, pastBills: past,
+               currentAdvances: curAdv, pastAdvances: pastAdv,
+               currentContext: { type: "OPD", visitId: cvKey } };
     }
 
     // 3. No current visit at all
     return { currentBills: [], pastBills: bills, currentAdvances: [], pastAdvances: advances,
              currentContext: null };
-  }, [bills, advances]);
+    // R7hr-53 — depend on patient.currentVisit._id so the OPD branch
+    // re-evaluates after the async /opd/patient/:pid probe (line ~447)
+    // resolves and stamps patient.currentVisit. Without this dep, the
+    // filter runs once with currentVisit=undefined and never refreshes.
+  }, [bills, advances, patient?.currentVisit?._id]);
 
   // Pick the active list based on the toggle
   const displayBills    = showHistory ? pastBills    : currentBills;
@@ -1515,6 +1551,22 @@ export default function ReceptionBilling() {
     // R7aa: fall back to summing billItems when a bill's parent totals
     // are stale (recalcTotals never ran). Keeps the patient-level summary
     // strip honest even when individual bill rows have ₹0 grossAmount.
+    //
+    // R7hr-53 — Scope the KPI strip to the CURRENT VISIT's bills
+    // (currentBills), not the patient's all-time bills. Previously the
+    // KPIs summed every PatientBill row, so a fresh OPD visit with one
+    // ₹200 bill would still show Gross ₹850 / Paid ₹350 / Outstanding
+    // ₹500 because of two older bills sitting in History. That's a lie:
+    // no payment has been collected for THIS visit, and the action row
+    // (Take Advance / Add Charge / Collect All Dues / Settle All) all
+    // targets the current visit. Historical bills are informational —
+    // the KPIs must mirror what the action buttons actually act on.
+    //
+    // Outstanding bills from prior visits don't disappear; they're
+    // still visible (and collectible) under the History tab via the
+    // per-bill Full Payment / Partial Settlement controls. The KPI strip
+    // just stops conflating "patient's lifetime billing" with "this
+    // visit's billing position".
     const _eff = (b) => {
       const net = Number(b.netAmount || 0);
       if (net > 0) return { net, bal: Number(b.balanceAmount || 0) };
@@ -1522,7 +1574,22 @@ export default function ReceptionBilling() {
       const paid     = (b.payments   || []).reduce((s, p) => s + Number(p.amount    || 0), 0);
       return { net: itemsNet, bal: Math.max(0, itemsNet - paid) };
     };
-    const agg = bills.reduce((acc, b) => {
+    // R7hr-54 — Exclude VOIDED bills (CANCELLED / REFUNDED) from the
+    // financial aggregation. A cancelled bill is voided — it should not
+    // contribute to Gross / Net Payable / Paid even though the row
+    // still exists in the list for audit. Symptom: after the user
+    // cancels the only ₹200 bill on a new visit, KPIs were still
+    // showing Gross ₹200 / Paid ₹200 because the cancel flow stamps
+    // a balancing payment to zero the bill — which the aggregator
+    // then mis-read as "₹200 collected". Excluding voided statuses
+    // makes the KPI strip honest: no active bill → all zeros.
+    // The bill itself remains visible in the bill list so the
+    // receptionist can see the audit trail and reprint a void slip.
+    const VOID_STATUSES = ["CANCELLED", "REFUNDED"];
+    const isVoid = (b) => VOID_STATUSES.includes(b.billStatus);
+    const scope = currentBills;
+    const liveScope = scope.filter(b => !isVoid(b));
+    const agg = liveScope.reduce((acc, b) => {
       const { net, bal } = _eff(b);
       acc.gross += net;
       acc.due   += bal;
@@ -1532,11 +1599,11 @@ export default function ReceptionBilling() {
       gross:    agg.gross,
       due:      agg.due,
       paid:     agg.gross - agg.due,
-      bills:    bills.length,
-      open:     bills.filter(b => ["GENERATED", "PARTIAL"].includes(b.billStatus)).length,
-      drafts:   bills.filter(b => b.billStatus === "DRAFT").length,
+      bills:    liveScope.length,
+      open:     liveScope.filter(b => ["GENERATED", "PARTIAL"].includes(b.billStatus)).length,
+      drafts:   liveScope.filter(b => b.billStatus === "DRAFT").length,
     };
-  }, [bills]);
+  }, [currentBills]);
 
   return (
     <div className="rx-page" style={{ background: C.bg, minHeight: "100vh", padding: "16px 20px 60px", fontFamily: FONT_SANS }}>
@@ -2250,7 +2317,38 @@ export default function ReceptionBilling() {
                   onGenerate={() => generateBill(activeBill._id)}
                   onPay={() => setPayTarget(activeBill)}
                   onSettle={() => setSettleTarget(activeBill)}
-                  onPrint={() => printReceipt(activeBill)}
+                  onPrint={() => {
+                    // R7hr-55 — When the bill has been REFUNDED, Print
+                    // should issue the refund slip (RefundReceipt
+                    // template), NOT the original tax invoice — the
+                    // patient needs a document showing the money was
+                    // returned to them. We reconstruct refundInfo from
+                    // the latest negative payment row stamped by the
+                    // backend refund flow (paymentMode/amount/remarks/
+                    // receivedBy carry everything the slip needs). For
+                    // any other status (DRAFT/GENERATED/PARTIAL/PAID/
+                    // CANCELLED) fall through to the regular receipt.
+                    if (activeBill?.billStatus === "REFUNDED") {
+                      const refunds = (activeBill.payments || [])
+                        .filter(p => Number(p.amount) < 0);
+                      const last = refunds[refunds.length - 1];
+                      if (last) {
+                        const remarks = String(last.remarks || "");
+                        const reason = remarks
+                          .replace(/^REFUND\s*(?:→\s*advance\s+pool)?\s*:?\s*/i, "")
+                          .trim();
+                        printRefundReceipt(activeBill, {
+                          amount:        Math.abs(Number(last.amount)),
+                          mode:          last.paymentMode || "CASH",
+                          transactionId: last.transactionId || "",
+                          reason,
+                          refundedBy:    last.receivedBy || "Reception",
+                        });
+                        return;
+                      }
+                    }
+                    printReceipt(activeBill);
+                  }}
                   onRefund={() => setRefundTarget(activeBill)}
                   onCancel={() => setCancelTarget(activeBill)}
                   onAddService={() => setAddSvcTarget(activeBill)}

@@ -28,7 +28,12 @@ import Dashboard1 from "./pages/patient/Dashboard";
 // ── Lazy-loaded pages (downloaded on-demand) ────────────────────
 // PatientsTable deleted 2026-05-17 — superseded by PatientLookupPage's
 // "directory" view. The /allpatient route now mounts PatientLookupPage.
-const OPDPrint = lazy(() => import("./pages/OPD/OPDPrint"));
+// R7hr-56 — OPDPrint dropped. It generated stale back-dated "receipts"
+// from a patient probe instead of the actual bill, confusing cashiers.
+// The legitimate receipt for any visit is printed from Billing Counter
+// → Bill detail → Print, which routes through the unified openPrint()
+// pipeline and the variant-aware templates.
+// const OPDPrint = lazy(() => import("./pages/OPD/OPDPrint"));
 // B8-T07 — /ServiceAlldata route + ServiceAlldata lazy import removed.
 // ServiceAlldata.jsx was a TreeTable scaffold with hardcoded test data
 // ("sahil/Rahul/Kabir"), never linked from any sidebar/menu and not
@@ -472,7 +477,12 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
 
             {/* ── OPD ──────────────────────────────────────────── */}
-            <Route path="/opd/:UHID" element={<OPDPrint />} />
+            {/* R7hr-56 — /opd/:UHID (legacy OPDPrint) removed. It rendered
+                stale patient-level data with no link to the actual bill,
+                so receipts were back-dated. Cashiers now print receipts
+                from Billing Counter → bill detail → Print, which uses
+                the unified openPrint() + variant-aware template system. */}
+            <Route path="/opd/:UHID" element={<Navigate to="/reception-billing" replace />} />
             <Route path="/opd-visit" element={<OPList />} />
             {/* /opd/new moved to /reception (see below) */}
             <Route path="/opd/new" element={<Navigate to="/reception" replace />} />
