@@ -104,6 +104,59 @@ function ScoreBadge({ score, label, risk, color }) {
   );
 }
 
+/* ── R7hr-69 · Lab / Imaging / Procedure catalog for the
+       Investigations autocomplete. Order: most-common Indian IPD
+       admission workup first, then grouped specialty groups so the
+       filter feels "smart" — doctor types 2-3 letters and the right
+       test surfaces near the top. ─────────────────────────────────── */
+const LAB_TESTS = [
+  // Hematology
+  "CBC (Complete Blood Count)", "ESR", "PT / INR", "aPTT", "D-Dimer",
+  "Peripheral Smear", "Reticulocyte Count", "Bleeding Time", "Clotting Time",
+  // Biochemistry — daily ward workup
+  "LFT (Liver Function Tests)", "RFT (Renal Function Tests)",
+  "Electrolytes (Na / K / Cl)", "Serum Calcium", "Serum Magnesium",
+  "Serum Phosphorus", "Lipid Profile", "Random Blood Sugar (RBS)",
+  "Fasting Blood Sugar (FBS)", "Post-Prandial Blood Sugar (PPBS)",
+  "HbA1c", "Uric Acid", "Amylase", "Lipase", "CPK", "CPK-MB",
+  "Troponin I", "NT-proBNP", "Procalcitonin", "CRP", "Ferritin",
+  "Serum Iron / TIBC", "Vitamin D (25-OH)", "Vitamin B12", "Folate",
+  // Endocrine
+  "TSH", "Free T3", "Free T4", "Cortisol (8 AM)", "PTH",
+  "Serum Insulin (Fasting)", "HCG (Beta)",
+  // ABG / Blood Gas
+  "ABG (Arterial Blood Gas)", "VBG (Venous Blood Gas)", "Lactate",
+  // Microbiology / Culture
+  "Blood Culture & Sensitivity", "Urine Culture & Sensitivity",
+  "Sputum Culture & Sensitivity", "Stool Culture",
+  "Wound Swab Culture", "CSF Analysis", "Pleural Fluid Analysis",
+  "Ascitic Fluid Analysis",
+  // Serology
+  "HIV ELISA", "HBsAg", "Anti-HCV", "VDRL", "Dengue NS1 + IgM / IgG",
+  "Malaria Antigen (MP-MRDT)", "Typhi-Dot IgM", "Widal Test",
+  "COVID-19 RT-PCR", "Leptospira IgM", "Scrub Typhus IgM",
+  // Urine / Stool
+  "Urine Routine & Microscopy", "Urine Albumin-Creatinine Ratio",
+  "24-hr Urine Protein", "24-hr Urine Creatinine Clearance",
+  "Stool Routine & Microscopy", "Stool Occult Blood",
+  // Cardiac
+  "ECG (12-Lead)", "2D Echo", "Stress Test (TMT)", "Holter Monitoring",
+  // Radiology
+  "Chest X-Ray PA", "Chest X-Ray AP", "X-Ray KUB", "X-Ray Abdomen Erect",
+  "X-Ray (specify region)",
+  "USG Abdomen", "USG KUB", "USG Pelvis", "USG Whole Abdomen",
+  "USG Doppler — Lower Limb Venous", "USG Doppler — Carotid",
+  "CECT Head", "NCCT Head", "CECT Chest", "CECT Abdomen + Pelvis",
+  "HRCT Chest", "MRI Brain (Plain + Contrast)", "MRI Spine",
+  // Endoscopy / Procedures
+  "Upper GI Endoscopy", "Colonoscopy", "Bronchoscopy", "ERCP",
+  "FNAC (specify site)", "Biopsy (specify site)",
+  // Pulmonary / Neuro
+  "PFT (Pulmonary Function Test)", "Spirometry",
+  "EEG", "EMG", "Nerve Conduction Study (NCS)",
+];
+/* ─────────────────────────────────────────────────────── */
+
 /* ── MORSE FALL SCALE ──────────────────────────────── */
 const MORSE_ITEMS = [
   {
@@ -530,6 +583,17 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   const [meds,      setMeds]      = useState([]);   // PrescriptionPanel value
   const [invests,   setInvests]   = useState([]);   // [{ name, urgency?, instructions? }]
   const [infusions, setInfusions] = useState([]);   // InfusionPanel value
+  // R7hr-69 — Investigations picker: catalog autocomplete + multi-select
+  // chip flow. `invQuery` is the live input, `invPending` is the chip
+  // batch waiting to be committed, `invUrgency` + `invInstructions`
+  // apply to the whole batch on commit. `invSuggestIdx` drives keyboard
+  // nav inside the autocomplete dropdown.
+  const [invQuery,        setInvQuery]        = useState("");
+  const [invPending,      setInvPending]      = useState([]); // array of test-name strings
+  const [invUrgency,      setInvUrgency]      = useState("ROUTINE");
+  const [invInstructions, setInvInstructions] = useState("");
+  const [invShowSuggest,  setInvShowSuggest]  = useState(false);
+  const [invSuggestIdx,   setInvSuggestIdx]   = useState(-1);
   const [treatmentPlan, setTreatmentPlan] = useState("");
   const [followupNotes, setFollowupNotes] = useState("");
   const [dietAdvice, setDietAdvice]     = useState("");
@@ -3957,44 +4021,163 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── R7hr-59 · Structured Investigations (OPD-style)
-              R7hr-67 polish: subtitle line matches Diagnosis card,
-              urgency dot in form + table, auto-sized + Add button so
-              text never clips, friendly empty state when 0 tests. */}
+              R7hr-67 polish: subtitle line matches Diagnosis card.
+              R7hr-69: lab-catalog autocomplete + multi-pick chip flow
+              — doctor types "cbc", picks CBC → chip; types "lft",
+              picks LFT → chip; clicks "+ Add 2 Tests" → both commit
+              with the urgency + instructions set above. Free-text
+              entries also work — pressing Enter on any value not in
+              the catalog still chips it. */}
           <Section title="Investigations Ordered" icon="pi-list-check" color={C.purple} badge={`${invests.length} test${invests.length===1?"":"s"}`}>
             <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
-              Order labs / imaging / procedures — Routine · Urgent · STAT
+              Order labs / imaging / procedures — type to search, pick multiple, then click Add
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1.4fr 130px 1.4fr auto", gap: 8, alignItems: "end" }}>
                 <Field label="Test / Investigation Name">
-                  <input id="ipd-inv-name" placeholder="e.g. CBC, LFT, RFT, ECG, USG Abdomen…" className="his-field" />
+                  <div style={{ position: "relative" }}>
+                    <input
+                      value={invQuery}
+                      onChange={e => { setInvQuery(e.target.value); setInvShowSuggest(true); setInvSuggestIdx(-1); }}
+                      onFocus={() => setInvShowSuggest(true)}
+                      onBlur={() => setTimeout(() => setInvShowSuggest(false), 150)}
+                      onKeyDown={(e) => {
+                        const q = invQuery.trim().toLowerCase();
+                        const matches = q ? LAB_TESTS.filter(t => t.toLowerCase().includes(q)).slice(0, 8) : [];
+                        if (e.key === "ArrowDown") { e.preventDefault(); setInvSuggestIdx(i => Math.min(matches.length - 1, i + 1)); }
+                        else if (e.key === "ArrowUp") { e.preventDefault(); setInvSuggestIdx(i => Math.max(0, i - 1)); }
+                        else if (e.key === "Enter") {
+                          e.preventDefault();
+                          const pick = invSuggestIdx >= 0 && matches[invSuggestIdx]
+                            ? matches[invSuggestIdx]
+                            : invQuery.trim();
+                          if (!pick) return;
+                          if (!invPending.includes(pick)) setInvPending(prev => [...prev, pick]);
+                          setInvQuery(""); setInvSuggestIdx(-1); setInvShowSuggest(false);
+                        } else if (e.key === "Escape") { setInvShowSuggest(false); setInvSuggestIdx(-1); }
+                      }}
+                      placeholder="Type test name — CBC, LFT, ECG, USG…"
+                      className="his-field"
+                    />
+                    {invShowSuggest && invQuery.trim() && (() => {
+                      const q = invQuery.trim().toLowerCase();
+                      const matches = LAB_TESTS.filter(t => t.toLowerCase().includes(q)).slice(0, 8);
+                      const exact = matches.some(m => m.toLowerCase() === q);
+                      return (
+                        <div style={{
+                          position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4,
+                          background: "white", border: `1px solid ${C.border}`, borderRadius: 8,
+                          boxShadow: "0 8px 24px rgba(15,23,42,.12)",
+                          maxHeight: 280, overflowY: "auto", zIndex: 50,
+                        }}>
+                          {matches.length === 0 && !exact && (
+                            <div
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                const pick = invQuery.trim();
+                                if (pick && !invPending.includes(pick)) setInvPending(prev => [...prev, pick]);
+                                setInvQuery(""); setInvShowSuggest(false);
+                              }}
+                              style={{ padding: "10px 14px", fontSize: 12, color: C.muted, cursor: "pointer", borderBottom: `1px solid ${C.border}` }}>
+                              <span style={{ color: C.purple, fontWeight: 700 }}>+ Add "{invQuery.trim()}"</span> as custom test
+                            </div>
+                          )}
+                          {matches.map((m, i) => (
+                            <div
+                              key={m}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                if (!invPending.includes(m)) setInvPending(prev => [...prev, m]);
+                                setInvQuery(""); setInvShowSuggest(false); setInvSuggestIdx(-1);
+                              }}
+                              onMouseEnter={() => setInvSuggestIdx(i)}
+                              style={{
+                                padding: "9px 14px", fontSize: 12, cursor: "pointer",
+                                background: invSuggestIdx === i ? `${C.purple}12` : "white",
+                                color: C.text, fontWeight: invSuggestIdx === i ? 700 : 500,
+                                borderBottom: i < matches.length - 1 ? `1px solid ${C.border}40` : "none",
+                                display: "flex", alignItems: "center", gap: 8,
+                              }}>
+                              <i className="pi pi-plus-circle" style={{ color: C.purple, fontSize: 11 }} />
+                              {m}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </Field>
                 <Field label="Urgency">
-                  <select id="ipd-inv-urg" className="his-field" defaultValue="ROUTINE">
+                  <select value={invUrgency} onChange={e => setInvUrgency(e.target.value)} className="his-field">
                     <option value="ROUTINE">Routine</option>
                     <option value="URGENT">Urgent</option>
                     <option value="STAT">STAT</option>
                   </select>
                 </Field>
                 <Field label="Instructions">
-                  <input id="ipd-inv-notes" placeholder="Fasting, repeat, specific time…" className="his-field" />
+                  <input value={invInstructions} onChange={e => setInvInstructions(e.target.value)}
+                    placeholder="Fasting, repeat, specific time…" className="his-field" />
                 </Field>
                 <button type="button" onClick={() => {
-                  const n = document.getElementById("ipd-inv-name");
-                  const u = document.getElementById("ipd-inv-urg");
-                  const x = document.getElementById("ipd-inv-notes");
-                  if (!n.value.trim()) return;
-                  setInvests(prev => [...prev, { name: n.value.trim(), urgency: u.value, instructions: x.value.trim() }]);
-                  n.value = ""; x.value = ""; u.value = "ROUTINE"; n.focus();
-                }} style={{
-                  height: 38, padding: "0 18px", minWidth: 96,
+                  // Commit invPending (or, if empty, the typed query) into invests
+                  // using the current urgency + instructions for the whole batch.
+                  let names = [...invPending];
+                  if (invQuery.trim() && !names.includes(invQuery.trim())) names.push(invQuery.trim());
+                  if (names.length === 0) return;
+                  setInvests(prev => [
+                    ...prev,
+                    ...names.map(name => ({ name, urgency: invUrgency, instructions: invInstructions.trim() })),
+                  ]);
+                  setInvPending([]); setInvQuery(""); setInvInstructions(""); setInvUrgency("ROUTINE");
+                }} disabled={invPending.length === 0 && !invQuery.trim()} style={{
+                  height: 38, padding: "0 18px", minWidth: 110,
                   border: "none", borderRadius: 8,
-                  background: C.purple, color: "white",
+                  background: (invPending.length > 0 || invQuery.trim()) ? C.purple : `${C.purple}50`,
+                  color: "white",
                   fontFamily: "inherit", fontSize: 12.5, fontWeight: 700,
-                  cursor: "pointer", whiteSpace: "nowrap",
+                  cursor: (invPending.length > 0 || invQuery.trim()) ? "pointer" : "not-allowed",
+                  whiteSpace: "nowrap",
                   boxShadow: `0 1px 2px ${C.purple}30`,
-                }}>+ Add Test</button>
+                }}>+ Add {invPending.length > 0 ? `${invPending.length + (invQuery.trim() ? 1 : 0)} Test${(invPending.length + (invQuery.trim() ? 1 : 0)) === 1 ? "" : "s"}` : "Test"}</button>
               </div>
+
+              {/* Pending chip strip — shown only while the doctor is
+                  stacking up tests. Each chip is removable. */}
+              {invPending.length > 0 && (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                  padding: "10px 12px",
+                  background: `${C.purple}08`, border: `1px solid ${C.purple}30`,
+                  borderRadius: 8,
+                }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: C.purple, textTransform: "uppercase", letterSpacing: ".5px" }}>
+                    Selected ({invPending.length}):
+                  </span>
+                  {invPending.map((t, idx) => (
+                    <span key={t + idx} style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "4px 4px 4px 11px", borderRadius: 999,
+                      background: "white", border: `1.5px solid ${C.purple}40`,
+                      fontSize: 11.5, fontWeight: 600, color: C.text,
+                    }}>
+                      {t}
+                      <button type="button" onClick={() => setInvPending(prev => prev.filter((_, j) => j !== idx))}
+                        title={`Remove ${t}`}
+                        style={{
+                          width: 18, height: 18, border: "none", background: `${C.purple}15`,
+                          color: C.purple, borderRadius: "50%", cursor: "pointer",
+                          display: "inline-flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 11, fontWeight: 800, padding: 0,
+                        }}>×</button>
+                    </span>
+                  ))}
+                  <button type="button" onClick={() => setInvPending([])}
+                    style={{
+                      marginLeft: "auto", border: "none", background: "transparent",
+                      color: C.muted, fontSize: 11, cursor: "pointer", fontWeight: 600, textDecoration: "underline",
+                    }}>Clear all</button>
+                </div>
+              )}
               {invests.length === 0 ? (
                 <div style={{
                   padding: "14px 16px", borderRadius: 10,
