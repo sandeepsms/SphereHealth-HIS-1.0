@@ -933,6 +933,9 @@ function NursingNotesContent({ selectedPatient }) {
               : "Provisional",
           icd10Code: top.icd10Code || "",
           icd10Description: top.icd10Description || "",
+          // R7hr-87 — pull the doctor's last patient-status call so it
+          // shows up on the nursing banner too.
+          status: top.patientStatus || "",
           updatedAt: top.createdAt,
         });
       } else {

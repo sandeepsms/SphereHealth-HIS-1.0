@@ -512,7 +512,7 @@ function DoctorNotesContent({ selectedPatient }) {
       setNotes(sorted);
       // Populate diag state from the most recent note that has any diagnosis data
       const withDiag = sorted.find(n =>
-        n.provisionalDiagnosis || n.workingDiagnosis || n.finalDiagnosis || n.icd10Code
+        n.provisionalDiagnosis || n.workingDiagnosis || n.finalDiagnosis || n.icd10Code || n.patientStatus
       );
       if (withDiag) {
         setDiagNoteId(withDiag._id);
@@ -523,6 +523,10 @@ function DoctorNotesContent({ selectedPatient }) {
           final:          withDiag.finalDiagnosis         || prev.final,
           icd10Code:      withDiag.icd10Code              || prev.icd10Code,
           icd10Description: withDiag.icd10Description     || prev.icd10Description,
+          // R7hr-87 — restore the last-saved patient status so the
+          // doctor's clinical-status call doesn't reset to "Stable" on
+          // reload.
+          status:         withDiag.patientStatus          || prev.status,
         }));
       } else if (sorted.length > 0) {
         setDiagNoteId(sorted[0]._id);
@@ -620,6 +624,11 @@ function DoctorNotesContent({ selectedPatient }) {
       } : undefined,
       provisionalDiagnosis: diag.provisional, workingDiagnosis: diag.working, finalDiagnosis: diag.final,
       icd10Code: diag.icd10Code, icd10Description: diag.icd10Description,
+      // R7hr-87 — patientStatus (Stable/Improving/Unchanged/Deteriorating/
+      // Critical/Ready for Discharge) was filed in the schema but never
+      // sent. Now it persists and surfaces on the patient banner for
+      // both doctor + nurse views.
+      patientStatus: diag.status,
       investigations: invx ? invx.split(",").map(s => s.trim()).filter(Boolean) : [],
       orders: orders.map(o => ({
         // FIX (audit P12-B1): the legacy whitelist coerced `infusion` and

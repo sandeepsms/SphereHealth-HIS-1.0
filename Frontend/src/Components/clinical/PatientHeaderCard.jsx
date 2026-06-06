@@ -189,6 +189,11 @@ export default function PatientHeaderCard({
     }
     return [];
   })();
+  // R7hr-87 — doctor's patient-status call (Stable / Improving /
+  // Unchanged / Deteriorating / Critical / Ready for Discharge).
+  // Comes from the in-flight doctor edit state OR from the saved-note
+  // pull (latestDiagnosis.status, populated by NursingNotes).
+  const patientStatus = diagnosis?.status || latestDiagnosis?.status || patient.patientStatus || "";
   const consultant = patient.attendingDoctor || patient.doctorName || patient.consultantName || "—";
   const admType    = patient.admissionType?.toUpperCase() || "IPD";
   const allergies  = (patient.allergies || patient.knownAllergies || []).filter(Boolean);
@@ -259,13 +264,27 @@ export default function PatientHeaderCard({
                   gap that opened up when it sat below the full row
                   (QR column on the right was taller than the info
                   column on the left, pushing the strip down). */}
-              {(consultant !== "—" || dxTiersFull.length > 0) && (
+              {(consultant !== "—" || dxTiersFull.length > 0 || patientStatus) && (
                 <div className="phc-clinical-strip">
                   {consultant !== "—" && (
                     <div className="phc-clin-chip phc-clin-chip--consultant" title="Attending consultant">
                       <i className="pi pi-user-edit phc-clin-icon" />
                       <span className="phc-clin-label">Consultant</span>
                       <span className="phc-clin-value">{consultant}</span>
+                    </div>
+                  )}
+                  {/* R7hr-87 — Patient Status chip (Stable / Improving /
+                      Unchanged / Deteriorating / Critical / Ready for
+                      Discharge). Colour matches clinical severity so
+                      both doctor + nurse see it at a glance. */}
+                  {patientStatus && (
+                    <div
+                      className={`phc-clin-chip phc-clin-chip--status phc-status--${patientStatus.toLowerCase().replace(/\s+/g, "-")}`}
+                      title="Doctor's current patient-status call"
+                    >
+                      <i className="pi pi-heart-fill phc-clin-icon" />
+                      <span className="phc-clin-tier">Status</span>
+                      <span className="phc-clin-value">{patientStatus}</span>
                     </div>
                   )}
                   {dxTiersFull.map((row) => (
