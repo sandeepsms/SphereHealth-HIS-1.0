@@ -127,7 +127,16 @@ async function fanOutMedReconToDoctorOrders(note) {
   const out = { created: 0, skipped: 0, reasons: {} };
   if (!note || note.noteType !== "initial") return out;
 
-  const rows = note?.noteDetails?.nabh?.medicationReconciliation;
+  // R7hr-111 — Path-drift fix. After R26 (Doctor IA + Nurse IA separate
+  // records, doctor block wrapped under noteDetails.doctor), the canonical
+  // location for medRecon is noteDetails.doctor.nabh.medicationReconciliation.
+  // The legacy noteDetails.nabh.medicationReconciliation path is kept as a
+  // backward-compat fallback for pre-R26 records. Without this fix the
+  // fan-out was silently reading [] and skipping every Continue row, so
+  // home medications marked Continue never landed in MAR.
+  const rows =
+    note?.noteDetails?.doctor?.nabh?.medicationReconciliation ||
+    note?.noteDetails?.nabh?.medicationReconciliation;
   if (!Array.isArray(rows) || rows.length === 0) return out;
 
   // We need the admission for visitId / admissionNumber / patientId so
