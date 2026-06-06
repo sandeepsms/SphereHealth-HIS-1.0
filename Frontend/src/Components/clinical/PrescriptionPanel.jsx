@@ -45,6 +45,45 @@ const BLANK_MED = {
   route: "Oral",
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   R7hr-71 — Map a drug's form ("Tablet" / "Injection" / "Cream"…)
+   to its sensible default Route. The doctor can still override
+   afterwards — this only fires when the autocomplete pick lands.
+   String matching is loose (substring + lowercase) so DrugMaster
+   form names like "Tab", "Cap-DR", "Eye Drops", "Inj (Vial)",
+   "Cream / Ointment" all resolve correctly without an explicit
+   match table.
+───────────────────────────────────────────────────────────────── */
+function routeFromForm(form) {
+  if (!form) return "";
+  const f = String(form).toLowerCase().trim();
+  // Order matters — most specific first.
+  if (f.includes("sublingual") || f === "sl")                        return "Sublingual";
+  if (f.includes("buccal") || f.includes("lozenge"))                 return "Buccal";
+  if (f.includes("eye drop") || f.includes("eye oint")
+      || f.includes("ophthal"))                                      return "Eye drops";
+  if (f.includes("ear drop") || f.includes("otic"))                  return "Ear drops";
+  if (f.includes("nasal") || f.includes("nose"))                     return "Nasal";
+  if (f.includes("inhal") || f === "mdi" || f === "dpi"
+      || f.includes("rotacap"))                                      return "Inhalation";
+  if (f.includes("nebul") || f.includes("respule"))                  return "Nebulization";
+  if (f.includes("suppositor"))                                      return "Per Rectum";
+  if (f.includes("pessar") || f.includes("vaginal"))                 return "Per Vagina";
+  if (f.includes("patch") || f.includes("transderm"))                return "Transdermal";
+  if (f.includes("cream") || f.includes("ointment") || f.includes("gel")
+      || f.includes("lotion") || f.includes("paste") || f === "topical"
+      || f.includes("scalp") || f.includes("shampoo"))               return "Topical";
+  if (f.includes("inject") || f.includes("inj") || f === "vial"
+      || f.includes("ampoule") || f.includes("amp") || f.includes("infusion"))
+                                                                     return "IV";
+  if (f.includes("tab") || f.includes("cap") || f.includes("syrup")
+      || f.includes("suspension") || f.includes("powder") || f.includes("sachet")
+      || f.includes("granule") || f.includes("solution") || f.includes("elixir")
+      || f === "liquid" || f.includes("oral") || f.includes("chewable"))
+                                                                     return "Oral";
+  return "";
+}
+
 export default function PrescriptionPanel({ value = [], onChange, theme }) {
   const C = { ...DEFAULT_THEME, ...(theme || {}) };
   const [newMed, setNewMed] = useState(BLANK_MED);
@@ -92,6 +131,12 @@ export default function PrescriptionPanel({ value = [], onChange, theme }) {
               if (dv && unit) next.dose = `${dv}${unit}`;
               else if (d.strength) next.dose = d.strength;
               if (d.form) next.form = d.form;
+              // R7hr-71 — derive Route from drug form (Tab→Oral,
+              // Inj→IV, Cream→Topical, Eye drops→Eye drops, etc.).
+              // Only override if we can map the form confidently —
+              // unknown forms keep whatever the doctor already had.
+              const derivedRoute = routeFromForm(d.form);
+              if (derivedRoute) next.route = derivedRoute;
               return next;
             });
           }}
@@ -153,11 +198,15 @@ export default function PrescriptionPanel({ value = [], onChange, theme }) {
           <option value="Bedtime">At Bedtime (HS)</option>
           <option value="Any Time">Any Time</option>
         </select>
+        {/* R7hr-71 — Duration is optional, especially at IPD admission
+            where the course end-date often isn't known until labs +
+            specialist input come in. Placeholder makes that explicit. */}
         <input
           list="pp-duration-options"
           value={newMed.duration}
           onChange={e => setNewMed(p => ({ ...p, duration: e.target.value }))}
-          placeholder="Duration"
+          placeholder="Duration (optional)"
+          title="Duration is optional — leave blank for indefinite / titrated courses, fill if known"
           style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
         />
         <datalist id="pp-duration-options">
