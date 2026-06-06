@@ -29,10 +29,8 @@
  *   • Optional diagnosis tier pill (Final / Working / Provisional)
  *   • Ward fallback chain — wardName → wardId.wardName → department
  */
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { QRCodeSVG } from "qrcode.react";
-import axios from "axios";
-import { API_ENDPOINTS } from "../../config/api";
 import useHospitalSettings from "../print/useHospitalSettings";
 import "./PatientHeaderCard.css";
 
@@ -198,25 +196,9 @@ export default function PatientHeaderCard({
     ? Math.floor((Date.now() - new Date(patient.admissionDate)) / (1000 * 60 * 60 * 24))
     : null;
 
-  // R7bn-5 / D6-fix: pull the twice-daily compliance summary so we can
-  // render a red OVERDUE / amber DUE_SOON banner. Re-fetches every 60s
-  // (and once on patient change) — the backend cron flips status every
-  // 15 min so 60s polling on the client is sufficient.
-  const [compliance, setCompliance] = useState(null);
-  useEffect(() => {
-    if (!patient?._id) { setCompliance(null); return; }
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await axios.get(`${API_ENDPOINTS.BASE}/compliance/assessment-status/${patient._id}`);
-        if (cancelled) return;
-        setCompliance(res.data?.summary || null);
-      } catch (_) { /* silent — compliance is a soft UX nudge */ }
-    };
-    load();
-    const id = setInterval(load, 60 * 1000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [patient?._id]);
+  // R7hr-86 — Compliance state + 60s poll moved out into the shared
+  // PatientAlertStrip component. Parents render that strip beside their
+  // "All Sections" / nav bar so the patient card stays compact.
 
   /* QR payload — plain text so any phone-camera QR reader shows the
      patient's identity + key data on scan. Rendered client-side via
@@ -336,41 +318,12 @@ export default function PatientHeaderCard({
         {/* Footer: allergies + twice-daily compliance only — consultant
             and diagnosis now live in the prominent strip above (inside
             the left info column, right under the meta-row). */}
-        <div className="phc-footer">
-          {allergies.length > 0 && (
-            <div className="phc-allergies">
-              <span className="phc-allergy-label">
-                <i className="pi pi-exclamation-triangle" /> ALLERGY:
-              </span>
-              {allergies.map((a) => (
-                <span key={a} className="phc-allergy-chip">{a}</span>
-              ))}
-            </div>
-          )}
-          {/* R7bn-5 / D6-fix: twice-daily compliance status banner.
-              Surfaces OVERDUE (red) or DUE_SOON (amber) only — when
-              everything is on schedule we render nothing so the header
-              stays compact. */}
-          {compliance && compliance.worst !== "OK" && (
-            <div className={`phc-compliance phc-compliance--${compliance.worst.toLowerCase()}`} title="Twice-daily assessment schedule (NABH COP.17)">
-              <i className={`pi ${compliance.worst === "OVERDUE" ? "pi-exclamation-circle" : "pi-clock"}`} />
-              <span className="phc-compliance-label">
-                {compliance.worst === "OVERDUE" ? "OVERDUE" : "DUE SOON"}
-              </span>
-              <span className="phc-compliance-count">
-                {compliance.overdue > 0 && <>{compliance.overdue} overdue</>}
-                {compliance.overdue > 0 && compliance.dueSoon > 0 && " · "}
-                {compliance.dueSoon > 0 && <>{compliance.dueSoon} due soon</>}
-              </span>
-            </div>
-          )}
-        </div>
 
-        {/* R7hr-85.1 — Doctor-specific dx grid (Provisional Dx / Working
-            Dx / Final Dx / ICD-10 rows) removed. The clinical strip
-            above the footer now carries every filled tier with its own
-            colour-coded pill + ICD-10 attached, so a second grid that
-            repeats the same data was just adding vertical bloat. */}
+        {/* R7hr-86 — .phc-footer dropped. Allergies + twice-daily
+            compliance now live in the shared PatientAlertStrip
+            component that parents render beside their "All Sections"
+            back button. Saves ~50 px of vertical chrome inside the
+            patient card. */}
       </div>
     </div>
   );

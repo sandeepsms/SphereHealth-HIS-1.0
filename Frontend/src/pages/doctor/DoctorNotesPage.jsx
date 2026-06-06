@@ -6,6 +6,9 @@ import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
+// R7hr-86 — patient-safety alert chips (allergies + assessment compliance)
+// now live next to the All Sections back button, not inside the card footer.
+import PatientAlertStrip from "../../Components/clinical/PatientAlertStrip";
 // R7cb-C: hospital settings for the printed note header.
 import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
 // R7fq Track C: shared print shell — replaces inline hospital header/footer
@@ -2083,16 +2086,35 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
             </div>
           )}
 
-          {/* ── Back-to-grid button (when a tile is open) ── */}
+          {/* ── Back-to-grid button (when a tile is open) ──
+              R7hr-86: alert chips now sit beside the back button so
+              allergies / OVERDUE compliance stay visible without
+              inflating the patient card. */}
           {patient && activeTile && (
-            <button
-              type="button"
-              onClick={() => setActiveTile(null)}
-              className="dnp-back-btn"
-              aria-label="Back to all sections"
-            >
-              <i className="pi pi-arrow-left" aria-hidden /> All Sections
-            </button>
+            <div className="dnp-back-bar" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+              <button
+                type="button"
+                onClick={() => setActiveTile(null)}
+                className="dnp-back-btn"
+                aria-label="Back to all sections"
+                style={{ margin: 0 }}
+              >
+                <i className="pi pi-arrow-left" aria-hidden /> All Sections
+              </button>
+              <PatientAlertStrip
+                patientId={patient?._id}
+                allergies={patient?.allergies || patient?.knownAllergies}
+              />
+            </div>
+          )}
+          {/* R7hr-86 — When no tile is open the alerts still belong
+              alongside the tile grid; show them in a slim row right
+              above the grid so allergies / OVERDUE remain visible. */}
+          {patient && !activeTile && (
+            <PatientAlertStrip
+              patientId={patient?._id}
+              allergies={patient?.allergies || patient?.knownAllergies}
+            />
           )}
 
           {/* ══ DIAGNOSIS PANEL ══════════════════════════════════════════════ */}
