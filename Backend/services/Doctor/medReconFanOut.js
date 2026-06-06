@@ -187,7 +187,12 @@ async function fanOutMedReconToDoctorOrders(note) {
         orderedBy: note.signedByName || note.doctorName,
         orderedByRole: "Doctor",
         orderedAt: note.signedAt || new Date(),
-        status: "Active",
+        // R7hr-112 — Created as "Pending" so the nurse must explicitly
+        // Acknowledge before the order shows as administered. NABH ISMP +
+        // 7-rights of medication require nurse-side verification BEFORE
+        // any dose hits the MAR as active/given. Pre-R7hr-112 we wrote
+        // "Active" which the Live MAR rendered as already-running.
+        status: "Pending",
         sourceRef,        // ← idempotency key
         // HAM and concentratedElectrolyte are auto-derived by the
         // DoctorOrder pre-save hook from medicineName — no need to
@@ -276,7 +281,9 @@ async function fanOutMedsToDoctorOrders(note) {
         orderedBy: note.signedByName || note.doctorName,
         orderedByRole: "Doctor",
         orderedAt: note.signedAt || new Date(),
-        status: "Active",
+        // R7hr-112 — see fanOutMedReconToDoctorOrders rationale: Pending
+        // until nurse Acknowledges. ISMP-compliant handoff.
+        status: "Pending",
         sourceRef,
       });
       out.created++;
@@ -351,11 +358,21 @@ async function fanOutInfusionsToDoctorOrders(note) {
           route: inf.route || "IV",
           notes: `Ordered at Initial Assessment${inf.duration ? ` — ${inf.duration}` : ""}`,
         },
-        currentRate: ratePretty,
+        // R7hr-112 — Do NOT pre-stamp currentRate. The Live MAR Infusion
+        // tab treats a populated currentRate (combined with status:Active)
+        // as "Running / drip going in", which would let nurses skip the
+        // physical setup ceremony (spike bag, prime line, verify rate at
+        // pump, attach to patient). The PRESCRIBED rate already lives in
+        // orderDetails.rate so the nurse sees what to set; currentRate
+        // gets stamped only when she physically starts the bag via the
+        // /:id PATCH route. Until then the order stays Pending in her queue.
+        // currentRate intentionally omitted — set on nurse Start.
         orderedBy: note.signedByName || note.doctorName,
         orderedByRole: "Doctor",
         orderedAt: note.signedAt || new Date(),
-        status: "Active",
+        // R7hr-112 — Pending until nurse acknowledges. See rationale on
+        // currentRate above + on fanOutMedReconToDoctorOrders.
+        status: "Pending",
         sourceRef,
       });
       out.created++;
@@ -433,7 +450,10 @@ async function fanOutInvestsToDoctorOrders(note) {
         orderedBy: note.signedByName || note.doctorName,
         orderedByRole: "Doctor",
         orderedAt: note.signedAt || new Date(),
-        status: "Active",
+        // R7hr-112 — Pending until nurse acknowledges. Lab samples should
+        // not be marked Active before the nurse has seen the order and
+        // initiated sample collection.
+        status: "Pending",
         sourceRef,
       });
       out.created++;

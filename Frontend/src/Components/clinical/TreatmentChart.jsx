@@ -1319,7 +1319,14 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                     </div>
                   </div>
                 )}
-                {infOrders.map(order => {
+                {/* R7hr-112 — Hide Pending orders from the live monitoring card list.
+                   Pending = doctor placed the order but the nurse hasn't Acknowledged +
+                   Started it yet. Those orders surface in the "NEW INFUSION ORDERS"
+                   alert banner above (with Acknowledge + Start Infusion buttons). Showing
+                   them ALSO as a "Running" live-monitoring card would let nurses bypass
+                   the ISMP-required acknowledge ceremony and would mislead anyone reading
+                   the chart into believing a drip is actually going in when it isn't. */}
+                {infOrders.filter(o => o.status !== "Pending").map(order => {
                   const hamBadge = order.hamFlag || isHAM(order.orderDetails?.medicineName || "");
                   const isStopped = ["Stopped","Cancelled"].includes(order.status);
                   const isHeld    = order.status === "Held";
