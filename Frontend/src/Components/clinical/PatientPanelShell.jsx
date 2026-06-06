@@ -127,7 +127,15 @@ export default function PatientPanelShell({
   // submits a reason, we remember it for the session (per UHID) so the
   // modal doesn't keep popping up while the user is actively reviewing.
   const { user } = useAuth() || {};
-  const isPrivilegedRole = ["Admin", "MedicalSuperintendent", "QualityCoordinator"].includes(user?.role);
+  // R7hr-98 — Nurses MUST be able to open any admitted patient on their
+  // ward without a break-glass justification: bedside nursing care is
+  // the canonical, not exceptional, access pattern. The previous list
+  // excluded Nurse → every nurse opening a patient triaged by Dr.
+  // Sandeep saw the justification modal because her name didn't appear
+  // in the admission.attendingDoctor string. Break-glass remains in
+  // force for OPD-only roles whose default access pattern is NOT this
+  // admitted patient (Receptionist, TPA Coordinator, Pharmacist).
+  const isPrivilegedRole = ["Admin", "MedicalSuperintendent", "QualityCoordinator", "Nurse", "MRD"].includes(user?.role);
   const treatingTeam = useMemo(() => {
     if (!admission) return [];
     const list = [

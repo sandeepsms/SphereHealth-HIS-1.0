@@ -466,6 +466,16 @@ const DoctorOrderSchema = new mongoose.Schema({
   // MAR / order-sheet reprints (NABH MOM.2 evidence gap).
   printCount: { type: Number, default: 0 },
 
+  // R7hr-96 — idempotency key for upstream fan-out flows (e.g. IPD
+  // Initial Assessment Medication Reconciliation → DoctorOrder).
+  // Format examples:
+  //   "medrecon:<doctorNoteId>:<rowIdx>"  — Med Recon row fan-out
+  //   future: "indent:<id>" / "transfer:<id>" / etc.
+  // Sparse-unique so the absence of a sourceRef doesn't collide with
+  // ordinary doctor-entered orders. The fan-out service queries by
+  // exact sourceRef before creating, so re-signs / amends are safe.
+  sourceRef: { type: String, default: null, index: true, sparse: true },
+
 }, { timestamps: true, collection: "doctor_orders" });
 
 /* ── R7az-CRIT-4 / D6-CRIT-4 + D6-HIGH-6 + D6-MED-1 ──────────────────

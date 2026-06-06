@@ -14,11 +14,27 @@ const mongoose = require("mongoose");
   require("../models/Patient/admissionModel");
   require("../models/bedMgmt/bedsModel");
   try { require("../models/CounterModel"); } catch (_) {}
+  try { require("../models/Doctor/doctorModel"); } catch (_) {}
 
   const Patient   = mongoose.models.Patient;
   const Admission = mongoose.models.Admission;
   const Beds      = mongoose.models.Beds;     // ← plural
   const Counter   = mongoose.models.Counter;
+  const Doctor    = mongoose.models.Doctor;
+
+  // Resolve attendingDoctorId so the Doctor-scope filter on /admissions
+  // (req.doctorProfile._id) matches and the patient panel can load.
+  let sandeepDoctorId = null;
+  if (Doctor) {
+    const d = await Doctor.findOne({
+      $or: [
+        { "personalInfo.fullName": /sandeep/i },
+        { fullName: /sandeep/i },
+        { name: /sandeep/i },
+      ],
+    }).select("_id doctorId").lean();
+    if (d) sandeepDoctorId = d._id;
+  }
 
   if (!Beds) {
     console.error("Beds model not registered. Available:", Object.keys(mongoose.models).filter(n=>/bed/i.test(n)));
@@ -64,6 +80,7 @@ const mongoose = require("mongoose");
     bloodGroup: "B+",
     address: { addressLine1: "Demo IPD admission", city: "Delhi", state: "Delhi", pincode: "110001" },
     paymentType: "Cash",
+    registrationType: "IPD",  // ← so patient-search lists under the IPD pill
     isActive: true,
   });
   console.log(`Patient: ${patient.fullName} · UHID=${patient.UHID}`);
@@ -81,12 +98,14 @@ const mongoose = require("mongoose");
     department: "General Medicine",
     departmentName: "General Medicine",
     attendingDoctor: "Dr. Sandeep",
+    attendingDoctorId: sandeepDoctorId,   // ← required for Doctor-scope filter
     doctorName: "Dr. Sandeep",
     consultantName: "Dr. Sandeep",
     bedId: bed._id,
     bedNumber: bed.bedNumber,
     wardName: bed.wardName,
     roomCategory: bed.roomCategory || "GENW",
+    hasBed: true,            // ← required by /admissions/active?hasBed=true
     status: "Active",
     age: patient.age,
     gender: patient.gender,

@@ -234,6 +234,25 @@ const createDoctorNote = async (data, doctorUserId) => {
     }
   }
 
+  // R7hr-96 + R7hr-97 — fan-out trio for create-and-sign-in-one-shot
+  // (the IA submit path that bypasses the separate sign step):
+  //   medRecon Continue rows → DoctorOrder Medication
+  //   meds[]                 → DoctorOrder Medication (courseDays/endDate from `duration`; blank = open-ended)
+  //   infusions[]            → DoctorOrder IV_Fluid (nurse Infusion Orders & Monitoring tab)
+  // All three idempotent on sourceRef so a later signDoctorNote won't
+  // double-create. No-op while the note is still draft — sign fires the
+  // fan-out in that case.
+  if (note && note.noteType === "initial" && note.status === "signed") {
+    try {
+      const fanOuts = require("./medReconFanOut");
+      fanOuts.fanOutMedReconToDoctorOrders(note).catch(e => console.error("[doctorNotes] medRecon fan-out error:", e?.message));
+      fanOuts.fanOutMedsToDoctorOrders(note).catch(e     => console.error("[doctorNotes] meds fan-out error:", e?.message));
+      fanOuts.fanOutInfusionsToDoctorOrders(note).catch(e=> console.error("[doctorNotes] infusion fan-out error:", e?.message));
+    } catch (e) {
+      console.error("[doctorNotes] IA fan-out wiring failed:", e?.message);
+    }
+  }
+
   // R7em-7 — Auto-populate NABH COP.18 Mortality Register when a death
   // note is saved. emitMortality is idempotent on admissionId (unique
   // index in the model), so a draft-then-sign sequence won't double-emit.
@@ -459,6 +478,31 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
   if (note.orders?.length && !note._ordersPushedToChart) {
     await TreatmentChart.addDoctorOrders(note);
     note._ordersPushedToChart = true; // transient — won't persist, but guards in-process dupes
+  }
+
+  // R7hr-96 + R7hr-97 — fan out IA payloads into standalone DoctorOrder
+  // rows so the MAR / Treatment Chart picks them up automatically:
+  //   1. Med Recon "Continue" rows           → DoctorOrder Medication
+  //   2. Prescription/Medications panel rows → DoctorOrder Medication
+  //      (with courseDays/endDate from `duration`; blank = open-ended,
+  //       i.e. no auto-discontinue — the doctor must Discontinue)
+  //   3. Infusion/IV Fluids panel rows       → DoctorOrder IV_Fluid
+  //      (lands in the nurse's Infusion Orders & Monitoring tab)
+  // All three are idempotent by sourceRef so re-sign/amend doesn't
+  // double-create. Failures are logged but never block the sign.
+  if (note.noteType === "initial") {
+    try {
+      const fanOuts = require("./medReconFanOut");
+      const { logErr } = require("../../utils/logErr");
+      const summary = {};
+      try { summary.medRecon  = await fanOuts.fanOutMedReconToDoctorOrders(note); } catch (e) { logErr("medReconFanOut", `note ${note._id}`)(e); }
+      try { summary.meds      = await fanOuts.fanOutMedsToDoctorOrders(note);     } catch (e) { logErr("iaMedsFanOut",  `note ${note._id}`)(e); }
+      try { summary.infusions = await fanOuts.fanOutInfusionsToDoctorOrders(note);} catch (e) { logErr("iaInfusionFanOut", `note ${note._id}`)(e); }
+      try { logErr("iaFanOut", `note ${note._id} ${JSON.stringify(summary)}`)(null); } catch (_) {}
+    } catch (err) {
+      const { logErr } = require("../../utils/logErr");
+      logErr("iaFanOut", `signDoctorNote fan-out failed for note ${note?._id}`)(err);
+    }
   }
 
   // FIX (audit P11-B5): auto-billing was only fired on create. Notes that

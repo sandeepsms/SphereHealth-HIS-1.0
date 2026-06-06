@@ -1064,11 +1064,31 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   useEffect(() => { setFamHx(famHxSummary(famHxStruct)); /* eslint-disable-next-line */ }, [famHxStruct]);
   useEffect(() => { setSocHx(socHxSummary(socHxStruct)); /* eslint-disable-next-line */ }, [socHxStruct]);
 
+  // R7hr-96 — High-Alert Medication keyword sniff (mirrors backend
+  // DoctorOrderModel HAM_KEYWORDS so the row's HAM chip lights up the
+  // moment the doctor types the drug name, without waiting for save).
+  // The doctor can still flip the checkbox manually for an edge-case
+  // brand name we didn't anticipate.
+  const HAM_KEYWORDS_FE = [
+    "insulin","heparin","enoxaparin","fondaparinux","warfarin","acenocoumarol",
+    "digoxin","amiodarone","lidocaine","lignocaine","morphine","fentanyl",
+    "pethidine","tramadol","midazolam","propofol","ketamine","potassium",
+    "kcl","sodium bicarbonate","magnesium sulfate","calcium chloride",
+    "calcium gluconate","adrenaline","epinephrine","noradrenaline",
+    "norepinephrine","dobutamine","dopamine","vasopressin","nitroprusside",
+    "alteplase","tenecteplase","streptokinase","methotrexate",
+    "vincristine","cisplatin","carboplatin","doxorubicin","cyclophosphamide",
+    "vancomycin iv","gentamicin iv","amikacin iv",
+  ];
+  const isHAMByName = (name = "") => HAM_KEYWORDS_FE.some(k => (name || "").toLowerCase().includes(k));
+
   // C · Medication Reconciliation — nurse owns the home-meds list (she
   // sees the drugs the patient brought). Doctor's table inherits each
-  // row + only adds the Continue/Hold/Modify/Discontinue decision.
-  // Doctor can still add rows nurse didn't (e.g. insulin the patient
-  // didn't mention) — those stay marked `_doctorOnly: true`.
+  // row + only adds the Continue/Hold decision (R7hr-96: dropped Modify/
+  // Discontinue because they don't map cleanly to MAR — Hold covers
+  // "don't give now"; Continue auto-fans-out to MAR). Doctor can still
+  // add rows nurse didn't (e.g. insulin the patient didn't mention) —
+  // those stay marked `_doctorOnly: true`.
   useEffect(() => {
     setMedRecon(prev => {
       // Index existing doctor rows so we preserve their decisions.
@@ -1082,7 +1102,11 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           const existing = byDrug.get(key) || {};
           return {
             drug: hm.drug, dose: hm.dose, frequency: hm.frequency, lastTaken: hm.lastTaken,
-            continueOnAdmit: existing.continueOnAdmit || "Continue",
+            // R7hr-96 — only Continue / Hold are valid; collapse any
+            // legacy Modify/Discontinue values to Hold so the dropdown
+            // never renders a missing option.
+            continueOnAdmit: ["Continue","Hold"].includes(existing.continueOnAdmit) ? existing.continueOnAdmit : "Continue",
+            isHAM: typeof existing.isHAM === "boolean" ? existing.isHAM : isHAMByName(hm.drug),
             _fromNursing: true,
           };
         });
@@ -1474,7 +1498,16 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             if (dNabh.ccDuration)       setCcDuration(dNabh.ccDuration);
             if (Array.isArray(dNabh.allergies?.list)) setAllergyList(dNabh.allergies.list);
             if (dNabh.allergies?.noKnown !== undefined) setNoKnownAllergies(!!dNabh.allergies.noKnown);
-            if (Array.isArray(dNabh.medicationReconciliation)) setMedRecon(dNabh.medicationReconciliation);
+            if (Array.isArray(dNabh.medicationReconciliation)) {
+              // R7hr-96 — collapse legacy Modify/Discontinue to Hold so the
+              // 2-option dropdown never renders a missing value; backfill
+              // isHAM by drug-name keyword sniff for rows saved before this.
+              setMedRecon(dNabh.medicationReconciliation.map(r => ({
+                ...r,
+                continueOnAdmit: ["Continue","Hold"].includes(r.continueOnAdmit) ? r.continueOnAdmit : "Hold",
+                isHAM: typeof r.isHAM === "boolean" ? r.isHAM : isHAMByName(r.drug),
+              })));
+            }
             if (dNabh.workingDx)        setWorkingDx(dNabh.workingDx);
             if (dNabh.differentialDx)   setDifferentialDx(dNabh.differentialDx);
             if (dNabh.comorbidities)    setComorbid(c => ({ ...c, ...dNabh.comorbidities }));
@@ -1602,7 +1635,18 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
     // R7fb/R7fc — DoctorNotes schema is strict; the only catch-all field is
     // `noteDetails` (Mixed). Pack the entire role-specific form data here so
     // the new NABH P0 fields persist instead of being silently dropped.
+    //
+    // R26 (USER RULE, 2026-06-06) — Doctor IA and Nurse IA must always be
+    // SEPARATE records with role-pure noteDetails. Previously this payload
+    // packed BOTH nursing + doctor blocks regardless of `section`, so a
+    // doctor-section save would contaminate the DoctorNote with stale
+    // nursing data (and vice versa). Now we inline the per-role blocks
+    // only when the matching section is saving. The doctor's record gets
+    // ONLY doctor data; the nurse's record gets ONLY nursing data.
+    // Cross-flow auto-flows (R7fe) still work because they READ from each
+    // record independently — they don't write into the other role's blob.
     noteDetails: {
+      ...(section !== "doctor" && {
       nursing: {
         admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit,
         consciousnessLevel, mobility, allergy, chiefComplaint,
@@ -1613,7 +1657,8 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         nutri: { scores: nutri, total: nutriTotal, risk: nutriMeta.label },
         vte: { scores: vte, total: vteTotal, risk: vteMeta.label },
         nursingProblems, nursingGoals, nursingNotes,
-      },
+      }}),
+      ...(section !== "nursing" && {
       doctor: {
         // R7hr-70 — pmh dropped (Co-morbidities replaces it). PSH /
         // FamHx / SocHx now write through pshStruct etc.; legacy
@@ -1658,12 +1703,17 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           functionalEcog: ecog,
           spiritualNeeds: spiritual,
         },
-      },
+      }}),
       // R7ff — Cross-check alerts snapshot for backend audit trail.
       // 'high' severity should ideally block sign-off; for now persisted
-      // so accountability is preserved.
+      // so accountability is preserved. R26 — cross-check is meaningful only
+      // when both roles are in scope; carried by either save for now since
+      // it is a global flag-set (not role-specific PHI).
       crossCheckAlerts,
       // R7fc — nurse P0 NABH fields (AAC.1 / AAC.4 / IPC / PSQ)
+      // R26 — same wrapper as the `nursing:` block; nursingNabh is pure
+      // nurse-side data and must NOT appear in a doctor-only save.
+      ...(section !== "doctor" && {
       nursingNabh: {
         identification: idBand,
         allergies: { list: nurseAllergyList, noKnown: nurseNoKnownAllergies },
@@ -1689,7 +1739,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         preAnaesthesia,
         nutritionalScreeningQuick: nrsQuick,
         promPremTriggers: promPrem,
-      },
+      }}),
     },
   });
 
@@ -2533,7 +2583,24 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         } catch (_) { /* non-fatal */ }
       }
       toast.success(sign ? "Assessment signed & submitted ✓" : "Draft saved");
-      if (sign) clearDraft();
+      if (sign) {
+        clearDraft();
+        // R7hr-98 — IMMEDIATELY lock the IA in-session so the next
+        // autosave tick doesn't write the same form back as a fresh
+        // draft (which was overwriting the signed record). Pre-fix the
+        // page waited for a reload to hydrate iaLocked from the server
+        // status, but the autosave fired before that. Now we lock the
+        // moment the sign API call returns 2xx — UI flips to LOCKED
+        // banner, all fields go read-only, no more autosave writes.
+        // The amend path remains the only way back into write mode.
+        const whoSigned =
+          (section === "doctor"
+            ? (doctorName || user?.fullName || "")
+            : (nurseName  || user?.fullName || ""));
+        setIaLocked(true);
+        setLockedSignedByName(whoSigned);
+        setLockedSignedAt(new Date().toISOString());
+      }
     } catch (err) {
       toast.error(err.response?.data?.message || "Save failed");
     } finally { setSaving(false); }
@@ -4350,7 +4417,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                 <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 6, fontSize: 11.5 }}>
                   <thead>
                     <tr style={{ background: "#f8fafc" }}>
-                      {["Drug", "Dose", "Frequency", "Last taken", "Continue?", ""].map(h => (
+                      {["Drug", "Dose", "Frequency", "Last taken", "Continue?", "HAM", ""].map(h => (
                         <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", borderBottom: `1.5px solid ${C.border}` }}>{h}</th>
                       ))}
                     </tr>
@@ -4370,7 +4437,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                                 <span style={{ background: C.pink, color: "white", padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 800, letterSpacing: ".3px" }}>NURSING</span>
                               </span>
                             ) : (
-                              <input value={m.drug || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, drug: e.target.value } : x))} placeholder="Drug name" className="his-field" style={{ padding: "4px 6px" }} />
+                              <input value={m.drug || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, drug: e.target.value, isHAM: (typeof x.isHAM === "boolean" && x.isHAM !== isHAMByName(x.drug)) ? x.isHAM : isHAMByName(e.target.value) } : x))} placeholder="Drug name" className="his-field" style={{ padding: "4px 6px" }} />
                             )}
                           </td>
                           <td style={cellStyle}>
@@ -4389,9 +4456,34 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                             )}
                           </td>
                           <td style={{ padding: "6px 8px" }}>
+                            {/* R7hr-96 — 2 options only. Continue → DoctorOrder
+                                Medication created on save (lands in MAR/
+                                Treatment Chart). Hold → recorded in IA but no
+                                MAR row, doctor decides later. */}
                             <select value={m.continueOnAdmit || "Continue"} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, continueOnAdmit: e.target.value } : x))} className="his-field" style={{ padding: "4px 6px" }}>
-                              {["Continue", "Hold", "Modify", "Discontinue"].map(t => <option key={t}>{t}</option>)}
+                              {["Continue", "Hold"].map(t => <option key={t}>{t}</option>)}
                             </select>
+                          </td>
+                          <td style={{ padding: "6px 8px", textAlign: "center" }}>
+                            {/* R7hr-96 — HAM tag. Auto-detected from the drug
+                                name (HAM_KEYWORDS list) but the doctor can
+                                flip it for brand names we didn't anticipate.
+                                On Continue → fan-out, the DoctorOrder backend
+                                pre-save hook re-asserts HAM independently, so
+                                this UI flag is advisory-only — the source of
+                                truth for two-nurse-witness lives on the
+                                downstream MAR row. */}
+                            <label style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11 }}>
+                              <input
+                                type="checkbox"
+                                checked={!!m.isHAM}
+                                onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, isHAM: e.target.checked } : x))}
+                                style={{ accentColor: "#ef4444" }}
+                              />
+                              {m.isHAM && (
+                                <span style={{ background: "#fee2e2", color: "#b91c1c", padding: "1px 5px", borderRadius: 3, fontSize: 9, fontWeight: 800, letterSpacing: ".3px" }}>HAM</span>
+                              )}
+                            </label>
                           </td>
                           <td style={{ padding: "6px 8px" }}>
                             {!ro && (
@@ -4411,7 +4503,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                   Nursing has captured {homeMeds.length} home medication{homeMeds.length === 1 ? "" : "s"} — they'll appear here automatically.
                 </div>
               )}
-              <button onClick={() => setMedRecon(l => [...l, { drug: "", dose: "", frequency: "", lastTaken: "", continueOnAdmit: "Continue", _doctorOnly: true }])}
+              <button onClick={() => setMedRecon(l => [...l, { drug: "", dose: "", frequency: "", lastTaken: "", continueOnAdmit: "Continue", isHAM: false, _doctorOnly: true }])}
                 style={{ padding: "5px 12px", border: `1.5px dashed ${C.accent}60`, borderRadius: 6,
                   background: C.accentL, cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: C.accent }}>
                 <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add medication (doctor-only)

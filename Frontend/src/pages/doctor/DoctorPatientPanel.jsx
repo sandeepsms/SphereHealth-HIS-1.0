@@ -2637,11 +2637,24 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
   ).length;
   const _billingCount = billing?.items?.length || (Number(billing?.totalAmount) > 0 ? 1 : 0);
 
+  // R7hr-101 — Tab-pill counts must match what the tab body actually renders.
+  // MLCOrDoctorNotesTab filters out IA notes (`nonInitialDocNotes`), and the
+  // Nursing Notes tab renders nurse notes that are NOT the initial assessment
+  // (IA gets its own tab + badge via `_initialCount`). Counting the raw
+  // collection here double-counted IA notes — the pill said "2" while the
+  // timeline rendered "1". Subtract IA so the badge matches the body.
+  // R25-safe: count derivation only, no shape change to readers.
+  const _mlcCount = doctorNotes.filter(
+    (n) => n.noteType !== "initial" && n.noteType !== "initialAssessment",
+  ).length;
+  const _nursingCount = nursingNotes.filter(
+    (n) => n.noteType !== "initial" && n.noteType !== "initialAssessment",
+  ).length;
   const tabCounts = {
     initial:   _initialCount,
     consent:   consents.length, // R7hr-75
-    mlc:       doctorNotes.length,
-    nursing:   nursingNotes.length,
+    mlc:       _mlcCount,
+    nursing:   _nursingCount,
     vitals:    vitalSheet.length,
     handover:  _handoverCount,
     treatment: _treatmentCount,

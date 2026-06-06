@@ -173,6 +173,7 @@ const TARGET_BED_NUMBER_PATTERNS = [/MGW.*B0?1$/i, /Male.*Bed.*1$/i, /MGW-B01$/i
     knownAllergies: DEMO_PATIENT.knownAllergies,
     allergies: DEMO_PATIENT.knownAllergies,
     paymentType: DEMO_PATIENT.paymentType,
+    registrationType: "IPD",  // ← so patient-search lists under the IPD pill
     isActive: true,
   });
   console.log(`\n[Step 3] Patient created: ${patient.fullName} · UHID=${patient.UHID} · _id=${patient._id}`);
@@ -206,6 +207,7 @@ const TARGET_BED_NUMBER_PATTERNS = [/MGW.*B0?1$/i, /Male.*Bed.*1$/i, /MGW-B01$/i
     bedNumber: targetBed.bedNumber,
     wardName: targetBed.wardName,
     roomCategory: targetBed.roomCategory || "GENW",
+    hasBed: true,            // ← required by /admissions/active?hasBed=true
     status: "Active",
     provisionalDiagnosis: "",
     age: patient.age,

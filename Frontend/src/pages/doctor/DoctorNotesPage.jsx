@@ -909,19 +909,38 @@ function DoctorNotesContent({ selectedPatient }) {
       if (diagNoteId) {
         await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${diagNoteId}/diagnosis`, payload, { headers });
       } else {
-        // No note yet — create a minimal draft note to anchor the diagnosis
-        const res = await axios.post(API_ENDPOINTS.DOCTOR_NOTES, {
-          ...payload,
-          patient: patient.patientId?._id || patient.patient,
-          patientName: patient.patientName || patient.patientId?.fullName || "",
-          patientUHID: patient.UHID || patient.uhid || searchUHID,
-          ipdNo,
-          visitDate: new Date(),
-          shift, noteType: "daily",
-          doctorName: user?.personalInfo ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim() : user?.name || "",
-        }, { headers });
-        const saved = res.data?.data || res.data;
-        if (saved?._id) setDiagNoteId(saved._id);
+        // R7hr-102 — Before spawning a fresh draft, look for an existing
+        // Initial Assessment for this patient. The IA is the canonical home
+        // for the patient's diagnosis (provisional/working/final/ICD), and
+        // previously this path created a phantom "Daily Progress" draft
+        // every time the diagnosis card was saved while diagNoteId hadn't
+        // hydrated yet — leaving stale empty daily-progress draft cards
+        // littering the Doctor Notes timeline right after the IA was signed.
+        // Reusing the IA via PATCH keeps R26 intact (no parallel
+        // role-mismatched record) and stops the "draft auto-saved after
+        // sign+save" regression the user flagged. Falls back to POST only
+        // when no IA exists at all (very early flow).
+        const existingIA = (notes || []).find(
+          (n) => n.noteType === "initial" || n.noteType === "initialAssessment",
+        );
+        if (existingIA?._id) {
+          await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${existingIA._id}/diagnosis`, payload, { headers });
+          setDiagNoteId(existingIA._id);
+        } else {
+          // No IA yet — create a minimal draft note to anchor the diagnosis
+          const res = await axios.post(API_ENDPOINTS.DOCTOR_NOTES, {
+            ...payload,
+            patient: patient.patientId?._id || patient.patient,
+            patientName: patient.patientName || patient.patientId?.fullName || "",
+            patientUHID: patient.UHID || patient.uhid || searchUHID,
+            ipdNo,
+            visitDate: new Date(),
+            shift, noteType: "daily",
+            doctorName: user?.personalInfo ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim() : user?.name || "",
+          }, { headers });
+          const saved = res.data?.data || res.data;
+          if (saved?._id) setDiagNoteId(saved._id);
+        }
       }
       toast.success("Diagnosis updated ✓");
       await fetchNotes(ipdNo);
