@@ -58,17 +58,26 @@ const fmtVal = (v) => {
 // MCCD layer table, GCS row should never split mid-row). Card-level
 // avoid is dropped in the wrapper below — that fixed pages that
 // previously held a single Vital Signs / small card and the rest empty.
+// R7hr-107 — Bolder field-label headlines.
+// User feedback: the labels above doctor's text-field values were the same
+// weight (600) and a soft slate-600 grey, so the eye couldn't anchor on them
+// when scanning a long IA card. Bumping the label to 800 weight + darker
+// slate-800 colour + slightly larger 11px gives the labels a true headline
+// feel — the doctor can now skim the labels and jump straight to the line
+// they need. Section dividers and table headers nudged the same way for
+// consistency. Values unchanged (already near-black at 11.5px).
+// R25-safe: pure CSS tweak, no markup change, no field gain/loss.
 const COMPACT_GRID_CSS = `<style>
   .dfx-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:11.5px;margin:6px 0 10px}
-  .dfx-grid .lbl{font-weight:600;color:#475569;font-size:10px;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:1px}
+  .dfx-grid .lbl{font-weight:800;color:#1e293b;font-size:11px;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:2px}
   .dfx-grid .val{color:#0f172a;font-size:11.5px;white-space:pre-wrap}
   .dfx-grid .full{grid-column:1 / -1}
-  .dfx-h{margin:10px 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:3px 8px;border-radius:4px}
+  .dfx-h{margin:10px 0 4px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;padding:4px 9px;border-radius:4px}
   .dfx-tbl{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0 8px;page-break-inside:avoid;break-inside:avoid}
-  .dfx-tbl th{padding:4px 6px;border:1px solid #cbd5e1;background:#f1f5f9;font-size:10px;text-align:left;color:#334155}
+  .dfx-tbl th{padding:4px 6px;border:1px solid #cbd5e1;background:#f1f5f9;font-size:10.5px;font-weight:800;text-align:left;color:#1e293b;text-transform:uppercase;letter-spacing:.3px}
   .dfx-tbl td{padding:4px 6px;border:1px solid #e2e8f0;color:#0f172a}
   .dfx-narr{margin:6px 0 10px;padding:8px 12px;background:#f8fafc;border-left:3px solid #94a3b8;font-size:11.5px;white-space:pre-wrap;line-height:1.45}
-  .dfx-banner{margin:6px 0 12px;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600}
+  .dfx-banner{margin:6px 0 12px;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:700}
 </style>`;
 
 const _kv = (label, value, isFull = false) => {
