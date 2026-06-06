@@ -32,10 +32,20 @@ const Sale        = require("../../models/Pharmacy/PharmacySaleModel");
 // doc). Without PatientBill in the credit ledger, the IPD Credit tab is
 // blind to the entire indent-released drug-charge category.
 const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+// R7hr-5: pharmacist Live Ledger can settle an outstanding sale from the
+// patient's advance pool — exact mirror of the IPD ledger's apply-advance
+// flow. PatientAdvance is the source-of-truth balance; we mutate that +
+// the sale's collectionLog atomically.
+const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
 const Settings    = require("../../models/Pharmacy/PharmacySettingsModel");
 const PharmacyDayClose = require("../../models/Pharmacy/PharmacyDayCloseModel");
 const Counter     = require("../../models/CounterModel");
 const Patient     = require("../../models/Patient/patientModel");
+// R7hr-12-S2 (D8-07): Doctor master lookup to auto-populate the prescriber's
+// MCI/state-council registration number on Sch H/H1/X dispenses — D&C Form 2
+// requires the registration column on the Schedule H register, otherwise the
+// state-FDA / NABH inspector marks the register as non-compliant.
+const Doctor      = require("../../models/Doctor/doctorModel");
 const mongoose    = require("mongoose");
 const { assertDrugSafeOrOverride } = require("../../utils/allergyCheck");
 const scheduleXRegister = require("../../services/Pharmacy/scheduleXRegister");
@@ -44,10 +54,30 @@ const scheduleXRegister = require("../../services/Pharmacy/scheduleXRegister");
 // audit row so the NABH register can reconstruct "who dispensed what to
 // whom, and when" without scraping individual Sale docs.
 const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+// R7hr-29: Drug Master category="Antibiotic" → auto Antimicrobial Use
+// Register row on every dispense (Walk-in/OPD/Homecare; IPD already emits
+// via the doctor-order POST). Lazy-imported so a missing emitter module
+// never breaks dispense.
+let _emitAntimicrobialForSale = null;
+let _discontinueAntimicrobialForSale = null;
+try {
+  const _amu = require("../../services/Compliance/nabhRegisterEmitter");
+  _emitAntimicrobialForSale       = _amu.emitAntimicrobialForSale;
+  // R7hr-33 (audit P0-2 / P0-3): used by cancelSale + returnItems below
+  // to flip Active AMU rows to Discontinued so the AWaRe consumption
+  // report doesn't over-count cancelled / refunded antibiotics.
+  _discontinueAntimicrobialForSale = _amu.discontinueAntimicrobialForSale;
+}
+catch (_) { /* emitter missing → no AMU register row; dispense still succeeds */ }
 // R7cu — pulled to module scope so collectCredit() can convert payment
 // amounts to Decimal128 + retry on VersionError races (two cashiers
 // collecting on the same sale simultaneously).
-const { toDec } = require("../../utils/money");
+// R7hr-12 (D2-01/D2-02): toNum coerces Decimal128 → Number safely. Without
+// it, expressions like `(sale.patientCredit || 0) + payable` trigger
+// Decimal128.toString() and become STRING CONCATENATION (`'100.00' + 50`
+// → `'100.0050'` → round2 → 100.01 instead of 150). Used at every read of
+// a Decimal128 money field before arithmetic.
+const { toDec, toNum } = require("../../utils/money");
 const retryVersionError = require("../../utils/retryVersionError");
 
 const todayISO  = () => new Date().toISOString().slice(0, 10);
@@ -240,6 +270,17 @@ exports.updateDrug = async (req, res) => {
       { new: true, runValidators: true }
     );
     if (!drug) return res.status(404).json({ success: false, message: "Drug not found", code: "NOT_FOUND" });
+    // R7hr-33 (audit P1-6): if the drug's `category` was just edited (or
+    // could have been edited — we don't compare before/after here, just
+    // assume any update may have touched it), bust the AMU classification
+    // cache so the next dispense re-evaluates from the fresh DB row. The
+    // alternative — wait 10 min for TTL expiry — meant a recategorised
+    // drug would emit (or miss) AMU rows for up to 10 minutes after the
+    // pharmacist's edit.
+    try {
+      const _amu = require("../../services/Compliance/nabhRegisterEmitter");
+      if (typeof _amu.invalidateAmuCache === "function") _amu.invalidateAmuCache(drug._id);
+    } catch (_) { /* AMU module optional — Drug edit must not fail on its absence */ }
     res.json({ success: true, data: drug });
   } catch (e) { sendErr(res, e); }
 };
@@ -249,7 +290,46 @@ exports.deleteDrug = async (req, res) => {
     if (!isOid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid drug id" });
     const drug = await Drug.findByIdAndUpdate(req.params.id, { $set: { isActive: false } }, { new: true });
     if (!drug) return res.status(404).json({ success: false, message: "Drug not found" });
-    res.json({ success: true, data: drug });
+    // R7hr-12-S2 (D3-07): cascade DrugBatch.isActive=false so existing
+    // batches stop dispensing. Pre-fix the indent path
+    // (indentService._fefoPickAndDecrement) only filters batches by
+    // batch.isActive — it never re-reads Drug.isActive — so an
+    // already-released-but-not-yet-administered indent could keep
+    // dispensing a recalled / formulary-removed drug indefinitely.
+    // The counter dispense path's L447 Drug.isActive check is also
+    // TOCTOU-vulnerable against an admin deactivating mid-flight.
+    // Cascade keeps both paths gated by a single is-Active source.
+    let batchCount = 0;
+    try {
+      const result = await DrugBatch.updateMany(
+        { drugId: drug._id, isActive: true },
+        { $set: { isActive: false } },
+      );
+      batchCount = result?.modifiedCount || result?.nModified || 0;
+    } catch (cascadeErr) {
+      // Don't fail the deactivation — log so the operator knows to
+      // hand-flip batches if the cascade was incomplete. The Drug master
+      // flip is the higher-priority safety gate (new indents will fail
+      // listDrugs at L115's isActive filter), so log + continue.
+      console.error("[Pharmacy] deleteDrug: batch cascade failed for drug",
+        String(drug._id), ":", cascadeErr.message);
+    }
+    // R7hr-12-S2 (D3-07): emit a ClinicalAudit row so the audit register
+    // has a single anchor for recall events — the pharmacist later sees
+    // "Drug X deactivated by admin Y at time Z, cascaded N batches".
+    try {
+      emitClinicalAudit({
+        req,
+        event: "PHARMACY_SALE_CANCELLED", // reused as closest enum bucket
+        UHID: "",
+        targetType: "Drug",
+        targetId: drug._id,
+        reason: `DRUG_DEACTIVATED: ${drug.name || ""} — cascaded ${batchCount} batch(es) to isActive=false`,
+        before: { isActive: true },
+        after: { isActive: false, drugName: drug.name, schedule: drug.schedule, cascadedBatches: batchCount },
+      });
+    } catch (_) { /* silent — audit emit is non-blocking */ }
+    res.json({ success: true, data: drug, meta: { cascadedBatches: batchCount } });
   } catch (e) { sendErr(res, e); }
 };
 
@@ -334,8 +414,57 @@ exports.recordGRN = async (req, res) => {
     const drug = await Drug.findById(drugId).lean();
     if (!drug) return res.status(404).json({ success: false, message: "Drug not found" });
 
-    // Issue a GRN number (per-day sequence is fine for now).
-    const grnNumber = `GRN-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${Math.floor(Math.random() * 9000) + 1000}`;
+    // R7hr-12-S2 (D8-06): supplier license / GST sanity check. Soft
+    // warning surfaced via remarks — many legacy supplier rows have empty
+    // gstin/drugLicenseNo defaults (SupplierModel L18-L20), so a hard
+    // reject would block routine GRNs. The remarks string lands on the
+    // BillingAudit emit below so the auditor sees the mismatch trail.
+    // Validation runs only when supplierId is provided AND the supplier
+    // doc carries non-empty fields to compare against.
+    let supplierWarning = "";
+    if (supplierId) {
+      try {
+        const sup = await Supplier.findById(supplierId).select("gstin drugLicenseNo name").lean();
+        if (sup) {
+          const reqGstin = String(req.body.invoiceGstin || req.body.supplierGstin || "").trim().toUpperCase();
+          const supGstin = String(sup.gstin || "").trim().toUpperCase();
+          if (reqGstin && supGstin && reqGstin !== supGstin) {
+            supplierWarning += `GSTIN mismatch (master=${supGstin}, invoice=${reqGstin}); `;
+          }
+          const reqLic = String(req.body.supplierDrugLicenseNo || "").trim();
+          const supLic = String(sup.drugLicenseNo || "").trim();
+          if (reqLic && supLic && reqLic !== supLic) {
+            supplierWarning += `Drug-License mismatch (master=${supLic}, invoice=${reqLic}); `;
+          }
+        }
+      } catch (_) { /* best-effort */ }
+    }
+
+    // Issue a GRN number — monotonic via Counter so the D&C "sequential
+    // purchase register" assumption holds and audits can detect a gap.
+    // R7hr-12-S2 (D8-06): pre-fix used Math.random() suffix on a per-day
+    // string, breaking the sequential-register expectation and exposing
+    // a collision surface (1-in-9000 per day, low but non-zero). Switch
+    // to nextSeq("pharmacyGRN") matching the existing pharmacyBill /
+    // pharmacyCreditCollection / pharmacySupplement convention.
+    const grnSeq = await nextSeq("pharmacyGRN");
+    const yy = String(new Date().getFullYear()).slice(-2);
+    const grnNumber = `GRN-${yy}-${String(grnSeq).padStart(6, "0")}`;
+
+    // R7hr-50 — Resolve canonical GST rate from HSN master at receipt time.
+    // Drug.gstRate is already kept in sync with HSN via the DrugModel
+    // pre-save hook, so this lookup is the source-of-truth refresh AT THE
+    // MOMENT OF GRN. Once stamped on the batch it becomes immutable for
+    // that stock — a later HSN re-classification on Drug master cannot
+    // rewrite the tax on stock already in the building.
+    let resolvedGstRate = Number(drug.gstRate ?? 12);
+    if (drug.hsnCode) {
+      try {
+        const HSNMaster = require("../../models/Pharmacy/HSNMasterModel");
+        const master = await HSNMaster.findOne({ code: drug.hsnCode, isActive: true }).lean();
+        if (master && master.gstRate != null) resolvedGstRate = Number(master.gstRate);
+      } catch (_) { /* fallback to drug.gstRate */ }
+    }
 
     const batch = await DrugBatch.create({
       drugId, drugName: drug.name,
@@ -346,6 +475,10 @@ exports.recordGRN = async (req, res) => {
       purchaseRate: Number(purchaseRate || 0),
       mrp:          Number(mrp || 0),
       salePrice:    Number(salePrice || drug.defaultSalePrice || mrp || 0),
+      // R7hr-50 — stamp GST + HSN at receipt time so the batch carries
+      // its own tax classification (independent of future Drug edits).
+      gstRate:          resolvedGstRate,
+      hsnCodeAtReceipt: drug.hsnCode || "",
       supplierId: supplierId || null,
       supplierName: supplierName || "",
       grnNumber,
@@ -355,11 +488,81 @@ exports.recordGRN = async (req, res) => {
       createdBy: req.user?.fullName || "System",
     });
 
+    // R7hr-50 — Sync purchase-rate intelligence back to Drug master.
+    //   lastPurchaseRate = this GRN's per-unit cost (so admin sees the most
+    //     recent procurement price without scanning batches)
+    //   lastGRNDate      = when that was captured
+    //   wac              = weighted-average cost across ACTIVE batches
+    //     (remaining > 0). Calculation: Σ(remaining × purchaseRate) /
+    //     Σ(remaining). New batch is included since it was just created.
+    //     Falls through to lastPurchaseRate if every active batch lacks a
+    //     purchaseRate. Best-effort — a costing-update failure mustn't
+    //     roll back the procurement.
+    try {
+      const activeBatches = await DrugBatch.find({
+        drugId, isActive: true, remaining: { $gt: 0 },
+      }).select("remaining purchaseRate").lean();
+      let totalQty = 0, totalCost = 0;
+      for (const b of activeBatches) {
+        const r = Number(b.remaining || 0);
+        const p = Number(b.purchaseRate || 0);
+        if (r > 0 && p > 0) { totalQty += r; totalCost += r * p; }
+      }
+      const newWac = totalQty > 0 ? Number((totalCost / totalQty).toFixed(2)) : Number(purchaseRate || 0);
+      await Drug.updateOne({ _id: drugId }, {
+        $set: {
+          lastPurchaseRate: Number(purchaseRate || 0),
+          lastGRNDate:      new Date(),
+          wac:              newWac,
+        },
+      });
+    } catch (e) {
+      console.warn("[recordGRN] R7hr-50 cost-sync failed (non-fatal):", e.message);
+    }
+
+    // R7hr-12-S2 (D8-06): BillingAudit emit so the procurement chain has
+    // a chronological audit row (D&C Rule §65 + GST Act §35 + NABH AAC.1).
+    // Pre-fix recordGRN was the only mutating pharmacy procurement op
+    // without an audit row — every other lifecycle op in this controller
+    // (dispense, return, cancel, vendor-return, addItems, collectCredit)
+    // emits one. Best-effort try/catch matches the vendor-return pattern
+    // so an audit blip can't roll back the batch creation.
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:     "ITEM_ADDED", // closest enum bucket for purchase-side row addition
+        actorId:   req.user?._id || req.user?.id || null,
+        actorName: req.user?.fullName || "System",
+        actorRole: req.user?.role || "",
+        amount:    qty * Number(purchaseRate || 0),
+        reason:    `GRN: ${drug.name || ""} batch ${batch.batchNo} qty=${qty} supplier=${supplierName || "—"} invoice=${invoiceNo || "—"}${supplierWarning ? " · WARN: " + supplierWarning : ""}`,
+        after:     {
+          batchId:    batch._id,
+          grnNumber,
+          supplierId: supplierId || null,
+          invoiceNo:  invoiceNo || "",
+          qty,
+          purchaseRate: Number(purchaseRate || 0),
+          supplierWarning: supplierWarning || null,
+        },
+      }, { req });
+    } catch (_) { /* best-effort */ }
+
     // R7bh-F4 / R7bg-10-CRIT-2: bump the Schedule-X running balance on
     // receipt so the CAS in scheduleXRegister.recordDispense has stock
-    // to deduct against. Best-effort — log on failure but don't fail
-    // the GRN itself (a missed balance bump shows as 0 in the register
-    // and the operator can reconcile manually).
+    // to deduct against.
+    // R7hr-12-S2 (D3-06): no longer best-effort. Pre-fix a transient
+    // recordReceipt failure left DrugBatch.remaining recording real
+    // stock while ScheduleXBalance.balance stayed at 0 — the next
+    // dispense's atomic CAS (scheduleXRegister.js:115-135) rejected
+    // with INSUFFICIENT_REGISTER_BALANCE even though Morphine/Pethidine
+    // was physically on the shelf. Pharmacist had no UI path to repair
+    // the divergence (no admin endpoint bumps balance directly), forcing
+    // hand-editing of Mongo to dispense a controlled substance during
+    // an NDPS-regulated emergency. Now: if receipt fails, roll back the
+    // DrugBatch.create above and 500 the GRN so the operator retries
+    // with a clear error — guarantees DrugBatch.remaining and
+    // ScheduleXBalance.balance never diverge.
     if (drug.schedule === "X") {
       try {
         await scheduleXRegister.recordReceipt({
@@ -371,10 +574,33 @@ exports.recordGRN = async (req, res) => {
       } catch (sxErr) {
         console.error("[Pharmacy] GRN: Schedule-X balance bump failed for drug",
           String(drugId), "qty", qty, ":", sxErr.message);
+        // R7hr-12-S2 (D3-06): roll back the just-created batch so the
+        // two stores stay aligned. Best-effort delete — if this also
+        // fails, the operator gets both errors via console for manual
+        // reconciliation, but the original 500 surfaces in the response.
+        try {
+          await DrugBatch.findByIdAndDelete(batch._id);
+        } catch (rbErr) {
+          console.error("[Pharmacy] GRN: Schedule-X rollback failed for batch",
+            String(batch._id), ":", rbErr.message);
+        }
+        return res.status(500).json({
+          success: false,
+          code: "SCHEDULE_X_RECEIPT_FAILED",
+          message: `GRN aborted — Schedule-X register failed to record receipt: ${sxErr.message}. Retry once the register is available; do NOT dispense until the GRN is re-recorded successfully.`,
+        });
       }
     }
 
-    res.status(201).json({ success: true, data: batch, grnNumber });
+    // R7hr-12-S2 (D8-06): surface supplierWarning in response so the
+    // pharmacist sees the mismatch on the UI confirmation (the warning
+    // is also persisted in the BillingAudit row above).
+    res.status(201).json({
+      success: true,
+      data: batch,
+      grnNumber,
+      ...(supplierWarning ? { warning: supplierWarning } : {}),
+    });
   } catch (e) {
     if (e.code === 11000) return res.status(409).json({ success: false, message: "This batch already exists for this drug" });
     sendErr(res, e);
@@ -384,6 +610,13 @@ exports.recordGRN = async (req, res) => {
 exports.listBatches = async (req, res) => {
   try {
     const { drugId, expiringIn, lowStock, location } = req.query;
+    // R7hr-12-S3 (D6-09): validate drugId as ObjectId at the door rather than
+    // relying on sendErr to map a downstream CastError → 400. Matches the
+    // explicit-validation convention used by every :id-bearing endpoint in
+    // this controller (validateObjectIdParam on routes, isOid() on query).
+    if (drugId && !isOid(drugId)) {
+      return res.status(400).json({ success: false, message: "Invalid drugId", code: "VALIDATION" });
+    }
     const where = { isActive: true };
     if (drugId)  where.drugId = drugId;
     if (location) where.location = location;
@@ -391,11 +624,40 @@ exports.listBatches = async (req, res) => {
       // IST-aware horizon (re-audit F-04-1) — the "expiring within N days"
       // filter must count days from the IST midnight the pharmacist sees,
       // not from the server's UTC instant.
-      const { istStartOfDayPlus } = require("../../utils/queryGuards");
+      // R7hr-12-S3 (D3-08): the previous one-sided `$lte` predicate
+      // surfaced already-expired batches under "expiring within N days"
+      // because no $gte anchor excluded them. Already-expired stock has a
+      // dedicated channel (/alerts -> expired bucket, /expiryRegister),
+      // and `fifoConsume` would refuse to dispense from it anyway. Add a
+      // start-of-today $gte so this list cleanly means "expires SOON, not
+      // already expired".
+      const { istStartOfDayPlus, istStartOfToday } = require("../../utils/queryGuards");
       const days = Number(expiringIn);
-      where.expiryDate = { $lte: istStartOfDayPlus(days) };
+      where.expiryDate = { $gte: istStartOfToday(), $lte: istStartOfDayPlus(days) };
     }
-    if (lowStock === "true") where.remaining = { $lt: 5 };
+    // R7hr-12-S3 (D3-05): replace the hard-coded per-batch `remaining < 5`
+    // filter with a per-drug rollup against the drug master's reorderLevel
+    // (defaults to 10 when blank). Pre-fix surfaced any drug with batches
+    // smaller than five units even when the drug had abundant total stock,
+    // AND missed drugs whose individual batches were >= 5 but total stock
+    // was below reorderLevel — making the list meaningless for reorder
+    // decisions. No live frontend caller passes `lowStock=true` today
+    // (Frontend reads /pharmacy/alerts.lowStock), but the documented
+    // ?lowStock=true contract should still return a useful result for
+    // any future consumer / integration. Mirrors the rollup at /alerts
+    // L4276-L4286 — keep the two paths semantically aligned.
+    if (lowStock === "true") {
+      const lowRollup = await DrugBatch.aggregate([
+        { $match: { isActive: true, remaining: { $gt: 0 }, ...(drugId ? { drugId: new mongoose.Types.ObjectId(drugId) } : {}) } },
+        { $group: { _id: "$drugId", totalRemaining: { $sum: "$remaining" } } },
+        { $lookup: { from: "pharmacydrugs", localField: "_id", foreignField: "_id", as: "drug" } },
+        { $unwind: { path: "$drug", preserveNullAndEmptyArrays: true } },
+        { $match: { $expr: { $lt: ["$totalRemaining", { $ifNull: ["$drug.reorderLevel", 10] }] } } },
+        { $project: { _id: 1 } },
+      ]);
+      const allowedDrugIds = lowRollup.map(r => r._id);
+      where.drugId = { $in: allowedDrugIds };
+    }
     const batches = await DrugBatch.find(where).sort({ expiryDate: 1 }).populate("drugId", "name reorderLevel").lean();
     res.json({ success: true, data: batches });
   } catch (e) { sendErr(res, e); }
@@ -513,6 +775,26 @@ exports.dispense = async (req, res) => {
       // GSTR-1 schema. Both optional — when blank, intra-state default
       // (CGST+SGST = gst/2 each) applies and B2C bucket is used.
       placeOfSupply, customerGstin,
+      // R7hp-2: structured payment metadata (Card last-4, UPI txn ref,
+      // Mix splits). Whitelisted here so the service layer can persist
+      // it on the Sale doc without a downstream schema change.
+      paymentDetails,
+      // R7hp-1: pharmacist counter identity for the bill footer.
+      counter,
+      // R7hr-12-S2 (D8-07): top-level prescriber registration number
+      // (MCI / state-council reg) for Sch H/H1/X register completeness.
+      // Either passed explicitly by the client, or auto-populated from
+      // the Doctor master when the prescriber resolves by name during the
+      // pre-flight loop below.
+      prescriberRegistrationNo,
+      // R7hr-23: D&C Rules 65 — Walk-in dispense of a Schedule H/H1/X
+      // drug requires the pharmacist on duty to preserve a photocopy of
+      // the prescription for 5 years. The frontend opens an attestation
+      // modal that captures prescriber + Rx ref + this checkbox; we
+      // snapshot the attestation on the sale so the Sch H register and
+      // any subsequent inspector audit can verify it per sale. Falsy on
+      // Walk-in + Sch H lines → RX_PHOTOCOPY_REQUIRED.
+      rxPhotocopyPreserved,
     } = req.body;
 
     // R7bh-F4 / R7bg-3-HIGH-1: normalise paymentMode at the controller boundary
@@ -562,6 +844,23 @@ exports.dispense = async (req, res) => {
       });
     }
 
+    // R7hr-12-S2 (D2-10): block Walk-in + Credit / Advance — pharmacy has
+    // no audit anchor to chase a credit/advance balance against an
+    // anonymous customer. The IPD-credit ledger surfaces only saleType in
+    // {IPD, Homecare} (listIpdCreditAdmissions L1097), so a Walk-in
+    // credit/advance sale becomes a silent receivable the system can't
+    // list. Advance against an anonymous customer is also structurally
+    // impossible — applyAdvanceToSale resolves the pool by UHID.
+    if (saleType === "Walk-in" && !String(patientUHID || "").trim()) {
+      if (paymentMode === "Credit" || paymentMode === "Advance") {
+        return res.status(400).json({
+          success: false,
+          code: "WALKIN_NEEDS_UHID",
+          message: `Walk-in sale with ${paymentMode} payment requires a patient UHID — credit / advance modes need a chase-able audit anchor`,
+        });
+      }
+    }
+
     if (!items || !items.length) {
       return res.status(400).json({ success: false, message: "items[] is required" });
     }
@@ -593,6 +892,35 @@ exports.dispense = async (req, res) => {
       const d = await Drug.findById(it.drugId).select("schedule name hsnCode").lean();
       if (d) drugMetaMap.set(key, d);
     }
+
+    // R7hr-12-S2 (D8-07): pre-resolve a top-level prescriber registration
+    // number for the sale. Priority: explicit req.body.prescriberRegistrationNo
+    // → Doctor master lookup by doctorName. The Doctor master fallback only
+    // fires when there's a non-empty doctorName AND no explicit reg supplied;
+    // a single keyed query per dispense so the cost is bounded. When the
+    // lookup misses, we fall through and let the H/H1/X validator below raise
+    // RX_REG_REQUIRED — never silently dispense a Sch H/H1/X drug without
+    // the registration column populated, since the statutory register column
+    // cannot be patched in post-hoc.
+    let resolvedPrescriberReg = String(prescriberRegistrationNo || "").trim();
+    if (!resolvedPrescriberReg) {
+      const candidateName = String(doctorName || "").trim();
+      if (candidateName) {
+        try {
+          // Match by personalInfo.fullName (auto-generated on Doctor save)
+          // using a case-insensitive exact match; legacy rows without the
+          // pre-save hook may need this query extended later.
+          const escaped = candidateName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const docRow = await Doctor.findOne({
+            "personalInfo.fullName": new RegExp("^" + escaped + "$", "i"),
+          }).select("professional.registrationNumber personalInfo.fullName").lean();
+          if (docRow?.professional?.registrationNumber) {
+            resolvedPrescriberReg = String(docRow.professional.registrationNumber).trim();
+          }
+        } catch (_) { /* Doctor lookup failures must not block dispense */ }
+      }
+    }
+
     for (const it of items) {
       const meta = drugMetaMap.get(String(it.drugId));
       if (!meta) continue;
@@ -604,6 +932,47 @@ exports.dispense = async (req, res) => {
             success: false,
             code: "RX_REF_REQUIRED",
             message: `Drug "${meta.name}" is Schedule ${sched} — prescriptionRef + prescriberName are required on the item or sale`,
+            // R7hr-23: structured payload so the frontend attestation modal
+            // knows exactly which fields to collect + which drug triggered.
+            drugName:    meta.name,
+            schedule:    sched,
+            missing:     ["prescriptionRef","prescriberName"]
+                            .filter(k => !String((k === "prescriberName" ? doctorName : prescriptionRef) || "").trim()),
+            saleType,
+          });
+        }
+        // R7hr-12-S2 (D8-07): D&C Form 2 / Schedule H1 register mandates the
+        // prescriber's MCI/state-council registration number. Accept from
+        // the item, then the top-level body, then the Doctor master fallback
+        // resolved above; reject if all three are empty so the auditor never
+        // sees a Schedule H/H1/X dispense with a blank Reg-No column.
+        const itemReg = String(it.prescriberRegistrationNo || "").trim();
+        if (!itemReg && !resolvedPrescriberReg) {
+          return res.status(400).json({
+            success: false,
+            code: "RX_REG_REQUIRED",
+            message: `Drug "${meta.name}" is Schedule ${sched} — prescriberRegistrationNo is required on the item or sale (D&C Form 2). If the prescriber is in the Doctor master, ensure their professional.registrationNumber is set.`,
+            drugName:    meta.name,
+            schedule:    sched,
+            missing:     ["prescriberRegistrationNo"],
+            saleType,
+          });
+        }
+        // R7hr-23: D&C Rules 65 — Walk-in counter dispense of any Sch H/H1/X
+        // line requires the pharmacist on duty to preserve a photocopy of
+        // the prescription for 5 years. We refuse the sale unless the
+        // frontend attestation modal has been signed off (rxPhotocopyPreserved
+        // = true). OPD/IPD/Homecare exempted — their prescription is
+        // already on the patient file (DoctorOrder / Prescription / Rx-link).
+        if (saleType === "Walk-in" && rxPhotocopyPreserved !== true) {
+          return res.status(400).json({
+            success: false,
+            code: "RX_PHOTOCOPY_REQUIRED",
+            message: `Drug "${meta.name}" is Schedule ${sched} (Walk-in sale). D&C Rules 65 require a photocopy of the prescription to be preserved for 5 years. Please confirm preservation on the attestation prompt to proceed.`,
+            drugName:    meta.name,
+            schedule:    sched,
+            missing:     ["rxPhotocopyPreserved"],
+            saleType,
           });
         }
       }
@@ -647,8 +1016,14 @@ exports.dispense = async (req, res) => {
     }
 
     // Bill number — Counter._id is the scope key, NOT a `name` field.
+    // R7hq: simplified from PHM-YYYYMMDD-NNNN (e.g. PHM-20260604-0002)
+    // to PHM-YY-NNNN (e.g. PHM-26-0002), matching the IPD-YY-NN style.
+    // The seq counter stays continuous (so the audit trail still has a
+    // monotonic per-pharmacy sequence number for GST §31 compliance);
+    // only the human-facing prefix shrinks.
     const seq = await nextSeq("pharmacyBill");
-    const billNumber = `PHM-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
+    const yy = String(new Date().getFullYear()).slice(-2);
+    const billNumber = `PHM-${yy}-${String(seq).padStart(4, "0")}`;
 
     // Stock pre-flight DELETED (business audit F-03). The previous
     // aggregation `$sum` + check happened OUTSIDE the atomic
@@ -666,13 +1041,96 @@ exports.dispense = async (req, res) => {
     // otherwise intra-state default (CGST + SGST). Blank state on
     // either side falls back to intra-state — safer default for the B2C
     // walk-in case where state isn't captured.
+    // R7hr-12-S2 (D8-03): drug-license expiry gate. NABH AAC.1 + Drugs &
+    // Cosmetics Act §18-A require a current statutory license to dispense.
+    // Pre-fix, drugLicenseExp was captured for invoice-header printing but
+    // NEVER enforced — pharmacy could dispense for years on an expired
+    // license without any system flag. We now load drugLicenseExp at the
+    // same time as state (single Settings read, no extra round trip) and
+    // reject the sale with code=LICENSE_EXPIRED unless the singleton's
+    // drugLicenseExpiryOverride flag is on AND a documented reason is
+    // present. Emergency override is itself audited downstream.
     let pharmacyState = "";
+    let licenseExp = null;
+    let licenseOverride = false;
+    let licenseOverrideReason = "";
     try {
-      const setRow = await Settings.findOne({}).select("state").lean();
-      pharmacyState = String(setRow?.state || "").trim().toUpperCase();
-    } catch (_) { /* settings missing — falls back to intra-state */ }
+      const setRow = await Settings.findOne({})
+        .select("state drugLicenseExp drugLicenseExpiryOverride drugLicenseExpiryOverrideReason")
+        .lean();
+      pharmacyState         = String(setRow?.state || "").trim().toUpperCase();
+      licenseExp            = setRow?.drugLicenseExp || null;
+      licenseOverride       = !!setRow?.drugLicenseExpiryOverride;
+      licenseOverrideReason = String(setRow?.drugLicenseExpiryOverrideReason || "").trim();
+    } catch (_) { /* settings missing — falls back to intra-state + no license enforcement */ }
+
+    // Reject when drugLicenseExp is set AND past today (IST), unless the
+    // explicit override is on with a documented reason. The override
+    // requires BOTH the flag and a non-empty reason — silently setting
+    // only the flag still triggers a 403.
+    if (licenseExp instanceof Date && !Number.isNaN(licenseExp.getTime())) {
+      const { istStartOfToday } = require("../../utils/queryGuards");
+      const today = istStartOfToday();
+      if (licenseExp < today) {
+        if (!licenseOverride || !licenseOverrideReason) {
+          return res.status(403).json({
+            success: false,
+            code: "LICENSE_EXPIRED",
+            message: `Pharmacy drug license expired on ${licenseExp.toISOString().slice(0, 10)}. ` +
+                     `Renew the license OR set the documented emergency override in /pharmacy/settings before dispensing.`,
+          });
+        }
+        // Override path — emit a WARN-level BillingAudit row so every
+        // expired-license sale is reconstructible later (NABH AAC.7).
+        try {
+          const BillingAudit = require("../../models/Billing/BillingAudit");
+          if (BillingAudit && typeof BillingAudit.emitBillingAudit === "function") {
+            await BillingAudit.emitBillingAudit({
+              event:     "MASTER_DRUG_PRICE_CHANGED", // closest enum slot until LICENSE_OVERRIDE lands
+              actorName: req?.user?.fullName || "System",
+              actorId:   req?.user?._id,
+              actorRole: req?.user?.role,
+              reason:    `LICENSE_EXPIRED override used. Reason: ${licenseOverrideReason}`,
+              after: {
+                drugLicenseExp:        licenseExp,
+                override:              true,
+                overrideReason:        licenseOverrideReason,
+                expiredByDays:         Math.floor((today.getTime() - licenseExp.getTime()) / 86400000),
+                saleType,
+                patientUHID:           String(patientUHID || ""),
+              },
+            }, { req });
+          }
+        } catch (_) { /* audit failure must not block emergency dispense */ }
+      }
+    }
+
     const customerState = String(placeOfSupply || "").trim().toUpperCase();
     const interState = !!(pharmacyState && customerState && pharmacyState !== customerState);
+
+    // R7hr-12-S3 (D7-06): denormalise bed / ward / attending consultant from
+    // the linked Admission for IPD + Homecare sales. Snapshotted on the Sale
+    // doc so a reprint after a bed transfer or consultant change still shows
+    // the encounter context at issue time (GST §31 invoice snapshot). Single
+    // bounded findById call; best-effort try/catch so an Admission read miss
+    // doesn't block a routine dispense (the bill simply prints "—" later).
+    // Walk-in / OPD leave these blank — the print template already falls back.
+    let snapBedNumber = "";
+    let snapWardName = "";
+    let snapConsultantName = "";
+    if (_admissionId && (saleType === "IPD" || saleType === "Homecare")) {
+      try {
+        const Admission = require("../../models/Patient/admissionModel");
+        const adm = await Admission.findById(_admissionId)
+          .select("bedNumber wardName attendingDoctor")
+          .lean();
+        if (adm) {
+          snapBedNumber      = String(adm.bedNumber || "").trim();
+          snapWardName       = String(adm.wardName || "").trim();
+          snapConsultantName = String(adm.attendingDoctor || "").trim();
+        }
+      } catch (_) { /* best-effort denorm — Sale.create proceeds with blanks */ }
+    }
 
     const saleItems = [];
     const scheduleXItems = []; // [{drugId, qty, prescriptionRef, prescriberName, drugName}]
@@ -694,6 +1152,10 @@ exports.dispense = async (req, res) => {
             qty:             u.used,
             prescriptionRef: String(it.prescriptionRef || prescriptionRef || "").trim(),
             prescriberName:  String(it.prescriberName || doctorName || "").trim(),
+            // R7hr-12-S2 (D8-07): pass the per-item or sale-level resolved
+            // prescriber registration number through to scheduleXRegister
+            // so the NDPS register row carries it for inspection.
+            prescriberRegistrationNo: String(it.prescriberRegistrationNo || resolvedPrescriberReg || "").trim(),
             drugName:        meta.name,
             batchId:         u.batch._id,
           });
@@ -728,16 +1190,40 @@ exports.dispense = async (req, res) => {
         // them under the unclassified bucket.
         const hsnSnap = String(drugMetaMap.get(String(it.drugId))?.hsnCode || "");
 
+        // R7hr-12-S3 (D2-07): paise-round per-line money fields so
+        // SUM(items.netAmount) on the sale reconciles with sale.grandTotal
+        // (sans the whole-rupee roundOff field). Pre-fix the dispense path
+        // stored raw-float per-line values while the refund (L1941-L1943)
+        // and supplement (L2143-L2144 / L2152-L2153) paths in this same
+        // file used round2() — gstSummary's $sum aggregation (L3155-L3253)
+        // operated on raw-float per-item taxableAmount/gstAmount and drifted
+        // paise per bill from the whole-rupee bill total. Aligning the
+        // dispense path with refund/supplement makes the two views agree.
         saleItems.push({
           drugId: it.drugId, drugName: it.drugName,
           batchId: u.batch._id, batchNo: u.batch.batchNo, expiryDate: u.batch.expiryDate,
+          // R7hr-31: snapshot the batch MRP onto the sale item so the
+          // Pharmacy Bill print can show MRP alongside sale RATE — Legal
+          // Metrology Rules + consumer-transparency expectation. Without
+          // this snapshot a later MRP revision on the batch (e.g. mfg
+          // revision) would rewrite history on every reprint.
+          mrp: Number(u.batch.mrp || 0),
           quantity: qty, unitPrice: unit, gstRate: gstR, discountPercent: discR,
           hsnCode: hsnSnap,
-          grossAmount: gross, discountAmount: discAmt,
-          taxableAmount: taxable,
-          gstAmount: gstAmt,
-          cgstAmount: cgstAmt, sgstAmount: sgstAmt, igstAmount: igstAmt,
-          netAmount: net,
+          grossAmount:    round2(gross),
+          discountAmount: round2(discAmt),
+          taxableAmount:  round2(taxable),
+          gstAmount:      round2(gstAmt),
+          cgstAmount:     round2(cgstAmt),
+          sgstAmount:     round2(sgstAmt),
+          igstAmount:     round2(igstAmt),
+          netAmount:      round2(net),
+          // R7hr-12-S2 (D8-07): per-item prescriber identity snapshot —
+          // sale-level prescriberRegistrationNo handles the homogeneous
+          // single-doctor script; per-item fields cover multi-doctor sales
+          // and survive on the bill doc for register printing.
+          prescriberName:           String(it.prescriberName || doctorName || "").trim(),
+          prescriberRegistrationNo: String(it.prescriberRegistrationNo || resolvedPrescriberReg || "").trim(),
         });
         subTotal  += gross;
         totalDisc += discAmt;
@@ -747,11 +1233,56 @@ exports.dispense = async (req, res) => {
         totalIgst += igstAmt;
       }
     }
-    const totalTaxable = subTotal - totalDisc;
-    const grandTotalRaw = totalTaxable + totalGst;
+    // R7hr-12-S3 (D2-07): paise-round the running totals before persistence
+    // for the same reconciliation reason — matches refund (L1949-L1951) and
+    // supplement (L2151-L2153) paths. The whole-rupee `grandTotal` + signed
+    // `roundOff` pair is intentional (Indian retail tendering convention,
+    // PharmacyBill.jsx renders the "Round-off" line on every print).
+    subTotal  = round2(subTotal);
+    totalDisc = round2(totalDisc);
+    totalGst  = round2(totalGst);
+    totalCgst = round2(totalCgst);
+    totalSgst = round2(totalSgst);
+    totalIgst = round2(totalIgst);
+    const totalTaxable = round2(subTotal - totalDisc);
+    const grandTotalRaw = round2(totalTaxable + totalGst);
     const roundOff = Math.round(grandTotalRaw) - grandTotalRaw;
     const grandTotal = grandTotalRaw + roundOff;
     const paid = Number(amountPaid != null ? amountPaid : grandTotal);
+
+    // R7hr-12-S2 (D2-11): hard-enforce that for paymentMode === "Mixed",
+    // the splits[] sum equals amountPaid (±1 paisa epsilon). Pre-fix the
+    // service trusted the client (schema note at PharmacySaleModel L141-L146:
+    // "The sum must equal amountPaid; the service trusts the client today,
+    // hard-enforces in a follow-up"), letting a buggy/malicious client post
+    // splits=[Cash 100, Card 50] alongside amountPaid=500 — the day-book
+    // byMode rollup would report ₹500 of "Mixed" while only ₹150 of split
+    // detail was captured. NABH IMS.2 audit-trail integrity + cashier
+    // shift-close reconciliation depend on this invariant. Cross-item
+    // rollback hasn't fired yet at this point (stock not committed via
+    // Sale.create); validate before consume.
+    if (paymentMode === "Mixed") {
+      const splits = Array.isArray(paymentDetails?.splits) ? paymentDetails.splits : [];
+      const splitsSum = splits
+        .filter(sp => sp && ["Cash", "Card", "UPI"].includes(sp.mode))
+        .reduce((t, sp) => t + Math.max(0, Number(sp.amount) || 0), 0);
+      if (Math.abs(splitsSum - paid) > 0.01) {
+        // Roll back any consumed stock before bailing — same shape as the
+        // outer cross-item rollback.
+        for (const c of consumedAll) {
+          try {
+            await DrugBatch.findByIdAndUpdate(c.batchId, {
+              $inc: { quantityOut: -c.qty, remaining: c.qty },
+            });
+          } catch (_) { /* best-effort */ }
+        }
+        return res.status(400).json({
+          success: false,
+          code: "MIXED_SPLITS_MISMATCH",
+          message: `Mixed-mode splits[] sum ₹${splitsSum.toFixed(2)} does not match amountPaid ₹${paid.toFixed(2)} (tolerance 1 paisa)`,
+        });
+      }
+    }
 
     // Over-payment becomes patient credit (pharmacy owes patient).
     // balanceDue tracks the OPPOSITE direction (patient owes pharmacy).
@@ -769,8 +1300,25 @@ exports.dispense = async (req, res) => {
     const sale = await Sale.create({
       billNumber,
       patientUHID, patientName, contactNumber, age, gender, doctorName,
+      // R7hr-12-S2 (D8-07): persist the resolved prescriber registration
+      // number at the sale level so scheduleHRegister + the printable
+      // statutory register can surface it as the D&C Form 2 / Schedule H1
+      // mandated "registration number of the prescriber" column.
+      prescriberRegistrationNo: resolvedPrescriberReg || "",
       saleType, admissionId: _admissionId, admissionNumber: _admissionNumber,
+      // R7hr-12-S3 (D7-06): encounter context snapshot — bed / ward /
+      // attending consultant captured from the Admission at billing time so
+      // a reprint after a bed transfer still shows the historical context.
+      bedNumber:      snapBedNumber,
+      wardName:       snapWardName,
+      consultantName: snapConsultantName,
       prescriptionRef: prescriptionRef || "",
+      // R7hr-23: D&C Rules 65 — snapshot the photocopy-preservation
+      // attestation on the sale doc so the Sch H register + any
+      // inspector audit can verify it per dispense. Always written
+      // (default false) — only Sch H/H1/X Walk-in lines actually
+      // require it; everywhere else it's an informational flag.
+      rxPhotocopyPreserved: !!rxPhotocopyPreserved,
       items: saleItems,
       subTotal, totalDiscount: totalDisc, totalTaxable, totalGst,
       roundOff, grandTotal,
@@ -788,6 +1336,23 @@ exports.dispense = async (req, res) => {
       igstAmount: totalIgst,
       paymentMode, amountPaid: paid,
       balanceDue,
+      // R7hp-2: shape-defensive whitelist on the payment metadata so
+      // garbage from an old client can't sneak unknown fields onto the
+      // sub-doc.
+      paymentDetails: paymentDetails && typeof paymentDetails === "object" ? {
+        cardLast4:      String(paymentDetails.cardLast4 || "").slice(0, 4),
+        cardHolderName: String(paymentDetails.cardHolderName || "").slice(0, 80),
+        upiTxnRef:      String(paymentDetails.upiTxnRef || "").slice(0, 64),
+        splits: Array.isArray(paymentDetails.splits) ? paymentDetails.splits
+          .filter(s => s && ["Cash","Card","UPI"].includes(s.mode))
+          .map(s => ({
+            mode:   s.mode,
+            amount: Math.max(0, Number(s.amount) || 0),
+            txnRef: String(s.txnRef || "").slice(0, 64),
+          })) : [],
+      } : undefined,
+      // R7hp-1: counter identity — falls back to actor name when blank.
+      counter: String(counter || req.user?.fullName || "").slice(0, 60),
       patientCredit:    round2(overPaid),
       patientCreditLog: creditLog,
       status: "Completed",
@@ -812,6 +1377,12 @@ exports.dispense = async (req, res) => {
             qty:           sx.qty,
             rx:            sx.prescriptionRef,
             doctorName:    sx.prescriberName,
+            // R7hr-12-S2 (D8-07): pass prescriber registration number so the
+            // NDPS / Schedule X register can persist it once
+            // ScheduleXEntryModel gains the column. The service ignores
+            // unknown fields today but the data flow is in place for the
+            // follow-up schema migration flagged in needsManualReview.
+            doctorRegistrationNo: sx.prescriberRegistrationNo || "",
             uhid:          patientUHID || "",
             // NDPS two-person rule — the dispenser is the cashier; we
             // accept an optional witnessId on the body. If missing, the
@@ -821,7 +1392,8 @@ exports.dispense = async (req, res) => {
             witnessId:     req.body?.witnessId   || null,
             dispensedBy:   req.user?.fullName    || "System",
             dispensedById: req.user?._id         || null,
-            remarks:       `Sale ${sale.billNumber} — ${sx.drugName}`,
+            remarks:       `Sale ${sale.billNumber} — ${sx.drugName}` +
+                           (sx.prescriberRegistrationNo ? ` (Rx Reg: ${sx.prescriberRegistrationNo})` : ""),
           });
         } catch (sxErr) {
           console.error("[Pharmacy] dispense: Schedule-X register failed for drug",
@@ -853,14 +1425,54 @@ exports.dispense = async (req, res) => {
           itemCount: (sale.items || []).length,
           paymentMode: sale.paymentMode,
           hamPresent: (sale.items || []).some((i) => i.isHAM === true),
+          // R7hr-12-S2 (D8-07): record prescriber identity in the audit
+          // trail so the NABH register can answer "who prescribed?" without
+          // re-reading the Sale doc. Empty for non-prescription dispenses.
+          prescriberName: sale.doctorName || "",
+          prescriberRegistrationNo: sale.prescriberRegistrationNo || "",
         },
       });
     } catch (_) { /* silent — audit emit is non-blocking */ }
 
+    // R7hr-29: NABH MOM.7 — Antimicrobial Use Register auto-population.
+    // For every dispensed item whose Drug Master category falls in the
+    // antimicrobial family {Antibiotic, Antiviral, Antifungal, Antiparasitic},
+    // create an AMU register row. Pharmacy counter is the "administration"
+    // moment for Walk-in/OPD/Homecare; IPD skipped because the doctor-order
+    // POST already emits a row keyed to doctorOrderId. Best-effort — register
+    // write must NEVER roll back the sale.
+    if (_emitAntimicrobialForSale && sale.saleType !== "IPD") {
+      try {
+        let patientDoc = {};
+        if (sale.patientUHID) {
+          const Patient = require("../../models/Patient/PatientModel");
+          patientDoc = await Patient.findOne({ UHID: sale.patientUHID })
+            .select("UHID fullName age gender _id")
+            .lean() || { UHID: sale.patientUHID, fullName: sale.patientName, age: sale.age, gender: sale.gender };
+        } else {
+          patientDoc = { UHID: "", fullName: sale.patientName, age: sale.age, gender: sale.gender };
+        }
+        await _emitAntimicrobialForSale({
+          sale,
+          patient: patientDoc,
+          actor: {
+            byUserId: req.user?._id,
+            byName:   req.user?.fullName || sale.createdBy,
+            byRole:   req.user?.role || "Pharmacist",
+          },
+        });
+      } catch (_) { /* AMU emit is non-blocking */ }
+    }
+
     // R7bf-H A6-HIGH-2: bust pharmacy revenue trend cache so the chart
     // doesn't lag the dashboard by up to 24h after a bulk sale.
+    // R7hr-12-S3 (D10-10): also bust ABC analysis cache (1h TTL) — without
+    // this the procurement "top consumers" tile was stale for up to 1h
+    // after a sale, misleading the procurement desk on what to reorder.
     try {
-      require("../Reports/dashboardsController").invalidatePharmacyTrendCache?.();
+      const _dash = require("../Reports/dashboardsController");
+      _dash.invalidatePharmacyTrendCache?.();
+      _dash.invalidateAbcCache?.();
     } catch (_) { /* best-effort */ }
     res.status(201).json({ success: true, data: sale });
     } catch (consumeErr) {
@@ -894,6 +1506,17 @@ exports.listSales = async (req, res) => {
     const guard = _assertRange(req);
     if (!guard.ok) return res.status(400).json({ success: false, code: "RANGE_TOO_LARGE", message: guard.message });
 
+    // R7hr-12-S3 (D6-07): `uhid` and `q` (free-text patient-name search) are
+    // PHI/quasi-identifiers under the DPDP Act. Accepting them as query-string
+    // params puts them in proxy access logs, browser history, and the Referer
+    // header on outbound download links — log retention windows are typically
+    // longer than application data retention and have weaker access controls.
+    // Mitigation today is operator-side: deployment runbook MUST scrub
+    // `uhid=` and `q=` from access-log line patterns (nginx log_format,
+    // ELB access-log redaction rule, etc.). Future hardening: introduce a
+    // POST /api/pharmacy/sales/search endpoint that accepts these in the
+    // request body; route the SPA there and deprecate the query-string
+    // form via a Deprecation header. Tracked under D6-07.
     const { from, to, status, saleType, uhid, q } = req.query;
     const where = {};
     if (status)   where.status = status;
@@ -908,10 +1531,141 @@ exports.listSales = async (req, res) => {
       const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       where.$or = [{ billNumber: rx }, { patientName: rx }, { patientUHID: rx }];
     }
+    // R7hr-12-S2 (D6-03): cross-team PHI/Rx scoping for Doctor and Nurse
+    // rx.read holders. PharmacySale has no attendingDoctorId column, so the
+    // scope goes through Admission — load admission ids matching
+    // req.scopeFilter (attached by restrictToOwnDoctorPatients /
+    // restrictToOwnNurseWard middleware on the route) and filter
+    // Sale.admissionId by that set. NO-OP for Admin/Pharmacist/Accountant
+    // (req.scopeFilter undefined). Failure to resolve the scope returns an
+    // empty result (fail-closed) rather than leaking the full PHI feed.
+    if (req.scopeFilter && Object.keys(req.scopeFilter).length > 0) {
+      try {
+        const Admission = require("../../models/Patient/admissionModel");
+        const admWhere = {};
+        if (req.scopeFilter.attendingDoctorId) {
+          admWhere.attendingDoctorId = req.scopeFilter.attendingDoctorId;
+        }
+        if (req.scopeFilter["bed.ward"]) {
+          admWhere.wardName = req.scopeFilter["bed.ward"];
+        }
+        const scopedAdms = await Admission.find(admWhere).select("_id").lean();
+        const allowedIds = scopedAdms.map(a => a._id);
+        where.admissionId = { $in: allowedIds };
+      } catch (scopeErr) {
+        console.error("[Pharmacy] listSales scope filter failed:", scopeErr.message);
+        return res.json({ success: true, data: [] });
+      }
+    }
     const { limit, skip } = _pagination(req, 200, 500);
     const sales = await Sale.find(where).sort({ createdAt: -1 })
       .skip(skip).limit(limit)
       .lean();
+
+    // R7hr-18: enrich each sale with patient (age/gender/contact) and
+    // admission (bed/ward/doctor) so the Sales Register Print can render
+    // a complete OPD/IPD/Walk-in variant without the client doing extra
+    // round-trips (which would also break the user-activation window for
+    // window.open() — see R7hr-17). Old sales created before R7hr-12-S3's
+    // D7-06 denormalisation don't have these fields snapshotted; this
+    // enrichment fills them on-the-fly at read time.
+    //
+    // Two batch fetches keep this O(1) round-trips regardless of result
+    // size: distinct UHIDs from Patient master, distinct admissionIds
+    // from Admission. Sale doc fields ALWAYS win over the lookups —
+    // existing snapshotted values (e.g. patientName, doctorName already
+    // captured at dispense) must not be overwritten by stale master data.
+    try {
+      const uhids = [...new Set(sales.map(s => s.patientUHID).filter(Boolean))];
+      const admIds = [...new Set(sales.map(s => s.admissionId).filter(Boolean)
+        .map(id => String(id)))];
+
+      let patMap = new Map();
+      let admMap = new Map();
+
+      if (uhids.length) {
+        const Patient = require("../../models/Patient/patientModel");
+        const pats = await Patient.find(
+          { UHID: { $in: uhids } },
+          { UHID: 1, fullName: 1, age: 1, gender: 1, contactNumber: 1, phone: 1 }
+        ).lean();
+        patMap = new Map(pats.map(p => [p.UHID, p]));
+      }
+
+      if (admIds.length) {
+        const Admission = require("../../models/Patient/admissionModel");
+        const adms = await Admission.find(
+          { _id: { $in: admIds } },
+          { _id: 1, admissionNumber: 1, admissionType: 1, attendingDoctor: 1,
+            bedNumber: 1, wardName: 1, admissionDate: 1, dateOfAdmission: 1,
+            diagnosis: 1, provisionalDiagnosis: 1, icdCode: 1, icd10: 1,
+            // R7hr-20: department/specialization for IPD pharmacy bill header
+            department: 1, specialization: 1 }
+        ).lean();
+        admMap = new Map(adms.map(a => [String(a._id), a]));
+      }
+
+      // R7hr-24: batch-fetch drug schedules and decorate each sale with
+      // schedules[] so the SalesTab Schedule filter can match. Same shape
+      // as the salesRegister endpoint — single drug-master fetch covers
+      // legacy + new sales (schedule isn't snapshotted on SALE_ITEM).
+      const _schedDrugIds2 = new Set();
+      for (const s of sales) {
+        for (const it of (s.items || [])) {
+          if (it.drugId) _schedDrugIds2.add(String(it.drugId));
+        }
+      }
+      let _schedMap2 = new Map();
+      if (_schedDrugIds2.size) {
+        try {
+          const Drug = require("../../models/Pharmacy/DrugModel");
+          const sched = await Drug.find(
+            { _id: { $in: [..._schedDrugIds2] } },
+            { schedule: 1 }
+          ).lean();
+          _schedMap2 = new Map(sched.map(d => [String(d._id), String(d.schedule || "G")]));
+        } catch (_) { /* leave map empty */ }
+      }
+      for (const s of sales) {
+        const set = new Set();
+        for (const it of (s.items || [])) {
+          const sch = _schedMap2.get(String(it.drugId)) || "";
+          if (sch) set.add(sch);
+        }
+        s.schedules = [...set];
+      }
+
+      for (const s of sales) {
+        const p = s.patientUHID ? patMap.get(s.patientUHID) : null;
+        const a = s.admissionId ? admMap.get(String(s.admissionId)) : null;
+        if (p) {
+          // Patient master fields — only fill when sale didn't snapshot.
+          if (!s.patientName) s.patientName = p.fullName;
+          if (s.age == null || s.age === "") s.age = p.age;
+          if (!s.gender) s.gender = p.gender;
+          if (!s.contactNumber) s.contactNumber = p.contactNumber || p.phone;
+        }
+        if (a) {
+          if (!s.admissionNumber) s.admissionNumber = a.admissionNumber;
+          if (!s.doctorName) s.doctorName = a.attendingDoctor || s.doctorName;
+          if (!s.attendingDoctor) s.attendingDoctor = a.attendingDoctor;
+          if (!s.bedNumber) s.bedNumber = a.bedNumber;
+          if (!s.wardName) s.wardName = a.wardName;
+          if (!s.admissionDate) s.admissionDate = a.admissionDate || a.dateOfAdmission;
+          if (!s.diagnosis) s.diagnosis = a.diagnosis || a.provisionalDiagnosis;
+          if (!s.icd10 && !s.icdCode) {
+            s.icd10 = a.icd10 || a.icdCode;
+          }
+          // R7hr-20: forward department/specialization to the IPD print header.
+          if (!s.department) s.department = a.department || a.specialization || "";
+        }
+      }
+    } catch (enrichErr) {
+      // Enrichment is best-effort — never block the register if a master
+      // collection hiccups. Log and ship the raw sales.
+      console.warn("[Pharmacy] listSales enrich failed:", enrichErr?.message);
+    }
+
     res.json({ success: true, data: sales });
   } catch (e) { sendErr(res, e); }
 };
@@ -922,6 +1676,97 @@ exports.getSale = async (req, res) => {
     const s = await Sale.findById(req.params.id).lean();
     if (!s) return res.status(404).json({ success: false, message: "Sale not found" });
     res.json({ success: true, data: s });
+  } catch (e) { sendErr(res, e); }
+};
+
+/*
+ * R7hr-28 — Walk-in / Homecare patient memory by mobile number.
+ *
+ * When a Walk-in patient comes back, the pharmacist types their mobile
+ * number; we return every distinct {patientName, age, gender, doctorName}
+ * triple that was ever captured against that contact, latest-seen first.
+ * The frontend renders them as a dropdown so the pharmacist can click
+ * the right name and skip retyping age / sex / doctor. The Sch H
+ * register also benefits — same prescriber details get carried forward
+ * across visits.
+ *
+ * Query param `q` accepts either a full mobile number or a 4+ digit
+ * prefix; we 400 on shorter inputs so we don't fan out a "send me every
+ * Walk-in patient" scan. Pulls only Walk-in + Homecare sales — OPD/IPD
+ * patients live in the Patient master and are resolved via /patients
+ * search, so mirroring them here would just create cache drift.
+ *
+ * Limit defaults to 8 (modal-sized) and is capped at 25.
+ */
+exports.lookupWalkInPatients = async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    // 4 digits is the smallest prefix that's still selective enough to
+    // avoid scanning the entire walk-in history on every keystroke.
+    if (q.length < 4) {
+      return res.json({ success: true, data: [] });
+    }
+    const lim = Math.min(25, Math.max(1, Number(req.query.limit) || 8));
+    // R7hr-33 (audit P1-2): prefix-anchored regex so the
+    // {contactNumber:1, saleType:1, createdAt:-1} compound index can be
+    // used by Mongo's planner. Unanchored `/9876/` becomes a COLLSCAN on
+    // every keystroke; `/^9876/` allows index-prefix scan. Mobile numbers
+    // are digits — `i` flag was always meaningless, removed. The
+    // pharmacist's mental model is "first digits I typed", so prefix
+    // matches the UX expectation too.
+    const safe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const rx = new RegExp("^" + safe);
+    const match = {
+      saleType: { $in: ["Walk-in", "Homecare"] },
+      contactNumber: rx,
+      // R7hr-33 (audit P2-9): drop "Refunded" — a fully-reversed sale
+      // shouldn't count as a returning-customer visit. Customer who came
+      // once and got a complete refund used to appear forever as a
+      // returning customer with visits=1.
+      status: { $in: ["Completed", "Partial-Return", "Supplemented"] },
+    };
+    // R7hr-33 (audit P1-1): honor the scope filter that the route now
+    // attaches for Doctor / Nurse rx.read holders. NO-OP for
+    // Admin/Pharmacist/Accountant (req.scopeFilter undefined / empty).
+    if (req.scopeFilter && Object.keys(req.scopeFilter).length > 0) {
+      Object.assign(match, req.scopeFilter);
+    }
+    const rows = await Sale.aggregate([
+      { $match: match },
+      { $sort: { createdAt: -1 } },
+      {
+        // Collapse to one row per {contact, patientName} — same number can
+        // legitimately have multiple family members.
+        $group: {
+          _id: {
+            contact: "$contactNumber",
+            name: { $ifNull: ["$patientName", ""] },
+          },
+          patientName:   { $first: "$patientName" },
+          contactNumber: { $first: "$contactNumber" },
+          age:           { $first: "$age" },
+          gender:        { $first: "$gender" },
+          doctorName:    { $first: "$doctorName" },
+          lastSeen:      { $first: "$createdAt" },
+          visits:        { $sum: 1 },
+        },
+      },
+      { $sort: { lastSeen: -1 } },
+      { $limit: lim },
+      {
+        $project: {
+          _id: 0,
+          patientName: 1,
+          contactNumber: 1,
+          age: 1,
+          gender: 1,
+          doctorName: 1,
+          lastSeen: 1,
+          visits: 1,
+        },
+      },
+    ]);
+    res.json({ success: true, data: rows });
   } catch (e) { sendErr(res, e); }
 };
 
@@ -960,13 +1805,21 @@ exports.getOutstandingForAdmission = async function (admissionId) {
     return { total: 0, count: 0, sales: [], bills: [] };
   }
   // ── A. PharmacySale-based credit (counter dispense + IPD homecare) ──
+  // R7hr-12 (D4-02): include Partial-Return and Supplemented in the
+  // open-status set. Supplemented sales can carry non-zero balanceDue
+  // when the add-on was booked Credit; Partial-Return sales can carry
+  // non-zero balanceDue when the original credit wasn't fully cleared
+  // by the refund. Both were silently passing the discharge gate before
+  // because the filter only honoured "Completed". Cancelled is excluded
+  // (cancelSale zeroes balanceDue atomically); Refunded is excluded
+  // (fully returned ⇒ notional balance only); Hold is excluded (not yet
+  // finalized). Same enum-set is already used at L2828 (salesRegister).
+  const OPEN_BALANCE_STATUSES = ["Completed", "Partial-Return", "Supplemented"];
   const sales = await Sale.find({
     admissionId,
-    // status:"Completed" excludes Cancelled/Refunded sales — they
-    // don't carry real balance even if the field is non-zero.
-    status:    "Completed",
+    status:    { $in: OPEN_BALANCE_STATUSES },
     saleType:  { $in: ["IPD", "Homecare"] },
-  }).select("billNumber grandTotal amountPaid balanceDue items createdAt").lean();
+  }).select("billNumber grandTotal amountPaid balanceDue items createdAt status").lean();
   let total = 0;
   const open = [];
   for (const s of sales) {
@@ -1053,17 +1906,59 @@ exports.getOutstandingForAdmission = async function (admissionId) {
 exports.listIpdCreditAdmissions = async (req, res) => {
   try {
     const Admission = require("../../models/Patient/admissionModel");
+    // R7hr-12-S2 (D6-03): scope filter for Doctor / Nurse rx.read holders.
+    // Resolve the allowed admission set up-front; downstream queries on
+    // Sale + PatientBill both join on admissionId, so a single $in filter
+    // covers both legs. Empty allowed set → empty response (fail-closed).
+    let scopedAdmissionIds = null; // null = no scope (Admin/Pharmacist/Accountant)
+    if (req.scopeFilter && Object.keys(req.scopeFilter).length > 0) {
+      try {
+        const admWhere = {};
+        if (req.scopeFilter.attendingDoctorId) {
+          admWhere.attendingDoctorId = req.scopeFilter.attendingDoctorId;
+        }
+        if (req.scopeFilter["bed.ward"]) {
+          admWhere.wardName = req.scopeFilter["bed.ward"];
+        }
+        const scopedAdms = await Admission.find(admWhere).select("_id").lean();
+        scopedAdmissionIds = scopedAdms.map(a => a._id);
+        if (scopedAdmissionIds.length === 0) {
+          return res.json({
+            success: true,
+            data: [],
+            summary: { admissions: 0, totalOutstanding: 0 },
+          });
+        }
+      } catch (scopeErr) {
+        console.error("[Pharmacy] listIpdCreditAdmissions scope filter failed:", scopeErr.message);
+        return res.json({ success: true, data: [], summary: { admissions: 0, totalOutstanding: 0 } });
+      }
+    }
     // ── A. PharmacySale-based credit ─────────────────────────────
     // Aggregate PharmacySale → group by admissionId where balanceDue > 0.
     // We do the grouping in JS rather than via $group + $lookup because
     // the typical active-IPD set is small (< 200) and the JS path keeps
     // the Decimal128-unwrap logic identical to getOutstandingForAdmission
     // (single source of truth).
-    const rawSales = await Sale.find({
+    // R7hr-12 (D4-02): mirror the open-balance status set used by
+    // getOutstandingForAdmission. If a Supplemented or Partial-Return sale
+    // still owes money, the pharmacist must be able to see the admission
+    // here and take payment — otherwise the discharge gate blocks with a
+    // 409 PHARMACY_OUTSTANDING but the pharmacist has no UI row to collect
+    // against (deadlocked discharge).
+    // R7hr-12-S2 (D10-02): filter `balanceDue: { $gt: 0 }` at Mongo so we
+    // don't hydrate fully-paid IPD sales into memory. Pre-fix the entire
+    // PharmacySale history of completed IPD sales was loaded and the
+    // balance > 0 check happened in JS — at 50k+ sales/year this became
+    // multi-second TTFB on the hot pill-open path. Decimal128 $gt 0 works.
+    const saleWhere = {
       saleType:    { $in: ["IPD", "Homecare"] },
-      status:      "Completed",
+      status:      { $in: ["Completed", "Partial-Return", "Supplemented"] },
       admissionId: { $ne: null },
-    }).select("admissionId admissionNumber patientUHID patientName balanceDue grandTotal createdAt billNumber").lean();
+      balanceDue:  { $gt: 0 },
+    };
+    if (scopedAdmissionIds) saleWhere.admissionId = { $in: scopedAdmissionIds };
+    const rawSales = await Sale.find(saleWhere).select("admissionId admissionNumber patientUHID patientName balanceDue grandTotal createdAt billNumber status").lean();
     const byAdm = new Map();
     for (const s of rawSales) {
       const bal = Number(s.balanceDue?.toString?.() ?? s.balanceDue ?? 0);
@@ -1092,15 +1987,29 @@ exports.listIpdCreditAdmissions = async (req, res) => {
     // We can't use a simple $match on category because billItems is an
     // array — use $elemMatch + lean. Pre-filter on a Mongo regex on
     // billItems.serviceCode for fast index-less scan (small set).
-    const openBills = await PatientBill.find({
+    // R7hr-12-S2 (D6-03): scope filter PatientBill side too, matching the
+    // PharmacySale leg above. Doctor/Nurse rx.read holders only see
+    // ward-indent credits for their panel/ward.
+    // R7hr-12-S2 (D10-02): PatientBill stores the admission FK as
+    // `admission` (PatientBillModel L245, indexed at L708), NOT
+    // `admissionId` — pre-fix the `admissionId: { $ne: null }` clause was
+    // a no-op against an absent field (matched ALL docs) and the
+    // post-fetch `String(b.admissionId)` group key was always "undefined",
+    // collapsing every indent bill onto a single junk admission. Also
+    // gate on `balanceAmount: { $gt: 0 }` at Mongo level so fully-paid
+    // bills don't get hydrated (Decimal128 $gt 0 works).
+    const billWhere = {
       visitType:  "IPD",
       billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] },
-      admissionId: { $ne: null },
+      admission:  { $ne: null },
+      balanceAmount: { $gt: 0 },
       $or: [
         { "billItems.category":    { $regex: /^pharmacy$/i } },
         { "billItems.serviceCode": { $regex: /^PHARM-/i }   },
       ],
-    }).select("admissionId UHID patientName billItems balanceAmount billStatus billNumber createdAt").lean();
+    };
+    if (scopedAdmissionIds) billWhere.admission = { $in: scopedAdmissionIds };
+    const openBills = await PatientBill.find(billWhere).select("admission UHID patientName billItems balanceAmount billStatus billNumber createdAt").lean();
     for (const b of openBills) {
       const bal = Number(b.balanceAmount?.toString?.() ?? b.balanceAmount ?? 0);
       if (bal <= 0) continue;
@@ -1115,9 +2024,11 @@ exports.listIpdCreditAdmissions = async (req, res) => {
       if (pharmNet <= 0 || allNet <= 0) continue;
       const pharmShare = round2(bal * (pharmNet / allNet));
       if (pharmShare <= 0) continue;
-      const key = String(b.admissionId);
+      // R7hr-12-S2 (D10-02): group key sources the correct field name.
+      const key = String(b.admission);
       const cur = byAdm.get(key) || {
-        admissionId:     b.admissionId,
+        // R7hr-12-S2 (D10-02): admissionId reference also uses correct field
+        admissionId:     b.admission,
         admissionNumber: "",
         UHID:            b.UHID || "",
         patientName:     b.patientName || "",
@@ -1197,11 +2108,32 @@ exports.getCreditByAdmission = async (req, res) => {
     }
     const Admission = require("../../models/Patient/admissionModel");
     const adm = await Admission.findById(admissionId)
-      .select("admissionNumber UHID patientId bedId wardName department primaryConsultant status admissionDate")
+      .select("admissionNumber UHID patientId bedId wardName department primaryConsultant status admissionDate attendingDoctorId")
       .populate("patientId", "fullName age gender contactNumber")
       .populate("bedId",     "bedNumber wardName")
       .lean();
     if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    // R7hr-12-S2 (D6-03): enforce scope filter on this drill-down too —
+    // pre-fix a Doctor/Nurse could simply pass an out-of-scope admissionId
+    // via URL and see the full credit ledger. NO-OP for Admin/Pharmacist/
+    // Accountant (req.scopeFilter undefined).
+    if (req.scopeFilter && Object.keys(req.scopeFilter).length > 0) {
+      const reqDoctor = req.scopeFilter.attendingDoctorId
+        ? String(req.scopeFilter.attendingDoctorId)
+        : null;
+      const reqWard = req.scopeFilter["bed.ward"] || null;
+      const admDoctor = adm.attendingDoctorId ? String(adm.attendingDoctorId) : null;
+      const admWard = adm.wardName || "";
+      const inDoctorScope = reqDoctor ? admDoctor === reqDoctor : true;
+      const inNurseScope  = reqWard ? admWard === reqWard : true;
+      if (!inDoctorScope || !inNurseScope) {
+        return res.status(403).json({
+          success: false,
+          code: "OUT_OF_SCOPE",
+          message: "Admission is outside your patient panel / ward — access denied",
+        });
+      }
+    }
     const allSales = await Sale.find({
       admissionId,
       saleType: { $in: ["IPD", "Homecare"] },
@@ -1268,10 +2200,68 @@ exports.getCreditByAdmission = async (req, res) => {
 // dispense vs ward indent on the UI.
 exports.getIpdCreditHistory = async (req, res) => {
   try {
-    const days = Math.min(180, Math.max(1, Number(req.query.days) || 30));
-    const since = new Date(); since.setDate(since.getDate() - days);
-    since.setHours(0, 0, 0, 0);
-    const sales = await Sale.find({
+    // R7hr-12-S3 (D6-10): tighten the upper cap from 180 → 90 days to align
+    // with the _assertRange convention used by every other range surface in
+    // this controller (listSales / listIpdCreditAdmissions / gstSummary). The
+    // 180-day default doubled the worst-case fan-out on the credit-history
+    // aggregation versus the rest of the registers — combined with the
+    // potentially-large per-day rollups, busy hospitals saw memory spikes.
+    // If accountants genuinely need the longer window for reconciliation,
+    // gate it behind a pharmacy.history.extended action held only by
+    // Admin/Accountant rather than letting it ride on every caller.
+    const days = Math.min(90, Math.max(1, Number(req.query.days) || 30));
+    // R7hr-12-S2 (D4-03): use IST start-of-today for the since boundary
+    // so the day-bucket window aligns with the IST calendar shown to the
+    // pharmacist. Pre-fix `new Date(); .setDate(-days); .setHours(0,0,0,0)`
+    // anchored on server-local time, which is UTC on default Linux pods
+    // (TZ unset) and drifts 5h30m behind IST midnight.
+    const { istStartOfToday } = require("../../utils/queryGuards");
+    const since = new Date(istStartOfToday().getTime() - days * 86400000);
+    // R7hr-12-S2 (D4-03): IST-aware YYYY-MM-DD formatter shared between
+    // the sale-bucket loop AND the indent-bucket loop below so both halves
+    // of the audit row land on the same IST calendar day. Pre-fix the
+    // bucket used `.toISOString().slice(0,10)` (UTC) regardless of server
+    // timezone — empirically `Date('2026-06-04T03:00 IST').toISOString()
+    // .slice(0,10)` returns '2026-06-03', so any sale dispensed between
+    // IST 00:00 and 05:30 was attributed to the PREVIOUS calendar day,
+    // breaking day-close reconciliation against the day-book.
+    const _IST_DKEY_FMT = new Intl.DateTimeFormat("en-CA", {
+      timeZone: process.env.HOSPITAL_TZ || "Asia/Kolkata",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    });
+    const istDateKey = (d) => {
+      if (!d) return "unknown";
+      try { return _IST_DKEY_FMT.format(new Date(d)); } catch (_) { return "unknown"; }
+    };
+    // R7hr-12-S2 (D6-03): scope filter for Doctor/Nurse — pre-resolve the
+    // admission set so both the Sale and PatientBill scans share it. NO-OP
+    // for Admin/Pharmacist/Accountant.
+    let scopedAdmissionIds = null;
+    if (req.scopeFilter && Object.keys(req.scopeFilter).length > 0) {
+      try {
+        const Admission = require("../../models/Patient/admissionModel");
+        const admWhere = {};
+        if (req.scopeFilter.attendingDoctorId) {
+          admWhere.attendingDoctorId = req.scopeFilter.attendingDoctorId;
+        }
+        if (req.scopeFilter["bed.ward"]) {
+          admWhere.wardName = req.scopeFilter["bed.ward"];
+        }
+        const scopedAdms = await Admission.find(admWhere).select("_id").lean();
+        scopedAdmissionIds = scopedAdms.map(a => a._id);
+        if (scopedAdmissionIds.length === 0) {
+          return res.json({
+            success: true,
+            data: [],
+            summary: { days: 0, bills: 0, totalDispensed: 0, totalCollected: 0, totalOutstanding: 0, windowDays: days },
+          });
+        }
+      } catch (scopeErr) {
+        console.error("[Pharmacy] getIpdCreditHistory scope filter failed:", scopeErr.message);
+        return res.json({ success: true, data: [], summary: { days: 0, bills: 0, totalDispensed: 0, totalCollected: 0, totalOutstanding: 0, windowDays: days } });
+      }
+    }
+    const saleWhere = {
       saleType:    { $in: ["IPD", "Homecare"] },
       // status:"Completed" excludes Cancelled — we want both the open
       // credit AND the historically-credit-then-paid bills here.
@@ -1288,19 +2278,18 @@ exports.getIpdCreditHistory = async (req, res) => {
         { balanceDue: { $gt: 0 } },
         { "collectionLog.0": { $exists: true } },
       ],
-    })
+    };
+    if (scopedAdmissionIds) saleWhere.admissionId = { $in: scopedAdmissionIds };
+    const sales = await Sale.find(saleWhere)
       .select("billNumber admissionId admissionNumber patientUHID patientName grandTotal amountPaid balanceDue items createdAt paymentMode collectionLog")
       .sort({ createdAt: -1 })
       .lean();
 
-    // Group by dateKey (YYYY-MM-DD in server-local timezone — fine
-    // for India-deployed servers; if multi-tz becomes a concern we
-    // switch to IST via Intl.DateTimeFormat like cron jobs do).
+    // Group by dateKey (YYYY-MM-DD in IST per the istDateKey helper above
+    // so the bucket matches the calendar day the pharmacist sees).
     const byDay = new Map();
     for (const s of sales) {
-      const dKey = s.createdAt
-        ? new Date(s.createdAt).toISOString().slice(0, 10)
-        : "unknown";
+      const dKey = istDateKey(s.createdAt);
       const total = Number(s.grandTotal?.toString?.() ?? s.grandTotal ?? 0);
       const paid  = Number(s.amountPaid?.toString?.() ?? s.amountPaid ?? 0);
       const bal   = Number(s.balanceDue?.toString?.() ?? s.balanceDue ?? 0);
@@ -1352,7 +2341,9 @@ exports.getIpdCreditHistory = async (req, res) => {
     // Each unique (admission, chargeDate) becomes one row in the history
     // (collapses multiple PHARM-* items dispensed on the same day onto
     // one "ward indent" entry to keep the audit log readable).
-    const indentBills = await PatientBill.find({
+    // R7hr-12-S2 (D6-03): scope the indent-bills leg by the same
+    // scopedAdmissionIds set computed above.
+    const indentBillWhere = {
       visitType:   "IPD",
       admissionId: { $ne: null },
       // Anything but DRAFT — DRAFT means the bill hasn't been generated
@@ -1364,7 +2355,9 @@ exports.getIpdCreditHistory = async (req, res) => {
         { "billItems.category":    { $regex: /^pharmacy$/i } },
         { "billItems.serviceCode": { $regex: /^PHARM-/i }   },
       ],
-    })
+    };
+    if (scopedAdmissionIds) indentBillWhere.admissionId = { $in: scopedAdmissionIds };
+    const indentBills = await PatientBill.find(indentBillWhere)
       .select("billNumber admissionId UHID patientName billItems balanceAmount netAmount patientPayableAmount payments createdAt billStatus")
       .lean();
 
@@ -1379,11 +2372,15 @@ exports.getIpdCreditHistory = async (req, res) => {
       if (!pharmItems.length) continue;
 
       // Group pharm items on this bill by dateKey
+      // R7hr-12-S2 (D4-03): IST-aware dateKey via the istDateKey helper
+      // hoisted earlier in this function — keeps the indent-side bucket
+      // calendar-aligned with the sale-side bucket above so the audit
+      // row totals don't drift 5h30m apart on early-morning dispenses.
       const byDateOnBill = new Map();
       for (const it of pharmItems) {
         const when  = it.chargeDate ? new Date(it.chargeDate) : (b.createdAt ? new Date(b.createdAt) : null);
         if (!when || when < since) continue;
-        const dKey = when.toISOString().slice(0, 10);
+        const dKey = istDateKey(when);
         if (!byDateOnBill.has(dKey)) {
           byDateOnBill.set(dKey, { dKey, items: [], itemsNet: 0, when });
         }
@@ -1502,6 +2499,23 @@ exports.collectCredit = async (req, res) => {
     const txnRef = String(req.body?.txnRef || "").trim();
     const notes  = String(req.body?.notes  || "").trim();
 
+    // R7hr-12-S3 (D4-08): generate the PHM-COLL-* receipt number ONCE outside
+    // the retryVersionError block. Pre-fix the nextSeq($inc) lived inside the
+    // retried callback, so every VersionError retry burned a counter sequence
+    // — the resulting PHM-COLL-YY-NNNN series had gaps (NNNN+1 had no record),
+    // violating the gap-less money-document expectation. Now the sequence is
+    // claimed before any optimistic-lock contention can occur, and the same
+    // receiptNumber is reused on every retry. Best-effort: a counter blip
+    // still leaves receiptNumber empty (operator can issue a manual receipt)
+    // but does not burn sequences on retry.
+    let receiptNumber = "";
+    try {
+      const seq = await nextSeq("pharmacyCreditCollection");
+      // R7hq: PHM-COLL-YY-NNNN format (was PHM-COLL-YYYYMMDD-NNNN).
+      const yy = String(new Date().getFullYear()).slice(-2);
+      receiptNumber = `PHM-COLL-${yy}-${String(seq).padStart(4, "0")}`;
+    } catch (_) { /* non-fatal */ }
+
     // Load fresh, validate balance, mutate, save. Wrapped in
     // retryVersionError so two concurrent collections on the same
     // sale (rare but possible) don't 500 with VersionError —
@@ -1524,18 +2538,18 @@ exports.collectCredit = async (req, res) => {
         const e = new Error(`Amount ₹${amt.toFixed(2)} exceeds outstanding ₹${bal.toFixed(2)}`);
         e.status = 400; e.code = "OVER_COLLECTION"; throw e;
       }
+      // R7hr-12-S3 (D4-08): idempotency on retry — if a previous retry
+      // committed and pushed this receiptNumber, don't re-push (the outer
+      // wrapper just re-throws on save failure, but a concurrent collect
+      // could squeak past). Cheap O(N) check; collectionLog rarely exceeds
+      // a handful of rows per sale.
+      if (receiptNumber && (sale.collectionLog || []).some(c => c.receiptNumber === receiptNumber)) {
+        return sale.toObject();
+      }
       const newPaid = Number(sale.amountPaid?.toString?.() ?? sale.amountPaid ?? 0) + amt;
       const newBal  = round2(bal - amt);
       sale.amountPaid = toDec(newPaid);
       sale.balanceDue = toDec(newBal);
-      // Receipt # — sequential per pharmacy. Best-effort: failures
-      // here don't block the payment, just leave receiptNumber empty
-      // (operator can issue a manual receipt).
-      let receiptNumber = "";
-      try {
-        const seq = await nextSeq("pharmacyCreditCollection");
-        receiptNumber = `PHM-COLL-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
-      } catch (_) { /* non-fatal */ }
       sale.collectionLog = sale.collectionLog || [];
       sale.collectionLog.push({
         amount: toDec(amt),
@@ -1599,6 +2613,413 @@ exports.collectCredit = async (req, res) => {
   }
 };
 
+// R7hr-5 ════════════════════════════════════════════════════════════
+// POST /api/pharmacy/sales/:id/apply-advance
+//
+// Consumes the patient's PatientAdvance balance against an outstanding
+// pharmacy sale. Mirrors the IPD Live Ledger's applyAdvanceToBill flow:
+//
+//   • Sum every ACTIVE/PARTIALLY_APPLIED advance row for the sale's UHID
+//     (advances aren't auto-targeted at a single bill — they're a pool).
+//   • Apply MIN(advance_remaining, sale_balance) — caller can pass an
+//     explicit `amount` to apply less.
+//   • Decrement each advance row's appliedAmount in deposit order
+//     (oldest first) and flip status to PARTIALLY_APPLIED / FULLY_APPLIED.
+//   • Append a collectionLog row to the sale with mode="Advance" + a
+//     sourceAdvanceId pointer to the LAST advance we touched (the audit
+//     trail can fan out via the per-advance appliedAmount delta).
+//
+// R7hr-11 ────────────────────────────────────────────────────────────
+//   Pre-R7hr-11 the advance debits + sale write ran outside a session.
+//   If the user double-clicked Apply Adv or two requests landed close
+//   together, the optimistic-lock retry would re-read the sale (now
+//   fully paid) and throw ALREADY_PAID — but the ADVANCE saves from
+//   the failed attempt had ALREADY committed. Net effect on the field:
+//   advance.appliedAmount climbed by N×slice per click, sale was paid
+//   once. Patient lost balance with no provenance.
+//
+//   Fix: run advance + sale saves inside `session.withTransaction` so
+//   either both commit or both roll back. The dispense() / sale code
+//   in this controller already uses the same pattern.
+exports.applyAdvanceToSale = async (req, res) => {
+  try {
+    const saleId = req.params.id;
+    if (!isOid(saleId)) {
+      return res.status(400).json({ success: false, message: "Invalid sale id" });
+    }
+    const requested = req.body?.amount != null ? Number(req.body.amount) : null;
+    if (requested != null && (!Number.isFinite(requested) || requested <= 0)) {
+      return res.status(400).json({
+        success: false, code: "INVALID_AMOUNT",
+        message: "amount, when provided, must be > 0",
+      });
+    }
+
+    // R7hr-11: open a mongoose session. If the cluster is a replica set
+    // (transactions supported) we wrap reads + writes in withTransaction;
+    // otherwise we fall back to non-transactional with a defence-in-depth
+    // CAS pattern (single-document optimisticConcurrency on advance saves
+    // means a concurrent over-debit will throw VersionError and bubble up).
+    // R7hr-12-S2 (D2-09): the previous detection read three different paths
+    // into the driver internals; recent mongoose/mongodb-driver versions move
+    // the option around and a mis-classified RS appears as standalone. Switch
+    // to a capability probe — actually call startTransaction() in a try
+    // and abort it immediately. If it throws "Transaction numbers are only
+    // allowed on a replica set member or mongos", we're on standalone.
+    const session = await mongoose.startSession().catch(() => null);
+    let useTx = false;
+    if (session) {
+      try {
+        session.startTransaction();
+        await session.abortTransaction();
+        useTx = true;
+      } catch (_) {
+        // standalone Mongo — transactions unsupported; fall back to the
+        // OCC + retryVersionError path below.
+        useTx = false;
+      }
+    }
+
+    // R7hr-12-S3 (D4-08): hoisted receipt-number cache so retries don't burn
+    // PHM-COLL counter sequences. Shared via closure with doApply() below.
+    // Cleared on every fresh applyAdvanceToSale call (function scope).
+    let appliedReceiptNumberHoisted = "";
+
+    const doApply = async (s) => {
+      const sale = await Sale.findById(saleId).session(s || undefined);
+      if (!sale) {
+        const e = new Error("Sale not found"); e.status = 404; throw e;
+      }
+      if (sale.status !== "Completed") {
+        const e = new Error(`Cannot apply advance on a ${sale.status} sale`);
+        e.status = 409; e.code = "SALE_NOT_COLLECTABLE"; throw e;
+      }
+      const bal = Number(sale.balanceDue?.toString?.() ?? sale.balanceDue ?? 0);
+      if (bal <= 0) {
+        const e = new Error("Sale is already fully paid"); e.status = 409;
+        e.code = "ALREADY_PAID"; throw e;
+      }
+      const uhid = (sale.patientUHID || sale.UHID || "").toString().toUpperCase();
+      if (!uhid) {
+        const e = new Error("Sale has no UHID — cannot resolve patient advance pool");
+        e.status = 400; e.code = "MISSING_UHID"; throw e;
+      }
+
+      // Pull all advance rows that still carry an unspent balance, in
+      // deposit order (oldest first) so the audit log reads naturally.
+      // R7hr-12-S3 (D4-09): admission-tagged advance scoping. PatientAdvance
+      // carries an optional `admission` field intended as a scoping anchor —
+      // money the family pre-deposited for THIS admission. Pre-fix the query
+      // matched by UHID only, so a re-admitted patient's Admission-B
+      // pharmacy sale could silently drain Admission-A's earmarked advance
+      // via FIFO ordering. Soft enforcement: prefer admission-tagged AND
+      // untagged advances for the current admission, but EXCLUDE advances
+      // tagged to a DIFFERENT admission. An untagged advance (general
+      // credit on the UHID) remains usable everywhere; an explicitly tagged
+      // advance is reserved for its admission. When sale.admissionId is
+      // null (rare for Walk-in/OPD with UHID), only untagged advances are
+      // consumable. Matches the spirit of patientAdvanceService.createAdvance
+      // L78-L81 which validates UHID match on creation.
+      // R7hr-12-S3 (D4-11): exclude isRefundCredit advances from pharmacy
+      // consumption. PatientAdvance carries an `isRefundCredit` flag set by
+      // the R7c "refund-to-advance" transfer flow — it's not new cash inflow
+      // but an internal book-move from a refunded bill into the advance pool.
+      // Day Book Cash In already excludes these to avoid double-counting; if
+      // pharmacy silently consumed one, the dispense + collection trail would
+      // re-classify it as fresh pharmacy cash collection. Tag with $ne:true
+      // (NOT { $eq:false }) so legacy rows where the field doesn't exist still
+      // match. When the only eligible advance is refund-credit, NO_ADVANCE
+      // fires below — operator must explicitly route through the
+      // billing-side flow.
+      const advWhere = {
+        UHID: uhid,
+        status: { $in: ["ACTIVE", "PARTIALLY_APPLIED"] },
+        isRefundCredit: { $ne: true },
+        $or: [
+          { admission: null },
+          ...(sale.admissionId ? [{ admission: sale.admissionId }] : []),
+        ],
+      };
+      const advances = await PatientAdvance
+        .find(advWhere)
+        .sort({ createdAt: 1 })
+        .session(s || undefined);
+      const remainingByAdv = advances.map(a => {
+        const amt   = Number(a.amount?.toString?.() ?? a.amount ?? 0);
+        const appl  = Number(a.appliedAmount?.toString?.() ?? a.appliedAmount ?? 0);
+        const refd  = Number(a.refundedAmount?.toString?.() ?? a.refundedAmount ?? 0);
+        return Math.max(0, amt - appl - refd);
+      });
+      const totalAvailable = remainingByAdv.reduce((s, n) => s + n, 0);
+      if (totalAvailable <= 0) {
+        const e = new Error("No unspent advance balance for this patient");
+        e.status = 409; e.code = "NO_ADVANCE"; throw e;
+      }
+
+      // Cap at the LESSER of sale balance and advance pool, then clamp
+      // any explicit caller-supplied request to that ceiling.
+      const cap   = Math.min(bal, totalAvailable);
+      const toApply = requested == null ? cap : Math.min(requested, cap);
+      if (toApply <= 0) {
+        const e = new Error("Nothing to apply"); e.status = 400;
+        e.code = "ZERO_APPLY"; throw e;
+      }
+
+      // Build sale mutation FIRST so we have a receiptNumber + collectionLog
+      // entry id for the appliedTo[] provenance row on each advance.
+      const round2 = (n) => Math.round(n * 100) / 100;
+      const newPaid = Number(sale.amountPaid?.toString?.() ?? sale.amountPaid ?? 0) + toApply;
+      const newBal  = round2(bal - toApply);
+      // R7hr-12-S3 (D4-08): reuse a hoisted receiptNumber across retries so
+      // VersionError-triggered re-runs of doApply() (non-tx fallback path
+      // wrapped in retryVersionError) don't burn a fresh PHM-COLL sequence
+      // per attempt — pre-fix the gap-less audit register grew holes on
+      // every concurrent collect-credit / apply-advance contention. The
+      // tx path was already safe (session-bound $inc rolls back on abort)
+      // but the non-tx retry path leaked sequences. `appliedReceiptNumberHoisted`
+      // is shared via closure with the outer scope below.
+      let receiptNumber = appliedReceiptNumberHoisted;
+      if (!receiptNumber) {
+        try {
+          const Counter = require("../../models/CounterModel");
+          const c = await Counter.findOneAndUpdate(
+            { _id: "pharmacyCreditCollection" },
+            { $inc: { seq: 1 } },
+            { upsert: true, new: true, setDefaultsOnInsert: true, session: s || undefined },
+          );
+          const yy = String(new Date().getFullYear()).slice(-2);
+          receiptNumber = `PHM-COLL-${yy}-${String(c.seq).padStart(4, "0")}`;
+          // Cache on the outer-scope ref so retries reuse this number
+          // instead of burning a fresh sequence.
+          appliedReceiptNumberHoisted = receiptNumber;
+        } catch (_) { /* non-fatal */ }
+      }
+
+      // Bleed advances FIFO until we've sucked `toApply` out of the pool.
+      // For each touched advance, push an appliedTo[] entry pointing at the
+      // sale (provenance) so reconcile + day-book queries can fan out.
+      // R7hr-12-S2 (D2-09): idempotency — if a prior request already pushed
+      // an appliedTo[] row for THIS sale onto this advance, skip the debit.
+      // Pre-fix a retry that re-read a fresh sale (already paid by the prior
+      // successful attempt) would still debit advances in the loop before
+      // discovering balanceDue<=0 — leading to a double-debit. With the
+      // idempotency check, retries become safe.
+      let need = toApply;
+      let lastAdvId = null;
+      const advanceSlices = []; // collected for emit + UI message
+      const debitedAdvanceIds = []; // for compensating reversal on failure
+      for (let i = 0; i < advances.length && need > 0; i++) {
+        const adv = advances[i];
+        const slice = Math.min(need, remainingByAdv[i]);
+        if (slice <= 0) continue;
+        // R7hr-12-S2 (D2-09): skip if this advance already carries an
+        // appliedTo[] row for this sale (idempotency on retry).
+        const alreadyApplied = (adv.appliedTo || []).some(
+          r => String(r.billId) === String(sale._id),
+        );
+        if (alreadyApplied) {
+          need -= slice; // treat as already-spent for the cap math
+          continue;
+        }
+        const newApplied = Number(adv.appliedAmount?.toString?.() ?? adv.appliedAmount ?? 0) + slice;
+        adv.appliedAmount = toDec(newApplied);
+        // The pre-save status hook auto-flips ACTIVE→PARTIAL→FULLY based on
+        // appliedAmount vs amount-refunded, so we don't need to set it here.
+        // R7hr-11: also record provenance — appliedTo[] is required for
+        // accountant reconcile + advance refund eligibility checks.
+        // billId is the saleId because the appliedTo subdoc schema marks
+        // it required; billNumber carries the human-readable PHM-* code
+        // so it reads naturally in the day-book UI.
+        // R7hr-12-S3 (D4-05): the appliedTo[].billId schema declares
+        // ref:'PatientBill' but here we deliberately reuse the required
+        // ObjectId slot with sale._id (a PharmacySale id, not a PatientBill).
+        // Mongoose accepts the cast (ObjectId is type-loose) and the only
+        // current readers consume `billNumber` (string) — see
+        // ReceptionBilling.jsx:2084 + PatientLookupPage.jsx:1082. Switch
+        // this to a refPath + discriminator (billType: 'PharmacySale') only
+        // when a populate('appliedTo.billId') consumer is added; don't
+        // "fix" it back to PatientBill without that work, or pharmacy
+        // applications will silently null-populate.
+        adv.appliedTo.push({
+          billId:        sale._id,
+          billNumber:    sale.billNumber || "",
+          amount:        toDec(slice),
+          appliedAt:     new Date(),
+          appliedBy:     req.user?.fullName || req.user?.userName || "System",
+          appliedById:   req.user?._id || null,
+          billPaymentId: null, // collectionLog _id assigned after sale.save()
+        });
+        await adv.save({ session: s || undefined });
+        debitedAdvanceIds.push({ advId: adv._id, slice });
+        need -= slice;
+        lastAdvId = adv._id;
+        advanceSlices.push({ advId: adv._id, slice });
+      }
+
+      // Now apply the sale-side mutation atomically with the advance saves.
+      sale.amountPaid = toDec(newPaid);
+      sale.balanceDue = toDec(newBal);
+      sale.collectionLog = sale.collectionLog || [];
+      sale.collectionLog.push({
+        amount: toDec(toApply),
+        mode: "Advance",
+        txnRef: "",
+        receiptNumber,
+        collectedAt: new Date(),
+        collectedBy: req.user?.fullName || "System",
+        collectedById: req.user?._id || null,
+        sourceAdvanceId: lastAdvId,
+        notes: "Auto-applied from patient advance pool",
+      });
+      if (newBal === 0) {
+        const modes = new Set(sale.collectionLog.map(c => c.mode));
+        sale.paymentMode = modes.size > 1 ? "Mixed" : "Advance";
+      }
+      // R7hr-12-S2 (D2-09): on standalone-Mongo deployments where the
+      // wrapping transaction is unavailable, sale.save() can throw
+      // VersionError (concurrent collectCredit) AFTER advance debits have
+      // committed. The retryVersionError outer wrapper re-runs doApply, which
+      // would naturally re-skip the already-applied advances thanks to the
+      // idempotency check above — but if the retry's re-read sees the sale
+      // already paid (ALREADY_PAID branch above), the partial advance
+      // debit would orphan with no compensating reversal. Catch the save
+      // error and compensate before re-throwing.
+      try {
+        await sale.save({ session: s || undefined });
+      } catch (saveErr) {
+        if (s) {
+          // Transaction path: abort handles rollback for both advance + sale.
+          throw saveErr;
+        }
+        // Standalone path: reverse the advance debits we committed above.
+        // This is best-effort — if a debit reversal also fails, the audit
+        // trail shows both the failed save and the failed reversal so the
+        // operator can hand-fix.
+        for (const dbg of debitedAdvanceIds) {
+          try {
+            await retryVersionError(async () => {
+              const fresh = await PatientAdvance.findById(dbg.advId);
+              if (!fresh) return;
+              const newApplied = Math.max(0, Number(fresh.appliedAmount?.toString?.() ?? 0) - dbg.slice);
+              fresh.appliedAmount = toDec(newApplied);
+              fresh.appliedTo = (fresh.appliedTo || []).filter(
+                r => String(r.billId) !== String(sale._id),
+              );
+              await fresh.save();
+            });
+          } catch (revErr) {
+            console.error(
+              "[Pharmacy] applyAdvanceToSale rollback failed for advance",
+              String(dbg.advId), ":", revErr.message,
+            );
+          }
+        }
+        throw saveErr;
+      }
+
+      return {
+        sale: sale.toObject(),
+        applied: toApply,
+        advanceRemaining: totalAvailable - toApply,
+        slices: advanceSlices,
+      };
+    };
+
+    let result;
+    try {
+      if (useTx) {
+        await session.withTransaction(async () => { result = await doApply(session); });
+      } else {
+        // Non-replica-set fallback: retry on VersionError so a concurrent
+        // race that bumped __v on advance OR sale starts fresh.
+        result = await retryVersionError(() => doApply(null));
+      }
+    } finally {
+      if (session) session.endSession();
+    }
+
+    try {
+      emitClinicalAudit({
+        req,
+        event: "PHARMACY_ADVANCE_APPLIED",
+        UHID: result.sale.patientUHID || "",
+        admissionId: result.sale.admissionId || null,
+        patientName: result.sale.patientName || "",
+        targetType: "PharmacySale",
+        targetId: result.sale._id,
+        after: {
+          billNumber: result.sale.billNumber,
+          amount: result.applied,
+          balanceDueRemaining: Number(result.sale.balanceDue?.toString?.() ?? result.sale.balanceDue ?? 0),
+          advancePoolRemaining: result.advanceRemaining,
+        },
+      });
+    } catch (_) { /* non-fatal */ }
+
+    // R7hr-12-S2 (D4-07): emit BillingAudit ADVANCE_APPLIED so the money
+    // trail lands on the canonical Day-Book / accountant feed. Pre-fix
+    // applyAdvanceToSale only emitted a ClinicalAudit row; the accountant's
+    // "advance utilisation" query keys off BillingAudit.event="ADVANCE_APPLIED"
+    // (see patientAdvanceService.js:298-316 for the IPD-bill mirror), so the
+    // pharmacy boundary was invisible to GST §35 + NABH AAC.7 reconcile. One
+    // audit row per advance slice so each PatientAdvance->Sale debit is
+    // independently auditable (matches patientAdvanceService's per-advance
+    // emission shape).
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      const actorId   = req.user?._id || req.user?.id || null;
+      const actorName = req.user?.fullName || "System";
+      const actorRole = req.user?.role || "";
+      for (const slice of (result.slices || [])) {
+        // Look up the advance receipt number lazily — the slice carries only
+        // the id; receiptNumber is human-readable for the audit trail.
+        let advReceiptNumber = "";
+        try {
+          const adv = await PatientAdvance.findById(slice.advId).select("receiptNumber").lean();
+          advReceiptNumber = adv?.receiptNumber || "";
+        } catch (_) { /* best-effort */ }
+        await emit({
+          event:                "ADVANCE_APPLIED",
+          actorId,
+          actorName,
+          actorRole,
+          UHID:                 (result.sale.patientUHID || "").toString().toUpperCase(),
+          billId:               result.sale._id,
+          billNumber:           result.sale.billNumber || "",
+          admissionId:          result.sale.admissionId || null,
+          advanceId:            slice.advId,
+          advanceReceiptNumber: advReceiptNumber,
+          amount:               toDec(slice.slice),
+          paymentMode:          "ADVANCE_ADJUSTMENT",
+          reason:               `Pharmacy sale ${result.sale.billNumber || ""} — advance applied via Live Ledger`,
+          after:                { source: "PHARMACY", saleType: result.sale.saleType || "" },
+        }, { req });
+      }
+      // Bust the Day-Book cache so the accountant tile reflects the new
+      // money flow immediately — mirrors patientAdvanceService.js:322-325.
+      try {
+        require("../Billing/billingController").invalidateDayBookCache?.();
+      } catch (_) { /* best-effort */ }
+    } catch (_) { /* best-effort — audit failure must not block sale */ }
+
+    res.json({
+      success: true,
+      message: result.sale.balanceDue.toString() === "0"
+        ? `Cleared ₹${result.applied.toFixed(2)} from advance — bill fully paid`
+        : `Applied ₹${result.applied.toFixed(2)} from advance — ₹${Number(result.sale.balanceDue.toString()).toFixed(2)} still outstanding`,
+      data: result.sale,
+      meta: { applied: result.applied, advanceRemaining: result.advanceRemaining },
+    });
+  } catch (e) {
+    const status = e.status || 500;
+    res.status(status).json({
+      success: false,
+      code: e.code || "APPLY_ADVANCE_FAILED",
+      message: e.message,
+    });
+  }
+};
+
 /* ════════════════════════════════════════════════════════════════
    PARTIAL RETURN — refund 1+ items, restore stock, recompute totals
 ══════════════════════════════════════════════════════════════════ */
@@ -1614,7 +3035,10 @@ exports.returnItems = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid refundMode" });
     }
 
-    const sale = await Sale.findById(req.params.id);
+    // R7hr-12 (D1-01 follow-on): `let` instead of `const` because the
+    // final-stage retryVersionError reload may reassign this binding to
+    // the freshly-saved doc after a VersionError race.
+    let sale = await Sale.findById(req.params.id);
     if (!sale) return res.status(404).json({ success: false, message: "Sale not found" });
     if (!["Completed","Partial-Return"].includes(sale.status)) {
       return res.status(400).json({ success: false, message: `Cannot return items on a ${sale.status} sale` });
@@ -1636,6 +3060,18 @@ exports.returnItems = async (req, res) => {
     // qty × unitPrice × (1 - disc%) × (1 + gst%) ).
     const refundedItems = [];
     let refundAmount = 0, refundTaxable = 0, refundGst = 0, refundDiscount = 0;
+    // R7hr-12-S3 (D3-10): surface restore-fallback events to the caller so a
+    // post-stock-take return (where quantityOut was clamped to 0 by a positive
+    // variance adjustment) doesn't silently leak stock. Pre-fix the primary
+    // predicate `quantityOut >= qty` would fail post-clamp, the code logged a
+    // console.error and continued — customer was refunded, but `remaining`
+    // never grew back. We now fall back to a delta-only $inc that just bumps
+    // `remaining` without touching quantityOut (the post-clamp quantityOut is
+    // already the truth and shouldn't go negative). The fallback is captured
+    // in `stockRestoreWarnings` and returned in the response.meta so the
+    // operator can confirm the discrepancy rather than the error being
+    // swallowed in the log file.
+    const stockRestoreWarnings = [];
 
     for (const reqIt of items) {
       const saleItemId = String(reqIt.saleItemId || reqIt._id || "");
@@ -1671,6 +3107,10 @@ exports.returnItems = async (req, res) => {
       refundedItems.push({
         saleItemId, drugId: orig.drugId, drugName: orig.drugName,
         batchId: orig.batchId, batchNo: orig.batchNo, expiryDate: orig.expiryDate,
+        // R7hr-33 (audit P0 — refund MRP): credit-note rows inherit the
+        // MRP that was on the original sale item so the refund slip can
+        // print MRP alongside Rate. Symmetry with R7hr-31 dispense path.
+        mrp: Number(orig.mrp || 0),
         quantity: qty, unitPrice: unit, gstRate: gst, discountPercent: dPct,
         grossAmount: round2(gross), discountAmount: round2(disc),
         taxableAmount: round2(taxable), gstAmount: round2(gstAmt),
@@ -1695,20 +3135,53 @@ exports.returnItems = async (req, res) => {
           { new: true },
         );
         if (!restored) {
-          // Batch is missing, disabled, or already at zero quantityOut —
-          // shouldn't happen unless someone hand-edited Mongo, but logging
-          // beats silently swallowing the failure.
-          console.error(
-            `[Pharmacy] returnItems: could not restore qty=${qty} to batch ${orig.batchId} ` +
-            `(possibly inactive or already reset). Sale ${sale._id} return continues.`,
+          // R7hr-12-S3 (D3-10): primary predicate failed — most commonly when
+          // a stock-take has clamped quantityOut to 0 after a positive variance.
+          // Fall back to a delta-only $inc on `remaining` so the physical
+          // returned stock still re-enters inventory. Don't touch quantityOut
+          // (its current value is the post-clamp truth) but log + surface to
+          // the response so an operator can investigate the discrepancy.
+          const fallback = await DrugBatch.findOneAndUpdate(
+            { _id: orig.batchId, isActive: true },
+            { $inc: { remaining: qty } },
+            { new: true },
           );
+          if (fallback) {
+            stockRestoreWarnings.push({
+              saleItemId,
+              batchId:    String(orig.batchId),
+              drugName:   orig.drugName,
+              qty,
+              mode:       "remaining-only",
+              reason:     "post-stocktake-clamp",
+            });
+            console.warn(
+              `[Pharmacy] returnItems: primary restore predicate failed for batch ${orig.batchId} ` +
+              `(quantityOut likely stock-take-clamped) — restored qty=${qty} to remaining only. Sale ${sale._id}.`,
+            );
+          } else {
+            stockRestoreWarnings.push({
+              saleItemId,
+              batchId:    String(orig.batchId),
+              drugName:   orig.drugName,
+              qty,
+              mode:       "failed",
+              reason:     "batch-missing-or-inactive",
+            });
+            console.error(
+              `[Pharmacy] returnItems: could not restore qty=${qty} to batch ${orig.batchId} ` +
+              `(possibly missing/inactive). Sale ${sale._id} return continues; investigate stock divergence.`,
+            );
+          }
         }
       }
     }
 
     // Issue a refund slip number via Counter (separate sequence)
+    // R7hq: REF-PHM-YY-NNNN (was REF-PHM-YYYYMMDD-NNNN).
     const seq = await nextSeq("pharmacyRefund");
-    const refundSlipNumber = `REF-PHM-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
+    const yy = String(new Date().getFullYear()).slice(-2);
+    const refundSlipNumber = `REF-PHM-${yy}-${String(seq).padStart(4, "0")}`;
 
     const returnRecord = {
       refundSlipNumber,
@@ -1721,46 +3194,89 @@ exports.returnItems = async (req, res) => {
       refundedBy:      req.user?.fullName || req.user?.name || "System",
       refundedById:    req.user?._id || null,
     };
-    sale.returns.push(returnRecord);
 
-    // Decide new status — fully returned (sum of all returned == sum of all sold)
-    // → Refunded; partially returned → Partial-Return.
-    const totalSoldQty = (sale.items || []).reduce((s, it) => s + Number(it.quantity || 0), 0);
-    const totalReturnedQty = (sale.returns || []).reduce(
-      (s, r) => s + (r.refundedItems || []).reduce((ss, ri) => ss + Number(ri.quantity || 0), 0), 0);
-    sale.status = totalReturnedQty >= totalSoldQty ? "Refunded" : "Partial-Return";
+    // R7hr-12 (D1-01 follow-on): now that PharmacySaleSchema enables
+    // optimisticConcurrency, a concurrent writer (collectCredit etc.) on the
+    // same sale would otherwise throw VersionError here. Wrap the final
+    // commit in retryVersionError and re-apply the diff on the freshly-read
+    // doc each iteration. Stock restore + refund slip seq are above and run
+    // exactly once (idempotent / counter-bumped).
+    // R7hr-12 (D2-01): every Decimal128 read uses toNum() before arithmetic
+    // to avoid string-concat corruption on retry.
+    let appliedSale;
+    let payable = 0;
+    await retryVersionError(async () => {
+      const fresh = await Sale.findById(req.params.id);
+      if (!fresh) {
+        const e = new Error("Sale not found"); e.status = 404; throw e;
+      }
+      // Idempotency guard — if a prior attempt already pushed this slip,
+      // do not double-write. We re-read on each retry so this catches
+      // any committed prior pass.
+      const already = (fresh.returns || []).some(r => r.refundSlipNumber === refundSlipNumber);
+      if (!already) fresh.returns.push(returnRecord);
 
-    // Money flow on refund:
-    //   1. If patient still owed money on this bill (balanceDue > 0),
-    //      first knock that off — patient now owes less.
-    //   2. Any refund amount LEFT OVER after that is money the pharmacy
-    //      must pay back. How we account for it depends on refundMode:
-    //        • Cash / Card / UPI — paid out at counter now, no ledger entry.
-    //        • Credit-note / Adjusted — pharmacy still holds the money
-    //          (will offset future bill or be paid out later), so it goes
-    //          to patientCredit as a positive balance.
-    const due       = Number(sale.balanceDue || 0);
-    const dueOffset = Math.min(due, refundAmount);
-    sale.balanceDue = round2(due - dueOffset);
-    const payable   = round2(refundAmount - dueOffset);
+      // Recompute status from FRESH state (other writers may have added returns).
+      const totalSoldQty = (fresh.items || []).reduce((s, it) => s + Number(it.quantity || 0), 0);
+      const totalReturnedQty = (fresh.returns || []).reduce(
+        (s, r) => s + (r.refundedItems || []).reduce((ss, ri) => ss + Number(ri.quantity || 0), 0), 0);
+      fresh.status = totalReturnedQty >= totalSoldQty ? "Refunded" : "Partial-Return";
 
-    if (payable > 0 && (refundMode === "Credit-note" || refundMode === "Adjusted")) {
-      sale.patientCredit = round2((sale.patientCredit || 0) + payable);
-      sale.patientCreditLog.push({
-        amount: payable,
-        reason: `Refund (${refundMode})`,
-        refSlip: refundSlipNumber,
-        byName: req.user?.fullName || req.user?.name || "System",
-        byId:   req.user?._id || null,
-      });
+      // Money flow on refund:
+      //   1. If patient still owed money on this bill (balanceDue > 0),
+      //      first knock that off — patient now owes less.
+      //   2. Any refund amount LEFT OVER after that is money the pharmacy
+      //      must pay back. How we account for it depends on refundMode:
+      //        • Cash / Card / UPI — paid out at counter now, no ledger entry.
+      //        • Credit-note / Adjusted — pharmacy still holds the money
+      //          (will offset future bill or be paid out later), so it goes
+      //          to patientCredit as a positive balance.
+      // Compute delta against fresh balanceDue/patientCredit on each retry
+      // so concurrent collectCredit's debit doesn't get clobbered.
+      if (!already) {
+        const due       = toNum(fresh.balanceDue);
+        const dueOffset = Math.min(due, refundAmount);
+        fresh.balanceDue = round2(due - dueOffset);
+        payable          = round2(refundAmount - dueOffset);
+        if (payable > 0 && (refundMode === "Credit-note" || refundMode === "Adjusted")) {
+          fresh.patientCredit = round2(toNum(fresh.patientCredit) + payable);
+          fresh.patientCreditLog.push({
+            amount: payable,
+            reason: `Refund (${refundMode})`,
+            refSlip: refundSlipNumber,
+            byName: req.user?.fullName || req.user?.name || "System",
+            byId:   req.user?._id || null,
+          });
+        }
+        fresh.remarks = (fresh.remarks ? fresh.remarks + " · " : "") +
+          `Returned ${refundedItems.length} line(s) · refund ${refundSlipNumber} · ${fmtINRSimple(refundAmount)} via ${refundMode}` +
+          (payable > 0 && (refundMode === "Credit-note" || refundMode === "Adjusted")
+            ? ` · credit ${fmtINRSimple(payable)} held for patient` : "");
+      }
+
+      await fresh.save();
+      appliedSale = fresh;
+    }, { label: "returnItems" });
+    // Rebind `sale` to the post-save doc so the rest of this handler sees
+    // the canonical, persisted state for cascades + audit emits.
+    sale = appliedSale;
+
+    // R7gz — Cascade the return into the IPD ledger. The matching
+    // MAR_RESERVATION BillingTrigger (emitted by onIndentReleased when
+    // the pharmacy first dispensed this drug) needs to be voided so
+    // the PHARM category total on /ipd-ledger reflects the refund.
+    // The pharmacy counter handles the actual money flow via
+    // PharmacySale.balanceDue / patientCredit above — this is the
+    // cost-view side. Best-effort: a failure here does NOT roll back
+    // the return (stock is already credited, refund slip is issued).
+    try {
+      const autoBilling = require("../../services/Billing/autoBillingService");
+      if (typeof autoBilling.onPharmacyReturn === "function") {
+        await autoBilling.onPharmacyReturn(sale, returnRecord);
+      }
+    } catch (e) {
+      console.error("[Pharmacy] returnItems → onPharmacyReturn cascade failed:", e.message);
     }
-
-    sale.remarks = (sale.remarks ? sale.remarks + " · " : "") +
-      `Returned ${refundedItems.length} line(s) · refund ${refundSlipNumber} · ${fmtINRSimple(refundAmount)} via ${refundMode}` +
-      (payable > 0 && (refundMode === "Credit-note" || refundMode === "Adjusted")
-        ? ` · credit ${fmtINRSimple(payable)} held for patient` : "");
-
-    await sale.save();
 
     // B6-T05 — ClinicalAudit emit on partial / full return (NABH MOM.4 +
     // drug-control trail). Captures refund slip + amount + refund mode so
@@ -1786,7 +3302,38 @@ exports.returnItems = async (req, res) => {
       });
     } catch (_) { /* silent — audit emit is non-blocking */ }
 
-    res.json({ success: true, data: { sale, returnRecord } });
+    // R7hr-33 (audit P0-3): discontinue the AMU register rows that match
+    // the returned antibiotic lines so the AWaRe consumption report stops
+    // counting refunded doses. Narrow by the returned drugName so a
+    // partial return of Drug A + Drug B leaves any unrelated Active AMU
+    // row from a 3rd drug untouched. Best-effort — register write must
+    // never roll back primary refund.
+    if (_discontinueAntimicrobialForSale && refundedItems.length > 0) {
+      try {
+        await _discontinueAntimicrobialForSale({
+          saleId: sale._id,
+          antibioticNames: refundedItems.map(r => r.drugName).filter(Boolean),
+          reason: "partial-return",
+          actor: {
+            byUserId: req.user?._id,
+            byName:   req.user?.fullName,
+            byRole:   req.user?.role || "Pharmacist",
+          },
+        });
+      } catch (_) { /* AMU discontinue is non-blocking */ }
+    }
+
+    // R7hr-12-S3 (D3-10): surface stock-restore fallbacks so the operator can
+    // investigate post-stocktake divergence rather than only seeing the
+    // failure in the log file. `stockRestoreWarnings` is an empty array on
+    // the happy path; non-empty entries carry `mode: "remaining-only"` (the
+    // delta fallback succeeded, but quantityOut wasn't touched) or
+    // `mode: "failed"` (no restore happened, inventory may need manual fix).
+    res.json({
+      success: true,
+      data: { sale, returnRecord },
+      meta: stockRestoreWarnings.length > 0 ? { stockRestoreWarnings } : undefined,
+    });
   } catch (e) { sendErr(res, e); }
 };
 
@@ -1808,7 +3355,9 @@ exports.addItems = async (req, res) => {
       return res.status(400).json({ success: false, message: "items[] is required — at least one item to add", code: "VALIDATION" });
     }
 
-    const sale = await Sale.findById(req.params.id);
+    // R7hr-12 (D1-01 follow-on): `let` so the final retryVersionError block
+    // can rebind to the freshly-saved doc after a VersionError race.
+    let sale = await Sale.findById(req.params.id);
     if (!sale) return res.status(404).json({ success: false, message: "Sale not found" });
     // Fully refunded sales shouldn't accept additions — that's a new bill.
     // Cancelled bills definitely can't accept additions.
@@ -1854,6 +3403,12 @@ exports.addItems = async (req, res) => {
         addedItems.push({
           drugId: it.drugId, drugName: it.drugName,
           batchId: u.batch._id, batchNo: u.batch.batchNo, expiryDate: u.batch.expiryDate,
+          // R7hr-33 (audit P0 — supplement MRP): supplementary-invoice
+          // lines snapshot MRP same as the original dispense path. Without
+          // this, supplemented items always render MRP "—" while the
+          // original items show "₹100" — visually inconsistent on the
+          // consolidated reprint.
+          mrp: Number(u.batch.mrp || 0),
           quantity: qty, unitPrice: unit, gstRate: gstR, discountPercent: discR,
           grossAmount: round2(gross),  discountAmount: round2(discAmt),
           taxableAmount: round2(taxable), gstAmount: round2(gstAmt), netAmount: round2(net),
@@ -1869,8 +3424,10 @@ exports.addItems = async (req, res) => {
     const paid          = Number(amountPaid != null ? amountPaid : addedTotal);
 
     // Issue supplementary slip number (separate sequence)
+    // R7hq: SUP-PHM-YY-NNNN (was SUP-PHM-YYYYMMDD-NNNN).
     const seq = await nextSeq("pharmacySupplement");
-    const supplementSlipNumber = `SUP-PHM-${new Date().toISOString().slice(0,10).replace(/-/g, "")}-${String(seq).padStart(4, "0")}`;
+    const yy = String(new Date().getFullYear()).slice(-2);
+    const supplementSlipNumber = `SUP-PHM-${yy}-${String(seq).padStart(4, "0")}`;
 
     const supplementRecord = {
       supplementSlipNumber,
@@ -1887,34 +3444,50 @@ exports.addItems = async (req, res) => {
       addedById:  req.user?._id || null,
       reason, notes,
     };
-    sale.supplements.push(supplementRecord);
-
-    // Roll up balanceDue + patient credit on the parent sale.
-    // Any unpaid portion of the supplement is added to the parent's balanceDue.
-    sale.balanceDue = round2((sale.balanceDue || 0) + Math.max(0, addedTotal - paid));
-    // If the patient over-paid for the supplement, treat the excess as credit.
     const overPaid = Math.max(0, paid - addedTotal);
-    if (overPaid > 0) {
-      sale.patientCredit = round2((sale.patientCredit || 0) + overPaid);
-      sale.patientCreditLog.push({
-        amount: overPaid,
-        reason: "Over-payment on supplementary invoice",
-        refSlip: supplementSlipNumber,
-        byName: req.user?.fullName || "System",
-        byId:   req.user?._id || null,
-      });
-    }
 
-    // Status — if the sale was Completed, mark it Supplemented so the
-    // operator can tell from the register. Partial-Return stays as-is
-    // (a sale can be both partial-returned AND supplemented; the
-    // supplement record is the audit trail).
-    if (sale.status === "Completed") sale.status = "Supplemented";
-
-    sale.remarks = (sale.remarks ? sale.remarks + " · " : "") +
-      `Added ${addedItems.length} line(s) · slip ${supplementSlipNumber} · ${fmtINRSimple(addedTotal)} via ${paymentMode}`;
-
-    await sale.save();
+    // R7hr-12 (D1-01 follow-on): wrap the final commit in retryVersionError.
+    // PharmacySaleSchema now enables optimisticConcurrency so a concurrent
+    // collectCredit/refund would throw VersionError without this. Stock
+    // consume + slip seq above run exactly once (atomic / counter-bumped);
+    // we re-read the doc and re-apply just the supplement diff on each
+    // retry. Idempotency key: supplementSlipNumber (already-pushed check).
+    // R7hr-12 (D2-01): every Decimal128 read uses toNum() before arithmetic.
+    let appliedSale;
+    await retryVersionError(async () => {
+      const fresh = await Sale.findById(req.params.id);
+      if (!fresh) {
+        const e = new Error("Sale not found"); e.status = 404; throw e;
+      }
+      const already = (fresh.supplements || []).some(s => s.supplementSlipNumber === supplementSlipNumber);
+      if (!already) {
+        fresh.supplements.push(supplementRecord);
+        // Roll up balanceDue + patient credit on the parent sale.
+        // Any unpaid portion of the supplement is added to the parent's balanceDue.
+        // Decimal128-safe arithmetic via toNum().
+        fresh.balanceDue = round2(toNum(fresh.balanceDue) + Math.max(0, addedTotal - paid));
+        if (overPaid > 0) {
+          fresh.patientCredit = round2(toNum(fresh.patientCredit) + overPaid);
+          fresh.patientCreditLog.push({
+            amount: overPaid,
+            reason: "Over-payment on supplementary invoice",
+            refSlip: supplementSlipNumber,
+            byName: req.user?.fullName || "System",
+            byId:   req.user?._id || null,
+          });
+        }
+        // Status — if the sale was Completed, mark it Supplemented so the
+        // operator can tell from the register. Partial-Return stays as-is
+        // (a sale can be both partial-returned AND supplemented; the
+        // supplement record is the audit trail).
+        if (fresh.status === "Completed") fresh.status = "Supplemented";
+        fresh.remarks = (fresh.remarks ? fresh.remarks + " · " : "") +
+          `Added ${addedItems.length} line(s) · slip ${supplementSlipNumber} · ${fmtINRSimple(addedTotal)} via ${paymentMode}`;
+      }
+      await fresh.save();
+      appliedSale = fresh;
+    }, { label: "addItems" });
+    sale = appliedSale;
 
     // B6-T05 — ClinicalAudit emit on supplementary invoice (NABH AAC.7).
     // Surfaces post-bill drug additions so the register can flag
@@ -2062,12 +3635,125 @@ exports.cancelSale = async (req, res) => {
       }
     }
 
+    // 4b. R7hr-12 (D4-01): reverse any advance application that settled
+    //     this sale. Pre-fix, cancelSale flipped status + zeroed balanceDue
+    //     + booked the WHOLE amountPaid into patientCredit — but for a sale
+    //     that had been paid from PatientAdvance via applyAdvanceToSale,
+    //     PatientAdvance.appliedAmount stayed inflated AND the same money
+    //     also got parked into PharmacySale.patientCredit. Net: patient
+    //     lost advance balance equal to the cancelled slice, books showed
+    //     the cash twice (advance-spent + pharmacy credit), and the
+    //     `applied + refunded ≤ amount` invariant blocked subsequent
+    //     advance refunds for that slice (stuck-state requiring DB
+    //     surgery).
+    //
+    //     Fix: walk PatientAdvance docs that carry an appliedTo[] row
+    //     keyed on this sale's _id (NOT just the collectionLog's lone
+    //     sourceAdvanceId — FIFO can bleed multiple advances and push a
+    //     row into EACH touched advance, but collectionLog only stores
+    //     the LAST advance id). Decrement appliedAmount by each matched
+    //     row's amount, $pull the row, emit an ADVANCE_APPLY_REVERSED
+    //     audit per advance. Net out the advance-sourced portion from
+    //     `amountPaid` before computing the patientCredit booking below
+    //     so the same money isn't double-counted.
+    //
+    //     OCC: PatientAdvanceSchema enables optimisticConcurrency (L136
+    //     in PatientAdvanceModel.js), so a concurrent applyAdvance/refund
+    //     mid-walk would throw VersionError; retryVersionError handles it
+    //     per-advance. Stock restore above is already committed and
+    //     idempotent, so a partial-failure here doesn't corrupt stock.
+    let advanceReversed = 0;
+    const advanceReversalLog = []; // [{ advanceId, receiptNumber, slice }]
+    try {
+      const uhid = (s.patientUHID || "").toString().toUpperCase();
+      if (uhid) {
+        const touchedAdvs = await PatientAdvance.find({
+          UHID: uhid,
+          "appliedTo.billId": s._id,
+        });
+        for (const adv of touchedAdvs) {
+          // Sum slices applied specifically to this sale on this advance
+          // (handles the rare case where FIFO bled+refilled the same
+          // advance twice — both rows must be reversed).
+          const matchingRows = (adv.appliedTo || []).filter(
+            r => String(r.billId) === String(s._id),
+          );
+          if (!matchingRows.length) continue;
+          const reversalAmt = matchingRows.reduce(
+            (t, r) => t + toNum(r.amount), 0,
+          );
+          if (reversalAmt <= 0) continue;
+          // CAS reversal with retry. Re-read the advance to capture
+          // post-other-writer state, recompute the matching rows on
+          // the FRESH doc, then $pull + decrement + save.
+          await retryVersionError(async () => {
+            const fresh = await PatientAdvance.findById(adv._id);
+            if (!fresh) return;
+            const freshRows = (fresh.appliedTo || []).filter(
+              r => String(r.billId) === String(s._id),
+            );
+            const freshAmt = freshRows.reduce((t, r) => t + toNum(r.amount), 0);
+            if (freshAmt <= 0) return; // already reversed by a prior attempt
+            // Decrement appliedAmount; rely on the pre-save status hook
+            // (already in PatientAdvanceModel) to flip the status enum
+            // appropriately (FULLY_APPLIED → PARTIALLY_APPLIED → ACTIVE).
+            const newApplied = Math.max(0, toNum(fresh.appliedAmount) - freshAmt);
+            fresh.appliedAmount = toDec(newApplied);
+            // $pull matching subdocs by mutating the in-memory array;
+            // Mongoose tracks the change and emits a proper $pull on save.
+            fresh.appliedTo = (fresh.appliedTo || []).filter(
+              r => String(r.billId) !== String(s._id),
+            );
+            await fresh.save();
+            advanceReversalLog.push({
+              advanceId:     adv._id,
+              receiptNumber: adv.receiptNumber || "",
+              slice:         freshAmt,
+            });
+          }, { label: `cancelSale-advance-reverse-${adv._id}` });
+        }
+        advanceReversed = advanceReversalLog.reduce((t, r) => t + r.slice, 0);
+        // Best-effort audit emit per reversed advance.
+        try {
+          const { emit } = require("../../models/Billing/BillingAudit");
+          for (const log of advanceReversalLog) {
+            await emit({
+              event:     "ADVANCE_APPLY_REVERSED",
+              actorId:   cancelledById,
+              actorName: cancelledByName,
+              actorRole: req.user?.role || "",
+              advanceId: log.advanceId,
+              advanceReceiptNumber: log.receiptNumber,
+              UHID:      uhid,
+              admissionId: s.admissionId || null,
+              amount:    log.slice,
+              reason:    `PHARM_SALE_CANCELLED: ${s.billNumber} — advance debit reversed`,
+              before:    { billId: s._id, status: "Completed" },
+              after:     { billId: s._id, status: "Cancelled", reversed: log.slice },
+            }, { req });
+          }
+        } catch (_) { /* best-effort */ }
+      }
+    } catch (advErr) {
+      console.error(
+        "[Pharmacy] cancelSale: advance reversal failed for sale",
+        String(s._id), ":", advErr.message,
+      );
+      // Do NOT abort the cancel — stock is already restored and the sale
+      // is already in status:Cancelled. Surface the failure in remarks
+      // below so accountant reconcile can flag it for manual unblock.
+    }
+
     // 5. Money flow + remarks via versioned save with retry. We touch
     //    patientCredit / patientCreditLog (arrays) so optimistic
     //    concurrency can collide if another endpoint pushed credit
     //    mid-flight.
+    // R7hr-12 (D4-01): subtract the advance-reversed slice from amountPaid
+    // before booking patientCredit — the advance pool already absorbed
+    // its share, so booking it again into patientCredit would double-
+    // count. Only the genuine cash/card/UPI portion should land here.
     const refundedSoFar  = (s.returns || []).reduce((t, r) => t + Number(r.refundAmount || 0), 0);
-    const payable        = Math.max(0, Number(s.amountPaid || 0) - refundedSoFar);
+    const payable        = Math.max(0, Number(s.amountPaid || 0) - refundedSoFar - advanceReversed);
 
     try {
       const retryVersionError = require("../../utils/retryVersionError");
@@ -2075,7 +3761,11 @@ exports.cancelSale = async (req, res) => {
         const fresh = await Sale.findById(s._id);
         if (!fresh) return;
         if (payable > 0) {
-          fresh.patientCredit = round2((fresh.patientCredit || 0) + payable);
+          // R7hr-12 (D2-01): fresh.patientCredit is Decimal128 on the
+          // hydrated doc — `(D128 || 0) + N` is string concat. toNum()
+          // coerces before + so the cancel's held-credit booking lands
+          // as a real number instead of a corrupted string.
+          fresh.patientCredit = round2(toNum(fresh.patientCredit) + payable);
           fresh.patientCreditLog.push({
             amount: payable,
             reason: "Sale cancelled — payment held as credit",
@@ -2087,6 +3777,10 @@ exports.cancelSale = async (req, res) => {
         fresh.remarks = (fresh.remarks ? fresh.remarks + " · " : "") +
           `Cancelled by ${cancelledByName} on ${cancelStamp.toISOString()}` +
           (payable > 0 ? ` · ${fmtINRSimple(payable)} held as credit` : "") +
+          // R7hr-12 (D4-01): surface advance reversal in the audit-trail
+          // remark so an accountant skimming the bill sees the linkage
+          // without spelunking BillingAudit.
+          (advanceReversed > 0 ? ` · ${fmtINRSimple(advanceReversed)} returned to patient advance pool` : "") +
           (isAdminOverride && cancellerId === dispenserId ? " · ADMIN-OVERRIDE self-cancel" : "");
         await fresh.save();
       }, { label: "cancelSale-credit" });
@@ -2096,18 +3790,29 @@ exports.cancelSale = async (req, res) => {
     }
 
     // 6. Audit on admin override (SOD breach).
+    // R7hr-12-S3 (D8-08): use BILL_CANCELLED (the accurate enum slot) instead
+    // of SHIFT_CLOSED (closest-bucket abuse). Pre-fix a surveyor or auditor
+    // filtering `BillingAudit.find({ event: "BILL_CANCELLED" })` would miss
+    // every pharmacy admin-override self-cancel because the row was misfiled
+    // under SHIFT_CLOSED. Now both PatientBill cancels and pharmacy cancels
+    // surface under the same enum bucket; the `reason` string still carries
+    // the ADMIN_OVERRIDE_SELF_CANCEL discriminator for grep-ability. Also
+    // populate billId + billNumber (previously missing on this row, breaking
+    // a billNumber-filtered audit query).
     if (isAdminOverride && cancellerId === dispenserId) {
       try {
         const { emit } = require("../../models/Billing/BillingAudit");
         await emit({
-          event:     "SHIFT_CLOSED", // closest enum bucket for SOD override audit
+          event:     "BILL_CANCELLED",
           actorId:   req.user?._id || null,
           actorName: cancelledByName,
           actorRole: req.user?.role || "Admin",
+          billId:    s._id,
+          billNumber:s.billNumber || "",
           amount:    Number(s.grandTotal || 0),
           reason:    `ADMIN_OVERRIDE_SELF_CANCEL: pharmacy sale ${s.billNumber} cancelled by dispenser via admin override`,
           before:    { saleId: s._id, status: "Completed" },
-          after:     { saleId: s._id, status: "Cancelled", cancelledAt: cancelStamp },
+          after:     { saleId: s._id, status: "Cancelled", cancelledAt: cancelStamp, kind: "PHARMACY_SALE_CANCEL" },
         }, { req });
       } catch (_) { /* best-effort */ }
     }
@@ -2133,11 +3838,47 @@ exports.cancelSale = async (req, res) => {
           cancelledAt: cancelStamp,
           adminOverrideSelfCancel: isAdminOverride && cancellerId === dispenserId,
           hamPresent: (s.items || []).some((i) => i.isHAM === true),
+          // R7hr-12 (D4-01): surface advance reversal on the clinical
+          // audit so a per-UHID NABH register can join the two-leg flow.
+          advanceReversedAmount: advanceReversed,
+          advanceReversedCount:  advanceReversalLog.length,
         },
       });
     } catch (_) { /* silent — audit emit is non-blocking */ }
 
-    res.json({ success: true, data: s });
+    // R7hr-33 (audit P0-2): discontinue ALL AMU register rows tied to this
+    // sale so the AWaRe consumption report stops counting cancelled
+    // antibiotics as Active. No name filter — the whole sale is reversed.
+    // Best-effort — register write must never roll back primary cancel.
+    if (_discontinueAntimicrobialForSale) {
+      try {
+        await _discontinueAntimicrobialForSale({
+          saleId: s._id,
+          reason: "sale-cancelled",
+          actor: {
+            byUserId: req.user?._id,
+            byName:   cancelledByName,
+            byRole:   req.user?.role || "Pharmacist",
+          },
+        });
+      } catch (_) { /* AMU discontinue is non-blocking */ }
+    }
+
+    res.json({
+      success: true,
+      data: s,
+      // R7hr-12 (D4-01): tell the caller how much (and from which advance
+      // receipt numbers) was returned to the patient's advance pool so
+      // the UI can show a confirmation row instead of silently changing
+      // the advance balance.
+      meta: {
+        advanceReversed,
+        advanceReversals: advanceReversalLog.map(r => ({
+          receiptNumber: r.receiptNumber,
+          amount:        r.slice,
+        })),
+      },
+    });
   } catch (e) { sendErr(res, e); }
 };
 
@@ -2168,19 +3909,68 @@ exports.recordVendorReturn = async (req, res) => {
     if (!Number.isFinite(qtyN) || qtyN <= 0) {
       return res.status(400).json({ success: false, message: "qty must be a positive number" });
     }
-    const batch = await DrugBatch.findById(batchId);
-    if (!batch) return res.status(404).json({ success: false, message: "Batch not found" });
-    const remaining = Math.max(0, (batch.quantityIn || 0) - (batch.quantityOut || 0) - (batch.vendorReturned || 0));
-    if (qtyN > remaining) {
+    // R7hr-12 (D3-01) + R7hr-12-S2 (D1-06): replace the load-then-save
+    // with an atomic findOneAndUpdate gated on a fresh `remaining >= qtyN`
+    // $expr. Pre-fix, findById + batch.save() raced concurrent dispense
+    // $inc decrements (fifoConsume's atomic update path). Between the read
+    // and the save, dispense decremented quantityOut + remaining; the
+    // pre-save hook then recomputed `remaining = in - out - vendorReturned`
+    // from the STALE in-memory snapshot, silently erasing the concurrent
+    // dispense's decrement and inflating closing stock — patients could be
+    // over-dispensed units that were already sold (controlled-drug
+    // compliance risk + Form 35 stock register corruption). The same fix
+    // closes D1-06 (P1 sibling) — two concurrent vendor returns each
+    // observing remaining=5 and both passing qty=4 would both succeed
+    // load-check-mutate-save, overstating vendor-returned by the race
+    // amount on supplier debit-notes. The atomic $expr/$inc pair makes
+    // the over-decrement impossible — the second call returns null and
+    // 409s with INSUFFICIENT_STOCK_RACED.
+    // The atomic update bypasses Mongoose middleware entirely so the
+    // pre-save remaining recompute can't see a stale snapshot. We still
+    // need the pre-read to surface a friendly error message + audit
+    // before/after snapshot, but the source-of-truth decrement is the
+    // atomic $inc gated by $expr.
+    const preBatch = await DrugBatch.findById(batchId);
+    if (!preBatch) return res.status(404).json({ success: false, message: "Batch not found" });
+    const preRemaining = Math.max(0, (preBatch.quantityIn || 0) - (preBatch.quantityOut || 0) - (preBatch.vendorReturned || 0));
+    if (qtyN > preRemaining) {
       return res.status(409).json({
         success: false,
         code: "INSUFFICIENT_STOCK",
-        message: `Cannot return ${qtyN} — only ${remaining} remaining in batch ${batch.batchNo}.`,
+        message: `Cannot return ${qtyN} — only ${preRemaining} remaining in batch ${preBatch.batchNo}.`,
       });
     }
-    batch.vendorReturned = (batch.vendorReturned || 0) + qtyN;
-    // remaining is recomputed by pre-save hook (in - out - vendorReturned).
-    await batch.save();
+    // Atomic, race-safe deduction. The $expr predicate re-checks the
+    // remaining invariant at write time (NOT against the stale read), so a
+    // concurrent dispense that crossed remaining < qtyN between the pre-
+    // read and the write returns null and we fail gracefully. Identical
+    // pattern to fifoConsume() at L480-L484 (proven safe at R7az-CRIT-5).
+    const batch = await DrugBatch.findOneAndUpdate(
+      {
+        _id: batchId,
+        isActive: true,
+        $expr: {
+          $gte: [
+            { $subtract: ["$quantityIn", { $add: ["$quantityOut", "$vendorReturned"] }] },
+            qtyN,
+          ],
+        },
+      },
+      { $inc: { vendorReturned: qtyN, remaining: -qtyN } },
+      { new: true },
+    );
+    if (!batch) {
+      // Concurrent dispense bled the batch dry between the pre-read and
+      // here. Re-read for the up-to-date count + return a 409 with the
+      // fresh remaining so the UI can show the truth.
+      const fresh = await DrugBatch.findById(batchId).lean();
+      const freshRem = Math.max(0, (fresh?.quantityIn || 0) - (fresh?.quantityOut || 0) - (fresh?.vendorReturned || 0));
+      return res.status(409).json({
+        success: false,
+        code: "INSUFFICIENT_STOCK_RACED",
+        message: `Concurrent dispense changed batch ${preBatch.batchNo} — only ${freshRem} remaining now (asked ${qtyN}).`,
+      });
+    }
 
     const row = await PharmacyVendorReturn.create({
       batchId:     batch._id,
@@ -2202,6 +3992,10 @@ exports.recordVendorReturn = async (req, res) => {
     });
 
     // Best-effort audit.
+    // R7hr-12 (D3-01): before-snapshot uses the preBatch read (pre-atomic);
+    // after-snapshot uses the freshly-returned post-update doc. Both come
+    // from independent reads so the audit trail records the actual delta
+    // even when a concurrent dispense moved quantityOut between them.
     try {
       const { emit } = require("../../models/Billing/BillingAudit");
       await emit({
@@ -2211,7 +4005,7 @@ exports.recordVendorReturn = async (req, res) => {
         actorRole: req.user?.role,
         amount:    qtyN * Number(batch.purchaseRate || 0),
         reason:    `VENDOR_RETURN: ${batch.drugName || ""} batch ${batch.batchNo} qty=${qtyN} reason=${reason || "EXPIRED"} (debit-note ${debitNoteNo || "—"})`,
-        before:    { remaining, vendorReturned: (batch.vendorReturned || 0) - qtyN },
+        before:    { remaining: preRemaining, vendorReturned: preBatch.vendorReturned || 0 },
         after:     { remaining: batch.remaining, vendorReturned: batch.vendorReturned, vendorReturnId: row._id },
       }, { req });
     } catch (_) { /* best-effort */ }
@@ -2266,16 +4060,25 @@ exports.closeDay = async (req, res) => {
     // inline. Cheaper than refactoring — only fires once per day.
     const todayStart = new Date(asOf);
     const monthStart = new Date(asOf.getFullYear(), asOf.getMonth(), 1);
+    // R7hr-12-S3 (D2-12): upper-bound the date windows so a back-dated close
+    // (asOf=2026-01-15 called today) doesn't capture everything from that day
+    // through now. Pre-fix, todayAgg matched `createdAt: { $gte: todayStart }`
+    // with no $lt — back-dated close-day rows stored e.g. 30 days of sales as
+    // "today's sales" and a month-plus as "month's sales", breaking the
+    // pharmacy EOD-cash NABH audit reconciliation. Now todayEnd = todayStart + 1d
+    // and monthEnd = monthStart + 1 month, so the buckets respect their labels.
+    const todayEnd = new Date(todayStart.getTime() + 86400000);
+    const monthEnd = new Date(asOf.getFullYear(), asOf.getMonth() + 1, 1);
     const SALE_STATUSES = ["Completed", "Partial-Return", "Refunded", "Supplemented"];
     const [drugsCount, batches, todayAgg, monthAgg] = await Promise.all([
       Drug.countDocuments({ isActive: true }),
       DrugBatch.find({ isActive: true, remaining: { $gt: 0 } }).lean(),
       Sale.aggregate([
-        { $match: { status: { $in: SALE_STATUSES }, createdAt: { $gte: todayStart } } },
+        { $match: { status: { $in: SALE_STATUSES }, createdAt: { $gte: todayStart, $lt: todayEnd } } },
         { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$grandTotal" } } },
       ]),
       Sale.aggregate([
-        { $match: { status: { $in: SALE_STATUSES }, createdAt: { $gte: monthStart } } },
+        { $match: { status: { $in: SALE_STATUSES }, createdAt: { $gte: monthStart, $lt: monthEnd } } },
         { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$grandTotal" } } },
       ]),
     ]);
@@ -2283,6 +4086,17 @@ exports.closeDay = async (req, res) => {
 
     // Idempotent upsert keyed on the floored asOf — second click on the
     // same day returns the existing row instead of failing the unique index.
+    // R7hr-12-S3 (D3-09): split into $setOnInsert (immutable closing snapshot
+    // — drugsCount / batchesInStock / stockValue / todaySales / monthSales /
+    // closedBy / closedById / closedByRole at first close) vs $set (mutable
+    // reconciliation fields — cashOnHand, varianceNote). Pre-fix every field
+    // was inside $setOnInsert, so an operator who clicked Close at 18:00 with
+    // a provisional cash count and then ran a recount at 18:30 saw the
+    // recount silently dropped — the second findOneAndUpdate returned the
+    // FIRST snapshot unchanged. Now the immutable closing totals stay pinned
+    // to the first close while the operator can refine cashOnHand /
+    // varianceNote with later attempts; the schema's `updatedAt` timestamp
+    // (timestamps:true on PharmacyDayCloseModel) records each recount moment.
     const row = await PharmacyDayClose.findOneAndUpdate(
       { asOf },
       {
@@ -2302,6 +4116,12 @@ exports.closeDay = async (req, res) => {
             count: monthAgg[0]?.count || 0,
             total: Math.round(monthAgg[0]?.total || 0),
           },
+        },
+        $set: {
+          // R7hr-12-S3 (D3-09): mutable reconciliation fields only — the
+          // schema already carries timestamps so `updatedAt` records the
+          // recount moment without needing a dedicated `recountedAt` field
+          // (kept the model untouched in this sprint).
           cashOnHand:   Number(req.body?.cashOnHand || 0),
           varianceNote: String(req.body?.varianceNote || "").trim(),
         },
@@ -2309,16 +4129,27 @@ exports.closeDay = async (req, res) => {
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
     // Audit
+    // R7hr-12-S3 (D8-08): keep SHIFT_CLOSED enum (pharmacy day-close is
+    // semantically a shift/day lifecycle event, parallel to cashier shift
+    // close) but tag `after.kind: "PHARMACY_DAY_CLOSE"` so dashboards can
+    // distinguish pharmacy-day-close rows from cashier shift-close rows
+    // without adding a new enum value to BillingAudit. The reason string
+    // continues to carry the discriminator for grep-only consumers.
     try {
       const { emit } = require("../../models/Billing/BillingAudit");
       await emit({
-        event:     "SHIFT_CLOSED",   // closest enum bucket
+        event:     "SHIFT_CLOSED",
         actorId:   req.user?._id || req.user?.id,
         actorName: row.closedBy,
         actorRole: row.closedByRole,
         amount:    row.todaySales?.total || 0,
         reason:    `PHARMACY_DAY_CLOSE asOf=${asOf.toISOString().slice(0,10)} sales=${row.todaySales?.count || 0}`,
-        after:     { dayCloseId: row._id, stockValue: row.stockValue, todaySales: row.todaySales },
+        after:     {
+          kind: "PHARMACY_DAY_CLOSE",
+          dayCloseId: row._id,
+          stockValue: row.stockValue,
+          todaySales: row.todaySales,
+        },
       }, { req });
     } catch (_) { /* best-effort */ }
     res.status(201).json({ success: true, data: row });
@@ -2341,7 +4172,12 @@ exports.stats = async (req, res) => {
     // Completed + Partial-Return + Refunded. Refunds are subtracted as a
     // separate aggregation so revenue is net of returns (matches register).
     const SALE_STATUSES = ["Completed", "Partial-Return", "Refunded", "Supplemented"];
-    const [drugsCount, batchFacet, todaySalesAgg, monthSalesAgg, todayRefundAgg, monthRefundAgg, todaySuppAgg, monthSuppAgg] = await Promise.all([
+    // R7hr-61: also fetch today's sales grouped by saleType so the
+    // Pharmacy Dashboard can render a Reception-style KPI strip
+    // (Walk-in / OPD / IPD / Homecare). Single extra aggregation —
+    // same $match + $group by saleType, runs in parallel with the
+    // existing 8 promises so dashboard latency is unchanged.
+    const [drugsCount, batchFacet, todaySalesAgg, monthSalesAgg, todayRefundAgg, monthRefundAgg, todaySuppAgg, monthSuppAgg, todaySalesByTypeAgg] = await Promise.all([
       Drug.countDocuments({ isActive: true }),
       // Single facet aggregation — Mongo computes stockValue + expiring +
       // expired + total count in one pipeline pass without ferrying batch
@@ -2397,6 +4233,12 @@ exports.stats = async (req, res) => {
         { $match: { "supplements.addedAt": { $gte: monthStart } } },
         { $group: { _id: null, supp: { $sum: "$supplements.addedTotal" } } },
       ]),
+      // R7hr-61: today's sales grouped by saleType (Walk-in/OPD/IPD/Homecare).
+      // Renders the per-type cards on the Pharmacy Dashboard Overview strip.
+      Sale.aggregate([
+        { $match: { status: { $in: SALE_STATUSES }, createdAt: { $gte: todayStart } } },
+        { $group: { _id: "$saleType", count: { $sum: 1 }, total: { $sum: "$grandTotal" } } },
+      ]),
     ]);
 
     const facet = batchFacet[0] || {};
@@ -2425,6 +4267,15 @@ exports.stats = async (req, res) => {
         supplements: Math.round(tSupp),
         net:    Math.round(Math.max(0, tGross + tSupp - tRefund)),
       },
+      // R7hr-61: per-saleType breakdown for the Overview KPI strip.
+      // Keys mirror PharmacySale.saleType enum (Walk-in/OPD/IPD/Homecare);
+      // any row with a saleType the UI doesn't know about still shows up
+      // — the frontend lays out a fixed 4-card strip and ignores extras.
+      todaySalesByType: (todaySalesByTypeAgg || []).reduce((acc, row) => {
+        const key = row._id || "Unknown";
+        acc[key] = { count: row.count || 0, total: Math.round(row.total || 0) };
+        return acc;
+      }, {}),
       monthSales: {
         count: monthSalesAgg[0]?.count || 0,
         total: Math.round(mGross),
@@ -2449,6 +4300,10 @@ const SETTINGS_ALLOWED_FIELDS = [
   "addressLine1","addressLine2","city","state","pincode","country",
   "phone1","phone2","email","website",
   "gstin","panNumber","drugLicenseNo","drugLicenseExp","fssaiNumber",
+  // R7hr-12-S2 (D8-03): admin emergency override for an expired drug
+  // license + documented reason. Both whitelisted on the singleton
+  // PharmacySettings doc so /api/pharmacy/settings PUT can toggle them.
+  "drugLicenseExpiryOverride","drugLicenseExpiryOverrideReason",
   "bankName","bankAccount","ifscCode","bankBranch","upiId",
   "headerColor","accentColor","billTemplate","defaultPaper",
   "registerHeader","registerShowLogo","registerShowGstin","registerShowDL",
@@ -2458,8 +4313,74 @@ const SETTINGS_ALLOWED_FIELDS = [
 function _pickSettings(body = {}) {
   const out = {};
   for (const k of SETTINGS_ALLOWED_FIELDS) if (body[k] !== undefined) out[k] = body[k];
+  // R7hr-46: pharmacy is now single-template (Classic Modern). The 10-template
+  // picker was retired so OPD / IPD / Walk-in prints stay consistent. Coerce
+  // any incoming billTemplate value to 1 so a stale tab still pinned to an
+  // old saved value (4 / 6 / etc) doesn't reintroduce a removed layout.
+  out.billTemplate = 1;
+  // R7hr-49: register print is also single-template now (Compact Strip · #3).
+  // Same coerce pattern for the 5-style register picker that was retired.
+  out.registerHeader = 3;
   return out;
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// R7hr-50 — HSN → GST canonical lookup endpoints
+// ═══════════════════════════════════════════════════════════════════
+
+// GET /api/pharmacy/hsn?q=3004 — search by code prefix or category for
+// autocomplete in Drug Master + GRN forms. Returns up to 25 rows.
+exports.searchHSN = async (req, res) => {
+  try {
+    const HSNMaster = require("../../models/Pharmacy/HSNMasterModel");
+    const q = String(req.query.q || "").trim().toUpperCase();
+    const cat = String(req.query.category || "").trim();
+    const where = { isActive: true };
+    if (q)   where.code = { $regex: `^${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}` };
+    if (cat) where.category = cat;
+    const rows = await HSNMaster.find(where, "code description gstRate category")
+      .sort({ code: 1 }).limit(25).lean();
+    res.status(200).json({ success: true, data: rows });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// GET /api/pharmacy/hsn/:code — exact code lookup. Returns 404 if not in
+// master, so the UI can prompt the admin to add a new HSN entry.
+exports.getHSNByCode = async (req, res) => {
+  try {
+    const HSNMaster = require("../../models/Pharmacy/HSNMasterModel");
+    const code = String(req.params.code || "").trim().toUpperCase();
+    if (!code) return res.status(400).json({ success: false, message: "HSN code required" });
+    const row = await HSNMaster.findOne({ code, isActive: true }).lean();
+    if (!row) return res.status(404).json({ success: false, message: "HSN code not found in master", code });
+    res.status(200).json({ success: true, data: row });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// POST /api/pharmacy/hsn — admin adds a new HSN entry when an invoice
+// carries a code not yet in the master. Validates gstRate against the
+// CBIC slab enum at the schema level.
+exports.createHSN = async (req, res) => {
+  try {
+    const HSNMaster = require("../../models/Pharmacy/HSNMasterModel");
+    const { code, description, gstRate, category } = req.body || {};
+    if (!code || gstRate == null) {
+      return res.status(400).json({ success: false, message: "code + gstRate required" });
+    }
+    const row = await HSNMaster.findOneAndUpdate(
+      { code: String(code).trim().toUpperCase() },
+      { $set: { description: description || "", gstRate: Number(gstRate), category: category || "Medicines", isActive: true, updatedBy: req.user?.fullName || "Admin" } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    res.status(201).json({ success: true, data: row });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
 
 exports.getSettings = async (req, res) => {
   try {
@@ -2502,12 +4423,36 @@ function _rangeFilter(req, field = "createdAt") {
 // caller can't blow up the server with a "give me 5 years of sales" GET.
 // Returns { ok: true } / { ok: false, message } so callers can early-exit
 // with 400 RANGE_TOO_LARGE.
+// R7hr-12-S2 (D6-05): pre-fix the function short-circuited to `{ok:true}`
+// when either bound was missing, letting `?from=1970-01-01` (no `to`)
+// bypass the cap entirely. Combined with _pagination (max 1000/page) and
+// rx.read holders including Doctor/Nurse, that opened a slow but real
+// enumeration of the entire sales/purchase/vendor-returns history. Now we
+// backfill the missing bound IN req.query before the span check + so the
+// downstream _rangeFilter calls construct a bounded range too. `to=now`
+// when only `from` is given; `from=to-90d` when only `to` is given.
 const _MAX_RANGE_MS = 90 * 86400000;
 function _assertRange(req) {
-  const { from, to } = req.query;
-  if (!from || !to) return { ok: true };
-  const f = new Date(from).getTime();
-  const t = new Date(to).getTime();
+  const q = req.query || {};
+  const hasFrom = !!q.from;
+  const hasTo   = !!q.to;
+  if (!hasFrom && !hasTo) return { ok: true };
+  // R7hr-12-S2 (D6-05): backfill missing bound to keep the 90-day cap
+  // enforceable in all cases — mutate req.query so downstream _rangeFilter
+  // builds a bounded range too.
+  if (!hasTo) {
+    const fNow = new Date();
+    q.to = fNow.toISOString().slice(0, 10);
+  }
+  if (!hasFrom) {
+    const tDate = new Date(q.to);
+    if (Number.isFinite(tDate.getTime())) {
+      const fDate = new Date(tDate.getTime() - _MAX_RANGE_MS);
+      q.from = fDate.toISOString().slice(0, 10);
+    }
+  }
+  const f = new Date(q.from).getTime();
+  const t = new Date(q.to).getTime();
   if (!Number.isFinite(f) || !Number.isFinite(t)) return { ok: true }; // let downstream error
   if (t - f > _MAX_RANGE_MS) {
     return {
@@ -2544,20 +4489,65 @@ exports.salesRegister = async (req, res) => {
     const rows = await Sale.find(where).sort({ createdAt: 1 })
       .skip(skip).limit(limit)
       .lean();
+
+    // R7hr-24: batch-fetch drug schedules so each register row can carry
+    // a `schedules: ["H", "G", ...]` array — the frontend Sales Register
+    // filter ("show only Sch H/H1/X sales") needs it. Sch is NOT
+    // snapshotted on SALE_ITEM at dispense time (only on the Drug master),
+    // so a single drug-master fetch per dispensed drugId covers legacy +
+    // new sales alike. O(1) extra round-trip per registerLoad.
+    const _schedDrugIds = new Set();
+    for (const s of rows) {
+      for (const it of (s.items || [])) {
+        if (it.drugId) _schedDrugIds.add(String(it.drugId));
+      }
+    }
+    let _schedMap = new Map();
+    if (_schedDrugIds.size) {
+      try {
+        const sched = await Drug.find(
+          { _id: { $in: [..._schedDrugIds] } },
+          { schedule: 1 }
+        ).lean();
+        _schedMap = new Map(sched.map(d => [String(d._id), String(d.schedule || "G")]));
+      } catch (_) { /* leave map empty — schedules column degrades to "" */ }
+    }
+    // R7hr-12 (D2-02): .lean() bypasses the decimalToNumber toJSON transform,
+    // so subTotal/totalTaxable/totalGst/grandTotal/cgst/sgst/igstAmount come
+    // back as raw Decimal128. `0 + Decimal128('100.00')` is the string
+    // '0100.00' (toString-coerced concat), which after a second row becomes
+    // '0100.00200.00' — and the per-row Decimal128 also JSON-serializes as
+    // {"$numberDecimal":"100.00"} on the wire, breaking every frontend
+    // consumer. toNum() coerces every Decimal128 read to a JS Number, both
+    // in the per-row mapper AND in the totals reducer, so the response is
+    // a clean numeric grid.
+    // R7hr-12 (D8-04): IGST handling — was `cgst: totalGst/2, sgst: totalGst/2`
+    // regardless of placeOfSupply. For inter-state B2B/corporate-panel sales
+    // (dispense() correctly routes the full gstAmt into igstAmount), the
+    // register was printing CGST+SGST while GSTR-1 carries IGST — a filing-
+    // blocking contradiction. Use the stored bill-level cgst/sgst/igstAmount
+    // columns (populated by dispense() per the placeOfSupply split) instead
+    // of hard-half-splitting totalGst.
     const out = rows.map(s => {
       const hsnMap = new Map();
       let totalDisc = 0;
+      // R7hr-24: collect the unique drug-schedule labels present on this
+      // sale (e.g. ["H","G"]) so the frontend Schedule filter can match.
+      const schedSet = new Set();
       for (const it of (s.items || [])) {
         const key = `${it.gstRate || 12}`;
         if (!hsnMap.has(key)) hsnMap.set(key, { gstRate: Number(key), taxable: 0, tax: 0 });
         const r = hsnMap.get(key);
-        r.taxable += Number(it.taxableAmount || 0);
-        r.tax     += Number(it.gstAmount    || 0);
-        totalDisc += Number(it.discountAmount || 0);
+        r.taxable += toNum(it.taxableAmount);
+        r.tax     += toNum(it.gstAmount);
+        totalDisc += toNum(it.discountAmount);
+        const sch = _schedMap.get(String(it.drugId)) || "";
+        if (sch) schedSet.add(sch);
       }
       const refundAmount     = (s.returns || []).reduce((t, r) => t + Number(r.refundAmount || 0), 0);
       const supplementAmount = (s.supplements || []).reduce((t, x) => t + Number(x.addedTotal || 0), 0);
-      const netEffective     = Math.max(0, Number(s.grandTotal || 0) + supplementAmount - refundAmount);
+      const grandTotalN      = toNum(s.grandTotal);
+      const netEffective     = Math.max(0, grandTotalN + supplementAmount - refundAmount);
       return {
         _id: s._id,
         billNumber: s.billNumber,
@@ -2567,36 +4557,54 @@ exports.salesRegister = async (req, res) => {
         admissionNumber: s.admissionNumber || "",
         saleType: s.saleType,
         paymentMode: s.paymentMode,
+        placeOfSupply: s.placeOfSupply || "",
+        customerGstin: s.customerGstin || "",
         status: s.status,
         itemsCount: s.items?.length || 0,
         returnsCount: (s.returns || []).length,
         supplementsCount: (s.supplements || []).length,
-        subTotal: s.subTotal,
+        subTotal: toNum(s.subTotal),
         discount: totalDisc,
-        taxable: s.totalTaxable,
-        cgst: Math.round(s.totalGst / 2 * 100) / 100,
-        sgst: Math.round(s.totalGst / 2 * 100) / 100,
-        gstTotal: s.totalGst,
-        grandTotal: s.grandTotal,
+        taxable: toNum(s.totalTaxable),
+        // R7hr-12 (D8-04) / R7hr-12-S2 (D2-03): trust the persisted split,
+        // not a /2 fallback — D2-03 is the P1 sibling of D8-04 calling out
+        // the same defect on salesRegister + gstSummary.
+        cgst: toNum(s.cgstAmount),
+        sgst: toNum(s.sgstAmount),
+        igst: toNum(s.igstAmount),
+        gstTotal: toNum(s.totalGst),
+        grandTotal: grandTotalN,
         refundAmount,                  // sum of all return slips (credit notes)
         supplementAmount,              // sum of all supplement slips (debit notes)
         netAfterReturns: netEffective, // grandTotal + supplements − refunds
         hsnBreakup: [...hsnMap.values()],
+        // R7hr-24: schedules array drives the Schedule filter dropdown in
+        // the frontend Sales Register. Empty array → "Unscheduled" (i.e. G
+        // / OTC). A bill with both Sch H + Sch G items lights up the H pill.
+        schedules: [...schedSet],
       };
     });
     const totals = rows.reduce((acc, s) => {
       const refundAmount     = (s.returns || []).reduce((t, r) => t + Number(r.refundAmount || 0), 0);
       const supplementAmount = (s.supplements || []).reduce((t, x) => t + Number(x.addedTotal || 0), 0);
+      const grandTotalN      = toNum(s.grandTotal);
       acc.bills += 1;
-      acc.subTotal     += s.subTotal     || 0;
-      acc.taxable      += s.totalTaxable || 0;
-      acc.gstTotal     += s.totalGst     || 0;
-      acc.grandTotal   += s.grandTotal   || 0;
+      // R7hr-12 (D2-02): toNum() before += so Decimal128 totals are summed
+      // numerically instead of string-concatenated.
+      acc.subTotal     += toNum(s.subTotal);
+      acc.taxable      += toNum(s.totalTaxable);
+      acc.gstTotal     += toNum(s.totalGst);
+      acc.grandTotal   += grandTotalN;
+      // R7hr-12 (D8-04): track per-bucket CGST/SGST/IGST so totals reflect
+      // the true intra/inter-state mix instead of a blanket totalGst/2.
+      acc.cgst         += toNum(s.cgstAmount);
+      acc.sgst         += toNum(s.sgstAmount);
+      acc.igst         += toNum(s.igstAmount);
       acc.refunds      += refundAmount;
       acc.supplements  += supplementAmount;
-      acc.net          += Math.max(0, (s.grandTotal || 0) + supplementAmount - refundAmount);
+      acc.net          += Math.max(0, grandTotalN + supplementAmount - refundAmount);
       return acc;
-    }, { bills: 0, subTotal: 0, taxable: 0, gstTotal: 0, grandTotal: 0, refunds: 0, supplements: 0, net: 0 });
+    }, { bills: 0, subTotal: 0, taxable: 0, gstTotal: 0, cgst: 0, sgst: 0, igst: 0, grandTotal: 0, refunds: 0, supplements: 0, net: 0 });
     res.json({ success: true, data: { rows: out, totals } });
   } catch (e) { sendErr(res, e); }
 };
@@ -2742,11 +4750,23 @@ exports.stockRegister = async (req, res) => {
 // returns. Net dispensed quantity = sold − returned per (sale, item).
 exports.scheduleHRegister = async (req, res) => {
   try {
+    // R7hr-12-S2 (D10-03): bound the range + paginate. Pre-fix this
+    // endpoint ran `Sale.find(where).sort().lean()` with neither a range
+    // cap nor pagination, while salesRegister and purchaseRegister already
+    // gate via `_assertRange + _pagination`. Without a guard, a rx.read
+    // holder could ask for the full year-end H/H1/X register (a real D&C
+    // surveyor-pull scenario), loading 50k+ sales × 20 items into Node
+    // heap and triggering 503 / process restart.
+    const guard = _assertRange(req);
+    if (!guard.ok) return res.status(400).json({ success: false, code: "RANGE_TOO_LARGE", message: guard.message });
+    const { limit, skip } = _pagination(req, 200, 1000);
     const where = {
       status: { $in: ["Completed", "Partial-Return", "Refunded", "Supplemented"] },
       ..._rangeFilter(req),
     };
-    const sales = await Sale.find(where).sort({ createdAt: 1 }).lean();
+    const sales = await Sale.find(where).sort({ createdAt: 1 })
+      .skip(skip).limit(limit)
+      .lean();
     // Cache drug schedule lookups so we don't re-read the same drug 50×
     const drugCache = new Map();
     const out = [];
@@ -2771,6 +4791,11 @@ exports.scheduleHRegister = async (req, res) => {
         }
       }
 
+      // R7hr-12-S2 (D8-07): sale-level prescriber registration number is
+      // the D&C Form 2 fallback when per-item is empty (homogeneous bills
+      // + legacy rows).
+      const saleReg = String(s.prescriberRegistrationNo || "").trim();
+
       // ── Supplementary items (debit notes) — Schedule H items added
       //    AFTER the original bill are equally regulated and must show
       //    up in the register with their slip number for audit.
@@ -2778,12 +4803,17 @@ exports.scheduleHRegister = async (req, res) => {
         for (const it of (sup.addedItems || [])) {
           const d = await getDrug(it.drugId);
           if (d && /^(H|H1|X)$/i.test(d.schedule || "")) {
+            // R7hr-12-S2 (D8-07): supplements.addedItems is a generic Array,
+            // so per-item reg may not be set on legacy supplements.
+            const itemReg = String(it.prescriberRegistrationNo || "").trim();
             out.push({
               date: sup.addedAt || s.createdAt,
               billNumber: s.billNumber + " · " + (sup.supplementSlipNumber || "SUP"),
               patientName: s.patientName || "—",
               patientUHID: s.patientUHID || "—",
               doctorName:  s.doctorName  || "—",
+              // R7hr-12-S2 (D8-07): D&C Form 2 mandated prescriber reg column.
+              prescriberRegistrationNo: itemReg || saleReg || "—",
               prescriptionRef: s.prescriptionRef || "—",
               drugName: d.name,
               schedule: d.schedule,
@@ -2807,12 +4837,18 @@ exports.scheduleHRegister = async (req, res) => {
           const itemKey = String(it._id);
           const returnedQty = Number(returnedByItem[itemKey] || 0);
           const dispensedNet = Math.max(0, Number(it.quantity || 0) - returnedQty);
+          // R7hr-12-S2 (D8-07): per-item prescriberRegistrationNo (new
+          // on SALE_ITEM) wins over sale-level. Legacy rows without the
+          // per-item column fall through to sale.prescriberRegistrationNo.
+          const itemReg = String(it.prescriberRegistrationNo || "").trim();
           out.push({
             date: s.createdAt,
             billNumber: s.billNumber,
             patientName: s.patientName || "—",
             patientUHID: s.patientUHID || "—",
             doctorName:  s.doctorName  || "—",
+            // R7hr-12-S2 (D8-07): D&C Form 2 mandated prescriber reg column.
+            prescriberRegistrationNo: itemReg || saleReg || "—",
             prescriptionRef: s.prescriptionRef || "—",
             drugName: d.name,
             schedule: d.schedule,
@@ -2869,6 +4905,15 @@ exports.gstSummary = async (req, res) => {
   try {
     const range = _rangeFilter(req);
     const STATUS_IN = ["Completed", "Partial-Return", "Refunded", "Supplemented"];
+    // R7hr-12 (D8-04): also $sum the per-item cgst/sgst/igstAmount columns
+    // that dispense() persists per the intra/inter-state placeOfSupply split.
+    // Pre-fix the bucket emitted cgst = sgst = tax/2 regardless of placeOfSupply,
+    // which silently dropped IGST off the printed register for any inter-state
+    // B2B / corporate-panel sale — the same sale then reconciles as IGST in
+    // GSTR-1 (via gstService.aggregateGSTForMonth), making the printed register
+    // contradict the filing and blocking submission.
+    // R7hr-12 (D2-02 related): $sum on Decimal128 inside aggregation is safe
+    // (Mongo coerces numerically); the issue was only on the Node side.
     const sales = await Sale.aggregate([
       { $match: { status: { $in: STATUS_IN }, ...range } },
       { $unwind: "$items" },
@@ -2876,13 +4921,20 @@ exports.gstSummary = async (req, res) => {
         _id: "$items.gstRate",
         taxable: { $sum: "$items.taxableAmount" },
         tax:     { $sum: "$items.gstAmount" },
+        cgst:    { $sum: { $ifNull: ["$items.cgstAmount", 0] } },
+        sgst:    { $sum: { $ifNull: ["$items.sgstAmount", 0] } },
+        igst:    { $sum: { $ifNull: ["$items.igstAmount", 0] } },
         qty:     { $sum: "$items.quantity" },
         billsArr:{ $addToSet: "$_id" },
       } },
-      { $project: { gstRate: "$_id", _id: 0, taxable: 1, tax: 1, qty: 1, billCount: { $size: "$billsArr" } } },
+      { $project: { gstRate: "$_id", _id: 0, taxable: 1, tax: 1, cgst: 1, sgst: 1, igst: 1, qty: 1, billCount: { $size: "$billsArr" } } },
       { $sort: { gstRate: 1 } },
     ]);
     // Credit-note bucket — refunded items per gstRate.
+    // Returned items in PharmacySaleSchema.returns.refundedItems don't currently
+    // carry the cgst/sgst/igst split (only gstAmount); derive the split from the
+    // parent sale's placeOfSupply by emitting both an interState flag and the
+    // raw tax then splitting on the Node side using the salesMap interState ratio.
     const refunds = await Sale.aggregate([
       { $match: { status: { $in: ["Partial-Return", "Refunded"] }, ...range } },
       { $unwind: "$returns" },
@@ -2916,52 +4968,107 @@ exports.gstSummary = async (req, res) => {
       ...supplements.map(s => Number(s._id)),
     ]);
     const salesMap = new Map(sales.map(s => [Number(s.gstRate), s]));
+    // R7hr-12 (D8-04): coerce every Decimal128 read to Number (Mongo aggregate
+    // returns Decimal128 BSON types when the source fields are Decimal128).
     const buckets = [...allRates].sort((a, b) => a - b).map(rate => {
-      const r = salesMap.get(rate) || { taxable: 0, tax: 0, qty: 0, billCount: 0 };
+      const r = salesMap.get(rate) || { taxable: 0, tax: 0, cgst: 0, sgst: 0, igst: 0, qty: 0, billCount: 0 };
       const ref = refundMap.get(rate) || { taxable: 0, tax: 0, qty: 0 };
       const sup = suppMap.get(rate) || { taxable: 0, tax: 0, qty: 0 };
-      const netTaxable = r.taxable + sup.taxable - ref.taxable;
-      const netTax     = r.tax     + sup.tax     - ref.tax;
+      const rTaxable = toNum(r.taxable),  rTax = toNum(r.tax);
+      const rCgst    = toNum(r.cgst),     rSgst = toNum(r.sgst), rIgst = toNum(r.igst);
+      const refTaxable = toNum(ref.taxable), refTax = toNum(ref.tax);
+      const supTaxable = toNum(sup.taxable), supTax = toNum(sup.tax);
+      // Split refunds/supplements proportionally on the same intra/inter-state
+      // ratio observed in the sales bucket for this rate. If a rate only has
+      // refunds (no matching sales row), fall back to intra-state half-split.
+      const sumSplitSales = rCgst + rSgst + rIgst;
+      const igstShare = sumSplitSales > 0 ? rIgst / sumSplitSales : 0;
+      const refIgst = refTax * igstShare,  refCgst = (refTax - refIgst) / 2, refSgst = (refTax - refIgst) / 2;
+      const supIgst = supTax * igstShare,  supCgst = (supTax - supIgst) / 2, supSgst = (supTax - supIgst) / 2;
+      const netTaxable = rTaxable + supTaxable - refTaxable;
+      const netTax     = rTax     + supTax     - refTax;
+      const netCgst    = rCgst    + supCgst    - refCgst;
+      const netSgst    = rSgst    + supSgst    - refSgst;
+      const netIgst    = rIgst    + supIgst    - refIgst;
       return {
         gstRate:  rate,
         qty:      r.qty,
         billCount: r.billCount,
-        taxable:  Math.round(r.taxable * 100) / 100,
-        tax:      Math.round(r.tax     * 100) / 100,
-        cgst:     Math.round(r.tax / 2 * 100) / 100,
-        sgst:     Math.round(r.tax / 2 * 100) / 100,
+        taxable:  Math.round(rTaxable * 100) / 100,
+        tax:      Math.round(rTax     * 100) / 100,
+        cgst:     Math.round(rCgst    * 100) / 100,
+        sgst:     Math.round(rSgst    * 100) / 100,
+        igst:     Math.round(rIgst    * 100) / 100,
         refundQty:     ref.qty,
-        refundTaxable: Math.round(ref.taxable * 100) / 100,
-        refundTax:     Math.round(ref.tax     * 100) / 100,
+        refundTaxable: Math.round(refTaxable * 100) / 100,
+        refundTax:     Math.round(refTax     * 100) / 100,
+        refundCgst:    Math.round(refCgst    * 100) / 100,
+        refundSgst:    Math.round(refSgst    * 100) / 100,
+        refundIgst:    Math.round(refIgst    * 100) / 100,
         supplementQty:     sup.qty,
-        supplementTaxable: Math.round(sup.taxable * 100) / 100,
-        supplementTax:     Math.round(sup.tax     * 100) / 100,
-        netTaxable:    Math.round(netTaxable  * 100) / 100,
-        netTax:        Math.round(netTax      * 100) / 100,
+        supplementTaxable: Math.round(supTaxable * 100) / 100,
+        supplementTax:     Math.round(supTax     * 100) / 100,
+        supplementCgst:    Math.round(supCgst    * 100) / 100,
+        supplementSgst:    Math.round(supSgst    * 100) / 100,
+        supplementIgst:    Math.round(supIgst    * 100) / 100,
+        netTaxable:    Math.round(netTaxable * 100) / 100,
+        netTax:        Math.round(netTax     * 100) / 100,
+        netCgst:       Math.round(netCgst    * 100) / 100,
+        netSgst:       Math.round(netSgst    * 100) / 100,
+        netIgst:       Math.round(netIgst    * 100) / 100,
       };
     });
     const totals = buckets.reduce((acc, r) => ({
       taxable:           acc.taxable           + r.taxable,
       tax:               acc.tax               + r.tax,
+      cgst:              acc.cgst              + r.cgst,
+      sgst:              acc.sgst              + r.sgst,
+      igst:              acc.igst              + r.igst,
       refundTaxable:     acc.refundTaxable     + r.refundTaxable,
       refundTax:         acc.refundTax         + r.refundTax,
+      refundCgst:        acc.refundCgst        + r.refundCgst,
+      refundSgst:        acc.refundSgst        + r.refundSgst,
+      refundIgst:        acc.refundIgst        + r.refundIgst,
       supplementTaxable: acc.supplementTaxable + r.supplementTaxable,
       supplementTax:     acc.supplementTax     + r.supplementTax,
-    }), { taxable: 0, tax: 0, refundTaxable: 0, refundTax: 0, supplementTaxable: 0, supplementTax: 0 });
+      supplementCgst:    acc.supplementCgst    + r.supplementCgst,
+      supplementSgst:    acc.supplementSgst    + r.supplementSgst,
+      supplementIgst:    acc.supplementIgst    + r.supplementIgst,
+    }), {
+      taxable: 0, tax: 0, cgst: 0, sgst: 0, igst: 0,
+      refundTaxable: 0, refundTax: 0, refundCgst: 0, refundSgst: 0, refundIgst: 0,
+      supplementTaxable: 0, supplementTax: 0, supplementCgst: 0, supplementSgst: 0, supplementIgst: 0,
+    });
     const netTaxable = totals.taxable + totals.supplementTaxable - totals.refundTaxable;
     const netTax     = totals.tax     + totals.supplementTax     - totals.refundTax;
+    const netCgst    = totals.cgst    + totals.supplementCgst    - totals.refundCgst;
+    const netSgst    = totals.sgst    + totals.supplementSgst    - totals.refundSgst;
+    const netIgst    = totals.igst    + totals.supplementIgst    - totals.refundIgst;
     res.json({ success: true, data: {
       buckets,
       grandTaxable:           Math.round(totals.taxable * 100) / 100,
       grandTax:               Math.round(totals.tax     * 100) / 100,
-      grandCGST:              Math.round(totals.tax / 2 * 100) / 100,
-      grandSGST:              Math.round(totals.tax / 2 * 100) / 100,
+      // R7hr-12 (D8-04): publish the true CGST/SGST/IGST grand totals
+      // (sum of bill-level intra/inter-state splits) so the auditor-facing
+      // printout no longer contradicts gstService's GSTR-1 feed.
+      grandCGST:              Math.round(totals.cgst * 100) / 100,
+      grandSGST:              Math.round(totals.sgst * 100) / 100,
+      grandIGST:              Math.round(totals.igst * 100) / 100,
       grandRefundTaxable:     Math.round(totals.refundTaxable     * 100) / 100,
       grandRefundTax:         Math.round(totals.refundTax         * 100) / 100,
+      grandRefundCGST:        Math.round(totals.refundCgst        * 100) / 100,
+      grandRefundSGST:        Math.round(totals.refundSgst        * 100) / 100,
+      grandRefundIGST:        Math.round(totals.refundIgst        * 100) / 100,
       grandSupplementTaxable: Math.round(totals.supplementTaxable * 100) / 100,
       grandSupplementTax:     Math.round(totals.supplementTax     * 100) / 100,
+      grandSupplementCGST:    Math.round(totals.supplementCgst    * 100) / 100,
+      grandSupplementSGST:    Math.round(totals.supplementSgst    * 100) / 100,
+      grandSupplementIGST:    Math.round(totals.supplementIgst    * 100) / 100,
       grandNetTaxable:        Math.round(netTaxable * 100) / 100,
       grandNetTax:            Math.round(netTax     * 100) / 100,
+      grandNetCGST:           Math.round(netCgst    * 100) / 100,
+      grandNetSGST:           Math.round(netSgst    * 100) / 100,
+      grandNetIGST:           Math.round(netIgst    * 100) / 100,
     } });
   } catch (e) { sendErr(res, e); }
 };
@@ -3009,4 +5116,223 @@ exports.alerts = async (req, res) => {
 
     res.json({ success: true, data: { lowStock: rollup, outOfStock, expiringSoon, expired } });
   } catch (e) { sendErr(res, e); }
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// R7hr-16 — Parse supplier invoice (JSON or PDF) → pre-fill GRN form.
+// Orchestrates the 4 service modules into the canonical shape the
+// frontend GRN upload card expects + persists a ParsedInvoice audit
+// row on EVERY parse attempt (success or failure).
+// ═══════════════════════════════════════════════════════════════════
+const _crypto             = require("crypto");
+const ParsedInvoice       = require("../../models/Pharmacy/ParsedInvoiceModel");
+const drugMatcher         = require("../../services/Pharmacy/drugMatcher");
+const supplierMatcher     = require("../../services/Pharmacy/supplierMatcher");
+const einvoiceJsonParser  = require("../../services/Pharmacy/einvoiceJsonParser");
+const pdfTextExtractor    = require("../../services/Pharmacy/pdfTextExtractor");
+const llmInvoiceExtractor = require("../../services/Pharmacy/llmInvoiceExtractor");
+
+// R7hr-16: service-code → HTTP status. Anything not mapped falls
+// through to 500 via sendErr. Keep aligned with the docstrings of
+// the four service modules.
+const _PARSE_HTTP = {
+  BAD_INPUT:                    400,
+  BAD_MIME:                     400,
+  PDF_PARSE_FAILED:             400,
+  PDF_HAS_NO_TEXT:              422,
+  SIGNED_INVOICE_NOT_UNWRAPPED: 422,
+  NOT_GSTN_EINVOICE:            422,
+  LLM_NOT_CONFIGURED:           503,
+  LLM_EXTRACT_FAILED:           502,
+};
+
+// R7hr-16: try-decode an IRP "SignedInvoice" envelope. Most supplier
+// portals hand the buyer { Irn, SignedInvoice, SignedQRCode } —
+// SignedInvoice is a JWS whose middle Base64URL segment is the actual
+// invoice JSON. Unwrap defensively before handing to the parser.
+function _unwrapSignedInvoiceIfNeeded(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  if (!obj.SignedInvoice || typeof obj.SignedInvoice !== "string") return obj;
+  try {
+    const seg = obj.SignedInvoice.split(".")[1];
+    if (!seg) return obj;
+    const pad = "=".repeat((4 - (seg.length % 4)) % 4);
+    const json = Buffer
+      .from(seg.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64")
+      .toString("utf8");
+    return JSON.parse(json);
+  } catch (_) {
+    return obj;  // parser will throw SIGNED_INVOICE_NOT_UNWRAPPED
+  }
+}
+
+function _trimDrug(d) {
+  if (!d || !d._id) return null;
+  return {
+    _id:         d._id,
+    name:        d.name,
+    genericName: d.genericName,
+    strength:    d.strength,
+    dosageForm:  d.dosageForm,
+    hsnCode:     d.hsnCode,
+  };
+}
+function _trimSupplier(s) {
+  if (!s || !s._id) return null;
+  return {
+    _id: s._id, name: s.name, gstin: s.gstin,
+    address: s.address, city: s.city, state: s.state,
+  };
+}
+
+exports.parseInvoice = async (req, res) => {
+  if (!req.file || !req.file.buffer) {
+    return res.status(400).json({
+      success: false, code: "BAD_INPUT",
+      message: "No file uploaded — attach a JSON or PDF supplier invoice.",
+    });
+  }
+  const buffer   = req.file.buffer;
+  const mimetype = (req.file.mimetype || "").toLowerCase();
+  const filename = req.file.originalname || "";
+  const ext      = filename.toLowerCase().split(".").pop() || "";
+  const fileHash = _crypto.createHash("sha256").update(buffer).digest("hex");
+
+  let fileType;
+  if (mimetype === "application/json" || ext === "json")     fileType = "JSON";
+  else if (mimetype === "application/pdf" || ext === "pdf")  fileType = "PDF";
+  else {
+    // R7hr-16: still write an audit row for BAD_MIME — model invariant
+    // says "every parse attempt, success or failure".
+    try {
+      await ParsedInvoice.create({
+        fileHash, fileType: "JSON", sourceFilename: filename,
+        rawText: "", extracted: {}, lineMatches: [], supplierMatch: {},
+        status: "rejected",
+        uploadedById:   req.user?._id || null,
+        uploadedByName: req.user?.fullName || req.user?.userName || "",
+        error: `BAD_MIME: ${mimetype || "(none)"} / ext=${ext}`,
+      });
+    } catch (_) { /* audit best-effort */ }
+    return res.status(400).json({
+      success: false, code: "BAD_MIME",
+      message: `Unsupported file type: ${mimetype || ext || "unknown"}. Upload a GSTN e-invoice JSON or a PDF.`,
+    });
+  }
+
+  let extracted   = null;
+  let rawText     = "";
+  let serviceCode = null;
+  try {
+    if (fileType === "JSON") {
+      const text = buffer.toString("utf8");
+      let json;
+      try { json = JSON.parse(text); }
+      catch (_) {
+        const e = new Error("Invalid JSON syntax in uploaded file");
+        e.code = "BAD_INPUT"; throw e;
+      }
+      const unwrapped = _unwrapSignedInvoiceIfNeeded(json);
+      extracted = einvoiceJsonParser.parseEInvoiceJson(unwrapped);
+    } else {
+      const pdf = await pdfTextExtractor.extractPdfText(buffer);
+      rawText   = (pdf.text || "").slice(0, 200000);
+      extracted = await llmInvoiceExtractor.extractInvoiceFromText(pdf.text, { fileHash });
+    }
+  } catch (e) {
+    serviceCode = e?.code || "PARSE_FAILED";
+    try {
+      await ParsedInvoice.create({
+        fileHash, fileType, sourceFilename: filename,
+        rawText, extracted: {}, lineMatches: [], supplierMatch: {},
+        status: "rejected",
+        uploadedById:   req.user?._id || null,
+        uploadedByName: req.user?.fullName || req.user?.userName || "",
+        error: `${serviceCode}: ${(e.message || "").slice(0, 500)}`,
+      });
+    } catch (_) { /* audit best-effort */ }
+    const status = _PARSE_HTTP[serviceCode] || 500;
+    return res.status(status).json({
+      success: false, code: serviceCode, message: e.message || "Parse failed",
+    });
+  }
+
+  // R7hr-16: per-line drug match + supplier match. Both best-effort
+  // — a matcher error degrades to "no match" rather than failing.
+  const lines = Array.isArray(extracted?.lines) ? extracted.lines : [];
+  const lineMatches = [];
+  for (const line of lines) {
+    let m = { drug: null, confidence: 0, alternatives: [] };
+    try {
+      m = await drugMatcher.findDrug(
+        line.extractedName || line.name || line.drugName || "",
+      );
+    } catch (_) { /* keep empty */ }
+    lineMatches.push({
+      extractedName:   line.extractedName || line.name || line.drugName || "",
+      matchedDrugId:   m.drug?._id || null,
+      matchedDrugName: m.drug?.name || "",
+      confidence:      Number(m.confidence) || 0,
+      alternatives:    (m.alternatives || []).map(a => ({
+        drugId: a.drug?._id, name: a.drug?.name, score: a.score,
+      })),
+    });
+  }
+
+  let supplierMatch = { supplier: null, confidence: 0, alternatives: [] };
+  try {
+    supplierMatch = await supplierMatcher.findSupplier({
+      name:  extracted?.supplier?.name  || "",
+      gstin: extracted?.supplier?.gstin || "",
+    });
+  } catch (_) { /* keep empty */ }
+
+  // R7hr-16: persist the parsed audit row. status='parsed' regardless
+  // of confidence — operator decides apply/reject in the UI later.
+  let parsedInvoiceId = null;
+  try {
+    const doc = await ParsedInvoice.create({
+      fileHash, fileType, sourceFilename: filename,
+      rawText,
+      extracted,
+      lineMatches,
+      supplierMatch: {
+        matchedSupplierId:   supplierMatch.supplier?._id || null,
+        matchedSupplierName: supplierMatch.supplier?.name || "",
+        confidence:          Number(supplierMatch.confidence) || 0,
+      },
+      status: "parsed",
+      uploadedById:   req.user?._id || null,
+      uploadedByName: req.user?.fullName || req.user?.userName || "",
+      error: "",
+    });
+    parsedInvoiceId = doc._id;
+  } catch (_) { /* audit best-effort */ }
+
+  // R7hr-16: response shape consumed by Frontend C8 GRN upload card.
+  return res.json({
+    success: true,
+    data: {
+      parsedInvoiceId,
+      fileType,
+      supplier: {
+        extracted:  extracted?.supplier || null,
+        match:      _trimSupplier(supplierMatch.supplier),
+        confidence: Number(supplierMatch.confidence) || 0,
+        alternatives: (supplierMatch.alternatives || []).map(a => ({
+          supplier: _trimSupplier(a.supplier),
+          score:    a.score,
+        })),
+      },
+      invoiceNo:   extracted?.invoiceNo   || "",
+      invoiceDate: extracted?.invoiceDate || null,
+      totals:      extracted?.totals || {},
+      lines: lineMatches.map((m, i) => ({
+        extracted:    lines[i] || {},
+        match:        _trimDrug({ _id: m.matchedDrugId, name: m.matchedDrugName }),
+        confidence:   m.confidence,
+        alternatives: m.alternatives,
+      })),
+    },
+  });
 };

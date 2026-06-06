@@ -15,7 +15,8 @@
  * Urgency: Routine / Urgent / STAT (colored badges, drives queue sort
  * + audio chime on pharmacist's side).
  */
-import React, { useState, useEffect, useCallback } from "react";
+// R7hr-12-S3 (D9-02 + D9-05): useRef for synchronous submit mutex; AbortController for chained loads.
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
@@ -131,8 +132,20 @@ export default function IndentRaisePage() {
     return null;
   }, [stockMap]);
 
+  // R7hr-12-S3 (D9-05): AbortController for the chained admission → orders → notes
+  // → stock fetch. Without it, a fast back-button-and-reopen on a different
+  // admission would let the older response land after the newer one and the
+  // nurse would see stale orders / stale stock pills on the freshly-opened
+  // admission. We abort the in-flight controller before each new load and on
+  // unmount, and pass `{ signal }` to every axios call.
+  const loadAbortRef = useRef(null);
   const load = useCallback(async () => {
     if (!admissionId) return;
+    // Abort any in-flight load before starting a new one (admissionId change).
+    if (loadAbortRef.current) loadAbortRef.current.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
+    const { signal } = controller;
     setLoading(true);
     try {
       // R7w: Two-step fetch — admission first, then doctor-orders keyed
@@ -151,28 +164,120 @@ export default function IndentRaisePage() {
       //      live prescriptions.
       // Pharmacy stock rollup still runs in parallel — non-fatal failure.
       const [admRes, stockRes] = await Promise.all([
-        axios.get(`${API_ENDPOINTS.BASE}/admissions/${admissionId}`),
-        axios.get(`${API_ENDPOINTS.BASE}/pharmacy/stock`).catch(() => ({ data: { data: [] } })),
+        axios.get(`${API_ENDPOINTS.BASE}/admissions/${admissionId}`, { signal }),
+        axios.get(`${API_ENDPOINTS.BASE}/pharmacy/stock`, { signal }).catch(() => ({ data: { data: [] } })),
       ]);
+      if (signal.aborted) return;                              // R7hr-12-S3 (D9-05)
       const adm = admRes.data?.data || admRes.data;
       setAdmission(adm);
 
       // Now query doctor-orders by the admission's actual identifiers.
-      // ACTIVE_STATUSES is the set of orders the nurse can still indent
-      // against — completed / cancelled / stopped doses are excluded.
-      const ACTIVE_STATUSES = "Pending,Acknowledged,InProgress,Held,OnHold";
+      //
+      // R7gx-FIX — Status semantic drift: per R7bq-K, DoctorOrder.status
+      // flips to "Completed" the moment the FIRST dose is administered,
+      // NOT when the course finishes. So an order on q4h or BD schedule
+      // spends most of its life flagged "Completed" while still being
+      // dispensed daily. For indent eligibility we want every order
+      // that's still being given to the patient — i.e. everything
+      // EXCEPT Cancelled / Stopped (true terminal states).
+      //
+      // Previously this list was Pending,Acknowledged,InProgress,Held,
+      // OnHold only — which hid every order that had been administered
+      // at least once. That's why the "From Prescription" tab kept
+      // showing 0 even on admissions with active MAR rows.
+      const ACTIVE_STATUSES = "Pending,Acknowledged,InProgress,Held,OnHold,Completed";
       const visitId = adm?.admissionNumber || adm?.ipdNo || "";
       const uhid    = adm?.UHID || "";
       let list = [];
       if (uhid && visitId) {
         try {
+          // R7hr-12-S3 (D9-05): chained call — pass { signal } so an admissionId
+          // change aborts the in-flight fetch instead of letting it land late.
           const orderRes = await axios.get(
             `${API_ENDPOINTS.BASE}/doctor-orders?UHID=${encodeURIComponent(uhid)}&visitId=${encodeURIComponent(visitId)}&orderType=Medication&status=${encodeURIComponent(ACTIVE_STATUSES)}`,
+            { signal },
           );
           list = orderRes.data?.data || orderRes.data?.orders || [];
         } catch (_) { /* leave list empty — the form still works via Other Drug */ }
       }
-      setOrders(Array.isArray(list) ? list : []);
+      if (signal.aborted) return;                              // R7hr-12-S3 (D9-05)
+
+      // R7gx-FIX-2 — MAR PARITY: TreatmentChart (the MAR) aggregates
+      // medications from TWO sources — the DoctorOrder collection AND
+      // every doctorNote.noteDetails.medicationOrders / .infusionOrders
+      // embedded array. Indent raise was reading only the first source,
+      // so meds prescribed inline inside an Initial Assessment, Daily
+      // Progress note, ICU note, etc. (without ever being promoted to
+      // a standalone DoctorOrder document) never showed up on the
+      // prescription tab. The pharmacist would see only a partial picture
+      // of what the patient is on — a real dispensing-safety gap.
+      //
+      // Canonical reader: DoctorPatientPanel.TreatmentChartTab L1515-1551
+      // — both lists are mirrored into the same shape for the MAR grid.
+      // We mirror it here, then dedupe so DoctorOrder rows (real lifecycle)
+      // win over note-embedded duplicates of the same drug.
+      const noteEmbeddedOrders = [];
+      if (visitId) {
+        try {
+          // R7hr-12-S3 (D9-05): chained call — pass { signal } so a quick
+          // admissionId switch aborts the notes fetch.
+          const noteRes = await axios.get(
+            `${API_ENDPOINTS.BASE}/doctor-notes/ipd/${encodeURIComponent(visitId)}`,
+            { signal },
+          );
+          const notes = noteRes.data?.data || noteRes.data?.notes
+            || (Array.isArray(noteRes.data) ? noteRes.data : []);
+          (Array.isArray(notes) ? notes : []).forEach((note) => {
+            const nd      = note?.noteDetails || {};
+            const meds    = Array.isArray(nd.medicationOrders) ? nd.medicationOrders : [];
+            const infs    = Array.isArray(nd.infusionOrders)   ? nd.infusionOrders   : [];
+            [...meds, ...infs].forEach((m, idx) => {
+              const drugName = m?.drug || m?.drugFluid || m?.medicineName || "";
+              if (!drugName) return;
+              // Skip note-embedded rows that the doctor explicitly cancelled.
+              const ms = String(m?.status || "").toLowerCase();
+              if (ms === "cancelled" || ms === "stopped") return;
+              noteEmbeddedOrders.push({
+                _id:          `note-${note._id}-${idx}`,
+                orderDetails: {
+                  medicineName: drugName,
+                  drugId:       m?.drugId || m?.medicineId || "",
+                  medicineCode: m?.medicineCode || m?.itemCode || "",
+                  dose:         m?.dose      || m?.volume || "",
+                  form:         m?.form      || "",
+                  frequency:    m?.frequency || m?.rate   || "",
+                  route:        m?.route     || "",
+                },
+                status:    m?.status || "Active",
+                orderedBy: note?.doctorName || note?.signedByName || "Doctor",
+                source:    "note",
+                noteRef:   note?._id,
+                noteType:  note?.noteType || "",
+              });
+            });
+          });
+        } catch (_) { /* note fetch is best-effort — the form still works without it */ }
+      }
+
+      // Dedupe — DoctorOrder rows (real lifecycle + admin trail) outrank
+      // note-embedded mirrors of the same drug. Match by drugId when both
+      // sides have one, else by case-insensitive trimmed medicineName.
+      const seen = new Set();
+      const keyFor = (o) => {
+        const d = o.orderDetails || {};
+        const id = String(d.drugId || d.medicineId || "").trim();
+        if (id) return `id:${id}`;
+        const nm = String(d.medicineName || d.displayName || o.serviceName || "").toLowerCase().trim();
+        return nm ? `nm:${nm}` : `oid:${o._id}`;
+      };
+      const merged = [];
+      [...(Array.isArray(list) ? list : []), ...noteEmbeddedOrders].forEach((o) => {
+        const k = keyFor(o);
+        if (seen.has(k)) return;
+        seen.add(k);
+        merged.push(o);
+      });
+      setOrders(merged);
 
       // Build the dual-key lookup. The stock endpoint returns rows
       // shaped { drugId, drugName, totalRemaining, batchCount,
@@ -191,15 +296,26 @@ export default function IndentRaisePage() {
         if (r.drugId)   byId.set(String(r.drugId), entry);
         if (r.drugName) byName.set(String(r.drugName).toLowerCase().trim(), entry);
       }
+      if (signal.aborted) return;                              // R7hr-12-S3 (D9-05)
       setStockMap({ byId, byName });
     } catch (e) {
+      // R7hr-12-S3 (D9-05): swallow abort-induced errors so a fast
+      // admissionId switch / unmount doesn't toast a misleading red error.
+      if (e?.name === "CanceledError" || e?.name === "AbortError" || signal.aborted) return;
       toast.error("Could not load admission: " + (e.response?.data?.message || e.message));
     } finally {
-      setLoading(false);
+      // Only flip the loader off if this controller is still the active one
+      // (i.e. we weren't superseded by a newer load()).
+      if (!signal.aborted) setLoading(false);
     }
   }, [admissionId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    // R7hr-12-S3 (D9-05): abort any in-flight load when the component
+    // unmounts or admissionId changes — prevents stale setOrders / setStockMap.
+    return () => { if (loadAbortRef.current) loadAbortRef.current.abort(); };
+  }, [load]);
 
   /* ── DoctorOrder selection — tick a prescribed med ──────────── */
   const addFromOrder = (order) => {
@@ -263,8 +379,22 @@ export default function IndentRaisePage() {
   };
   const removeItem = (key) => setItems(prev => prev.filter(i => i.key !== key));
 
+  // R7hr-12-S3 (D9-02): synchronous ref-mutex to block the double-click
+  // window between the user releasing the mouse and React flipping `saving`
+  // to true. Without this, a quick double-click on "Raise indent to pharmacy"
+  // fires two POST /indents in flight before the disabled flag re-renders —
+  // resulting in two stock reservations + two near-identical "Raised at …"
+  // entries in the audit trail. Mirrors the pattern shipped in
+  // PharmacyLedgerPage.applyAdvanceToSale (R7hr-11).
+  const submitMutex = useRef(false);
   const submit = async () => {
+    if (submitMutex.current) return;                          // R7hr-12-S3 (D9-02)
     if (!items.length) return toast.warn("Add at least one drug");
+    // R7hr-12-S3 (D9-11): defence-in-depth — if the admission is discharged
+    // we should never reach a live POST, even if the disabled-attribute on
+    // Submit is removed in a future refactor.
+    if (isDischarged) return;
+    submitMutex.current = true;                               // R7hr-12-S3 (D9-02)
     setSaving(true);
     try {
       const payload = {
@@ -280,6 +410,7 @@ export default function IndentRaisePage() {
       toast.error(e.response?.data?.message || e.message);
     } finally {
       setSaving(false);
+      submitMutex.current = false;                            // R7hr-12-S3 (D9-02)
     }
   };
 

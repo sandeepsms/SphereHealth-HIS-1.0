@@ -501,6 +501,22 @@ const docOrderByIdResolver = async (req) => {
   }
 };
 
+// Post-sign amend on a doctor note carries only the note id in the URL —
+// resolve the admission via the DoctorNotes doc so the discharge gate
+// can fire on a discharged admission's amendment attempt.
+const doctorNoteByIdResolver = async (req) => {
+  const m = req.path.match(/^\/doctor-notes\/([^/]+)\//);
+  if (!m) return req.body?.admissionId || null;
+  try {
+    const DoctorNotes = require("../models/Doctor/DoctorNotesModel");
+    const doc = await DoctorNotes.findById(m[1]).select("admissionId").lean();
+    return doc?.admissionId || req.body?.admissionId || null;
+  } catch (e) {
+    console.warn("[discharge-gate] doctorNoteByIdResolver failed:", e.message);
+    return req.body?.admissionId || null;
+  }
+};
+
 const prescriptionByIdResolver = async (req) => {
   const m = req.path.match(/^\/prescriptions\/([^/]+)/);
   if (!m) return req.body?.admissionId || null;
@@ -540,9 +556,33 @@ const icuBundleByIdResolver = async (req) => {
   }
 };
 
-// Pharmacy IPD sales only — saleType !== 'IPD' rows (OPD walk-in, vendor
-// returns) bypass via the rule.condition predicate.
+// Pharmacy admission-linked sales (IPD + Homecare) — saleType not in
+// {IPD, Homecare} rows (OPD walk-in, vendor returns) bypass via the
+// rule.condition predicate. R7hr-12-S3 (D6-08): name kept as
+// pharmacyIpdResolver for git-blame stability; resolver logic itself
+// (read body.admissionId) is identical for IPD and Homecare.
 const pharmacyIpdResolver = (req) => req.body?.admissionId || null;
+
+// R7hr-12-S2 (D6-01): /pharmacy/sales/:id/add-items mutates an EXISTING
+// PharmacySale — items[] is consumed from inventory and the parent sale's
+// balanceDue / supplementRecord is mutated. The body carries NO saleType
+// and NO admissionId, so the existing pharmacyIpdResolver + saleType=IPD
+// condition pair leaks the supplement past the discharge gate. We resolve
+// admissionId by looking up the parent Sale doc (admissionId is indexed
+// on PharmacySaleSchema L102). enforceStrict so an unresolvable parent
+// (deleted/garbage id) fails closed rather than being waved through.
+const pharmacySaleByIdResolver = async (req) => {
+  const m = req.path.match(/^\/pharmacy\/sales\/([^/]+)\/add-items/);
+  if (!m) return null;
+  try {
+    const PharmacySale = require("../models/Pharmacy/PharmacySaleModel");
+    const doc = await PharmacySale.findById(m[1]).select("admissionId").lean();
+    return doc?.admissionId || null;
+  } catch (e) {
+    console.warn("[discharge-gate] pharmacySaleByIdResolver failed:", e.message);
+    return null;
+  }
+};
 
 // B3-T09 / PART B — UHID-path resolver. Real frontend prescription &
 // nursing-assessment writes hit /prescriptions/uhid/:uhid (and similar)
@@ -574,6 +614,10 @@ const uhidPathResolver = async (req) => {
 
 const ENFORCE_DISCHARGE_WRITE_RULES = [
   // ── R7az-A original surfaces ────────────────────────────────────────
+  // Doctor-note POST /:id/amend is matched ahead of the bare-POST create
+  // rule so the resolver can pull admissionId off the note doc (the amend
+  // body doesn't carry admissionId — only the clinical overlay fields).
+  { method: "POST",   regex: /\/doctor-notes\/[^/]+\/amend(\/|$|\?)/,          resolveAdmissionId: doctorNoteByIdResolver },
   { method: "POST",   regex: /\/doctor-notes(\/|$|\?)/,                        resolveAdmissionId: defaultResolver },
   { method: "PUT",    regex: /\/doctor-notes\/[^/]+(\/|$|\?)/,                 resolveAdmissionId: defaultResolver },
   { method: "PATCH",  regex: /\/doctor-notes\/[^/]+\/[^/]+(\/|$|\?)/,          resolveAdmissionId: defaultResolver },
@@ -635,11 +679,26 @@ const ENFORCE_DISCHARGE_WRITE_RULES = [
   // Bed transfers — body.admissionId.
   { method: "POST",   regex: /\/bed-transfers(\/|$|\?)/,                       resolveAdmissionId: defaultResolver },
 
-  // Pharmacy sales — only when saleType=IPD (OPD walk-in sales legitimately
-  // happen without an admission). enforceStrict:true so a malformed IPD
-  // request without admissionId is REJECTED rather than waved through.
+  // R7hr-12-S2 (D6-01): Pharmacy sale supplements — POST /pharmacy/sales/:id/add-items
+  // is a "supplement to an existing bill" verb. The body carries no saleType
+  // and no admissionId, so the broad /pharmacy/sales rule below would either
+  // (a) not fire at all because its condition predicate requires
+  // body.saleType === "IPD", or (b) mis-resolve to null. We need a dedicated
+  // rule that ALWAYS fires and resolves the admission via the parent Sale
+  // doc. enforceStrict so an unresolvable parent fails closed. MUST be
+  // placed BEFORE the /pharmacy/sales catch-all because ENFORCE_DISCHARGE_WRITE_RULES
+  // uses Array.find — first regex+method match wins.
+  { method: "POST",   regex: /\/pharmacy\/sales\/[^/]+\/add-items(\/|$|\?)/,   resolveAdmissionId: pharmacySaleByIdResolver, enforceStrict: true },
+
+  // Pharmacy sales — only when saleType=IPD or Homecare (OPD walk-in sales
+  // legitimately happen without an admission). enforceStrict:true so a malformed
+  // IPD/Homecare request without admissionId is REJECTED rather than waved
+  // through.
+  // R7hr-12-S3 (D6-08): Extend discharge gate to Homecare sales — discharged-
+  // admission Homecare sales would otherwise silently re-open the IPD credit
+  // ledger. Same shape as D6-01.
   { method: "POST",   regex: /\/pharmacy\/sales(\/|$|\?)/,                     resolveAdmissionId: pharmacyIpdResolver,
-    condition: (req) => req.body?.saleType === "IPD", enforceStrict: true },
+    condition: (req) => ["IPD", "Homecare"].includes(req.body?.saleType), enforceStrict: true },
 
   // MAR per-medication administer/discontinue — URL is /mar/:marId/medication/:medId/<verb>,
   // resolve via MAR document. enforceStrict so an unresolved MAR fails closed

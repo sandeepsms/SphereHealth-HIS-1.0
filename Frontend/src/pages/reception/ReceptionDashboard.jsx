@@ -29,6 +29,11 @@ import { toMoney, fmtINR0 as fmtCur, fmtINR2 as fmtCurExact } from "../../utils/
 import PatientCreditLedger from "../../Components/billing/PatientCreditLedger";
 import "./ReceptionDashboard.css";
 
+// R7hr-52: full display labels (used for dot + status-label render). The
+// dropdown picker is restricted to RECEPTIONIST_PICKABLE below — receptionist
+// only toggles on-duty/off-duty (Available ↔ OnLeave); InConsultation is
+// auto-derived from in-progress OPD visits server-side (see effectiveStatus
+// in doctorController.getAllDoctors); OnBreak/Offline are legacy/admin-only.
 const STATUS_LABEL = {
   Available:       "Available",
   InConsultation:  "In Consultation",
@@ -36,6 +41,7 @@ const STATUS_LABEL = {
   OnLeave:         "On Leave",
   Offline:         "Offline",
 };
+const RECEPTIONIST_PICKABLE = ["Available", "OnLeave"];
 const STATUS_DOT_CLASS = {
   Available:        "rd-doc-status-dot--available",
   InConsultation:   "rd-doc-status-dot--inconsultation",
@@ -499,7 +505,11 @@ export default function ReceptionDashboard() {
             ) : queues.map(d => (
               <div key={d._id} className="rd-doc-row">
                 <div className="rd-doc-name">
-                  <span className={`rd-doc-status-dot ${STATUS_DOT_CLASS[d.availability?.status] || ""}`} />
+                  {/* R7hr-52: dot reflects effectiveStatus (derived) — so when
+                      the doctor is actually with a patient the dot shows
+                      InConsultation even though stored availability.status
+                      is still "Available". */}
+                  <span className={`rd-doc-status-dot ${STATUS_DOT_CLASS[d.availability?.effectiveStatus || d.availability?.status] || ""}`} />
                   <div className="rd-min-zero">
                     <div className="rd-doc-info-name">{d.fullName}</div>
                     <div className="rd-doc-info-spec">{d.specialization} · {d.department || "—"}</div>
@@ -526,20 +536,28 @@ export default function ReceptionDashboard() {
                       Next →
                     </button>
                   )}
+                  {/* R7hr-52: Receptionist picker is BINARY (Available / OnLeave).
+                      InConsultation is server-derived (effectiveStatus) when
+                      the doctor has an in-progress OPD visit — that auto-updates
+                      on the next load(). The dropdown's `value` is the STORED
+                      availability.status (what we'll PATCH), but the dot + the
+                      read-only label show effectiveStatus so the receptionist
+                      sees the live consultation state at a glance. */}
                   {isToday && canDriveDoctorSelf && (
                     <select
                       className="rd-doc-btn"
-                      value={d.availability?.status || "Offline"}
+                      value={RECEPTIONIST_PICKABLE.includes(d.availability?.status) ? d.availability.status : "Available"}
                       onChange={e => setStatus(d._id, e.target.value)}
+                      title={d.availability?.effectiveStatus === "InConsultation" ? "Doctor is currently with a patient (auto-detected)" : ""}
                     >
-                      {Object.entries(STATUS_LABEL).map(([k, v]) =>
-                        <option key={k} value={k}>{v}</option>
+                      {RECEPTIONIST_PICKABLE.map(k =>
+                        <option key={k} value={k}>{STATUS_LABEL[k]}</option>
                       )}
                     </select>
                   )}
                   {isToday && !canDriveDoctorSelf && (
                     <span className="rd-doc-status-label" style={{ fontSize:11, color:"#64748b", fontWeight:600 }}>
-                      {STATUS_LABEL[d.availability?.status || "Offline"]}
+                      {STATUS_LABEL[d.availability?.effectiveStatus || d.availability?.status || "Available"]}
                     </span>
                   )}
                 </div>

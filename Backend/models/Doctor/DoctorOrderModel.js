@@ -25,6 +25,12 @@ const HAM_KEYWORDS = [
 ];
 const isHAM = (name = "") => HAM_KEYWORDS.some(k => name.toLowerCase().includes(k));
 
+// Concentrated-electrolyte / hypertonic auto-detect. NABH MOM.9 calls these
+// out as a tighter subgroup of HAM that needs segregated storage + extra
+// labelling. Driven by the same medicineName scan as hamFlag so the two
+// flags can never drift.
+const CONCENTRATED_ELECTROLYTE_RE = /KCl|potassium chloride|NaCl\s*3%|hypertonic saline|MgSO4|magnesium sulfate|magnesium sulphate/i;
+
 /* ────────────── Sub-schemas ────────────── */
 
 // Each scheduled dose administration event (NABH MAR)
@@ -47,22 +53,58 @@ const AdminRecordSchema = new mongoose.Schema({
   doseGiven:      { type: String },           // actual dose if different from ordered
   routeUsed:      { type: String },
   siteUsed:       { type: String },           // injection site
-  notes:          { type: String },
+  notes: {
+    type: String,
+    required: [
+      function () { return this.status === "refused" || this.status === "skipped"; },
+      "notes are required when status is refused or skipped",
+    ],
+  },
   // HAM two-nurse verification
-  verifiedBy:     { type: String },           // second nurse (required for HAMs)
+  verifiedBy: {
+    type: String,
+    validate: {
+      validator: function (v) {
+        const parent = (typeof this.ownerDocument === "function" ? this.ownerDocument() : null);
+        if (parent && parent.hamFlag === true) {
+          return typeof v === "string" && v.trim().length > 0;
+        }
+        return true;
+      },
+      message: "verifiedBy (second-nurse) is required for High Alert Medication administrations",
+    },
+  },
   verifiedAt:     { type: Date },
   fiveRightsChecked: { type: Boolean, default: false },
   // Hold / delay
-  holdReason:     { type: String },
+  holdReason: {
+    type: String,
+    required: [
+      function () { return this.status === "hold" || this.status === "OnHold"; },
+      "holdReason is required when status is hold/OnHold",
+    ],
+  },
   holdUntil:      { type: String },
   delayedTo:      { type: String },
-  delayReason:    { type: String },
+  delayReason: {
+    type: String,
+    required: [
+      function () { return this.status === "delayed"; },
+      "delayReason is required when status is delayed",
+    ],
+  },
   // PRN/SOS effectiveness
   prnEffect:      { type: String, enum: ["effective","partial","no_effect",""], default: "" },
   prnReassessTime:{ type: String },
   // Adverse event
   adverseEvent:   { type: Boolean, default: false },
-  adverseDetails: { type: String },
+  adverseDetails: {
+    type: String,
+    required: [
+      function () { return this.adverseEvent === true; },
+      "adverseDetails are required when adverseEvent is true",
+    ],
+  },
   // STAT / Emergency dose (given outside the scheduled window)
   isStatDose:     { type: Boolean, default: false },
   statReason:     { type: String },
@@ -155,10 +197,26 @@ const DoctorOrderSchema = new mongoose.Schema({
     // (audit A-01). The validator below enforces the format
     // "<positive number><whitespace><unit>" with a known unit list. Empty /
     // negative / non-numeric values now fail Mongoose validation.
-    medicineName: String,
+    medicineName: {
+      type: String,
+      required: [
+        function () {
+          const t = (this.ownerDocument && this.ownerDocument()?.orderType) || this.parent?.()?.orderType;
+          return t === "Medication";
+        },
+        "medicineName is required for Medication orders",
+      ],
+    },
     dose: {
       type: String,
       trim: true,
+      required: [
+        function () {
+          const t = (this.ownerDocument && this.ownerDocument()?.orderType) || this.parent?.()?.orderType;
+          return t === "Medication";
+        },
+        "dose is required for Medication orders",
+      ],
       validate: {
         // Empty allowed (some non-medication orders have no dose). Otherwise
         // require a STRICTLY POSITIVE amount followed by a known unit. The
@@ -176,9 +234,55 @@ const DoctorOrderSchema = new mongoose.Schema({
         message: (props) => `dose "${props.value}" must be a positive amount + unit (e.g. "500 mg", "1.5 mg/kg/day")`,
       },
     },
-    frequency: String, duration: String, route: String,
-    rate: String, accessSite: String, additives: String,
-    dilution: String, totalVolume: String, titrationGoal: String, startTime: String,
+    frequency: {
+      type: String,
+      required: [
+        function () {
+          const t = (this.ownerDocument && this.ownerDocument()?.orderType) || this.parent?.()?.orderType;
+          return t === "Medication";
+        },
+        "frequency is required for Medication orders",
+      ],
+    },
+    duration: String,
+    route: {
+      type: String,
+      required: [
+        function () {
+          const t = (this.ownerDocument && this.ownerDocument()?.orderType) || this.parent?.()?.orderType;
+          return t === "Medication";
+        },
+        "route is required for Medication orders",
+      ],
+    },
+    mealStatus: {
+      type: String,
+      enum: ["BeforeFood","WithFood","AfterFood","EmptyStomach","NotApplicable"],
+      default: "NotApplicable",
+    },
+    rate: {
+      type: String,
+      required: [
+        function () {
+          const t = (this.ownerDocument && this.ownerDocument()?.orderType) || this.parent?.()?.orderType;
+          return t === "IV_Fluid";
+        },
+        "rate is required for IV_Fluid orders",
+      ],
+    },
+    accessSite: String, additives: String,
+    dilution: String,
+    totalVolume: {
+      type: String,
+      required: [
+        function () {
+          const t = (this.ownerDocument && this.ownerDocument()?.orderType) || this.parent?.()?.orderType;
+          return t === "IV_Fluid";
+        },
+        "totalVolume is required for IV_Fluid orders",
+      ],
+    },
+    titrationGoal: String, startTime: String,
     // R7bq-1 / R7bq-3 — IV Medication dilution.
     //   dilutionVolume     = number of ml of diluent for each dose
     //   dilutionFluid      = which diluent (NS 0.9% / RL / D5W / etc.) — separate
@@ -189,14 +293,44 @@ const DoctorOrderSchema = new mongoose.Schema({
     dilutionVolume:    { type: Number, default: null, min: 0, max: 5000 },
     dilutionFluid:     { type: String, default: "" },
     infuseOverMinutes: { type: Number, default: null, min: 0, max: 720 },
+    // IV Fluid — explicit name of the fluid (separate from medicineName)
+    fluidName: {
+      type: String,
+      required: [
+        function () {
+          const t = (this.ownerDocument && this.ownerDocument()?.orderType) || this.parent?.()?.orderType;
+          return t === "IV_Fluid";
+        },
+        "fluidName is required for IV_Fluid orders",
+      ],
+    },
     // Blood Transfusion
     bloodGroup: String, crossMatchDone: String, premeds: String, monitoring: String,
     // Investigation / Radiology fields
-    testName: String, urgency: String, instructions: String,
+    testName: {
+      type: String,
+      required: [
+        function () {
+          const t = (this.ownerDocument && this.ownerDocument()?.orderType) || this.parent?.()?.orderType;
+          return t === "Investigation" || t === "Lab" || t === "Radiology";
+        },
+        "testName is required for Investigation / Lab / Radiology orders",
+      ],
+    },
+    urgency: String, instructions: String,
     sampleType: String, fasting: String,
     region: String, contrast: String, sedation: String, laterality: String,
     // Procedure fields
-    procedureName: String,
+    procedureName: {
+      type: String,
+      required: [
+        function () {
+          const t = (this.ownerDocument && this.ownerDocument()?.orderType) || this.parent?.()?.orderType;
+          return t === "Procedure";
+        },
+        "procedureName is required for Procedure orders",
+      ],
+    },
     procedureType: { type: String, enum: ["Minor","Major","Diagnostic","Therapeutic","Bedside"] },
     indication: String, estimatedDuration: String, anaesthesia: String, position: String,
     consentRequired: { type: Boolean, default: false },
@@ -227,6 +361,11 @@ const DoctorOrderSchema = new mongoose.Schema({
     instruction: String, careCategory: String,
     // Consultation fields
     speciality: String, consultantName: String, reason: String, referredBy: String,
+    // R7hr-83 — set on order placement from /api/services/lookup; consumed by Phase C billing trigger on completion.
+    serviceMasterId: { type: mongoose.Schema.Types.ObjectId, ref: 'ServiceMaster', default: null },
+    serviceCode:     { type: String, trim: true, default: null, index: true },
+    serviceName:     { type: String, trim: true, default: null },
+    unitPrice:       { type: Number, min: 0, default: null },
     // Common
     notes: String, displayName: String,
   },
@@ -252,7 +391,10 @@ const DoctorOrderSchema = new mongoose.Schema({
   // by the pre-save hook below before the state-machine guard runs.
   status: {
     type: String,
-    enum: ["Pending","Acknowledged","Active","InProgress","Completed","Cancelled","OnHold","Stopped","Modified"],
+    // "missed" (lowercase) matches the AdminRecord adminStatus convention —
+    // when an entire scheduled course's window closes without any dose
+    // record at all, the EOD sweep flips the parent order to "missed".
+    enum: ["Pending","Acknowledged","Active","InProgress","Completed","Cancelled","OnHold","Stopped","Modified","missed"],
     default: "Pending",
     index: true,
   },
@@ -324,58 +466,55 @@ const DoctorOrderSchema = new mongoose.Schema({
   // MAR / order-sheet reprints (NABH MOM.2 evidence gap).
   printCount: { type: Number, default: 0 },
 
-}, { timestamps: true, collection: "doctor_orders" });
+  // R7hr-96 — idempotency key for upstream fan-out flows (e.g. IPD
+  // Initial Assessment Medication Reconciliation → DoctorOrder).
+  // Format examples:
+  //   "medrecon:<doctorNoteId>:<rowIdx>"  — Med Recon row fan-out
+  //   future: "indent:<id>" / "transfer:<id>" / etc.
+  // Sparse-unique so the absence of a sourceRef doesn't collide with
+  // ordinary doctor-entered orders. The fan-out service queries by
+  // exact sourceRef before creating, so re-signs / amends are safe.
+  sourceRef: { type: String, default: null, index: true, sparse: true },
 
-/* ── Auto-set hamFlag before save ── */
-DoctorOrderSchema.pre("save", function (next) {
-  const name = this.orderDetails?.medicineName || this.orderDetails?.displayName || "";
-  if (name && !this.hamFlag) {
-    this.hamFlag = isHAM(name);
-    this.twoNurseRequired = this.hamFlag;
-    this.highRisk = this.hamFlag;
-  }
-  next();
-});
+}, { timestamps: true, collection: "doctor_orders" });
 
 /* ── R7az-CRIT-4 / D6-CRIT-4 + D6-HIGH-6 + D6-MED-1 ──────────────────
    State-machine guard. Pre-R7az nothing prevented a route handler from
    moving a Cancelled order back to Active, or flipping a Stopped order
    to InProgress and quietly re-administering — a CRITICAL governance
-   gap. This hook captures the prior status on init and rejects any
+   gap. The hook captures the prior status on init and rejects any
    transition that isn't in the allowed matrix below. Admin override
    path uses `this._stateOverride = "admin"` (the route handler sets
    this when an Admin user explicitly requests a terminal-reopen).
 
-   The matrix lives here (not in the controller) so every write path —
-   route handler, service method, cron, migration — gets the same
-   guarantee. Modified means "the doctor edited the order details
-   in-flight" — kept reachable from Active and InProgress.
+   The matrix lives in the shared registry (utils/statusTransitionGuard.js)
+   so every write path — route handler, service method, cron, migration —
+   gets the same guarantee. Modified means "the doctor edited the order
+   details in-flight" — kept reachable from Active and InProgress.
 
    Legacy doc cleanup: status:"Held" → coerced to "OnHold" before
    matrix check, so old data doesn't break post-deploy.
 ─────────────────────────────────────────────────────────────────────── */
-// R7bf-I / A7-HIGH-5 — DoctorOrder state-machine matrix is now sourced
-// from the shared registry (utils/statusTransitionGuard.js). The local
-// copy here is kept as a fallback (only used if the require fails — e.g.
-// circular-load in some unit-test bootstrap) so the model still self-
-// contains a sane matrix. The shared registry tightens Completed → []
-// (was previously [Modified]) — pre-R7bf a nurse / lab path could
-// "amend" an executed medication order which re-fired MAR scheduling
-// and was a documented re-administration risk. Now Completed is
-// terminal; amendments require the admin force flag + audit row.
-let SHARED = null;
-try { SHARED = require("../../utils/statusTransitionGuard"); } catch (_) { /* fallback */ }
-const ALLOWED_TRANSITIONS = (SHARED && SHARED.LEGAL_TRANSITIONS.DoctorOrder) || {
-  Pending:     ["Acknowledged","Active","InProgress","OnHold","Stopped","Cancelled","Completed","Modified"],
-  Acknowledged:["Active","InProgress","OnHold","Stopped","Cancelled","Completed","Modified"],
-  Active:      ["InProgress","OnHold","Stopped","Cancelled","Completed","Modified"],
-  InProgress:  ["Completed","OnHold","Stopped","Cancelled","Modified"],
-  OnHold:      ["Active","InProgress","Stopped","Cancelled"],
-  Stopped:     [],
-  Cancelled:   [],
-  Completed:   [],
-  Modified:    ["Active","InProgress","Stopped","Cancelled","Completed"],
-};
+// DoctorOrder state-machine matrix is sourced exclusively from the shared
+// registry. If the import fails we throw at module load instead of falling
+// back to a silently stale local copy — a divergent matrix is worse than
+// a hard boot failure because it makes governance unverifiable.
+let SHARED;
+try {
+  SHARED = require("../../utils/statusTransitionGuard");
+} catch (err) {
+  throw new Error(
+    `DoctorOrderModel: failed to load shared state-machine registry ` +
+    `(utils/statusTransitionGuard) — refusing to boot with a stale ` +
+    `local matrix. Underlying error: ${err && err.message}`,
+  );
+}
+const ALLOWED_TRANSITIONS = SHARED && SHARED.LEGAL_TRANSITIONS && SHARED.LEGAL_TRANSITIONS.DoctorOrder;
+if (!ALLOWED_TRANSITIONS || typeof ALLOWED_TRANSITIONS !== "object") {
+  throw new Error(
+    "DoctorOrderModel: utils/statusTransitionGuard loaded but LEGAL_TRANSITIONS.DoctorOrder is missing or malformed",
+  );
+}
 
 // Snapshot prior status at load time so the next save can validate the
 // transition. We can't read `this.status` post-mutation to know what it
@@ -384,8 +523,34 @@ DoctorOrderSchema.post("init", function () {
   this._priorStatus = this.status;
 });
 
+/* ── Single ordered pre('save') hook ─────────────────────────────────
+   Order matters:
+     1. HAM auto-flag scan (medicineName / displayName keyword match)
+        + concentratedElectrolyte derivation from the same scan, so the
+        two flags never drift.
+     2. State-machine transition guard.
+   Combining them into one hook removes the prior implicit ordering
+   between two registered pre('save') callbacks and lets the HAM scan
+   re-run whenever medicineName is modified (the old guard short-
+   circuited via `!this.hamFlag`, which made re-flagging impossible).
+──────────────────────────────────────────────────────────────────── */
 DoctorOrderSchema.pre("save", function (next) {
-  // Legacy "Held" coercion — old data wrote "Held"; new enum says "OnHold".
+  // 1. HAM + concentrated-electrolyte auto-derive.
+  //    Re-runs on creation or whenever medicineName changes — modifying
+  //    the drug name after the order exists must be able to flip the
+  //    flag in either direction.
+  if (this.isNew || this.isModified("orderDetails.medicineName")) {
+    const name = this.orderDetails?.medicineName || this.orderDetails?.displayName || "";
+    if (name) {
+      this.hamFlag = isHAM(name);
+      this.twoNurseRequired = this.hamFlag;
+      this.highRisk = this.hamFlag;
+      this.concentratedElectrolyte = CONCENTRATED_ELECTROLYTE_RE.test(name);
+    }
+  }
+
+  // 2. State-machine guard.
+  //    Legacy "Held" coercion — old data wrote "Held"; new enum says "OnHold".
   if (this.status === "Held") this.status = "OnHold";
   if (this._priorStatus === "Held") this._priorStatus = "OnHold";
 
@@ -421,5 +586,7 @@ DoctorOrderSchema.pre("save", function (next) {
 DoctorOrderSchema.index({ UHID: 1, status: 1 });
 DoctorOrderSchema.index({ visitId: 1, status: 1 });
 DoctorOrderSchema.index({ UHID: 1, orderType: 1 });
+DoctorOrderSchema.index({ admissionId: 1, status: 1 });
+DoctorOrderSchema.index({ ipdNo: 1, orderType: 1, status: 1 });
 
 module.exports = mongoose.models.DoctorOrder || mongoose.model("DoctorOrder", DoctorOrderSchema);

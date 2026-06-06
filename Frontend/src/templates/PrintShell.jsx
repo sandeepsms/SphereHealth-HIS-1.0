@@ -23,6 +23,11 @@ import "./printShell.css";
 // standalone `<head>` for `window.open()` printing.
 // eslint-disable-next-line import/no-unresolved
 import printShellCssText from "./printShell.css?inline";
+// R7hr-12 (D7-01) — render the GST §48(4) / NABH IMS.4 duplicate
+// watermark from inside the shared shell so every printable (Advance,
+// OPD, Refund, Service, Discharge, PatientFile themes, Pharmacy bills…)
+// inherits it without each caller importing PrintWatermark separately.
+import PrintWatermark from "../Components/print/PrintWatermark";
 
 /* ============================================================
    Shared helpers (pure — used by both React + HTML branches)
@@ -99,6 +104,14 @@ const normalizeOpts = (opts = {}) => {
     docNumber: opts.meta?.docNumber || "",
     pageOf:    opts.meta?.pageOf    || "",
     printedAt: opts.meta?.printedAt || new Date().toISOString(),
+    // R7hr-12 (D7-01) — forward watermark inputs so the shell can render
+    // the GST §48(4) DUPLICATE/TRIPLICATE stamp on reprints. Callers
+    // (AdvanceReceipt, OPDReceipt, RefundReceipt, ServiceReceipt,
+    // DischargeSummary, PharmacyBill, patientFileThemes) already pass
+    // these via meta; pre-fix they were silently dropped here.
+    printCount:         Number(opts.meta?.printCount) || 0,
+    watermarkLabel:     opts.meta?.watermarkLabel || "",
+    watermarkRecipient: opts.meta?.watermarkRecipient || "",
   };
   const showDisclaimer = opts.showDisclaimer !== false;
   return { hospital, docTitle, docSubtitle, patient, signatures, banners, meta, showDisclaimer };
@@ -133,6 +146,16 @@ export default function PrintShell(props) {
 
   return (
     <div className="pf-page" style={styleVars}>
+      {/* R7hr-12 (D7-01) — GST §48(4) / NABH IMS.4 DUPLICATE watermark
+          for reprints. PrintWatermark itself returns null when
+          printCount <= 1 so originals stay clean. Mounted at the page
+          root (matching the legacy Components/print/PrintShell.jsx
+          pattern) so every shell-using printable inherits it. */}
+      <PrintWatermark
+        printCount={meta.printCount}
+        label={meta.watermarkLabel || undefined}
+        recipient={meta.watermarkRecipient || undefined}
+      />
       {/* R7gb P0-13 — hidden source strings the @page running headers
           read via CSS `string-set`. Must render BEFORE visible content
           so the first page gets correct values too. */}
@@ -357,6 +380,43 @@ export function buildPrintShellHtml(opts = {}) {
       <span class="pf-page-string-doctitle">${esc(rhDocTitle)}</span>
     </div>`;
 
+  /* R7hr-12 (D7-01) — mirror the React `<PrintWatermark>` render for
+     the standalone HTML helper. Same gate as PrintWatermark.jsx L33:
+     no markup at all when printCount <= 1 (originals stay clean).
+     Label resolution matches PrintWatermark.jsx L41-L45. */
+  const watermarkHtml = (() => {
+    const pc = Number(meta.printCount) || 0;
+    if (!pc || pc <= 1) return "";
+    let resolved = meta.watermarkLabel || "";
+    if (!resolved) {
+      if (pc === 2) resolved = "DUPLICATE";
+      else if (pc === 3) resolved = "TRIPLICATE";
+      else resolved = `COPY ${pc}`;
+    }
+    const fullLabel = meta.watermarkRecipient
+      ? `${resolved} FOR ${meta.watermarkRecipient}`
+      : resolved;
+    const wmStyle = [
+      "position:fixed",
+      "top:50%",
+      "left:50%",
+      "transform:translate(-50%,-50%) rotate(-30deg)",
+      "font-family:'Inter','Segoe UI',sans-serif",
+      "font-weight:900",
+      "font-size:100px",
+      "letter-spacing:8px",
+      "color:rgba(220,38,38,0.15)",
+      "text-shadow:0 0 1px rgba(220,38,38,0.25)",
+      "pointer-events:none",
+      "user-select:none",
+      "z-index:0",
+      "white-space:nowrap",
+      "-webkit-print-color-adjust:exact",
+      "print-color-adjust:exact",
+    ].join(";");
+    return `<div aria-hidden="true" class="pr-watermark" style="${wmStyle}">${esc(fullLabel)}</div>`;
+  })();
+
   const headerLeft = `
     <div class="pf-header-left">
       ${hospital.logo ? `<img src="${esc(hospital.logo)}" alt="" class="pf-logo" />` : ""}
@@ -486,6 +546,7 @@ export function buildPrintShellHtml(opts = {}) {
 
   const page = `
     <div class="pf-page" style="--pf-header-color:${esc(headerColor)};">
+      ${watermarkHtml}
       ${pageStrings}
       <header class="pf-header">
         ${headerLeft}

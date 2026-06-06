@@ -60,6 +60,24 @@ const catColors = {
   OTHER:        { bg: "#f1f5f9", fg: C.slate },
 };
 
+// ── Doctor-order type colour map (12 enum values) ────────────────
+// Used by the new "Doctor Order Type" column. Falls back to slate
+// for unknown values. Palette aligned with the HIS-wide chip set.
+const docOrderColors = {
+  Medication:        { bg: C.purpleL, fg: C.purple   },
+  IV_Fluid:          { bg: C.blueL,   fg: C.blue     },
+  Lab:               { bg: C.tealL,   fg: C.teal     },
+  Radiology:         { bg: "#eef2ff", fg: "#4338ca"  }, // indigo
+  Procedure:         { bg: C.amberL,  fg: C.amber    },
+  BloodTransfusion:  { bg: C.redL,    fg: C.red      },
+  Diet:              { bg: C.greenL,  fg: C.green    },
+  Oxygen:            { bg: "#ecfeff", fg: "#0e7490"  }, // cyan
+  Physiotherapy:     { bg: "#fdf2f8", fg: "#be185d"  }, // pink
+  Activity:          { bg: C.orangeL, fg: C.orange   },
+  Nursing:           { bg: "#fff1f2", fg: "#be123c"  }, // rose
+  Consultation:      { bg: "#f1f5f9", fg: C.slate    },
+};
+
 // Inline pill primitive — used for status/category/auto badges
 // throughout the table so chrome stays consistent.
 const pillStyle = (bg, fg) => ({
@@ -139,6 +157,28 @@ const APPLICABLE_TO_OPTIONS = ["OPD", "IPD", "DAYCARE", "EMERGENCY", "ALL"].map(
 // Only TPA and CORPORATE — CASH is auto-created from defaultPrice
 const TARIFF_TYPES = ["TPA", "CORPORATE"].map((v) => ({ label: v, value: v }));
 
+// 12 doctor-order categories (mirrors backend enum). Optional on every
+// service row — null means this service is not part of the doctor-order
+// flow (e.g. room rent, registration).
+const DOC_ORDER_CATEGORIES = [
+  "Medication",
+  "IV_Fluid",
+  "Lab",
+  "Radiology",
+  "Procedure",
+  "BloodTransfusion",
+  "Diet",
+  "Oxygen",
+  "Physiotherapy",
+  "Activity",
+  "Nursing",
+  "Consultation",
+];
+const DOC_ORDER_OPTIONS = DOC_ORDER_CATEGORIES.map((v) => ({
+  label: v.replace(/_/g, " "),
+  value: v,
+}));
+
 const STATUS_OPTIONS = [
   { label: "All", value: null },
   { label: "Active", value: "true" },
@@ -152,6 +192,9 @@ const BLANK_SVC = {
   serviceName: "",
   domain: "OPD",
   category: "REGISTRATION",
+  // Optional doctor-order bucket — Medication / Lab / Radiology / …
+  // Surfaces this service in the matching doctor-order group.
+  doctorOrderCategory: null,
   subCategory: "",
   billingType: "ONE_TIME",
   defaultPrice: 0,
@@ -191,6 +234,7 @@ export default function ChargeableServices() {
   const [filters, setFilters] = useState({
     search: "",
     category: null,
+    doctorOrderCategory: null,
     status: null,
   });
 
@@ -219,6 +263,7 @@ export default function ChargeableServices() {
         limit: 200,
         ...(domain && { domain }),
         ...(filters.category && { category: filters.category }),
+        ...(filters.doctorOrderCategory && { doctorOrderCategory: filters.doctorOrderCategory }),
         ...(filters.search && { search: filters.search }),
         ...(filters.status !== null && filters.status !== undefined && {
           isActive: filters.status,
@@ -260,7 +305,7 @@ export default function ChargeableServices() {
   // ── Tab switch: reset filters ────────────────────────────────
   const handleTabChange = (idx) => {
     setActiveTab(idx);
-    setFilters({ search: "", category: null, status: null });
+    setFilters({ search: "", category: null, doctorOrderCategory: null, status: null });
   };
 
   // ── Mini stats for current domain ───────────────────────────
@@ -308,6 +353,7 @@ export default function ChargeableServices() {
       serviceName: svc.serviceName,
       domain: svc.domain,
       category: svc.category,
+      doctorOrderCategory: svc.doctorOrderCategory || null,
       subCategory: svc.subCategory || "",
       billingType: svc.billingType,
       defaultPrice: svc.defaultPrice,
@@ -492,6 +538,21 @@ export default function ChargeableServices() {
     return <span style={pillStyle(c.bg, c.fg)}>{r.category}</span>;
   };
 
+  // Doctor-order type pill — surfaces which doctor-order group this
+  // service belongs to. null shows muted em-dash so admins can scan
+  // for non-orderable rows (room rent, registration).
+  const doctorOrderBodyTemplate = (r) => {
+    if (!r.doctorOrderCategory) {
+      return <span style={{ color: "#cbd5e1" }}>—</span>;
+    }
+    const c = docOrderColors[r.doctorOrderCategory] || { bg: "#f1f5f9", fg: C.slate };
+    return (
+      <span style={pillStyle(c.bg, c.fg)}>
+        {r.doctorOrderCategory.replace(/_/g, " ")}
+      </span>
+    );
+  };
+
   const billingTypeBodyTemplate = (r) => (
     <span style={{ fontSize: 11, color: C.muted }}>
       {r.billingType?.replace(/_/g, " ")}
@@ -567,8 +628,8 @@ export default function ChargeableServices() {
   // Search + 2 dropdowns + Clear button (only when any filter active)
   // + a small "X of Y shown" muted text floated right.
   const clearFilters = () =>
-    setFilters({ search: "", category: null, status: null });
-  const anyFilter = !!filters.search || !!filters.category || filters.status !== null;
+    setFilters({ search: "", category: null, doctorOrderCategory: null, status: null });
+  const anyFilter = !!filters.search || !!filters.category || !!filters.doctorOrderCategory || filters.status !== null;
 
   const filterBar = (
     <div
@@ -634,6 +695,33 @@ export default function ChargeableServices() {
         >
           <option value="">All Categories</option>
           {CATEGORIES.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        {/* Doctor-order type filter — passes ?doctorOrderCategory=<v>
+           to the LIST call so admins can scope to a single bucket
+           (Medication / Lab / Radiology / …). */}
+        <select
+          value={filters.doctorOrderCategory ?? ""}
+          onChange={(e) => setFilters({ ...filters, doctorOrderCategory: e.target.value || null })}
+          style={{
+            minWidth: 190,
+            height: 42,
+            padding: "0 14px",
+            border: `1.5px solid ${C.border}`,
+            borderRadius: 9,
+            fontSize: 13,
+            fontFamily: "'DM Sans', sans-serif",
+            color: filters.doctorOrderCategory ? C.text : "#94a3b8",
+            background: "#fff",
+            outline: "none",
+            cursor: "pointer",
+            appearance: "auto",
+            boxSizing: "border-box",
+          }}
+        >
+          <option value="">All Doctor Order Types</option>
+          {DOC_ORDER_OPTIONS.map(opt => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </select>
@@ -783,6 +871,18 @@ export default function ChargeableServices() {
           bodyStyle={cellStyle}
           sortable
           field="category"
+        />
+        {/* Doctor-order type pill — placed right after Category so the
+           two classification columns sit together. Muted em-dash for
+           services without a doctorOrderCategory. */}
+        <Column
+          header="Doctor Order Type"
+          body={doctorOrderBodyTemplate}
+          style={{ width: 150 }}
+          headerStyle={headerStyle}
+          bodyStyle={cellStyle}
+          sortable
+          field="doctorOrderCategory"
         />
         <Column
           header="Billing Type"
@@ -1092,6 +1192,28 @@ export default function ChargeableServices() {
                 onChange={(e) => setSvcForm({ ...svcForm, category: e.value })}
                 style={{ width: "100%" }}
               />
+            </div>
+
+            {/* Doctor Order Type (optional) — drives which doctor-order
+               bucket this service surfaces in (Pharmacy / Lab / Radiology
+               / …). Leave blank for non-orderable lines (room rent,
+               registration, consult fee). Placed next to Category so
+               the two classification dropdowns sit together. */}
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={labelStyle}>Doctor Order Type (optional)</label>
+              <Dropdown
+                value={svcForm.doctorOrderCategory}
+                options={DOC_ORDER_OPTIONS}
+                onChange={(e) =>
+                  setSvcForm({ ...svcForm, doctorOrderCategory: e.value })
+                }
+                placeholder="— Not applicable —"
+                showClear
+                style={{ width: "100%" }}
+              />
+              <small style={{ color: C.muted, fontSize: 11 }}>
+                Flags which doctor-order group this service belongs to. Leave blank for non-orderable lines.
+              </small>
             </div>
 
             {/* Sub Category */}

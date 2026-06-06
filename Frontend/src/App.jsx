@@ -28,7 +28,12 @@ import Dashboard1 from "./pages/patient/Dashboard";
 // ── Lazy-loaded pages (downloaded on-demand) ────────────────────
 // PatientsTable deleted 2026-05-17 — superseded by PatientLookupPage's
 // "directory" view. The /allpatient route now mounts PatientLookupPage.
-const OPDPrint = lazy(() => import("./pages/OPD/OPDPrint"));
+// R7hr-56 — OPDPrint dropped. It generated stale back-dated "receipts"
+// from a patient probe instead of the actual bill, confusing cashiers.
+// The legitimate receipt for any visit is printed from Billing Counter
+// → Bill detail → Print, which routes through the unified openPrint()
+// pipeline and the variant-aware templates.
+// const OPDPrint = lazy(() => import("./pages/OPD/OPDPrint"));
 // B8-T07 — /ServiceAlldata route + ServiceAlldata lazy import removed.
 // ServiceAlldata.jsx was a TreeTable scaffold with hardcoded test data
 // ("sahil/Rahul/Kabir"), never linked from any sidebar/menu and not
@@ -98,6 +103,8 @@ const IPDBillingLedger = lazy(() => import("./pages/billing/IPDBillingLedger"));
 // Nurse → Pharmacy indent workflow
 const IndentRaisePage     = lazy(() => import("./pages/nursing/IndentRaisePage"));
 const PharmacyIndentsPage = lazy(() => import("./pages/pharmacy/PharmacyIndentsPage"));
+// R7hr-3: pharmacist-scoped ledger (pharmacy slice only, no full hospital bill).
+const PharmacyLedgerPage = lazy(() => import("./pages/pharmacy/PharmacyLedgerPage"));
 
 // Vitals
 const UpdateVitalSheet = lazy(() => import("./Components/vital/UpdateVitalSheet"));
@@ -231,6 +238,12 @@ const MedicationErrorRegisterPage   = lazy(() => import("./pages/compliance/Medi
 // discharge is finalised with disposition === "LAMA"; manual entries for
 // Compliance / MRD backfill.
 const LAMARegisterPage              = lazy(() => import("./pages/compliance/LAMARegisterPage"));
+// NABH AAC.1 / IMS.2 — IA Amendments register. Chronological WHO / WHAT /
+// WHEN / WHY trail for every post-sign edit to a doctor or nurse Initial
+// Assessment. Read-only surveyor surface — actual amendments still happen
+// on the IA pages and emit DOCTOR_NOTE_AMENDED / NURSE_NOTE_AMENDED rows
+// to the ClinicalAudit collection.
+const IAAmendmentsRegisterPage      = lazy(() => import("./pages/compliance/IAAmendmentsRegisterPage"));
 // R7gw-B9-B9-T03 — NABH Root Cause Analysis Register (QPS.1 + AAC.7).
 // Auto-pre-created from sentinel events (linkedSentinelId set, status
 // Initiated). QPS chair files manual entries for serious near-miss or
@@ -470,7 +483,12 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
 
             {/* ── OPD ──────────────────────────────────────────── */}
-            <Route path="/opd/:UHID" element={<OPDPrint />} />
+            {/* R7hr-56 — /opd/:UHID (legacy OPDPrint) removed. It rendered
+                stale patient-level data with no link to the actual bill,
+                so receipts were back-dated. Cashiers now print receipts
+                from Billing Counter → bill detail → Print, which uses
+                the unified openPrint() + variant-aware template system. */}
+            <Route path="/opd/:UHID" element={<Navigate to="/reception-billing" replace />} />
             <Route path="/opd-visit" element={<OPList />} />
             {/* /opd/new moved to /reception (see below) */}
             <Route path="/opd/new" element={<Navigate to="/reception" replace />} />
@@ -635,6 +653,13 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/pharmacy/indents" element={
               <RoleGuard action="indent.read"><PharmacyIndentsPage /></RoleGuard>
             } />
+            {/* R7hr-3 — Pharmacist's scoped ledger. rx.read gate keeps it
+                inside the pharmacy role; the page itself never reads bed/
+                doctor/services data so even an over-broad role wouldn't
+                see the hospital ledger here. */}
+            <Route path="/pharmacy/ledger/:admissionId" element={
+              <RoleGuard action="rx.read"><PharmacyLedgerPage /></RoleGuard>
+            } />
 
             {/* ── Main / Default ───────────────────────────────── */}
             <Route path="/" element={<Navigate to={homePath} replace />} />
@@ -793,6 +818,14 @@ function AppLayout({ collapsed, setCollapsed }) {
                 manual POST for compliance / MRD backfill. */}
             <Route path="/compliance/nabh-registers/lama" element={
               <RoleGuard action="compliance.nabh.read"><LAMARegisterPage /></RoleGuard>
+            } />
+            {/* NABH AAC.1 / IMS.2 — IA Amendments register. Chronological
+                audit-log mirror of every post-sign edit to a doctor or
+                nurse Initial Assessment. Read-only; the actual amendments
+                happen on the IA pages themselves and emit DOCTOR_NOTE_AMENDED
+                / NURSE_NOTE_AMENDED rows to the ClinicalAudit collection. */}
+            <Route path="/compliance/ia-amendments" element={
+              <RoleGuard action="reports.audit"><IAAmendmentsRegisterPage /></RoleGuard>
             } />
             {/* R7gw-B9-B9-T03 — Root Cause Analysis Register (NABH QPS.1).
                 Auto-pre-created from sentinel events; QPS chair / Quality

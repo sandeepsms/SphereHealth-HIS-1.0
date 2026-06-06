@@ -10,6 +10,11 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientFileExport from "../../Components/clinical/PatientFileExport";
+// R7gx-UI — Mirror Doctor panel: nurse panel surfaces the canonical
+// Treatment Chart MAR view. Shared TreatmentChart component handles
+// medication + infusion administration; nurseMode=true gives full
+// write access (Given / Hold / Not-Available / Partial / Refused).
+import TreatmentChart from "../../Components/clinical/TreatmentChart";
 // Phase 2 shell — pf-* design system shared with DoctorPatientPanel.
 import PatientPanelShell from "../../Components/clinical/PatientPanelShell";
 // Phase 3 — log every nurse-side UI event into the patient activity feed.
@@ -66,8 +71,13 @@ const TABS = [
   { id:"rbs",         label:"🩸 RBS Monitoring"       },
   { id:"handover",    label:"🔄 Handover Notes"       },
   { id:"icubundles",  label:"🛡 ICU Bundles"         },
+  // R7gx-UI — Treatment Chart pill (mirrors Doctor panel position).
+  // Single source of truth for medication administration; nurses chart
+  // every dose here. Pill position kept identical to Doctor panel so
+  // muscle memory transfers between roles.
+  { id:"treatment",   label:"💉 Treatment Chart"      },
   { id:"orders",      label:"📋 Doctor Orders"        },
-  { id:"meds",        label:"💊 Medications"          },
+  // R7gx-UI — Medications pill removed (mirror of Doctor panel cleanup).
   { id:"medrecon",    label:"⚖ Med Reconciliation"   },
   { id:"discharge",   label:"🚪 Discharge Summary"    },
   { id:"medcerts",    label:"📑 Medical Certificates" },
@@ -1906,6 +1916,250 @@ function EmergencyTab({emergency=[]}) {
   );
 }
 
+/* ══════════════════════════════════════════════════ TAB: CONSENT FORMS
+   R7hr-75 — Mirrors the DoctorPatientPanel.ConsentFormsTab.
+   R7hr-76 — Render full consent document inline (body / risks / benefits /
+   alternatives / consent-given-by / witness / biometric / staff sig)
+   instead of just a summary card. */
+function ConsentFormsTab({ consents = [], uhid, patient, admission }) {
+  const STATUS_STYLE = {
+    SIGNED:  { bg: C.greenL, color: C.green,  label: "✓ SIGNED"   },
+    PENDING: { bg: C.amberL, color: C.amber,  label: "⌛ PENDING"  },
+    REFUSED: { bg: C.redL,   color: C.red,    label: "✕ REFUSED"  },
+    REVOKED: { bg: "#f1f5f9",color: C.muted,  label: "↶ REVOKED"  },
+  };
+  const openConsent = () => {
+    const u = uhid ? `?uhid=${encodeURIComponent(uhid)}` : "";
+    window.open(`/consent-forms${u}`, "_blank", "noopener");
+  };
+  if (!consents.length) {
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        <Empty icon="📜" msg="No consent forms recorded for this patient yet"/>
+        <div style={{display:"flex",justifyContent:"center"}}>
+          <button
+            onClick={openConsent}
+            style={{background:C.teal,color:"#fff",border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:13,cursor:"pointer",boxShadow:"0 2px 6px rgba(13,148,136,0.25)"}}
+          >📜 Capture New Consent ↗</button>
+        </div>
+      </div>
+    );
+  }
+  const liveWardBed = [admission?.wardName, admission?.bedNumber].filter(Boolean).join(" / ");
+  const liveAdmDate = admission?.admissionDate ? new Date(admission.admissionDate).toLocaleDateString("en-IN") : "";
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:15,color:C.dark}}>📜 Consent Forms</div>
+          <div style={{fontSize:11,color:C.muted}}>NABH PRE.3 / PRE.4 · {consents.length} record{consents.length===1?"":"s"}</div>
+        </div>
+        <button onClick={openConsent}
+          style={{background:C.teal,color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontWeight:700,fontSize:12,cursor:"pointer"}}
+        >+ New Consent</button>
+      </div>
+      {consents.map((c, i) => {
+        const st = STATUS_STYLE[c.status] || STATUS_STYLE.PENDING;
+        const ts = c.signedAt || c.createdAt;
+        const wardBed = c.wardBed || liveWardBed || "—";
+        const admDate = c.admissionDate || liveAdmDate || "—";
+        const dept    = c.department    || admission?.department || "—";
+        const doctor  = c.doctorName    || admission?.attendingDoctor || "—";
+        return (
+          <div key={c._id || i}
+            style={{background:"#fff",border:`1px solid ${C.border}`,borderLeft:`4px solid ${st.color}`,borderRadius:10,padding:"16px 18px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,paddingBottom:12,borderBottom:`1px dashed ${C.border}`}}>
+              <span style={{fontSize:22}}>📜</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:800,fontSize:15,color:C.dark}}>{c.consentTitle || c.consentType || "Consent Form"}</div>
+                <div style={{fontSize:11,color:C.muted}}>
+                  NABH {c.consentType || "—"} · Consent ID <span style={{fontFamily:"monospace",fontWeight:700,color:C.text}}>{c._id?.slice(-8).toUpperCase() || "—"}</span> · {ts ? fmtDT(ts) : "—"}
+                </div>
+              </div>
+              <span style={{padding:"4px 11px",borderRadius:999,background:st.bg,color:st.color,fontWeight:800,fontSize:11}}>{st.label}</span>
+              <button onClick={openConsent}
+                title="Open consent in the standalone module to print or re-sign"
+                style={{background:"#fff",border:`1px solid ${C.border}`,color:C.dark,borderRadius:6,padding:"5px 11px",fontWeight:700,fontSize:11,cursor:"pointer"}}>🖨 Print ↗</button>
+            </div>
+            <div style={{border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",background:"#f8fafc",marginBottom:14,display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px 18px"}}>
+              {[
+                ["UHID",              c.UHID || patient?.UHID],
+                ["Patient Name",      c.patientName || patient?.fullName],
+                ["Age / Gender",      `${c.age || patient?.age || "—"} / ${c.gender || patient?.gender || "—"}`],
+                ["IPD / OPD No.",     c.ipdNo || admission?.admissionNumber],
+                ["Ward / Bed",        wardBed],
+                ["Date of Admission", admDate],
+                ["Attending Doctor",  doctor],
+                ["Department",        dept],
+              ].map(([label, value], idx) => (
+                <div key={idx}>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:".3px"}}>{label}</div>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text,marginTop:2}}>{value || "—"}</div>
+                </div>
+              ))}
+            </div>
+            {c.procedureDescription && (
+              <div style={{marginBottom:14,padding:"10px 14px",background:"#fafafa",border:`1px solid ${C.border}`,borderRadius:8,lineHeight:1.7,fontSize:13,fontFamily:"serif",whiteSpace:"pre-line"}}>{c.procedureDescription}</div>
+            )}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:14}}>
+              {[
+                {title:"Risks & Complications", icon:"⚠", color:C.red,   items:c.risksDisclosed || []},
+                {title:"Benefits",               icon:"✓", color:C.green, items:c.benefitsExplained || []},
+                {title:"Alternatives",           icon:"⇄", color:C.blue,  items:c.alternativesDisclosed || []},
+              ].map((sec, ix) => (
+                <div key={ix} style={{border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",background:"#fff"}}>
+                  <div style={{fontWeight:800,fontSize:12,color:sec.color,marginBottom:8,letterSpacing:".2px"}}>
+                    <span style={{marginRight:6}}>{sec.icon}</span>{sec.title}
+                  </div>
+                  {sec.items.length ? (
+                    <ul style={{paddingLeft:18,margin:0}}>
+                      {sec.items.map((x, j) => <li key={j} style={{fontSize:12,marginBottom:4,color:C.text,lineHeight:1.5}}>{x}</li>)}
+                    </ul>
+                  ) : (
+                    <div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>None recorded</div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px 16px",marginBottom:14}}>
+              <div>
+                <div style={{fontSize:10,color:C.muted,fontWeight:700}}>CONSENT GIVEN BY</div>
+                <div style={{fontSize:13,fontWeight:700}}>{c.consentGivenBy === "GUARDIAN" ? "Guardian / Legal Rep" : "Self (Patient)"}</div>
+              </div>
+              {c.consentGivenBy === "GUARDIAN" && (
+                <>
+                  <div><div style={{fontSize:10,color:C.muted,fontWeight:700}}>GUARDIAN NAME</div><div style={{fontSize:13,fontWeight:700}}>{c.guardianName || "—"}</div></div>
+                  <div><div style={{fontSize:10,color:C.muted,fontWeight:700}}>RELATION</div><div style={{fontSize:13,fontWeight:700}}>{c.guardianRelation || "—"}</div></div>
+                  <div><div style={{fontSize:10,color:C.muted,fontWeight:700}}>GUARDIAN CONTACT</div><div style={{fontSize:13,fontWeight:700}}>{c.guardianContact || "—"}</div></div>
+                </>
+              )}
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:700}}>LANGUAGE</div><div style={{fontSize:13,fontWeight:700}}>{c.languageUsed || "—"}</div></div>
+              {c.interpreterRequired && (
+                <div><div style={{fontSize:10,color:C.muted,fontWeight:700}}>INTERPRETER</div><div style={{fontSize:13,fontWeight:700}}>{c.interpreterName || "Required"}</div></div>
+              )}
+              {(c.witnessName || c.witnessRelation) && (
+                <>
+                  <div><div style={{fontSize:10,color:C.muted,fontWeight:700}}>WITNESS</div><div style={{fontSize:13,fontWeight:700}}>{c.witnessName || "—"}</div></div>
+                  <div><div style={{fontSize:10,color:C.muted,fontWeight:700}}>WITNESS RELATION</div><div style={{fontSize:13,fontWeight:700}}>{c.witnessRelation || "—"}</div></div>
+                </>
+              )}
+            </div>
+            {/* R7hr-79 — full Digital Authentication · Paperless Consent
+                ceremony block (mirror of DoctorPatientPanel). Surfaces the
+                vendor + HARDWARE pill + AAGUID + IP/UA + cryptographic
+                proof + staff e-signature image without leaving the panel. */}
+            {(c.biometric?.captured || c.bypass?.authorisedAt) ? (
+              <div style={{border:`1.5px solid ${C.greenB}`,borderRadius:10,padding:"14px 16px",marginTop:8,background:"#f0fdf4"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,paddingBottom:8,borderBottom:`1px dashed ${C.greenB}`}}>
+                  <span style={{fontSize:18}}>🪪</span>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:800,color:C.text}}>Digital Authentication · Paperless Consent</div>
+                    <div style={{fontSize:10,color:C.muted}}>NABH PRE.4 · IT-Act 2000 Sec. 3A · Electronic signature equivalent</div>
+                  </div>
+                  {c.status === "SIGNED" && (
+                    <span style={{marginLeft:"auto",padding:"3px 10px",background:C.green,color:"#fff",borderRadius:6,fontSize:10,fontWeight:800,letterSpacing:".3px"}}>✓ SIGNED & LOCKED</span>
+                  )}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,fontSize:11}}>
+                  <div>
+                    <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Fingerprint placed by</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.text}}>{c.consentingParty?.name || c.patientName || "—"}</div>
+                    <div style={{fontSize:10.5,color:C.muted,lineHeight:1.5}}>
+                      Relation: <strong>{c.consentingParty?.relation || "SELF"}</strong>
+                      {c.consentingParty?.contactNumber && <> · {c.consentingParty.contactNumber}</>}
+                      {c.consentingParty?.idProofType && c.consentingParty?.idProofNumber && (
+                        <div>ID: {c.consentingParty.idProofType} ending …{String(c.consentingParty.idProofNumber).slice(-4)}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Hardware Scanner</div>
+                    {c.bypass?.authorisedAt ? (
+                      <div style={{fontSize:11.5,color:C.amber}}>⚠ Biometric bypassed by admin
+                        <div style={{fontSize:10,color:C.muted,marginTop:2}}>Reason: <em>{c.bypass.reason}</em></div>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{fontSize:12,fontWeight:700,color:C.text,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                          {c.biometric?.authenticatorVendor || "Platform authenticator"}
+                          {c.biometric?.isHardwareBacked && (
+                            <span style={{padding:"1px 6px",background:"#0f766e",color:"#fff",borderRadius:4,fontSize:8.5,fontWeight:800,letterSpacing:".3px"}}>HARDWARE</span>
+                          )}
+                        </div>
+                        <div style={{fontSize:9.5,color:C.muted,fontFamily:"monospace",marginTop:2}}>AAGUID {c.biometric?.aaguid || "—"}</div>
+                      </>
+                    )}
+                  </div>
+                  <div>
+                    <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Captured At</div>
+                    <div style={{fontSize:11.5,color:C.text,fontWeight:600}}>
+                      {c.biometric?.capturedAt
+                        ? new Date(c.biometric.capturedAt).toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"})
+                        : "—"}
+                    </div>
+                    <div style={{fontSize:9.5,color:C.muted,marginTop:1}}>Server-stamped — cannot be forged</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Captured From</div>
+                    <div style={{fontSize:10.5,color:C.text,fontFamily:"monospace"}}>IP {c.biometric?.capturedFromIp || "—"}</div>
+                    {c.biometric?.capturedUserAgent && (
+                      <div style={{fontSize:9,color:C.muted,fontFamily:"monospace",lineHeight:1.3,marginTop:1}}>{String(c.biometric.capturedUserAgent).slice(0,100)}</div>
+                    )}
+                  </div>
+                  {c.biometric?.credentialId && (
+                    <div style={{gridColumn:"1 / -1"}}>
+                      <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Credential Fingerprint (cryptographic proof)</div>
+                      <div style={{fontSize:10,color:C.text,fontFamily:"monospace",wordBreak:"break-all"}}>{String(c.biometric.credentialId).slice(0,36)}…</div>
+                      <div style={{fontSize:9.5,color:C.muted,fontStyle:"italic",marginTop:2}}>
+                        Actual fingerprint template stayed inside the device TPM and was never transmitted or stored — privacy preserved per IT-Act DPDP Sensitive Personal Data provisions.
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div style={{marginTop:14,paddingTop:12,borderTop:`1px dashed ${C.greenB}`,display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+                  <div>
+                    <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Explained By / Staff Facilitator</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.text}}>{c.staffSignature?.userName || c.signedByName || c.doctorName || "—"}</div>
+                    <div style={{fontSize:10.5,color:C.muted}}>{c.staffSignature?.userRole || c.signedByRole || c.doctorRegNo || "—"}</div>
+                    {(c.staffSignature?.signedAt || c.signedAt) && (
+                      <div style={{fontSize:10,color:C.muted,marginTop:2}}>E-signed at {new Date(c.staffSignature?.signedAt || c.signedAt).toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+                    )}
+                  </div>
+                  {c.staffSignature?.signatureImage ? (
+                    <div>
+                      <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Staff Signature</div>
+                      <img src={c.staffSignature.signatureImage} alt="Staff signature"
+                        style={{height:50,maxWidth:220,border:`1px solid ${C.border}`,borderRadius:4,padding:3,background:"#fff"}}/>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{fontSize:9.5,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",marginBottom:3}}>Status</div>
+                      <div style={{fontSize:11,color:C.amber}}>⏳ Awaiting staff e-signature</div>
+                    </div>
+                  )}
+                </div>
+                <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.greenB}`,textAlign:"center",fontSize:9.5,color:C.muted,fontStyle:"italic"}}>
+                  This consent form is valid as per NABH Standards (PRE.3) · Authenticated electronically per IT-Act 2000 Sec. 3A — paper signature not required
+                </div>
+              </div>
+            ) : (
+              <div style={{border:`1px dashed ${C.border}`,borderRadius:8,padding:"12px 14px",marginTop:8,background:"#fafafa",fontSize:11,color:C.muted,textAlign:"center"}}>
+                ⏳ Awaiting digital fingerprint capture and staff e-signature
+              </div>
+            )}
+            {c.additionalNotes && (
+              <div style={{marginTop:12,padding:"10px 12px",background:"#fffbeb",border:`1px solid ${C.amberB}`,borderRadius:8}}>
+                <div style={{fontSize:11,fontWeight:800,color:C.amber,marginBottom:4}}>📝 Additional Notes</div>
+                <div style={{fontSize:12,color:C.text,whiteSpace:"pre-line"}}>{c.additionalNotes}</div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════════ MAIN */
 function NursePatientPanelContent({ selectedAdmission }) {
   const navigate = useNavigate();
@@ -1925,6 +2179,10 @@ function NursePatientPanelContent({ selectedAdmission }) {
   const [doctorNotes,  setDoctorNotes]  = useState([]);
   const [billing,      setBilling]      = useState(null);
   const [vitalSheet,   setVitalSheet]   = useState([]);
+  // R7hr-75 — Real saved-consent list for the Consent Forms tab (mirrors
+  // DoctorPatientPanel). Replaces the bare launcher card so a nurse who
+  // just witnessed a consent immediately sees it here.
+  const [consents,     setConsents]     = useState([]);
   const [emergency,    setEmergency]    = useState([]);
   const [doctorOrders, setDoctorOrders] = useState([]);
 
@@ -1956,6 +2214,7 @@ function NursePatientPanelContent({ selectedAdmission }) {
     setLoading(true); setError(""); setLoaded(false);
     setPatient(null); setAdmission(null); setNursingNotes([]); setDoctorNotes([]);
     setBilling(null); setVitalSheet([]); setEmergency([]); setDoctorOrders([]);
+    setConsents([]);
     setPendingTransfer(null);
     setActiveTab("overview");
     try {
@@ -2016,6 +2275,16 @@ function NursePatientPanelContent({ selectedAdmission }) {
         axios.get(`${BASE}/doctor-orders?UHID=${u}`).then(r=>{
           const l=Array.isArray(r.data)?r.data:(r.data?.data||[]);
           setDoctorOrders(l);
+        }).catch(()=>{}),
+
+        // R7hr-75 — Consent forms (used by the Consent Forms tab list view).
+        // R7hr-77 — Sort by displayed date (signedAt || createdAt) descending
+        // so the latest taken consent sits at the top.
+        axios.get(`${BASE}/consent-forms/uhid/${u}`).then(r=>{
+          const l=Array.isArray(r.data)?r.data:(r.data?.data||[]);
+          setConsents(l.sort((a,b)=>
+            new Date(b.signedAt || b.createdAt || 0) - new Date(a.signedAt || a.createdAt || 0)
+          ));
         }).catch(()=>{}),
       ]);
 
@@ -2122,8 +2391,10 @@ function NursePatientPanelContent({ selectedAdmission }) {
       case "blood":      return <BloodTransfusionRecordsTab nursingNotes={nursingNotes}/>;
       case "rbs":        return <RBSMonitoringTab nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>;
       case "handover":   return <HandoverNotesTab patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>;
+      // R7gx-UI — Treatment Chart (MAR) via shared component, nurse-mode on.
+      case "treatment":  return <TreatmentChart UHID={patient?.UHID} admissionId={admission?._id} patientName={patient?.fullName || patient?.name} nurseMode={true} />;
       case "orders":     return <DoctorOrdersTab doctorNotes={doctorNotes}/>;
-      case "meds":       return <MedicationsTab doctorNotes={doctorNotes} doctorOrders={doctorOrders}/>;
+      // R7gx-UI — "meds" tab removed.
       case "medrecon":   return <MedReconciliationTab admission={admission} patient={patient}/>;
       case "billing":    return <BillingTab billing={billing}/>;
       case "emergency":  return <EmergencyTab emergency={emergency}/>;
@@ -2131,15 +2402,9 @@ function NursePatientPanelContent({ selectedAdmission }) {
       // R7gm — Deep-link tabs. Nurse role can VIEW + initiate (e.g. raise
       // consent, view discharge summary, fill ICU bundle daily checklist).
       // Backend gating decides what writes are allowed.
-      case "consent":    return renderLauncher({
-        id: "consent", icon: "📜", color: C.teal,
-        title: "Consent Forms",
-        description: "Witness, capture or print NABH PRE.3 / PRE.4 informed consents with TPM-backed fingerprint biometric + staff e-signature.",
-        nabh: "NABH PRE.3 · PRE.4 · IT-Act 2000 §3A",
-        url: ({ uhid }) => `/consent-forms?uhid=${encodeURIComponent(uhid)}`,
-        cta: "Open Consent Module ↗",
-        note: "Opens in a new tab so you don't lose your place here.",
-      });
+      // R7hr-75 — Real saved-consent list (mirrors doctor panel) so a nurse
+      // who just witnessed a consent immediately sees it here.
+      case "consent":    return <ConsentFormsTab consents={consents} uhid={patient?.UHID || activeUhid} patient={patient} admission={admission}/>;
       case "icubundles": return renderLauncher({
         id: "icubundles", icon: "🛡", color: "#0ea5e9",
         title: "Bundles of Care — ICU",
@@ -2178,10 +2443,33 @@ function NursePatientPanelContent({ selectedAdmission }) {
     }
   };
 
+  // R7hr-73 — surface a count for every nurse-panel tab we can cheaply
+  // compute from already-loaded state. Empty tabs (count===0) are dimmed
+  // by the shell so the nurse can tell at a glance which sections have
+  // data. Fixes the stale "docnotes" key (no such tab id) → use "mlc".
+  // Launcher tabs (consent / icubundles / discharge / medcerts / patientfile)
+  // intentionally have no count.
+  const _initialCount = doctorNotes.filter((n) => n.noteType === "initial" || n.noteType === "initialAssessment").length
+                      + nursingNotes.filter((n) => n.noteType === "initial" || n.noteType === "initialAssessment").length;
+  const _handoverCount = doctorNotes.filter((n) => n.noteType === "handover").length
+                       + nursingNotes.filter((n) => ["handover","discharge","sbar"].includes(n.noteType)).length;
+  const _allOrders = doctorNotes.flatMap((n) => n.orders || []);
+  const _pendingOrderCount = _allOrders.filter((o) => !o.nurseStatus || o.nurseStatus === "pending").length;
+  const _treatmentCount = (doctorOrders || []).filter((o) =>
+    ["Medication","IV_Fluid","Infusion","Procedure","Diet"].includes(o.orderType)
+  ).length;
+  const _billingCount = billing?.items?.length || (Number(billing?.totalAmount) > 0 ? 1 : 0);
+
   const tabCounts = {
+    initial:   _initialCount,
+    consent:   consents.length, // R7hr-75
+    mlc:       doctorNotes.length,
     nursing:   nursingNotes.length,
-    docnotes:  doctorNotes.length,
-    orders:    doctorNotes.flatMap((n) => n.orders || []).filter((o) => !o.nurseStatus || o.nurseStatus === "pending").length,
+    vitals:    vitalSheet.length,
+    handover:  _handoverCount,
+    treatment: _treatmentCount,
+    orders:    _pendingOrderCount,
+    billing:   _billingCount,
     emergency: emergency.length,
   };
 

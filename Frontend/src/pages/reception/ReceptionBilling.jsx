@@ -308,23 +308,59 @@ export default function ReceptionBilling() {
                currentContext: { type: "IPD", admissionNumber: adm } };
     }
 
-    // 2. No active IPD — look for today's OPD/Daycare/Emergency
-    const todayBills = bills.filter(b =>
-      b.visitType !== "IPD" && (isToday(b.createdAt) || isActiveStatus(b.billStatus)));
-    if (todayBills.length > 0) {
-      const past = bills.filter(b => !todayBills.includes(b));
+    // 2. No active IPD — scope to the CURRENT OPD/Daycare/ER visit.
+    //
+    // R7hr-53 — the previous filter (`isToday(createdAt) || isActiveStatus`)
+    // had a fatal OR: any old DRAFT/GENERATED/PARTIAL bill from a prior
+    // visit (same patient, different visitId) leaked into "Current Visit"
+    // because "GENERATED" is an active status. That meant when a patient
+    // was re-registered for a new OPD visit, the unpaid bill from their
+    // earlier visit kept appearing as if it were part of the new visit.
+    //
+    // Bills are linked to OPD via `b.visitId`, and patient.currentVisit._id
+    // is the latest OPD visit (probed at fetch time, see ~line 447). Scope
+    // currentBills strictly to that visitId. Safety fallback: legacy bills
+    // that never got a visitId stamped but were created TODAY still surface
+    // as current — covers walk-in service rows added before R7bw landed
+    // the visitId wiring. Older paid bills, and ALL bills from prior visits
+    // (even today's earlier visit), flow to History.
+    const cvId = patient?.currentVisit?._id
+              || patient?.currentVisit?.visitId
+              || patient?.currentVisit?.id
+              || null;
+    const cvKey = cvId ? String(cvId) : null;
+    const sameVisit = (b) => {
+      if (!cvKey) return false;
+      const bv = b.visitId?._id || b.visitId;
+      return bv ? String(bv) === cvKey : false;
+    };
+    const currentVisitBills = bills.filter(b =>
+      b.visitType !== "IPD" && (
+        sameVisit(b)
+        || (!b.visitId && isToday(b.createdAt))   // unlinked-today fallback
+      ));
+    // Enter the OPD branch if we either found visit-scoped bills OR we have
+    // a known current visit (so an empty Current Visit shows the correct
+    // empty state instead of dumping everything into History).
+    if (currentVisitBills.length > 0 || cvKey) {
+      const past = bills.filter(b => !currentVisitBills.includes(b));
       // OPD advances rarely have admission scoping — keep advances with no
       // admission OR ones created today as "current".
       const curAdv = advances.filter(a => !a.admission || isToday(a.createdAt) || isToday(a.paidAt));
       const pastAdv = advances.filter(a => !curAdv.includes(a));
-      return { currentBills: todayBills, pastBills: past, currentAdvances: curAdv, pastAdvances: pastAdv,
-               currentContext: { type: "OPD" } };
+      return { currentBills: currentVisitBills, pastBills: past,
+               currentAdvances: curAdv, pastAdvances: pastAdv,
+               currentContext: { type: "OPD", visitId: cvKey } };
     }
 
     // 3. No current visit at all
     return { currentBills: [], pastBills: bills, currentAdvances: [], pastAdvances: advances,
              currentContext: null };
-  }, [bills, advances]);
+    // R7hr-53 — depend on patient.currentVisit._id so the OPD branch
+    // re-evaluates after the async /opd/patient/:pid probe (line ~447)
+    // resolves and stamps patient.currentVisit. Without this dep, the
+    // filter runs once with currentVisit=undefined and never refreshes.
+  }, [bills, advances, patient?.currentVisit?._id]);
 
   // Pick the active list based on the toggle
   const displayBills    = showHistory ? pastBills    : currentBills;
@@ -910,13 +946,34 @@ export default function ReceptionBilling() {
           <td style="text-align:right">₹${_num(it.unitPrice).toFixed(2)}</td>
           <td style="text-align:right">₹${_num(it.netAmount).toFixed(2)}</td>
         </tr>`).join("");
-      const paysRows = (b.payments || []).map((p) => `
+      // R7hd-FIX4 — Receipt No column. Each payment's receipt slip is
+      // numbered {billNumber}-P{seq} (positive amounts) or {billNumber}-R{seq}
+      // (refunds, negative amounts) — same convention printPaymentReceipt
+      // / printRefundReceipt use. Prefer the stored p.receiptNumber if
+      // the backend has stamped one (e.g. via PaymentReceiptModel), else
+      // compute the synthetic slip number for display only.
+      let _pSeq = 0, _rSeq = 0;
+      const paysRows = (b.payments || []).map((p) => {
+        const isRefund = _num(p.amount) < 0;
+        if (isRefund) _rSeq++; else _pSeq++;
+        const _slip = p.receiptNumber
+                   || p.receiptNo
+                   || `${b.billNumber || "DRAFT"}-${isRefund ? "R" : "P"}${isRefund ? _rSeq : _pSeq}`;
+        return `
         <tr>
+          <td style="font-family:'DM Mono',monospace;font-size:11px">${esc(_slip)}</td>
           <td>${new Date(p.paidAt || p.createdAt || Date.now()).toLocaleString("en-IN")}</td>
           <td>${esc(p.paymentMode || "")}</td>
           <td>${esc(p.transactionId || "—")}</td>
           <td style="text-align:right">₹${_num(p.amount).toFixed(2)}</td>
-        </tr>`).join("");
+        </tr>`;
+      }).join("");
+      // R7hd-FIX3 — the visit number now lives in the patient info strip
+      // (opposite the Address row). Showing it again on the bill row was
+      // redundant and noisy, especially for single-visit consolidated bills.
+      // For multi-bill consolidations (rare — patient with both OPD and
+      // a same-day Daycare bill, etc.) the per-row visitType pill still
+      // disambiguates which encounter the bill belongs to.
       return `
         <div class="bill-block">
           <div class="bill-head">
@@ -937,7 +994,7 @@ export default function ReceptionBilling() {
           ${paysRows ? `
             <div class="pay-head">Payments</div>
             <table>
-              <thead><tr><th>Date</th><th>Mode</th><th>Reference</th><th style="text-align:right">Amount</th></tr></thead>
+              <thead><tr><th>Receipt No</th><th>Date</th><th>Mode</th><th>Reference</th><th style="text-align:right">Amount</th></tr></thead>
               <tbody>${paysRows}</tbody>
             </table>` : ""}
         </div>`;
@@ -959,15 +1016,88 @@ export default function ReceptionBilling() {
             </tr>`).join("")}</tbody>
         </table>
       </div>`;
+    // R7hd — header redesigned to mirror PrintShell pattern (Registration
+    // Receipt + IPD bill style). White hospital band with right-aligned
+    // GSTIN/Reg/PAN block; accent title bar; patient info strip; per-bill
+    // blocks below now carry the visit number with a dynamic label.
+    const _accent = hs.printAccentColor || "#1d4ed8";
+    const _bills = billRows.length;
+    const _firstVt = String(billRows[0]?.b?.visitType || "OPD").toUpperCase();
+    // R7hd-FIX — patient strip was missing Department / Doctor /
+    // Address. Compute them here from currentVisit (OPD) → admission
+    // (IPD) → patient flat fields with object-id guards (some legacy
+    // visits stored raw ObjectIds in .department).
+    const _cv = patient?.currentVisit;
+    const _ca = patient?.currentAdmission;
+    const _isObjId = (s) => typeof s === "string" && /^[a-f0-9]{24}$/i.test(s);
+    const _safe = (v) => (_isObjId(v) ? "" : v);
+    const _printDept =
+         (_cv?.departmentId?.departmentName)
+      || (_cv?.departmentName)
+      || (_cv?.doctorProfile?.department?.departmentName)
+      || (_cv?.doctorProfile?.department?.name)
+      || _safe(_cv?.department)
+      || (_ca?.departmentName)
+      || _safe(_ca?.department)
+      || (typeof patient?.department === "object"
+            ? (patient.department?.name || patient.department?.departmentName)
+            : _safe(patient?.department))
+      || "";
+    const _rawDoc =
+         (_cv?.consultantName)
+      || (_cv?.doctorId?.personalInfo?.fullName)
+      || (_cv?.doctorId?.fullName)
+      || (_cv?.doctorName)
+      || (_cv?.attendingDoctor)
+      || (_ca?.doctorName)
+      || (_ca?.attendingDoctor)
+      || (typeof patient?.doctor === "object"
+            ? (patient.doctor?.fullName || patient.doctor?.personalInfo?.fullName)
+            : patient?.doctor)
+      || "";
+    const _printDoc = _rawDoc
+      ? (/^(Dr\.?|Prof\.?|Mr\.?|Mrs\.?|Ms\.?)\s+/i.test(_rawDoc) ? _rawDoc : `Dr. ${_rawDoc}`)
+      : "";
+    // Patient address — `address.completeAddress` is the canonical free-
+    // text field. `district` comes through on freshly registered patients;
+    // `city`/`state`/`pincode` round out the postal line.
+    const _pa = patient?.address || {};
+    const _pAddrLine = [
+      _pa.completeAddress || patient?.permanentAddress || patient?.currentAddress,
+      [_pa.district || _pa.city, _pa.state, _pa.pincode].filter(Boolean).join(", "),
+    ].filter(Boolean).join(" · ");
     win.document.write(`<!doctype html><html><head>
-      <title>Final Bill — ${esc(patient?.fullName || uhid)}</title>
+      <title>Final Consolidated Bill — ${esc(patient?.fullName || uhid)}</title>
       <style>
-        body { font-family: Arial, sans-serif; padding: 24px; color:#0f172a; font-size:13px; }
-        h1 { font-size: 22px; margin: 0; }
-        .meta { color: #64748b; font-size: 11px; margin-bottom: 14px; }
-        .hdr { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; padding-bottom:10px; border-bottom:1.5px solid #cbd5e1; }
-        .bill-block { margin: 18px 0; padding-bottom: 12px; border-bottom: 1px dashed #e2e8f0; page-break-inside: avoid; }
-        .bill-head { display:flex; gap:10px; align-items:center; margin-bottom:8px; }
+        *{box-sizing:border-box;font-family:'DM Sans',Arial,sans-serif}
+        body { padding: 0; color:#0f172a; font-size:13px; margin: 0; }
+        .wrap { max-width: 820px; margin: 0 auto; padding: 24px; }
+        /* ── Hospital header band (white, accent border-bottom) ── */
+        .hd { display: flex; align-items: flex-start; gap: 14px; padding: 14px 4px; border-bottom: 2px solid ${_accent}; }
+        .hd img { height: 54px; width: auto; border-radius: 6px; }
+        .hd-body { flex: 1; min-width: 0; }
+        .hd-title { font-size: 18px; font-weight: 800; color: ${_accent}; margin: 0; line-height: 1.2; }
+        .hd-tag { font-size: 11.5px; color:#475569; margin-top: 2px; }
+        .hd-addr { font-size: 11px; color:#64748b; margin-top: 3px; line-height: 1.4; }
+        .hd-meta { font-size: 10.5px; color: #475569; text-align: right; min-width: 140px; line-height: 1.5; }
+        .hd-meta strong { color:#0f172a; }
+        /* ── Title bar ── */
+        .title-bar { display:flex; align-items:center; justify-content:space-between; margin: 10px 0 14px; padding: 9px 14px; background: ${_accent}; color:#fff; border-radius: 6px; }
+        .title-bar__title { font-size: 13px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; }
+        .title-bar__meta { display:flex; align-items:center; gap:10px; }
+        .title-bar__no { font-size: 11px; font-weight: 700; background: rgba(255,255,255,.2); padding: 3px 10px; border-radius: 4px; letter-spacing: .3px; font-family:'DM Mono',monospace; }
+        .title-bar__date { font-size: 10.5px; font-weight: 600; opacity: .9; }
+        /* ── Patient info strip (2-column grid) ── */
+        .info-strip { display:grid; grid-template-columns: repeat(2, 1fr); gap: 4px 24px; padding: 10px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 14px; }
+        .info-strip__row { display:flex; gap: 8px; font-size: 11.5px; }
+        .info-strip__lbl { color: #64748b; font-weight: 600; min-width: 78px; text-transform: uppercase; font-size: 10px; letter-spacing: .3px; padding-top: 2px; }
+        .info-strip__val { color: #0f172a; font-weight: 700; font-size: 12px; }
+        .info-strip__val.mono { font-family: 'DM Mono', monospace; }
+        /* ── Per-bill blocks ── */
+        .meta { color: #64748b; font-size: 11px; }
+        .bill-block { margin: 14px 0; padding: 10px; border: 1px solid #e2e8f0; border-radius: 8px; page-break-inside: avoid; background: #fff; }
+        .bill-head { display:flex; gap:10px; align-items:center; margin-bottom:8px; font-size: 13px; flex-wrap: wrap; }
+        .bill-head > strong { color: ${_accent}; font-family: 'DM Mono', monospace; font-size: 14px; }
         .pill { padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; background:#f1f5f9; color:#475569; }
         .pill-opd { background:#ecfeff; color:#0e7490; }
         .pill-emergency, .pill-er { background:#fef2f2; color:#b91c1c; }
@@ -977,30 +1107,111 @@ export default function ReceptionBilling() {
         .pill-generated { background:#ecfeff; color:#0369a1; }
         .pill-partial { background:#fef3c7; color:#a16207; }
         .pill-draft { background:#f1f5f9; color:#64748b; }
-        .bill-sub { color:#475569; font-size:12px; margin: 6px 0 4px; }
+        .bill-sub { color:#475569; font-size:12px; margin: 6px 0 4px; padding: 8px 10px; background: #f8fafc; border-radius: 6px; }
         .pay-head { font-weight:700; font-size:11px; color:#475569; margin: 10px 0 4px; text-transform:uppercase; letter-spacing:.5px; }
         table { width:100%; border-collapse: collapse; margin: 4px 0 6px; font-size:12px; }
         th, td { padding: 5px 8px; border-bottom: 1px solid #e2e8f0; text-align:left; }
         th { background:#f8fafc; font-weight:700; }
-        .grand { margin-top: 20px; padding-top: 12px; border-top: 2px solid #0f172a; }
-        .grand-row { display:flex; justify-content:space-between; padding: 4px 0; }
-        .grand-row.major { font-size:16px; font-weight:900; padding-top:8px; border-top:1px dashed #cbd5e1; margin-top:4px; }
-        .footer { margin-top: 24px; padding-top: 10px; border-top: 1px dashed #cbd5e1; font-size: 10px; color:#94a3b8; text-align:center; }
+        /* ── Grand totals card ── */
+        .grand { margin-top: 20px; padding: 14px; background: #f8fafc; border: 1.5px solid ${_accent}; border-radius: 10px; }
+        .grand-row { display:flex; justify-content:space-between; padding: 4px 0; font-size: 12.5px; }
+        .grand-row.major { font-size:16px; font-weight:900; padding-top:8px; border-top:1px dashed #cbd5e1; margin-top:6px; }
+        .footer { margin-top: 18px; padding-top: 10px; border-top: 1px dashed #cbd5e1; font-size: 10px; color:#94a3b8; text-align:center; line-height:1.5; }
+        @media print { body { padding: 0; } .wrap { padding: 12px; } }
       </style></head><body>
-      <div class="hdr">
-        <div>
-          ${hs.logo ? `<img src="${hs.logo}" alt="" style="max-height:54px;display:block;margin-bottom:6px"/>` : ""}
-          <h1 style="color:${hs.printHeaderColor || "#0f172a"}">${esc(_hospName)}</h1>
-          <div class="meta">${_hospTagline ? esc(_hospTagline) + " · " : ""}Final Consolidated Bill</div>
-          ${_addrLine ? `<div class="meta">${esc(_addrLine)}</div>` : ""}
-          ${_phoneLine ? `<div class="meta">${esc(_phoneLine)}</div>` : ""}
-          ${hs.gstin ? `<div class="meta">GSTIN: ${esc(hs.gstin)}</div>` : ""}
+      <div class="wrap">
+      <div class="hd">
+        ${hs.logo ? `<img src="${hs.logo}" alt=""/>` : ""}
+        <div class="hd-body">
+          <h1 class="hd-title">${esc(_hospName)}</h1>
+          ${_hospTagline ? `<div class="hd-tag">${esc(_hospTagline)}</div>` : ""}
+          ${_addrLine ? `<div class="hd-addr">${esc(_addrLine)}</div>` : ""}
+          ${_phoneLine ? `<div class="hd-addr">${esc(_phoneLine)}</div>` : ""}
         </div>
-        <div style="text-align:right">
-          <strong>${esc(patient?.fullName || "Patient")}</strong><br>
-          <span class="meta">UHID: ${esc(uhid)} · ${patient?.age ? patient.age + "y" : ""} · ${esc(patient?.gender || "")}</span><br>
-          <span class="meta">Phone: ${esc(patient?.contactNumber || "—")}</span><br>
-          <span class="meta">Printed: ${new Date().toLocaleString("en-IN")}</span>
+        <div class="hd-meta">
+          ${hs.gstin ? `<div><strong>GSTIN:</strong> ${esc(hs.gstin)}</div>` : ""}
+          ${hs.registrationNo ? `<div><strong>Reg No:</strong> ${esc(hs.registrationNo)}</div>` : ""}
+          ${hs.panNumber ? `<div><strong>PAN:</strong> ${esc(hs.panNumber)}</div>` : ""}
+        </div>
+      </div>
+      <!-- Title bar -->
+      <div class="title-bar">
+        <div class="title-bar__title">Final Consolidated Bill</div>
+        <div class="title-bar__meta">
+          <span class="title-bar__no">${_bills} BILL${_bills === 1 ? "" : "S"}</span>
+          <span class="title-bar__date">${new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+        </div>
+      </div>
+      <!-- Patient info strip -->
+      <div class="info-strip">
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Patient</div>
+          <div class="info-strip__val">${esc(patient?.title || "")} ${esc(patient?.fullName || "—")}</div>
+        </div>
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">UHID</div>
+          <div class="info-strip__val mono">${esc(uhid)}</div>
+        </div>
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Age / Sex</div>
+          <div class="info-strip__val">${patient?.age ? patient.age + "y" : "—"}${patient?.gender ? " · " + esc(patient.gender) : ""}</div>
+        </div>
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Phone</div>
+          <div class="info-strip__val">${esc(patient?.contactNumber || "—")}</div>
+        </div>
+        <!-- R7hd-FIX2 — Address (left) opposite the visit-number row (right),
+             so the sequence between Phone and Doctor reads
+             "Address ║ OPD No / IPD No / Daycare No / …". Address is no
+             longer a wide row — keeps the strip a clean 2-col grid. -->
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Address</div>
+          <div class="info-strip__val" style="font-weight:600">${esc(_pAddrLine || "—")}</div>
+        </div>
+        ${(() => {
+          // Visit-number row with dynamic label per visit type, sourced
+          // from the first bill (or fall back to patient.currentVisit /
+          // currentAdmission so the row still renders before a bill is
+          // generated). Mirrors the per-bill block label.
+          const _topVisitLabel =
+              _firstVt === "IPD"        ? "IPD No"
+            : _firstVt === "DAYCARE"    ? "Daycare No"
+            : _firstVt === "DAY CARE"   ? "Daycare No"
+            : _firstVt === "EMERGENCY"  ? "Emergency No"
+            : _firstVt === "ER"         ? "Emergency No"
+            : _firstVt === "SERVICES"   ? "Service No"
+            : _firstVt === "SERVICE"    ? "Service No"
+                                        : "OPD No";
+          const _topVisitNo = billRows[0]?.b?.admissionNumber
+                          || billRows[0]?.b?.opdNumber
+                          || _ca?.admissionNumber
+                          || _cv?.admissionNumber
+                          || _cv?.visitNumber
+                          || "";
+          return `<div class="info-strip__row">
+            <div class="info-strip__lbl">${_topVisitLabel}</div>
+            <div class="info-strip__val mono">${esc(_topVisitNo || "—")}</div>
+          </div>`;
+        })()}
+        <!-- R7hd-FIX2 — always render these rows so the 2-col grid
+             alignment (Address↔OPD No, Department↔Doctor, Visit Type↔
+             Printed) stays consistent. Fields fall back to "—" when
+             missing — typical for late-stage walk-ins. -->
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Department</div>
+          <div class="info-strip__val">${esc(_printDept || "—")}</div>
+        </div>
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Doctor</div>
+          <div class="info-strip__val">${esc(_printDoc || "—")}</div>
+        </div>
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Visit Type</div>
+          <div class="info-strip__val">${esc(_firstVt === "ER" ? "Emergency" : _firstVt === "DAYCARE" || _firstVt === "DAY CARE" ? "Daycare" : _firstVt === "SERVICES" || _firstVt === "SERVICE" ? "Service" : _firstVt[0] + _firstVt.slice(1).toLowerCase())}</div>
+        </div>
+        <div class="info-strip__row">
+          <div class="info-strip__lbl">Printed</div>
+          <div class="info-strip__val">${new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
         </div>
       </div>
       ${itemsHtml}
@@ -1020,8 +1231,10 @@ export default function ReceptionBilling() {
       <div class="footer">
         Final consolidated bill generated by Reception · ${new Date().toLocaleString("en-IN")}<br>
         ${list.length} bill${list.length === 1 ? "" : "s"} across OPD / Day Care / ER / Services for this patient.
-        ${hs.billFooterNote ? esc(hs.billFooterNote) : ""}
+        ${hs.billFooterNote ? "<br>" + esc(hs.billFooterNote) : ""}
+        <div style="margin-top:6px;opacity:.7">Generated by ${esc(_hospName)} HIS</div>
       </div>
+      </div><!-- /.wrap -->
       <script>window.onload = () => { setTimeout(() => window.print(), 200); };</script>
       </body></html>`);
     win.document.close();
@@ -1042,7 +1255,10 @@ export default function ReceptionBilling() {
       receiptNo:    `${bill.billNumber}-P${(bill.payments || []).length || 1}`,
       patientName:  patient?.fullName || bill.patientName,
       uhid:         patient?.UHID || bill.UHID,
-      ipdNo:        bill.admissionNumber,
+      // R7hb — pass visitType so the template labels the No. row
+      // correctly (OPD No / IPD No / Daycare No / Emergency No).
+      visitType:    bill.visitType,
+      visitNo:      bill.admissionNumber,
       age:          patient?.age,
       gender:       patient?.gender,
       amount:       Number(pay.amount || 0),
@@ -1089,8 +1305,9 @@ export default function ReceptionBilling() {
       receiptNo:    `${bill.billNumber}-R${refundCount}`,
       patientName:  patient?.fullName || bill.patientName,
       uhid:         patient?.UHID || bill.UHID,
-      ipdNo:        bill.admissionNumber,
-      opdNo:        bill.opdNumber,
+      // R7hb — pass visitType for the dynamic No. label
+      visitType:    bill.visitType,
+      visitNo:      bill.admissionNumber || bill.opdNumber,
       date:         new Date().toISOString(),
       approvedBy:   refundInfo.refundedBy || "Reception",
       refundedBy:   refundInfo.refundedBy || "Reception",
@@ -1334,6 +1551,22 @@ export default function ReceptionBilling() {
     // R7aa: fall back to summing billItems when a bill's parent totals
     // are stale (recalcTotals never ran). Keeps the patient-level summary
     // strip honest even when individual bill rows have ₹0 grossAmount.
+    //
+    // R7hr-53 — Scope the KPI strip to the CURRENT VISIT's bills
+    // (currentBills), not the patient's all-time bills. Previously the
+    // KPIs summed every PatientBill row, so a fresh OPD visit with one
+    // ₹200 bill would still show Gross ₹850 / Paid ₹350 / Outstanding
+    // ₹500 because of two older bills sitting in History. That's a lie:
+    // no payment has been collected for THIS visit, and the action row
+    // (Take Advance / Add Charge / Collect All Dues / Settle All) all
+    // targets the current visit. Historical bills are informational —
+    // the KPIs must mirror what the action buttons actually act on.
+    //
+    // Outstanding bills from prior visits don't disappear; they're
+    // still visible (and collectible) under the History tab via the
+    // per-bill Full Payment / Partial Settlement controls. The KPI strip
+    // just stops conflating "patient's lifetime billing" with "this
+    // visit's billing position".
     const _eff = (b) => {
       const net = Number(b.netAmount || 0);
       if (net > 0) return { net, bal: Number(b.balanceAmount || 0) };
@@ -1341,7 +1574,22 @@ export default function ReceptionBilling() {
       const paid     = (b.payments   || []).reduce((s, p) => s + Number(p.amount    || 0), 0);
       return { net: itemsNet, bal: Math.max(0, itemsNet - paid) };
     };
-    const agg = bills.reduce((acc, b) => {
+    // R7hr-54 — Exclude VOIDED bills (CANCELLED / REFUNDED) from the
+    // financial aggregation. A cancelled bill is voided — it should not
+    // contribute to Gross / Net Payable / Paid even though the row
+    // still exists in the list for audit. Symptom: after the user
+    // cancels the only ₹200 bill on a new visit, KPIs were still
+    // showing Gross ₹200 / Paid ₹200 because the cancel flow stamps
+    // a balancing payment to zero the bill — which the aggregator
+    // then mis-read as "₹200 collected". Excluding voided statuses
+    // makes the KPI strip honest: no active bill → all zeros.
+    // The bill itself remains visible in the bill list so the
+    // receptionist can see the audit trail and reprint a void slip.
+    const VOID_STATUSES = ["CANCELLED", "REFUNDED"];
+    const isVoid = (b) => VOID_STATUSES.includes(b.billStatus);
+    const scope = currentBills;
+    const liveScope = scope.filter(b => !isVoid(b));
+    const agg = liveScope.reduce((acc, b) => {
       const { net, bal } = _eff(b);
       acc.gross += net;
       acc.due   += bal;
@@ -1351,11 +1599,11 @@ export default function ReceptionBilling() {
       gross:    agg.gross,
       due:      agg.due,
       paid:     agg.gross - agg.due,
-      bills:    bills.length,
-      open:     bills.filter(b => ["GENERATED", "PARTIAL"].includes(b.billStatus)).length,
-      drafts:   bills.filter(b => b.billStatus === "DRAFT").length,
+      bills:    liveScope.length,
+      open:     liveScope.filter(b => ["GENERATED", "PARTIAL"].includes(b.billStatus)).length,
+      drafts:   liveScope.filter(b => b.billStatus === "DRAFT").length,
     };
-  }, [bills]);
+  }, [currentBills]);
 
   return (
     <div className="rx-page" style={{ background: C.bg, minHeight: "100vh", padding: "16px 20px 60px", fontFamily: FONT_SANS }}>
@@ -1569,6 +1817,30 @@ export default function ReceptionBilling() {
               || "—";
             // OPD/Daycare/ER bills created today (for the visit summary slot)
             const todayBill = (currentBills || [])[0] || (bills || [])[0];
+            // R7hc — surface the visit number on the patient card. Pre-R7hc
+            // only IPD admissions showed a number in the sub-line ("IPD · IPD-26-02");
+            // OPD/Daycare/ER/Service just said "OPD · Today" — so the
+            // receptionist couldn't quote the OPD/ER/Service identifier
+            // without opening the bill. Now every visit type shows a
+            // labelled number (or "Today" fallback if none).
+            const _visitTypeRaw = String(
+              (isIPD && (currentContext?.type || "IPD")) ||
+              todayBill?.visitType ||
+              patient?.currentVisit?.visitType ||
+              "OPD"
+            ).toUpperCase();
+            const _visitTypeLabel =
+              _visitTypeRaw === "IPD"        ? "IPD"
+            : _visitTypeRaw === "DAYCARE"    ? "Daycare"
+            : _visitTypeRaw === "DAY CARE"   ? "Daycare"
+            : _visitTypeRaw === "EMERGENCY"  ? "Emergency"
+            : _visitTypeRaw === "ER"         ? "Emergency"
+            : _visitTypeRaw === "SERVICES"   ? "Service"
+            : _visitTypeRaw === "SERVICE"    ? "Service"
+                                             : "OPD";
+            const _visitNumber = isIPD
+              ? (currentContext?.admissionNumber || ipdBill?.admissionNumber || patient?.currentAdmission?.admissionNumber)
+              : (todayBill?.admissionNumber || todayBill?.opdNumber || patient?.currentVisit?.admissionNumber || patient?.currentVisit?.visitNumber);
             return (
               <div style={{
                 background: C.card, border: `1.5px solid ${C.border}`,
@@ -1604,9 +1876,13 @@ export default function ReceptionBilling() {
                         : fmtDateTime(todayBill?.createdAt || new Date())}
                     </div>
                     <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
-                      {isIPD
-                        ? `IPD · ${currentContext?.admissionNumber || ipdBill?.admissionNumber || "—"}`
-                        : `${todayBill?.visitType || "OPD"} · Today`}
+                      {/* R7hc — show {Type} No: {visitNumber} for every
+                          visit type. Falls back to "Today" when no number
+                          exists yet (e.g. walk-in being registered). */}
+                      {_visitTypeLabel} No: <strong style={{ color: C.text, fontFamily: "'DM Mono', monospace" }}>
+                        {_visitNumber || "—"}
+                      </strong>
+                      {!_visitNumber && <span style={{ marginLeft: 4 }}>· Today</span>}
                       {patient.tpa && (
                         <span style={{
                           marginLeft: 6, fontSize: 10, fontWeight: 800, color: C.amber,
@@ -2041,7 +2317,38 @@ export default function ReceptionBilling() {
                   onGenerate={() => generateBill(activeBill._id)}
                   onPay={() => setPayTarget(activeBill)}
                   onSettle={() => setSettleTarget(activeBill)}
-                  onPrint={() => printReceipt(activeBill)}
+                  onPrint={() => {
+                    // R7hr-55 — When the bill has been REFUNDED, Print
+                    // should issue the refund slip (RefundReceipt
+                    // template), NOT the original tax invoice — the
+                    // patient needs a document showing the money was
+                    // returned to them. We reconstruct refundInfo from
+                    // the latest negative payment row stamped by the
+                    // backend refund flow (paymentMode/amount/remarks/
+                    // receivedBy carry everything the slip needs). For
+                    // any other status (DRAFT/GENERATED/PARTIAL/PAID/
+                    // CANCELLED) fall through to the regular receipt.
+                    if (activeBill?.billStatus === "REFUNDED") {
+                      const refunds = (activeBill.payments || [])
+                        .filter(p => Number(p.amount) < 0);
+                      const last = refunds[refunds.length - 1];
+                      if (last) {
+                        const remarks = String(last.remarks || "");
+                        const reason = remarks
+                          .replace(/^REFUND\s*(?:→\s*advance\s+pool)?\s*:?\s*/i, "")
+                          .trim();
+                        printRefundReceipt(activeBill, {
+                          amount:        Math.abs(Number(last.amount)),
+                          mode:          last.paymentMode || "CASH",
+                          transactionId: last.transactionId || "",
+                          reason,
+                          refundedBy:    last.receivedBy || "Reception",
+                        });
+                        return;
+                      }
+                    }
+                    printReceipt(activeBill);
+                  }}
                   onRefund={() => setRefundTarget(activeBill)}
                   onCancel={() => setCancelTarget(activeBill)}
                   onAddService={() => setAddSvcTarget(activeBill)}

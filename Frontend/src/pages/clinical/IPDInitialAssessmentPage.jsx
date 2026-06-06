@@ -16,6 +16,17 @@ import SignaturePad from "../../Components/signature/SignaturePad";
 // header + 2-col patient strip + double-signature zone. The
 // role-aware nursing/doctor block HTML (R7fh) flows in via bodyHtml.
 import { buildPrintShellHtml } from "@/templates/PrintShell";
+// R7hr-58 — Structured Clinical Examination card shared with
+// OPDAssessmentPage. Replaces the old Review-of-Systems checklist +
+// free-text Physical Examination textareas with the same rich
+// General-Exam + CVS/RS/CNS/P-A UI the doctor already uses in OPD.
+import ClinicalExaminationCard, { clinExamSummary } from "../../Components/clinical/ClinicalExaminationCard";
+// R7hr-59 — Shared OPD-style Rx + IV-fluids builders. Same controlled
+// components the doctor already uses in OPDAssessmentPage so the IPD
+// Initial Assessment gets the rich DrugAutocomplete + 7-cell rx row +
+// IV bag builder UX instead of the legacy hand-built textarea/table.
+import PrescriptionPanel from "../../Components/clinical/PrescriptionPanel";
+import InfusionPanel     from "../../Components/clinical/InfusionPanel";
 
 /* ── Design tokens ── */
 const C = {
@@ -32,7 +43,7 @@ const C = {
 };
 
 /* ── Section card ── */
-function Section({ title, icon, color = C.accent, badge, children, defaultOpen = true }) {
+function Section({ title, icon, color = C.accent, badge, children, defaultOpen = true, disabled = false }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div style={{ background: C.card, border: `1.5px solid ${color}25`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
@@ -50,10 +61,23 @@ function Section({ title, icon, color = C.accent, badge, children, defaultOpen =
             <span style={{ background: color + "18", color, border: `1px solid ${color}30`,
               fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 4 }}>{badge}</span>
           )}
+          {disabled && (
+            <span title="Locked - click Amend at the top of the page to edit"
+              style={{ background: "#fee2e2", color: "#b91c1c", border: "1px solid #fecaca",
+                fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 4 }}>LOCKED</span>
+          )}
         </div>
         <i className={`pi ${open ? "pi-chevron-up" : "pi-chevron-down"}`} style={{ fontSize: 10, color: C.muted }} />
       </div>
-      {open && <div style={{ padding: "16px 18px" }}>{children}</div>}
+      {open && (
+        <div
+          aria-disabled={disabled || undefined}
+          style={{
+            padding: "16px 18px",
+            ...(disabled ? { pointerEvents: "none", opacity: 0.7, filter: "saturate(0.85)" } : null),
+          }}
+        >{children}</div>
+      )}
     </div>
   );
 }
@@ -91,6 +115,123 @@ function ScoreBadge({ score, label, risk, color }) {
       <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{risk}</div>
     </div>
   );
+}
+
+/* ── R7hr-69 · Lab / Imaging / Procedure catalog for the
+       Investigations autocomplete. Order: most-common Indian IPD
+       admission workup first, then grouped specialty groups so the
+       filter feels "smart" — doctor types 2-3 letters and the right
+       test surfaces near the top. ─────────────────────────────────── */
+const LAB_TESTS = [
+  // Hematology
+  "CBC (Complete Blood Count)", "ESR", "PT / INR", "aPTT", "D-Dimer",
+  "Peripheral Smear", "Reticulocyte Count", "Bleeding Time", "Clotting Time",
+  // Biochemistry — daily ward workup
+  "LFT (Liver Function Tests)", "RFT (Renal Function Tests)",
+  "Electrolytes (Na / K / Cl)", "Serum Calcium", "Serum Magnesium",
+  "Serum Phosphorus", "Lipid Profile", "Random Blood Sugar (RBS)",
+  "Fasting Blood Sugar (FBS)", "Post-Prandial Blood Sugar (PPBS)",
+  "HbA1c", "Uric Acid", "Amylase", "Lipase", "CPK", "CPK-MB",
+  "Troponin I", "NT-proBNP", "Procalcitonin", "CRP", "Ferritin",
+  "Serum Iron / TIBC", "Vitamin D (25-OH)", "Vitamin B12", "Folate",
+  // Endocrine
+  "TSH", "Free T3", "Free T4", "Cortisol (8 AM)", "PTH",
+  "Serum Insulin (Fasting)", "HCG (Beta)",
+  // ABG / Blood Gas
+  "ABG (Arterial Blood Gas)", "VBG (Venous Blood Gas)", "Lactate",
+  // Microbiology / Culture
+  "Blood Culture & Sensitivity", "Urine Culture & Sensitivity",
+  "Sputum Culture & Sensitivity", "Stool Culture",
+  "Wound Swab Culture", "CSF Analysis", "Pleural Fluid Analysis",
+  "Ascitic Fluid Analysis",
+  // Serology
+  "HIV ELISA", "HBsAg", "Anti-HCV", "VDRL", "Dengue NS1 + IgM / IgG",
+  "Malaria Antigen (MP-MRDT)", "Typhi-Dot IgM", "Widal Test",
+  "COVID-19 RT-PCR", "Leptospira IgM", "Scrub Typhus IgM",
+  // Urine / Stool
+  "Urine Routine & Microscopy", "Urine Albumin-Creatinine Ratio",
+  "24-hr Urine Protein", "24-hr Urine Creatinine Clearance",
+  "Stool Routine & Microscopy", "Stool Occult Blood",
+  // Cardiac
+  "ECG (12-Lead)", "2D Echo", "Stress Test (TMT)", "Holter Monitoring",
+  // Radiology
+  "Chest X-Ray PA", "Chest X-Ray AP", "X-Ray KUB", "X-Ray Abdomen Erect",
+  "X-Ray (specify region)",
+  "USG Abdomen", "USG KUB", "USG Pelvis", "USG Whole Abdomen",
+  "USG Doppler — Lower Limb Venous", "USG Doppler — Carotid",
+  "CECT Head", "NCCT Head", "CECT Chest", "CECT Abdomen + Pelvis",
+  "HRCT Chest", "MRI Brain (Plain + Contrast)", "MRI Spine",
+  // Endoscopy / Procedures
+  "Upper GI Endoscopy", "Colonoscopy", "Bronchoscopy", "ERCP",
+  "FNAC (specify site)", "Biopsy (specify site)",
+  // Pulmonary / Neuro
+  "PFT (Pulmonary Function Test)", "Spirometry",
+  "EEG", "EMG", "Nerve Conduction Study (NCS)",
+];
+/* ─────────────────────────────────────────────────────── */
+
+/* ── R7hr-70 · Structured History catalogs (Past Surgical, Family,
+       Social). Each [key, label] pair drives both the on-screen
+       checkbox grid AND the print/save summary. ─────────────────── */
+const PSH_OPTIONS = [
+  ["appendectomy",     "Appendectomy"],
+  ["cholecystectomy",  "Cholecystectomy"],
+  ["hernia",           "Hernia repair"],
+  ["cabg",             "CABG"],
+  ["angioplasty",      "Angioplasty / Stent"],
+  ["valveReplacement", "Valve replacement"],
+  ["hysterectomy",     "Hysterectomy"],
+  ["cSection",         "Caesarean section"],
+  ["thyroidectomy",    "Thyroidectomy"],
+  ["kneeReplacement",  "Knee replacement"],
+  ["hipReplacement",   "Hip replacement"],
+  ["cataract",         "Cataract surgery"],
+];
+const FAMHX_OPTIONS = [
+  ["diabetes",            "Diabetes Mellitus"],
+  ["hypertension",        "Hypertension"],
+  ["cad",                 "CAD / IHD"],
+  ["stroke",              "Stroke / CVA"],
+  ["cancer",              "Cancer / Malignancy"],
+  ["asthma",              "Asthma"],
+  ["thyroid",             "Thyroid disorder"],
+  ["mentalIllness",       "Mental illness"],
+  ["kidney",              "Chronic Kidney Disease"],
+  ["suddenCardiacDeath",  "Sudden cardiac death"],
+  ["bleedingDisorder",    "Hereditary bleeding disorder"],
+];
+/* Social history is the odd one out — chip-group values (Never /
+   Current / Former etc.) rather than booleans. Group → chip options. */
+const SOCHX_GROUPS = [
+  { key: "smoking",   label: "Smoking",   chips: ["Never", "Current", "Former"] },
+  { key: "alcohol",   label: "Alcohol",   chips: ["Never", "Occasional", "Daily", "Former"] },
+  { key: "tobacco",   label: "Tobacco / Gutka / Paan", chips: ["Never", "Current", "Former"] },
+  { key: "substance", label: "Substance abuse", chips: ["Never", "Past", "Current"] },
+];
+
+function pshSummary(s) {
+  if (!s) return "";
+  const ticks = PSH_OPTIONS.filter(([k]) => s[k]).map(([, l]) => l);
+  if (s.other) ticks.push(s.other);
+  return ticks.join(", ");
+}
+function famHxSummary(s) {
+  if (!s) return "";
+  const ticks = FAMHX_OPTIONS.filter(([k]) => s[k]).map(([, l]) => l);
+  if (s.other) ticks.push(s.other);
+  return ticks.join(", ");
+}
+function socHxSummary(s) {
+  if (!s) return "";
+  const parts = [];
+  for (const g of SOCHX_GROUPS) {
+    const v = s[g.key];
+    if (v && v !== "Never") parts.push(`${g.label}: ${v}`);
+  }
+  if (s.occupation)    parts.push(`Occupation: ${s.occupation}`);
+  if (s.recentTravel)  parts.push(`Recent travel: ${s.recentTravel}`);
+  if (s.other)         parts.push(s.other);
+  return parts.join(" · ");
 }
 
 /* ── MORSE FALL SCALE ──────────────────────────────── */
@@ -333,7 +474,7 @@ const FREQS  = ["OD", "BD", "TDS", "QID", "SOS", "Stat", "HS", "Alternate days",
 // R7ey-F79/F80/F81 — accept `onSign` callback so the parent (DoctorNotesPage
 // embed) can refresh its local `patient.initialAssessment` cache the moment
 // the doctor signs, lifting the tile-gate without a full page reload.
-export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
+export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultViewRole }) {
   const { uhid: uhidParam } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -349,9 +490,25 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   // toggle in the header to flip between Nurse and Doctor view. Doctor
   // users always see Doctor view; Nurse users always see Nursing view —
   // no UX change for them.
+  //
+  // R7hr-57 — accept `defaultViewRole` prop. Pre-R7hr-57 an Admin opening
+  // this page from DoctorNotes saw the Nursing form by default (because
+  // the role-based default fell through to "nurse" for non-doctor users).
+  // DoctorNotes now passes `defaultViewRole="doctor"` so the embed always
+  // opens in Doctor view — matching the page context the user clicked
+  // into. Standalone /ipd-initial-assessment route keeps the role-based
+  // default. Doctor/Nurse users are unaffected (their role still wins).
   const _userRoleRaw = String(user?.role || "").toLowerCase();
   const isAdminUser  = _userRoleRaw === "admin";
-  const _defaultViewRole = _userRoleRaw === "doctor" ? "doctor" : "nurse";
+  const _roleBasedDefault = _userRoleRaw === "doctor" ? "doctor" : "nurse";
+  // Doctor role always overrides; Nurse role always overrides; everyone
+  // else (Admin, etc.) honours the explicit `defaultViewRole` prop.
+  const _defaultViewRole =
+    _userRoleRaw === "doctor" ? "doctor"
+    : _userRoleRaw === "nurse" ? "nurse"
+    : (defaultViewRole === "doctor" || defaultViewRole === "nurse")
+      ? defaultViewRole
+      : _roleBasedDefault;
   const [viewRole, setViewRole] = useState(_defaultViewRole);
   const isDoctorRole = viewRole === "doctor";
 
@@ -393,6 +550,29 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   // R7fm — separate NurseNote id for the nursing-section mirror write
   // (NurseNotes collection / nursing timeline). See R7fm.
   const [nurseNoteId, setNurseNoteId] = useState(null);
+  // R7hr-72/lock — One-shot fill, explicit Amend ceremony. Once the
+  // restored role-specific note has status signed/amended, the page
+  // drops into LOCKED mode: every Section becomes read-only behind the
+  // `ro` helper, the bottom Save/Sign buttons hide, and a red ribbon
+  // exposes a single Amend button. Clicking it pops a modal that
+  // captures a reason (min 5 chars), snapshots the full form state,
+  // then unlocks the page for editing. On save, a diff payload + the
+  // reason posts to /{role-notes}/:id/amend so the backend logs the
+  // audit row and re-signs.
+  const [iaLocked,         setIaLocked]         = useState(false);
+  const [amendMode,        setAmendMode]        = useState(false);
+  const [amendReason,      setAmendReason]      = useState("");
+  const [amendModalOpen,   setAmendModalOpen]   = useState(false);
+  const [preAmendSnapshot, setPreAmendSnapshot] = useState(null);
+  // Lock ribbon metadata sourced from the restored note.
+  const [lockedSignedByName, setLockedSignedByName] = useState("");
+  const [lockedSignedAt,     setLockedSignedAt]     = useState(null);
+  // R7hr-90 — Server-known existing role-specific signed/amended IA note
+  // (id only). Powers the pre-POST defensive guard and the 409 handler:
+  // the one-shot constraint says only ONE Initial Assessment per
+  // (admission, role) may exist signed. If this id is set, attempting to
+  // create another via Sign & Submit (without amendMode) is blocked.
+  const [existingSignedIaId, setExistingSignedIaId] = useState(null);
   // R7bd — activeTab + Doctor Initial Assessment tab removed. This page
   // is now nursing-only: the Doctor's initial assessment lives in the
   // dedicated Doctor Notes → Initial Assessment flow, and combining
@@ -473,10 +653,40 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   const [doctorName, setDoctorName]     = useState(user?.fullName || "");
   const [regNo, setRegNo]               = useState(user?.doctorDetails?.registrationNumber || "");
   const [hopi, setHopi]                 = useState("");       // History of Present Illness
-  const [pmh, setPmh]                   = useState("");
-  const [psh, setPsh]                   = useState("");
-  const [famHx, setFamHx]               = useState("");
-  const [socHx, setSocHx]               = useState("");
+  // R7hr-70 — pmh removed (replaced by Co-morbidities checklist).
+  // PSH / FamHx / SocHx kept as legacy strings for load fall-back, but
+  // the canonical state moves to structured objects below.
+  const [psh, setPsh]                   = useState("");   // legacy string — read-only after R7hr-70
+  const [famHx, setFamHx]               = useState("");   // legacy string — read-only after R7hr-70
+  const [socHx, setSocHx]               = useState("");   // legacy string — read-only after R7hr-70
+
+  // R7hr-70 — Structured Past Surgical / Family / Social history.
+  // Checkbox-grid UI mirrors Co-morbidities (3-col). Free-text "other"
+  // captures anything not in the menu. On save these write through to
+  // pshStruct / famHxStruct / socHxStruct AND a derived legacy string
+  // so any downstream consumer that reads `psh` etc. still works.
+  const [pshStruct, setPshStruct] = useState({
+    appendectomy: false, cholecystectomy: false, hernia: false,
+    cabg: false, angioplasty: false, valveReplacement: false,
+    hysterectomy: false, cSection: false, thyroidectomy: false,
+    kneeReplacement: false, hipReplacement: false, cataract: false,
+    other: "",
+  });
+  const [famHxStruct, setFamHxStruct] = useState({
+    diabetes: false, hypertension: false, cad: false, stroke: false,
+    cancer: false, asthma: false, thyroid: false, mentalIllness: false,
+    kidney: false, suddenCardiacDeath: false, bleedingDisorder: false,
+    other: "",
+  });
+  const [socHxStruct, setSocHxStruct] = useState({
+    smoking:   "Never",   // Never / Current / Former
+    alcohol:   "Never",   // Never / Occasional / Daily / Former
+    tobacco:   "Never",   // Never / Current / Former
+    substance: "Never",   // Never / Past / Current
+    occupation: "",
+    recentTravel: "",
+    other: "",
+  });
   const [docAllergy, setDocAllergy]     = useState("");
   const [genExam, setGenExam]           = useState("");
   const [cvs, setCvs]                   = useState("");
@@ -486,8 +696,34 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   const [provDx, setProvDx]             = useState("");
   const [finalDx, setFinalDx]           = useState("");
   const [icd10, setIcd10]               = useState("");
+  // R7hr-65 — bring IPD Diagnosis card to parity with OPD: ICD-10
+  // description (free-text alongside the code) + Patient Status pill
+  // (Stable / Improving / Unchanged / Deteriorating / Critical /
+  // Ready for Discharge). Empty defaults so old saved IAs still load.
+  const [icd10Description, setIcd10Description] = useState("");
+  const [patientStatus, setPatientStatus]       = useState("");
   const [investigations, setInvestigations] = useState("");
   const [rxRows, setRxRows]             = useState([blankRx()]);
+  // R7hr-59 — Adopt OPD-style structured Investigations + Rx + Infusion.
+  // Shapes match PrescriptionPanel / InfusionPanel so the shared
+  // components drop straight in. The legacy `rxRows` + `investigations`
+  // string still live above for back-compat read/save (old saved
+  // assessments shouldn't be lost), but new IPD assessments write
+  // through to these structured arrays.
+  const [meds,      setMeds]      = useState([]);   // PrescriptionPanel value
+  const [invests,   setInvests]   = useState([]);   // [{ name, urgency?, instructions? }]
+  const [infusions, setInfusions] = useState([]);   // InfusionPanel value
+  // R7hr-69 — Investigations picker: catalog autocomplete + multi-select
+  // chip flow. `invQuery` is the live input, `invPending` is the chip
+  // batch waiting to be committed, `invUrgency` + `invInstructions`
+  // apply to the whole batch on commit. `invSuggestIdx` drives keyboard
+  // nav inside the autocomplete dropdown.
+  const [invQuery,        setInvQuery]        = useState("");
+  const [invPending,      setInvPending]      = useState([]); // array of test-name strings
+  const [invUrgency,      setInvUrgency]      = useState("ROUTINE");
+  const [invInstructions, setInvInstructions] = useState("");
+  const [invShowSuggest,  setInvShowSuggest]  = useState(false);
+  const [invSuggestIdx,   setInvSuggestIdx]   = useState(-1);
   const [treatmentPlan, setTreatmentPlan] = useState("");
   const [followupNotes, setFollowupNotes] = useState("");
   const [dietAdvice, setDietAdvice]     = useState("");
@@ -533,6 +769,29 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
     constitutional: "NAD", cardiac: "NAD", respiratory: "NAD", gi: "NAD",
     gu: "NAD", musculoskeletal: "NAD", neuro: "NAD", skin: "NAD",
     endocrine: "NAD", psych: "NAD",
+  });
+  // R7hr-58 — Structured clinical examination (replaces simple Review of
+  // Systems checklist + Physical Examination textareas). Shares UI with
+  // OPD Assessment via ClinicalExaminationCard. The old `ros` + `genExam`
+  // / `cvs` / `rs` / `abdomen` / `cns` strings stay in scope so legacy
+  // records still load + print; the new structured payload takes
+  // precedence on hydration.
+  const [clinExam, setClinExam] = useState({
+    genExam: {
+      built: "", nourishment: "", consciousness: "", orientation: "",
+      pallor: "", pedalEdema: "", hydration: "", jvp: "",
+      icterus: false, cyanosis: false, clubbing: false,
+      lymphadenopathy: false, febrile: false, lymphLocation: "",
+    },
+    sysExam: {
+      cvs: { s1s2: "", rhythm: "", murmur: false, murmurDetails: "", other: "" },
+      rs:  { airEntry: "", breathSounds: "", crepts: false, wheeze: false, rhonchi: false, other: "" },
+      cns: { gcs: "", speech: "", tone: "", reflexes: "", plantar: "", power: "", other: "" },
+      pa:  { soft: false, tender: false, distended: false, organomegaly: false, mass: false,
+             bowelSounds: "", tenderLocation: "", organomegalyDetails: "", other: "" },
+    },
+    generalExamination: "",
+    systemicExamination: "",
   });
 
   /* ══ R7fc · NURSE P0 NABH FIELDS (N1-N10) ══════════════════════ */
@@ -748,7 +1007,13 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   const draftKey = patient?._id ? `sphere_draft_ipd_initial_${patient._id}` : null;
   const { savedAt, hasDraft, clearDraft } = useAutoSave(
     draftKey,
-    { admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit, consciousnessLevel, mobility, allergy, chiefComplaint, vitals, painPresent, painScore, painLocation, painCharacter, devices, skinIntact, skinNotes, morse, braden, nutri, vte, nursingProblems, nursingGoals, nursingNotes, doctorName, regNo, hopi, pmh, psh, famHx, socHx, docAllergy, genExam, cvs, rs, abdomen, cns, provDx, finalDx, icd10, investigations, rxRows, treatmentPlan, followupNotes, dietAdvice, activityAdvice,
+    { admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit, consciousnessLevel, mobility, allergy, chiefComplaint, vitals, painPresent, painScore, painLocation, painCharacter, devices, skinIntact, skinNotes, morse, braden, nutri, vte, nursingProblems, nursingGoals, nursingNotes, doctorName, regNo, hopi, psh, famHx, socHx, pshStruct, famHxStruct, socHxStruct, docAllergy, genExam, cvs, rs, abdomen, cns, provDx, finalDx, icd10, investigations, rxRows, treatmentPlan, followupNotes, dietAdvice, activityAdvice,
+      // R7hr-72 — structured panels added during R7hr-58..69; without
+      // them in this dep object the autosave hook would never re-fire
+      // when the doctor edited Investigations / Prescription / Infusion
+      // / Clinical Examination / Diagnosis-extras, so the draft silently
+      // froze on the field that was open when autosave last ran.
+      meds, invests, infusions, clinExam, icd10Description, patientStatus,
       // R7fb · doctor P0 fields
       docCC, ccDuration, allergyList, noKnownAllergies, medRecon, workingDx, differentialDx, comorbid, codeStatus, codeStatusDiscussedWith, codeStatusLimitations, elosDays, goalOfCare, docRiskAck, ros,
       // R7fc · nurse P0 fields
@@ -785,19 +1050,45 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
   // B · PMH — bidirectional best-effort sync. Whichever party fills
   // first becomes the seed for the other. Doctor's full > nurse's brief.
   useEffect(() => {
-    if (!pmh && nurseBriefPmh?.trim()) setPmh(nurseBriefPmh.trim());
+    // R7hr-70 — pmh removed from doctor view (replaced by Co-morbidities
+    // checklist). Nurse's brief PMH field stays — it's the nurse-side
+    // context, no longer fans out to a doctor PMH textarea.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nurseBriefPmh]);
-  useEffect(() => {
-    if (!nurseBriefPmh && pmh?.trim()) setNurseBriefPmh(pmh.trim().slice(0, 240));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pmh]);
+
+  // R7hr-70 — keep the legacy psh / famHx / socHx strings in sync with
+  // the structured state so any downstream consumer that reads the
+  // string fields (discharge-summary print, narrative theme, etc.)
+  // gets the canonical joined-summary text without per-source plumbing.
+  useEffect(() => { setPsh(pshSummary(pshStruct)); /* eslint-disable-next-line */ }, [pshStruct]);
+  useEffect(() => { setFamHx(famHxSummary(famHxStruct)); /* eslint-disable-next-line */ }, [famHxStruct]);
+  useEffect(() => { setSocHx(socHxSummary(socHxStruct)); /* eslint-disable-next-line */ }, [socHxStruct]);
+
+  // R7hr-96 — High-Alert Medication keyword sniff (mirrors backend
+  // DoctorOrderModel HAM_KEYWORDS so the row's HAM chip lights up the
+  // moment the doctor types the drug name, without waiting for save).
+  // The doctor can still flip the checkbox manually for an edge-case
+  // brand name we didn't anticipate.
+  const HAM_KEYWORDS_FE = [
+    "insulin","heparin","enoxaparin","fondaparinux","warfarin","acenocoumarol",
+    "digoxin","amiodarone","lidocaine","lignocaine","morphine","fentanyl",
+    "pethidine","tramadol","midazolam","propofol","ketamine","potassium",
+    "kcl","sodium bicarbonate","magnesium sulfate","calcium chloride",
+    "calcium gluconate","adrenaline","epinephrine","noradrenaline",
+    "norepinephrine","dobutamine","dopamine","vasopressin","nitroprusside",
+    "alteplase","tenecteplase","streptokinase","methotrexate",
+    "vincristine","cisplatin","carboplatin","doxorubicin","cyclophosphamide",
+    "vancomycin iv","gentamicin iv","amikacin iv",
+  ];
+  const isHAMByName = (name = "") => HAM_KEYWORDS_FE.some(k => (name || "").toLowerCase().includes(k));
 
   // C · Medication Reconciliation — nurse owns the home-meds list (she
   // sees the drugs the patient brought). Doctor's table inherits each
-  // row + only adds the Continue/Hold/Modify/Discontinue decision.
-  // Doctor can still add rows nurse didn't (e.g. insulin the patient
-  // didn't mention) — those stay marked `_doctorOnly: true`.
+  // row + only adds the Continue/Hold decision (R7hr-96: dropped Modify/
+  // Discontinue because they don't map cleanly to MAR — Hold covers
+  // "don't give now"; Continue auto-fans-out to MAR). Doctor can still
+  // add rows nurse didn't (e.g. insulin the patient didn't mention) —
+  // those stay marked `_doctorOnly: true`.
   useEffect(() => {
     setMedRecon(prev => {
       // Index existing doctor rows so we preserve their decisions.
@@ -811,7 +1102,11 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           const existing = byDrug.get(key) || {};
           return {
             drug: hm.drug, dose: hm.dose, frequency: hm.frequency, lastTaken: hm.lastTaken,
-            continueOnAdmit: existing.continueOnAdmit || "Continue",
+            // R7hr-96 — only Continue / Hold are valid; collapse any
+            // legacy Modify/Discontinue values to Hold so the dropdown
+            // never renders a missing option.
+            continueOnAdmit: ["Continue","Hold"].includes(existing.continueOnAdmit) ? existing.continueOnAdmit : "Continue",
+            isHAM: typeof existing.isHAM === "boolean" ? existing.isHAM : isHAMByName(hm.drug),
             _fromNursing: true,
           };
         });
@@ -824,6 +1119,30 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [homeMeds]);
+
+  // R7hr-88 — Anthropometry auto-fills from "Vitals on Admission".
+  // Nursing IPD Initial Assessment captures Weight (kg) and Height (cm)
+  // in the Vitals on Admission section; this effect pushes those into
+  // the N4 Anthropometry block (heightCm / weightKg / BMI) so the nurse
+  // doesn't have to re-enter the same numbers. Skips overwriting an
+  // existing manual Anthropometry entry — only fills when the
+  // Anthropometry field is still blank, so a deliberate post-admission
+  // measurement re-take isn't clobbered.
+  useEffect(() => {
+    const v_h = String(vitals.height || "").trim();
+    const v_w = String(vitals.weight || "").trim();
+    if (!v_h && !v_w) return;
+    setAnthropo(prev => {
+      const next = { ...prev };
+      if (v_h && !prev.heightCm) next.heightCm = v_h;
+      if (v_w && !prev.weightKg) next.weightKg = v_w;
+      const h = Number(next.heightCm) / 100;
+      const w = Number(next.weightKg);
+      next.bmi = (h && w) ? (w / (h * h)).toFixed(1) : prev.bmi;
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vitals.height, vitals.weight]);
 
   // D · Anthropometry — nurse measures Ht/Wt with calibrated scale at
   // admission. Doctor's section mirrors nurse's values (read-only) and
@@ -983,10 +1302,17 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             if (d.nursingGoals)       setNursingGoals(d.nursingGoals);
             if (d.nursingNotes)       setNursingNotes(d.nursingNotes);
             if (d.hopi)               setHopi(d.hopi);
-            if (d.pmh)                setPmh(d.pmh);
+            // R7hr-70 — pmh dropped from UI; if older draft has it, fold it
+            // into pshStruct.other as a fallback so doctor doesn't lose data.
             if (d.psh)                setPsh(d.psh);
             if (d.famHx)              setFamHx(d.famHx);
             if (d.socHx)              setSocHx(d.socHx);
+            if (d.pshStruct)          setPshStruct(s => ({ ...s, ...d.pshStruct }));
+            else if (d.psh)           setPshStruct(s => ({ ...s, other: d.psh }));
+            if (d.famHxStruct)        setFamHxStruct(s => ({ ...s, ...d.famHxStruct }));
+            else if (d.famHx)         setFamHxStruct(s => ({ ...s, other: d.famHx }));
+            if (d.socHxStruct)        setSocHxStruct(s => ({ ...s, ...d.socHxStruct }));
+            else if (d.socHx)         setSocHxStruct(s => ({ ...s, other: d.socHx }));
             if (d.genExam)            setGenExam(d.genExam);
             if (d.cvs)                setCvs(d.cvs);
             if (d.rs)                 setRs(d.rs);
@@ -995,8 +1321,30 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             if (d.provDx)             setProvDx(d.provDx);
             if (d.finalDx)            setFinalDx(d.finalDx);
             if (d.icd10)              setIcd10(d.icd10);
+            // R7hr-65 — new fields, may be missing on older drafts
+            if (d.icd10Description)   setIcd10Description(d.icd10Description);
+            if (d.patientStatus)      setPatientStatus(d.patientStatus);
             if (d.investigations)     setInvestigations(d.investigations);
             if (d.rxRows)             setRxRows(d.rxRows);
+            if (Array.isArray(d.meds))      setMeds(d.meds);          // R7hr-59
+            if (Array.isArray(d.invests))   setInvests(d.invests);    // R7hr-59
+            if (Array.isArray(d.infusions)) setInfusions(d.infusions);// R7hr-59
+            // R7hr-72 — Clinical Examination structured state was missing
+            // from the localStorage restore path. Without this the doctor
+            // would lose all general + systemic exam findings on refresh.
+            if (d.clinExam) {
+              setClinExam(c => ({
+                ...c,
+                ...d.clinExam,
+                genExam: { ...c.genExam, ...(d.clinExam.genExam || {}) },
+                sysExam: {
+                  cvs: { ...c.sysExam.cvs, ...(d.clinExam.sysExam?.cvs || {}) },
+                  rs:  { ...c.sysExam.rs,  ...(d.clinExam.sysExam?.rs  || {}) },
+                  cns: { ...c.sysExam.cns, ...(d.clinExam.sysExam?.cns || {}) },
+                  pa:  { ...c.sysExam.pa,  ...(d.clinExam.sysExam?.pa  || {}) },
+                },
+              }));
+            }
             if (d.treatmentPlan)      setTreatmentPlan(d.treatmentPlan);
             if (d.followupNotes)      setFollowupNotes(d.followupNotes);
             if (d.dietAdvice)         setDietAdvice(d.dietAdvice);
@@ -1115,10 +1463,16 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             if (doc.doctorName)         setDoctorName(doc.doctorName);
             if (doc.regNo)              setRegNo(doc.regNo);
             if (doc.hopi)               setHopi(doc.hopi);
-            if (doc.pmh)                setPmh(doc.pmh);
+            // R7hr-70 — pmh dropped; structured fields take precedence
             if (doc.psh)                setPsh(doc.psh);
             if (doc.famHx)              setFamHx(doc.famHx);
             if (doc.socHx)              setSocHx(doc.socHx);
+            if (doc.pshStruct)          setPshStruct(s => ({ ...s, ...doc.pshStruct }));
+            else if (doc.psh)           setPshStruct(s => ({ ...s, other: doc.psh }));
+            if (doc.famHxStruct)        setFamHxStruct(s => ({ ...s, ...doc.famHxStruct }));
+            else if (doc.famHx)         setFamHxStruct(s => ({ ...s, other: doc.famHx }));
+            if (doc.socHxStruct)        setSocHxStruct(s => ({ ...s, ...doc.socHxStruct }));
+            else if (doc.socHx)         setSocHxStruct(s => ({ ...s, other: doc.socHx }));
             if (doc.docAllergy)         setDocAllergy(doc.docAllergy);
             if (doc.genExam)            setGenExam(doc.genExam);
             if (doc.cvs)                setCvs(doc.cvs);
@@ -1128,8 +1482,14 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             if (doc.provDx)             setProvDx(doc.provDx);
             if (doc.finalDx)            setFinalDx(doc.finalDx);
             if (doc.icd10)              setIcd10(doc.icd10);
+            // R7hr-65 — saved-from-server pull (icd10Description + patientStatus)
+            if (doc.icd10Description)   setIcd10Description(doc.icd10Description);
+            if (doc.patientStatus)      setPatientStatus(doc.patientStatus);
             if (doc.investigations)     setInvestigations(doc.investigations);
             if (Array.isArray(doc.rxRows) && doc.rxRows.length) setRxRows(doc.rxRows);
+            if (Array.isArray(doc.meds))      setMeds(doc.meds);          // R7hr-59
+            if (Array.isArray(doc.invests))   setInvests(doc.invests);    // R7hr-59
+            if (Array.isArray(doc.infusions)) setInfusions(doc.infusions);// R7hr-59
             if (doc.treatmentPlan)      setTreatmentPlan(doc.treatmentPlan);
             if (doc.followupNotes)      setFollowupNotes(doc.followupNotes);
             if (doc.dietAdvice)         setDietAdvice(doc.dietAdvice);
@@ -1138,7 +1498,16 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             if (dNabh.ccDuration)       setCcDuration(dNabh.ccDuration);
             if (Array.isArray(dNabh.allergies?.list)) setAllergyList(dNabh.allergies.list);
             if (dNabh.allergies?.noKnown !== undefined) setNoKnownAllergies(!!dNabh.allergies.noKnown);
-            if (Array.isArray(dNabh.medicationReconciliation)) setMedRecon(dNabh.medicationReconciliation);
+            if (Array.isArray(dNabh.medicationReconciliation)) {
+              // R7hr-96 — collapse legacy Modify/Discontinue to Hold so the
+              // 2-option dropdown never renders a missing value; backfill
+              // isHAM by drug-name keyword sniff for rows saved before this.
+              setMedRecon(dNabh.medicationReconciliation.map(r => ({
+                ...r,
+                continueOnAdmit: ["Continue","Hold"].includes(r.continueOnAdmit) ? r.continueOnAdmit : "Hold",
+                isHAM: typeof r.isHAM === "boolean" ? r.isHAM : isHAMByName(r.drug),
+              })));
+            }
             if (dNabh.workingDx)        setWorkingDx(dNabh.workingDx);
             if (dNabh.differentialDx)   setDifferentialDx(dNabh.differentialDx);
             if (dNabh.comorbidities)    setComorbid(c => ({ ...c, ...dNabh.comorbidities }));
@@ -1149,6 +1518,22 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             if (dNabh.goalOfCare)       setGoalOfCare(dNabh.goalOfCare);
             if (dNabh.riskAcknowledgement) setDocRiskAck(r => ({ ...r, ...dNabh.riskAcknowledgement }));
             if (dNabh.reviewOfSystems)  setRos(s => ({ ...s, ...dNabh.reviewOfSystems }));
+            // R7hr-58 — Hydrate structured clinical examination (preferred
+            // over legacy `ros` + free-text exam fields). Deep-merge each
+            // nested system block so partial saves don't wipe defaults.
+            if (dNabh.clinicalExamination) {
+              setClinExam(c => ({
+                ...c,
+                ...dNabh.clinicalExamination,
+                genExam: { ...c.genExam, ...(dNabh.clinicalExamination.genExam || {}) },
+                sysExam: {
+                  cvs: { ...c.sysExam.cvs, ...(dNabh.clinicalExamination.sysExam?.cvs || {}) },
+                  rs:  { ...c.sysExam.rs,  ...(dNabh.clinicalExamination.sysExam?.rs  || {}) },
+                  cns: { ...c.sysExam.cns, ...(dNabh.clinicalExamination.sysExam?.cns || {}) },
+                  pa:  { ...c.sysExam.pa,  ...(dNabh.clinicalExamination.sysExam?.pa  || {}) },
+                },
+              }));
+            }
             if (dNabh.anthropometry)    setDocAnthropo(a => ({ ...a, ...dNabh.anthropometry }));
             if (dNabh.localExamination) setLocalExam(e => ({ ...e, ...dNabh.localExamination }));
             if (dNabh.referrals)        setReferrals(r => ({ ...r, ...dNabh.referrals }));
@@ -1170,6 +1555,28 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
               `Nurse data ready — fill the Doctor section and Sign to add your assessment.`,
               { autoClose: 3500 },
             );
+
+            // R7hr-72/lock — Drop into LOCKED mode if the ROLE-SPECIFIC
+            // restored note is already signed/amended. Doctor view checks
+            // the doctor-section note; nurse view checks the nurse-section
+            // note. If only the OTHER role's note is signed (common: nurse
+            // signed first, doctor still drafting) the active form stays
+            // editable.
+            const lockSrc = isDoctorRole ? doctorSec : nurseSec;
+            if (lockSrc && (lockSrc.status === "signed" || lockSrc.status === "amended")) {
+              setIaLocked(true);
+              setLockedSignedByName(
+                lockSrc.signedByName
+                || (isDoctorRole ? (lockSrc.noteDetails?.doctor?.doctorName || doctorName)
+                                 : (lockSrc.noteDetails?.nursing?.nurseName || nurseName))
+                || "",
+              );
+              setLockedSignedAt(lockSrc.signedAt || lockSrc.updatedAt || lockSrc.createdAt || null);
+              // R7hr-90 — Record the server-known existing IA id so the
+              // pre-POST guard + 409 handler can recognise it (even after
+              // the user dismisses LOCKED via a stale-state edge).
+              if (lockSrc._id) setExistingSignedIaId(lockSrc._id);
+            }
           }
 
           // Also resolve the NurseNote mirror id so future sign-offs PUT
@@ -1220,11 +1627,26 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
     workingDiagnosis: workingDx || "",
     finalDiagnosis: finalDx || "",
     icdCode: icd10 || "",
+    // R7hr-65 — mirror to top-level so discharge summary / file print can
+    // surface the description + status without digging through noteDetails.
+    icdDescription: icd10Description || "",
+    patientStatus: patientStatus || "",
     diagnosis: finalDx || workingDx || provDx || "",
     // R7fb/R7fc — DoctorNotes schema is strict; the only catch-all field is
     // `noteDetails` (Mixed). Pack the entire role-specific form data here so
     // the new NABH P0 fields persist instead of being silently dropped.
+    //
+    // R26 (USER RULE, 2026-06-06) — Doctor IA and Nurse IA must always be
+    // SEPARATE records with role-pure noteDetails. Previously this payload
+    // packed BOTH nursing + doctor blocks regardless of `section`, so a
+    // doctor-section save would contaminate the DoctorNote with stale
+    // nursing data (and vice versa). Now we inline the per-role blocks
+    // only when the matching section is saving. The doctor's record gets
+    // ONLY doctor data; the nurse's record gets ONLY nursing data.
+    // Cross-flow auto-flows (R7fe) still work because they READ from each
+    // record independently — they don't write into the other role's blob.
     noteDetails: {
+      ...(section !== "doctor" && {
       nursing: {
         admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit,
         consciousnessLevel, mobility, allergy, chiefComplaint,
@@ -1235,12 +1657,22 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         nutri: { scores: nutri, total: nutriTotal, risk: nutriMeta.label },
         vte: { scores: vte, total: vteTotal, risk: vteMeta.label },
         nursingProblems, nursingGoals, nursingNotes,
-      },
+      }}),
+      ...(section !== "nursing" && {
       doctor: {
-        doctorName, regNo, hopi, pmh, psh, famHx, socHx, docAllergy,
+        // R7hr-70 — pmh dropped (Co-morbidities replaces it). PSH /
+        // FamHx / SocHx now write through pshStruct etc.; legacy
+        // strings stay in the payload as a back-compat read.
+        doctorName, regNo, hopi, psh, famHx, socHx, pshStruct, famHxStruct, socHxStruct, docAllergy,
         genExam, cvs, rs, abdomen, cns,
-        provDx, finalDx, icd10, investigations,
+        // R7hr-65 — icd10Description + patientStatus mirror what OPD writes,
+        // so the same downstream consumers (discharge summary, patient file
+        // print, narrative theme) light up without per-source plumbing.
+        provDx, finalDx, icd10, icd10Description, patientStatus, investigations,
         rxRows: rxRows.filter(r => r.drug.trim()),
+        meds,           // R7hr-59 — structured Rx (PrescriptionPanel shape)
+        invests,        // R7hr-59 — structured Investigations
+        infusions,      // R7hr-59 — IV/infusion orders (InfusionPanel shape)
         treatmentPlan, followupNotes, dietAdvice, activityAdvice,
         // R7fb — doctor P0 NABH fields (AAC.1 / COP.1 / AAC.4)
         nabh: {
@@ -1253,6 +1685,12 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           elosDays, goalOfCare,
           riskAcknowledgement: docRiskAck,
           reviewOfSystems: ros,
+          // R7hr-58 — Structured clinical examination (General Exam +
+          // CVS/RS/CNS/P-A blocks). Replaces the simple `ros` checklist
+          // and the 5 free-text exam textareas on UI. We keep `ros`
+          // saved alongside for back-compat (old records remain
+          // readable); on load, `clinicalExamination` takes precedence.
+          clinicalExamination: clinExam,
           // R7fd · doctor P1
           anthropometry: docAnthropo,
           localExamination: localExam,
@@ -1265,12 +1703,17 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           functionalEcog: ecog,
           spiritualNeeds: spiritual,
         },
-      },
+      }}),
       // R7ff — Cross-check alerts snapshot for backend audit trail.
       // 'high' severity should ideally block sign-off; for now persisted
-      // so accountability is preserved.
+      // so accountability is preserved. R26 — cross-check is meaningful only
+      // when both roles are in scope; carried by either save for now since
+      // it is a global flag-set (not role-specific PHI).
       crossCheckAlerts,
       // R7fc — nurse P0 NABH fields (AAC.1 / AAC.4 / IPC / PSQ)
+      // R26 — same wrapper as the `nursing:` block; nursingNabh is pure
+      // nurse-side data and must NOT appear in a doctor-only save.
+      ...(section !== "doctor" && {
       nursingNabh: {
         identification: idBand,
         allergies: { list: nurseAllergyList, noKnown: nurseNoKnownAllergies },
@@ -1296,7 +1739,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         preAnaesthesia,
         nutritionalScreeningQuick: nrsQuick,
         promPremTriggers: promPrem,
-      },
+      }}),
     },
   });
 
@@ -1611,19 +2054,34 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         ${kv("Chief Complaint", docCC, true)}
         ${kv("Duration / Onset", ccDuration, true)}`)}
 
-      ${block("History", "NABH AAC.1", `
+      ${block("History", "NABH AAC.1", (() => {
+        // R7hr-70 — Past Medical Hx removed (Co-morbidities replaces it).
+        // PSH / Family / Social rendered from structured state via helpers
+        // that join ticked labels + free-text "other".
+        const pshOut = pshSummary(pshStruct) || esc(psh) || "—";
+        const famOut = famHxSummary(famHxStruct) || esc(famHx) || "—";
+        const socOut = socHxSummary(socHxStruct) || esc(socHx) || "—";
+        return `
         ${kv("HPI", hopi, true)}
+        ${kv("Past Surgical Hx", pshOut, true)}
         <div class="grid grid-2">
-          ${kv("Past Medical Hx", pmh)}
-          ${kv("Past Surgical Hx", psh)}
-          ${kv("Family Hx", famHx)}
-          ${kv("Social Hx", socHx)}
-        </div>`)}
+          ${kv("Family Hx", famOut)}
+          ${kv("Social Hx", socOut)}
+        </div>`;
+      })())}
 
       ${block("Co-morbidities", "NABH AAC.1", `
         <div class="grid grid-4">
           ${["diabetes","hypertension","cad","ckd","copd","asthma","liverDx","cancer","stroke","mentalHealth","hypothyroid","hiv","hepB","hepC"]
-            .map(k => kv(k.replace(/([A-Z])/g, " $1").replace(/^./, c=>c.toUpperCase()), yn(comorbid[k]))).join("")}
+            .map(k => {
+              // R7hr-64: append "(since N yr)" when an onset is captured
+              const yrs = comorbid[`${k}Years`];
+              const label = k.replace(/([A-Z])/g, " $1").replace(/^./, c => c.toUpperCase());
+              const val = comorbid[k]
+                ? (yrs ? `Yes (since ${esc(yrs)} yr)` : "Yes")
+                : "No";
+              return kv(label, val);
+            }).join("")}
           ${kv("Other", comorbid.other, true)}
         </div>`)}
 
@@ -1646,26 +2104,42 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
                 <td>${m._fromNursing ? "Nursing" : "Doctor"}</td>
               </tr>`).join("")}</tbody></table>`)}
 
-      ${block("Review of Systems", "NABH AAC.1", `
-        <div class="grid grid-2">
-          ${Object.entries(ros).map(([k, v]) => kv(k.replace(/^./, c=>c.toUpperCase()), v)).join("")}
-        </div>`)}
-
-      ${block("Physical Examination", "NABH AAC.1", `
-        ${kv("General", genExam, true)}
-        <div class="grid grid-2">
-          ${kv("CVS", cvs)}
-          ${kv("Respiratory", rs)}
-          ${kv("Abdomen", abdomen)}
-          ${kv("CNS", cns)}
-        </div>
-        ${kv("Local examination", localExam, true)}`)}
+      ${block("Clinical Examination", "NABH AAC.1", (() => {
+        // R7hr-58 — Structured Clinical Examination summary. Uses the
+        // shared `clinExamSummary` helper exported by
+        // ClinicalExaminationCard so OPD + IPD prints stay aligned.
+        // Falls back to legacy ros/genExam/cvs/rs/abdomen/cns rendering
+        // if the structured block is empty (e.g. older saved records).
+        const s = clinExamSummary ? clinExamSummary(clinExam) : null;
+        if (s && (s.general || s.systemic)) {
+          return `
+            ${s.general ? kv("General Examination", s.general, true) : ""}
+            ${s.systemic ? kv("Systemic Examination", s.systemic, true) : ""}
+            ${kv("Local examination", localExam, true)}`;
+        }
+        return `
+          <div class="grid grid-2">
+            ${Object.entries(ros).map(([k, v]) => kv(k.replace(/^./, c=>c.toUpperCase()), v)).join("")}
+          </div>
+          ${kv("General", genExam, true)}
+          <div class="grid grid-2">
+            ${kv("CVS", cvs)}
+            ${kv("Respiratory", rs)}
+            ${kv("Abdomen", abdomen)}
+            ${kv("CNS", cns)}
+          </div>
+          ${kv("Local examination", localExam, true)}`;
+      })())}
 
       ${block("Diagnosis (3-tier)", "NABH AAC.1", `
         ${kv("Provisional", provDx, true)}
         ${kv("Working", workingDx, true)}
         ${kv("Final / Confirmed", finalDx, true)}
-        ${kv("ICD-10", icd10)}
+        <div class="grid grid-2">
+          ${kv("ICD-10 Code", icd10)}
+          ${kv("ICD-10 Description", icd10Description)}
+        </div>
+        ${kv("Patient Status", patientStatus)}
         ${kv("Differentials", differentialDx, true)}`)}
 
       ${block("Anthropometry (Doctor confirms)", "Drug-dosing safety", `
@@ -1676,19 +2150,27 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           ${kv("IBW (Devine)", docAnthropo.idealBodyWeightKg)}
         </div>`)}
 
-      ${block("Investigations", "—", kv("Tests ordered", investigations, true))}
+      ${block("Investigations Ordered", "—", invests.length > 0
+        ? `<ul style="margin:0;padding-left:18px">${invests.map(i => `<li>${esc(i.name)}${i.urgency && i.urgency!=="ROUTINE" ? ` <span style="color:#b91c1c;font-weight:700">[${esc(i.urgency)}]</span>` : ""}${i.instructions ? ` — ${esc(i.instructions)}` : ""}</li>`).join("")}</ul>`
+        : kv("Tests ordered", investigations, true))}
 
       ${block("Treatment Plan", "NABH COP.1", kv("Plan", treatmentPlan, true))}
 
       ${block("Prescription",
-        `${rxRows.filter(r=>r.drug).length} drug(s)`,
-        rxRows.filter(r=>r.drug).length === 0
-          ? `<div class="empty">No medications prescribed</div>`
-          : `<table><thead><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead>
-              <tbody>${rxRows.filter(r=>r.drug).map(r => `<tr>
-                <td>${esc(r.drug)}</td><td>${esc(r.dose)}</td><td>${esc(r.route)}</td>
-                <td>${esc(r.frequency)}</td><td>${esc(r.duration)}</td><td>${esc(r.instructions)}</td>
-              </tr>`).join("")}</tbody></table>`)}
+        `${meds.length || rxRows.filter(r=>r.drug).length} drug(s)`,
+        meds.length > 0
+          ? `<table><thead><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th></tr></thead><tbody>${meds.map(m => `<tr><td>${esc(m.name)}</td><td>${esc(m.dose||"")}</td><td>${esc(m.route||"")}</td><td>${esc(m.frequency||"")}</td><td>${esc(m.duration||"")}</td></tr>`).join("")}</tbody></table>`
+          : (rxRows.filter(r=>r.drug).length === 0
+              ? `<div class="empty">No medications prescribed</div>`
+              : `<table><thead><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead>
+                  <tbody>${rxRows.filter(r=>r.drug).map(r => `<tr>
+                    <td>${esc(r.drug)}</td><td>${esc(r.dose)}</td><td>${esc(r.route)}</td>
+                    <td>${esc(r.frequency)}</td><td>${esc(r.duration)}</td><td>${esc(r.instructions)}</td>
+                  </tr>`).join("")}</tbody></table>`))}
+
+      ${infusions.length > 0 ? block("Infusion / IV Fluids", "—",
+        `<table><thead><tr><th>Fluid</th><th>Volume</th><th>Rate</th><th>Additives</th></tr></thead><tbody>${infusions.map(f => `<tr><td>${esc(f.name)}</td><td>${esc(f.totalVolume||"")}</td><td>${esc(f.rate||"")}</td><td>${esc(f.additives||"")}</td></tr>`).join("")}</tbody></table>`
+      ) : ""}
 
       ${block("Care Decisions", "NABH AAC.4 + ROP.1", `
         <div class="grid grid-2">
@@ -2101,7 +2583,24 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         } catch (_) { /* non-fatal */ }
       }
       toast.success(sign ? "Assessment signed & submitted ✓" : "Draft saved");
-      if (sign) clearDraft();
+      if (sign) {
+        clearDraft();
+        // R7hr-98 — IMMEDIATELY lock the IA in-session so the next
+        // autosave tick doesn't write the same form back as a fresh
+        // draft (which was overwriting the signed record). Pre-fix the
+        // page waited for a reload to hydrate iaLocked from the server
+        // status, but the autosave fired before that. Now we lock the
+        // moment the sign API call returns 2xx — UI flips to LOCKED
+        // banner, all fields go read-only, no more autosave writes.
+        // The amend path remains the only way back into write mode.
+        const whoSigned =
+          (section === "doctor"
+            ? (doctorName || user?.fullName || "")
+            : (nurseName  || user?.fullName || ""));
+        setIaLocked(true);
+        setLockedSignedByName(whoSigned);
+        setLockedSignedAt(new Date().toISOString());
+      }
     } catch (err) {
       toast.error(err.response?.data?.message || "Save failed");
     } finally { setSaving(false); }
@@ -2109,6 +2608,145 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
 
   const setV = key => val => setVitals(v => ({ ...v, [key]: val }));
   const setDev = key => e => setDevices(d => ({ ...d, [key]: e.target.checked }));
+
+  /* ── R7hr-72/lock — Read-only helper. Every Section gets disabled={ro}
+     so its body becomes non-interactive once locked. The bottom Save
+     Draft / Sign buttons also gate on this; the Amend button (top
+     ribbon) stays clickable. */
+  const ro = iaLocked && !amendMode;
+
+  /* ── R7hr-72/lock — Pretty-print signed-at for the locked ribbon. */
+  const fmtDT = (d) => {
+    if (!d) return "—";
+    try {
+      return new Date(d).toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      });
+    } catch { return String(d); }
+  };
+
+  /* ── R7hr-72/lock — Snapshot every top-level form-state bucket BEFORE
+     we unlock the page. The diff at save-time walks pre-amend vs current
+     and emits a [{ field, oldValue, newValue }] list. Listing every state
+     slot here keeps the audit trail honest — anything a doctor or nurse
+     might touch during an amend must be captured. */
+  const captureFormSnapshot = () => ({
+    // Nursing general
+    admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit,
+    consciousnessLevel, mobility, allergy, chiefComplaint,
+    vitals, painPresent, painScore, painLocation, painCharacter,
+    devices, skinIntact, skinNotes,
+    morse, braden, nutri, vte,
+    nursingProblems, nursingGoals, nursingNotes,
+    // Doctor general + history
+    doctorName, regNo, hopi, psh, famHx, socHx,
+    pshStruct, famHxStruct, socHxStruct,
+    docAllergy, genExam, cvs, rs, abdomen, cns,
+    provDx, finalDx, icd10, icd10Description, patientStatus,
+    investigations, rxRows, meds, invests, infusions,
+    treatmentPlan, followupNotes, dietAdvice, activityAdvice,
+    // Doctor P0 NABH
+    docCC, ccDuration, allergyList, noKnownAllergies, medRecon,
+    workingDx, differentialDx, comorbid,
+    codeStatus, codeStatusDiscussedWith, codeStatusLimitations,
+    elosDays, goalOfCare, docRiskAck, ros, clinExam,
+    // Doctor P1 NABH
+    docAnthropo, localExam, referrals, prognosis, consentNeeded,
+    // Doctor P2 NABH
+    obGyn, immunisation, ecog, spiritual,
+    // Nurse P0 NABH
+    idBand, nurseAllergyList, nurseNoKnownAllergies, nurseBriefPmh,
+    homeMeds, anthropo, psychosocial, barthel, bodyChart,
+    dischargePlan, educationNeeds, precautions,
+    // Nurse P1 NABH
+    cognitive, cultural, elimination, sleep, valuables, caregiver, highRisk,
+    // Nurse P2 NABH
+    mobilityGait, preAnaesthesia, nrsQuick, promPrem,
+  });
+
+  /* ── R7hr-72/lock — Walk pre-amend vs current and emit a flat list
+     of [{ field, oldValue, newValue }]. Primitives compare directly;
+     arrays / objects are JSON-stringified for compare and emit a single
+     root-level entry when they deep-differ. Compact + reliable for the
+     audit row — surveyors care about WHAT changed, not the leaf-level
+     breakdown. */
+  const computeAmendChanges = (before, after) => {
+    if (!before) return [];
+    const changes = [];
+    const isPrimitive = (v) => v == null || (typeof v !== "object");
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    for (const k of keys) {
+      const a = before[k], b = after[k];
+      if (isPrimitive(a) && isPrimitive(b)) {
+        if (a !== b) changes.push({ field: k, oldValue: a, newValue: b });
+      } else {
+        const aj = JSON.stringify(a);
+        const bj = JSON.stringify(b);
+        if (aj !== bj) changes.push({
+          field: k,
+          oldValue: JSON.parse(aj ?? "null"),
+          newValue: JSON.parse(bj ?? "null"),
+        });
+      }
+    }
+    return changes;
+  };
+
+  /* ── R7hr-72/lock — Amend dispatch. Called by the bottom Save buttons
+     (and the role-specific sign-off buttons) when amendMode is true.
+     Routes to the right collection: doctor amends hit /doctor-notes/:id
+     /amend, nurse amends hit the same canonical row (DoctorNotes section
+     ="nursing") + mirror the amend onto /nursing-notes/:id/amend for the
+     nursing-timeline log. Reason + diff travel together. */
+  const handleAmendSave = async (section = "nursing") => {
+    if (!patient) { toast.warn("Load a patient first"); return; }
+    if (!amendReason || amendReason.trim().length < 5) {
+      toast.error("Amend reason is required (min 5 characters)");
+      return;
+    }
+    setSaving(true);
+    try {
+      const after  = captureFormSnapshot();
+      const changes = computeAmendChanges(preAmendSnapshot, after);
+      const payload = {
+        reason: amendReason.trim(),
+        changes,
+        ...buildPayload(section, "signed"),
+      };
+      const sectionNoteId = section === "doctor" ? doctorNoteId : nurseSectionNoteId;
+      if (!sectionNoteId) {
+        // No id to amend against — fall back to the existing save path so
+        // the row is created + signed cleanly (still records the reason
+        // in noteDetails for the audit).
+        toast.warn("No existing signed note found — saving as a fresh signed entry instead.");
+        await handleSave(true, section);
+      } else {
+        // Primary canonical row.
+        await axios.post(
+          `${API_ENDPOINTS.DOCTOR_NOTES}/${sectionNoteId}/amend`,
+          payload,
+        );
+        // Nurse-section amend also mirrors onto the NurseNotes timeline.
+        if (section === "nursing" && nurseNoteId) {
+          try {
+            await axios.post(
+              `${API_ENDPOINTS.NURSING_NOTES}/${nurseNoteId}/amend`,
+              { reason: amendReason.trim(), changes },
+            );
+          } catch (_) { /* non-fatal — DoctorNotes amend already landed */ }
+        }
+      }
+      toast.success("Amendment saved & re-signed ✓ (audit logged)");
+      // Stay LOCKED — status is 'amended', still a locked record.
+      setAmendMode(false);
+      setAmendReason("");
+      setPreAmendSnapshot(null);
+      setLockedSignedAt(new Date().toISOString());
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Amend save failed");
+    } finally { setSaving(false); }
+  };
 
   /* ═══════════ RENDER ═══════════ */
   return (
@@ -2185,20 +2823,23 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
               For doctor mode they'd save the wrong role, so the buttons
               are hidden — the doctor uses the dedicated Doctor sign-off
               block at the bottom of the doctor form which calls
-              handleSave(true, "doctor"). */}
-          {!isDoctorRole && (<>
+              handleSave(true, "doctor").
+              R7hr-72/lock — also hidden when LOCKED & !amendMode; the
+              red Amend ribbon owns the only path back to editing. */}
+          {!isDoctorRole && !(iaLocked && !amendMode) && (<>
             <button onClick={() => handleSave(false)} disabled={saving}
               style={{ padding: "8px 18px", border: `1.5px solid ${C.border}`, borderRadius: 8,
                 background: "white", cursor: saving ? "not-allowed" : "pointer",
                 fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
               <i className="pi pi-save" style={{ marginRight: 6, fontSize: 12 }} />Save Draft
             </button>
-            <button onClick={() => handleSave(true)} disabled={saving || !patient}
+            <button onClick={() => amendMode ? handleAmendSave("nursing") : handleSave(true)} disabled={saving || !patient}
               style={{ padding: "8px 22px", border: "none", borderRadius: 8,
-                background: saving ? "#93c5fd" : C.accent, cursor: saving ? "not-allowed" : "pointer",
+                background: saving ? "#93c5fd" : (amendMode ? "#d97706" : C.accent),
+                cursor: saving ? "not-allowed" : "pointer",
                 fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white" }}>
               <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
-              {saving ? "Saving…" : "Sign & Submit"}
+              {saving ? "Saving…" : (amendMode ? "Save Amendment" : "Sign & Submit")}
             </button>
           </>)}
         </div>
@@ -2249,6 +2890,82 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
 
       {patient && (<>
 
+        {/* ── R7hr-72/lock · LOCKED ribbon ─────────────────────────────
+            Visible when the restored note for the active role is signed
+            or amended. Amend opens the modal — the only way into edit
+            mode. Backend logs the audit row on /amend dispatch. */}
+        {iaLocked && !amendMode && (
+          <div role="status" style={{
+            background: "#fef2f2", border: "2px solid #dc2626", borderRadius: 10,
+            padding: "12px 16px", marginBottom: 14, color: "#7f1d1d",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 18 }} aria-hidden="true">{"🔒"}</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: ".3px" }}>
+                  LOCKED — signed by {lockedSignedByName || "—"} on {fmtDT(lockedSignedAt)}.
+                </div>
+                <div style={{ fontSize: 11, color: "#9f1239", marginTop: 2 }}>
+                  Click Amend to edit (audit logged).
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAmendModalOpen(true)}
+              style={{
+                padding: "8px 18px", border: "none", borderRadius: 8,
+                background: "#dc2626", color: "white", cursor: "pointer",
+                fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 800,
+                boxShadow: "0 4px 12px rgba(220,38,38,.35)", whiteSpace: "nowrap",
+              }}
+            >
+              <i className="pi pi-pencil" style={{ fontSize: 11, marginRight: 6 }} />
+              Amend
+            </button>
+          </div>
+        )}
+
+        {/* ── R7hr-72/lock · AMENDING ribbon ───────────────────────────
+            Amber banner while amendMode is true. Cancel reverts the
+            mode-flip (snapshot is dropped; we never mutated form state
+            on "Begin Amend", just flipped the gate). */}
+        {amendMode && (
+          <div role="status" style={{
+            background: "#fffbeb", border: "2px solid #d97706", borderRadius: 10,
+            padding: "12px 16px", marginBottom: 14, color: "#78350f",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 18 }} aria-hidden="true">{"✏"}</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: ".3px" }}>
+                  AMENDING — reason: «{amendReason}».
+                </div>
+                <div style={{ fontSize: 11, color: "#92400e", marginTop: 2 }}>
+                  Make changes then click Save Amendment.
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setAmendMode(false);
+                setAmendReason("");
+                setPreAmendSnapshot(null);
+              }}
+              style={{
+                padding: "8px 16px", border: "1.5px solid #d97706", borderRadius: 8,
+                background: "white", color: "#92400e", cursor: "pointer",
+                fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
+              }}
+            >
+              Cancel Amend
+            </button>
+          </div>
+        )}
+
         {/* R7ff · Cross-check banner — appears at top whenever nurse's
             and doctor's independently-captured fields disagree. Sticky
             visibility forces reconciliation before sign-off. */}
@@ -2293,7 +3010,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         {!isDoctorRole && (<>
 
           {/* ── Admission Details ── */}
-          <Section title="Admission Details" icon="pi-calendar-plus" color={C.teal}>
+          <Section title="Admission Details" icon="pi-calendar-plus" color={C.teal} disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 14 }}>
               <Field label="Admit Date"><input type="date" value={admitDate} onChange={e => setAdmitDate(e.target.value)} className="his-field" /></Field>
               <Field label="Admit Time"><input type="time" value={admitTime} onChange={e => setAdmitTime(e.target.value)} className="his-field" /></Field>
@@ -2327,7 +3044,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── Vitals ── */}
-          <Section title="Vitals on Admission" icon="pi-heart-fill" color={C.red} badge="NABH Required">
+          <Section title="Vitals on Admission" icon="pi-heart-fill" color={C.red} badge="NABH Required" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 12 }}>
               {[
                 { label: "BP Systolic", key: "bpSys", unit: "mmHg" },
@@ -2361,7 +3078,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── Pain ── */}
-          <Section title="Pain Assessment" icon="pi-exclamation-circle" color={C.orange}>
+          <Section title="Pain Assessment" icon="pi-exclamation-circle" color={C.orange} disabled={ro}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
               <input type="checkbox" id="painPresent" checked={painPresent} onChange={e => setPainPresent(e.target.checked)}
                 style={{ accentColor: C.orange, width: 16, height: 16 }} />
@@ -2387,7 +3104,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── Skin & Devices ── */}
-          <Section title="Skin Integrity & Medical Devices" icon="pi-user" color={C.purple}>
+          <Section title="Skin Integrity & Medical Devices" icon="pi-user" color={C.purple} disabled={ro}>
             <Grid2>
               <div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase",
@@ -2434,7 +3151,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── MORSE FALL SCALE ── */}
-          <Section title="Morse Fall Scale" icon="pi-exclamation-triangle" color={C.amber} badge="NABH Required">
+          <Section title="Morse Fall Scale" icon="pi-exclamation-triangle" color={C.amber} badge="NABH Required" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 20, alignItems: "start" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {MORSE_ITEMS.map(item => (
@@ -2468,7 +3185,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── BRADEN SCALE ── */}
-          <Section title="Braden Scale — Pressure Ulcer Risk" icon="pi-th-large" color={C.purple} badge="NABH Required">
+          <Section title="Braden Scale — Pressure Ulcer Risk" icon="pi-th-large" color={C.purple} badge="NABH Required" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 20, alignItems: "start" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {BRADEN_ITEMS.map(item => (
@@ -2503,7 +3220,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── NRS-2002 Nutritional Screen ── */}
-          <Section title="Nutritional Risk Screening (NRS-2002)" icon="pi-chart-bar" color={C.green} badge="NABH Required">
+          <Section title="Nutritional Risk Screening (NRS-2002)" icon="pi-chart-bar" color={C.green} badge="NABH Required" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 20, alignItems: "start" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {NUTRI_ITEMS.map(item => (
@@ -2558,7 +3275,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
               ══════════════════════════════════════════════════════════ */}
 
           {/* ── N1 · Patient Identification (PSQ.1 two-identifier) ── */}
-          <Section title="Patient Identification" icon="pi-id-card" color={C.teal} badge="NABH PSQ.1">
+          <Section title="Patient Identification" icon="pi-id-card" color={C.teal} badge="NABH PSQ.1" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12, fontSize: 12 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input type="checkbox" checked={idBand.bandAttached}
@@ -2588,7 +3305,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N4 · Anthropometry (drug dosing safety) ── */}
-          <Section title="Anthropometry" icon="pi-chart-bar" color={C.teal}>
+          <Section title="Anthropometry" icon="pi-chart-bar" color={C.teal} disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <Field label="Height (cm)">
                 <input type="number" value={anthropo.heightCm}
@@ -2617,7 +3334,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N2 · Allergies (independent of doctor capture) ── */}
-          <Section title="Allergies (Nursing check)" icon="pi-shield" color={C.red} badge="NABH PSQ.4">
+          <Section title="Allergies (Nursing check)" icon="pi-shield" color={C.red} badge="NABH PSQ.4" disabled={ro}>
             <div style={{ marginBottom: 8 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: C.muted, cursor: "pointer" }}>
                 <input type="checkbox" checked={nurseNoKnownAllergies}
@@ -2670,7 +3387,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N3 · Brief PMH + Home Medications ── */}
-          <Section title="Brief History & Home Medications" icon="pi-list" color={C.purple} badge="NABH MOM">
+          <Section title="Brief History & Home Medications" icon="pi-list" color={C.purple} badge="NABH MOM" disabled={ro}>
             <Field label="Past Medical History (brief — for nursing context)" style={{ marginBottom: 10 }}>
               <textarea value={nurseBriefPmh} onChange={e => setNurseBriefPmh(e.target.value)}
                 placeholder="e.g. DM on insulin since 2018, HTN, post-MI 2022…"
@@ -2706,7 +3423,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N5 · Psychosocial Assessment ── */}
-          <Section title="Psychosocial Assessment" icon="pi-heart" color={C.pink} badge="NABH AAC.1.b">
+          <Section title="Psychosocial Assessment" icon="pi-heart" color={C.pink} badge="NABH AAC.1.b" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <Field label="Emotional state">
                 <select value={psychosocial.emotionalState} onChange={e => setPsychosocial(p => ({ ...p, emotionalState: e.target.value }))} className="his-field">
@@ -2732,7 +3449,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N6 · Functional / ADL (Barthel Index) ── */}
-          <Section title="Functional Assessment — Barthel ADL" icon="pi-check-square" color={C.teal} badge="NABH AAC.1.b">
+          <Section title="Functional Assessment — Barthel ADL" icon="pi-check-square" color={C.teal} badge="NABH AAC.1.b" disabled={ro}>
             {(() => {
               const cfg = [
                 ["feeding", "Feeding", [[0,"Unable"],[5,"Needs help"],[10,"Independent"]]],
@@ -2772,7 +3489,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N7 · Body Chart / Wound Documentation ── */}
-          <Section title="Body Chart — Existing wounds / bruises / scars" icon="pi-user-edit" color={C.purple} badge="NABH IPC + AAC.6">
+          <Section title="Body Chart — Existing wounds / bruises / scars" icon="pi-user-edit" color={C.purple} badge="NABH IPC + AAC.6" disabled={ro}>
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               Document all existing skin findings AT ADMISSION — defends against "developed in hospital" claims.
             </div>
@@ -2792,7 +3509,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N10 · Special Precautions ── */}
-          <Section title="Special Precautions" icon="pi-exclamation-triangle" color={C.warn} badge="NABH IPC + PSQ.4">
+          <Section title="Special Precautions" icon="pi-exclamation-triangle" color={C.warn} badge="NABH IPC + PSQ.4" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
               <div>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 600, marginBottom: 6, cursor: "pointer" }}>
@@ -2847,7 +3564,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N9 · Education Needs ── */}
-          <Section title="Patient Education Needs" icon="pi-book" color={C.green} badge="NABH AAC.6 + PRE.5">
+          <Section title="Patient Education Needs" icon="pi-book" color={C.green} badge="NABH AAC.6 + PRE.5" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12 }}>
               <Field label="Preferred language">
                 <select value={educationNeeds.preferredLanguage}
@@ -2888,7 +3605,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N8 · Discharge Planning (initiated Day 1) ── */}
-          <Section title="Discharge Planning — Day 1" icon="pi-home" color={C.accent} badge="NABH AAC.4">
+          <Section title="Discharge Planning — Day 1" icon="pi-home" color={C.accent} badge="NABH AAC.4" disabled={ro}>
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               Discharge planning starts at admission — gives time to arrange home support, equipment, follow-up.
             </div>
@@ -2944,7 +3661,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
               ══════════════════════════════════════════════════════════ */}
 
           {/* ── N11 · Cognitive / Communication ── */}
-          <Section title="Cognitive & Communication" icon="pi-eye" color={C.purple} badge="NABH AAC.1.b">
+          <Section title="Cognitive & Communication" icon="pi-eye" color={C.purple} badge="NABH AAC.1.b" disabled={ro}>
             <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
               Orientation
             </div>
@@ -2998,7 +3715,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N12 · Cultural / Spiritual ── */}
-          <Section title="Cultural & Spiritual Preferences" icon="pi-globe" color={C.green} badge="NABH ROP">
+          <Section title="Cultural & Spiritual Preferences" icon="pi-globe" color={C.green} badge="NABH ROP" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Field label="Religion">
                 <select value={cultural.religion}
@@ -3028,7 +3745,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N13 · Bowel / Bladder Pattern ── */}
-          <Section title="Bowel / Bladder Pattern" icon="pi-sync" color={C.teal}>
+          <Section title="Bowel / Bladder Pattern" icon="pi-sync" color={C.teal} disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Bowel</div>
@@ -3077,7 +3794,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N14 · Sleep Pattern ── */}
-          <Section title="Sleep Pattern" icon="pi-moon" color={C.accent}>
+          <Section title="Sleep Pattern" icon="pi-moon" color={C.accent} disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <Field label="Hours per night">
                 <input type="number" value={sleep.hoursPerNight}
@@ -3111,7 +3828,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N15 · Valuables / Belongings ── */}
-          <Section title="Valuables & Belongings" icon="pi-briefcase" color={C.warn} badge="NABH ROP + PSQ">
+          <Section title="Valuables & Belongings" icon="pi-briefcase" color={C.warn} badge="NABH ROP + PSQ" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Field label="Status">
                 <select value={valuables.status}
@@ -3139,7 +3856,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N16 · Family / Caregiver Identification ── */}
-          <Section title="Family & Primary Caregiver" icon="pi-users" color={C.pink} badge="NABH AAC.6">
+          <Section title="Family & Primary Caregiver" icon="pi-users" color={C.pink} badge="NABH AAC.6" disabled={ro}>
             <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
               Primary caregiver
             </div>
@@ -3188,7 +3905,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N17 · High-Risk Patient Flag ── */}
-          <Section title="High-Risk Patient Flag" icon="pi-flag-fill" color={C.red} badge="NABH PSQ.4">
+          <Section title="High-Risk Patient Flag" icon="pi-flag-fill" color={C.red} badge="NABH PSQ.4" disabled={ro}>
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               Flag drives observation frequency, escalation protocols, and discharge planning urgency.
             </div>
@@ -3223,7 +3940,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
               ══════════════════════════════════════════════════════════ */}
 
           {/* ── N18 · Mobility / Gait ── */}
-          <Section title="Mobility & Gait" icon="pi-arrow-right" color={C.teal}>
+          <Section title="Mobility & Gait" icon="pi-arrow-right" color={C.teal} disabled={ro}>
             <div style={{ display: "flex", gap: 18, fontSize: 12, flexWrap: "wrap" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                 <input type="checkbox" checked={mobilityGait.independent} onChange={e => setMobilityGait(p => ({ ...p, independent: e.target.checked }))} />
@@ -3247,7 +3964,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N19 · Pre-anaesthesia basics (elective surgery quick screen) ── */}
-          <Section title="Pre-Anaesthesia Screen (if elective surgery planned)" icon="pi-bolt" color={C.warn}>
+          <Section title="Pre-Anaesthesia Screen (if elective surgery planned)" icon="pi-bolt" color={C.warn} disabled={ro}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
               <input type="checkbox" checked={preAnaesthesia.plannedSurgery} onChange={e => setPreAnaesthesia(p => ({ ...p, plannedSurgery: e.target.checked }))} />
               Elective surgery planned this admission
@@ -3289,7 +4006,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N20 · NRS-2002 Quick Screen ── */}
-          <Section title="Nutritional Quick Screen (NRS-2002 short)" icon="pi-bookmark" color={C.green}>
+          <Section title="Nutritional Quick Screen (NRS-2002 short)" icon="pi-bookmark" color={C.green} disabled={ro}>
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               4-question rapid triage. Any "Yes" triggers dietitian referral. Full NRS-2002 is in the
               "Nutritional Risk Screening" section above.
@@ -3321,7 +4038,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── N21 · PROM / PREM Surveys (NABH PSQ) ── */}
-          <Section title="Outcome & Experience Surveys (PROM / PREM)" icon="pi-comments" color={C.accent} badge="NABH PSQ">
+          <Section title="Outcome & Experience Surveys (PROM / PREM)" icon="pi-comments" color={C.accent} badge="NABH PSQ" disabled={ro}>
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               Schedule patient-reported outcomes (PROM) and experience (PREM) at discharge.
             </div>
@@ -3354,7 +4071,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── Nursing Plan (existing) ── */}
-          <Section title="Nursing Problems & Care Goals" icon="pi-pencil" color={C.pink}>
+          <Section title="Nursing Problems & Care Goals" icon="pi-pencil" color={C.pink} disabled={ro}>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <Field label="Identified Nursing Problems">
                 <textarea value={nursingProblems} onChange={e => setNursingProblems(e.target.value)}
@@ -3377,12 +4094,17 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           {/* ── Nursing sign-off — only shown when the mounter is a NURSE
               (or unknown role, for the legacy standalone /ipd-initial-
               assessment route). When a DOCTOR mounts via DoctorNotes the
-              Doctor sign-off block below renders instead. R7ey-F79. ── */}
-          {!isDoctorRole && (
-          <div style={{ background: "#fdf2f8", border: `1px solid ${C.pink}30`, borderRadius: 12,
+              Doctor sign-off block below renders instead. R7ey-F79.
+              R7hr-72/lock — hidden when LOCKED & !amendMode (the red
+              ribbon's Amend button is the only path back in); when
+              amendMode is on, the "Sign" button morphs into "Save
+              Amendment" and dispatches via handleAmendSave. */}
+          {!isDoctorRole && !(iaLocked && !amendMode) && (
+          <div style={{ background: amendMode ? "#fffbeb" : "#fdf2f8",
+            border: `1px solid ${amendMode ? "#d97706" : C.pink}30`, borderRadius: 12,
             padding: "14px 20px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.pink }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: amendMode ? "#92400e" : C.pink }}>
                 <i className="pi pi-verified" style={{ marginRight: 6 }} />Nurse's Digital Signature
               </div>
               <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
@@ -3390,20 +4112,33 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
               </div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => handleSave(false, "nursing")} disabled={saving}
-                style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-                  background: "white", cursor: saving ? "not-allowed" : "pointer",
-                  fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
-                Save Draft
-              </button>
-              <button onClick={async () => { await handleSave(true, "nursing"); onSign?.("nurse"); }} disabled={saving}
-                style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: C.pink,
-                  cursor: saving ? "not-allowed" : "pointer",
-                  fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
-                  boxShadow: `0 4px 14px ${C.pink}40` }}>
-                <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
-                {saving ? "Saving…" : "Sign Nursing Assessment"}
-              </button>
+              {!amendMode && (
+                <button onClick={() => handleSave(false, "nursing")} disabled={saving}
+                  style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8,
+                    background: "white", cursor: saving ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
+                  Save Draft
+                </button>
+              )}
+              {amendMode ? (
+                <button onClick={() => handleAmendSave("nursing")} disabled={saving}
+                  style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: "#d97706",
+                    cursor: saving ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
+                    boxShadow: "0 4px 14px rgba(217,119,6,.4)" }}>
+                  <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
+                  {saving ? "Saving…" : "Save Amendment"}
+                </button>
+              ) : (
+                <button onClick={async () => { await handleSave(true, "nursing"); onSign?.("nurse"); }} disabled={saving}
+                  style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: C.pink,
+                    cursor: saving ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
+                    boxShadow: `0 4px 14px ${C.pink}40` }}>
+                  <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
+                  {saving ? "Saving…" : "Sign Nursing Assessment"}
+                </button>
+              )}
             </div>
           </div>
           )}
@@ -3420,7 +4155,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
         {isDoctorRole && (<>
 
           {/* ── Doctor Header ── */}
-          <Section title="Doctor & Admission Info" icon="pi-id-card" color={C.accent}>
+          <Section title="Doctor & Admission Info" icon="pi-id-card" color={C.accent} disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
               <Field label="Doctor Name" required>
                 <input value={doctorName} onChange={e => setDoctorName(e.target.value)} placeholder="Dr. Full Name" className="his-field" />
@@ -3435,7 +4170,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── D1 · Chief Complaint (NABH AAC.1 — distinct from HPI) ── */}
-          <Section title="Chief Complaint" icon="pi-comment" color={C.accent} badge="NABH AAC.1">
+          <Section title="Chief Complaint" icon="pi-comment" color={C.accent} badge="NABH AAC.1" disabled={ro}>
             <Grid2>
               <Field label="Chief Complaint *">
                 <input value={docCC} onChange={e => setDocCC(e.target.value)}
@@ -3448,38 +4183,107 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             </Grid2>
           </Section>
 
-          {/* ── History ── */}
-          <Section title="History" icon="pi-book" color={C.purple}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* ── History ──
+              R7hr-70: Past Medical History removed (Co-morbidities card
+              below is the structured replacement). Past Surgical /
+              Family / Social History upgraded from plain textareas to
+              checkbox-grid pickers matching the Co-morbidities pattern;
+              free-text "Other" stays for anything off-menu. */}
+          <Section title="History" icon="pi-book" color={C.purple} disabled={ro}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <Field label="History of Present Illness *">
                 <textarea value={hopi} onChange={e => setHopi(e.target.value)}
                   placeholder="Onset, character, progression, associated symptoms, relieving/aggravating factors…"
                   className="his-textarea" style={{ minHeight: 90 }} />
               </Field>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
-                <Field label="Past Medical History">
-                  <textarea value={pmh} onChange={e => setPmh(e.target.value)}
-                    placeholder="DM, HTN, CAD…" className="his-textarea" style={{ minHeight: 64 }} />
-                </Field>
-                <Field label="Past Surgical History">
-                  <textarea value={psh} onChange={e => setPsh(e.target.value)}
-                    placeholder="Previous surgeries…" className="his-textarea" style={{ minHeight: 64 }} />
-                </Field>
-                <Field label="Family History">
-                  <textarea value={famHx} onChange={e => setFamHx(e.target.value)}
-                    placeholder="Hereditary conditions…" className="his-textarea" style={{ minHeight: 64 }} />
-                </Field>
-                <Field label="Social / Personal History">
-                  <textarea value={socHx} onChange={e => setSocHx(e.target.value)}
-                    placeholder="Smoking, alcohol, occupation, travel…" className="his-textarea" style={{ minHeight: 64 }} />
-                </Field>
+
+              {/* Past Surgical History — checkbox grid */}
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>
+                  Past Surgical History
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 12, marginBottom: 8 }}>
+                  {PSH_OPTIONS.map(([k, label]) => (
+                    <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                      <input type="checkbox" checked={!!pshStruct[k]}
+                        onChange={e => setPshStruct(s => ({ ...s, [k]: e.target.checked }))} />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <input value={pshStruct.other}
+                  onChange={e => setPshStruct(s => ({ ...s, other: e.target.value }))}
+                  placeholder="Other surgeries (free-text)…" className="his-field" />
+              </div>
+
+              {/* Family History — checkbox grid */}
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>
+                  Family History (hereditary conditions)
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 12, marginBottom: 8 }}>
+                  {FAMHX_OPTIONS.map(([k, label]) => (
+                    <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                      <input type="checkbox" checked={!!famHxStruct[k]}
+                        onChange={e => setFamHxStruct(s => ({ ...s, [k]: e.target.checked }))} />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <input value={famHxStruct.other}
+                  onChange={e => setFamHxStruct(s => ({ ...s, other: e.target.value }))}
+                  placeholder="Other family history (specify cancer type, age at death, etc.)…" className="his-field" />
+              </div>
+
+              {/* Social / Personal History — chip groups + small inputs */}
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>
+                  Social / Personal History
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+                  {SOCHX_GROUPS.map(g => (
+                    <div key={g.key} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      <span style={{ minWidth: 160, fontSize: 11.5, fontWeight: 600, color: C.text }}>{g.label}:</span>
+                      {g.chips.map(c => (
+                        <button key={c} type="button"
+                          onClick={() => setSocHxStruct(s => ({ ...s, [g.key]: c }))}
+                          style={{
+                            padding: "3px 12px", borderRadius: 999,
+                            border: `1.5px solid ${socHxStruct[g.key] === c ? C.purple : C.border}`,
+                            background:  socHxStruct[g.key] === c ? C.purple : "white",
+                            color:       socHxStruct[g.key] === c ? "white"   : C.muted,
+                            fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                            cursor: "pointer", transition: "all .15s ease",
+                          }}>{c}</button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                  <input value={socHxStruct.occupation}
+                    onChange={e => setSocHxStruct(s => ({ ...s, occupation: e.target.value }))}
+                    placeholder="Occupation (e.g. office worker, farmer, factory…)" className="his-field" />
+                  <input value={socHxStruct.recentTravel}
+                    onChange={e => setSocHxStruct(s => ({ ...s, recentTravel: e.target.value }))}
+                    placeholder="Recent travel (last 3 months)…" className="his-field" />
+                </div>
+                <input value={socHxStruct.other}
+                  onChange={e => setSocHxStruct(s => ({ ...s, other: e.target.value }))}
+                  placeholder="Other personal / social context (sleep, exercise, diet, marital, etc.)…" className="his-field" />
               </div>
             </div>
           </Section>
 
-          {/* ── D5 · Co-morbidity checklist (NABH AAC.1 / COP.1) ── */}
-          <Section title="Co-morbidities" icon="pi-list-check" color={C.purple} badge="NABH AAC.1">
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, fontSize: 12 }}>
+          {/* ── D5 · Co-morbidity checklist (NABH AAC.1 / COP.1) ──
+              R7hr-64: each ticked co-morbidity now exposes an inline
+              "since N yr" input. Stored alongside the boolean as
+              `${key}Years` (e.g. comorbid.diabetes=true +
+              comorbid.diabetesYears='5'), so the existing boolean
+              shape survives and the year-of-onset shows up in the
+              print block + downstream consumers without a schema
+              change. */}
+          <Section title="Co-morbidities" icon="pi-list-check" color={C.purple} badge="NABH AAC.1" disabled={ro}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 12 }}>
               {[
                 ["diabetes", "Diabetes Mellitus"],   ["hypertension", "Hypertension"],
                 ["cad", "CAD / IHD"],                ["ckd", "Chronic Kidney Disease"],
@@ -3488,13 +4292,45 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
                 ["stroke", "Stroke / CVA"],          ["mentalHealth", "Mental Health"],
                 ["hypothyroid", "Hypothyroidism"],   ["hiv", "HIV / AIDS"],
                 ["hepB", "Hepatitis B"],             ["hepC", "Hepatitis C"],
-              ].map(([k, label]) => (
-                <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                  <input type="checkbox" checked={!!comorbid[k]}
-                    onChange={e => setComorbid(c => ({ ...c, [k]: e.target.checked }))} />
-                  <span>{label}</span>
-                </label>
-              ))}
+              ].map(([k, label]) => {
+                const yearsKey = `${k}Years`;
+                const ticked = !!comorbid[k];
+                return (
+                  <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 26 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", flex: ticked ? "0 0 auto" : 1, minWidth: 0 }}>
+                      <input type="checkbox" checked={ticked}
+                        onChange={e => setComorbid(c => ({
+                          ...c,
+                          [k]: e.target.checked,
+                          // clear the years field if the box is being un-ticked
+                          ...(e.target.checked ? {} : { [yearsKey]: "" }),
+                        }))} />
+                      <span>{label}</span>
+                    </label>
+                    {ticked && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: C.muted }}>
+                        <span>since</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          inputMode="decimal"
+                          value={comorbid[yearsKey] || ""}
+                          onChange={e => setComorbid(c => ({ ...c, [yearsKey]: e.target.value }))}
+                          placeholder="—"
+                          style={{
+                            width: 56, padding: "3px 6px",
+                            border: `1px solid ${C.border}`, borderRadius: 6,
+                            fontSize: 11.5, fontWeight: 700, color: C.text,
+                            background: "#fff", outline: "none",
+                          }}
+                        />
+                        <span>yr</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             <Field label="Other co-morbidities" style={{ marginTop: 10 }}>
               <input value={comorbid.other}
@@ -3505,7 +4341,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
 
           {/* ── D2+D3 · Structured Allergies + Medication Reconciliation
                        (NABH PSQ.4 + MOM + AAC.4) ────────────────────────── */}
-          <Section title="Allergies & Medication Reconciliation" icon="pi-shield" color={C.red} badge="NABH PSQ.4 + MOM">
+          <Section title="Allergies & Medication Reconciliation" icon="pi-shield" color={C.red} badge="NABH PSQ.4 + MOM" disabled={ro}>
             {/* Allergies — structured list */}
             <div style={{ marginBottom: 14 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -3581,7 +4417,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
                 <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 6, fontSize: 11.5 }}>
                   <thead>
                     <tr style={{ background: "#f8fafc" }}>
-                      {["Drug", "Dose", "Frequency", "Last taken", "Continue?", ""].map(h => (
+                      {["Drug", "Dose", "Frequency", "Last taken", "Continue?", "HAM", ""].map(h => (
                         <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", borderBottom: `1.5px solid ${C.border}` }}>{h}</th>
                       ))}
                     </tr>
@@ -3601,7 +4437,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
                                 <span style={{ background: C.pink, color: "white", padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 800, letterSpacing: ".3px" }}>NURSING</span>
                               </span>
                             ) : (
-                              <input value={m.drug || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, drug: e.target.value } : x))} placeholder="Drug name" className="his-field" style={{ padding: "4px 6px" }} />
+                              <input value={m.drug || ""} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, drug: e.target.value, isHAM: (typeof x.isHAM === "boolean" && x.isHAM !== isHAMByName(x.drug)) ? x.isHAM : isHAMByName(e.target.value) } : x))} placeholder="Drug name" className="his-field" style={{ padding: "4px 6px" }} />
                             )}
                           </td>
                           <td style={cellStyle}>
@@ -3620,9 +4456,34 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
                             )}
                           </td>
                           <td style={{ padding: "6px 8px" }}>
+                            {/* R7hr-96 — 2 options only. Continue → DoctorOrder
+                                Medication created on save (lands in MAR/
+                                Treatment Chart). Hold → recorded in IA but no
+                                MAR row, doctor decides later. */}
                             <select value={m.continueOnAdmit || "Continue"} onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, continueOnAdmit: e.target.value } : x))} className="his-field" style={{ padding: "4px 6px" }}>
-                              {["Continue", "Hold", "Modify", "Discontinue"].map(t => <option key={t}>{t}</option>)}
+                              {["Continue", "Hold"].map(t => <option key={t}>{t}</option>)}
                             </select>
+                          </td>
+                          <td style={{ padding: "6px 8px", textAlign: "center" }}>
+                            {/* R7hr-96 — HAM tag. Auto-detected from the drug
+                                name (HAM_KEYWORDS list) but the doctor can
+                                flip it for brand names we didn't anticipate.
+                                On Continue → fan-out, the DoctorOrder backend
+                                pre-save hook re-asserts HAM independently, so
+                                this UI flag is advisory-only — the source of
+                                truth for two-nurse-witness lives on the
+                                downstream MAR row. */}
+                            <label style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer", fontSize: 11 }}>
+                              <input
+                                type="checkbox"
+                                checked={!!m.isHAM}
+                                onChange={e => setMedRecon(l => l.map((x, j) => j === i ? { ...x, isHAM: e.target.checked } : x))}
+                                style={{ accentColor: "#ef4444" }}
+                              />
+                              {m.isHAM && (
+                                <span style={{ background: "#fee2e2", color: "#b91c1c", padding: "1px 5px", borderRadius: 3, fontSize: 9, fontWeight: 800, letterSpacing: ".3px" }}>HAM</span>
+                              )}
+                            </label>
                           </td>
                           <td style={{ padding: "6px 8px" }}>
                             {!ro && (
@@ -3642,7 +4503,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
                   Nursing has captured {homeMeds.length} home medication{homeMeds.length === 1 ? "" : "s"} — they'll appear here automatically.
                 </div>
               )}
-              <button onClick={() => setMedRecon(l => [...l, { drug: "", dose: "", frequency: "", lastTaken: "", continueOnAdmit: "Continue", _doctorOnly: true }])}
+              <button onClick={() => setMedRecon(l => [...l, { drug: "", dose: "", frequency: "", lastTaken: "", continueOnAdmit: "Continue", isHAM: false, _doctorOnly: true }])}
                 style={{ padding: "5px 12px", border: `1.5px dashed ${C.accent}60`, borderRadius: 6,
                   background: C.accentL, cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: C.accent }}>
                 <i className="pi pi-plus" style={{ marginRight: 5, fontSize: 10 }} />Add medication (doctor-only)
@@ -3650,96 +4511,363 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             </div>
           </Section>
 
-          {/* ── D9 · Review of Systems (NABH AAC.1) ── */}
-          <Section title="Review of Systems" icon="pi-clipboard" color={C.teal} badge="NABH AAC.1">
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8, fontSize: 12 }}>
-              {[
-                ["constitutional", "Constitutional"], ["cardiac", "Cardiac"],
-                ["respiratory", "Respiratory"],       ["gi", "GI"],
-                ["gu", "Genitourinary"],              ["musculoskeletal", "Musculoskeletal"],
-                ["neuro", "Neuro"],                   ["skin", "Skin"],
-                ["endocrine", "Endocrine"],           ["psych", "Psychiatric"],
-              ].map(([k, label]) => (
-                <div key={k} style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 8, alignItems: "center" }}>
-                  <label style={{ fontSize: 11.5, fontWeight: 600, color: C.muted }}>{label}</label>
-                  <input value={ros[k] || ""} onChange={e => setRos(r => ({ ...r, [k]: e.target.value }))}
-                    placeholder="NAD or describe abnormality" className="his-field" style={{ padding: "5px 8px", fontSize: 11.5 }} />
-                </div>
-              ))}
-            </div>
-          </Section>
+          {/* ── R7hr-58 · Structured Clinical Examination (replaces ROS + PE) ──
+              The old "Review of Systems" 10-input NAD checklist and
+              "Physical Examination" 5-textarea grid were too thin for IPD
+              admission. Now reuses the rich Clinical Examination card from
+              OPD Assessment: structured General Examination (dropdowns +
+              severity-scaled findings + quick checkboxes) and Systemic
+              Examination CVS/RS/CNS/PA mini-blocks with picklists. Single
+              shared component → single source of truth, consistent UX
+              across OPD and IPD doctors. */}
+          <ClinicalExaminationCard value={clinExam} onChange={setClinExam} color={C.teal} />
 
-          {/* ── Examination ── */}
-          <Section title="Physical Examination" icon="pi-eye" color={C.teal}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <Field label="General Examination">
-                <textarea value={genExam} onChange={e => setGenExam(e.target.value)}
-                  placeholder="Built, nourishment, pallor, icterus, cyanosis, clubbing, lymphadenopathy, edema…"
-                  className="his-textarea" style={{ minHeight: 72 }} />
-              </Field>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <Field label="CVS">
-                  <textarea value={cvs} onChange={e => setCvs(e.target.value)}
-                    placeholder="S1 S2, murmurs, JVP, peripheral pulses…" className="his-textarea" />
-                </Field>
-                <Field label="Respiratory System">
-                  <textarea value={rs} onChange={e => setRs(e.target.value)}
-                    placeholder="Air entry, breath sounds, percussion…" className="his-textarea" />
-                </Field>
-                <Field label="Abdomen">
-                  <textarea value={abdomen} onChange={e => setAbdomen(e.target.value)}
-                    placeholder="Soft/distended, tenderness, organomegaly, bowel sounds…" className="his-textarea" />
-                </Field>
-                <Field label="CNS">
-                  <textarea value={cns} onChange={e => setCns(e.target.value)}
-                    placeholder="Orientation, cranial nerves, motor, sensory, reflexes…" className="his-textarea" />
-                </Field>
+          {/* ── D4 · 3-tier Diagnosis + Differentials (NABH AAC.1) ──
+              R7hr-65: Adopt the OPD Assessment "Patient Diagnosis" card
+              layout — three color-coded tiles (Provisional amber /
+              Working blue / Final green), an ICD-10 Code + Description
+              row in purple, and a Patient Status chip strip. Differential
+              Diagnoses kept below as an IPD-specific add (OPD doesn't
+              have it). Single source of truth for what a diagnosis card
+              looks like across OPD and IPD. */}
+          <Section title="Diagnosis" icon="pi-tag" color={C.accent} badge="NABH AAC.1 · 3-tier" disabled={ro}>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
+              Provisional → Working → Final + ICD-10 coding
+            </div>
+
+            {/* Three diagnosis tiers — color-coded by clinical certainty */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+              {/* Provisional (orange) — first-contact impression */}
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#f59e0b", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: ".6px" }}>Provisional Dx *</span>
+                </div>
+                <textarea
+                  value={provDx}
+                  onChange={e => setProvDx(e.target.value)}
+                  placeholder="Initial clinical impression on admission"
+                  style={{ width: "100%", border: "1.5px solid #fcd34d", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#fffbeb", boxSizing: "border-box", minHeight: 64, resize: "vertical" }}
+                />
+              </div>
+              {/* Working (blue) — evolving impression */}
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#3b82f6", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: ".6px" }}>Working Dx</span>
+                </div>
+                <textarea
+                  value={workingDx}
+                  onChange={e => setWorkingDx(e.target.value)}
+                  placeholder="Refined after labs / imaging"
+                  style={{ width: "100%", border: "1.5px solid #93c5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#eff6ff", boxSizing: "border-box", minHeight: 64, resize: "vertical" }}
+                />
+              </div>
+              {/* Final (green) — confirmed at discharge */}
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: ".6px" }}>Final Dx</span>
+                </div>
+                <textarea
+                  value={finalDx}
+                  onChange={e => setFinalDx(e.target.value)}
+                  placeholder="Confirmed at discharge"
+                  style={{ width: "100%", border: "1.5px solid #86efac", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#f0fdf4", boxSizing: "border-box", minHeight: 64, resize: "vertical" }}
+                />
               </div>
             </div>
-          </Section>
 
-          {/* ── D4 · 3-tier Diagnosis + Differentials (NABH AAC.1) ── */}
-          <Section title="Diagnosis" icon="pi-tag" color={C.accent} badge="NABH AAC.1 · 3-tier">
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <Field label="Provisional Diagnosis * (on admission, based on Hx + Exam)">
-                <textarea value={provDx} onChange={e => setProvDx(e.target.value)}
-                  placeholder="Initial clinical impression…"
-                  className="his-textarea" style={{ minHeight: 56 }} />
-              </Field>
-              <Field label="Working Diagnosis (after initial investigations)">
-                <textarea value={workingDx} onChange={e => setWorkingDx(e.target.value)}
-                  placeholder="Refined diagnosis after labs/imaging during the stay…"
-                  className="his-textarea" style={{ minHeight: 56 }} />
-              </Field>
-              <Grid2>
-                <Field label="Final / Confirmed Diagnosis">
-                  <textarea value={finalDx} onChange={e => setFinalDx(e.target.value)}
-                    placeholder="Confirmed at discharge…" className="his-textarea" style={{ minHeight: 56 }} />
-                </Field>
-                <Field label="ICD-10 Code">
-                  <input value={icd10} onChange={e => setIcd10(e.target.value)}
-                    placeholder="e.g. J18.9, K35.9…" className="his-field" />
-                </Field>
-              </Grid2>
-              <Field label="Differential Diagnoses">
-                <textarea value={differentialDx} onChange={e => setDifferentialDx(e.target.value)}
-                  placeholder="Alternative diagnoses to rule out — one per line"
-                  className="his-textarea" style={{ minHeight: 56 }} />
-              </Field>
+            {/* ICD-10 row — code + description applied to the episode */}
+            <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 12, marginBottom: 12 }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#8b5cf6", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: ".6px" }}>ICD-10 Code</span>
+                </div>
+                <input
+                  value={icd10}
+                  onChange={e => setIcd10(e.target.value)}
+                  placeholder="e.g. J18.9"
+                  style={{ width: "100%", border: "1.5px solid #c4b5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: "#5b21b6", outline: "none", background: "#faf5ff", boxSizing: "border-box", letterSpacing: ".5px" }}
+                />
+              </div>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#8b5cf6", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: ".6px" }}>ICD-10 Description</span>
+                </div>
+                <input
+                  value={icd10Description}
+                  onChange={e => setIcd10Description(e.target.value)}
+                  placeholder="e.g. Unspecified pneumonia, Type 2 DM with complications…"
+                  style={{ width: "100%", border: "1.5px solid #c4b5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#faf5ff", boxSizing: "border-box" }}
+                />
+              </div>
             </div>
-          </Section>
 
-          {/* ── Investigations ── */}
-          <Section title="Investigations Ordered" icon="pi-list-check" color={C.purple}>
-            <Field label="Tests / Investigations">
-              <textarea value={investigations} onChange={e => setInvestigations(e.target.value)}
-                placeholder="CBC, LFT, RFT, Blood sugar, ECG, X-Ray Chest, USG Abdomen, Cultures…"
-                className="his-textarea" style={{ minHeight: 80 }} />
+            {/* Patient Status chips — clinical trajectory at a glance.
+                Click an already-selected chip to clear it (toggle), since
+                "no status set" is a valid state for a fresh admission. */}
+            <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>Patient Status:</span>
+              {["Stable","Improving","Unchanged","Deteriorating","Critical","Ready for Discharge"].map(s => (
+                <button key={s} type="button"
+                  onClick={() => setPatientStatus(p => p === s ? "" : s)}
+                  style={{
+                    padding: "4px 13px", borderRadius: 20,
+                    border: `1.5px solid ${patientStatus === s ? "#2563eb" : C.border}`,
+                    background: patientStatus === s ? "#2563eb" : "white",
+                    color: patientStatus === s ? "white" : C.muted,
+                    fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                    cursor: "pointer", transition: "all .15s ease",
+                  }}>
+                  {s}
+                </button>
+              ))}
+            </div>
+
+            {/* Differential Diagnoses — IPD-specific addition (OPD card
+                doesn't include this; we keep it for the admission flow
+                because the doctor often lists 2-3 dx to rule out). */}
+            <Field label="Differential Diagnoses">
+              <textarea value={differentialDx} onChange={e => setDifferentialDx(e.target.value)}
+                placeholder="Alternative diagnoses to rule out — one per line"
+                className="his-textarea" style={{ minHeight: 56 }} />
             </Field>
           </Section>
 
+          {/* ── R7hr-59 · Structured Investigations (OPD-style)
+              R7hr-67 polish: subtitle line matches Diagnosis card.
+              R7hr-69: lab-catalog autocomplete + multi-pick chip flow
+              — doctor types "cbc", picks CBC → chip; types "lft",
+              picks LFT → chip; clicks "+ Add 2 Tests" → both commit
+              with the urgency + instructions set above. Free-text
+              entries also work — pressing Enter on any value not in
+              the catalog still chips it. */}
+          <Section title="Investigations Ordered" icon="pi-list-check" color={C.purple} badge={`${invests.length} test${invests.length===1?"":"s"}`} disabled={ro}>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
+              Order labs / imaging / procedures — type to search, pick multiple, then click Add
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 130px 1.4fr auto", gap: 8, alignItems: "end" }}>
+                <Field label="Test / Investigation Name">
+                  <div style={{ position: "relative" }}>
+                    <input
+                      value={invQuery}
+                      onChange={e => { setInvQuery(e.target.value); setInvShowSuggest(true); setInvSuggestIdx(-1); }}
+                      onFocus={() => setInvShowSuggest(true)}
+                      onBlur={() => setTimeout(() => setInvShowSuggest(false), 150)}
+                      onKeyDown={(e) => {
+                        const q = invQuery.trim().toLowerCase();
+                        const matches = q ? LAB_TESTS.filter(t => t.toLowerCase().includes(q)).slice(0, 8) : [];
+                        if (e.key === "ArrowDown") { e.preventDefault(); setInvSuggestIdx(i => Math.min(matches.length - 1, i + 1)); }
+                        else if (e.key === "ArrowUp") { e.preventDefault(); setInvSuggestIdx(i => Math.max(0, i - 1)); }
+                        else if (e.key === "Enter") {
+                          e.preventDefault();
+                          const pick = invSuggestIdx >= 0 && matches[invSuggestIdx]
+                            ? matches[invSuggestIdx]
+                            : invQuery.trim();
+                          if (!pick) return;
+                          if (!invPending.includes(pick)) setInvPending(prev => [...prev, pick]);
+                          setInvQuery(""); setInvSuggestIdx(-1); setInvShowSuggest(false);
+                        } else if (e.key === "Escape") { setInvShowSuggest(false); setInvSuggestIdx(-1); }
+                      }}
+                      placeholder="Type test name — CBC, LFT, ECG, USG…"
+                      className="his-field"
+                    />
+                    {invShowSuggest && invQuery.trim() && (() => {
+                      const q = invQuery.trim().toLowerCase();
+                      const matches = LAB_TESTS.filter(t => t.toLowerCase().includes(q)).slice(0, 8);
+                      const exact = matches.some(m => m.toLowerCase() === q);
+                      return (
+                        <div style={{
+                          position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4,
+                          background: "white", border: `1px solid ${C.border}`, borderRadius: 8,
+                          boxShadow: "0 8px 24px rgba(15,23,42,.12)",
+                          maxHeight: 280, overflowY: "auto", zIndex: 50,
+                        }}>
+                          {matches.length === 0 && !exact && (
+                            <div
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                const pick = invQuery.trim();
+                                if (pick && !invPending.includes(pick)) setInvPending(prev => [...prev, pick]);
+                                setInvQuery(""); setInvShowSuggest(false);
+                              }}
+                              style={{ padding: "10px 14px", fontSize: 12, color: C.muted, cursor: "pointer", borderBottom: `1px solid ${C.border}` }}>
+                              <span style={{ color: C.purple, fontWeight: 700 }}>+ Add "{invQuery.trim()}"</span> as custom test
+                            </div>
+                          )}
+                          {matches.map((m, i) => (
+                            <div
+                              key={m}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                if (!invPending.includes(m)) setInvPending(prev => [...prev, m]);
+                                setInvQuery(""); setInvShowSuggest(false); setInvSuggestIdx(-1);
+                              }}
+                              onMouseEnter={() => setInvSuggestIdx(i)}
+                              style={{
+                                padding: "9px 14px", fontSize: 12, cursor: "pointer",
+                                background: invSuggestIdx === i ? `${C.purple}12` : "white",
+                                color: C.text, fontWeight: invSuggestIdx === i ? 700 : 500,
+                                borderBottom: i < matches.length - 1 ? `1px solid ${C.border}40` : "none",
+                                display: "flex", alignItems: "center", gap: 8,
+                              }}>
+                              <i className="pi pi-plus-circle" style={{ color: C.purple, fontSize: 11 }} />
+                              {m}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </Field>
+                <Field label="Urgency">
+                  <select value={invUrgency} onChange={e => setInvUrgency(e.target.value)} className="his-field">
+                    <option value="ROUTINE">Routine</option>
+                    <option value="URGENT">Urgent</option>
+                    <option value="STAT">STAT</option>
+                  </select>
+                </Field>
+                <Field label="Instructions">
+                  <input value={invInstructions} onChange={e => setInvInstructions(e.target.value)}
+                    placeholder="Fasting, repeat, specific time…" className="his-field" />
+                </Field>
+                <button type="button" onClick={() => {
+                  // Commit invPending (or, if empty, the typed query) into invests
+                  // using the current urgency + instructions for the whole batch.
+                  let names = [...invPending];
+                  if (invQuery.trim() && !names.includes(invQuery.trim())) names.push(invQuery.trim());
+                  if (names.length === 0) return;
+                  setInvests(prev => [
+                    ...prev,
+                    ...names.map(name => ({ name, urgency: invUrgency, instructions: invInstructions.trim() })),
+                  ]);
+                  setInvPending([]); setInvQuery(""); setInvInstructions(""); setInvUrgency("ROUTINE");
+                }} disabled={invPending.length === 0 && !invQuery.trim()} style={{
+                  height: 38, padding: "0 18px", minWidth: 110,
+                  border: "none", borderRadius: 8,
+                  background: (invPending.length > 0 || invQuery.trim()) ? C.purple : `${C.purple}50`,
+                  color: "white",
+                  fontFamily: "inherit", fontSize: 12.5, fontWeight: 700,
+                  cursor: (invPending.length > 0 || invQuery.trim()) ? "pointer" : "not-allowed",
+                  whiteSpace: "nowrap",
+                  boxShadow: `0 1px 2px ${C.purple}30`,
+                }}>+ Add {invPending.length > 0 ? `${invPending.length + (invQuery.trim() ? 1 : 0)} Test${(invPending.length + (invQuery.trim() ? 1 : 0)) === 1 ? "" : "s"}` : "Test"}</button>
+              </div>
+
+              {/* Pending chip strip — shown only while the doctor is
+                  stacking up tests. Each chip is removable. */}
+              {invPending.length > 0 && (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                  padding: "10px 12px",
+                  background: `${C.purple}08`, border: `1px solid ${C.purple}30`,
+                  borderRadius: 8,
+                }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: C.purple, textTransform: "uppercase", letterSpacing: ".5px" }}>
+                    Selected ({invPending.length}):
+                  </span>
+                  {invPending.map((t, idx) => (
+                    <span key={t + idx} style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "4px 4px 4px 11px", borderRadius: 999,
+                      background: "white", border: `1.5px solid ${C.purple}40`,
+                      fontSize: 11.5, fontWeight: 600, color: C.text,
+                    }}>
+                      {t}
+                      <button type="button" onClick={() => setInvPending(prev => prev.filter((_, j) => j !== idx))}
+                        title={`Remove ${t}`}
+                        style={{
+                          width: 18, height: 18, border: "none", background: `${C.purple}15`,
+                          color: C.purple, borderRadius: "50%", cursor: "pointer",
+                          display: "inline-flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 11, fontWeight: 800, padding: 0,
+                        }}>×</button>
+                    </span>
+                  ))}
+                  <button type="button" onClick={() => setInvPending([])}
+                    style={{
+                      marginLeft: "auto", border: "none", background: "transparent",
+                      color: C.muted, fontSize: 11, cursor: "pointer", fontWeight: 600, textDecoration: "underline",
+                    }}>Clear all</button>
+                </div>
+              )}
+              {invests.length === 0 ? (
+                <div style={{
+                  padding: "14px 16px", borderRadius: 10,
+                  background: `${C.purple}08`, border: `1px dashed ${C.purple}40`,
+                  textAlign: "center", fontSize: 12, color: C.muted, fontStyle: "italic",
+                }}>
+                  <i className="pi pi-info-circle" style={{ marginRight: 6, color: C.purple }} />
+                  No investigations ordered yet — type a test name above and click "+ Add Test".
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto", border: `1px solid ${C.border}`, borderRadius: 10 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead><tr style={{ background: `${C.purple}08` }}>
+                      {["#", "Investigation", "Urgency", "Instructions", ""].map(h => (
+                        <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: 10, fontWeight: 700, color: C.purple, textTransform: "uppercase", letterSpacing: ".6px", borderBottom: `1.5px solid ${C.purple}20` }}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {invests.map((inv, i) => {
+                        const urgColor = inv.urgency === "STAT" ? "#b91c1c"
+                                      : inv.urgency === "URGENT" ? "#a16207"
+                                      : "#475569";
+                        const urgBg    = inv.urgency === "STAT" ? "#fef2f2"
+                                      : inv.urgency === "URGENT" ? "#fef3c7"
+                                      : "#f1f5f9";
+                        return (
+                          <tr key={i} style={{ borderTop: i === 0 ? "none" : `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "white" }}>
+                            <td style={{ padding: "8px 12px", fontSize: 12, fontWeight: 700, color: C.muted, width: 32 }}>{i+1}</td>
+                            <td style={{ padding: "8px 12px", fontSize: 12.5, fontWeight: 600, color: C.text }}>{inv.name}</td>
+                            <td style={{ padding: "8px 12px", fontSize: 11 }}>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 999, background: urgBg, color: urgColor, fontWeight: 700, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: urgColor, flexShrink: 0 }} />
+                                {inv.urgency || "Routine"}
+                              </span>
+                            </td>
+                            <td style={{ padding: "8px 12px", fontSize: 11.5, color: C.muted }}>{inv.instructions || "—"}</td>
+                            <td style={{ padding: "8px 12px", textAlign: "right", width: 36 }}>
+                              <button type="button" onClick={() => setInvests(prev => prev.filter((_, j) => j !== i))} title="Remove" style={{ border: "none", background: "transparent", cursor: "pointer", color: "#dc2626", fontWeight: 800, fontSize: 14 }}>✕</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </Section>
+
+          {/* ── R7hr-59 · Prescription (shared PrescriptionPanel)
+              R7hr-67 polish: subtitle bar above the panel for visual
+              parity with Diagnosis. PrescriptionPanel itself is shared
+              with OPD so we don't touch internals — just wrap better. */}
+          <Section title="Prescription / Medications" icon="pi-file-edit" color={C.green} badge={`${meds.length} drug${meds.length===1?"":"s"}`} disabled={ro}>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
+              Inpatient medications — drug · dose · frequency · meal · duration · route
+            </div>
+            <PrescriptionPanel value={meds} onChange={setMeds} />
+          </Section>
+
+          {/* ── R7hr-59 · Infusion / IV Fluids (shared InfusionPanel)
+              R7hr-67 polish: subtitle bar. InfusionPanel internals stay
+              untouched (shared with OPD); HAM auto-tag banner lives
+              inside the panel. */}
+          <Section title="Infusion / IV Fluids" icon="pi-bolt" color={C.teal} badge={`${infusions.length} order${infusions.length===1?"":"s"}`} disabled={ro}>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
+              IV fluids / drips — routes to nurse's Infusion Orders & Monitoring tab on save
+            </div>
+            <InfusionPanel value={infusions} onChange={setInfusions} />
+          </Section>
+
           {/* ── Treatment Plan ── */}
-          <Section title="Treatment Plan" icon="pi-list" color={C.green}>
+          <Section title="Treatment Plan" icon="pi-list" color={C.green} disabled={ro}>
             <Field label="Treatment Plan / Management">
               <textarea value={treatmentPlan} onChange={e => setTreatmentPlan(e.target.value)}
                 placeholder="Conservative / surgical plan, monitoring required, nursing orders, special instructions…"
@@ -3747,73 +4875,8 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             </Field>
           </Section>
 
-          {/* ── Prescription ── */}
-          <Section title="Prescription" icon="pi-file-edit" color={C.green}
-            badge={`${rxRows.filter(r => r.drug).length} drug(s)`}>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ background: "#f8fafc" }}>
-                    {["#", "Drug / Medicine", "Dose", "Route", "Frequency", "Duration", "Instructions", ""].map(h => (
-                      <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700,
-                        color: C.muted, textTransform: "uppercase", letterSpacing: ".6px",
-                        borderBottom: `1.5px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rxRows.map((row, idx) => (
-                    <tr key={row.id} style={{ borderBottom: `1px solid ${C.border}` }}>
-                      <td style={{ padding: "8px 10px", fontSize: 12, fontWeight: 700, color: C.muted }}>{idx + 1}</td>
-                      <td style={{ padding: "6px 6px", minWidth: 180 }}>
-                        <input value={row.drug} onChange={e => setRxRows(r => r.map(x => x.id === row.id ? { ...x, drug: e.target.value } : x))}
-                          placeholder="Drug name…" className="his-field" style={{ padding: "6px 8px" }} />
-                      </td>
-                      <td style={{ padding: "6px 6px", minWidth: 80 }}>
-                        <input value={row.dose} onChange={e => setRxRows(r => r.map(x => x.id === row.id ? { ...x, dose: e.target.value } : x))}
-                          placeholder="500mg" className="his-field" style={{ padding: "6px 8px" }} />
-                      </td>
-                      <td style={{ padding: "6px 6px", minWidth: 90 }}>
-                        <select value={row.route} onChange={e => setRxRows(r => r.map(x => x.id === row.id ? { ...x, route: e.target.value } : x))}
-                          className="his-field" style={{ padding: "6px 8px" }}>
-                          {ROUTES.map(r => <option key={r}>{r}</option>)}
-                        </select>
-                      </td>
-                      <td style={{ padding: "6px 6px", minWidth: 90 }}>
-                        <select value={row.frequency} onChange={e => setRxRows(r => r.map(x => x.id === row.id ? { ...x, frequency: e.target.value } : x))}
-                          className="his-field" style={{ padding: "6px 8px" }}>
-                          {FREQS.map(f => <option key={f}>{f}</option>)}
-                        </select>
-                      </td>
-                      <td style={{ padding: "6px 6px", minWidth: 90 }}>
-                        <input value={row.duration} onChange={e => setRxRows(r => r.map(x => x.id === row.id ? { ...x, duration: e.target.value } : x))}
-                          placeholder="5 days" className="his-field" style={{ padding: "6px 8px" }} />
-                      </td>
-                      <td style={{ padding: "6px 6px", minWidth: 140 }}>
-                        <input value={row.instructions} onChange={e => setRxRows(r => r.map(x => x.id === row.id ? { ...x, instructions: e.target.value } : x))}
-                          placeholder="After food, SOS…" className="his-field" style={{ padding: "6px 8px" }} />
-                      </td>
-                      <td style={{ padding: "6px 6px" }}>
-                        <button onClick={() => setRxRows(r => r.filter(x => x.id !== row.id))}
-                          style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", padding: 4 }}>
-                          <i className="pi pi-trash" style={{ fontSize: 13 }} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <button onClick={() => setRxRows(r => [...r, blankRx()])}
-              style={{ marginTop: 12, padding: "7px 16px", border: `1.5px dashed ${C.green}60`,
-                borderRadius: 8, background: C.greenL, cursor: "pointer",
-                fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 600, color: C.green }}>
-              <i className="pi pi-plus" style={{ marginRight: 6, fontSize: 11 }} />Add Medicine
-            </button>
-          </Section>
-
           {/* ── D6 + D7 + D8 · Care Decisions (NABH AAC.4 / ROP.1 / PSQ.4) ── */}
-          <Section title="Care Decisions" icon="pi-flag" color={C.accent} badge="NABH AAC.4 + ROP.1">
+          <Section title="Care Decisions" icon="pi-flag" color={C.accent} badge="NABH AAC.4 + ROP.1" disabled={ro}>
             {/* Code Status */}
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>
@@ -3914,7 +4977,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           {(() => {
             const fromNursing = !!(anthropo.heightCm || anthropo.weightKg);
             return (
-              <Section title="Anthropometry" icon="pi-chart-line" color={C.teal} badge="Drug-dosing safety">
+              <Section title="Anthropometry" icon="pi-chart-line" color={C.teal} badge="Drug-dosing safety" disabled={ro}>
                 {fromNursing && (
                   <div style={{ background: "#fdf2f8", border: `1.5px solid ${C.pink}40`, borderRadius: 6, padding: "6px 10px", marginBottom: 10, fontSize: 11, color: C.pink, fontWeight: 600 }}>
                     <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
@@ -3964,7 +5027,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           })()}
 
           {/* ── D11 · Local examination (surgical/focused) ── */}
-          <Section title="Local / Focused Examination" icon="pi-search" color={C.purple}>
+          <Section title="Local / Focused Examination" icon="pi-search" color={C.purple} disabled={ro}>
             <Field label="Local examination findings (relevant to chief complaint)">
               <textarea value={localExam} onChange={e => setLocalExam(e.target.value)}
                 placeholder="e.g. RIF tender, McBurney's positive, Rovsing's negative, no rebound. Wound: clean, healthy granulation, 4×3 cm, no slough…"
@@ -3973,7 +5036,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── D12 · Cross-Consultation / Referrals ── */}
-          <Section title="Cross-Consultation / Referrals" icon="pi-users" color={C.accent} badge="NABH COP">
+          <Section title="Cross-Consultation / Referrals" icon="pi-users" color={C.accent} badge="NABH COP" disabled={ro}>
             {referrals.length > 0 && (
               <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 8, fontSize: 11.5 }}>
                 <thead>
@@ -4011,7 +5074,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── D13 · Prognosis Discussion ── */}
-          <Section title="Prognosis Discussed With" icon="pi-comments" color={C.pink} badge="NABH PRE.4">
+          <Section title="Prognosis Discussed With" icon="pi-comments" color={C.pink} badge="NABH PRE.4" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Field label="Discussed with (name + relation)">
                 <input value={prognosis.discussedWith}
@@ -4040,7 +5103,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── D14 · Consent Linkage ── */}
-          <Section title="Consents Required" icon="pi-id-card" color={C.green} badge="NABH PRE.3 + PRE.4">
+          <Section title="Consents Required" icon="pi-id-card" color={C.green} badge="NABH PRE.3 + PRE.4" disabled={ro}>
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               Flag which consents must be obtained before procedures. Each flagged consent must be captured
               with biometric + staff e-sign via the Consent Forms page (R7ez).
@@ -4070,7 +5133,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
               ══════════════════════════════════════════════════════════ */}
 
           {/* ── D15 · Menstrual / Obstetric (women of childbearing age) ── */}
-          <Section title="Menstrual & Obstetric History" icon="pi-heart" color={C.pink}>
+          <Section title="Menstrual & Obstetric History" icon="pi-heart" color={C.pink} disabled={ro}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
               <input type="checkbox" checked={obGyn.isApplicable} onChange={e => setObGyn(p => ({ ...p, isApplicable: e.target.checked }))} />
               Patient is female of childbearing age — capture below
@@ -4118,7 +5181,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── D16 · Immunisation Status ── */}
-          <Section title="Immunisation Status" icon="pi-shield" color={C.green}>
+          <Section title="Immunisation Status" icon="pi-shield" color={C.green} disabled={ro}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
               <input type="checkbox" checked={immunisation.upToDateForAge} onChange={e => setImmunisation(p => ({ ...p, upToDateForAge: e.target.checked }))} />
               Up-to-date for age per national schedule
@@ -4147,7 +5210,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── D17 · Functional / ECOG ── */}
-          <Section title="Functional Status (ECOG)" icon="pi-user" color={C.teal}>
+          <Section title="Functional Status (ECOG)" icon="pi-user" color={C.teal} disabled={ro}>
             <Field label="ECOG Performance Status (0–4)">
               <select value={ecog.score} onChange={e => setEcog(p => ({ ...p, score: e.target.value }))} className="his-field">
                 <option value="">— Select —</option>
@@ -4169,7 +5232,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── D18 · Spiritual / Existential Needs ── */}
-          <Section title="Spiritual / Existential Needs" icon="pi-star" color={C.purple}>
+          <Section title="Spiritual / Existential Needs" icon="pi-star" color={C.purple} disabled={ro}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
               <input type="checkbox" checked={spiritual.distressNoted} onChange={e => setSpiritual(p => ({ ...p, distressNoted: e.target.checked }))} />
               Spiritual / existential distress noted at this visit
@@ -4184,7 +5247,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           </Section>
 
           {/* ── Diet, Activity & Follow-up ── */}
-          <Section title="Diet, Activity & Follow-up" icon="pi-calendar-clock" color={C.teal}>
+          <Section title="Diet, Activity & Follow-up" icon="pi-calendar-clock" color={C.teal} disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <Field label="Diet Advice">
                 <textarea value={dietAdvice} onChange={e => setDietAdvice(e.target.value)}
@@ -4201,11 +5264,17 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
             </div>
           </Section>
 
-          {/* ── Doctor sign-off ── */}
-          <div style={{ background: C.accentL, border: `1px solid ${C.accent}30`, borderRadius: 12,
+          {/* ── Doctor sign-off ──
+              R7hr-72/lock — hidden when LOCKED & !amendMode (the red
+              ribbon's Amend button is the only path back in); when
+              amendMode is on, the "Sign" button morphs into "Save
+              Amendment" and dispatches via handleAmendSave. */}
+          {!(iaLocked && !amendMode) && (
+          <div style={{ background: amendMode ? "#fffbeb" : C.accentL,
+            border: `1px solid ${amendMode ? "#d97706" : C.accent}30`, borderRadius: 12,
             padding: "14px 20px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: amendMode ? "#92400e" : C.accent }}>
                 <i className="pi pi-verified" style={{ marginRight: 6 }} />Doctor's Digital Signature
               </div>
               <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
@@ -4213,22 +5282,36 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
               </div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => handleSave(false, "doctor")} disabled={saving}
-                style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-                  background: "white", cursor: saving ? "not-allowed" : "pointer",
-                  fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
-                Save Draft
-              </button>
-              <button onClick={async () => { await handleSave(true, "doctor"); onSign?.("doctor"); }} disabled={saving}
-                style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: C.accent,
-                  cursor: saving ? "not-allowed" : "pointer",
-                  fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
-                  boxShadow: `0 4px 14px ${C.accent}40` }}>
-                <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
-                {saving ? "Submitting…" : "Sign Doctor Initial Assessment"}
-              </button>
+              {!amendMode && (
+                <button onClick={() => handleSave(false, "doctor")} disabled={saving}
+                  style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8,
+                    background: "white", cursor: saving ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
+                  Save Draft
+                </button>
+              )}
+              {amendMode ? (
+                <button onClick={() => handleAmendSave("doctor")} disabled={saving}
+                  style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: "#d97706",
+                    cursor: saving ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
+                    boxShadow: "0 4px 14px rgba(217,119,6,.4)" }}>
+                  <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
+                  {saving ? "Saving…" : "Save Amendment"}
+                </button>
+              ) : (
+                <button onClick={async () => { await handleSave(true, "doctor"); onSign?.("doctor"); }} disabled={saving}
+                  style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: C.accent,
+                    cursor: saving ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
+                    boxShadow: `0 4px 14px ${C.accent}40` }}>
+                  <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
+                  {saving ? "Submitting…" : "Sign Doctor Initial Assessment"}
+                </button>
+              )}
             </div>
           </div>
+          )}
 
         </>)}
 
@@ -4239,6 +5322,105 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign }) {
           onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
           onCancel={() => setShowSetup(false)}
         />
+      )}
+
+      {/* ── R7hr-72/lock · Amend modal ────────────────────────────────
+          Centred overlay with a mandatory reason textarea (min 5 chars).
+          Begin Amend captures the full form snapshot, flips amendMode
+          on, and dismisses itself; the AMENDING ribbon + editable form
+          take over. */}
+      {amendModalOpen && (
+        <div
+          role="dialog" aria-modal="true" aria-labelledby="amend-modal-title"
+          style={{
+            position: "fixed", inset: 0, background: "rgba(15,23,42,.55)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 9999, padding: 20,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setAmendModalOpen(false); }}
+        >
+          <div style={{
+            background: "white", borderRadius: 14, width: "100%", maxWidth: 520,
+            border: "1px solid #e2e6ea", boxShadow: "0 24px 70px rgba(15,23,42,.35)",
+            overflow: "hidden",
+          }}>
+            <div style={{
+              padding: "14px 20px", borderBottom: "1px solid #e2e6ea",
+              background: "#fef2f2", display: "flex", alignItems: "center", gap: 8,
+            }}>
+              <span style={{ fontSize: 16 }} aria-hidden="true">{"🔒"}</span>
+              <div id="amend-modal-title" style={{ fontSize: 14, fontWeight: 800, color: "#7f1d1d" }}>
+                Amend Initial Assessment
+              </div>
+            </div>
+            <div style={{ padding: "16px 20px" }}>
+              <div style={{ fontSize: 12, color: C.muted, marginBottom: 8, lineHeight: 1.5 }}>
+                This record is signed. Amendments are <strong>permanent + audit-logged</strong>.
+                Please describe why the assessment must change.
+              </div>
+              <label style={{
+                display: "block", fontSize: 11, fontWeight: 700, color: C.muted,
+                textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 4,
+              }}>
+                Reason for amendment <span style={{ color: C.red, marginLeft: 3 }}>*</span>
+              </label>
+              <textarea
+                value={amendReason}
+                onChange={(e) => setAmendReason(e.target.value)}
+                placeholder="Reason for amendment (required) — e.g. lab corrected, vitals re-checked, history clarified…"
+                style={{
+                  width: "100%", minHeight: 92, padding: "8px 10px",
+                  border: `1.5px solid ${amendReason.trim().length >= 5 ? C.border : "#fecaca"}`,
+                  borderRadius: 8, fontSize: 13, fontFamily: "'DM Sans', sans-serif",
+                  resize: "vertical", boxSizing: "border-box",
+                }}
+                autoFocus
+              />
+              <div style={{ fontSize: 10, color: amendReason.trim().length >= 5 ? C.muted : "#b91c1c", marginTop: 4 }}>
+                {amendReason.trim().length}/5 characters minimum
+              </div>
+            </div>
+            <div style={{
+              padding: "12px 20px", borderTop: "1px solid #e2e6ea",
+              background: "#f8fafc", display: "flex", justifyContent: "flex-end", gap: 8,
+            }}>
+              <button
+                type="button"
+                onClick={() => { setAmendModalOpen(false); }}
+                style={{
+                  padding: "8px 18px", border: `1.5px solid ${C.border}`, borderRadius: 8,
+                  background: "white", color: C.muted, cursor: "pointer",
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={amendReason.trim().length < 5}
+                onClick={() => {
+                  const reason = amendReason.trim();
+                  if (reason.length < 5) return;
+                  setPreAmendSnapshot(captureFormSnapshot());
+                  setAmendMode(true);
+                  setAmendModalOpen(false);
+                  setAmendReason(reason);
+                }}
+                style={{
+                  padding: "8px 18px", border: "none", borderRadius: 8,
+                  background: amendReason.trim().length >= 5 ? "#dc2626" : "#fca5a5",
+                  color: "white",
+                  cursor: amendReason.trim().length >= 5 ? "pointer" : "not-allowed",
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 800,
+                  boxShadow: amendReason.trim().length >= 5 ? "0 4px 12px rgba(220,38,38,.35)" : "none",
+                }}
+              >
+                <i className="pi pi-pencil" style={{ fontSize: 10, marginRight: 5 }} />
+                Begin Amend
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

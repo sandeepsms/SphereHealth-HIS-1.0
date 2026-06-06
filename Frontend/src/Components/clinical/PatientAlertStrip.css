@@ -1,0 +1,55 @@
+/* R7hr-86 — Patient safety alert strip styles. Designed to sit beside
+   the "All Sections" back button on Doctor/Nursing Notes, so the
+   patient header card itself stays compact. */
+
+.pas-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pas-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  line-height: 1.2;
+}
+
+.pas-chip-icon { font-size: 12px; }
+.pas-chip-label {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+.pas-chip-value {
+  font-weight: 600;
+  font-size: 11.5px;
+  opacity: .92;
+}
+
+/* Allergy chip — always red because it's a patient-safety hard alert. */
+.pas-chip--allergy {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+
+/* Compliance — colour mirrors the legacy .phc-compliance-- classes so
+   the visual continues to match the rest of HIS. */
+.pas-chip--compliance.pas-chip--overdue {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+.pas-chip--compliance.pas-chip--due_soon {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fde68a;
+}

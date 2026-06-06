@@ -193,11 +193,28 @@ async function findServiceByCode(code) {
 // for the room the patient is currently in. Returns zero rates if the
 // patient has no bed (OPD / Services stub) or if the category is missing
 // pricing — the caller falls back to whatever ServiceMaster has.
-async function resolveBedAndNursingRates(admission) {
+async function resolveBedAndNursingRates(admission, opts = {}) {
+  // R7hr-12-S2 (D10-06): optional `_roomCacheById` lets the batched cron
+  // skip the Room.findById().populate() round-trip when the cron driver
+  // has already preloaded every active admission's room+category in one
+  // shot (runDailyBedChargeAccrual). Discharge / on-demand / backfill
+  // callers omit the cache and fall through to the original query path.
+  const { _roomCacheById } = opts || {};
   const empty = { bedRate: 0, nursingRate: 0, categoryCode: null, categoryName: null, roomType: null };
   if (!admission?.roomId) return empty;
   try {
-    const room = await Room.findById(admission.roomId).populate("roomCategory").lean();
+    // R7hr-12-S2 (D10-06): cache lookup. When the cron passes a
+    // preloaded Map it has already pulled every active admission's
+    // Room+RoomCategory in one $in find — absence is authoritative
+    // (room was deleted between cache-warm and now, or admission.roomId
+    // is stale). Non-cron callers omit the Map and take the original
+    // per-call findById path unchanged.
+    let room;
+    if (_roomCacheById instanceof Map) {
+      room = _roomCacheById.get(String(admission.roomId)) || null;
+    } else {
+      room = await Room.findById(admission.roomId).populate("roomCategory").lean();
+    }
     const cat = room?.roomCategory;
     if (!cat) return empty;
     return {
@@ -233,11 +250,16 @@ async function resolveBedAndNursingRates(admission) {
 //       monitoringCharge, dieteticsCharge, housekeepingCharge, linenCharge
 //     }
 //   }
-async function resolveRoomCategoryChargeMatrix(admission) {
-  // Reuse the legacy resolver to discover the categoryCode + categoryName
-  // off the admission's populated room → roomCategory chain. That gives
-  // us the join key for the matrix lookup AND a safe legacy fallback.
-  const legacy = await resolveBedAndNursingRates(admission);
+async function resolveRoomCategoryChargeMatrix(admission, opts = {}) {
+  // R7hr-12-S2 (D10-06): optional caches plumbed in by the batched cron
+  // (runDailyBedChargeAccrual). When `_roomCacheById` is provided the
+  // Room+RoomCategory lookup short-circuits to a Map.get; when
+  // `_matrixCacheByCategoryCode` is provided the RoomCategoryCharges
+  // findOne short-circuits the same way. Callers who don't pass caches
+  // (discharge flush, on-demand recalc, backfill) get the original
+  // per-call query path — preserves zero behaviour change off the cron.
+  const { _roomCacheById, _matrixCacheByCategoryCode } = opts || {};
+  const legacy = await resolveBedAndNursingRates(admission, { _roomCacheById });
   const empty = {
     matched: false,
     categoryCode: legacy.categoryCode,
@@ -257,12 +279,24 @@ async function resolveRoomCategoryChargeMatrix(admission) {
   };
   if (!legacy.categoryCode) return empty;
   try {
-    const RoomCategoryCharges = require("../../models/Admin/RoomCategoryChargesModel");
-    const row = await RoomCategoryCharges.findOne({
-      categoryCode: String(legacy.categoryCode).toUpperCase(),
-      active:       true,
-      effectiveTo:  null,
-    }).lean();
+    const codeKey = String(legacy.categoryCode).toUpperCase();
+    // R7hr-12-S2 (D10-06): cache lookup. When the cron passes a
+    // preloaded Map it has already pulled every active RoomCategoryCharges
+    // row in one shot (same filter we'd use here) — so the absence of a
+    // categoryCode in the Map is authoritative and we DON'T fall through
+    // to findOne. Non-cron callers (discharge flush, backfill, on-demand)
+    // omit the Map and take the live findOne path unchanged.
+    let row;
+    if (_matrixCacheByCategoryCode instanceof Map) {
+      row = _matrixCacheByCategoryCode.get(codeKey) || null;
+    } else {
+      const RoomCategoryCharges = require("../../models/Admin/RoomCategoryChargesModel");
+      row = await RoomCategoryCharges.findOne({
+        categoryCode: codeKey,
+        active:       true,
+        effectiveTo:  null,
+      }).lean();
+    }
     if (!row) return empty;
     return {
       matched: true,
@@ -1225,16 +1259,130 @@ async function onMARAdministration(marDoc, medication, administrationEntry) {
   // entire QID schedules.
   try {
     const BillingTrigger = require("../../models/Billing/BillingTrigger");
+
+    // R7hr-12-S2 (D5-08): two-dimensional MAR↔reservation dedup join.
+    //
+    // The original guard (kept below as the fallback) joins purely on
+    // (serviceCode, sourceType:"MAR_RESERVATION", admissionId, 2h
+    // window). The 2-hour window is the only barrier when the
+    // serviceCode axis hits — meaning:
+    //   (a) a drug released > 2h before the nurse administers it
+    //       (post-op morning meds after a previous-evening release)
+    //       double-bills the first dose, and
+    //   (b) QID/q6h schedules deliberately bill every subsequent
+    //       dose as a fresh PHARM-* row (the R7bn-4 trade-off).
+    //
+    // To shrink (a) without re-introducing the (b) regression, look
+    // up the indent items for this admission whose drugName matches
+    // the MAR med — and pre-filter to UNCONSUMED reservations
+    // (item.finalTriggerId is unset). If we find one, the dedup
+    // succeeds independently of the 2h window AND we stamp the
+    // indent item's finalTriggerId so subsequent administrations of
+    // the SAME indent line won't double-match (a second admin reads
+    // the indent item, sees finalTriggerId already populated, and
+    // falls through to the regular emit — which is correct QID
+    // behaviour: the second dose IS a fresh charge).
+    //
+    // Architectural note for the eventual schema fix flagged in
+    // needsManualReview: stamping `reservationTriggerId` or
+    // `indentItemId` directly onto AdministrationEntrySchema is
+    // the cleaner long-term home for the join key — once that
+    // lands, this name-based pre-filter can drop in favour of an
+    // exact id-on-id join. For now the indent-side
+    // finalTriggerId-stamping (existing schema slot at L78 in
+    // PharmacyIndentModel.js) is the round-trip that lets us
+    // dedup correctly across the 2-hour boundary.
+    let matchedIndentItemId = null;
+    let matchedIndentDocId = null;
+    try {
+      const PharmacyIndent = require("../../models/Pharmacy/PharmacyIndentModel");
+      const drugNameRe = new RegExp(
+        `^${drugName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+        "i",
+      );
+      // Look at items reserved within the last 24h that haven't yet
+      // been consumed by a MAR row. The 24h horizon covers overnight
+      // hold-and-dispense (evening release → next-morning admin) but
+      // still bounds the query to a single recent batch.
+      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const candidateIndent = await PharmacyIndent.findOne(
+        {
+          admissionId,
+          status: { $in: ["Released", "PartiallyReleased"] },
+          releasedAt: { $gte: since24h },
+          items: {
+            $elemMatch: {
+              drugName:             drugNameRe,
+              reservationTriggerId: { $ne: null },
+              finalTriggerId:       null,
+            },
+          },
+        },
+        { _id: 1, items: 1 },
+      ).lean();
+      if (candidateIndent?.items?.length) {
+        const hit = candidateIndent.items.find(
+          (it) =>
+            it?.reservationTriggerId &&
+            !it?.finalTriggerId &&
+            drugNameRe.test(it.drugName || ""),
+        );
+        if (hit) {
+          matchedIndentItemId = hit._id;
+          matchedIndentDocId  = candidateIndent._id;
+        }
+      }
+    } catch (lookupErr) {
+      // Non-fatal — fall through to the legacy 2h serviceCode guard.
+      console.warn("[AutoBilling] R7hr-12-S2 indent-item lookup skipped:", lookupErr.message);
+    }
+
     const since = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2h (R7bn)
+    // R7hr-12-S2 (D5-08): join on EITHER (serviceCode + 2h window) for
+    // legacy back-compat OR (sourceDocumentId === indent item._id) for
+    // the precise round-trip — whichever fires first wins. The $or
+    // skips the second clause when matchedIndentItemId is null so the
+    // legacy code path is preserved when the lookup didn't hit.
+    const dedupOr = [
+      {
+        serviceCode: service.serviceCode,
+        createdAt:   { $gte: since },
+      },
+    ];
+    if (matchedIndentItemId) {
+      dedupOr.push({ sourceDocumentId: matchedIndentItemId });
+    }
     const reservation = await BillingTrigger.findOne({
       admissionId,
-      serviceCode: service.serviceCode,
       sourceType: "MAR_RESERVATION",
-      status: { $in: ["completed", "billed", "pending"] },
-      createdAt: { $gte: since },
-    }).select("_id status").lean();
+      status:     { $in: ["completed", "billed", "pending"] },
+      $or:        dedupOr,
+    }).select("_id status sourceDocumentId").lean();
     if (reservation) {
-      console.log(`[AutoBilling] onMARAdministration skipped duplicate — reservation trigger ${reservation._id} already covers ${service.serviceCode}`);
+      console.log(`[AutoBilling] onMARAdministration skipped duplicate — reservation trigger ${reservation._id} already covers ${service.serviceCode} (joinKey=${reservation.sourceDocumentId || "serviceCode+2h"})`);
+      // R7hr-12-S2 (D5-08): stamp finalTriggerId on the matching indent
+      // item so subsequent administrations of the SAME indent line
+      // don't hit this branch again — QID's second dose then bills
+      // correctly as a fresh PHARM-* row (the R7bn-4 trade-off
+      // continues to hold for doses-after-the-first). If we joined via
+      // the legacy serviceCode path we DON'T stamp because we can't be
+      // sure we matched the right indent item — that branch keeps the
+      // pre-S2 behaviour (a single dedup-skip per 2h window).
+      if (matchedIndentDocId && matchedIndentItemId && reservation.sourceDocumentId
+        && String(reservation.sourceDocumentId) === String(matchedIndentItemId)) {
+        try {
+          const PharmacyIndent = require("../../models/Pharmacy/PharmacyIndentModel");
+          await PharmacyIndent.updateOne(
+            { _id: matchedIndentDocId, "items._id": matchedIndentItemId, "items.finalTriggerId": null },
+            { $set: { "items.$.finalTriggerId": reservation._id } },
+          );
+        } catch (stampErr) {
+          // Non-fatal — without the stamp the next admin will still
+          // dedup via the same path the first time around, just with a
+          // redundant lookup.
+          console.warn("[AutoBilling] R7hr-12-S2 finalTriggerId stamp failed:", stampErr.message);
+        }
+      }
       return;
     }
   } catch (e) {
@@ -1470,6 +1618,114 @@ async function onInvestigationResulted(orderDoc) {
       completionNotes: "Result auto-billed on result entry",
       autoCharge:    true,
     });
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   R7hr-83 Phase C — auto-bill on doctor-order completion.
+   Reads serviceCode/unitPrice that Phase B writes on order placement;
+   fires once per (sourceType, sourceRef) to prevent double-billing on
+   retry/restart.
+──────────────────────────────────────────────────────────────────── */
+// Maps DoctorOrder.orderType → category hint stamped on the trigger.
+// NOTE: BillingTrigger schema has no top-level `category` field — the
+// IPDLedger byCategory aggregator derives the category from the
+// serviceCode prefix (e.g. "LAB-CBC-001" → "LAB"). We persist this map
+// on the trigger's `department` field as a secondary hint and rely on
+// the serviceCode set by Phase B for the canonical category bucket.
+const DOCTOR_ORDER_CATEGORY_MAP = {
+  Lab:              "LAB",
+  Radiology:        "RADIOLOGY",
+  Investigation:    "LAB",            // alias for Lab in the orderType enum
+  Procedure:        "PROCEDURE",
+  BloodTransfusion: "BLOOD",
+  IV_Fluid:         "PHARMACY",       // IV fluids billed under pharmacy line
+  Diet:             "DIET",
+  Oxygen:           "OXYGEN",
+  Physiotherapy:    "PHYSIO",
+  Activity:         "NURSING",        // activity orders billed under nursing line
+  Nursing:          "NURSING",
+  Consultation:     "CONSULTATION",
+  Medication:       "PHARMACY",       // safety net; pharmacy MAR path is the primary biller
+};
+
+async function onDoctorOrderCompleted(order) {
+  try {
+    // 1. Guards.
+    if (!order || !order._id) return null;
+    const od = order.orderDetails || {};
+    if (!od.serviceCode || od.unitPrice == null) return null;   // no ServiceMaster pick — nothing to bill
+    if (!order.admissionId) return null;                        // IPD-only path; OPD bills via Services & Orders panel
+
+    // 2. Idempotency — one trigger per (sourceType, sourceRef).
+    const existing = await BillingTrigger.findOne({
+      sourceType: "DoctorOrder",
+      sourceRef:  order._id,
+    });
+    if (existing) return existing;
+
+    // 3. Compose the trigger doc.
+    const category = DOCTOR_ORDER_CATEGORY_MAP[order.orderType] || null;
+    const unitPrice  = toNum(od.unitPrice);
+    const quantity   = 1;
+    const totalPrice = unitPrice * quantity;
+    const completedById = order.completedById || order.updatedBy || null;
+    const completedByName = order.completedBy || order.updatedByName || null;
+
+    // BillingTrigger schema stores money as Decimal128 + price/qty/name
+    // at top-level (not as `lineItems[]`); the IPD ledger byCategory tab
+    // derives the section from `serviceCode.split("-")[0]`, so the
+    // category map above is recorded on `department` as a hint and
+    // mirrored into `notes` for audit greppability. Status enum is
+    // lowercase ("pending") per the schema.
+    const trigger = await _emitTrigger({
+      admissionId: order.admissionId,
+      patientId:   order.patientId,
+      UHID:        order.patientUHID || order.UHID,
+      patientType: "IPD",
+
+      // Service line.
+      serviceId:   od.serviceMasterId || null,
+      serviceCode: od.serviceCode,
+      serviceName: od.serviceName,
+      quantity,
+      unitPrice,
+      totalAmount: totalPrice,
+
+      // Source linkage — sourceRef is the R7hr-83 dedup key (partial-unique
+      // index on (sourceType, sourceRef) lives on the schema). We also
+      // populate the legacy sourceDocumentId/Model pair so any older
+      // audit/retry path that joins on those keeps working.
+      sourceType:          "DoctorOrder",
+      sourceRef:           order._id,
+      sourceDocumentId:    order._id,
+      sourceDocumentModel: "DoctorOrder",
+
+      // Subcategory + category hint — schema has no `subCategory` field,
+      // so we encode the orderType in notes and the ledger-bucket hint
+      // in department.
+      department: category,
+      notes:      `subCategory:${order.orderType}${category ? ` · ledgerBucket:${category}` : ""}`,
+
+      // Actor.
+      orderedBy:      order.orderedBy || null,
+      orderedById:    order.orderedById || null,
+      orderedByRole:  order.orderedByRole || "Doctor",
+      completedBy:    completedByName,
+      completedById:  completedById,
+      completedByRole: order.completedByRole || "Doctor",
+      completedAt:    order.completedAt || new Date(),
+
+      status: "pending",   // PatientBill picker will materialise this row
+    }, completedByName ? { name: completedByName, userId: completedById, role: order.completedByRole || "Doctor" } : null);
+
+    return trigger;
+  } catch (e) {
+    // Async-emit pattern (per R7gw-B4 cron-handler convention) — the
+    // upstream order-completion flow cannot rollback this billing emit,
+    // so we log and swallow. The next sweep / manual retry can re-fire.
+    console.error("[AutoBilling] onDoctorOrderCompleted error:", e && e.message);
+    return null;
   }
 }
 
@@ -2268,22 +2524,111 @@ async function runDailyBedChargeAccrual() {
     Transfer:  "IPD",
   };
 
-  let bedFired = 0, nurseFired = 0, skipped = 0, errors = 0;
-  for (const adm of active) {
-    const typeCode = typeMap[adm.admissionType] || "IPD";
-    if (typeCode !== "IPD" && typeCode !== "DAYCARE") continue;
+  // R7hr-12-S2 (D10-06): batch the per-admission lookups + admissions loop.
+  //
+  // Pre-S2 the cron walked admissions sequentially and each admission
+  // re-queried:
+  //   • Room.findById().populate("roomCategory") ............... N queries
+  //   • RoomCategoryCharges.findOne() .......................... N queries
+  //   • ServiceMaster.findOne() inside each of 8 createTrigger() N×8 queries
+  // Round-trip cost at 200 active IPDs was ≥ 11k Mongo calls per tick.
+  //
+  // The three layered wins applied here (matching the audit refinement):
+  //   (1) Pre-load all Room + RoomCategory docs in ONE find with $in on
+  //       admission.roomId — collapses Room+RoomCategory from 2N → 2.
+  //   (2) Pre-load every RoomCategoryCharges row in ONE find — collapses
+  //       RoomCategoryCharges from N → 1. We index the result by
+  //       categoryCode so flushDailyChargesForAdmission can read it in
+  //       O(1) without going back to the DB.
+  //   (3) Run admissions in chunks of `BATCH_SIZE` via Promise.all so
+  //       independent admissions overlap their createTrigger waterfalls
+  //       at the connection-pool level. The per-line createTrigger calls
+  //       INSIDE one admission stay sequential — Promise.all there is
+  //       UNSAFE because they all save() the same PatientBill doc, and
+  //       Mongoose's optimisticConcurrency would burn the 5-retry
+  //       VersionError budget on the first round of concurrent saves.
+  //
+  // Out of scope here (deferred): an in-process ServiceMaster cache for
+  // the 8 BED/NURSING/etc. codes would shave another N×8 round-trips
+  // off createTrigger's per-call findServiceByCode lookup, but it
+  // requires plumbing a per-tick map through createTrigger and every
+  // peer caller — too wide for this fix. Wins (1)+(2)+(3) alone bring
+  // the cost from ~11k to ~N×(7) ≈ 1.4k round-trips at N=200 and
+  // overlap them in groups of BATCH_SIZE.
 
-    try {
-      // R7bh-F3 / R7bg-1-CRIT-6: stamp every trigger emitted from the
-      // daily accrual cron with triggeredByRole:"Cron" so the audit
-      // ledger can split scheduled vs service-layer emits.
-      const result = await flushDailyChargesForAdmission(adm, { typeCode, _fromCron: true });
-      bedFired   += result.bedFired;
-      nurseFired += result.nurseFired;
-      skipped    += result.skipped;
-    } catch (e) {
-      errors++;
-      console.error(`[daily-accrual] admission ${adm._id}:`, e.message);
+  // (1) + (2) — preload Rooms + Categories + Charges in three queries.
+  const roomCacheById = new Map();
+  const matrixCacheByCategoryCode = new Map();
+  try {
+    const roomIds = [...new Set(active.map((a) => a.roomId).filter(Boolean).map(String))];
+    if (roomIds.length) {
+      const rooms = await Room.find({ _id: { $in: roomIds } })
+        .populate("roomCategory")
+        .lean();
+      for (const r of rooms) roomCacheById.set(String(r._id), r);
+    }
+
+    // Pull every active RoomCategoryCharges row once. The set is small
+    // (one row per category × tariff window) so a list-load is faster
+    // than N selective findOnes against the same compound index.
+    const RoomCategoryCharges = require("../../models/Admin/RoomCategoryChargesModel");
+    const matrixRows = await RoomCategoryCharges.find({
+      active:      true,
+      effectiveTo: null,
+    }).lean();
+    for (const row of matrixRows) {
+      if (row?.categoryCode) {
+        matrixCacheByCategoryCode.set(String(row.categoryCode).toUpperCase(), row);
+      }
+    }
+  } catch (preloadErr) {
+    // Preload failure → fall through to per-call lookups (legacy
+    // behaviour, just slower). We don't want a cache-warm error to
+    // abort the whole tick.
+    console.warn("[daily-accrual] R7hr-12-S2 preload skipped:", preloadErr.message);
+  }
+
+  // (3) — admissions chunk size. Conservative ceiling so we never
+  // saturate the Mongo connection pool (typical pool size 5-20). At
+  // 16 concurrent admissions × ~7 inner queries each that's at most
+  // 112 in-flight ops — well below a 100-conn pool. Bumping this
+  // higher trades latency for risk of pool exhaustion.
+  const BATCH_SIZE = 16;
+
+  let bedFired = 0, nurseFired = 0, skipped = 0, errors = 0;
+  for (let i = 0; i < active.length; i += BATCH_SIZE) {
+    const slice = active.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(slice.map(async (adm) => {
+      const typeCode = typeMap[adm.admissionType] || "IPD";
+      if (typeCode !== "IPD" && typeCode !== "DAYCARE") {
+        return { bedFired: 0, nurseFired: 0, skipped: 0, errored: false };
+      }
+      try {
+        // R7bh-F3 / R7bg-1-CRIT-6: stamp every trigger emitted from the
+        // daily accrual cron with triggeredByRole:"Cron" so the audit
+        // ledger can split scheduled vs service-layer emits.
+        const r = await flushDailyChargesForAdmission(adm, {
+          typeCode,
+          _fromCron: true,
+          // R7hr-12-S2 (D10-06): pass the preloaded caches so the
+          // resolveRoomCategoryChargeMatrix call inside flush can skip
+          // the Room+RoomCategory and RoomCategoryCharges queries
+          // entirely. Discharge/manual flush callers omit these and
+          // keep the legacy per-call lookup path.
+          _roomCacheById:              roomCacheById,
+          _matrixCacheByCategoryCode:  matrixCacheByCategoryCode,
+        });
+        return { bedFired: r.bedFired, nurseFired: r.nurseFired, skipped: r.skipped, errored: false };
+      } catch (e) {
+        console.error(`[daily-accrual] admission ${adm._id}:`, e.message);
+        return { bedFired: 0, nurseFired: 0, skipped: 0, errored: true };
+      }
+    }));
+    for (const r of results) {
+      bedFired   += r.bedFired;
+      nurseFired += r.nurseFired;
+      skipped    += r.skipped;
+      if (r.errored) errors++;
     }
   }
   return { active: active.length, bedFired, nurseFired, skipped, errors, at: new Date() };
@@ -2299,7 +2644,19 @@ async function runDailyBedChargeAccrual() {
  *
  * Returns { bedFired, nurseFired, skipped } counts so the caller can audit.
  */
-async function flushDailyChargesForAdmission(admission, { typeCode, prorate = false, dischargeTime, _dischargingFlush = false, _fromCron = false } = {}) {
+async function flushDailyChargesForAdmission(admission, {
+  typeCode,
+  prorate = false,
+  dischargeTime,
+  _dischargingFlush = false,
+  _fromCron = false,
+  // R7hr-12-S2 (D10-06): optional per-tick caches plumbed in by the
+  // batched cron driver. Discharge / on-demand callers omit both and
+  // resolveRoomCategoryChargeMatrix falls back to the original per-call
+  // queries — preserves zero-behaviour-change for non-cron use.
+  _roomCacheById,
+  _matrixCacheByCategoryCode,
+} = {}) {
   let bedFired = 0, nurseFired = 0, skipped = 0;
   // R7bh-F3 / R7bg-1-CRIT-6: when invoked by runDailyBedChargeAccrual the
   // emit is a scheduled accrual — stamp every downstream createTrigger
@@ -2406,7 +2763,14 @@ async function flushDailyChargesForAdmission(admission, { typeCode, prorate = fa
   //   - "HalfOnDischarge"  → 1× until discharge day, 0.5× on discharge
   //   - "HalfBoth"         → 0.5× Day 1 AND 0.5× on discharge, 1× interior
   // The Daycare prorateMultiplier above still wins for hourly visits.
-  const matrix = await resolveRoomCategoryChargeMatrix(admission);
+  // R7hr-12-S2 (D10-06): pass any preloaded cron caches through so the
+  // resolver can skip the per-admission Room + RoomCategoryCharges
+  // round-trips. Non-cron callers leave these undefined (the resolver
+  // falls back to its original findOne path).
+  const matrix = await resolveRoomCategoryChargeMatrix(admission, {
+    _roomCacheById,
+    _matrixCacheByCategoryCode,
+  });
   const catTag = matrix.categoryCode ? `-${matrix.categoryCode}` : "";
 
   // Today's calendar day in IST. We compare admission/discharge days
@@ -2679,6 +3043,13 @@ async function onIndentReleased(indentDoc, releaseItems = []) {
   // Index releaseItems by itemId so we can pull per-item issuedQty.
   const inboundByItemId = new Map((releaseItems || []).map(r => [String(r.itemId), r]));
 
+  // R7hr-12 (D8-01): Schedule-X register cascade on indent release.
+  // Lazy-require to avoid a circular dependency (scheduleXRegister →
+  // Drug → ... and we only need it when at least one Schedule-X item
+  // is in this release).
+  let scheduleXRegister = null;
+  let Drug = null;
+
   for (const item of (indentDoc.items || [])) {
     const released = inboundByItemId.get(String(item._id));
     if (!released) continue;
@@ -2691,49 +3062,342 @@ async function onIndentReleased(indentDoc, releaseItems = []) {
     // is the snapshot stored on the indent item (taken from the
     // pharmacy release payload), so the receipt matches the dispense.
     const unitPrice = Number(released.unitPrice || item.unitPriceSnapshot || 0);
-    if (unitPrice <= 0) continue;       // Nothing meaningful to bill
 
-    const code = `PHARM-${(item.drugCode || item.drugName || "DRUG").toUpperCase().replace(/\s+/g, "-").slice(0, 24)}`;
+    // R7hr-12-S2 (D5-02): symmetrize serviceCode with the MAR-administer
+    // path. onMARAdministration resolves the drug via findServiceByName
+    // FIRST (L1171); if the ServiceMaster has a row for this drug name,
+    // the MAR side stamps the trigger with the master's serviceCode (e.g.
+    // "NRS-INJ", "PARA-500") — NOT the synthetic "PHARM-…". Pre-S2 the
+    // release path here always stamped the synthetic code, so the
+    // 2h MAR-dedup query (L1229-1235) joined on serviceCode never
+    // matched and every dispensed-then-administered drug double-billed
+    // on first dose. Mirror the same lookup precedence here so both
+    // paths converge on the same canonical code:
+    //   1. ServiceMaster name match (master row exists) → master code
+    //   2. Synthetic PHARM-<drug> (default install — master has no row)
+    // The synthetic shape is preserved bit-for-bit when no master row
+    // matches, so call sites without a populated ServiceMaster keep
+    // current behaviour. resolvedMasterService is also re-used by the
+    // createTrigger call below to populate serviceId (lets the bill
+    // line render with the master's category / billing-type metadata).
+    const drugNameForLookup = item.drugName || item.drugCode || "";
+    let resolvedMasterService = null;
+    if (drugNameForLookup) {
+      try {
+        resolvedMasterService = await findServiceByName(drugNameForLookup, "IPD");
+      } catch (lookupErr) {
+        // Non-fatal — fall through to the synthetic shape (bias toward
+        // billing, not skipping). The dedup misalignment will reappear
+        // for that one item but the release path stays unblocked.
+        console.warn(`[Indent] R7hr-12-S2 findServiceByName failed for "${drugNameForLookup}":`, lookupErr.message);
+      }
+    }
+    const code = resolvedMasterService?.serviceCode
+      || `PHARM-${(item.drugCode || item.drugName || "DRUG").toUpperCase().replace(/\s+/g, "-").slice(0, 24)}`;
+
+    // R7hr-12 (D5-03): missing unit price → emit pending-review trigger
+    // instead of silently continuing. Pre-R7hr-12 we `continue`d when
+    // unitPrice <= 0, which let the dispensed stock leave the pharmacy
+    // with NO bill artifact (revenue leak). Now the Stuck-Triggers tile
+    // surfaces every missing-price release so the operator can either
+    // (a) edit the indent line with the correct price + retry, or
+    // (b) cancel after manual reconciliation. Mirrors invariant R7
+    // (pending-review fallback on every trigger failure).
+    if (unitPrice <= 0) {
+      try {
+        await BillingTrigger.create({
+          admissionId:         indentDoc.admissionId,
+          patientId:           indentDoc.patientId,
+          UHID:                indentDoc.UHID,
+          patientType:         "IPD",
+          serviceCode:         code,
+          serviceName:         `${item.drugName}${item.dose ? ` ${item.dose}` : ""} (reserved — missing price)`,
+          quantity:            issuedQty,
+          sourceType:          "MAR_RESERVATION",
+          sourceDocumentId:    item._id,
+          sourceDocumentModel: "PharmacyIndent",
+          orderedBy:           indentDoc.raisedBy || "Nurse",
+          orderedById:         indentDoc.raisedById,
+          orderedByRole:       indentDoc.raisedByRole || "Nurse",
+          completedBy:         indentDoc.releasedBy || "Pharmacist",
+          completedByRole:     "Pharmacist",
+          triggeredBy:         indentDoc.releasedBy || "Pharmacist",
+          triggeredByRole:     "Pharmacist",
+          orderDetails:        `Indent ${indentDoc.indentNumber || indentDoc._id} · ${item.drugName} × ${issuedQty} — unit price missing on release payload + indent snapshot`,
+          status:              "pending-review",
+          reviewReason:        `missing-unit-price: indent release for "${item.drugName}" carried no unitPrice (release payload + indent snapshot both 0). Edit the line or set a default price and retry.`,
+        });
+      } catch (createErr) {
+        console.error(`[Indent] R7hr-12 missing-price pending-review create failed for item ${item._id}:`, createErr.message);
+      }
+      continue; // no charge fired, but stock + audit row are durable
+    }
+
     try {
-      const result = await createTrigger({
-        admissionId:         indentDoc.admissionId,
-        patientId:           indentDoc.patientId,
-        UHID:                indentDoc.UHID,
-        patientType:         "IPD",
-        serviceCode:         code,
-        serviceName:         `${item.drugName}${item.dose ? ` ${item.dose}` : ""} (reserved)`,
-        quantity:            issuedQty,
-        unitPriceOverride:   unitPrice,
-        // R7az-CRIT-1 (D6-CRIT-1): canonical sourceType for the
-        // pharmacy reservation row. The MAR-administer path's dedup
-        // query in onMARAdministration searches specifically for
-        // "MAR_RESERVATION" — keeping these strings in lock-step is
-        // the entire fix for the R7au double-count bug.
-        sourceType:          "MAR_RESERVATION",
-        sourceDocumentId:    item._id,          // Points back at the indent item for MAR↔reservation lookup
-        sourceDocumentModel: "PharmacyIndent",
-        orderedBy:           indentDoc.raisedBy || "Nurse",
-        orderedById:         indentDoc.raisedById,
-        orderedByRole:       indentDoc.raisedByRole || "Nurse",
-        completedBy:         indentDoc.releasedBy || "Pharmacist",
-        completedByRole:     "Pharmacist",
-        orderDetails:        `Indent ${indentDoc.indentNumber} · ${item.drugName} × ${issuedQty}`,
-        autoCharge:          true,
-        dailyDedup:          false,
-      });
-      // Stamp the trigger id back onto the indent item so the MAR
-      // consumption path can find it later. We use a direct $set on
-      // the subdoc rather than re-save() to keep the indent-write
-      // optimistically concurrent.
-      if (result?.trigger?._id) {
-        const PharmacyIndent = require("../../models/Pharmacy/PharmacyIndentModel");
-        await PharmacyIndent.findOneAndUpdate(
-          { _id: indentDoc._id, "items._id": item._id },
-          { $set: { "items.$.reservationTriggerId": result.trigger._id } },
-        );
+      // R7hr-12-S3 (D5-12): upsert-by-indent-item on partial release.
+      //
+      // Pre-S3 each release call wrote a FRESH MAR_RESERVATION trigger
+      // with quantity = issuedQty for THIS call only — so a second
+      // partial release of the same indent line emitted a SECOND
+      // PHARM-* trigger carrying just the delta. The MAR-side 2h
+      // dedup (autoBillingService.js L1340-1387) looks back on
+      // serviceCode + admissionId and would find the OLDER trigger
+      // first, skipping the new delta entirely when both releases
+      // landed within 2h. Net effect: under-bill of the second batch
+      // during high-tempo shifts (pharmacist splits a 10-unit indent
+      // into two 5-unit releases within the same hour).
+      //
+      // The fix mirrors the audit's suggested option (a): query for an
+      // existing reservation trigger keyed by sourceType +
+      // sourceDocumentId (the indent item _id is unique per line, so
+      // this is a single-row lookup), and:
+      //   • if found AND still UNCONSUMED by MAR (status pending /
+      //     completed / billed; finalTriggerId on the indent item not
+      //     yet stamped) → GROW quantity + totalAmount + originalQuantity
+      //     in-place, append an overrideHistory row for the audit trail,
+      //     and reuse the existing reservationTriggerId on the indent
+      //     item (already pointed at the same row).
+      //   • otherwise → fall through to the existing createTrigger path
+      //     (first release, or the prior reservation was already
+      //     consumed/voided and a new one is the correct shape).
+      //
+      // This collapses each indent line down to ONE reservation trigger
+      // regardless of release-call count, which is also what the
+      // S2 (D5-08) two-dimensional MAR dedup join already assumed.
+      let existingResv = null;
+      try {
+        existingResv = await BillingTrigger.findOne({
+          sourceType:       "MAR_RESERVATION",
+          sourceDocumentId: item._id,
+          status:           { $in: ["completed", "billed", "pending"] },
+        });
+      } catch (lookupErr) {
+        // Non-fatal — fall through to a fresh create. Worst case the
+        // second release writes a new trigger (legacy pre-S3 behaviour).
+        console.warn(`[Indent] R7hr-12-S3 reservation upsert lookup skipped for item ${item._id}:`, lookupErr.message);
+      }
+
+      // If the prior reservation was already consumed by a MAR-given
+      // dose (finalTriggerId stamped — see autoBillingService.js
+      // L1374-1378 in the MAR dedup path), we MUST emit a fresh
+      // trigger for the new delta — the old row is "spoken for" by
+      // the dose that already administered, and growing it would
+      // retroactively change a billed line. The cheap check is on the
+      // indent subdoc the prior release stamped.
+      let priorConsumed = false;
+      if (existingResv) {
+        try {
+          const PharmacyIndent = require("../../models/Pharmacy/PharmacyIndentModel");
+          const parent = await PharmacyIndent.findOne(
+            { _id: indentDoc._id, "items._id": item._id },
+            { "items.$": 1 },
+          ).lean();
+          const sub = parent?.items?.[0];
+          if (sub?.finalTriggerId) priorConsumed = true;
+        } catch (consumedErr) {
+          // Bias toward the safer FRESH create when the lookup fails.
+          priorConsumed = true;
+          console.warn(`[Indent] R7hr-12-S3 indent-consumed check skipped for item ${item._id}:`, consumedErr.message);
+        }
+      }
+
+      if (existingResv && !priorConsumed) {
+        // Partial-release growth path. Quantity / totalAmount /
+        // originalQuantity all grow by the new issuedQty; the
+        // overrideHistory row carries the audit trail (who grew it,
+        // when, by how much) so /admin/audit-trail can replay the
+        // sequence of partial releases on a single ledger line.
+        const oldQty   = Number(existingResv.quantity) || 0;
+        const newQty   = oldQty + issuedQty;
+        const oldTotal = toNum(existingResv.totalAmount) || 0;
+        const newTotal = oldTotal + (issuedQty * unitPrice);
+        existingResv.quantity         = newQty;
+        // Decimal128 fields — wrap so the setter doesn't lose precision on
+        // long-stay admissions where many partial releases accumulate.
+        existingResv.originalQuantity = toDec(newQty);
+        existingResv.totalAmount      = toDec(newTotal);
+        existingResv.orderDetails     = `Indent ${indentDoc.indentNumber} · ${item.drugName} × ${newQty} (partial releases summed)`;
+        existingResv.overrideHistory  = existingResv.overrideHistory || [];
+        existingResv.overrideHistory.push({
+          field:     "quantity",
+          oldValue:  String(oldQty),
+          newValue:  String(newQty),
+          reason:    `R7hr-12-S3: partial release added ${issuedQty} unit(s) — see indent ${indentDoc.indentNumber}`,
+          changedBy: indentDoc.releasedBy || "Pharmacist",
+          changedAt: new Date(),
+        });
+        await existingResv.save();
+        // Indent item already carries reservationTriggerId from the
+        // first release — no re-stamp needed. Safety net: ensure the
+        // pointer is set even if the first stamp had failed.
+        try {
+          const PharmacyIndent = require("../../models/Pharmacy/PharmacyIndentModel");
+          await PharmacyIndent.findOneAndUpdate(
+            { _id: indentDoc._id, "items._id": item._id, "items.reservationTriggerId": null },
+            { $set: { "items.$.reservationTriggerId": existingResv._id } },
+          );
+        } catch (stampErr) {
+          console.warn(`[Indent] R7hr-12-S3 reservation re-stamp skipped for item ${item._id}:`, stampErr.message);
+        }
+      } else {
+        const result = await createTrigger({
+          admissionId:         indentDoc.admissionId,
+          patientId:           indentDoc.patientId,
+          UHID:                indentDoc.UHID,
+          patientType:         "IPD",
+          // R7hr-12-S2 (D5-02): pass through the master service id when the
+          // symmetrization lookup above hit a row — keeps the bill line
+          // tagged with the ServiceMaster category/billingType and lets the
+          // MAR-side serviceCode comparison match exactly.
+          serviceId:           resolvedMasterService?._id,
+          serviceCode:         code,
+          serviceName:         resolvedMasterService?.serviceName
+            || `${item.drugName}${item.dose ? ` ${item.dose}` : ""} (reserved)`,
+          quantity:            issuedQty,
+          unitPriceOverride:   unitPrice,
+          // R7az-CRIT-1 (D6-CRIT-1): canonical sourceType for the
+          // pharmacy reservation row. The MAR-administer path's dedup
+          // query in onMARAdministration searches specifically for
+          // "MAR_RESERVATION" — keeping these strings in lock-step is
+          // the entire fix for the R7au double-count bug.
+          sourceType:          "MAR_RESERVATION",
+          sourceDocumentId:    item._id,          // Points back at the indent item for MAR↔reservation lookup
+          sourceDocumentModel: "PharmacyIndent",
+          orderedBy:           indentDoc.raisedBy || "Nurse",
+          orderedById:         indentDoc.raisedById,
+          orderedByRole:       indentDoc.raisedByRole || "Nurse",
+          completedBy:         indentDoc.releasedBy || "Pharmacist",
+          completedByRole:     "Pharmacist",
+          orderDetails:        `Indent ${indentDoc.indentNumber} · ${item.drugName} × ${issuedQty}`,
+          autoCharge:          true,
+          dailyDedup:          false,
+        });
+        // Stamp the trigger id back onto the indent item so the MAR
+        // consumption path can find it later. We use a direct $set on
+        // the subdoc rather than re-save() to keep the indent-write
+        // optimistically concurrent.
+        if (result?.trigger?._id) {
+          const PharmacyIndent = require("../../models/Pharmacy/PharmacyIndentModel");
+          await PharmacyIndent.findOneAndUpdate(
+            { _id: indentDoc._id, "items._id": item._id },
+            { $set: { "items.$.reservationTriggerId": result.trigger._id } },
+          );
+        }
       }
     } catch (e) {
       console.error(`[Indent] reservation trigger for item ${item._id} failed:`, e.message);
+    }
+
+    // R7hr-12 (D8-01): Schedule-X / NDPS register cascade. Pre-R7hr-12
+    // the counter-dispense path (pharmacyController.dispense L840-869)
+    // was the ONLY caller of scheduleXRegister.recordDispense, so every
+    // ward indent of morphine/pethidine/diazepam left the statutory
+    // NDPS register blank — 70–90% of narcotic use in a hospital flows
+    // through IPD, so the register was effectively missing the bulk of
+    // its mandated rows.
+    //
+    // Implementation notes (mirror the counter-dispense pattern at
+    // pharmacyController.js L843-867):
+    //   • Drug.schedule === "X" gates the call — non-Schedule-X items
+    //     skip silently.
+    //   • One recordDispense per picked batch (item.picked[] is the
+    //     FEFO audit ledger written by releaseIndent at L480-486), so
+    //     a single indent line that pulled from multiple batches
+    //     produces one register row per batch — exactly the NDPS
+    //     traceability requirement.
+    //   • Failures are non-fatal: log + log a remark on the indent.
+    //     We DON'T refuse the release on first cut (per refinement)
+    //     because the IPD indent UI doesn't yet collect witnessName/
+    //     witnessId — refusing here would break legitimate ward
+    //     workflow. The recordDispense call will 400 with
+    //     WITNESS_REQUIRED until the UI is updated, and the remark
+    //     surfaces the gap to the operator for manual entry via the
+    //     Schedule-X register page.
+    if (!item.drugId) continue; // legacy / manual line w/o drug master
+    if (!scheduleXRegister) {
+      scheduleXRegister = require("../Pharmacy/scheduleXRegister");
+      Drug = require("../../models/Pharmacy/DrugModel");
+    }
+    let drugMeta = null;
+    try {
+      drugMeta = await Drug.findById(item.drugId).select("schedule name").lean();
+    } catch (lookupErr) {
+      console.error(`[Indent] R7hr-12 Drug lookup failed for ${item.drugId}:`, lookupErr.message);
+      continue;
+    }
+    if (!drugMeta || drugMeta.schedule !== "X") continue;
+
+    const picks = Array.isArray(item.picked) ? item.picked : [];
+    // Only NEW picks from this release land on the register. The
+    // release path at indentService.js L480-486 appends to item.picked
+    // — so on a multi-call PartiallyReleased indent the array may
+    // contain prior-release rows too. Filter by pickedAt >= release
+    // timestamp (or, for the first release, by anything within the
+    // last 10 minutes of this release). Best-effort; over-recording
+    // is preferred to under-recording for NDPS.
+    const releasedAt = indentDoc.releasedAt ? new Date(indentDoc.releasedAt).getTime() : Date.now();
+    const newPicks = picks.length === 0
+      ? [{ batchId: null, qty: issuedQty, batchNo: "" }] // fallback when no FEFO trail
+      : picks.filter((p) => {
+        const t = p.pickedAt ? new Date(p.pickedAt).getTime() : releasedAt;
+        return t >= releasedAt - 60 * 1000; // 1-minute slack for clock skew
+      });
+    const picksToRecord = newPicks.length > 0 ? newPicks : picks;
+
+    for (const p of picksToRecord) {
+      try {
+        await scheduleXRegister.recordDispense({
+          drugId:        item.drugId,
+          batchId:       p.batchId || undefined,
+          qty:           Number(p.qty) || 0,
+          rx:            indentDoc.indentNumber || String(indentDoc._id),
+          doctorName:    "", // doctor identity isn't on the indent header — surface via remarks
+          uhid:          indentDoc.UHID || "",
+          // NDPS two-person rule — IPD indent release payload doesn't
+          // currently carry witness identity. Pass empty so the
+          // service-side check 400s with WITNESS_REQUIRED; we capture
+          // the gap as a remark below so the operator can reconcile
+          // via the Schedule-X register UI. Once the indent-release
+          // UI is updated to collect witnessName/witnessId, plumb
+          // them through releaseItems and read them here.
+          witnessName:   indentDoc.acknowledgedBy || "",
+          witnessId:     indentDoc.acknowledgedById || null,
+          dispensedBy:   indentDoc.releasedBy || "Pharmacist",
+          dispensedById: indentDoc.releasedById || null,
+          remarks:       `Indent ${indentDoc.indentNumber || indentDoc._id} · ward=${indentDoc.wardName || ""} bed=${indentDoc.bedNumber || ""}`,
+        });
+      } catch (sxErr) {
+        // Mirror the pharmacyController.js pattern: don't abort the
+        // release. Log + surface a pending-review BillingTrigger so
+        // the Stuck-Triggers tile carries the regulatory gap.
+        console.error(
+          `[Indent] R7hr-12 Schedule-X recordDispense failed for drug ${item.drugId} batch ${p.batchId || "—"} qty=${p.qty}:`,
+          sxErr.code || sxErr.message,
+        );
+        try {
+          await BillingTrigger.create({
+            admissionId:         indentDoc.admissionId,
+            patientId:           indentDoc.patientId,
+            UHID:                indentDoc.UHID,
+            patientType:         "IPD",
+            serviceName:         `Schedule-X register PENDING — ${drugMeta.name} × ${p.qty}`,
+            quantity:            Number(p.qty) || 0,
+            sourceType:          "MAR_RESERVATION",
+            sourceDocumentId:    item._id,
+            sourceDocumentModel: "PharmacyIndent",
+            orderedBy:           indentDoc.releasedBy || "Pharmacist",
+            orderedById:         indentDoc.releasedById,
+            orderedByRole:       "Pharmacist",
+            triggeredBy:         indentDoc.releasedBy || "Pharmacist",
+            triggeredByRole:     "Pharmacist",
+            status:              "pending-review",
+            reviewReason:        `schedule-x-register-failed: ${sxErr.code || sxErr.message} (drug=${drugMeta.name}, batchId=${p.batchId || "—"}, qty=${p.qty}) — NDPS register row must be entered manually via the Schedule-X register page.`,
+            orderDetails:        `Indent ${indentDoc.indentNumber || indentDoc._id} — Schedule-X dispense not recorded on register; manual reconciliation required.`,
+          });
+        } catch (logErr) {
+          console.error(`[Indent] R7hr-12 pending-review schedule-x trigger create failed:`, logErr.message);
+        }
+      }
     }
   }
 }
@@ -2817,6 +3481,395 @@ async function onMARNonAdminister(marDoc, medication, statusReason) {
     }
   } catch (e) {
     console.error("[AutoBilling] onMARNonAdminister error:", e.message);
+  }
+}
+
+/**
+ * R7hr-12 (D2-06): Reduce a reservation trigger's qty/totalAmount in
+ * place — proportional partial-cancel for pharmacy returns. Pre-R7hr-12
+ * onPharmacyReturn always full-cancelled the entire reservation even
+ * when only N units of a M-unit dispense came back, so the patient
+ * lost the (M-N) units of charge from the IPD ledger while only
+ * receiving the cash refund for N units. Direct revenue leak.
+ *
+ * This helper edits BOTH the trigger row (quantity, totalAmount) AND
+ * the linked bill item (quantity) in lock-step, recomputing totals via
+ * the bill's pre-save hook, and stamps an overrideHistory[] entry so
+ * the audit trail shows what changed. If the bill line was already
+ * gone (status:"cancelled" earlier, etc.) the helper still updates the
+ * trigger so the row stays internally consistent.
+ *
+ * @param {ObjectId} triggerId
+ * @param {number}   qtyReturned   units returned (must be < trigger.quantity)
+ * @param {object}   opts          { reason, user, refundSlipNumber }
+ * @returns {Promise<{ status, trigger }>}
+ *      status ∈ "partial" (reduced) | "full" (fully cancelled) | "skipped"
+ */
+async function _partialReduceTrigger(triggerId, qtyReturned, { reason, user, refundSlipNumber } = {}) {
+  const trigger = await BillingTrigger.findById(triggerId);
+  if (!trigger) return { status: "skipped", reason: "trigger-not-found" };
+  if (trigger.status === "voided" || trigger.status === "cancelled") {
+    return { status: "skipped", reason: "already-closed", trigger };
+  }
+
+  const currentQty = Number(trigger.quantity) || 0;
+  const ret = Number(qtyReturned) || 0;
+  if (ret <= 0) return { status: "skipped", reason: "invalid-qty", trigger };
+
+  // Full void path — return ≥ trigger qty means the whole reservation
+  // is going away. Delegate to cancelTrigger so the audit trail + bill
+  // line removal stay consistent with the legacy behaviour.
+  if (ret >= currentQty) {
+    try {
+      const cancelled = await cancelTrigger(triggerId, {
+        reason: `Pharmacy return ${refundSlipNumber || ""} — full reservation voided (${ret}/${currentQty} returned)`.trim(),
+        user:   user || { fullName: "AutoBilling (return)", role: "System" },
+      });
+      return { status: "full", trigger: cancelled };
+    } catch (e) {
+      if (e.code === "ALREADY_CLOSED") return { status: "skipped", reason: "already-closed" };
+      throw e;
+    }
+  }
+
+  // Partial-cancel path — reduce qty + totalAmount in place.
+  const unit = toNum(trigger.unitPrice);
+  const newQty   = currentQty - ret;
+  const newTotal = unit * newQty;
+
+  // Snapshot the before state for overrideHistory.
+  const before = {
+    quantity:    currentQty,
+    unitPrice:   unit,
+    totalAmount: toNum(trigger.totalAmount),
+  };
+
+  // Edit the linked bill item, if any. Mirrors the pattern from
+  // overrideTrigger (L3327-L3348) — set inputs, let the bill's pre-save
+  // hook recompute grossAmount / netAmount / patient + TPA splits.
+  if (trigger.billId && trigger.billItemId) {
+    const retryVE = require("../../utils/retryVersionError");
+    try {
+      await retryVE(async () => {
+        const bill = await PatientBill.findById(trigger.billId);
+        if (!bill) return;
+        if (["PAID", "CANCELLED", "REFUNDED"].includes(bill.billStatus)) {
+          // Closed bill — caller must use the refund flow. We still
+          // reduce the trigger so the row matches reality, but flag
+          // the bill-side residue so the operator can reconcile.
+          return;
+        }
+        const item = bill.billItems.id(trigger.billItemId);
+        if (item) {
+          item.quantity = newQty;
+          // unitPrice unchanged — only qty drops.
+          await bill.save();
+        }
+      }, { label: "_partialReduceTrigger" });
+    } catch (billErr) {
+      console.error(`[AutoBilling] _partialReduceTrigger bill update failed for trigger ${triggerId}:`, billErr.message);
+      // Don't bubble — trigger update below keeps the audit row honest
+      // even if the bill mutation hit a closed-bill or version race.
+    }
+  }
+
+  trigger.quantity    = newQty;
+  trigger.totalAmount = toDec(newTotal);
+  trigger.overrideHistory.push({
+    field:         "qty/totalAmount",
+    oldValue:      before,
+    newValue:      { quantity: newQty, unitPrice: unit, totalAmount: newTotal },
+    reason:        String(reason || `Pharmacy return — ${ret} units returned of ${currentQty}`).trim(),
+    changedBy:     user?.fullName || user?.name || "AutoBilling (return)",
+    changedByRole: user?.role || "System",
+    changedById:   user?._id || user?.id,
+  });
+  await trigger.save();
+
+  // Best-effort audit row — reuse ITEM_PRICE_OVERRIDDEN since the
+  // override path covers qty/price edits and the enum doesn't have a
+  // dedicated "partial-refund" event. The reason text disambiguates.
+  try {
+    const { emitBillingAudit } = require("../../models/Billing/BillingAudit");
+    await emitBillingAudit({
+      event:       "ITEM_PRICE_OVERRIDDEN",
+      UHID:        trigger.UHID,
+      admissionId: trigger.admissionId,
+      triggerId:   trigger._id,
+      billId:      trigger.billId,
+      amount:      newTotal,
+      actorName:   user?.fullName || "AutoBilling (return)",
+      actorRole:   user?.role || "System",
+      reason:      `Partial pharmacy return — ${ret}/${currentQty} units returned (slip ${refundSlipNumber || "—"})`,
+      before,
+      after:       { quantity: newQty, unitPrice: unit, totalAmount: newTotal },
+    });
+  } catch (auditErr) {
+    console.warn("[AutoBilling] _partialReduceTrigger audit emit failed (non-fatal):", auditErr.message);
+  }
+
+  return { status: "partial", trigger };
+}
+
+/**
+ * R7gz — Pharmacy return → IPD ledger refund cascade.
+ *
+ * When the pharmacist processes a return on a PharmacySale that
+ * originated from an IPD indent, two things need to happen on the
+ * billing side:
+ *
+ *   1. PharmacySale.balanceDue / patientCredit adjust — handled
+ *      inline in pharmacyController.returnItems (pharmacy counter is
+ *      where the money flow lives — payment is collected there, refund
+ *      is paid out there).
+ *
+ *   2. The corresponding MAR_RESERVATION BillingTrigger sitting on the
+ *      patient's IPD ledger (created by onIndentReleased) needs to
+ *      reduce by the returned quantity / amount — otherwise the IPD
+ *      ledger's PHARM category total over-states actual consumption
+ *      and the patient appears to owe money for medicine they returned.
+ *
+ * R7hr-12 (D2-06): partial-return support. Pre-R7hr-12 every match was
+ * full-cancelled regardless of `it.quantity`, so a 2-of-10 return wiped
+ * a ₹1000 reservation while only refunding ₹200 cash — patient got 8
+ * units of free medication on every partial return. The cascade now
+ * walks reservations newest-first and consumes `it.quantity` units
+ * across them: full-cancels each trigger it can fully absorb, then
+ * partial-reduces the last one to consume the remainder. Multi-trigger
+ * coverage handles the (uncommon but real) case of an indent line
+ * that was released across two indent calls (PartiallyReleased → second
+ * release), producing two reservation triggers for the same service
+ * code.
+ *
+ * Idempotent — re-running on an already-cancelled trigger is a no-op.
+ */
+async function onPharmacyReturn(sale, returnRecord) {
+  if (!sale || !returnRecord) return;
+  const admissionId = sale.admissionId;
+  // OPD / non-admission sales don't have an IPD ledger to update
+  if (!admissionId) return;
+
+  const items = Array.isArray(returnRecord.refundedItems) ? returnRecord.refundedItems : [];
+  if (!items.length) return;
+
+  for (const it of items) {
+    const drugName = it.drugName || it.medicineName || "";
+    if (!drugName) continue;
+
+    // Resolve service code the same way onIndentReleased did.
+    let serviceCode = it.serviceCode;
+    if (!serviceCode) {
+      const drugCode = it.drugCode || drugName;
+      serviceCode = `PHARM-${String(drugCode).toUpperCase().replace(/\s+/g, "-").slice(0, 24)}`;
+    }
+
+    // R7hr-12 (D2-06): the returned quantity for this line — drives
+    // partial-cancel proportionality.
+    const returnedQty = Number(it.quantity) || 0;
+    if (returnedQty <= 0) continue;
+
+    try {
+      // Match the MAR reservation trigger that paid for this line.
+      // Use a wide-ish window — pharmacy returns can land days after
+      // the original dispense.
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const reservations = await BillingTrigger.find({
+        admissionId,
+        serviceCode,
+        $or: [
+          { sourceType: "MAR_RESERVATION" },
+          { sourceType: "MAR", sourceDocumentModel: "PharmacyIndent" }, // legacy
+        ],
+        status: { $in: ["completed", "billed", "pending"] },
+        createdAt: { $gte: since },
+      }).sort({ createdAt: -1 });
+
+      if (!reservations.length) {
+        console.log(`[AutoBilling] onPharmacyReturn no live reservation for ${serviceCode} (${admissionId}) — nothing to void`);
+        continue;
+      }
+
+      // R7hr-12 (D2-06): consume `returnedQty` units across the
+      // reservations (newest first). For each reservation:
+      //   • triggerQty <= remaining → full cancel, decrement remaining
+      //   • triggerQty >  remaining → partial reduce by `remaining`,
+      //                              remaining = 0, stop.
+      let remaining = returnedQty;
+      for (const r of reservations) {
+        if (remaining <= 0) break;
+        const triggerQty = Number(r.quantity) || 0;
+        const consumeFromThis = Math.min(triggerQty, remaining);
+        try {
+          await _partialReduceTrigger(r._id, consumeFromThis, {
+            reason: `Pharmacy return ${returnRecord.refundSlipNumber || ""} — ${consumeFromThis} unit(s) of ${triggerQty} returned`,
+            user: { fullName: "AutoBilling (return)", role: "System" },
+            refundSlipNumber: returnRecord.refundSlipNumber || "",
+          });
+          remaining -= consumeFromThis;
+        } catch (e) {
+          if (e.code === "ALREADY_CLOSED") continue;
+          console.error(`[AutoBilling] onPharmacyReturn _partialReduceTrigger ${r._id} failed:`, e.message);
+        }
+      }
+
+      if (remaining > 0) {
+        // Coverage gap — returned more than the live reservations
+        // accounted for. Could happen if the MAR-administer path
+        // already promoted some reservations to per-dose triggers
+        // (post-dedup-window doses become separate MAR triggers).
+        // Log for the operator; don't fail the return.
+        console.warn(
+          `[AutoBilling] onPharmacyReturn ${serviceCode} (${admissionId}): ` +
+          `${remaining} unit(s) of returned ${returnedQty} found no matching reservation — ` +
+          `MAR per-dose triggers may need manual reconcile.`,
+        );
+      }
+    } catch (e) {
+      console.error(`[AutoBilling] onPharmacyReturn ${serviceCode} error:`, e.message);
+    }
+  }
+}
+
+/**
+ * R7hr-12-S2 (D3-03): IPD indent return — void the matching MAR
+ * reservation triggers when a ward returns unused drug to the pharmacy.
+ *
+ * Pre-R7hr-12-S2 there was NO ward-side equivalent of onPharmacyReturn:
+ * `releaseIndent` decremented stock and fired MAR_RESERVATION billing
+ * triggers, but no code path could reverse either side when a patient
+ * was discharged / transferred / refused dose. Operators either let the
+ * PHARM-* charge sit on the bill (over-billing) or hand-edited Mongo.
+ *
+ * Strategy — mirror onPharmacyReturn:
+ *   • One pass per returned item; resolve serviceCode the same way
+ *     onIndentReleased did (master-first via findServiceByName, then
+ *     PHARM-* synthetic fallback) so the join lands on the same
+ *     trigger row.
+ *   • Use sourceDocumentId === indentItem._id as the strong join key
+ *     (release path stamped it at autoBillingService.js L2722) and
+ *     serviceCode + admissionId + sourceType as the broad fallback for
+ *     legacy triggers that don't carry sourceDocumentId yet.
+ *   • _partialReduceTrigger handles the qty math + bill-line refund +
+ *     overrideHistory[] audit — same helper onPharmacyReturn uses, so
+ *     IPD ledger refunds and GST CN reversal stay consistent across
+ *     OPD/walk-in and ward dispense paths.
+ *
+ * @param {Object} indentDoc       — the saved indent (post-issuedQty decrement)
+ * @param {Object} returnRecord    — { items: [{itemId, returnQty}], reason, user }
+ */
+async function onIndentReturned(indentDoc, returnRecord) {
+  if (!indentDoc?._id || !returnRecord) return;
+  const admissionId = indentDoc.admissionId;
+  if (!admissionId) return; // walk-in indents shouldn't exist but defensive
+
+  const requestedReturns = Array.isArray(returnRecord.items) ? returnRecord.items : [];
+  if (!requestedReturns.length) return;
+
+  // Index items on the doc by id so we can resolve serviceCode + drug
+  // metadata from the indent line itself rather than re-fetching.
+  const itemById = new Map(
+    (indentDoc.items || []).map((it) => [String(it._id), it]),
+  );
+
+  const reasonTxt = String(returnRecord.reason || "").trim() || "Indent return";
+  const user = returnRecord.user || { fullName: "AutoBilling (indent return)", role: "System" };
+
+  for (const r of requestedReturns) {
+    const itemId    = String(r.itemId || "");
+    const returnQty = Number(r.returnQty || 0);
+    if (!itemId || returnQty <= 0) continue;
+
+    const item = itemById.get(itemId);
+    if (!item) {
+      console.warn(`[AutoBilling] onIndentReturned: itemId ${itemId} not on indent ${indentDoc._id} — skipped`);
+      continue;
+    }
+
+    const drugName = item.drugName || "";
+    if (!drugName) continue;
+
+    // Resolve service code — master-first to match the MAR-administer
+    // path, then fall back to the PHARM-* synthetic that onIndentReleased
+    // uses. The dual lookup keeps us robust whether the indent was
+    // released against a master-coded service or the synthetic.
+    let serviceCode = null;
+    try {
+      const svc = await findServiceByName(drugName, "IPD");
+      if (svc?.serviceCode) serviceCode = svc.serviceCode;
+    } catch (_) { /* master lookup is optional */ }
+    const syntheticCode = `PHARM-${String(item.drugCode || drugName).toUpperCase().replace(/\s+/g, "-").slice(0, 24)}`;
+
+    try {
+      // Strong join via sourceDocumentId (indent item _id) FIRST. This
+      // hits every trigger the release path stamped, regardless of
+      // serviceCode shape — defends against the D5-02 cross-axis
+      // (master vs PHARM-*) mismatch.
+      const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30d window
+      const strongMatches = await BillingTrigger.find({
+        admissionId,
+        sourceDocumentId:    item._id,
+        sourceDocumentModel: "PharmacyIndent",
+        status: { $in: ["completed", "billed", "pending"] },
+      }).sort({ createdAt: -1 });
+
+      let reservations = strongMatches;
+      if (!reservations.length) {
+        // Fallback: legacy triggers without sourceDocumentId. Match on
+        // serviceCode (both shapes) + admissionId + reservation source.
+        const candidateCodes = [syntheticCode];
+        if (serviceCode && serviceCode !== syntheticCode) candidateCodes.unshift(serviceCode);
+        reservations = await BillingTrigger.find({
+          admissionId,
+          serviceCode: { $in: candidateCodes },
+          $or: [
+            { sourceType: "MAR_RESERVATION" },
+            { sourceType: "MAR", sourceDocumentModel: "PharmacyIndent" },
+          ],
+          status: { $in: ["completed", "billed", "pending"] },
+          createdAt: { $gte: since },
+        }).sort({ createdAt: -1 });
+      }
+
+      if (!reservations.length) {
+        console.log(
+          `[AutoBilling] onIndentReturned: no live reservation for indent item ${itemId} ` +
+          `(${drugName}, admission ${admissionId}) — nothing to void. ` +
+          `MAR may have already promoted to per-dose triggers — manual reconcile may be needed.`,
+        );
+        continue;
+      }
+
+      // Consume returnQty across reservations newest-first via the
+      // shared _partialReduceTrigger helper. Each call either full-
+      // cancels (when ret >= trigger.quantity) or proportionally
+      // reduces qty + totalAmount + bill-line + overrideHistory[].
+      let remaining = returnQty;
+      for (const t of reservations) {
+        if (remaining <= 0) break;
+        const triggerQty = Number(t.quantity) || 0;
+        const consumeFromThis = Math.min(triggerQty, remaining);
+        try {
+          await _partialReduceTrigger(t._id, consumeFromThis, {
+            reason: `Indent return ${indentDoc.indentNumber || indentDoc._id} — ${consumeFromThis}/${triggerQty} unit(s) returned: ${reasonTxt}`,
+            user,
+          });
+          remaining -= consumeFromThis;
+        } catch (e) {
+          if (e.code === "ALREADY_CLOSED") continue;
+          console.error(`[AutoBilling] onIndentReturned _partialReduceTrigger ${t._id} failed:`, e.message);
+        }
+      }
+
+      if (remaining > 0) {
+        console.warn(
+          `[AutoBilling] onIndentReturned: indent ${indentDoc.indentNumber || indentDoc._id} ` +
+          `item ${itemId} (${drugName}): ${remaining}/${returnQty} units returned found no matching reservation — ` +
+          `MAR per-dose triggers may need manual reconcile.`,
+        );
+      }
+    } catch (e) {
+      console.error(`[AutoBilling] onIndentReturned item ${itemId} error:`, e.message);
+    }
   }
 }
 
@@ -3769,8 +4822,14 @@ module.exports = {
   onMARAdministration,
   // R7az-CRIT-6: MAR HELD/REFUSED/MISSED voids the pharmacy reservation
   onMARNonAdminister,
+  // R7gz: Pharmacy return voids the matching IPD ledger PHARM trigger
+  onPharmacyReturn,
   onInvestigationOrdered,
   onInvestigationResulted,
+  // R7hr-83 Phase C — auto-bill on doctor-order completion (idempotent
+  // per (sourceType, sourceRef)). Wired from the DoctorOrder completion
+  // flow after Phase B has stamped serviceCode/unitPrice on the order.
+  onDoctorOrderCompleted,
   onEquipmentCharged,
   confirmAndBillTrigger,
   getAuditTrail,
@@ -3802,6 +4861,9 @@ module.exports = {
   addManualCharge,
   // Pharmacy indent release → reservation billing hook
   onIndentReleased,
+  // R7hr-12-S2 (D3-03): Pharmacy indent return → void matching MAR
+  // reservation triggers (called from indentService.returnIndent).
+  onIndentReturned,
   // R7az-CRIT-7: order-cancellation refund cascade (Agent D wires the route)
   onOrderCancelled,
   UNDO_WINDOW_MS,

@@ -228,12 +228,14 @@ function OPDRow({ v, idx, navigate, reload }) {
         </div>
       </div>
       <div className="rx-card-actions">
-        {/* `/opd/:UHID` opens OPDPrint (receipt) — see App.jsx route */}
-        <button className="rx-action-btn"
-                onClick={() => uhid ? navigate(`/opd/${uhid}`) : toast.warning("No UHID linked")}
-                title="Print OPD receipt" disabled={!uhid}>
-          <i className="pi pi-print" /> Receipt
-        </button>
+        {/* R7hr-56 — Receipt button removed. It used to navigate to
+            `/opd/:UHID` (the legacy OPDPrint page) which read patient
+            data once at page-load and rendered a generic OPD slip with
+            no link to the actual visit's bill — so cashiers would print
+            stale, back-dated information. The correct receipt for any
+            given visit is now generated from the Billing Counter
+            (Print button on the visit's bill row), which is reached
+            via the Bill button below. */}
         {uhid && (
           <button className="rx-action-btn"
                   onClick={() => navigate(`/visit-history/${uhid}`)} title="Patient history">

@@ -8,10 +8,98 @@
 // ═══════════════════════════════════════════════════════════════
 
 const serviceMasterService = require("../../services/ServiceMaster/Servicemasterservice");
+const ServiceMaster = require("../../models/ServiceMaster/serviceMasterModel");
+
+// R7hr-A2: doctor-order categorisation. Each ServiceMaster row optionally
+// declares which doctor-order surface it belongs to so the IPD/OPD order
+// pads can call /lookup?doctorOrderCategory=Lab (etc.) instead of fishing
+// through the full catalogue. The enum mirrors the schema (Agent A1).
+const DOCTOR_ORDER_CATEGORIES = [
+  "Medication",
+  "IV_Fluid",
+  "Lab",
+  "Radiology",
+  "Procedure",
+  "BloodTransfusion",
+  "Diet",
+  "Oxygen",
+  "Physiotherapy",
+  "Activity",
+  "Nursing",
+  "Consultation",
+];
+
+// Returns true when the value is "absent" (null/undefined/empty string) —
+// the field is optional, so these three are valid no-ops.
+function _doctorOrderCategoryIsAbsent(v) {
+  return v === undefined || v === null || v === "";
+}
+
+// Escape a user-supplied string for safe use inside a RegExp literal.
+// Prevents the q param from injecting regex metacharacters (`.*`, `[`, etc.).
+function _escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 // ── GET /api/services ─────────────────────────────────────────
+//
+// R7hr-A2: optional `?doctorOrderCategory=<value>` filter. When present
+// and not in the enum we 400 — silently dropping a typo'd filter would
+// return the entire catalogue and look like the filter "matched" everything.
+// When the filter IS set we run a controller-side find against the model
+// so pagination + total counts are accurate (post-filtering a page-window
+// returned by the service would under-count).
 exports.getAll = async (req, res) => {
   try {
+    const doctorOrderCategory = req.query.doctorOrderCategory;
+    if (
+      !_doctorOrderCategoryIsAbsent(doctorOrderCategory) &&
+      !DOCTOR_ORDER_CATEGORIES.includes(doctorOrderCategory)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid doctorOrderCategory. Must be one of: ${DOCTOR_ORDER_CATEGORIES.join(", ")}`,
+      });
+    }
+
+    if (!_doctorOrderCategoryIsAbsent(doctorOrderCategory)) {
+      // Build a query that mirrors the service-layer shape but injects
+      // the new filter. Keeps the existing filter semantics (category/
+      // domain/applicableTo/search/isActive/page/limit) intact.
+      const {
+        category,
+        domain,
+        applicableTo,
+        isActive = "true",
+        search,
+        page = 1,
+        limit = 100,
+      } = req.query;
+      const q = { doctorOrderCategory };
+      if (isActive !== undefined) q.isActive = isActive === "true";
+      if (category) q.category = category;
+      if (domain) q.domain = domain;
+      if (applicableTo) q.applicableTo = { $in: [applicableTo, "ALL"] };
+      if (search) q.$text = { $search: search };
+
+      const skip = (parseInt(page) - 1) * parseInt(limit);
+      const [services, total] = await Promise.all([
+        ServiceMaster.find(q)
+          .sort({ domain: 1, category: 1, displayOrder: 1 })
+          .limit(parseInt(limit))
+          .skip(skip),
+        ServiceMaster.countDocuments(q),
+      ]);
+      return res.json({
+        success: true,
+        services,
+        total,
+        page: parseInt(page),
+        totalPages: Math.ceil(total / parseInt(limit)),
+        data: services,
+      });
+    }
+
     const result = await serviceMasterService.getAllServices(req.query);
     res.json({ success: true, ...result, data: result.services });
   } catch (e) {
@@ -44,8 +132,22 @@ exports.getById = async (req, res) => {
 // R7bb-C / S6: forward req.user as the `actor` arg so the service-
 // layer audit emit carries the operator's identity. Pre-R7bb master-
 // data writes had no audit trail at all.
+//
+// R7hr-A2: validate `doctorOrderCategory` against the doctor-order enum
+// before the Mongo round-trip — schema-level validation also catches it
+// but a controller-side 400 is friendlier than Mongoose's stack trace.
 exports.create = async (req, res) => {
   try {
+    const doc = req.body?.doctorOrderCategory;
+    if (
+      !_doctorOrderCategoryIsAbsent(doc) &&
+      !DOCTOR_ORDER_CATEGORIES.includes(doc)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid doctorOrderCategory. Must be one of: ${DOCTOR_ORDER_CATEGORIES.join(", ")}`,
+      });
+    }
     const data = await serviceMasterService.createService(req.body, req.user);
     res.status(201).json({ success: true, data });
   } catch (e) {
@@ -65,8 +167,22 @@ exports.create = async (req, res) => {
 // open so routine tweaks aren't slowed down.
 exports.update = async (req, res) => {
   try {
-    const ServiceMaster = require("../../models/ServiceMaster/serviceMasterModel");
     const PriceChangeRequest = require("../../models/ServiceMaster/priceChangeRequestModel");
+
+    // R7hr-A2: validate `doctorOrderCategory` before either the price-
+    // change-request branch or the direct mutation runs. Reject typos at
+    // the controller boundary rather than letting them ride into the doc.
+    const doc = req.body?.doctorOrderCategory;
+    if (
+      Object.prototype.hasOwnProperty.call(req.body || {}, "doctorOrderCategory") &&
+      !_doctorOrderCategoryIsAbsent(doc) &&
+      !DOCTOR_ORDER_CATEGORIES.includes(doc)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid doctorOrderCategory. Must be one of: ${DOCTOR_ORDER_CATEGORIES.join(", ")}`,
+      });
+    }
 
     // Inspect whether a price field is being changed.
     const body = req.body || {};
@@ -227,6 +343,60 @@ exports.seed = async (req, res) => {
   try {
     const data = await serviceMasterService.seedDefaultServices();
     res.json({ success: true, data });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// ── GET /api/services/lookup ──────────────────────────────────
+//
+// R7hr-A2: thin endpoint for doctor-order pads (IPD/OPD Rx, Lab, Imaging,
+// Procedure, etc.). The full catalogue endpoint returns billing/tariff
+// metadata that the order pad doesn't need and that bloats the payload —
+// this one strips down to the four fields the picker actually renders.
+//   ?doctorOrderCategory  REQUIRED — must match the enum
+//   ?q                    OPTIONAL — case-insensitive substring on
+//                                    serviceName + serviceCode
+//   ?limit                OPTIONAL — default 20, capped at 50 to stop
+//                                    a single autocomplete keystroke
+//                                    pulling the entire catalogue
+exports.lookup = async (req, res) => {
+  try {
+    const doctorOrderCategory = req.query.doctorOrderCategory;
+    if (_doctorOrderCategoryIsAbsent(doctorOrderCategory)) {
+      return res.status(400).json({
+        success: false,
+        message: "doctorOrderCategory query param is required",
+      });
+    }
+    if (!DOCTOR_ORDER_CATEGORIES.includes(doctorOrderCategory)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid doctorOrderCategory. Must be one of: ${DOCTOR_ORDER_CATEGORIES.join(", ")}`,
+      });
+    }
+
+    let limit = parseInt(req.query.limit, 10);
+    if (!Number.isFinite(limit) || limit <= 0) limit = 20;
+    if (limit > 50) limit = 50;
+
+    const filter = { isActive: true, doctorOrderCategory };
+    const q = (req.query.q || "").trim();
+    if (q) {
+      // Regex (not $text) so partial substrings work mid-string and we
+      // don't need a text index on serviceCode. Escape regex meta so a
+      // stray "." or "[" can't blow up the query.
+      const rx = new RegExp(_escapeRegex(q), "i");
+      filter.$or = [{ serviceName: rx }, { serviceCode: rx }];
+    }
+
+    const rows = await ServiceMaster.find(filter)
+      .select("_id serviceCode serviceName defaultPrice doctorOrderCategory")
+      .sort({ serviceName: 1 })
+      .limit(limit)
+      .lean();
+
+    res.json({ success: true, count: rows.length, data: rows });
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });
   }

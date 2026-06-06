@@ -85,7 +85,11 @@ const _grid = (cells) => {
 const _narr = (text) => text ? `<div class="dfx-narr">${escapeHtml(String(text))}</div>` : "";
 
 // Per-type builders — compact equivalents of DoctorNotesPage TYPE_BUILDERS.
-const buildBuilder = (note) => {
+// R7hr-100 — `opts` (default {}) is forwarded from the outer
+// buildDoctorNoteCardHtml(note, opts) so the `initial` builder can
+// honour opts.hideNursingExtras. All other builders ignore opts;
+// signature stays back-compat — passing nothing preserves prior behaviour.
+const buildBuilder = (note, opts = {}) => {
   const nd = note.noteDetails || {};
 
   const BUILDERS = {
@@ -479,7 +483,12 @@ const buildBuilder = (note) => {
       // without having to scroll down to the nurse card. Empty
       // buckets stay hidden; if no nursing sub-blocks are populated
       // the divider+block is suppressed entirely.
-      const nursingExtras = renderNursingNabhExtras(nNabh, H);
+      // R7hr-100 — When caller (IA tab) explicitly requested hiding the
+      // nursing intake extras (because no separate Nurse Initial
+      // Assessment exists yet), skip rendering the cross-disciplinary
+      // block entirely. Default behaviour unchanged for prints +
+      // timelines (opts.hideNursingExtras is undefined / falsy there).
+      const nursingExtras = opts.hideNursingExtras ? "" : renderNursingNabhExtras(nNabh, H);
       const nursingBlock = nursingExtras
         ? `<div style="margin:18px 0 6px;padding:6px 12px;border-radius:6px;background:linear-gradient(90deg,#eef2ff,#fdf2f8);font-size:11px;font-weight:700;color:#312e81;letter-spacing:.5px;text-align:center">━━━ NURSING INTAKE — CROSS-DISCIPLINARY (NABH IPSG.6) ━━━</div>${nursingExtras}`
         : "";
@@ -500,7 +509,16 @@ const buildBuilder = (note) => {
  * cards inline. Falls back to a SOAP narrative summary when no
  * dedicated builder exists for the noteType.
  */
-export function buildDoctorNoteCardHtml(note) {
+export function buildDoctorNoteCardHtml(note, opts = {}) {
+  // R7hr-100 — opts.hideNursingExtras (default false → preserves all
+  // existing behaviour for prints + timelines). The Initial Assessment
+  // tab in the patient panel sets it to TRUE when no separate Nurse
+  // IA note exists, so doctors don't see the "NURSING INTAKE — CROSS-
+  // DISCIPLINARY" block with default values (Barthel max scores,
+  // dropdown defaults) before the nurse has actually filled anything.
+  // The Complete File print (Narrative.jsx) and Doctor Notes timeline
+  // never pass this option, so they continue to render the full card
+  // exactly as before. R25-safe: additive, default-preserving.
   const fmtDate = (d) => d ? new Date(d).toLocaleString("en-IN", {
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit",
@@ -577,7 +595,10 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
     : "";
 
   // Per-type builder body
-  const builder = buildBuilder(note);
+  // R7hr-100 — forward opts so the `initial` builder can honour
+  // opts.hideNursingExtras. Default {} → all existing call sites
+  // (prints, timelines) keep their unchanged behaviour.
+  const builder = buildBuilder(note, opts);
   const typeBody = builder ? builder() : "";
 
   // Signature footer

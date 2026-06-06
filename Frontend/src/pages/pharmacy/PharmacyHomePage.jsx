@@ -7,7 +7,7 @@
  * Theme matches the rest of the HIS: gradient hero, KPI strip,
  * sectioned cards, his-field inputs, tight modals.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import "../../Components/clinical/clinical-forms.css";
 import { toast } from "react-toastify";
@@ -19,13 +19,21 @@ import TEMPLATES from "../../Components/print/printables/PharmacyBillTemplates";
 import PharmacyBill from "../../Components/print/printables/PharmacyBill";
 import PharmacyRegister, { REGISTER_HEADERS } from "../../Components/print/printables/PharmacyRegister";
 import PharmacyIndentsPage from "./PharmacyIndentsPage";
+// R7hr-4 — pharmacist-scoped per-admission ledger, mounted in-place
+// inside IPDCreditTab so the IPD Credit pill never has to navigate
+// away to /pharmacy/ledger/:admissionId.
+import PharmacyLedgerPage from "./PharmacyLedgerPage";
 import opdService from "../../Services/patient/opdService";
+// R7hr-61 — generic presence hook (despite the "Receptionist" name it
+// sends user.role from AuthContext, so Pharmacist heartbeats land with
+// role=Pharmacist on the same /presence/heartbeat endpoint).
+import { useReceptionistPresence } from "../../hooks/useReceptionistPresence";
 import { IS_PHARMACY_STANDALONE, PHARMACY_MODE_LABEL } from "../../config/pharmacyMode";
 import {
   listDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
-  recordGRN, listBatches, stockRollup,
-  dispense, listSales, cancelSale, returnSaleItems, addItemsToSale,
+  recordGRN, listBatches, stockRollup, parseInvoice,  // R7hr-16: invoice auto-fill
+  dispense, listSales, cancelSale, returnSaleItems, addItemsToSale, lookupWalkInPatients,
   getStats, getAlerts,
   getPharmacySettings, updatePharmacySettings,
   getSalesRegister, getPurchaseRegister, getStockRegister,
@@ -118,7 +126,10 @@ const BASE_TABS = [
   // R7cu — IPD Credit Ledger: pharmacist sees every active IPD admission
   // with pharmacy outstanding > 0, drills in to collect payment. The
   // discharge flow is HARD-blocked at the backend until this clears.
-  { key: "ipdcredit", label: "IPD Credit", icon: "pi-credit-card" },
+  // R7hr-8: was "IPD Credit". Renamed to match the actual surface
+  // pharmacists use — the per-admission ledger (KPI strip + day-wise
+  // medicines + Collect + Apply-advance + Interim/Final bill print).
+  { key: "ipdcredit", label: "IPD Ledger", icon: "pi-credit-card" },
   { key: "indents",   label: "Live Indents", icon: "pi-inbox" }, // badge + tone wired dynamically
   { key: "sales",     label: "Sales Register", icon: "pi-receipt" },
   { key: "registers", label: "Registers",  icon: "pi-book" },
@@ -207,6 +218,25 @@ function indentBadgeFor(stats) {
 export default function PharmacyHomePage() {
   const [tab, setTab] = useState("dashboard");
 
+  // R7hr-17: Warm the pharmacy-settings cache on mount so every Print
+  // click handler in this page can read it synchronously (Chrome blocks
+  // window.open after `await` — the user-activation flag is consumed
+  // by the microtask boundary, popup gets silently dropped). Fire-and-
+  // forget — no awaiting required, the cache fills in the background.
+  useEffect(() => { warmCachedPhSettings(); }, []);
+
+  // R7hr-4 — Shared state so the Live Indents tab and the IPD Credit
+  // tab can cross-talk without a URL change. When the pharmacist clicks
+  // "Live Ledger" inside the embedded indents queue, we flip the tab to
+  // ipdcredit and pre-seed the selection so IPDCreditTab opens that
+  // admission's embedded ledger straight away. Object identity (`null`
+  // vs `{...}`) drives the IPDCreditTab effect that pulls the focus.
+  const [ledgerFocus, setLedgerFocus] = useState(null); // { admissionId, seed } | null
+  const handleShowLedger = (admissionId, seed) => {
+    setLedgerFocus({ admissionId, seed });
+    setTab("ipdcredit");
+  };
+
   // Poll open indents and recompute the Live Indents tab badge/tone every
   // render. useMemo keeps the array reference stable when counts haven't
   // changed so TabStrip doesn't re-mount its buttons unnecessarily.
@@ -273,8 +303,25 @@ export default function PharmacyHomePage() {
 
         {/* Tab strip — shared admin TabStrip for design consistency.
             The Live Indents tab carries a dynamic badge + tone so the
-            pharmacist can spot STAT/urgent work from any other tab. */}
-        <TabStrip tabs={tabs} value={tab} onChange={setTab} accent={C.orange} accentL={C.orangeL} />
+            pharmacist can spot STAT/urgent work from any other tab.
+            R7hr-8: sticky so the pills stay anchored to the viewport
+            even when the user scrolls deep into the IPD Ledger drill-in
+            (the inner ledger page is tall — without this the tab strip
+            scrolls out of sight and the pharmacist loses orientation). */}
+        <div style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 20,
+          background: C.bg,
+          paddingTop: 4,
+          paddingBottom: 4,
+          marginLeft: -4,
+          marginRight: -4,
+          paddingLeft: 4,
+          paddingRight: 4,
+        }}>
+          <TabStrip tabs={tabs} value={tab} onChange={setTab} accent={C.orange} accentL={C.orangeL} />
+        </div>
 
         {/* Tab body */}
         {tab === "dashboard" && <DashboardTab />}
@@ -283,8 +330,15 @@ export default function PharmacyHomePage() {
         {tab === "grn"       && <GRNTab />}
         {tab === "dispense"  && <DispenseTab />}
         {tab === "opdrx"     && <OPDRxTab />}
-        {tab === "ipdcredit" && <IPDCreditTab />}
-        {tab === "indents"   && <PharmacyIndentsPage embedded />}
+        {tab === "ipdcredit" && (
+          <IPDCreditTab
+            focus={ledgerFocus}
+            onClearFocus={() => setLedgerFocus(null)}
+          />
+        )}
+        {tab === "indents"   && (
+          <PharmacyIndentsPage embedded onShowLedger={handleShowLedger} />
+        )}
         {tab === "sales"     && <SalesTab />}
         {tab === "registers" && <RegistersTab />}
         {tab === "suppliers" && <SuppliersTab />}
@@ -298,16 +352,38 @@ export default function PharmacyHomePage() {
    DASHBOARD TAB
 ══════════════════════════════════════════════════════════════════ */
 function DashboardTab() {
+  const { user } = useAuth();
+  const myUserId = user?._id || user?.id;
   const [stats, setStats] = useState(null);
   const [alerts, setAlerts] = useState({ lowStock: [], outOfStock: [], expiringSoon: [], expired: [] });
+  // R7hr-61 — Reception-style "ACTIVE RIGHT NOW" strip. Heartbeat sent
+  // by useReceptionistPresence hook below (role-agnostic — sends
+  // user.role), and the active roster is polled here every 30s.
+  // Filtered to pharmacy-relevant roles (Pharmacist + Admin) so
+  // receptionists/nurses on shift don't clutter this strip.
+  const [presence, setPresence] = useState([]);
+
+  // R7hr-61 — fire heartbeats so OTHER pharmacy windows can see this
+  // operator. resource={ type:"idle", action:"viewing-dashboard" }
+  // matches what the Reception dashboard sends.
+  useReceptionistPresence({ type: "idle", action: "viewing-dashboard" });
 
   const refresh = async () => {
     try {
       const [s, a] = await Promise.all([getStats(), getAlerts()]);
       setStats(s.data); setAlerts(a.data);
     } catch (e) { toast.error(e.message); }
+    // R7hr-61 — separate try so a 403 on presence doesn't break the
+    // existing KPI render. Old deployments where Pharmacist lacks
+    // presence.read will simply hide the Active strip.
+    try {
+      const p = await axios.get(`${API_ENDPOINTS.BASE}/presence/active`);
+      const all = p.data?.data || p.data || [];
+      const PHARM_ROLES = new Set(["Pharmacist", "Admin"]);
+      setPresence(all.filter(x => PHARM_ROLES.has(x.userRole)));
+    } catch (_) { /* silent */ }
   };
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); const t = setInterval(refresh, 30000); return () => clearInterval(t); }, []);
 
   // R7bd-E-8 / A2-MED-7 — clicking the Low Stock KPI tile scrolls down
   // to the corresponding alert section (which already lists each drug
@@ -323,6 +399,72 @@ function DashboardTab() {
 
   return (
     <div>
+      {/* ── R7hr-61: Active Right Now strip (pharmacy-scoped — Pharmacist + Admin) ── */}
+      {presence.length > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          padding: "10px 14px", marginBottom: 12,
+          background: "#f8fafc", border: `1.5px solid ${C.border}`,
+          borderRadius: 10,
+        }}>
+          <i className="pi pi-users" style={{ color: C.purple }} />
+          <span style={{ fontWeight: 800, fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>
+            Active Right Now ({presence.length})
+          </span>
+          {presence.map(p => {
+            const secondsAgo = Math.floor((Date.now() - new Date(p.lastHeartbeatAt)) / 1000);
+            const isMe = String(p.userId) === String(myUserId || "");
+            const ago  = secondsAgo < 60 ? `${secondsAgo}s ago` : `${Math.floor(secondsAgo/60)}m ago`;
+            const doing = p.action === "viewing-dashboard" ? "on dashboard"
+                        : p.action === "dispensing" ? `dispensing${p.currentResource?.label ? ` ${p.currentResource.label}` : ""}`
+                        : p.action === "releasing"  ? `releasing${p.currentResource?.label ? ` ${p.currentResource.label}` : ""}`
+                        : p.action || "idle";
+            return (
+              <div key={p.userId} style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "4px 10px", borderRadius: 999,
+                background: isMe ? `${C.purple}15` : C.card,
+                border: `1px solid ${isMe ? C.purple : C.border}`,
+                fontSize: 11.5, color: C.text,
+              }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.green, display: "inline-block" }} />
+                <span style={{ fontWeight: 700 }}>{p.userName}{isMe ? " (you)" : ""}</span>
+                <span style={{ color: C.muted, fontStyle: "italic" }}>{doing}</span>
+                <span style={{ color: C.muted, fontSize: 10 }}>{ago}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── R7hr-61: pharmacy-scoped collection strip (mirrors Reception
+              ACTIVE/OVERVIEW row but counts Sale rows, not visits) ── */}
+      {stats && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+          {/* Total — net of refunds, includes supplements; matches register. */}
+          <PharmStat
+            accent={C.purple}
+            label="Total Collection"
+            value={fmtINR(stats.todaySales?.net ?? stats.todaySales?.total ?? 0)}
+            sub={`${stats.todaySales?.count || 0} sale${(stats.todaySales?.count || 0) === 1 ? "" : "s"}`}
+          />
+          {/* Per-saleType cards. Render Walk-in / OPD / IPD / Homecare
+              in a fixed order so the strip layout doesn't shuffle as
+              today's mix changes. */}
+          {["Walk-in", "OPD", "IPD", "Homecare"].map(t => {
+            const row = stats.todaySalesByType?.[t] || { count: 0, total: 0 };
+            const accent = t === "Walk-in" ? C.teal
+                         : t === "OPD"     ? C.green
+                         : t === "IPD"     ? C.blue
+                         : t === "Homecare" ? C.amber
+                         : C.muted;
+            return (
+              <PharmStat key={t} accent={accent} label={t} value={fmtINR(row.total)} sub={`${row.count} sale${row.count === 1 ? "" : "s"}`} />
+            );
+          })}
+        </div>
+      )}
+
       {/* KPI strip */}
       {stats && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
@@ -446,6 +588,10 @@ function DrugsTab() {
     catch (e) { toast.error(e.message); }
   };
 
+  // R7hr-30: Windows-explorer-style click-to-sort. Default sort by drug
+  // name ascending; clicking any other column header sorts by that column.
+  const { sorted: sortedDrugs, sort } = useTableSort(drugs, "name", "asc");
+
   return (
     <div>
       {/* Filters */}
@@ -464,9 +610,21 @@ function DrugsTab() {
         </button>
       </div>
 
-      <Table cols={["Drug / Generic","Form / Strength","Category","Manufacturer","Reorder @","GST","Sale ₹","Action"]}>
-        {drugs.length === 0 ? <EmptyRow span={8} text="No drugs match." /> :
-          drugs.map((d, i) => (
+      <Table
+        cols={[
+          { label: "Drug / Generic",   key: "name" },
+          { label: "Form / Strength",  key: "form" },
+          { label: "Category",         key: "category" },
+          { label: "Manufacturer",     key: "manufacturer" },
+          { label: "Reorder @",        key: "reorderLevel" },
+          { label: "GST",              key: "gstRate" },
+          { label: "Sale ₹",           key: "defaultSalePrice" },
+          "Action",
+        ]}
+        sort={sort}
+      >
+        {sortedDrugs.length === 0 ? <EmptyRow span={8} text="No drugs match." /> :
+          sortedDrugs.map((d, i) => (
             <tr key={d._id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "#fff" }}>
               <td style={{ padding: "9px 12px" }}>
                 <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
@@ -589,11 +747,26 @@ function InventoryTab() {
     } catch (e) { toast.error(e.message); }
   };
 
+  // R7hr-30: Windows-style click-to-sort. Default sort by drug name asc.
+  const { sorted: sortedRollup, sort } = useTableSort(rollup, "drugName", "asc");
+
   return (
     <div>
-      <Table cols={["Drug","Category","On hand","Batches","Nearest expiry","Reorder @","Sale ₹","Action"]}>
-        {rollup.length === 0 ? <EmptyRow span={8} text="No stock yet — record a GRN to add inventory." /> :
-          rollup.map((r, i) => {
+      <Table
+        cols={[
+          { label: "Drug",           key: "drugName" },
+          { label: "Category",       key: "category" },
+          { label: "On hand",        key: "totalRemaining" },
+          { label: "Batches",        key: "batchCount" },
+          { label: "Nearest expiry", key: "nearestExpiry" },
+          { label: "Reorder @",      key: "reorderLevel" },
+          { label: "Sale ₹",         key: "latestSale" },
+          "Action",
+        ]}
+        sort={sort}
+      >
+        {sortedRollup.length === 0 ? <EmptyRow span={8} text="No stock yet — record a GRN to add inventory." /> :
+          sortedRollup.map((r, i) => {
             const low = r.totalRemaining <= (r.reorderLevel || 10);
             const expSoon = r.nearestExpiry && new Date(r.nearestExpiry) <= new Date(Date.now() + 90 * 86400000);
             return (
@@ -663,6 +836,16 @@ function GRNTab() {
 
   const [drugs, setDrugs] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  // R7hr-16: invoice upload helper state — kept ABOVE the manual form
+  // state so it's obvious the upload is a pre-fill helper, not a
+  // replacement. The manual form below remains the source of truth and
+  // the only path that calls /grn (which fires Schedule-X register,
+  // credentialExpiryBlocker, and nextSeq("pharmacyGRN")).
+  const [parsing, setParsing]         = useState(false);
+  const [parsed, setParsed]           = useState(null);  // { parsedInvoiceId, supplier, lines, ... }
+  const [bulkSaving, setBulkSaving]   = useState(false);
+  const fileInputRef                  = useRef(null);
+  const [dragOver, setDragOver]       = useState(false);
   const [form, setForm] = useState(blankForm());
   const [drugQuery, setDrugQuery] = useState("");
   const [saving, setSaving] = useState(false);
@@ -750,6 +933,90 @@ function GRNTab() {
   // Sale > MRP is illegal in India
   const saleAboveMrp = mrp > 0 && sale > mrp;
 
+  // R7hr-16: confidence display helpers — shared across the parsed
+  // header strip and per-line table so colour thresholds stay in lock-step.
+  const confColor = (c) => c >= 0.95 ? C.green : c >= 0.7 ? C.amber : C.red;
+  const confLabel = (c) => c >= 0.95 ? "High"  : c >= 0.7 ? "Med"   : "Low";
+
+  // R7hr-16: drop / click handler — uploads to /grn/parse-invoice and,
+  // on success, pushes the supplier + invoice header into the manual form
+  // so the operator sees what would auto-fill immediately. Per-line drug
+  // pre-fill happens via applyLineToForm below.
+  const onPickFile = async (file) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { toast.warn("File too large (5 MB max)"); return; }
+    setParsing(true); setParsed(null);
+    try {
+      const r = await parseInvoice(file);
+      setParsed(r);
+      if (r.supplier?.match?._id) {
+        setForm(p => ({
+          ...p,
+          supplierId:  r.supplier.match._id,
+          invoiceNo:   r.invoiceNo   || p.invoiceNo,
+          invoiceDate: r.invoiceDate ? new Date(r.invoiceDate).toISOString().slice(0, 10) : p.invoiceDate,
+        }));
+      }
+      toast.success(`Parsed ${r.lines?.length || 0} line(s) from invoice`);
+    } catch (e) { toast.error(e.message); }
+    finally { setParsing(false); }
+  };
+
+  // R7hr-16: copy one parsed line into the manual form so the operator
+  // can review/edit before committing. Light up the green drugLabel hint
+  // by setting drugQuery to the canonical label of the matched drug.
+  const applyLineToForm = (line) => {
+    if (!line.match?._id) { toast.warn("No drug match — choose one from the alternatives or pick manually"); return; }
+    const d = drugs.find(x => x._id === line.match._id);
+    if (d) setDrugQuery(`${d.name}${d.strength ? " · " + d.strength : ""}`);
+    setForm(p => ({
+      ...p,
+      drugId:       line.match._id,
+      batchNo:      line.extracted.batch || p.batchNo,
+      expiryDate:   line.extracted.expiry ? new Date(line.extracted.expiry).toISOString().slice(0, 10) : p.expiryDate,
+      quantityIn:   String(line.extracted.qty          || ""),
+      purchaseRate: String(line.extracted.purchaseRate || ""),
+      mrp:          String(line.extracted.mrp          || ""),
+    }));
+    setAutoSalePrice(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // R7hr-16: bulk-add ALL high-confidence rows. Each row is committed
+  // through the existing recordGRN service so Schedule-X register entries,
+  // credentialExpiryBlocker, and audit emits all fire as if the operator
+  // had clicked Save 30 times. NEVER bypass /grn.
+  const applyAllLines = async () => {
+    if (!parsed?.lines?.length) return;
+    const greenLines = parsed.lines.filter(l => l.confidence >= 0.7 && l.match?._id);
+    if (greenLines.length === 0) { toast.warn("No high-confidence rows to bulk-add — review individually"); return; }
+    if (!window.confirm(`Add ${greenLines.length} of ${parsed.lines.length} rows as separate GRN batches? Low-confidence (<70%) rows are skipped.`)) return;
+    setBulkSaving(true);
+    const supplier = suppliers.find(s => s._id === parsed.supplier?.match?._id);
+    let ok = 0, fail = 0;
+    for (const line of greenLines) {
+      try {
+        await recordGRN({
+          drugId:       line.match._id,
+          supplierId:   parsed.supplier?.match?._id || "",
+          supplierName: supplier?.name || "",
+          batchNo:      line.extracted.batch || "NA",
+          expiryDate:   line.extracted.expiry ? new Date(line.extracted.expiry).toISOString().slice(0, 10) : "",
+          quantityIn:   Number(line.extracted.qty          || 0),
+          purchaseRate: Number(line.extracted.purchaseRate || 0),
+          mrp:          Number(line.extracted.mrp          || 0),
+          salePrice:    Number(line.extracted.mrp          || 0) * 0.9,
+          invoiceNo:    parsed.invoiceNo   || "",
+          invoiceDate:  parsed.invoiceDate ? new Date(parsed.invoiceDate).toISOString().slice(0, 10) : "",
+        });
+        ok++;
+      } catch (e) { fail++; console.error("[bulk-grn]", line.extracted.extractedName, e); }
+    }
+    setBulkSaving(false);
+    toast[fail ? "warn" : "success"](`Bulk GRN done — ${ok} added${fail ? `, ${fail} failed (check console)` : ""}`);
+    setParsed(null);
+  };
+
   const submit = async (addAnother) => {
     if (!form.drugId)       { toast.warn("Select a drug from the list");     return; }
     if (!form.batchNo)      { toast.warn("Batch number is required");        return; }
@@ -814,6 +1081,188 @@ function GRNTab() {
           </button>
         </div>
       )}
+
+      {/* R7hr-16: invoice auto-fill helper. Sits ABOVE the manual form
+          on purpose — it pre-fills the form below; the operator still
+          reviews each row and commits via the existing /grn pathway so
+          Schedule-X, credentialExpiryBlocker, and audit semantics are
+          preserved. NEVER bypass the manual form. */}
+      <Card title="Upload supplier invoice (auto-fill GRN)" color={C.purple} icon="pi-cloud-upload">
+        <GRNSection icon="pi-file" text="Drop file or click to pick" />
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; onPickFile(f); }}
+          onClick={() => fileInputRef.current?.click()}
+          style={{ border: `2px dashed ${dragOver ? C.purple : C.border}`, borderRadius: 10, padding: 24, textAlign: "center", cursor: "pointer", background: dragOver ? C.purpleL : "#fff" }}
+        >
+          <i className="pi pi-cloud-upload" style={{ color: C.purple, fontSize: 28 }} />
+          <div style={{ marginTop: 8, fontWeight: 700, color: C.text, fontSize: 13 }}>Drop GSTN .json or supplier .pdf here, or click to pick</div>
+          <div style={{ marginTop: 4, fontSize: 11, color: C.muted }}>JSON = perfect accuracy · PDF = AI-extracted with confidence per field · 5 MB max</div>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,.pdf,application/json,application/pdf"
+          style={{ display: "none" }}
+          onChange={(e) => onPickFile(e.target.files?.[0])}
+        />
+
+        {/* R7hr-16: parsing spinner */}
+        {parsing && (
+          <div style={{ marginTop: 12, padding: "10px 14px", background: C.subtle, border: `1px solid ${C.border}`, borderRadius: 8, display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: C.muted }}>
+            <i className="pi pi-spin pi-spinner" style={{ color: C.purple }} />
+            Reading invoice…
+          </div>
+        )}
+
+        {/* R7hr-16: parsed-invoice review panel */}
+        {parsed && (
+          <div style={{ marginTop: 14 }}>
+            {/* Header strip: invoice header + supplier match */}
+            <div style={{ padding: "10px 14px", background: C.subtle, border: `1px solid ${C.border}`, borderRadius: 10, display: "flex", flexWrap: "wrap", gap: 18, alignItems: "center", marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700 }}>Invoice #</div>
+                <div style={{ fontWeight: 800, color: C.text, fontSize: 13, marginTop: 2, fontFamily: "DM Mono, monospace" }}>{parsed.invoiceNo || "—"}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700 }}>Invoice date</div>
+                <div style={{ fontWeight: 800, color: C.text, fontSize: 13, marginTop: 2 }}>
+                  {parsed.invoiceDate ? new Date(parsed.invoiceDate).toISOString().slice(0, 10) : "—"}
+                </div>
+              </div>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700 }}>Supplier match</div>
+                <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 800, color: C.text, fontSize: 13 }}>
+                    {parsed.supplier?.match?.name || parsed.supplier?.extracted?.name || "Unrecognised"}
+                  </span>
+                  {typeof parsed.supplier?.confidence === "number" && (
+                    <span style={{ padding: "2px 8px", borderRadius: 999, background: confColor(parsed.supplier.confidence) + "1a", color: confColor(parsed.supplier.confidence), fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px" }}>
+                      {confLabel(parsed.supplier.confidence)} · {Math.round(parsed.supplier.confidence * 100)}%
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Line table */}
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                <thead>
+                  <tr style={{ background: C.subtle, borderBottom: `1.5px solid ${C.border}` }}>
+                    {["Matched drug","Extracted name","Qty","Rate","MRP","Batch","Expiry","Confidence","Action"].map(c => (
+                      <th key={c} style={{ padding: "7px 10px", textAlign: "left", fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontSize: 10, whiteSpace: "nowrap" }}>{c}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(parsed.lines || []).map((line, idx) => {
+                    const c = Number(line.confidence) || 0;
+                    const low = c < 0.7;
+                    const alts = Array.isArray(line.alternatives) ? line.alternatives : [];
+                    return (
+                      <tr key={idx} style={{ borderBottom: `1px solid ${C.border}`, borderLeft: low ? `3px solid ${C.red}` : "3px solid transparent" }}>
+                        <td style={{ padding: "7px 10px", fontWeight: 700, color: line.match?._id ? C.text : C.muted }}>
+                          {line.match?.name || "—"}
+                          {line.match?.strength && <span style={{ color: C.muted, fontWeight: 500 }}> · {line.match.strength}</span>}
+                        </td>
+                        <td style={{ padding: "7px 10px", color: C.muted, fontStyle: "italic" }}>{line.extracted?.extractedName || "—"}</td>
+                        <td style={{ padding: "7px 10px", color: C.text }}>{line.extracted?.qty ?? "—"}</td>
+                        <td style={{ padding: "7px 10px", color: C.text }}>{line.extracted?.purchaseRate ?? "—"}</td>
+                        <td style={{ padding: "7px 10px", color: C.text }}>{line.extracted?.mrp ?? "—"}</td>
+                        <td style={{ padding: "7px 10px", color: C.text, fontFamily: "DM Mono, monospace" }}>{line.extracted?.batch || "—"}</td>
+                        <td style={{ padding: "7px 10px", color: C.text }}>
+                          {line.extracted?.expiry ? new Date(line.extracted.expiry).toISOString().slice(0, 10) : "—"}
+                        </td>
+                        <td style={{ padding: "7px 10px" }}>
+                          <span style={{ padding: "2px 8px", borderRadius: 999, background: confColor(c) + "1a", color: confColor(c), fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px" }}>
+                            {confLabel(c)} · {Math.round(c * 100)}%
+                          </span>
+                          {low && <div style={{ marginTop: 4, fontSize: 10, color: C.red, fontWeight: 600 }}>Pick manually</div>}
+                        </td>
+                        <td style={{ padding: "7px 10px", whiteSpace: "nowrap" }}>
+                          {line.match?._id ? (
+                            <button
+                              onClick={() => applyLineToForm(line)}
+                              disabled={bulkSaving}
+                              style={{ padding: "4px 10px", borderRadius: 5, border: `1px solid ${C.purple}40`, background: "#fff", color: C.purple, fontSize: 10.5, fontWeight: 700, cursor: bulkSaving ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
+                            >
+                              <i className="pi pi-arrow-up" style={{ fontSize: 10 }} />Pre-fill form
+                            </button>
+                          ) : alts.length > 0 ? (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <select
+                                className="his-select"
+                                style={{ fontSize: 11, padding: "3px 6px", maxWidth: 180 }}
+                                defaultValue=""
+                                onChange={(e) => {
+                                  const id = e.target.value;
+                                  if (!id) return;
+                                  const alt = alts.find(a => (a._id || a.id) === id);
+                                  if (alt) applyLineToForm({ ...line, match: { _id: alt._id || alt.id, name: alt.name, strength: alt.strength } });
+                                }}
+                              >
+                                <option value="">choose alternative…</option>
+                                {alts.map(a => (
+                                  <option key={a._id || a.id} value={a._id || a.id}>
+                                    {a.name}{a.strength ? " · " + a.strength : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: 10.5, color: C.muted, fontStyle: "italic" }}>Pick manually</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {(!parsed.lines || parsed.lines.length === 0) && (
+                    <tr><td colSpan={9} style={{ padding: "20px 14px", textAlign: "center", color: C.muted, fontStyle: "italic", fontSize: 12 }}>No line items extracted.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Footer with counts + actions */}
+            {(() => {
+              const lines = parsed.lines || [];
+              const green  = lines.filter(l => (l.confidence || 0) >= 0.95).length;
+              const yellow = lines.filter(l => (l.confidence || 0) >= 0.7 && (l.confidence || 0) < 0.95).length;
+              const red    = lines.filter(l => (l.confidence || 0) < 0.7).length;
+              const bulkCount = lines.filter(l => (l.confidence || 0) >= 0.7 && l.match?._id).length;
+              return (
+                <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 11.5, color: C.muted, fontWeight: 600 }}>
+                    <span style={{ color: C.green, fontWeight: 800 }}>Green: {green}</span>
+                    <span style={{ margin: "0 6px" }}>·</span>
+                    <span style={{ color: C.amber, fontWeight: 800 }}>Yellow: {yellow}</span>
+                    <span style={{ margin: "0 6px" }}>·</span>
+                    <span style={{ color: C.red, fontWeight: 800 }}>Red: {red}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      onClick={() => setParsed(null)}
+                      disabled={bulkSaving}
+                      style={{ padding: "8px 14px", borderRadius: 7, border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12, cursor: bulkSaving ? "not-allowed" : "pointer" }}
+                    >
+                      <i className="pi pi-times" style={{ marginRight: 6 }} />Clear
+                    </button>
+                    <button
+                      onClick={applyAllLines}
+                      disabled={bulkSaving || bulkCount === 0}
+                      style={{ padding: "8px 16px", borderRadius: 7, border: "none", background: bulkSaving || bulkCount === 0 ? "#94a3b8" : C.purple, color: "#fff", fontWeight: 800, fontSize: 12, cursor: (bulkSaving || bulkCount === 0) ? "not-allowed" : "pointer" }}
+                    >
+                      {bulkSaving ? "Adding…" : <><i className="pi pi-bolt" style={{ marginRight: 6 }} />Add ALL green rows ({bulkCount})</>}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </Card>
 
       <Card title="Record Goods Receipt (GRN)" color={C.purple} icon="pi-download">
         {/* ── Section 1: Drug & Supplier ─────────────────────────── */}
@@ -965,11 +1414,32 @@ function GRNSection({ icon, text }) {
 // Module-level cache for pharmacy settings so we don't re-fetch on every
 // dispense / sales print. Cleared when Settings tab saves a change.
 let _phSettings = null;
+let _phSettingsLoading = null;     // Promise dedup so concurrent callers share one fetch.
 async function getCachedPhSettings() {
   if (_phSettings) return _phSettings;
-  try { _phSettings = (await getPharmacySettings()).data || null; } catch { _phSettings = null; }
-  return _phSettings;
+  if (!_phSettingsLoading) {
+    _phSettingsLoading = (async () => {
+      try { _phSettings = (await getPharmacySettings()).data || null; }
+      catch { _phSettings = null; }
+      finally { _phSettingsLoading = null; }
+      return _phSettings;
+    })();
+  }
+  return _phSettingsLoading;
 }
+// R7hr-17: SYNC accessor used in click handlers. Chrome blocks
+// window.open() that runs after an `await` because user-activation is
+// stripped across microtask boundaries. So every print onClick MUST
+// be synchronous; we read the warmed cache directly (falling back to
+// {} if not yet warm — only happens on the very first click of the
+// session, before warmCachedPhSettings() has resolved). Sales tab,
+// dispense flow, IPD ledger, Walk-in print — all callers now use this
+// instead of awaiting in the handler.
+function getCachedPhSettingsSync() { return _phSettings || {}; }
+// R7hr-17: kicked off on PharmacyHomePage mount so subsequent click
+// handlers can read the cache synchronously. Best-effort — failure is
+// silently absorbed (cached as null, sync getter returns {}).
+function warmCachedPhSettings() { getCachedPhSettings().catch(() => {}); }
 function invalidatePhSettings() { _phSettings = null; }
 
 function DispenseTab() {
@@ -983,6 +1453,27 @@ function DispenseTab() {
   const [saleType, setSaleType] = useState("Walk-in");
   const [paymentMode, setPaymentMode] = useState("Cash");
   const [saving, setSaving] = useState(false);
+  // R7hr-23: Sch H attestation modal. Opens when the backend rejects a
+  // Walk-in dispense with code RX_REF_REQUIRED / RX_REG_REQUIRED /
+  // RX_PHOTOCOPY_REQUIRED (a Sch H/H1/X line was attempted without the
+  // prescription evidence required by D&C Rules 65). The modal captures
+  // prescriber + Rx ref + photocopy checkbox; on confirm we resubmit
+  // dispense() with rxPhotocopyPreserved=true.
+  const [schHAttest, setSchHAttest] = useState({ open: false, drug: "", schedule: "" });
+  // R7hr-28: Walk-in / Homecare patient memory. As the pharmacist types the
+  // contact number, debounced lookup against past walk-in sales surfaces
+  // every distinct {patientName, age, gender, doctorName} ever captured
+  // against it. Click → patient fields auto-fill so a returning customer
+  // never has to retype their details.
+  const [walkInMatches,      setWalkInMatches]      = useState([]);
+  const [walkInDropdownOpen, setWalkInDropdownOpen] = useState(false);
+  // R7hr-12-S2 (D9-07): Synchronous mutex against fast double-clicks on the
+  // Save/Submit button. State-based `saving` only gates AFTER React re-renders
+  // (one frame later); a quick double-tap fires the handler twice and the
+  // backend dispense() has no body-hash idempotency, so a slipped duplicate
+  // double-debits stock + double-charges the patient. Mirrors the pattern
+  // shipped in PharmacyLedgerPage.applyAdvanceToSale (R7hr-11).
+  const submitMutexRef = useRef(false);
   const [drugSearch, setDrugSearch] = useState("");
 
   // Pull HIS patient from UHID — auto-fills name/age/gender/contact/doctor
@@ -1015,9 +1506,23 @@ function DispenseTab() {
       });
       setAdmissionId(hit.admissionId);
       setAdmissionNumber(hit.admissionNumber || "");
-      setSaleType(hit.saleType || "OPD");
+      // R7hr-22: Dispense tab tab is restricted to Walk-in + Homecare. Don't
+      // auto-flip to OPD/IPD on UHID fetch — the resolved patient may live
+      // in HIS but the sale itself flows through here as a Walk-in OTC
+      // dispense (over-the-counter cash sale to a registered patient).
+      // For Rx-linked OPD dispensing use the OPD Rx tab; for credit-
+      // linked IPD dispensing use the IPD Ledger tab.
+      setSaleType("Walk-in");
       setHisLinked(true);
       toast.success(`Linked ${hit.patientName} (${hit.source === "admission" ? `IPD · ${hit.admissionNumber || hit.admissionId}` : "OPD"})`);
+      // R7hr-22: gentle guidance — the patient is OPD/IPD in HIS but the
+      // tab is restricted to OTC. Nudge the pharmacist to the right tab
+      // for the workflow they probably intended.
+      if (hit.source === "admission") {
+        toast(`💡 Tip: For IPD credit-linked billing use the "IPD Ledger" tab. Dispense tab will record this as a Walk-in OTC sale.`, { duration: 6000 });
+      } else if (hit.source === "patient") {
+        toast(`💡 Tip: For Rx-linked OPD dispense (Schedule-H + prescriber capture) use the "OPD Rx" tab. Dispense tab will record this as a Walk-in OTC sale.`, { duration: 6000 });
+      }
     } catch (e) {
       toast.error(e.message || "UHID lookup failed");
     } finally { setLookupBusy(false); }
@@ -1037,6 +1542,33 @@ function DispenseTab() {
     const rx = new RegExp(drugSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
     return rollup.filter(r => rx.test(r.drugName || "")).slice(0, 8);
   }, [drugSearch, rollup]);
+
+  // R7hr-28: Walk-in patient memory by mobile-number prefix. We debounce
+  // 250 ms (typical search-as-you-type) and AbortController-cancel the
+  // previous fetch so a fast typist doesn't get a stale "last completed
+  // wins" response stomping on the fresh keystroke. Min 4 chars matches
+  // the backend's RX_LEN guard (refuses shorter queries to prevent
+  // full-table scans). Only fires for Walk-in / Homecare — IPD/OPD sales
+  // were filtered out of SALE_TYPES by R7hr-22, but we still defensive-
+  // guard on saleType in case that's ever relaxed.
+  useEffect(() => {
+    const q = String(patient.contactNumber || "").trim();
+    if (!["Walk-in", "Homecare"].includes(saleType)) { setWalkInMatches([]); return; }
+    if (q.length < 4) { setWalkInMatches([]); setWalkInDropdownOpen(false); return; }
+    const ac = new AbortController();
+    const id = setTimeout(async () => {
+      try {
+        const r = await lookupWalkInPatients(q, { signal: ac.signal });
+        if (!ac.signal.aborted) {
+          setWalkInMatches(Array.isArray(r?.data) ? r.data : []);
+          setWalkInDropdownOpen(true);
+        }
+      } catch (e) {
+        if (e.name !== "AbortError") setWalkInMatches([]);
+      }
+    }, 250);
+    return () => { clearTimeout(id); ac.abort(); };
+  }, [patient.contactNumber, saleType]);
 
   const addItem = (r) => {
     if (items.some(it => it.drugId === r.drugId)) {
@@ -1068,13 +1600,30 @@ function DispenseTab() {
     return { sub, disc, gst, grand };
   }, [items]);
 
-  const submit = async () => {
+  // R7hr-23: extras carries the Sch H attestation payload when the user
+  // confirmed the photocopy-preserved modal. Empty object on the first
+  // attempt — the backend's RX_*_REQUIRED gate triggers the modal which
+  // re-invokes submit(extras) with prescriptionRef + doctorName +
+  // prescriberRegistrationNo + rxPhotocopyPreserved.
+  const submit = async (extras = {}) => {
     if (items.length === 0) { toast.warn("Add at least one item"); return; }
+    // R7hr-12-S2 (D9-07): Synchronous re-entry guard. If the previous click's
+    // dispense() POST is still in flight, swallow the duplicate immediately
+    // (no toast — same UX as PharmacyLedgerPage.applyAdvanceToSale).
+    if (submitMutexRef.current) return;
+    submitMutexRef.current = true;
     setSaving(true);
     try {
       const r = await dispense({
         ...patient, saleType, paymentMode,
         admissionId, admissionNumber,
+        // R7hr-23: forward the Sch H attestation payload when the user
+        // confirmed the photocopy-preserved modal. doctorName wins over
+        // the patient form's doctorName if the modal collected one.
+        ...(extras.doctorName              ? { doctorName:              extras.doctorName } : {}),
+        ...(extras.prescriptionRef         ? { prescriptionRef:         extras.prescriptionRef } : {}),
+        ...(extras.prescriberRegistrationNo? { prescriberRegistrationNo:extras.prescriberRegistrationNo } : {}),
+        ...(extras.rxPhotocopyPreserved === true ? { rxPhotocopyPreserved: true } : {}),
         items: items.map(it => ({
           drugId: it.drugId, drugName: it.drugName,
           quantity: Number(it.quantity), unitPrice: Number(it.unitPrice),
@@ -1086,14 +1635,14 @@ function DispenseTab() {
       // the print window toolbar (half-A4 default for pharmacy).
       // Pharmacy settings travel with the payload so the bill renders
       // the right header/footer (hospital vs outsourced).
-      const phSet = await getCachedPhSettings();
+      const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
       // R7eo-B — Pattern B caller payload gap fix: derive billLabel +
       // forward customer GST identity so the pharmacy template can title
       // it Cash Memo / Tax Invoice / Pharmacy Bill and render the B2B
       // GSTIN block when set.
       openPrint("pharmacy-bill", {
         ...r.data,
-        template:     phSet?.billTemplate || 1,
+        template:     1, /* R7hr-46: locked to Classic Modern */
         defaultPaper: phSet?.defaultPaper || "half-a4",
         pharmacySettings: phSet,
         billLabel:        r.data.saleType === "Walk-in" ? "Cash Memo" : r.data.customerGstin ? "Tax Invoice" : "Pharmacy Bill",
@@ -1117,8 +1666,32 @@ function DispenseTab() {
       setItems([]);
       clearLink();
       setRollup((await stockRollup()).data || []);
-    } catch (e) { toast.error(e.message); }
-    finally { setSaving(false); }
+    } catch (e) {
+      // R7hr-23: Sch H/H1/X gate from backend — open the attestation modal
+      // instead of a hard toast.error. The modal collects prescriber + Rx
+      // ref + photocopy checkbox; confirm path calls submit({...attest}).
+      // Codes: RX_REF_REQUIRED (prescriptionRef + prescriberName missing),
+      // RX_REG_REQUIRED (council reg # missing), RX_PHOTOCOPY_REQUIRED
+      // (Walk-in Sch H without photocopy attestation).
+      if (e && (e.code === "RX_REF_REQUIRED"
+             || e.code === "RX_REG_REQUIRED"
+             || e.code === "RX_PHOTOCOPY_REQUIRED")) {
+        setSchHAttest({
+          open:     true,
+          drug:     e.drugName || "",
+          schedule: e.schedule || "H",
+        });
+        return;
+      }
+      toast.error(e.message);
+    }
+    finally {
+      // R7hr-12-S2 (D9-07): release the synchronous mutex AFTER the network
+      // round-trip completes so a fast double-click during the in-flight POST
+      // can't fire a second dispense() call.
+      submitMutexRef.current = false;
+      setSaving(false);
+    }
   };
 
   return (
@@ -1199,50 +1772,16 @@ function DispenseTab() {
       <Card title="Patient & Payment" color={C.blue} icon="pi-user">
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
 
-          {/* R7cs — UHID lookup is HIS-only. In a retail/standalone
-              pharmacy deployment there's no Patient or Admission DB to
-              query, so we hide the field entirely. The dispense flow
-              then takes the walk-in path by default — pharmacist
-              optionally types patient name / contact below if they
-              want to capture it for a Schedule H register entry. */}
-          {!IS_PHARMACY_STANDALONE && (
-            <Field label="UHID — pull from HIS">
-              <div style={{ display: "flex", gap: 6 }}>
-                <input className="his-field" style={{ flex: 1, fontFamily: "DM Mono, monospace" }}
-                  value={patient.patientUHID}
-                  placeholder="UH00000001 (or leave empty for walk-in)"
-                  onChange={e => setPatient(p => ({ ...p, patientUHID: e.target.value }))}
-                  onKeyDown={e => { if (e.key === "Enter") fetchByUHID(); }} />
-                <button onClick={fetchByUHID} disabled={lookupBusy || !patient.patientUHID.trim()}
-                  style={{ padding: "8px 14px", borderRadius: 7, border: "none",
-                    background: lookupBusy ? "#94a3b8" : C.blue, color: "#fff",
-                    fontWeight: 700, fontSize: 11.5,
-                    cursor: lookupBusy || !patient.patientUHID.trim() ? "not-allowed" : "pointer",
-                    whiteSpace: "nowrap" }}>
-                  {lookupBusy ? <i className="pi pi-spin pi-spinner" style={{ fontSize: 10 }} />
-                              : <><i className="pi pi-search" style={{ fontSize: 10, marginRight: 4 }} />Fetch</>}
-                </button>
-              </div>
-            </Field>
-          )}
-
-          {hisLinked && !IS_PHARMACY_STANDALONE && (
-            <div style={{
-              padding: "9px 12px", background: C.greenL, border: `1.5px solid ${C.green}40`,
-              borderRadius: 7, display: "flex", alignItems: "center", gap: 8,
-            }}>
-              <i className="pi pi-link" style={{ color: C.green, fontSize: 12 }} />
-              <div style={{ flex: 1, fontSize: 11.5, fontWeight: 700, color: "#166534" }}>
-                Linked to HIS · {saleType}
-                {admissionNumber && <span style={{ marginLeft: 6, fontFamily: "DM Mono, monospace", color: C.green }}>{admissionNumber}</span>}
-              </div>
-              <button onClick={clearLink} title="Unlink"
-                style={{ width: 22, height: 22, borderRadius: 5, border: "none", background: "#fff", color: C.muted, cursor: "pointer", fontSize: 10 }}>
-                <i className="pi pi-times" />
-              </button>
-            </div>
-          )}
-
+          {/* R7hr-25: Removed the "UHID — pull from HIS" lookup block.
+              The Dispense tab is now restricted to Walk-in + Homecare
+              (see R7hr-22) — neither flow needs to resolve a HIS
+              patient or admission, so the field was dead UX. OPD
+              dispense goes through the OPD Rx tab (Rx-linked); IPD
+              dispense goes through the IPD Ledger tab (credit-linked).
+              All the manual patient fields below stay — pharmacist
+              optionally captures name/age/sex/contact/doctor for the
+              statutory Schedule H register column on a Sch H/H1/X
+              Walk-in sale (D&C Rules 65). */}
           <Field label="Patient name"><input className="his-field" value={patient.patientName} onChange={e => setPatient(p => ({ ...p, patientName: e.target.value }))} /></Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <Field label="Age"><input className="his-field" value={patient.age || ""} onChange={e => setPatient(p => ({ ...p, age: e.target.value }))} /></Field>
@@ -1253,11 +1792,130 @@ function DispenseTab() {
               </select>
             </Field>
           </div>
-          <Field label="Contact"><input className="his-field" value={patient.contactNumber} onChange={e => setPatient(p => ({ ...p, contactNumber: e.target.value }))} /></Field>
+          {/* R7hr-28: Contact field doubles as a returning-customer
+              lookup. As the pharmacist types 4+ digits, the debounced
+              effect above queries past Walk-in / Homecare sales and
+              renders a dropdown of every distinct
+              {patientName, age, gender, doctorName} ever captured
+              against that mobile number. Click a row → all 5 fields
+              auto-fill; a returning customer never has to retype. */}
+          <Field label="Contact">
+            <div style={{ position: "relative" }}>
+              <input
+                className="his-field"
+                value={patient.contactNumber}
+                onChange={e => setPatient(p => ({ ...p, contactNumber: e.target.value }))}
+                onFocus={() => { if (walkInMatches.length) setWalkInDropdownOpen(true); }}
+                onBlur={() => setTimeout(() => setWalkInDropdownOpen(false), 200)}
+                autoComplete="off"
+                placeholder={["Walk-in", "Homecare"].includes(saleType) ? "Type 4+ digits to find past customers…" : ""}
+              />
+              {/* R7hr-33 (audit P2-6): show the dropdown when the query is
+                  long enough — even when empty — so the cashier sees
+                  "No previous customers" instead of wondering whether the
+                  server replied at all. Only renders for Walk-in/Homecare
+                  with ≥4 typed digits (matches backend RX_LEN guard). */}
+              {walkInDropdownOpen && ["Walk-in", "Homecare"].includes(saleType) && String(patient.contactNumber || "").trim().length >= 4 && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "100%",
+                    left: 0,
+                    right: 0,
+                    marginTop: 4,
+                    background: "#fff",
+                    border: "1px solid #d1d5db",
+                    borderRadius: 6,
+                    boxShadow: "0 6px 16px rgba(15,23,42,0.12)",
+                    zIndex: 40,
+                    maxHeight: 280,
+                    overflowY: "auto",
+                  }}
+                >
+                  <div style={{ padding: "6px 10px", fontSize: 11, color: "#64748b", borderBottom: "1px solid #e5e7eb", background: "#f8fafc" }}>
+                    {walkInMatches.length === 0
+                      ? "No previous customers with this number"
+                      : `${walkInMatches.length} previous customer${walkInMatches.length === 1 ? "" : "s"} found`}
+                  </div>
+                  {walkInMatches.map((m, ix) => {
+                    const last = m.lastSeen ? new Date(m.lastSeen) : null;
+                    const days = last ? Math.max(0, Math.floor((Date.now() - last.getTime()) / 86400000)) : null;
+                    const ago  = days === null ? ""
+                                : days === 0 ? "today"
+                                : days === 1 ? "yesterday"
+                                : days < 30  ? `${days} days ago`
+                                : days < 365 ? `${Math.floor(days / 30)} mo ago`
+                                : `${Math.floor(days / 365)} yr ago`;
+                    return (
+                      <button
+                        key={`${m.contactNumber}-${m.patientName}-${ix}`}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault() /* keep input focus */}
+                        onClick={() => {
+                          // R7hr-33 (audit P1-4): "fill blanks" semantics —
+                          // only set fields the cashier hasn't already
+                          // typed. Previously `m.doctorName || p.doctorName`
+                          // meant lookup-doctor always WON over user-typed,
+                          // overwriting today's prescriber for Sch H/H1/X
+                          // bills where the register column needs the
+                          // current Reg-No, not the stale historical one.
+                          // Same rule for every other patient field.
+                          setPatient(p => ({
+                            ...p,
+                            patientName:   p.patientName   || m.patientName   || "",
+                            contactNumber: p.contactNumber || m.contactNumber || "",
+                            age:           p.age           || m.age           || "",
+                            gender:        p.gender        || m.gender        || "",
+                            doctorName:    p.doctorName    || m.doctorName    || "",
+                          }));
+                          setWalkInDropdownOpen(false);
+                          // R7hr-33 (audit P2-toast): drop patient name
+                          // from the toast — it's PHI and clinical
+                          // workstations are often shared with patient view.
+                          toast.success(`Loaded prior customer (${m.visits} visit${m.visits === 1 ? "" : "s"})`);
+                        }}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "8px 10px",
+                          background: "#fff",
+                          border: "none",
+                          borderBottom: ix === walkInMatches.length - 1 ? "none" : "1px solid #f1f5f9",
+                          cursor: "pointer",
+                          fontSize: 13,
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "#f8fafc"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "#fff"; }}
+                      >
+                        <div style={{ fontWeight: 600, color: "#0f172a" }}>
+                          {m.patientName || "(no name)"}
+                          {m.age ? <span style={{ fontWeight: 400, color: "#64748b" }}> · {m.age}{m.gender ? "/" + m.gender.charAt(0) : ""}</span> : null}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                          📱 {m.contactNumber}
+                          {m.doctorName ? <> · 🩺 {m.doctorName}</> : null}
+                          {ago ? <> · last seen {ago}</> : null}
+                          <> · {m.visits} visit{m.visits === 1 ? "" : "s"}</>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </Field>
           <Field label="Doctor"><input className="his-field" value={patient.doctorName} onChange={e => setPatient(p => ({ ...p, doctorName: e.target.value }))} /></Field>
           <Field label="Sale type">
             <select className="his-select" value={saleType} onChange={e => setSaleType(e.target.value)}>
-              {SALE_TYPES.map(o => <option key={o}>{o}</option>)}
+              {/* R7hr-22: Dispense tab is for Walk-in + Homecare only.
+                 OPD dispense flows through the OPD Rx tab (Rx-linked, with
+                 prescriber reg + Schedule-H validation); IPD dispense flows
+                 through the IPD Ledger tab (credit-linked, posts to the
+                 admission ledger). Filtering OPD/IPD out of this dropdown
+                 prevents the wrong-tab landing pattern. Sales Register
+                 still filters all four types — see registerTypeFilter. */}
+              {SALE_TYPES.filter(o => o === "Walk-in" || o === "Homecare").map(o => <option key={o}>{o}</option>)}
             </select>
           </Field>
           <Field label="Payment mode">
@@ -1265,12 +1923,96 @@ function DispenseTab() {
               {PAYMENT_MODES.map(o => <option key={o}>{o}</option>)}
             </select>
           </Field>
-          <button onClick={submit} disabled={saving || items.length === 0}
+          <button onClick={() => submit()} disabled={saving || items.length === 0}
             style={{ padding: "11px 20px", borderRadius: 8, border: "none", background: saving || items.length === 0 ? "#94a3b8" : C.green, color: "#fff", fontWeight: 800, fontSize: 13, cursor: saving || items.length === 0 ? "not-allowed" : "pointer", marginTop: 6 }}>
             {saving ? "Saving…" : <><i className="pi pi-check" style={{ marginRight: 6 }} />Complete sale · {fmtINR(tot.grand)}</>}
           </button>
         </div>
       </Card>
+      {/* R7hr-23: Schedule H / H1 / X attestation modal. Triggered by the
+         backend gate when the cart includes a controlled drug on a
+         Walk-in sale. The pharmacist must capture prescriber + Rx ref
+         and confirm the photocopy has been preserved for the 5-year
+         D&C Rules 65 audit window. */}
+      {schHAttest.open && (
+        <SchHAttestModal
+          drug={schHAttest.drug}
+          schedule={schHAttest.schedule}
+          initialDoctorName={patient.doctorName || ""}
+          onClose={() => setSchHAttest({ open: false, drug: "", schedule: "" })}
+          onConfirm={(payload) => {
+            setSchHAttest({ open: false, drug: "", schedule: "" });
+            // Persist the entered doctor name into the patient form so
+            // the printed bill carries it too (the form's Doctor field
+            // is what the saleDoc snapshots from when extras isn't set).
+            if (payload.doctorName) setPatient(p => ({ ...p, doctorName: payload.doctorName }));
+            // Resubmit with attestation payload.
+            submit(payload);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// R7hr-23: Schedule H / H1 / X photocopy-attestation modal. Captures the
+// four pieces the backend needs to clear the Sch-H register column +
+// D&C Rules 65 audit:
+//   • Prescriber Name
+//   • Prescriber Registration No (MCI / State Medical Council)
+//   • Prescription Ref (Rx number / clinic name + date)
+//   • Checkbox confirming the photocopy has been preserved for 5 years
+// All four are required before the "Confirm & Dispense" button enables.
+function SchHAttestModal({ drug, schedule, initialDoctorName = "", onClose, onConfirm }) {
+  const [doctorName, setDoctorName] = useState(initialDoctorName);
+  const [regNo,      setRegNo]      = useState("");
+  const [rxRef,      setRxRef]      = useState("");
+  const [preserved,  setPreserved]  = useState(false);
+  const ready = doctorName.trim() && regNo.trim() && rxRef.trim() && preserved;
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", zIndex: 9999, display: "grid", placeItems: "center", padding: 16 }}>
+      <div style={{ background: "#fff", borderRadius: 14, padding: 22, width: "min(560px, 100%)", boxShadow: "0 20px 50px rgba(0,0,0,.25)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <div style={{ background: "#fef3c7", color: "#92400e", padding: "6px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, letterSpacing: 0.5 }}>
+            SCHEDULE {schedule || "H"} · D&C RULES 65
+          </div>
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#0f172a", marginBottom: 4 }}>Prescription attestation required</div>
+        <div style={{ fontSize: 12.5, color: "#64748b", marginBottom: 14, lineHeight: 1.55 }}>
+          <b>{drug || "This drug"}</b> is a Schedule {schedule || "H"} controlled medicine. On a Walk-in sale the Drugs &amp; Cosmetics Rules 65 require the pharmacist to <b>preserve a photocopy of the prescription for 5 years</b>. Please confirm the photocopy is on file and capture the prescriber details below before dispensing.
+        </div>
+        <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+          <label style={{ display: "block" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 4, letterSpacing: 0.4 }}>PRESCRIBER NAME *</div>
+            <input className="his-field" value={doctorName} onChange={e => setDoctorName(e.target.value)} placeholder="Dr. R. Kapoor" />
+          </label>
+          <label style={{ display: "block" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 4, letterSpacing: 0.4 }}>PRESCRIBER REG NO *</div>
+            <input className="his-field" value={regNo} onChange={e => setRegNo(e.target.value)} placeholder="MCI / State Council Reg #" />
+          </label>
+          <label style={{ display: "block" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 4, letterSpacing: 0.4 }}>PRESCRIPTION REF *</div>
+            <input className="his-field" value={rxRef} onChange={e => setRxRef(e.target.value)} placeholder="Rx number, clinic + date, etc." />
+          </label>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", padding: "10px 12px", background: preserved ? "#dcfce7" : "#fef9c3", border: `1px solid ${preserved ? "#16a34a" : "#facc15"}`, borderRadius: 8 }}>
+            <input type="checkbox" checked={preserved} onChange={e => setPreserved(e.target.checked)} style={{ marginTop: 3 }} />
+            <span style={{ fontSize: 12.5, color: "#0f172a", lineHeight: 1.5 }}>
+              I confirm that a <b>photocopy of the original prescription</b> has been preserved on file for the <b>5-year D&amp;C Rules 65 audit window</b>. This attestation is recorded against the sale.
+            </span>
+          </label>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onClose}
+            style={{ padding: "9px 16px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", color: "#0f172a", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+            Cancel
+          </button>
+          <button onClick={() => onConfirm({ doctorName: doctorName.trim(), prescriberRegistrationNo: regNo.trim(), prescriptionRef: rxRef.trim(), rxPhotocopyPreserved: true })}
+            disabled={!ready}
+            style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: ready ? "#16a34a" : "#94a3b8", color: "#fff", fontWeight: 800, fontSize: 12, cursor: ready ? "pointer" : "not-allowed" }}>
+            <i className="pi pi-check" style={{ marginRight: 6 }} />Confirm &amp; Dispense
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1291,6 +2033,12 @@ function SalesTab() {
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo]     = useState("");
+  // R7hr-24: Sale Type + Schedule narrowing on the Sales Register tab.
+  // Sale Type maps 1:1 to PharmacySale.saleType ("Walk-in"/"OPD"/"IPD"/
+  // "Homecare"). Schedule matches any of the row's schedules[] array
+  // populated by listSales (drug-master join — covers H/H1/X/G/N).
+  const [typeFilter,  setTypeFilter]  = useState("All");
+  const [schedFilter, setSchedFilter] = useState("All");
   const [returnSale, setReturnSale] = useState(null);    // the bill being returned
   const [addItemsSale, setAddItemsSale] = useState(null); // the bill to add items to
   // R7bh-F9 / R7bg-4-HIGH-1 — debounce the bill / patient / UHID search.
@@ -1341,13 +2089,57 @@ function SalesTab() {
         <input className="his-field" placeholder="Search bill / patient / UHID…" style={{ width: 260, padding: "6px 10px", fontSize: 12 }} value={q} onChange={e => setQ(e.target.value)} />
         <Field label="From"><input type="date" className="his-field" value={from} onChange={e => setFrom(e.target.value)} /></Field>
         <Field label="To"><input type="date" className="his-field" value={to} onChange={e => setTo(e.target.value)} /></Field>
+        {/* R7hr-24: Sale Type + Schedule filters. Backend already filters
+            by from/to + UHID (when the q field is a UHID); these two are
+            applied client-side over the returned rows so the result count
+            in the strip reflects what's actually visible. */}
+        <Field label="Sale type">
+          <select className="his-select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
+            {["All","Walk-in","OPD","IPD","Homecare"].map(o => <option key={o}>{o}</option>)}
+          </select>
+        </Field>
+        <Field label="Schedule">
+          <select className="his-select" value={schedFilter} onChange={e => setSchedFilter(e.target.value)}>
+            {/* R7hr-26: align with DrugModel.schedule enum
+                ["G","H","H1","X","OTC",""]. Master uses "OTC" (not "N")
+                for over-the-counter so the dropdown must offer it too —
+                otherwise picking G/N never matches OTC-tagged drugs. */}
+            {["All","H","H1","X","G","OTC"].map(o => <option key={o}>{o}</option>)}
+          </select>
+        </Field>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, color: C.muted, fontWeight: 700 }}>{rows.length} bills</span>
+        <span style={{ fontSize: 12, color: C.muted, fontWeight: 700 }}>
+          {(() => {
+            const filt = rows.filter(s => {
+              if (typeFilter !== "All" && String(s.saleType||"") !== typeFilter) return false;
+              if (schedFilter !== "All") {
+                const sx = Array.isArray(s.schedules) ? s.schedules : [];
+                if (!sx.includes(schedFilter)) return false;
+              }
+              return true;
+            });
+            return filt.length === rows.length
+              ? `${rows.length} bills`
+              : `${filt.length} / ${rows.length} bills`;
+          })()}
+        </span>
       </div>
 
-      <Table cols={["Bill #","Date","Patient","Type","Items","Grand ₹","Payment","Status","Action"]}>
-        {rows.length === 0 ? <EmptyRow span={9} text="No sales for the selected filters." /> :
-          rows.map((s, i) => (
+      {(() => {
+        // R7hr-24/R7hr-30: filter THEN sort the bills.
+        const filteredRows = rows.filter(s => {
+          if (typeFilter !== "All" && String(s.saleType||"") !== typeFilter) return false;
+          if (schedFilter !== "All") {
+            const sx = Array.isArray(s.schedules) ? s.schedules : [];
+            if (!sx.includes(schedFilter)) return false;
+          }
+          return true;
+        });
+        return (
+      <SalesBillsTable
+        rows={filteredRows}
+        emptyText={rows.length === 0 ? "No sales for the selected filters." : "No bills match Sale Type / Schedule filter."}
+        renderRow={(s, i) => (
             <tr key={s._id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "#fff" }}>
               <td style={{ padding: "9px 12px", fontFamily: "DM Mono, monospace", fontSize: 11 }}>{s.billNumber}</td>
               <td style={{ padding: "9px 12px", color: C.muted }}>{new Date(s.createdAt).toLocaleString("en-IN")}</td>
@@ -1356,6 +2148,18 @@ function SalesTab() {
                 <div style={{ fontSize: 10.5, color: C.muted }}>{s.patientUHID || "—"}</div>
               </td>
               <td style={{ padding: "9px 12px" }}>{s.saleType}</td>
+              {/* R7hr-24: schedule chips per bill — H/H1/X show amber
+                  (controlled), G/N show green (over-the-counter). */}
+              <td style={{ padding: "9px 12px" }}>
+                {(s.schedules || []).length === 0 ? <span style={{ color: C.muted }}>—</span> :
+                  (s.schedules || []).map(sch => {
+                    const isCtrl = ["H","H1","X"].includes(sch);
+                    return (
+                      <span key={sch} style={{ display: "inline-block", padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700, marginRight: 4,
+                        background: isCtrl ? "#fef3c7" : "#dcfce7", color: isCtrl ? "#92400e" : "#166534" }}>{sch}</span>
+                    );
+                  })}
+              </td>
               <td style={{ padding: "9px 12px" }}>{s.items?.length || 0}</td>
               <td style={{ padding: "9px 12px", fontWeight: 800 }}>{fmtINR(s.grandTotal)}</td>
               <td style={{ padding: "9px 12px" }}>{s.paymentMode}</td>
@@ -1376,13 +2180,13 @@ function SalesTab() {
               <td style={{ padding: "8px 12px" }}>
                 <RowAction icon="pi-print" color={C.blue}
                   onClick={async () => {
-                    const phSet = await getCachedPhSettings();
+                    const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
                     // R7eo-B — Pattern B caller payload gap fix: forward
                     // billLabel + B2B GST identity so the reprint shows
                     // the same title and GST block as the original.
                     openPrint("pharmacy-bill", {
                       ...s,
-                      template:      phSet?.billTemplate || 1,
+                      template:      1, /* R7hr-46: locked to Classic Modern */
                       defaultPaper:  phSet?.defaultPaper || "half-a4",
                       pharmacySettings: phSet,
                       billLabel:         s.saleType === "Walk-in" ? "Cash Memo" : s.customerGstin ? "Tax Invoice" : "Pharmacy Bill",
@@ -1416,8 +2220,10 @@ function SalesTab() {
                 )}
               </td>
             </tr>
-          ))}
-      </Table>
+          )}
+      />
+        );
+      })()}
 
       {returnSale && (
         <ReturnModal sale={returnSale}
@@ -1501,7 +2307,7 @@ function ReturnModal({ sale, onClose, onDone }) {
       toast.success(`Refund ${rec.refundSlipNumber} · ₹${rec.refundAmount.toLocaleString("en-IN")} via ${refundMode}`);
 
       // Print refund slip + revised bill — both honour current pharmacy settings
-      const phSet = await getCachedPhSettings();
+      const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
       openPrint("refund-receipt", {
         receiptNo: rec.refundSlipNumber,
         patientName: updated.patientName, uhid: updated.patientUHID, ipdNo: updated.admissionNumber,
@@ -1535,7 +2341,7 @@ function ReturnModal({ sale, onClose, onDone }) {
         // INVOICE" — this is the post-return reprint variant.
         openPrint("pharmacy-bill", {
           ...updated,
-          template:     phSet?.billTemplate || 1,
+          template:     1, /* R7hr-46: locked to Classic Modern */
           defaultPaper: phSet?.defaultPaper || "half-a4",
           pharmacySettings: phSet,
           // header overlay so the bill is clearly labelled as REVISED
@@ -1754,7 +2560,7 @@ function AddItemsModal({ sale, onClose, onDone }) {
       toast.success(`Addendum ${rec.supplementSlipNumber} · ${fmtINR(rec.addedTotal)} added to ${sale.billNumber}`);
 
       // Auto-print revised tax invoice — patient + pharmacy each need a copy
-      const phSet = await getCachedPhSettings();
+      const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
       setTimeout(() => {
         // R7eo-B — Pattern B caller payload gap fix: forward B2B GST
         // identity onto the supplementary reprint so the debit-note
@@ -1762,7 +2568,7 @@ function AddItemsModal({ sale, onClose, onDone }) {
         // TAX INVOICE" — this is the post-addendum reprint variant.
         openPrint("pharmacy-bill", {
           ...updated,
-          template:     phSet?.billTemplate || 1,
+          template:     1, /* R7hr-46: locked to Classic Modern */
           defaultPaper: phSet?.defaultPaper || "half-a4",
           pharmacySettings: phSet,
           billLabel: "REVISED TAX INVOICE",
@@ -1951,6 +2757,12 @@ function RegistersTab() {
   const [to,   setTo]   = useState(today);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  // R7hr-24: Sales Register narrowing filters. "All" leaves rows untouched.
+  // Sale Type covers the four PharmacySale.saleType enum values; Schedule
+  // covers the D&C drug schedules carried on row.schedules[] (H/H1/X are
+  // the controlled ones; G is OTC; "" means no schedule on the master).
+  const [typeFilter,  setTypeFilter]  = useState("All");
+  const [schedFilter, setSchedFilter] = useState("All");
 
   const fetchers = {
     sales:        getSalesRegister,
@@ -1967,7 +2779,7 @@ function RegistersTab() {
      standard print window with paper-size + hospital header. */
   const printRegister = async () => {
     if (!data) { toast.warn("No data to print"); return; }
-    const phSet = await getCachedPhSettings();
+    const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
     const meta  = REGISTER_DEFS.find(r => r.key === reg);
     const subtitle = reg === "expiry"
       ? "Batches expiring within 90 days"
@@ -1977,6 +2789,15 @@ function RegistersTab() {
 
     let columns = [], rows = [], totals = {};
     if (reg === "sales") {
+      // R7hr-12 (D8-04): include an IGST column. When all sales in the
+      // range are intra-state (B2C walk-in / same-state OPD) the column
+      // stays as 0 across every row but is shown for parity with the
+      // GSTR-1 filing schema. For any inter-state B2B / corporate-panel
+      // sale (where dispense() routes the gstAmount into igstAmount per
+      // placeOfSupply), this column carries the actual IGST charged and
+      // the CGST/SGST columns sit at 0 — matching the printed register
+      // to the GSTR-1 feed produced by gstService.aggregateGSTForMonth.
+      const totalsHasIgst = Number(data?.totals?.igst || 0) > 0;
       columns = [
         { key: "date",       label: "Date",     nowrap: true, muted: true },
         { key: "billNumber", label: "Bill #",   mono: true,   bold: true },
@@ -1987,6 +2808,7 @@ function RegistersTab() {
         { key: "taxable",    label: "Taxable",  align: "right" },
         { key: "cgst",       label: "CGST",     align: "right", muted: true },
         { key: "sgst",       label: "SGST",     align: "right", muted: true },
+        ...(totalsHasIgst ? [{ key: "igst", label: "IGST", align: "right", muted: true }] : []),
         { key: "grand",      label: "Grand",    align: "right", bold: true },
         { key: "paymentMode",label: "Pay" },
       ];
@@ -1995,12 +2817,20 @@ function RegistersTab() {
         billNumber: r.billNumber, patientName: r.patientName,
         ref: r.admissionNumber || r.patientUHID || "—",
         saleType: r.saleType, itemsCount: r.itemsCount,
-        taxable: fmtMoney(r.taxable), cgst: fmtMoney(r.cgst), sgst: fmtMoney(r.sgst),
+        taxable: fmtMoney(r.taxable),
+        cgst: fmtMoney(r.cgst),
+        sgst: fmtMoney(r.sgst),
+        // R7hr-12 (D8-04): pass IGST through to the print template so the
+        // auditor / GST officer sees the inter-state tax explicitly.
+        igst: fmtMoney(r.igst),
         grand: `₹${fmtMoney(r.grandTotal)}`, paymentMode: r.paymentMode,
       }));
       totals = data.totals && {
         Bills: data.totals.bills,
         "Taxable": `₹${fmtMoney(data.totals.taxable)}`,
+        "CGST": `₹${fmtMoney(data.totals.cgst)}`,
+        "SGST": `₹${fmtMoney(data.totals.sgst)}`,
+        ...(totalsHasIgst ? { "IGST": `₹${fmtMoney(data.totals.igst)}` } : {}),
         "GST": `₹${fmtMoney(data.totals.gstTotal)}`,
         "Grand total": `₹${fmtMoney(data.totals.grandTotal)}`,
       };
@@ -2202,6 +3032,30 @@ function RegistersTab() {
         <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <Field label="From"><input type="date" className="his-field" value={from} onChange={e => setFrom(e.target.value)} /></Field>
           <Field label="To"><input type="date" className="his-field" value={to} onChange={e => setTo(e.target.value)} /></Field>
+          {/* R7hr-24: Sale Type + Schedule filters surface only on the Sales
+              Register — the other registers either don't have saleType
+              (Purchase/Stock/Expiry) or already drill into one schedule
+              class (Schedule H register). Client-side filtering — the
+              backend already paginates within the date range, so this just
+              narrows what the operator sees + recomputes totals. */}
+          {reg === "sales" && (
+            <>
+              <Field label="Sale type">
+                <select className="his-select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
+                  {["All","Walk-in","OPD","IPD","Homecare"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+              <Field label="Schedule">
+                <select className="his-select" value={schedFilter} onChange={e => setSchedFilter(e.target.value)}>
+                  {/* R7hr-26: align with DrugModel.schedule enum
+                ["G","H","H1","X","OTC",""]. Master uses "OTC" (not "N")
+                for over-the-counter so the dropdown must offer it too —
+                otherwise picking G/N never matches OTC-tagged drugs. */}
+            {["All","H","H1","X","G","OTC"].map(o => <option key={o}>{o}</option>)}
+                </select>
+              </Field>
+            </>
+          )}
           <div style={{ flex: 1 }} />
           <button onClick={load} disabled={loading}
             style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: loading ? "#94a3b8" : C.orange, color: "#fff", fontWeight: 700, fontSize: 12, cursor: loading ? "not-allowed" : "pointer" }}>
@@ -2215,7 +3069,7 @@ function RegistersTab() {
       )}
 
       {/* Body per register */}
-      {reg === "sales"      && <SalesRegisterTbl      data={data} loading={loading} />}
+      {reg === "sales"      && <SalesRegisterTbl      data={data} loading={loading} typeFilter={typeFilter} schedFilter={schedFilter} />}
       {reg === "purchase"   && <PurchaseRegisterTbl   data={data} loading={loading} />}
       {reg === "stock"      && <StockRegisterTbl      data={data} loading={loading} />}
       {reg === "schedule-h" && <ScheduleHRegisterTbl  data={data} loading={loading} />}
@@ -2238,24 +3092,83 @@ function _RegisterShell({ title, color, totals, children }) {
   );
 }
 
-function SalesRegisterTbl({ data, loading }) {
+function SalesRegisterTbl({ data, loading, typeFilter = "All", schedFilter = "All" }) {
   if (loading) return <Card title="Loading…" color={C.green} icon="pi-spin pi-spinner"><div /></Card>;
-  const rows = data?.rows || [];
-  const t = data?.totals;
+  const allRows = data?.rows || [];
+  // R7hr-24: apply Sale Type + Schedule narrowing client-side. Backend
+  // already paginates within the date range so the filter set is bounded;
+  // recomputing totals on the filtered subset keeps the strip header in
+  // sync with what's actually visible.
+  const rows = allRows.filter(r => {
+    if (typeFilter !== "All" && String(r.saleType || "") !== typeFilter) return false;
+    if (schedFilter !== "All") {
+      const sx = Array.isArray(r.schedules) ? r.schedules : [];
+      if (!sx.includes(schedFilter)) return false;
+    }
+    return true;
+  });
+  // Recompute totals from filtered rows so the header strip matches the
+  // body. Falls back to server totals when no narrowing is in effect to
+  // preserve the historical numbers (covers refunds/supplements that the
+  // per-row mapper doesn't carry).
+  const t = (typeFilter === "All" && schedFilter === "All")
+    ? data?.totals
+    : {
+        bills:      rows.length,
+        taxable:    rows.reduce((s, r) => s + Number(r.taxable || 0), 0),
+        gstTotal:   rows.reduce((s, r) => s + Number(r.gstTotal || ((Number(r.cgst||0)+Number(r.sgst||0)+Number(r.igst||0)))), 0),
+        grandTotal: rows.reduce((s, r) => s + Number(r.grandTotal || 0), 0),
+      };
+  // R7hr-30: click-to-sort. Date desc by default so newest bills land on top.
+  const { sorted: sortedRows, sort } = useTableSort(rows, "date", "desc");
   return (
     <_RegisterShell title="Sales Register" color={C.green}
       totals={t && <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>
+        {(typeFilter !== "All" || schedFilter !== "All") && (
+          <span style={{ background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 999, fontWeight: 700, marginRight: 8 }}>
+            Filtered{typeFilter !== "All" ? ` · ${typeFilter}` : ""}{schedFilter !== "All" ? ` · Sch ${schedFilter}` : ""}
+          </span>
+        )}
         {t.bills} bills · taxable {fmtINR(t.taxable)} · GST {fmtINR(t.gstTotal)} · <b style={{ color: C.green }}>{fmtINR(t.grandTotal)}</b>
       </span>}>
-      <Table cols={["Date","Bill #","Patient","UHID/Adm","Type","Items","Taxable","CGST","SGST","Total","Pay"]} compact>
-        {rows.length === 0 ? <EmptyRow span={11} text="No bills in this range." /> :
-          rows.map(r => (
+      <Table
+        cols={[
+          { label: "Date",     key: "date" },
+          { label: "Bill #",   key: "billNumber" },
+          { label: "Patient",  key: "patientName" },
+          { label: "UHID/Adm", key: "admissionNumber" },
+          { label: "Type",     key: "saleType" },
+          "Sch",
+          { label: "Items",    key: "itemsCount" },
+          { label: "Taxable",  key: "taxable" },
+          { label: "CGST",     key: "cgst" },
+          { label: "SGST",     key: "sgst" },
+          { label: "Total",    key: "grandTotal" },
+          { label: "Pay",      key: "paymentMode" },
+        ]}
+        sort={sort}
+        compact
+      >
+        {sortedRows.length === 0 ? <EmptyRow span={12} text={allRows.length === 0 ? "No bills in this range." : "No bills match the filter."} /> :
+          sortedRows.map(r => (
             <tr key={r._id} style={{ borderTop: `1px solid ${C.border}` }}>
               <td style={{ padding: "6px 10px", color: C.muted }}>{new Date(r.date).toLocaleDateString("en-IN")}</td>
               <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 11 }}>{r.billNumber}</td>
               <td style={{ padding: "6px 10px" }}>{r.patientName}</td>
               <td style={{ padding: "6px 10px", color: C.muted, fontSize: 11 }}>{r.admissionNumber || r.patientUHID || "—"}</td>
               <td style={{ padding: "6px 10px" }}>{r.saleType}</td>
+              {/* R7hr-24: render the schedule chips so the operator can see
+                  why a row matched / what controlled drugs it contains. */}
+              <td style={{ padding: "6px 10px" }}>
+                {(r.schedules || []).length === 0 ? <span style={{ color: C.muted }}>—</span> :
+                  (r.schedules || []).map(s => {
+                    const isCtrl = ["H","H1","X"].includes(s);
+                    return (
+                      <span key={s} style={{ display: "inline-block", padding: "2px 7px", borderRadius: 999, fontSize: 10, fontWeight: 700, marginRight: 4,
+                        background: isCtrl ? "#fef3c7" : "#dcfce7", color: isCtrl ? "#92400e" : "#166534" }}>{s}</span>
+                    );
+                  })}
+              </td>
               <td style={{ padding: "6px 10px" }}>{r.itemsCount}</td>
               <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtINR(r.taxable)}</td>
               <td style={{ padding: "6px 10px", textAlign: "right", color: C.muted }}>{fmtINR(r.cgst)}</td>
@@ -2272,14 +3185,34 @@ function SalesRegisterTbl({ data, loading }) {
 function PurchaseRegisterTbl({ data, loading }) {
   if (loading) return null;
   const rows = data?.rows || []; const t = data?.totals;
+  // R7hr-32: click-to-sort. Default newest GRN first.
+  const { sorted, sort } = useTableSort(rows, "invoiceDate", "desc");
   return (
     <_RegisterShell title="Purchase Register" color={C.purple}
       totals={t && <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>
         {t.grnCount} GRNs · taxable {fmtINR(t.taxable)} · input GST {fmtINR(t.tax)} · gross <b style={{ color: C.purple }}>{fmtINR(t.gross)}</b>
       </span>}>
-      <Table cols={["GRN Date","GRN #","Invoice #","Supplier","Drug","HSN","Batch","Expiry","Qty","Rate","Taxable","GST","Gross"]} compact>
-        {rows.length === 0 ? <EmptyRow span={13} text="No purchases recorded in this range." /> :
-          rows.map(r => (
+      <Table
+        cols={[
+          { label: "GRN Date",  key: "invoiceDate" },
+          { label: "GRN #",     key: "grnNumber" },
+          { label: "Invoice #", key: "invoiceNo" },
+          { label: "Supplier",  key: "supplier" },
+          { label: "Drug",      key: "drug" },
+          { label: "HSN",       key: "hsn" },
+          { label: "Batch",     key: "batch" },
+          { label: "Expiry",    key: "expiry" },
+          { label: "Qty",       key: "qty" },
+          { label: "Rate",      key: "rate" },
+          { label: "Taxable",   key: "taxable" },
+          { label: "GST",       key: "tax" },
+          { label: "Gross",     key: "gross" },
+        ]}
+        sort={sort}
+        compact
+      >
+        {sorted.length === 0 ? <EmptyRow span={13} text="No purchases recorded in this range." /> :
+          sorted.map(r => (
             <tr key={r._id} style={{ borderTop: `1px solid ${C.border}` }}>
               <td style={{ padding: "6px 10px", color: C.muted }}>{new Date(r.invoiceDate).toLocaleDateString("en-IN")}</td>
               <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 10.5 }}>{r.grnNumber}</td>
@@ -2304,12 +3237,28 @@ function PurchaseRegisterTbl({ data, loading }) {
 function StockRegisterTbl({ data, loading }) {
   if (loading) return null;
   const rows = data?.rows || [];
+  // R7hr-32: click-to-sort. Default by drug name asc (Form 35 convention).
+  const { sorted, sort } = useTableSort(rows, "drugName", "asc");
   return (
     <_RegisterShell title="Stock Register · Form 35" color={C.blue}
       totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{rows.length} drugs with movement</span>}>
-      <Table cols={["Drug","Category","HSN","Opening","Receipts","Issued","Closing","Reorder","Status"]} compact>
-        {rows.length === 0 ? <EmptyRow span={9} text="No stock movement in this range." /> :
-          rows.map(r => {
+      <Table
+        cols={[
+          { label: "Drug",     key: "drugName" },
+          { label: "Category", key: "category" },
+          { label: "HSN",      key: "hsn" },
+          { label: "Opening",  key: "opening" },
+          { label: "Receipts", key: "receipts" },
+          { label: "Issued",   key: "issued" },
+          { label: "Closing",  key: "closing" },
+          { label: "Reorder",  key: "reorderLevel" },
+          "Status",
+        ]}
+        sort={sort}
+        compact
+      >
+        {sorted.length === 0 ? <EmptyRow span={9} text="No stock movement in this range." /> :
+          sorted.map(r => {
             const low = r.closing < r.reorderLevel;
             return (
               <tr key={r.drugId} style={{ borderTop: `1px solid ${C.border}` }}>
@@ -2339,18 +3288,45 @@ function StockRegisterTbl({ data, loading }) {
 function ScheduleHRegisterTbl({ data, loading }) {
   if (loading) return null;
   const rows = data?.rows || [];
+  // R7hr-12-S2 (D8-07): add prescriber Reg-No column. D&C Form 2 + Schedule H1
+  // register explicitly mandate "the name, address and registration number
+  // of the prescriber" — the inspector marks the register non-compliant
+  // when the column is missing. Backend now emits prescriberRegistrationNo
+  // per row; UI surfaces it next to the doctor name.
+  // R7hr-32: click-to-sort. Default newest dispense first.
+  const { sorted, sort } = useTableSort(rows, "date", "desc");
   return (
     <_RegisterShell title="Schedule H / H1 / X Register" color={C.red}
       totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{rows.length} prescription-mandatory dispenses</span>}>
-      <Table cols={["Date","Bill #","Patient","UHID","Doctor","Rx Ref","Drug","Schedule","Batch","Expiry","Qty","Flags"]} compact>
-        {rows.length === 0 ? <EmptyRow span={12} text="No Schedule H drugs dispensed in this range." /> :
-          rows.map((r, i) => (
+      <Table
+        cols={[
+          { label: "Date",      key: "date" },
+          { label: "Bill #",    key: "billNumber" },
+          { label: "Patient",   key: "patientName" },
+          { label: "UHID",      key: "patientUHID" },
+          { label: "Doctor",    key: "doctorName" },
+          { label: "Rx Reg No", key: "prescriberRegistrationNo" },
+          { label: "Rx Ref",    key: "prescriptionRef" },
+          { label: "Drug",      key: "drugName" },
+          { label: "Schedule",  key: "schedule" },
+          { label: "Batch",     key: "batchNo" },
+          { label: "Expiry",    key: "expiryDate" },
+          { label: "Qty",       key: "quantity" },
+          "Flags",
+        ]}
+        sort={sort}
+        compact
+      >
+        {sorted.length === 0 ? <EmptyRow span={13} text="No Schedule H drugs dispensed in this range." /> :
+          sorted.map((r, i) => (
             <tr key={i} style={{ borderTop: `1px solid ${C.border}` }}>
               <td style={{ padding: "6px 10px", color: C.muted }}>{new Date(r.date).toLocaleString("en-IN")}</td>
               <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 10.5 }}>{r.billNumber}</td>
               <td style={{ padding: "6px 10px", fontWeight: 600 }}>{r.patientName}</td>
               <td style={{ padding: "6px 10px" }}>{r.patientUHID}</td>
               <td style={{ padding: "6px 10px" }}>{r.doctorName}</td>
+              {/* R7hr-12-S2 (D8-07): prescriber registration number column. */}
+              <td style={{ padding: "6px 10px", fontFamily: "DM Mono, monospace", fontSize: 10.5 }}>{r.prescriberRegistrationNo || "—"}</td>
               <td style={{ padding: "6px 10px", fontSize: 10.5 }}>{r.prescriptionRef}</td>
               <td style={{ padding: "6px 10px", fontWeight: 600 }}>{r.drugName}</td>
               <td style={{ padding: "6px 10px" }}>
@@ -2382,12 +3358,31 @@ function ExpiryRegisterTbl({ data, loading }) {
     SOON:    { c: C.amber, bg: C.amberL },
     WATCH:   { c: C.blue,  bg: C.blueL },
   };
+  // R7hr-32: click-to-sort. Default by days-to-expiry ascending so the most
+  // urgent batches surface at the top (matches the existing "next 90 days" mental
+  // model). Pharmacist can flip to descending to scan least-urgent first.
+  const { sorted, sort } = useTableSort(rows, "daysToExpiry", "asc");
   return (
     <_RegisterShell title="Expiry Register · next 90 days" color={C.amber}
       totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{rows.length} batches · value <b style={{ color: C.amber }}>{fmtINR(totalValue)}</b></span>}>
-      <Table cols={["Drug","Category","Batch","Supplier","Expiry","Days","Remaining","Sale ₹","Value","Status"]} compact>
-        {rows.length === 0 ? <EmptyRow span={10} text="No batches expiring within 90 days." /> :
-          rows.map((r, i) => {
+      <Table
+        cols={[
+          { label: "Drug",      key: "drug" },
+          { label: "Category",  key: "category" },
+          { label: "Batch",     key: "batchNo" },
+          { label: "Supplier",  key: "supplier" },
+          { label: "Expiry",    key: "expiryDate" },
+          { label: "Days",      key: "daysToExpiry" },
+          { label: "Remaining", key: "remaining" },
+          { label: "Sale ₹",    key: "salePrice" },
+          { label: "Value",     key: "value" },
+          { label: "Status",    key: "status" },
+        ]}
+        sort={sort}
+        compact
+      >
+        {sorted.length === 0 ? <EmptyRow span={10} text="No batches expiring within 90 days." /> :
+          sorted.map((r, i) => {
             const st = statusC[r.status] || statusC.WATCH;
             return (
               <tr key={i} style={{ borderTop: `1px solid ${C.border}` }}>
@@ -2414,14 +3409,35 @@ function ExpiryRegisterTbl({ data, loading }) {
 function GstSummaryTbl({ data, loading }) {
   if (loading) return null;
   const buckets = data?.buckets || [];
+  // R7hr-32: click-to-sort. Default by GST slab asc (GSTR-1 §13 convention,
+  // 0% → 5% → 12% → 18% → 28%). For a derived Gross column we extend each
+  // bucket with `gross = taxable + tax` so the sort hook can read it.
+  const bucketsWithGross = useMemo(
+    () => buckets.map(b => ({ ...b, gross: Number(b.taxable || 0) + Number(b.tax || 0) })),
+    [buckets],
+  );
+  const { sorted, sort } = useTableSort(bucketsWithGross, "gstRate", "asc");
   return (
     <_RegisterShell title="GST Summary · GSTR-1 / GSTR-3B feeder" color={C.pink}
       totals={<span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>
         Taxable <b>{fmtINR(data?.grandTaxable)}</b> · CGST {fmtINR(data?.grandCGST)} · SGST {fmtINR(data?.grandSGST)} · Total tax <b style={{ color: C.pink }}>{fmtINR(data?.grandTax)}</b>
       </span>}>
-      <Table cols={["GST Slab","Bills","Qty","Taxable","CGST","SGST","Total Tax","Gross"]} compact>
-        {buckets.length === 0 ? <EmptyRow span={8} text="No taxable sales in this range." /> :
-          buckets.map(b => (
+      <Table
+        cols={[
+          { label: "GST Slab",  key: "gstRate" },
+          { label: "Bills",     key: "billCount" },
+          { label: "Qty",       key: "qty" },
+          { label: "Taxable",   key: "taxable" },
+          { label: "CGST",      key: "cgst" },
+          { label: "SGST",      key: "sgst" },
+          { label: "Total Tax", key: "tax" },
+          { label: "Gross",     key: "gross" },
+        ]}
+        sort={sort}
+        compact
+      >
+        {sorted.length === 0 ? <EmptyRow span={8} text="No taxable sales in this range." /> :
+          sorted.map(b => (
             <tr key={b.gstRate} style={{ borderTop: `1px solid ${C.border}` }}>
               <td style={{ padding: "7px 10px", fontWeight: 800, color: C.pink }}>{b.gstRate}%</td>
               <td style={{ padding: "7px 10px" }}>{b.billCount}</td>
@@ -2430,7 +3446,7 @@ function GstSummaryTbl({ data, loading }) {
               <td style={{ padding: "7px 10px", textAlign: "right" }}>{fmtINR(b.cgst)}</td>
               <td style={{ padding: "7px 10px", textAlign: "right" }}>{fmtINR(b.sgst)}</td>
               <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700 }}>{fmtINR(b.tax)}</td>
-              <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700 }}>{fmtINR(b.taxable + b.tax)}</td>
+              <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 700 }}>{fmtINR(b.gross)}</td>
             </tr>
           ))}
       </Table>
@@ -2646,100 +3662,43 @@ function SettingsTab() {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 14 }}>
 
-      {/* TEMPLATE PICKER — top of Settings */}
+      {/* TEMPLATE — locked to Classic Modern (R7hr-46). The historical
+          10-thumbnail picker + preview modal has been removed; pharmacy
+          now uses a single system-wide layout for OPD, IPD and Walk-in
+          bills alike. */}
       <Card title="Bill print template" color={C.purple} icon="pi-palette">
-        <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>
-          Pick a layout for every pharmacy bill. <b>Click any thumbnail to preview at full size</b> — then click "Use this" inside the preview to apply.
-          Templates <b>1-5</b> are tuned for in-house, <b>6-10</b> for outsourced retail pharmacies.
+        <div style={{
+          display: "flex", alignItems: "center", gap: 14,
+          padding: 14, borderRadius: 10,
+          border: `2px solid ${C.blue}`,
+          background: "linear-gradient(135deg, #eff6ff 0%, #fff 100%)",
+        }}>
+          <div style={{
+            width: 60, height: 60, borderRadius: 12,
+            background: C.blue, color: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 22, fontWeight: 800,
+          }}>
+            <i className="pi pi-check" />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Classic Modern</div>
+            <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>
+              Single system-wide layout · gradient masthead · clinical
+            </div>
+            <div style={{ fontSize: 10.5, color: C.muted, marginTop: 6 }}>
+              Used for every OPD, IPD and Walk-in pharmacy bill. The previous
+              10-template picker was retired so prints stay consistent across
+              the hospital.
+            </div>
+          </div>
+          <span style={{
+            fontSize: 9, fontWeight: 800,
+            padding: "3px 8px", borderRadius: 4,
+            background: "#dbeafe", color: "#1e40af",
+            letterSpacing: ".4px", textTransform: "uppercase",
+          }}>Locked</span>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-          {TEMPLATES.map(t => {
-            const active = (s.billTemplate || 1) === t.id;
-            const isInh  = t.audience === "in-house";
-            const accent = isInh ? C.blue : C.orange;
-            return (
-              <div key={t.id}
-                style={{
-                  borderRadius: 10,
-                  border: `2px solid ${active ? accent : C.border}`,
-                  background: "#fff",
-                  overflow: "hidden",
-                  position: "relative",
-                  cursor: "pointer",
-                  boxShadow: active ? `0 6px 18px ${accent}30` : "0 1px 3px rgba(15,23,42,.05)",
-                  transition: "transform .15s, box-shadow .15s",
-                }}
-                onClick={() => setPreviewTpl(t.id)}
-                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = `0 8px 22px ${accent}35`; }}
-                onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = active ? `0 6px 18px ${accent}30` : "0 1px 3px rgba(15,23,42,.05)"; }}
-              >
-                {/* Thumbnail viewport — scales a real PharmacyBill to ~210px wide */}
-                <div style={{
-                  height: 200, overflow: "hidden", position: "relative",
-                  background: "#f1f5f9",
-                  borderBottom: `1px solid ${C.border}`,
-                }}>
-                  <div style={{
-                    transform: "scale(0.27)", transformOrigin: "top left",
-                    width: "370%", pointerEvents: "none",
-                  }}>
-                    <PharmacyBill settings={DEMO_SETTINGS} receipt={{ ...DEMO_BILL, template: t.id }} />
-                  </div>
-                  {active && (
-                    <div style={{
-                      position: "absolute", top: 8, right: 8,
-                      width: 26, height: 26, borderRadius: "50%",
-                      background: accent, color: "#fff",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      boxShadow: "0 2px 8px rgba(0,0,0,.2)",
-                    }}>
-                      <i className="pi pi-check" style={{ fontSize: 12 }} />
-                    </div>
-                  )}
-                  <div style={{
-                    position: "absolute", top: 8, left: 8,
-                    padding: "2px 8px", borderRadius: 4,
-                    background: "rgba(0,0,0,.7)", color: "#fff",
-                    fontSize: 9.5, fontWeight: 800, letterSpacing: ".4px",
-                  }}>#{t.id}</div>
-                </div>
-                {/* Label strip */}
-                <div style={{ padding: "8px 10px" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                    <div style={{ fontSize: 12, fontWeight: 800, color: active ? accent : C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {t.label}
-                    </div>
-                    <span style={{
-                      flexShrink: 0, fontSize: 8.5, fontWeight: 800,
-                      padding: "1px 6px", borderRadius: 3,
-                      background: isInh ? "#dbeafe" : "#fed7aa",
-                      color:      isInh ? "#1e40af" : "#9a3412",
-                      letterSpacing: ".4px", textTransform: "uppercase",
-                    }}>
-                      {isInh ? "In-house" : "Outsourced"}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 10, color: C.muted, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.sub}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Full-size preview modal */}
-        {previewTpl != null && (
-          <TemplatePreviewModal
-            tplId={previewTpl}
-            isActive={(s.billTemplate || 1) === previewTpl}
-            settingsDoc={s}
-            onClose={() => setPreviewTpl(null)}
-            onUse={() => {
-              setS(p => ({ ...p, billTemplate: previewTpl }));
-              setPreviewTpl(null);
-              toast.success(`Template #${previewTpl} selected — Save to apply`);
-            }}
-          />
-        )}
         <div style={{ marginTop: 12 }}>
           <Field label="Default paper size">
             <select className="his-select" style={{ width: 200 }} value={s.defaultPaper || "half-a4"} onChange={upd("defaultPaper")}>
@@ -2751,48 +3710,41 @@ function SettingsTab() {
         </div>
       </Card>
 
-      {/* REGISTER HEADER PICKER */}
+      {/* REGISTER HEADER — locked to Compact Strip (R7hr-49). The historical
+          5-style picker has been removed; every statutory register print
+          uses the single Compact Strip layout for consistency. */}
       <Card title="Register print style" color={C.teal} icon="pi-book">
-        <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 12 }}>
-          Statutory registers (Sales · Purchase · Stock · Schedule H · Expiry · GST) print with the header style picked here.
-          The hospital identity comes from <b>Hospital Settings</b> when in-house, otherwise from the identity fields below.
-          Click any card to preview at full size with sample data.
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
-          {REGISTER_HEADERS.map(h => {
-            const active = (s.registerHeader || 1) === h.id;
-            return (
-              <div key={h.id}
-                onClick={() => setPreviewReg(h.id)}
-                style={{
-                  borderRadius: 10, border: `2px solid ${active ? C.teal : C.border}`,
-                  background: "#fff", overflow: "hidden", cursor: "pointer",
-                  boxShadow: active ? `0 6px 18px ${C.teal}30` : "0 1px 3px rgba(15,23,42,.05)",
-                  transition: "transform .15s, box-shadow .15s",
-                }}
-                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; }}
-                onMouseLeave={e => { e.currentTarget.style.transform = "none"; }}
-              >
-                <div style={{ height: 160, overflow: "hidden", position: "relative", background: "#f1f5f9", borderBottom: `1px solid ${C.border}` }}>
-                  <div style={{ transform: "scale(0.28)", transformOrigin: "top left", width: "360%", pointerEvents: "none" }}>
-                    <PharmacyRegister
-                      settings={DEMO_SETTINGS}
-                      receipt={{ ...DEMO_REGISTER, headerStyle: h.id, pharmacySettings: { ...s, registerHeader: h.id } }} />
-                  </div>
-                  {active && (
-                    <div style={{ position: "absolute", top: 8, right: 8, width: 26, height: 26, borderRadius: "50%", background: C.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,.2)" }}>
-                      <i className="pi pi-check" style={{ fontSize: 12 }} />
-                    </div>
-                  )}
-                  <div style={{ position: "absolute", top: 8, left: 8, padding: "2px 8px", borderRadius: 4, background: "rgba(0,0,0,.7)", color: "#fff", fontSize: 9.5, fontWeight: 800 }}>#{h.id}</div>
-                </div>
-                <div style={{ padding: "8px 10px" }}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: active ? C.teal : C.text }}>{h.label}</div>
-                  <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{h.sub}</div>
-                </div>
-              </div>
-            );
-          })}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 14,
+          padding: 14, borderRadius: 10,
+          border: `2px solid ${C.teal}`,
+          background: "linear-gradient(135deg, #ecfeff 0%, #fff 100%)",
+        }}>
+          <div style={{
+            width: 60, height: 60, borderRadius: 12,
+            background: C.teal, color: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 22, fontWeight: 800,
+          }}>
+            <i className="pi pi-check" />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Compact Strip</div>
+            <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>
+              Single-row inline header · saves space
+            </div>
+            <div style={{ fontSize: 10.5, color: C.muted, marginTop: 6 }}>
+              Used for every statutory register (Sales · Purchase · Stock ·
+              Schedule&nbsp;H · Expiry · GST). The previous 5-style picker was
+              retired so register prints stay uniform across the hospital.
+            </div>
+          </div>
+          <span style={{
+            fontSize: 9, fontWeight: 800,
+            padding: "3px 8px", borderRadius: 4,
+            background: "#ccfbf1", color: "#0f766e",
+            letterSpacing: ".4px", textTransform: "uppercase",
+          }}>Locked</span>
         </div>
 
         {/* Per-register toggles */}
@@ -2822,10 +3774,19 @@ function SettingsTab() {
             isActive={(s.registerHeader || 1) === previewReg}
             settingsDoc={s}
             onClose={() => setPreviewReg(null)}
-            onUse={() => {
-              setS(p => ({ ...p, registerHeader: previewReg }));
+            onUse={async () => {
+              // R7hr-40: auto-save (mirrors the bill-template fix above).
+              const next = { ...s, registerHeader: previewReg };
+              setS(next);
               setPreviewReg(null);
-              toast.success(`Register header style #${previewReg} selected — Save to apply`);
+              try {
+                const r = await updatePharmacySettings(next);
+                setS(r.data);
+                invalidatePhSettings();
+                toast.success(`Register header #${previewReg} applied · next register print uses it now`);
+              } catch (e) {
+                toast.error(`Couldn't save header style: ${e.message}`);
+              }
             }}
           />
         )}
@@ -2970,6 +3931,8 @@ function SuppliersTab() {
     try { await deleteSupplier(s._id); toast.success("Supplier deactivated"); refresh(); }
     catch (e) { toast.error(e.message); }
   };
+  // R7hr-30: click-to-sort. Default by supplier name ascending.
+  const { sorted: sortedRows, sort } = useTableSort(rows, "name", "asc");
   return (
     <div>
       <div style={{ marginBottom: 12, display: "flex", justifyContent: "flex-end" }}>
@@ -2977,9 +3940,20 @@ function SuppliersTab() {
           <i className="pi pi-plus" style={{ marginRight: 6 }} />Add Supplier
         </button>
       </div>
-      <Table cols={["Name","Contact","Phone","GSTIN","Drug Licence","Credit days","Action"]}>
-        {rows.length === 0 ? <EmptyRow span={7} text="No suppliers yet." /> :
-          rows.map((s, i) => (
+      <Table
+        cols={[
+          { label: "Name",         key: "name" },
+          { label: "Contact",      key: "contactPerson" },
+          { label: "Phone",        key: "phone" },
+          { label: "GSTIN",        key: "gstin" },
+          { label: "Drug Licence", key: "drugLicenseNo" },
+          { label: "Credit days",  key: "creditDays" },
+          "Action",
+        ]}
+        sort={sort}
+      >
+        {sortedRows.length === 0 ? <EmptyRow span={7} text="No suppliers yet." /> :
+          sortedRows.map((s, i) => (
             <tr key={s._id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? "#fafbfc" : "#fff" }}>
               <td style={{ padding: "9px 12px", fontWeight: 700 }}>{s.name}</td>
               <td style={{ padding: "9px 12px", color: C.muted }}>{s.contactPerson || "—"}</td>
@@ -3059,6 +4033,26 @@ function KPI({ label, value, color, icon }) {
   );
 }
 
+// R7hr-61 — Reception-style overview card used by the pharmacy
+// Dashboard collection strip. Coloured accent bar across the top
+// matches the screenshot the user shared (Reception Overview tiles).
+function PharmStat({ accent, label, value, sub }) {
+  return (
+    <div style={{
+      background: C.card, border: `1.5px solid ${C.border}`,
+      borderRadius: 12, overflow: "hidden",
+      boxShadow: "0 1px 3px rgba(15,23,42,.04)",
+    }}>
+      <div style={{ height: 4, background: accent }} />
+      <div style={{ padding: "12px 16px" }}>
+        <div style={{ fontSize: 10.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: accent, lineHeight: 1.1, marginTop: 4 }}>{value}</div>
+        {sub && <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
 function Card({ title, color, icon, children }) {
   return (
     <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
@@ -3071,15 +4065,62 @@ function Card({ title, color, icon, children }) {
   );
 }
 
-function Table({ cols, children, compact }) {
+// R7hr-30: Generic Windows-explorer-style click-to-sort. Pass `cols` either
+// as plain strings (legacy — header is just a label) or as
+// `{ label, key }` to make it sortable. When `sort = { key, dir, onChange }`
+// is provided, clicking a sortable header calls onChange(colKey); the active
+// column shows a ▲ / ▼ caret and the inactive sortable columns show a faint
+// dotted hint so the user discovers they're clickable.
+function Table({ cols, children, compact, sort }) {
   return (
     <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: compact ? 11.5 : 12 }}>
         <thead>
           <tr style={{ background: C.subtle, borderBottom: `1.5px solid ${C.border}` }}>
-            {cols.map(c => (
-              <th key={c} style={{ padding: compact ? "7px 10px" : "9px 12px", textAlign: "left", fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontSize: 10, whiteSpace: "nowrap" }}>{c}</th>
-            ))}
+            {cols.map((c, idx) => {
+              const isObj   = c && typeof c === "object";
+              const label   = isObj ? c.label : c;
+              const sortKey = isObj ? c.key   : null;
+              const sortable = !!sortKey && !!sort?.onChange;
+              const active   = sortable && sort?.key === sortKey;
+              const dir      = active ? sort?.dir : null;
+              return (
+                <th
+                  key={`${label}-${idx}`}
+                  onClick={sortable ? () => sort.onChange(sortKey) : undefined}
+                  title={sortable ? "Click to sort" : undefined}
+                  style={{
+                    padding: compact ? "7px 10px" : "9px 12px",
+                    textAlign: "left",
+                    fontWeight: 800,
+                    color: active ? C.green : C.muted,
+                    textTransform: "uppercase",
+                    letterSpacing: ".5px",
+                    fontSize: 10,
+                    whiteSpace: "nowrap",
+                    cursor: sortable ? "pointer" : "default",
+                    userSelect: sortable ? "none" : "auto",
+                    background: active ? `${C.green}0d` : "transparent",
+                    transition: "background 120ms ease",
+                  }}
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    {label}
+                    {sortable && (
+                      <span style={{
+                        fontSize: 8,
+                        color: active ? C.green : "#cbd5e1",
+                        fontWeight: 900,
+                        lineHeight: 1,
+                        letterSpacing: "-1px",
+                      }}>
+                        {dir === "asc" ? "▲" : dir === "desc" ? "▼" : "▲▼"}
+                      </span>
+                    )}
+                  </span>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>{children}</tbody>
@@ -3088,8 +4129,104 @@ function Table({ cols, children, compact }) {
   );
 }
 
+// R7hr-30: useTableSort — state + memoised sorter for any data array.
+// Smart compare: numbers compare numerically, strings that look numeric
+// ("₹120", "12.5") parse to numbers, strings that look like dates parse
+// with Date.parse, everything else falls back to localeCompare.
+function useTableSort(rows, initialKey, initialDir = "asc") {
+  // R7hr-33 (audit P2-B): use the lazy-init form + functional-set form for
+  // setKey so a function key (e.g. `(r) => r.status || "Hold"`) lands as a
+  // value, not as React's setState updater. Without this, the previous
+  // implementation silently stored the function INVOKED with prev=null,
+  // breaking sort. Now both string keys ("name") and function keys are
+  // first-class.
+  const [key, setKey] = useState(() => initialKey || null);
+  const [dir, setDir] = useState(initialDir);
+  const onChange = (newKey) => {
+    if (!newKey) return;
+    if (newKey === key) setDir(d => d === "asc" ? "desc" : "asc");
+    else { setKey(() => newKey); setDir("asc"); }
+  };
+  const sorted = useMemo(() => {
+    const arr = Array.isArray(rows) ? rows.slice() : [];
+    if (!key) return arr;
+    const getter = typeof key === "function" ? key : (row) => {
+      // Support dotted paths like "items.length" or "patient.name"
+      const parts = String(key).split(".");
+      let v = row;
+      for (const p of parts) {
+        if (v == null) return null;
+        v = v[p];
+      }
+      return v;
+    };
+    arr.sort((a, b) => {
+      let av = getter(a), bv = getter(b);
+      // null/undefined sort LAST regardless of direction (so empty rows
+      // don't hijack the top of the list when sorting ascending)
+      const aEmpty = av == null || av === "";
+      const bEmpty = bv == null || bv === "";
+      if (aEmpty && bEmpty) return 0;
+      if (aEmpty) return 1;
+      if (bEmpty) return -1;
+      // Numeric
+      if (typeof av === "number" && typeof bv === "number") return av - bv;
+      // String-with-money-or-percent: extract leading number
+      const as = String(av), bs = String(bv);
+      const asNum = Number(as.replace(/[^\d.-]/g, ""));
+      const bsNum = Number(bs.replace(/[^\d.-]/g, ""));
+      if (Number.isFinite(asNum) && Number.isFinite(bsNum) &&
+          /^-?[\d.,₹\s%]+$/.test(as) && /^-?[\d.,₹\s%]+$/.test(bs)) {
+        return asNum - bsNum;
+      }
+      // Date-ISO or date-like
+      const ad = Date.parse(as), bd = Date.parse(bs);
+      if (!Number.isNaN(ad) && !Number.isNaN(bd)) return ad - bd;
+      return as.localeCompare(bs);
+    });
+    if (dir === "desc") arr.reverse();
+    return arr;
+  }, [rows, key, dir]);
+  return { sorted, sort: { key, dir, onChange } };
+}
+
 function EmptyRow({ span, text }) {
   return <tr><td colSpan={span} style={{ padding: "24px 16px", textAlign: "center", color: C.muted, fontSize: 12, fontStyle: "italic" }}>{text}</td></tr>;
+}
+
+// R7hr-30: SalesBillsTable — Sales tab table with click-to-sort headers.
+// Separate component so its useState/useMemo hooks live in their own scope
+// (Sales tab does filtering above before passing in rows; we only sort).
+function SalesBillsTable({ rows, emptyText, renderRow }) {
+  const { sorted, sort } = useTableSort(rows, "createdAt", "desc");
+  return (
+    <Table
+      cols={[
+        { label: "Bill #",  key: "billNumber" },
+        { label: "Date",    key: "createdAt" },
+        { label: "Patient", key: "patientName" },
+        { label: "Type",    key: "saleType" },
+        "Sch",  /* array-valued — not directly sortable */
+        { label: "Items",   key: "items.length" },
+        { label: "Grand ₹", key: "grandTotal" },
+        { label: "Payment", key: "paymentMode" },
+        // R7hr-33 (audit P1-B): a few legacy pre-R7c sales were persisted
+        // with status=null. The renderer falls back to "Hold" via
+        // STATUS_COL[s.status] || STATUS_COL.Hold, but the sort hook
+        // treats null as empty and sinks the row to the bottom of an
+        // ascending sort — confusing because the user sees a row
+        // "Hold" sitting below all real "Hold" rows. Bridge with a
+        // function key so null → "Hold" for sort purposes too.
+        { label: "Status",  key: (r) => r.status || "Hold" },
+        "Action",
+      ]}
+      sort={sort}
+    >
+      {sorted.length === 0
+        ? <EmptyRow span={10} text={emptyText} />
+        : sorted.map((s, i) => renderRow(s, i))}
+    </Table>
+  );
 }
 
 function RowAction({ icon, label, color, onClick }) {
@@ -3187,6 +4324,13 @@ function OPDRxTab() {
   const [qdUnitPrice, setQdUnitPrice] = useState(0);
   const [qdPaymentMode, setQdPaymentMode] = useState("Cash");
   const [qdSaving, setQdSaving]     = useState(false);
+  // R7hr-12-S2 (D9-07): Synchronous mutex against fast double-clicks on the
+  // quick-dispense Save button. `qdSaving` only gates AFTER React re-renders;
+  // a 1-frame double-tap fires the handler twice, and the backend dispense()
+  // has no body-hash idempotency, so a duplicate would decrement stock from
+  // FEFO twice and create two PharmacySale rows. Mirrors the ref-mutex
+  // pattern in PharmacyLedgerPage.applyAdvanceToSale (R7hr-11).
+  const qdSubmitMutexRef = useRef(false);
   // R7cy — FEFO batch info for the selected drug. The drug master does
   // NOT carry a reliable sellPrice — the real price lives on each
   // PharmacyDrugBatch row (set at GRN time, varies by purchase lot).
@@ -3206,7 +4350,28 @@ function OPDRxTab() {
   const [daVisit, setDaVisit]           = useState(null);
   const [daItems, setDaItems]           = useState([]); // [{med, drug, batch, needed, qty, unitPrice, status, note}]
   const [daPaymentMode, setDaPaymentMode] = useState("Cash");
+  // R7hp-2 — structured payment-mode capture for the Dispense All modal.
+  // Card: last-4 + cardholder name. UPI: txn ref. Mix: split rows with
+  // per-row mode + amount + ref. Persisted on PharmacySale.paymentDetails
+  // so the bill (and any future GST audit) can show exactly how the
+  // bill was settled.
+  const [daCardLast4, setDaCardLast4]   = useState("");
+  const [daCardHolder, setDaCardHolder] = useState("");
+  const [daUpiTxnRef, setDaUpiTxnRef]   = useState("");
+  const [daSplits, setDaSplits]         = useState([
+    { mode: "Cash", amount: "", txnRef: "" },
+    { mode: "Card", amount: "", txnRef: "" },
+  ]);
   const [daSaving, setDaSaving]         = useState(false);
+  // R7hr-12-S2 (D9-07): Synchronous mutex for the Dispense-All flow. Same
+  // rationale as qdSubmitMutexRef above — backend dispense() has no
+  // idempotency hash, so a double-click on the multi-item Submit button
+  // would create two sales each consuming FEFO stock for every line.
+  const daSubmitMutexRef = useRef(false);
+  // R7hp-4 — duplicate-dispense indicator keyed by visitNumber. Set when
+  // the Rx loader detects an existing OPD pharmacy sale referencing the
+  // same visit. UI surfaces a warning banner on the visit row.
+  const [daDispenseStatus, setDaDispenseStatus] = useState({});
   const [daPreparing, setDaPreparing]   = useState(false);
 
   const today = new Date().toLocaleDateString("en-IN", {
@@ -3228,6 +4393,31 @@ function OPDRxTab() {
       setPatient(list[0]?.patientId || null);
       if (list.length === 0) {
         toast.info(`No OPD visit in last ${d} day${d === 1 ? "" : "s"} for ${u}`);
+      }
+      // R7hp-4 — duplicate-dispense detection. Pull every pharmacy
+      // sale for this UHID once, then build a {visitNumber → {sale}}
+      // map so each visit card can flag whether its Rx has already
+      // been dispensed (and by whom + when). Failure is non-fatal:
+      // the modal still works, just without the warning banner.
+      try {
+        const sr = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/sales`, { params: { uhid: u, limit: 200 } });
+        const sales = sr?.data?.data || [];
+        const byVisit = {};
+        for (const s of sales) {
+          const rx = String(s.prescriptionRef || "").trim();
+          if (!rx) continue;
+          if (s.status === "Cancelled") continue;
+          if (!byVisit[rx]) byVisit[rx] = {
+            dispensed: true,
+            billNumber: s.billNumber,
+            when: s.createdAt,
+            by: s.createdBy || s.counter || "Pharmacist",
+            grandTotal: s.grandTotal,
+          };
+        }
+        setDaDispenseStatus(byVisit);
+      } catch (e) {
+        // silent — warning banner is a nice-to-have, not a blocker
       }
     } catch (e) {
       // R7cw: distinguish missing-route (backend restart needed) from
@@ -3272,6 +4462,27 @@ function OPDRxTab() {
         setQdMatches(Array.isArray(list) ? list : (list?.data || []));
       } catch (_) { /* non-fatal */ }
     }
+  };
+
+  // R7hr-14 — Walk-in extra item. Patient asks for "ek paracetamol bhi
+  // dena", "isi ke sath ek bandage", "ek extra glucon-D" — items beyond
+  // the doctor's Rx. Same backend dispense() flow, same drug autocomplete,
+  // same FEFO batch pricing — only difference is medicineRef stays
+  // empty (no Rx row backing) so the sale ledger can distinguish
+  // prescribed vs walk-in sales for audit + analytics later. _walkIn
+  // flag is consumed by the modal header to switch the orange Rx-context
+  // card to a "Walk-in extra" affordance instead of trying to render
+  // empty medicineName / dosage / frequency cells.
+  const openWalkInExtra = (visit) => {
+    setQdMed({ _walkIn: true, _visit: visit });
+    setQdDrug(null);
+    setQdQty(1);
+    setQdUnitPrice(0);
+    setQdPaymentMode("Cash");
+    setQdDrugSearch("");
+    setQdMatches([]);
+    setQdFefoBatch(null);
+    setQdOpen(true);
   };
 
   // Debounced drug search inside the modal (250ms — same as Dispense tab).
@@ -3341,6 +4552,10 @@ function OPDRxTab() {
     if (!Number.isFinite(qty) || qty <= 0) { toast.warn("Quantity must be > 0"); return; }
     const price = Number(qdUnitPrice);
     if (!Number.isFinite(price) || price < 0) { toast.warn("Invalid unit price"); return; }
+    // R7hr-12-S2 (D9-07): Synchronous re-entry guard. Swallow duplicates
+    // arriving inside the same React tick so they never reach dispense().
+    if (qdSubmitMutexRef.current) return;
+    qdSubmitMutexRef.current = true;
     setQdSaving(true);
     // R7cz — Resolve doctor name + prescription ref ONCE so the same
     // values flow both to the top-level sale and to the per-item Rx
@@ -3401,6 +4616,10 @@ function OPDRxTab() {
       const msg = e?.response?.data?.message || e.message || "Dispense failed";
       toast.error(msg);
     } finally {
+      // R7hr-12-S2 (D9-07): release mutex AFTER the in-flight POST resolves,
+      // not before — otherwise a fast double-click during the network round
+      // trip would still fire a second dispense().
+      qdSubmitMutexRef.current = false;
       setQdSaving(false);
     }
   };
@@ -3417,6 +4636,21 @@ function OPDRxTab() {
   // 500mg" → "Paracetamol 500mg".
   const stripFormPrefix = (name) =>
     String(name || "").replace(/^(tab\.?|cap\.?|syp\.?|inj\.?|cream|oint\.?|drop[s]?)\s+/i, "").trim();
+
+  // R7ho-FIX: parens-stripped fallback. Backend uses a contains-regex
+  // search, so "Bifilac probiotic" (no parens) does NOT substring-match
+  // a stored row named "Bifilac (probiotic)" (the " (" between is in
+  // the way). Conversely, "ORS sachets (WHO formula)" does not match a
+  // row named "ORS sachets WHO formula" (clean). The two-shot below
+  // tries the original query first (preserves matches against parens-
+  // named SKUs), then a parens-stripped retry to catch clean-named
+  // SKUs. Both branches use the same scoring so the best candidate
+  // surfaces regardless of the SKU author's punctuation choice.
+  const stripPunctuation = (s) =>
+    String(s || "")
+      .replace(/[()\[\]{},;:!?]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
 
   // Frequency → doses/day. Covers the abbreviations our doctors use.
   const parseFrequency = (f) => {
@@ -3439,24 +4673,46 @@ function OPDRxTab() {
   // Best-match: search inventory for the medicine name (form prefix
   // stripped) and pick the candidate whose normalised name most
   // closely matches the prescription.
+  // R7ho-FIX: two-shot search — original query first, then parens-
+  // stripped fallback. Catches both punctuation styles a doctor or
+  // pharmacist might have used when authoring the SKU master.
   const matchInventoryDrug = async (medicineName) => {
     const q = stripFormPrefix(medicineName);
     if (q.length < 2) return null;
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const targetN = norm(q);
+    const scoreList = (list) => list.map(d => {
+      const candidates = [d.brandName, d.genericName, d.name].filter(Boolean).map(norm);
+      let best = 0;
+      for (const c of candidates) {
+        if (c === targetN) best = Math.max(best, 100);
+        else if (c.startsWith(targetN) || targetN.startsWith(c)) best = Math.max(best, 80);
+        else if (c.includes(targetN) || targetN.includes(c)) best = Math.max(best, 60);
+      }
+      return { d, s: best };
+    }).sort((a, b) => b.s - a.s);
     try {
-      const r = await listDrugs({ q, limit: 5 });
-      const list = Array.isArray(r) ? r : (r?.data || []);
-      if (!list.length) return null;
-      const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-      const targetN = norm(q);
-      // Score by: exact match > startsWith > includes > first
-      const scored = list.map(d => {
-        const candidate = norm(d.brandName || d.genericName || d.name);
-        if (candidate === targetN) return { d, s: 100 };
-        if (candidate.startsWith(targetN) || targetN.startsWith(candidate)) return { d, s: 80 };
-        if (candidate.includes(targetN) || targetN.includes(candidate)) return { d, s: 60 };
-        return { d, s: 0 };
-      }).sort((a, b) => b.s - a.s);
-      return scored[0]?.d || list[0];
+      // Shot 1 — original query
+      let r = await listDrugs({ q, limit: 8 });
+      let list = Array.isArray(r) ? r : (r?.data || []);
+      if (list.length) {
+        const scored = scoreList(list);
+        if (scored[0]?.s >= 60) return scored[0].d;
+      }
+      // Shot 2 — parens-stripped fallback (covers SKUs stored without
+      // punctuation when the Rx text carries it, or vice versa).
+      const qClean = stripPunctuation(q);
+      if (qClean && qClean !== q) {
+        r = await listDrugs({ q: qClean, limit: 8 });
+        list = Array.isArray(r) ? r : (r?.data || []);
+        if (list.length) {
+          const scored = scoreList(list);
+          if (scored[0]?.s >= 60) return scored[0].d;
+          return scored[0]?.d || list[0];
+        }
+      }
+      // Final fallback — first hit from whatever shot 1 produced
+      return list[0] || null;
     } catch (_) { return null; }
   };
 
@@ -3494,6 +4750,15 @@ function OPDRxTab() {
       status: "matching", note: "",
     })));
     setDaPaymentMode("Cash");
+    // R7hp-2 — reset payment-mode metadata so a previous sale's card
+    // last-4 / UPI ref doesn't bleed onto the next bill.
+    setDaCardLast4("");
+    setDaCardHolder("");
+    setDaUpiTxnRef("");
+    setDaSplits([
+      { mode: "Cash", amount: "", txnRef: "" },
+      { mode: "Card", amount: "", txnRef: "" },
+    ]);
     setDaOpen(true);
     setDaPreparing(true);
 
@@ -3545,12 +4810,33 @@ function OPDRxTab() {
 
   const submitDispenseAll = async () => {
     if (daSellable.length === 0) { toast.warn("Nothing to dispense — every row is skipped"); return; }
+    // R7hr-12-S2 (D9-07): Synchronous re-entry guard. Without this a fast
+    // double-tap on the Dispense-All button creates two identical multi-item
+    // sales — each consuming FEFO stock for every line.
+    if (daSubmitMutexRef.current) return;
+    daSubmitMutexRef.current = true;
     const visit = daVisit || {};
     const docName = visit.consultantName ||
       (visit.doctorId?.personalInfo
         ? `Dr. ${visit.doctorId.personalInfo.firstName || ""} ${visit.doctorId.personalInfo.lastName || ""}`.trim()
         : "");
     const rxRef = visit.visitNumber || "";
+    // R7hp-2 — assemble structured paymentDetails per selected mode.
+    // Backend whitelist drops anything off-shape, but we ship only
+    // the fields that the mode actually uses so we don't pollute the
+    // sale doc with empty Card last-4 on a UPI sale.
+    const paymentDetails =
+        daPaymentMode === "Card"  ? { cardLast4: daCardLast4.trim().slice(0,4), cardHolderName: daCardHolder.trim() }
+      : daPaymentMode === "UPI"   ? { upiTxnRef: daUpiTxnRef.trim() }
+      : daPaymentMode === "Mixed" ? { splits: daSplits.filter(s => Number(s.amount) > 0).map(s => ({
+          mode: s.mode, amount: Number(s.amount) || 0, txnRef: s.txnRef.trim(),
+        })) }
+      : undefined; // Cash / Credit have no extra fields
+    // R7hp-1 — pharmacist counter identity. Pull from session so the
+    // bill footer's COUNTER cell renders the actual cashier name.
+    let counter = "";
+    try { counter = (JSON.parse(sessionStorage.getItem("his_user") || "{}")?.fullName) || ""; } catch {}
+
     setDaSaving(true);
     try {
       const r = await dispense({
@@ -3563,6 +4849,8 @@ function OPDRxTab() {
         prescriptionRef: rxRef,
         saleType:        "OPD",
         paymentMode:     daPaymentMode,
+        paymentDetails,
+        counter,
         items: daSellable.map(it => ({
           drugId:          it.drug._id,
           drugName:        it.drug.brandName || it.drug.genericName || it.drug.name,
@@ -3581,6 +4869,53 @@ function OPDRxTab() {
       });
       const billNo = r?.data?.billNumber || r?.data?.data?.billNumber || "";
       toast.success(`Dispensed ${daSellable.length} item${daSellable.length === 1 ? "" : "s"} — Bill ${billNo}`);
+
+      // R7hp-3 — auto-open the Pharmacy Bill print right after a
+      // successful Dispense All save. Mirrors the existing line-1094
+      // print trigger from the cart-based New Sale flow. Pharmacy
+      // settings load through the same cached helper so the bill
+      // shell paints with the right header/footer (hospital vs
+      // outsourced pharmacy identity).
+      try {
+        const saleDoc = r?.data?.data || r?.data || {};
+        const phSet = getCachedPhSettingsSync();  // R7hr-17: sync read — preserves user-activation for window.open
+        openPrint("pharmacy-bill", {
+          ...saleDoc,
+          template:         1, /* R7hr-46: locked to Classic Modern */
+          defaultPaper:     phSet?.defaultPaper || "half-a4",
+          pharmacySettings: phSet,
+          billLabel:        "Pharmacy Bill",
+          customerGstin:    saleDoc.customerGstin     || null,
+          customerLegalName:saleDoc.customerLegalName || null,
+          customerAddress:  saleDoc.customerAddress   || null,
+          customerState:    saleDoc.customerState     || null,
+          placeOfSupply:    saleDoc.placeOfSupply     || null,
+          saleType:         saleDoc.saleType          || "OPD",
+          printAudit: {
+            entityType:   "PharmacyBill",
+            entityId:     saleDoc._id,
+            entityNumber: saleDoc.billNumber,
+            UHID:         saleDoc.patientUHID || saleDoc.UHID,
+            patientName:  saleDoc.patientName,
+          },
+        });
+      } catch (printErr) {
+        // Don't let a print-window failure mask the successful sale.
+        console.warn("[Dispense All] print failed:", printErr);
+      }
+
+      // R7hp-4 — mark this visit as dispensed so the warning banner
+      // surfaces if a family member walks back in and the pharmacist
+      // re-loads the same UHID without a hard refresh.
+      if (rxRef) {
+        setDaDispenseStatus(prev => ({ ...prev, [rxRef]: {
+          dispensed: true,
+          billNumber: billNo,
+          when: new Date().toISOString(),
+          by: counter || "Pharmacist",
+        }}));
+      }
+
       setDaOpen(false);
       setDaVisit(null);
       setDaItems([]);
@@ -3588,6 +4923,10 @@ function OPDRxTab() {
       const msg = e?.response?.data?.message || e.message || "Dispense failed";
       toast.error(msg);
     } finally {
+      // R7hr-12-S2 (D9-07): release mutex AFTER the network round trip so an
+      // in-flight POST can't be duplicated by a second click before its
+      // response arrives.
+      daSubmitMutexRef.current = false;
       setDaSaving(false);
     }
   };
@@ -3734,6 +5073,8 @@ function OPDRxTab() {
           ? `Dr. ${v.doctorId.personalInfo.firstName || ""} ${v.doctorId.personalInfo.lastName || ""}`.trim()
           : "—");
         const deptName = v.departmentId?.departmentName || v.department || "—";
+        // R7hp-4 — already-dispensed lookup for this visit's prescription.
+        const dispenseInfo = daDispenseStatus[v.visitNumber] || null;
         const dxParts = [
           v.provisionalDiagnosis && `Provisional: ${v.provisionalDiagnosis}`,
           v.workingDiagnosis     && `Working: ${v.workingDiagnosis}`,
@@ -3765,18 +5106,50 @@ function OPDRxTab() {
                     textTransform: "uppercase", letterSpacing: ".4px",
                   }}>{v.status}</span>
                 )}
+                {/* R7hp-4 — Already-dispensed pill */}
+                {dispenseInfo && (
+                  <span style={{
+                    padding: "2px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700,
+                    background: "#fef3c7", color: "#92400e",
+                    border: "1px solid #fcd34d",
+                    textTransform: "uppercase", letterSpacing: ".4px",
+                  }} title={`Bill ${dispenseInfo.billNumber} · ${dispenseInfo.when ? new Date(dispenseInfo.when).toLocaleString("en-IN") : ""} · by ${dispenseInfo.by}`}>
+                    ⚠ Already dispensed
+                  </span>
+                )}
                 {meds.length > 0 && (
                   <button
-                    onClick={() => openDispenseAll(v)}
+                    onClick={() => {
+                      // R7hp-4 — block accidental re-dispense; confirm if family
+                      // member walks in or pharmacist re-clicks by mistake.
+                      if (dispenseInfo) {
+                        const when = dispenseInfo.when ? new Date(dispenseInfo.when).toLocaleString("en-IN", {
+                          day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+                        }) : "earlier";
+                        const ok = window.confirm(
+                          `⚠ This prescription was already dispensed on ${when}\n` +
+                          `(Bill ${dispenseInfo.billNumber}, by ${dispenseInfo.by}).\n\n` +
+                          `Dispensing again will create a second sale and consume stock again.\n\n` +
+                          `Continue only if the patient genuinely needs a re-fill (lost medicines, family pickup, etc.).\n\n` +
+                          `Proceed with re-dispense?`
+                        );
+                        if (!ok) return;
+                      }
+                      openDispenseAll(v);
+                    }}
                     style={{
-                      padding: "5px 14px", background: C.orange, color: "#fff", border: "none",
+                      padding: "5px 14px",
+                      background: dispenseInfo ? "#94a3b8" : C.orange,
+                      color: "#fff", border: "none",
                       borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: "pointer",
                       boxShadow: "0 1px 3px rgba(234,88,12,.3)",
                     }}
-                    title="Auto-match all prescribed medicines against inventory, cap quantities at stock, and confirm in one shot"
+                    title={dispenseInfo
+                      ? `Already dispensed via ${dispenseInfo.billNumber} — re-dispense will require confirmation`
+                      : "Auto-match all prescribed medicines against inventory, cap quantities at stock, and confirm in one shot"}
                   >
                     <i className="pi pi-bolt" style={{ marginRight: 5, fontSize: 11 }} />
-                    Dispense All ({meds.length})
+                    {dispenseInfo ? `Re-dispense (${meds.length})` : `Dispense All (${meds.length})`}
                   </button>
                 )}
               </div>
@@ -3806,6 +5179,19 @@ function OPDRxTab() {
             {meds.length === 0 ? (
               <div style={{ padding: 18, textAlign: "center", color: C.muted, fontSize: 12, fontStyle: "italic" }}>
                 No medicines prescribed in this visit.
+                {/* R7hr-14: even when no Rx is on file the pharmacist may
+                    still need to sell a walk-in extra (e.g. patient came
+                    in for a consultation only but now asks for paracetamol
+                    on the way out). Surface the same affordance here. */}
+                <div style={{ marginTop: 10 }}>
+                  <button onClick={() => openWalkInExtra(v)} style={{
+                    padding: "6px 14px", background: "#fff", color: "#059669", border: "1.5px solid #a7f3d0",
+                    borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                  }}>
+                    <i className="pi pi-plus-circle" style={{ marginRight: 5, fontSize: 11 }} />
+                    Add walk-in item
+                  </button>
+                </div>
               </div>
             ) : (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -3853,6 +5239,34 @@ function OPDRxTab() {
               </table>
             )}
 
+            {/* R7hr-14: Walk-in extras strip — patient asks for items
+                beyond the doctor's Rx (extra tablet, injection, surgical
+                consumable, ORS, etc.). One click opens the standard
+                quick-dispense modal with no Rx context; the pharmacist
+                picks any drug + qty + payment mode and the sale is
+                attached to THIS visit (so the patient bill aggregates
+                cleanly) but flagged as a walk-in extra in the audit
+                trail (medicineRef stays empty). */}
+            {meds.length > 0 && (
+              <div style={{
+                padding: "8px 14px", background: "#f0fdf4", borderTop: `1px dashed ${C.border}`,
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                fontSize: 11, color: "#065f46",
+              }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <i className="pi pi-info-circle" style={{ fontSize: 11, color: "#059669" }} />
+                  Patient asking for extras (tablet / injection / surgical / consumable)? Add here — same bill, FEFO batch, audit-tracked.
+                </span>
+                <button onClick={() => openWalkInExtra(v)} style={{
+                  padding: "5px 12px", background: "#059669", color: "#fff", border: "none",
+                  borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                }}>
+                  <i className="pi pi-plus-circle" style={{ marginRight: 4, fontSize: 10 }} />
+                  Add walk-in item
+                </button>
+              </div>
+            )}
+
             {v.advice && (
               <div style={{ padding: "10px 14px", background: "#fffbeb", borderTop: `1px solid ${C.border}`, fontSize: 11, color: "#a16207" }}>
                 <strong>Advice: </strong>{v.advice}
@@ -3885,12 +5299,30 @@ function OPDRxTab() {
             {/* Doctor's prescription block — reminds the pharmacist what's
                 being sold so they can sanity-check qty (e.g. 5 days × TDS
                 = 15 tabs, not 5). */}
-            <div style={{ background: "#fff7ed", border: `1px solid #fed7aa`, borderRadius: 8, padding: "8px 12px", fontSize: 11.5, color: C.text, marginBottom: 14 }}>
-              <div><strong>{qdMed?.medicineName}</strong></div>
-              <div style={{ color: C.muted, marginTop: 2 }}>
-                {[qdMed?.dosage, qdMed?.frequency, qdMed?.duration, qdMed?.mealStatus].filter(Boolean).join(" · ")}
-              </div>
-              {qdMed?.instructions && <div style={{ color: C.muted, marginTop: 2, fontStyle: "italic" }}>{qdMed.instructions}</div>}
+            <div style={{ background: qdMed?._walkIn ? "#ecfdf5" : "#fff7ed", border: `1px solid ${qdMed?._walkIn ? "#a7f3d0" : "#fed7aa"}`, borderRadius: 8, padding: "8px 12px", fontSize: 11.5, color: C.text, marginBottom: 14 }}>
+              {/* R7hr-14: when launched from "Add walk-in item" the modal
+                  has no prescribed medicine context, so swap the orange
+                  Rx-context card for a green "Walk-in extra" affordance
+                  that explains why nothing is preselected. */}
+              {qdMed?._walkIn ? (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <i className="pi pi-plus-circle" style={{ color: "#059669", fontSize: 13 }} />
+                    <strong style={{ color: "#065f46" }}>Walk-in extra item</strong>
+                  </div>
+                  <div style={{ color: C.muted, marginTop: 2, fontSize: 11 }}>
+                    Patient-requested add-on — not on the doctor's Rx. Pick any drug, surgical, or consumable below.
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div><strong>{qdMed?.medicineName}</strong></div>
+                  <div style={{ color: C.muted, marginTop: 2 }}>
+                    {[qdMed?.dosage, qdMed?.frequency, qdMed?.duration, qdMed?.mealStatus].filter(Boolean).join(" · ")}
+                  </div>
+                  {qdMed?.instructions && <div style={{ color: C.muted, marginTop: 2, fontStyle: "italic" }}>{qdMed.instructions}</div>}
+                </>
+              )}
             </div>
 
             {/* Inventory drug picker */}
@@ -4155,29 +5587,30 @@ function OPDRxTab() {
             {/* Footer */}
             <div style={{
               padding: "14px 22px", borderTop: `1px solid ${C.border}`, background: "#f8fafc",
-              display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap",
+              display: "flex", flexDirection: "column", gap: 10,
             }}>
-              <div style={{ display: "flex", gap: 24, alignItems: "center", fontSize: 12 }}>
-                <div>
-                  <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>Items</div>
-                  <div style={{ color: C.text, fontWeight: 800, fontSize: 15, marginTop: 1 }}>
-                    {daSellable.length}<span style={{ color: C.muted, fontSize: 11, fontWeight: 600 }}> / {daItems.length}</span>
-                    {daSkipped > 0 && <span style={{ marginLeft: 8, fontSize: 10.5, color: C.amber, fontWeight: 700 }}>({daSkipped} skipped)</span>}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 24, alignItems: "center", fontSize: 12 }}>
+                  <div>
+                    <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>Items</div>
+                    <div style={{ color: C.text, fontWeight: 800, fontSize: 15, marginTop: 1 }}>
+                      {daSellable.length}<span style={{ color: C.muted, fontSize: 11, fontWeight: 600 }}> / {daItems.length}</span>
+                      {daSkipped > 0 && <span style={{ marginLeft: 8, fontSize: 10.5, color: C.amber, fontWeight: 700 }}>({daSkipped} skipped)</span>}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>Total</div>
+                    <div style={{ color: C.orange, fontWeight: 800, fontSize: 17, marginTop: 1 }}>{fmtINR(daTotal)}</div>
+                  </div>
+                  <div>
+                    <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase", marginBottom: 3 }}>Payment</div>
+                    <select className="his-select" value={daPaymentMode} onChange={(e) => setDaPaymentMode(e.target.value)}
+                      style={{ fontSize: 12, padding: "5px 8px", minWidth: 100 }}>
+                      {["Cash","Card","UPI","Mixed","Credit"].map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
                   </div>
                 </div>
-                <div>
-                  <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>Total</div>
-                  <div style={{ color: C.orange, fontWeight: 800, fontSize: 17, marginTop: 1 }}>{fmtINR(daTotal)}</div>
-                </div>
-                <div>
-                  <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: "uppercase", marginBottom: 3 }}>Payment</div>
-                  <select className="his-select" value={daPaymentMode} onChange={(e) => setDaPaymentMode(e.target.value)}
-                    style={{ fontSize: 12, padding: "5px 8px", minWidth: 100 }}>
-                    {(PAYMENT_MODES || ["Cash", "Card", "UPI"]).map((m) => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ display: "flex", gap: 10 }}>
                 <button onClick={() => !daSaving && setDaOpen(false)} disabled={daSaving} style={{
                   padding: "9px 18px", background: "#fff", color: C.muted, border: `1.5px solid ${C.border}`,
                   borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: daSaving ? "not-allowed" : "pointer",
@@ -4192,7 +5625,86 @@ function OPDRxTab() {
                   <i className={`pi ${daSaving ? "pi-spin pi-spinner" : "pi-check-circle"}`} style={{ marginRight: 6 }} />
                   {daSaving ? "Dispensing…" : `Confirm & Sell ${daSellable.length} item${daSellable.length === 1 ? "" : "s"}`}
                 </button>
+                </div>
               </div>
+
+              {/* R7hp-2 — conditional payment-mode detail fields. Card →
+                  last-4 + cardholder. UPI → txn ref. Mixed → split
+                  rows. Collapses when paymentMode is Cash/Credit so the
+                  modal footer stays compact. */}
+              {daPaymentMode === "Card" && (
+                <div style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 11, flexWrap: "wrap" }}>
+                  <div style={{ color: C.muted, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Card</div>
+                  <input
+                    placeholder="Last 4 digits"
+                    value={daCardLast4}
+                    onChange={e => setDaCardLast4(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
+                    maxLength={4}
+                    style={{ width: 110, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, fontFamily: "'DM Mono', monospace" }}
+                  />
+                  <input
+                    placeholder="Cardholder name (optional)"
+                    value={daCardHolder}
+                    onChange={e => setDaCardHolder(e.target.value.slice(0, 80))}
+                    style={{ flex: 1, minWidth: 180, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}
+                  />
+                </div>
+              )}
+              {daPaymentMode === "UPI" && (
+                <div style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 11 }}>
+                  <div style={{ color: C.muted, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>UPI</div>
+                  <input
+                    placeholder="Transaction reference (UTR / VPA / PSP ref)"
+                    value={daUpiTxnRef}
+                    onChange={e => setDaUpiTxnRef(e.target.value.slice(0, 64))}
+                    style={{ flex: 1, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, fontFamily: "'DM Mono', monospace" }}
+                  />
+                </div>
+              )}
+              {daPaymentMode === "Mixed" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 11 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ color: C.muted, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Split payment {(() => {
+                        const sum = daSplits.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+                        const diff = daTotal - sum;
+                        return Math.abs(diff) < 0.01
+                          ? <span style={{ color: "#15803d", marginLeft: 6 }}>· balanced</span>
+                          : <span style={{ color: diff > 0 ? "#a16207" : "#b91c1c", marginLeft: 6 }}>· {diff > 0 ? `short ${fmtINR(diff)}` : `over ${fmtINR(-diff)}`}</span>;
+                      })()}
+                    </div>
+                    <button onClick={() => setDaSplits(prev => [...prev, { mode: "Cash", amount: "", txnRef: "" }])}
+                      style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.muted, padding: "2px 8px", borderRadius: 6, fontSize: 10.5, cursor: "pointer", fontWeight: 600 }}>
+                      + Add row
+                    </button>
+                  </div>
+                  {daSplits.map((s, i) => (
+                    <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <select value={s.mode}
+                        onChange={e => setDaSplits(prev => prev.map((x, j) => j === i ? { ...x, mode: e.target.value } : x))}
+                        style={{ width: 90, padding: "6px 8px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}>
+                        {["Cash","Card","UPI"].map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                      <input
+                        type="number" placeholder="Amount"
+                        value={s.amount}
+                        onChange={e => setDaSplits(prev => prev.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
+                        style={{ width: 100, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, fontFamily: "'DM Mono', monospace", textAlign: "right" }}
+                      />
+                      <input
+                        placeholder={s.mode === "Card" ? "Last 4 / ref" : s.mode === "UPI" ? "Txn ref" : "Notes (optional)"}
+                        value={s.txnRef}
+                        onChange={e => setDaSplits(prev => prev.map((x, j) => j === i ? { ...x, txnRef: e.target.value.slice(0, 64) } : x))}
+                        style={{ flex: 1, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12 }}
+                      />
+                      {daSplits.length > 1 && (
+                        <button onClick={() => setDaSplits(prev => prev.filter((_, j) => j !== i))}
+                          style={{ width: 28, height: 28, border: `1px solid ${C.border}`, background: "#fff", color: "#dc2626", borderRadius: 6, fontSize: 14, cursor: "pointer", fontWeight: 700 }}>×</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -4209,12 +5721,63 @@ function OPDRxTab() {
    on the same outstanding > 0 condition, so this tab is the
    only place that credit can be cleared before discharge.
 ══════════════════════════════════════════════════════════════════ */
-function IPDCreditTab() {
+// R7hr-4 props:
+//   focus         — { admissionId, seed } pushed in by PharmacyHomePage
+//                   when the user clicked "Live Ledger" in the Live
+//                   Indents tab. Triggers an auto-open of the embedded
+//                   per-admission ledger view.
+//   onClearFocus  — called when the user clicks "Back to list" so the
+//                   parent's ledgerFocus state resets and re-clicking
+//                   the same admission opens it again.
+function IPDCreditTab({ focus, onClearFocus } = {}) {
   const [loading, setLoading]   = useState(false);
   const [rows, setRows]         = useState([]);
   const [summary, setSummary]   = useState({ admissions: 0, totalOutstanding: 0 });
+  // R7hr-10: list of ALL active IPD admissions (not just ones with
+  // pharmacy outstanding) — the pharmacist asked for "active
+  // admissions ki list". Click any row to open its embedded ledger.
+  const [activeAdms, setActiveAdms] = useState([]);
   const [openAdm, setOpenAdm]   = useState(null);  // selected admission detail blob
   const [openLoading, setOpenLoading] = useState(false);
+
+  // R7hr-4 — Selected admission for the embedded ledger view. When set,
+  // the tab swaps the table for <PharmacyLedgerPage embedded ...>.
+  // Distinct from `openAdm` (which drives the legacy per-bill drawer
+  // that's still wired below) so the two render paths don't fight.
+  const [ledgerAdm, setLedgerAdm] = useState(null); // { admissionId, seed } | null
+
+  // When the parent pushes a focus (Live Ledger click in Live Indents),
+  // hoist it into local ledger state so the same back/close lifecycle
+  // applies. We also pre-seed the rows fetch as usual.
+  useEffect(() => {
+    if (focus?.admissionId) {
+      setLedgerAdm({ admissionId: String(focus.admissionId), seed: focus.seed || null });
+    }
+  }, [focus]);
+
+  // R7hr-9: One-shot guard so the auto-open only fires the FIRST time
+  // the rows finish loading after the pill is clicked. After the user
+  // explicitly hits "Back to list" we set this to true so the list view
+  // is honoured until they pick a row themselves.
+  const [didAutoOpen, setDidAutoOpen] = useState(false);
+
+  // (auto-open useEffect lives BELOW the hist state declaration so it
+  //  can safely reference hist — declaring this above the hist state
+  //  triggered a TDZ "Cannot access 'hist' before initialization".)
+
+  // Resolve the seed for the embedded ledger from either the parent
+  // focus push OR the row the user clicked locally on the table.
+  const openLedger = (admissionId, seed) => {
+    setLedgerAdm({ admissionId: String(admissionId), seed: seed || null });
+  };
+  const closeLedger = () => {
+    setLedgerAdm(null);
+    // R7hr-9: mark "already auto-opened" so subsequent rows-state
+    // changes don't yank the user back into the embedded ledger
+    // after they explicitly hit "Back to list".
+    setDidAutoOpen(true);
+    if (typeof onClearFocus === "function") onClearFocus();
+  };
 
   // R7cv — Per-day history of all IPD credit sales (both outstanding +
   // already-paid). Pharmacist asked for "every IPD jisme pharmacy se
@@ -4224,6 +5787,11 @@ function IPDCreditTab() {
   const [histSummary, setHistSummary] = useState({ days: 0, bills: 0, totalDispensed: 0, totalCollected: 0, totalOutstanding: 0 });
   const [histDays, setHistDays]       = useState(30);                // window selector
   const [expandedDay, setExpandedDay] = useState(null);              // dateKey of the open day-card
+
+  // R7hr-10: auto-open removed — the pill now defaults to the active
+  // admissions LIST so the pharmacist can pick which patient to act
+  // on. The parent-pushed focus path (Live Indents → Live Ledger)
+  // still opens directly via the focus useEffect above.
 
   // Per-bill collection modal — open with `setCollect({sale, max})`.
   const [collect, setCollect] = useState(null);
@@ -4236,9 +5804,25 @@ function IPDCreditTab() {
   const load = async () => {
     setLoading(true);
     try {
-      const r = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/credit/ipd-admissions`);
-      setRows(r?.data?.data || []);
-      setSummary(r?.data?.summary || { admissions: 0, totalOutstanding: 0 });
+      // R7hr-10: fetch both the outstanding-pharmacy list (for KPIs +
+      // discharge gate) AND the full active-admissions list (for the
+      // picker the pharmacist actually clicks through). Active list
+      // gets filtered down to IPD admissions only — OPD visits live
+      // in the same collection but don't belong on this ledger.
+      const [credR, actR] = await Promise.all([
+        axios.get(`${API_ENDPOINTS.BASE}/pharmacy/credit/ipd-admissions`),
+        axios.get(`${API_ENDPOINTS.BASE}/admissions/active`).catch(() => null),
+      ]);
+      setRows(credR?.data?.data || []);
+      setSummary(credR?.data?.summary || { admissions: 0, totalOutstanding: 0 });
+      const allAct = Array.isArray(actR?.data) ? actR.data : (actR?.data?.data || []);
+      const ipdOnly = allAct.filter(a => {
+        const n = String(a.admissionNumber || "").toUpperCase();
+        // Keep rows that look like a real IPD admission. OPD/ER/DC
+        // visits create their own admission rows with non-IPD slugs.
+        return n.startsWith("IPD");
+      });
+      setActiveAdms(ipdOnly);
     } catch (e) {
       // R7cv: if the new credit route 404s, the backend likely needs
       // restart — make the message actionable instead of just relaying
@@ -4316,6 +5900,23 @@ function IPDCreditTab() {
     } finally { setColSaving(false); }
   };
 
+  // R7hr-4 — When an admission is selected, replace the entire tab body
+  // with the embedded pharmacist ledger (KPIs + day-wise meds + Collect +
+  // Take Advance + explicit "no hospital bill" notice). Keeps everything
+  // inside the same /pharmacy screen — no route change.
+  if (ledgerAdm) {
+    return (
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+        <PharmacyLedgerPage
+          embedded
+          admissionId={ledgerAdm.admissionId}
+          seedPatient={ledgerAdm.seed || undefined}
+          onBack={closeLedger}
+        />
+      </div>
+    );
+  }
+
   return (
     <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
       {/* Hero strip */}
@@ -4355,6 +5956,87 @@ function IPDCreditTab() {
       }}>
         <i className="pi pi-lock" style={{ fontSize: 12 }} />
         <span><strong>Discharge gate active.</strong> Until every row below shows ₹0 outstanding, the receptionist cannot clear the patient's final bill — they'll see a 409 with a deep-link to this tab.</span>
+      </div>
+
+      {/* R7hr-10: Active admissions picker. Lists EVERY active IPD
+          admission (regardless of pharmacy outstanding) so the
+          pharmacist can drill into any patient's ledger to take
+          advance, collect, or re-print the interim/final bill. */}
+      <div style={{ marginBottom: 18 }}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, marginBottom: 8,
+          fontSize: 13, fontWeight: 800, color: C.text,
+        }}>
+          <i className="pi pi-users" style={{ color: C.orange }} />
+          Active IPD Admissions
+          <span style={{
+            background: "#f1f5f9", color: C.muted, fontSize: 10.5,
+            padding: "1px 8px", borderRadius: 10, fontWeight: 700,
+          }}>{activeAdms.length}</span>
+        </div>
+        {activeAdms.length === 0 ? (
+          <div style={{ padding: 20, textAlign: "center", background: "#f8fafc", border: `1px dashed ${C.border}`, borderRadius: 8, color: C.muted, fontSize: 12 }}>
+            No active IPD admissions right now.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
+            {activeAdms.map(a => {
+              // Map credit-summary row by admissionId so we can show
+              // outstanding ₹X right on the picker card.
+              const credit = rows.find(r => String(r.admissionId) === String(a._id));
+              const outstanding = credit ? Number(credit.outstanding || 0) : 0;
+              return (
+                <button key={a._id} onClick={() => openLedger(a._id, {
+                  UHID:            a.UHID || "",
+                  patientName:     a.patientName || a.fullName || "",
+                  admissionNumber: a.admissionNumber || "",
+                  bed:             [a.bedNumber, a.wardName].filter(Boolean).join(" · "),
+                  consultant:      a.attendingDoctor || a.doctorName || "",
+                })} style={{
+                  textAlign: "left", background: "#fff",
+                  border: `1px solid ${outstanding > 0 ? "#fde68a" : C.border}`,
+                  borderLeft: `4px solid ${outstanding > 0 ? "#f59e0b" : C.orange}`,
+                  borderRadius: 10, padding: "10px 12px", cursor: "pointer",
+                  display: "flex", flexDirection: "column", gap: 4,
+                  transition: "transform 0.08s, box-shadow 0.08s",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,.08)"; }}
+                onMouseLeave={e => { e.currentTarget.style.boxShadow = "none"; }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>
+                      {a.patientName || a.fullName || "—"}
+                    </span>
+                    <span style={{ fontSize: 9.5, color: C.muted, fontFamily: "'DM Mono', monospace" }}>
+                      {a.UHID || ""}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.muted, fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>
+                    {a.admissionNumber}
+                    {a.bedNumber && <span style={{ color: C.text, fontWeight: 500 }}> · {a.bedNumber}</span>}
+                    {a.wardName && <span style={{ color: C.muted, fontWeight: 500 }}> · {a.wardName}</span>}
+                  </div>
+                  {(a.attendingDoctor || a.doctorName) && (
+                    <div style={{ fontSize: 11, color: C.muted }}>
+                      <i className="pi pi-user-edit" style={{ marginRight: 4, fontSize: 9 }} />
+                      {a.attendingDoctor || a.doctorName}
+                    </div>
+                  )}
+                  {outstanding > 0 && (
+                    <div style={{
+                      marginTop: 2, fontSize: 10.5, fontWeight: 800,
+                      color: "#b45309", background: "#fffbeb",
+                      border: "1px solid #fde68a", borderRadius: 4,
+                      padding: "1px 6px", alignSelf: "flex-start",
+                    }}>
+                      ⚠ Outstanding {fmtINR(outstanding)}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {loading && rows.length === 0 ? (
@@ -4403,12 +6085,23 @@ function IPDCreditTab() {
                   {fmtINR(r.outstanding)}
                 </td>
                 <td style={{ padding: "8px 12px", textAlign: "right" }}>
-                  <button onClick={() => openAdmission(r)} style={{
+                  {/* R7hr-4 — Open in the embedded ledger view (KPI strip
+                      + day-wise meds + Collect + Take Advance). Was the
+                      per-bill drawer (openAdmission). The drawer is
+                      retained as a fallback for older code paths but no
+                      longer the default entry. */}
+                  <button onClick={() => openLedger(r.admissionId, {
+                    UHID:            r.UHID || "",
+                    patientName:     r.patientFullName || "",
+                    admissionNumber: r.admissionNumber || "",
+                    bed:             [r.bedNumber, r.wardName].filter(Boolean).join(" · "),
+                    consultant:      r.consultantName || "",
+                  })} style={{
                     padding: "5px 12px", background: C.orange, color: "#fff", border: "none",
                     borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
                   }}>
                     <i className="pi pi-arrow-right" style={{ marginRight: 4, fontSize: 10 }} />
-                    Collect
+                    Open Ledger
                   </button>
                 </td>
               </tr>

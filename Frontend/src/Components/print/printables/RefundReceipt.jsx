@@ -103,7 +103,12 @@ const RefundReceipt = ({ settings = {}, receipt = {} }) => {
       </table>
 
       <div className="pr-amount-words" style={{ fontStyle: "italic" }}>
-        Refunded an amount of (Rs.) {numberToIndianWords(amount)} only
+        {/* R7hr-12-S2 (D7-03): numberToIndianWords() already terminates
+            with " Only" (utils/printUtils.js L99) — the literal " only"
+            suffix double-stamped patient-facing receipts as
+            "Rupees X Only only". Drop the suffix and terminate with a
+            period, mirroring PharmacyBill's R7hr-7 Fix #5 pattern. */}
+        Refunded an amount of (Rs.) {numberToIndianWords(amount)}.
       </div>
 
       {/* Refund mode + UTR slip — required when refund is NEFT/IMPS so the

@@ -132,6 +132,32 @@ const createDoctorNote = async (data, doctorUserId) => {
   // for IPD admissions the frontend passes the admissionNumber as visitId.
   const finalIpdNo = resolvedIpdNo || resolvedAdmissionNumber || data.visitId || "N/A";
 
+  // R7hr-88 — ONE Initial Assessment per admission. The schema-level
+  // partial-unique indexes are the authoritative gate, but checking
+  // here first lets us return a friendly 409 with the existing IA's
+  // identity so the frontend can route the user straight to Amend
+  // rather than surfacing a raw duplicate-key error from Mongo.
+  if (noteType === "initial") {
+    const dupOr = [];
+    if (resolvedAdmissionId) dupOr.push({ admissionId: resolvedAdmissionId });
+    if (finalIpdNo && finalIpdNo !== "N/A") dupOr.push({ ipdNo: finalIpdNo });
+    if (dupOr.length) {
+      const existing = await DoctorNotes.findOne({
+        noteType: "initial",
+        $or: dupOr,
+      }).select("_id status signedByName signedAt").lean();
+      if (existing) {
+        const e = new Error(
+          "Initial Assessment already exists for this admission — use Amend instead.",
+        );
+        e.code = "DUPLICATE_INITIAL_ASSESSMENT";
+        e.statusCode = 409;
+        e.existing = existing;
+        throw e;
+      }
+    }
+  }
+
   const note = await DoctorNotes.create({
     patient: patRef || undefined,
     patientName: pName || "",
@@ -205,6 +231,25 @@ const createDoctorNote = async (data, doctorUserId) => {
       }).catch((e) => console.error("[doctorNotes] emitASA error:", e?.message));
     } catch (e) {
       console.error("[doctorNotes] ASA emit wiring failed:", e?.message);
+    }
+  }
+
+  // R7hr-96 + R7hr-97 — fan-out trio for create-and-sign-in-one-shot
+  // (the IA submit path that bypasses the separate sign step):
+  //   medRecon Continue rows → DoctorOrder Medication
+  //   meds[]                 → DoctorOrder Medication (courseDays/endDate from `duration`; blank = open-ended)
+  //   infusions[]            → DoctorOrder IV_Fluid (nurse Infusion Orders & Monitoring tab)
+  // All three idempotent on sourceRef so a later signDoctorNote won't
+  // double-create. No-op while the note is still draft — sign fires the
+  // fan-out in that case.
+  if (note && note.noteType === "initial" && note.status === "signed") {
+    try {
+      const fanOuts = require("./medReconFanOut");
+      fanOuts.fanOutMedReconToDoctorOrders(note).catch(e => console.error("[doctorNotes] medRecon fan-out error:", e?.message));
+      fanOuts.fanOutMedsToDoctorOrders(note).catch(e     => console.error("[doctorNotes] meds fan-out error:", e?.message));
+      fanOuts.fanOutInfusionsToDoctorOrders(note).catch(e=> console.error("[doctorNotes] infusion fan-out error:", e?.message));
+    } catch (e) {
+      console.error("[doctorNotes] IA fan-out wiring failed:", e?.message);
     }
   }
 
@@ -433,6 +478,31 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
   if (note.orders?.length && !note._ordersPushedToChart) {
     await TreatmentChart.addDoctorOrders(note);
     note._ordersPushedToChart = true; // transient — won't persist, but guards in-process dupes
+  }
+
+  // R7hr-96 + R7hr-97 — fan out IA payloads into standalone DoctorOrder
+  // rows so the MAR / Treatment Chart picks them up automatically:
+  //   1. Med Recon "Continue" rows           → DoctorOrder Medication
+  //   2. Prescription/Medications panel rows → DoctorOrder Medication
+  //      (with courseDays/endDate from `duration`; blank = open-ended,
+  //       i.e. no auto-discontinue — the doctor must Discontinue)
+  //   3. Infusion/IV Fluids panel rows       → DoctorOrder IV_Fluid
+  //      (lands in the nurse's Infusion Orders & Monitoring tab)
+  // All three are idempotent by sourceRef so re-sign/amend doesn't
+  // double-create. Failures are logged but never block the sign.
+  if (note.noteType === "initial") {
+    try {
+      const fanOuts = require("./medReconFanOut");
+      const { logErr } = require("../../utils/logErr");
+      const summary = {};
+      try { summary.medRecon  = await fanOuts.fanOutMedReconToDoctorOrders(note); } catch (e) { logErr("medReconFanOut", `note ${note._id}`)(e); }
+      try { summary.meds      = await fanOuts.fanOutMedsToDoctorOrders(note);     } catch (e) { logErr("iaMedsFanOut",  `note ${note._id}`)(e); }
+      try { summary.infusions = await fanOuts.fanOutInfusionsToDoctorOrders(note);} catch (e) { logErr("iaInfusionFanOut", `note ${note._id}`)(e); }
+      try { logErr("iaFanOut", `note ${note._id} ${JSON.stringify(summary)}`)(null); } catch (_) {}
+    } catch (err) {
+      const { logErr } = require("../../utils/logErr");
+      logErr("iaFanOut", `signDoctorNote fan-out failed for note ${note?._id}`)(err);
+    }
   }
 
   // FIX (audit P11-B5): auto-billing was only fired on create. Notes that
@@ -823,6 +893,161 @@ const updateDiagnosis = async (id, data, actor = {}) => {
 };
 
 // ─────────────────────────────────────────────────────────────
+// Amend a SIGNED (or already amended) note — NABH IMS.2 / MCI
+// Indian Medical Records Act 1956 §3. The original signedAt /
+// signedByName attestation is preserved; the mutation is captured
+// as an entry on note.amendments[] (who, when, why, before→after
+// per field), the whitelisted clinical fields are overlaid in
+// place, status flips to "amended", and a ClinicalAudit row is
+// emitted under DOCTOR_NOTE_AMENDED (7y retention floor).
+//
+// Concurrency: read-mutate-save is wrapped in retryVersionError so
+// a parallel diagnosis update / re-sign on the same note doesn't
+// 500 with a Mongoose VersionError.
+// ─────────────────────────────────────────────────────────────
+const amendDoctorNote = async (id, data, actorUser, req = null) => {
+  const reason  = String(data?.reason || "").trim();
+  const changes = Array.isArray(data?.changes) ? data.changes : [];
+
+  if (!reason || reason.length < 5) {
+    const err = new Error("Amendment reason is required (5-1000 chars)");
+    err.statusCode = 400;
+    err.code = "AMEND_REASON_REQUIRED";
+    throw err;
+  }
+  if (reason.length > 1000) {
+    const err = new Error("Amendment reason exceeds 1000 chars");
+    err.statusCode = 400;
+    err.code = "AMEND_REASON_TOO_LONG";
+    throw err;
+  }
+
+  // Pre-flight ownership / status check on a lean snapshot so we 4xx
+  // before the version-retry loop and don't burn retries on a known-bad
+  // request.
+  const before = await DoctorNotes.findById(id).lean();
+  if (!before) {
+    const err = new Error("Note not found");
+    err.statusCode = 404;
+    throw err;
+  }
+  if (before.status !== "signed" && before.status !== "amended") {
+    const err = new Error("Only signed (or already-amended) notes can be amended");
+    err.statusCode = 409;
+    err.code = "AMEND_REQUIRES_SIGNED_NOTE";
+    throw err;
+  }
+
+  const actorId   = actorUser?.id || actorUser?._id || null;
+  const actorRole = actorUser?.role || "";
+  const isAuthor  = before.doctor && actorId
+                    && String(before.doctor) === String(actorId);
+  if (!isAuthor && actorRole !== "Admin") {
+    const err = new Error("Only the original author or Admin can amend this note");
+    err.statusCode = 403;
+    err.code = "AMEND_NOT_OWNER";
+    throw err;
+  }
+
+  // Whitelist of clinical fields the amend body may overwrite. Anything
+  // outside this list is silently ignored — DO NOT widen without an
+  // explicit policy review (the attestation chain depends on it).
+  const ALLOWED_FIELDS = [
+    "provisionalDiagnosis",
+    "workingDiagnosis",
+    "finalDiagnosis",
+    "icd10Code",
+    "icd10Description",
+    "patientStatus",
+    "soap",
+    "vitals",
+    "investigations",
+    "orders",
+    "noteDetails",
+    "tags",
+    "isCritical",
+  ];
+
+  const retryVE = require("../../utils/retryVersionError");
+  const prevStatus = before.status;
+
+  const note = await retryVE(async () => {
+    const doc = await DoctorNotes.findById(id);
+    if (!doc) {
+      const err = new Error("Note not found");
+      err.statusCode = 404;
+      throw err;
+    }
+    if (doc.status !== "signed" && doc.status !== "amended") {
+      const err = new Error("Only signed (or already-amended) notes can be amended");
+      err.statusCode = 409;
+      err.code = "AMEND_REQUIRES_SIGNED_NOTE";
+      throw err;
+    }
+
+    // Build the amendment entry from the JWT-resolved actor (NEVER from
+    // the request body — caller cannot impersonate another clinician).
+    const actorName = actorUser?.fullName
+      || [actorUser?.firstName, actorUser?.lastName].filter(Boolean).join(" ").trim()
+      || actorUser?.name
+      || "";
+    doc.amendments.push({
+      amendedAt:     new Date(),
+      amendedBy:     actorId || undefined,
+      amendedById:   actorUser?.employeeId || "",
+      amendedByName: actorName,
+      amendedByRole: actorRole,
+      reason,
+      changes: changes.map((c) => ({
+        field:    c?.field    || "",
+        oldValue: c?.oldValue,
+        newValue: c?.newValue,
+      })),
+    });
+
+    // Overlay the whitelisted clinical fields. We deliberately do NOT
+    // touch signedAt / signedByName / signedByReg / signedByEmpId /
+    // signature — the original attestation must survive the amendment.
+    ALLOWED_FIELDS.forEach((f) => {
+      if (data[f] !== undefined) doc[f] = data[f];
+    });
+
+    doc.status    = "amended";
+    doc.updatedBy = actorId || doc.updatedBy;
+    await doc.save();
+    return doc;
+  }, { label: "doctor-note-amend" });
+
+  // R7bn-1 / D9-fix: ClinicalAudit emit on amend (NABH IMS.2). The event
+  // is on the LONG_RETENTION_EVENTS list — 7y floor.
+  try {
+    const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+    emitClinicalAudit({
+      req,
+      event: "DOCTOR_NOTE_AMENDED",
+      UHID: note.patientUHID || note.UHID,
+      admissionId: note.admissionId,
+      patientId: note.patient,
+      patientName: note.patientName,
+      targetType: "DoctorNote",
+      targetId: note._id,
+      reason,
+      before: { status: prevStatus },
+      after: {
+        status: "amended",
+        reason,
+        changesCount: changes.length,
+        prevStatus,
+        newStatus: "amended",
+      },
+      actor: req ? undefined : { _id: actorId, fullName: actorUser?.fullName, role: actorRole },
+    });
+  } catch (_) { /* silent — audit emit is non-blocking */ }
+
+  return note;
+};
+
+// ─────────────────────────────────────────────────────────────
 // Delete draft note
 // ─────────────────────────────────────────────────────────────
 const deleteDoctorNote = async (id, doctorUserId, opts = {}) => {
@@ -887,5 +1112,6 @@ module.exports = {
   getNoteById,
   updateDoctorNote,
   updateDiagnosis,
+  amendDoctorNote,
   deleteDoctorNote,
 };

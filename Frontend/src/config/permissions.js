@@ -185,6 +185,9 @@ export const ACTIONS = {
   "indent.read":           ["Admin", "Nurse", "Doctor", "Pharmacist", "Receptionist"],
   "indent.fulfill":        ["Admin", "Pharmacist"],
   "indent.cancel":         ["Admin", "Nurse", "Pharmacist"],
+  // R7hr-12-S2 (D3-03): ward-stock-return endpoint mirror. Same tier as
+  // pharmacy.return — Admin + Pharmacist only.
+  "indent.return":         ["Admin", "Pharmacist"],
   "pharmacy.grn":          ["Admin", "Pharmacist"],
   "pharmacy.return":       ["Admin", "Pharmacist"],
   "pharmacy.add-items":    ["Admin", "Pharmacist"],

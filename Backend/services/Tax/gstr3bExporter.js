@@ -21,6 +21,15 @@
 const gstService = require("../Reports/gstService");
 const CreditNote = require("../../models/Billing/CreditNote");
 const { toNum } = require("../../utils/money");
+// R7hr-12 (D2-04): the underlying aggregateGSTForMonth (gstService) now
+// nets pharmacy refunds and supplements directly into its grossTotals via
+// $unionWith streams keyed on returns.refundedAt / supplements.addedAt.
+// We therefore do NOT subtract them again here — only the hospital
+// CreditNote stream (PatientBill refunds) is missing from gstService's
+// merge and still needs an explicit subtraction below. The end result
+// keeps GSTR-3B section 3.1 in lock-step with GSTR-1 cdnr + b2c/b2b/b2cl.
+// (No direct import of _bucketPharmacyReturnsAndSupplements is needed
+// — the netting happens inside aggregateGSTForMonth.)
 
 const HOSPITAL_GSTIN = process.env.HOSPITAL_GSTIN || "";
 const HOSPITAL_STATE_CODE = process.env.HOSPITAL_STATE_CODE || "29";
@@ -70,10 +79,19 @@ async function buildGSTR3BJSON(period) {
   const cnSgst = toNum(cn.sgst);
   const cnIgst = toNum(cn.igst);
 
+  // R7hr-12 (D2-04): pharmacy refunds (credit notes) and supplements
+  // (debit notes) used to be silently dropped from GSTR-3B because they
+  // live as embedded sub-docs on PharmacySale (returns[] / supplements[])
+  // and never reach the CreditNote collection. The fix lives upstream
+  // in gstService.aggregateGSTForMonth — that pipeline now $unionWith's
+  // PharmacySale.returns (negative-signed) and PharmacySale.supplements
+  // (positive-signed) so `grossTotals.taxableValue/cgst/sgst/igst` above
+  // ALREADY net them. The only remaining subtraction here is the
+  // hospital-bill CreditNote stream (which gstService doesn't touch).
   const netTaxable = Number((taxableValue - cnTaxable).toFixed(2));
-  const netCgst = Number((cgstOut - cnCgst).toFixed(2));
-  const netSgst = Number((sgstOut - cnSgst).toFixed(2));
-  const netIgst = Number((igstOut - cnIgst).toFixed(2));
+  const netCgst    = Number((cgstOut      - cnCgst   ).toFixed(2));
+  const netSgst    = Number((sgstOut      - cnSgst   ).toFixed(2));
+  const netIgst    = Number((igstOut      - cnIgst   ).toFixed(2));
 
   const json = {
     gstin: HOSPITAL_GSTIN,

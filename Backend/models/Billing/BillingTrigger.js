@@ -49,7 +49,7 @@ const BillingTriggerSchema = new mongoose.Schema({
   // tripping the schema enum validator.
   sourceType: {
     type: String,
-    enum: ["NurseNote","DoctorNote","DoctorAssessment","MAR","MAR_RESERVATION","InvestigationOrder",
+    enum: ["NurseNote","DoctorNote","DoctorAssessment","DoctorOrder","MAR","MAR_RESERVATION","InvestigationOrder",
            "Equipment","CarePlan","Discharge","Procedure","DoctorVisit","Manual","AutoCharge",
            "Admission","BedCharge","Emergency",
            // R7bj-F5 / R7bi-6-TBA-MED-1: support-staff kinds
@@ -234,12 +234,22 @@ BillingTriggerSchema.index({ admissionId: 1, sourceType: 1, createdAt: -1 });
 // The IPD ledger page hits this on every load to find stuck triggers.
 BillingTriggerSchema.index({ status: 1, createdAt: -1 });
 BillingTriggerSchema.index({ admissionId: 1, status: 1, createdAt: -1 });
+// R7hr-12-S3 / D10-09: compound index on (status, updatedAt) backs the
+// daily stuck-trigger sweeper in index.js (`status:"pending-review",
+// updatedAt:{ $lt: cutoff }` + the multi-status `$in` aggregate). Without
+// it the 01:00 IST cron falls back to {status,createdAt} for the equality
+// then in-memory filters on updatedAt; the multi-status aggregate is
+// near-collscan. At 1M+ rows that's 10-30s/run, blocking other writes.
+BillingTriggerSchema.index({ status: 1, updatedAt: 1 });
 // R7bf-J/A8-HIGH-1: compound index for IPDLedger's unfiltered audit-trail
 // read (no status, no sourceType — just admissionId + sort). Pre-R7bf
 // this fell back to the {admissionId,sourceType,createdAt} index which
 // scanned all sourceTypes per admission — fine at small scale but slow
 // at long-stay-ICU cardinalities (~1k+ triggers per admission).
 BillingTriggerSchema.index({ admissionId: 1, createdAt: -1 });
+
+// R7hr-83 — idempotency for DoctorOrder completion auto-bill.
+BillingTriggerSchema.index({ sourceType: 1, sourceRef: 1 }, { unique: true, partialFilterExpression: { sourceRef: { $type: 'objectId' } } });
 
 // R7bh-F3 / R7bg-1-CRIT-6: serialize Decimal128 money fields back to plain
 // JS Numbers on toJSON / toObject so the wire shape stays unchanged for

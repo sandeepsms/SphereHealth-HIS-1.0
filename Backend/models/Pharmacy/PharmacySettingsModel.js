@@ -46,6 +46,15 @@ const PharmacySettingsSchema = new mongoose.Schema(
     drugLicenseExp:  { type: Date,   default: null },
     fssaiNumber:     { type: String, default: "" },
 
+    // R7hr-12-S2 (D8-03): admin emergency override flag — when set true,
+    // the dispense() license-expiry gate is bypassed so a hospital with
+    // an expired drug license can still service medical emergencies while
+    // renewal is in flight. The override REQUIRES a documented reason
+    // (drugLicenseExpiryOverrideReason) and is audited via BillingAudit
+    // every time a sale leverages it. Default false — never silently on.
+    drugLicenseExpiryOverride:       { type: Boolean, default: false },
+    drugLicenseExpiryOverrideReason: { type: String,  default: "" },
+
     // Bank (printed on invoice footer for credit / pay-later customers)
     bankName:    { type: String, default: "" },
     bankAccount: { type: String, default: "" },

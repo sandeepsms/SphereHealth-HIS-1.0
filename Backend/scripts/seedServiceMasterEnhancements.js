@@ -216,6 +216,7 @@ const SAMPLE_SERVICES = [
       "infection",
     ],
     domain: "COMMON",
+    doctorOrderCategory: "Lab",
   },
   {
     serviceName: "Blood Urea & Creatinine",
@@ -863,6 +864,26 @@ async function enhanceExistingServices() {
   console.log(`  Updated ${updated} services with category-level defaults.`);
 }
 
+// ── R7hr-83 / Phase A5 — Doctor-Order category inference ──────
+// Heuristic map: ServiceMaster.serviceType → DoctorOrder enum value.
+// Used to stamp the SAMPLE_SERVICES rows at upsert time so the Phase B
+// autocomplete in the Doctor Order panel finds them.
+const SERVICE_TYPE_TO_DOCTOR_ORDER_CATEGORY = {
+  investigation: "Lab",
+  radiology: "Radiology",
+  procedure: "Procedure",
+  consultation: "Consultation",
+  nursing: "Nursing",
+};
+
+function inferDoctorOrderCategory(svc) {
+  if (svc.doctorOrderCategory) return svc.doctorOrderCategory;
+  // Special-case the autobill engine codes by serviceCode hints.
+  if (svc.serviceCode === "NRS-BLD") return "BloodTransfusion";
+  if (/OXYGEN|OXY-/i.test(svc.serviceName || svc.serviceCode || "")) return "Oxygen";
+  return SERVICE_TYPE_TO_DOCTOR_ORDER_CATEGORY[svc.serviceType] || null;
+}
+
 // ── Phase 2: Upsert sample services ──────────────────────────
 async function seedSampleServices() {
   console.log("\n[Phase 2] Upserting sample services...");
@@ -871,9 +892,16 @@ async function seedSampleServices() {
   let skipped = 0;
 
   for (const svcData of SAMPLE_SERVICES) {
+    const doctorOrderCategory = inferDoctorOrderCategory(svcData);
+    const payload = {
+      ...svcData,
+      ...(doctorOrderCategory ? { doctorOrderCategory } : {}),
+      isActive: true,
+    };
+
     const result = await ServiceMaster.updateOne(
       { serviceCode: svcData.serviceCode },
-      { $setOnInsert: { ...svcData, isActive: true } },
+      { $setOnInsert: payload },
       { upsert: true },
     );
 

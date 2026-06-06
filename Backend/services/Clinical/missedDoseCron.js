@@ -33,15 +33,23 @@
 const mongoose = require("mongoose");
 const { logErr } = require("../../utils/logErr");
 const { acquireLock, releaseLock } = require("../../utils/cronScheduler");
+// R7hr-12-S2 (D10-04): Replace server-local setHours(0,0,0,0) with the
+// canonical IST helper. On a UTC-deployed pod the previous helper made the
+// EOD missed-dose sweep fire 5h30m late (UTC 00:00 instead of IST 00:00).
+// istStartOfToday() anchors on Asia/Kolkata via Intl.DateTimeFormat +
+// explicit +05:30 offset, matching cronScheduler/autoBillingService and the
+// other ~12 call sites that already use this helper.
+const { istStartOfToday } = require("../../utils/queryGuards");
 
-/** Midnight of today in the server's local timezone (which the rest of
- * the codebase treats as IST on this deployment — the diag script in
- * Backend/scripts/diagStuckOrders.js uses the same `setHours(0,0,0,0)`
- * pattern so we stay consistent). */
+/** Midnight of today in the hospital timezone (IST). Delegates to the
+ * shared queryGuards helper so all crons share one source of truth and
+ * stay consistent on UTC-deployed containers. The previous local-time
+ * `setHours(0,0,0,0)` pattern is preserved in diagStuckOrders.js /
+ * doctorOrderRoutes.js — those producers should be migrated together in
+ * a follow-up so the producer/consumer boundary stays aligned. */
 function todayMidnight() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
+  // R7hr-12-S2 (D10-04): IST-anchored cutoff (was server-local before).
+  return istStartOfToday();
 }
 
 async function tickOnce() {

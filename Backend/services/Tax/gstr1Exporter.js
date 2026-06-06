@@ -502,7 +502,226 @@ async function _bucketCreditNotes(periodStart, periodEnd) {
     ) || HOSPITAL_STATE_CODE,
     customerGstin: c.customerGstin || "",
     reason: c.reason || "",
+    // R7hr-12: hospital-bill credit notes always carry credit-side semantics
+    // (the CreditNote collection has no debit-note path). Tag explicitly so
+    // the downstream cdnr consumer can distinguish from pharmacy debit notes.
+    noteType: "C",
   }));
+}
+
+// R7hr-12 (D2-04) — Pharmacy refunds + supplements are stored as embedded
+// sub-docs on PharmacySale (returns[].refundedItems[] and
+// supplements[].addedItems[]) and never create a CreditNote row, so the
+// pre-R7hr-12 GSTR-1 cdnr section was empty for the entire pharmacy stream.
+// Per GST §34 / Rule 53 every refund (credit note) and supplementary
+// invoice (debit note) must be filed as a SEPARATE document with its own
+// number/date — option (a) in the audit suggestedFix. We bucket both
+// sources here, key each row off the sub-doc's own timestamp
+// (refundedAt / addedAt) so cross-period refunds land in the correct GSTR-1
+// month, and tag each row noteType "C" (credit) / "D" (debit) so the
+// portal exporter and gstr3bExporter.js can net them correctly.
+async function _bucketPharmacyReturnsAndSupplements(periodStart, periodEnd) {
+  const rows = [];
+
+  // ── Returns / refunds → credit notes ──────────────────────────────
+  // Match on $unwound returns.refundedAt (sub-doc timestamp) so a refund
+  // issued in month M+1 against a sale created in M lands in M+1 (per
+  // §34, the CN month is the issuance month, NOT the original supply
+  // month — original supply stays where it was).
+  const returnsAgg = await PharmacySale.aggregate([
+    { $match: { "returns.0": { $exists: true } } },
+    { $unwind: "$returns" },
+    {
+      $match: {
+        "returns.refundedAt": { $gte: periodStart, $lt: periodEnd },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        invoiceNumber: 1,
+        saleId: "$_id",
+        saleCreatedAt: "$createdAt",
+        placeOfSupply: 1,
+        customerGstin: 1,
+        customerName: 1,
+        returnRecord: "$returns",
+      },
+    },
+  ]).option({ allowDiskUse: true, maxTimeMS: 30_000 });
+
+  for (const r of returnsAgg) {
+    const rec = r.returnRecord || {};
+    const refundedAt = rec.refundedAt || rec.createdAt || new Date();
+    const refundTaxable = toNum(rec.refundTaxable);
+    const refundGst = toNum(rec.refundGst);
+    const posRaw = (r.placeOfSupply && (r.placeOfSupply.state || r.placeOfSupply.stateCode || r.placeOfSupply))
+      || HOSPITAL_STATE_CODE;
+    let placeOfSupply;
+    let intraState;
+    try {
+      const decision = isIntraStateSupply(
+        HOSPITAL_STATE_CODE, posRaw,
+        { invoiceRef: rec.refundSlipNumber || r.invoiceNumber || String(r.saleId) },
+      );
+      intraState = decision.intraState;
+      placeOfSupply = decision.pos;
+    } catch (_e) {
+      // Legacy pharmacy sale missing placeOfSupply — fall back to hospital
+      // state (intra). The accountant can correct in the next regen.
+      intraState = true;
+      placeOfSupply = HOSPITAL_STATE_CODE;
+    }
+    // Per-item CGST/SGST/IGST split — sum across refundedItems[] so the
+    // CDNR row matches the original invoice's intra/inter-state nature.
+    let cgst = 0, sgst = 0, igst = 0;
+    for (const it of (rec.refundedItems || [])) {
+      const gstAmt = toNum(it.gstAmount);
+      // Refund line may carry its own split if a future writer adds it,
+      // otherwise derive from intra/inter.
+      const lineCgst = toNum(it.cgstAmount);
+      const lineSgst = toNum(it.sgstAmount);
+      const lineIgst = toNum(it.igstAmount);
+      if (lineCgst + lineSgst + lineIgst > 0) {
+        cgst += lineCgst;
+        sgst += lineSgst;
+        igst += lineIgst;
+      } else if (intraState) {
+        cgst += gstAmt / 2;
+        sgst += gstAmt / 2;
+      } else {
+        igst += gstAmt;
+      }
+    }
+    // Fall back to the aggregate refundGst if items[] didn't yield a split
+    // (legacy rows where refundedItems[] is sparse).
+    if (cgst + sgst + igst === 0 && refundGst > 0) {
+      if (intraState) {
+        cgst = refundGst / 2;
+        sgst = refundGst / 2;
+      } else {
+        igst = refundGst;
+      }
+    }
+    rows.push({
+      creditNoteNumber: rec.refundSlipNumber || `REF-${r.saleId}-${rec._id || ""}`,
+      creditNoteDate: new Date(refundedAt).toISOString().slice(0, 10),
+      originalInvoiceNumber: r.invoiceNumber || "",
+      originalInvoiceDate: r.saleCreatedAt
+        ? new Date(r.saleCreatedAt).toISOString().slice(0, 10)
+        : "",
+      taxableValue: Number(refundTaxable.toFixed(2)),
+      cgstAmount: Number(cgst.toFixed(2)),
+      sgstAmount: Number(sgst.toFixed(2)),
+      igstAmount: Number(igst.toFixed(2)),
+      cessAmount: 0,
+      placeOfSupply: normalizeGstStateCode(placeOfSupply) || HOSPITAL_STATE_CODE,
+      customerGstin: r.customerGstin || "",
+      reason: rec.reason || "Sales return",
+      // GSTR-1 CDNR schema: "C" = credit note, "D" = debit note.
+      noteType: "C",
+      // GSTN reason codes — 01 Sales return is the canonical fit.
+      reasonCode: "01",
+      source: "pharmacy",
+    });
+  }
+
+  // ── Supplements → debit notes ─────────────────────────────────────
+  // Per the auditor's refinement, supplements live ONLY in
+  // supplements[].addedItems[] — original items[] is NEVER mutated — so
+  // pre-R7hr-12 the added taxable value was MISSING from GSTR-1 entirely
+  // (not double-counted). Emit each supplement as a debit-note CDNR row.
+  const supplementsAgg = await PharmacySale.aggregate([
+    { $match: { "supplements.0": { $exists: true } } },
+    { $unwind: "$supplements" },
+    {
+      $match: {
+        "supplements.addedAt": { $gte: periodStart, $lt: periodEnd },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        invoiceNumber: 1,
+        saleId: "$_id",
+        saleCreatedAt: "$createdAt",
+        placeOfSupply: 1,
+        customerGstin: 1,
+        customerName: 1,
+        supplementRecord: "$supplements",
+      },
+    },
+  ]).option({ allowDiskUse: true, maxTimeMS: 30_000 });
+
+  for (const r of supplementsAgg) {
+    const rec = r.supplementRecord || {};
+    const addedAt = rec.addedAt || rec.createdAt || new Date();
+    const addedTaxable = toNum(rec.addedTaxable);
+    const addedGst = toNum(rec.addedGst);
+    const posRaw = (r.placeOfSupply && (r.placeOfSupply.state || r.placeOfSupply.stateCode || r.placeOfSupply))
+      || HOSPITAL_STATE_CODE;
+    let placeOfSupply;
+    let intraState;
+    try {
+      const decision = isIntraStateSupply(
+        HOSPITAL_STATE_CODE, posRaw,
+        { invoiceRef: rec.supplementSlipNumber || r.invoiceNumber || String(r.saleId) },
+      );
+      intraState = decision.intraState;
+      placeOfSupply = decision.pos;
+    } catch (_e) {
+      intraState = true;
+      placeOfSupply = HOSPITAL_STATE_CODE;
+    }
+    let cgst = 0, sgst = 0, igst = 0;
+    for (const it of (rec.addedItems || [])) {
+      const gstAmt = toNum(it.gstAmount);
+      const lineCgst = toNum(it.cgstAmount);
+      const lineSgst = toNum(it.sgstAmount);
+      const lineIgst = toNum(it.igstAmount);
+      if (lineCgst + lineSgst + lineIgst > 0) {
+        cgst += lineCgst;
+        sgst += lineSgst;
+        igst += lineIgst;
+      } else if (intraState) {
+        cgst += gstAmt / 2;
+        sgst += gstAmt / 2;
+      } else {
+        igst += gstAmt;
+      }
+    }
+    if (cgst + sgst + igst === 0 && addedGst > 0) {
+      if (intraState) {
+        cgst = addedGst / 2;
+        sgst = addedGst / 2;
+      } else {
+        igst = addedGst;
+      }
+    }
+    rows.push({
+      creditNoteNumber: rec.supplementSlipNumber || `SUP-${r.saleId}-${rec._id || ""}`,
+      creditNoteDate: new Date(addedAt).toISOString().slice(0, 10),
+      originalInvoiceNumber: r.invoiceNumber || "",
+      originalInvoiceDate: r.saleCreatedAt
+        ? new Date(r.saleCreatedAt).toISOString().slice(0, 10)
+        : "",
+      taxableValue: Number(addedTaxable.toFixed(2)),
+      cgstAmount: Number(cgst.toFixed(2)),
+      sgstAmount: Number(sgst.toFixed(2)),
+      igstAmount: Number(igst.toFixed(2)),
+      cessAmount: 0,
+      placeOfSupply: normalizeGstStateCode(placeOfSupply) || HOSPITAL_STATE_CODE,
+      customerGstin: r.customerGstin || "",
+      reason: rec.reason || "Supplementary invoice",
+      noteType: "D",
+      // 04 Correction in invoice is the canonical fit for a missed-item
+      // debit note; accountant can refine in the next regen.
+      reasonCode: "04",
+      source: "pharmacy",
+    });
+  }
+
+  return rows;
 }
 
 /**
@@ -525,7 +744,14 @@ async function buildGSTR1JSON(period) {
     hsnMap.set(key, { ...h });
   }
   const pharmacy = await _bucketPharmacySales(periodStart, periodEnd, hsnMap);
-  const cdnr = await _bucketCreditNotes(periodStart, periodEnd);
+  // R7hr-12 (D2-04): cdnr now combines hospital-bill CreditNotes with
+  // pharmacy refunds (credit notes) AND pharmacy supplements (debit notes).
+  // Pre-R7hr-12 the pharmacy stream was silently dropped from cdnr, so
+  // every monthly GSTR-1 over-stated outward supply by the refund total
+  // and under-stated by the supplement total.
+  const hospitalCNs = await _bucketCreditNotes(periodStart, periodEnd);
+  const pharmacyNotes = await _bucketPharmacyReturnsAndSupplements(periodStart, periodEnd);
+  const cdnr = [...hospitalCNs, ...pharmacyNotes];
 
   // Merge buckets across sources
   const b2b = [...hospital.b2b, ...pharmacy.b2b];
@@ -572,24 +798,31 @@ async function buildGSTR1JSON(period) {
     .sort((a, b) => a.hsnSac.localeCompare(b.hsnSac) || a.rate - b.rate);
 
   // Computed totals (across buckets) for fast review.
+  // R7hr-12 (D2-04): also net cdnr — credit notes ("C") reduce outward
+  // supply and debit notes ("D") increase it, so the summary reflects
+  // the same number the portal will compute after reconcile.
   const sumKey = (k) =>
     b2b.reduce((s, x) => s + (x.items || []).reduce((a, i) => a + (i[k] || 0), 0), 0) +
     b2cl.reduce((s, x) => s + (x.items || []).reduce((a, i) => a + (i[k] || 0), 0), 0) +
     b2c.reduce((s, x) => s + (x[k] || 0), 0);
+  const cdnrSign = (row) => (row.noteType === "D" ? 1 : -1);
+  const cdnrSumKey = (k) =>
+    cdnr.reduce((s, x) => s + cdnrSign(x) * (x[k] || 0), 0);
 
   const summary = _emptySummary();
-  summary.totalCgst = Number(sumKey("cgstAmount").toFixed(2));
-  summary.totalSgst = Number(sumKey("sgstAmount").toFixed(2));
-  summary.totalIgst = Number(sumKey("igstAmount").toFixed(2));
+  summary.totalCgst = Number((sumKey("cgstAmount") + cdnrSumKey("cgstAmount")).toFixed(2));
+  summary.totalSgst = Number((sumKey("sgstAmount") + cdnrSumKey("sgstAmount")).toFixed(2));
+  summary.totalIgst = Number((sumKey("igstAmount") + cdnrSumKey("igstAmount")).toFixed(2));
   summary.totalTaxable = Number(
     (
       b2b.reduce((s, x) => s + (x.items || []).reduce((a, i) => a + (i.taxableValue || 0), 0), 0) +
       b2cl.reduce((s, x) => s + (x.items || []).reduce((a, i) => a + (i.taxableValue || 0), 0), 0) +
-      b2c.reduce((s, x) => s + (x.taxableValue || 0), 0)
+      b2c.reduce((s, x) => s + (x.taxableValue || 0), 0) +
+      cdnrSumKey("taxableValue")
     ).toFixed(2),
   );
   summary.hsnCount = hsn.length;
-  summary.lineCount = b2b.length + b2cl.length + b2c.length;
+  summary.lineCount = b2b.length + b2cl.length + b2c.length + cdnr.length;
 
   return {
     // GSTN portal preamble
@@ -628,4 +861,7 @@ module.exports = {
   // keeps the two reports in lock-step).
   normalizeGstStateCode,
   isIntraStateSupply,
+  // R7hr-12 (D2-04) — exported so gstr3bExporter.js can reuse the same
+  // pharmacy CN/DN aggregation and keep the two reports in lock-step.
+  _bucketPharmacyReturnsAndSupplements,
 };

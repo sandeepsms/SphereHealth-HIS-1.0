@@ -10,7 +10,24 @@ class OPDController {
       const visit = await opdService.createOPDVisit(req.body);
       res.status(201).json({ success: true, message: "OPD visit created successfully", data: visit });
     } catch (error) {
-      res.status(400).json({ success: false, message: error.message });
+      // R7hr-47 / R7hr-51: surface structured rule errors so the reception
+      // UI can render a rich banner. PATIENT_ALREADY_IPD carries the admission
+      // number + ward; DOCTOR_NOT_AVAILABLE carries the doctor name +
+      // availability status so the receptionist sees exactly which doctor +
+      // why before re-picking.
+      const status = error.status || 400;
+      res.status(status).json({
+        success: false,
+        message: error.message,
+        code: error.code || null,
+        // R7hr-47 fields
+        admissionNumber: error.admissionNumber || null,
+        wardName: error.wardName || null,
+        // R7hr-51 fields
+        doctorName:           error.doctorName           || null,
+        availabilityStatus:   error.availabilityStatus   || null,
+        availabilityNote:     error.availabilityNote     || null,
+      });
     }
   }
 
@@ -115,7 +132,15 @@ class OPDController {
   async updateVitals(req, res) {
     try {
       const { nurseName, ...vitalsData } = req.body;
-      const visit = await opdService.updateVitals(req.params.visitNumber, vitalsData, nurseName);
+      // R7hf — pass JWT-verified actor so the auto-emitted NABH RBS
+      // register row is attributed to the verified nurse identity, not
+      // a client-supplied display name.
+      const actor = req.user ? {
+        _id: req.user._id || req.user.id,
+        name: req.user.fullName || req.user.username || nurseName || "Nurse",
+        role: req.user.role || "Nurse",
+      } : null;
+      const visit = await opdService.updateVitals(req.params.visitNumber, vitalsData, nurseName, actor);
       if (!visit) return res.status(404).json({ success: false, message: "Visit not found" });
       res.status(200).json({ success: true, message: "Vitals updated", data: visit });
     } catch (error) {

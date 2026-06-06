@@ -1,6 +1,11 @@
 const router   = require("express").Router();
 const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
 const User = require("../../models/User/userModel");
+// R7hr-83 Phase C — auto-bill on completion. Wired at every site that
+// transitions a DoctorOrder to status="Completed". The service is
+// idempotent (joinKey dedup) so re-fires are safe; the catch below
+// guarantees a billing failure never breaks the clinical save.
+const autoBillingService = require("../../services/Billing/autoBillingService");
 // R7m: Apply role-based action gates to every write route. Reads stay
 // open (any authenticated clinician can view orders). Writes are
 // scoped to the appropriate role per Backend/config/permissions.js.
@@ -11,6 +16,88 @@ const { requireAction, adminOnly } = require("../../middleware/auth");
 // runs first.
 const { credentialExpiryBlocker } = require("../../middleware/credentialExpiryBlocker");
 const { validateObjectIdParam } = require("../../utils/queryGuards");
+// R7hr-12-S? — per-verb permission resolver used by /doctor-action so
+// each action verb (stop/hold/resume/modify/substitute) can demand its
+// own fine-grained permission rather than sharing the route-level gate.
+const { roleCan } = require("../../config/permissions");
+
+/* ─────────────────────────────────────────────────────
+   R7hr-12-S? — Centralized status transition helper.
+   Pre-fix multiple route handlers mutated `status` via
+   findByIdAndUpdate / $set, bypassing the pre('save') hook
+   that enforces the ALLOWED_TRANSITIONS matrix (see
+   DoctorOrderModel.js). That meant a Stopped or Cancelled
+   order could be flipped back to Active via the wrong
+   route handler. Every state change MUST flow through
+   moveStatus() so the matrix + audit emit fire uniformly.
+
+   Caller passes a HYDRATED Mongoose doc (NOT a lean()
+   object). Reason / actor are persisted onto schema
+   fields when present; statusReason / statusChangedBy /
+   statusChangedAt are written through but silently
+   stripped by Mongoose strict-mode if absent from the
+   schema (sibling agent will add them in a follow-up).
+───────────────────────────────────────────────────── */
+async function moveStatus(orderDoc, nextStatus, { actor, reason, session } = {}) {
+  orderDoc.status = nextStatus;
+  if (reason) orderDoc.statusReason = reason;
+  if (actor)  orderDoc.statusChangedBy = actor;
+  orderDoc.statusChangedAt = new Date();
+  await orderDoc.save(session ? { session } : undefined);
+  try {
+    const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+    await emitClinicalAudit({
+      event: "STATUS_CHANGE",
+      targetType: "DoctorOrder",
+      targetId: orderDoc._id,
+      UHID: orderDoc.UHID,
+      admissionId: orderDoc.admissionId,
+      patientId: orderDoc.patientId,
+      actor: typeof actor === "object" ? actor : { _id: actor },
+      after: { status: nextStatus, reason },
+    });
+  } catch (e) { /* never let audit emit break the route */ }
+  return orderDoc;
+}
+
+/* ─────────────────────────────────────────────────────
+   R7hr-83 Phase C — auto-bill on completion.
+   Centralised wrapper called from every completion path
+   (PATCH /step, /administer, …). Guards:
+   - IPD only (admissionId required — OPD orders bill via
+     a different route).
+   - Skips Medication: the MAR /administer path goes through
+     autoBillingService.onMARAdministration which already
+     creates the BillingTrigger; firing here would just lean
+     on the service's idempotency check for no gain.
+   - Skips Investigation: that category is excluded from
+     SERVICE_MASTER_MAPPABLE_TYPES (Phase B) and bills via
+     autoBillingService.onInvestigationResulted on the
+     Investigation /resulted path.
+   The catch logs and swallows — billing must never roll back
+   the clinical save.
+───────────────────────────────────────────────────── */
+async function fireAutoBillOnCompletion(order) {
+  try {
+    if (!order) return;
+    // IPD-only: OPD orders are billed via a separate channel.
+    if (!order.admissionId) return;
+    // R7hr-83 Phase C — auto-bill on completion: skip Medication
+    // (handled by autoBillingService.onMARAdministration) and
+    // Investigation (handled by onInvestigationResulted).
+    if (order.orderType === "Medication") return;
+    if (order.orderType === "Investigation") return;
+    // Re-fetch a fresh lean copy so the service receives the
+    // persisted post-save state (status=Completed, completedAt,
+    // any late field-mutations the route applied).
+    const freshOrder = await DoctorOrder.findById(order._id).lean();
+    if (!freshOrder || freshOrder.status !== "Completed") return;
+    await autoBillingService.onDoctorOrderCompleted(freshOrder);
+  } catch (e) {
+    // R7hr-83 Phase C — auto-bill on completion: never throw upstream.
+    console.error("[doctor-orders] autoBilling onDoctorOrderCompleted failed:", e?.message);
+  }
+}
 
 /* ─────────────────────────────────────────────────────
    NABH High Alert Medication detection (shared util)
@@ -43,14 +130,22 @@ function parseDurationToDays(str) {
   if (!s) return 1;
   // Open-ended courses — no pre-seed.
   if (s.includes("continu") || s === "daily" || s === "stat" || s === "sos") return null;
+  // R7hr-12-S? (P1-12): hours come BEFORE the "day" branch so "5 hrs" doesn't
+  // accidentally match the d?ay regex via "h" then "r" → 1 day. Convert
+  // hours → days via ceil(h/24) with a floor of 1.
+  const hourMatch = s.match(/(\d+(?:\.\d+)?)\s*h(?:ou)?rs?\b/);
+  if (hourMatch) {
+    const hours = parseFloat(hourMatch[1]);
+    return Math.min(30, Math.max(1, Math.ceil(hours / 24)));
+  }
   // "5 days", "5d", "5  day"
   const dayMatch  = s.match(/(\d+(?:\.\d+)?)\s*d(?:ay)?s?/);
   if (dayMatch)  return Math.min(30, Math.max(1, Math.round(parseFloat(dayMatch[1]))));
-  // "1 week", "2 weeks", "1w"
-  const weekMatch = s.match(/(\d+(?:\.\d+)?)\s*w(?:eek)?s?/);
+  // "1 week", "2 weeks", "1w", "1 wk", "2 wks"
+  const weekMatch = s.match(/(\d+(?:\.\d+)?)\s*w(?:k|ks|eek|eeks)?\b/);
   if (weekMatch) return Math.min(30, Math.max(1, Math.round(parseFloat(weekMatch[1]) * 7)));
-  // "1 month"
-  const monthMatch = s.match(/(\d+(?:\.\d+)?)\s*m(?:onth)?s?/);
+  // "1 month" — conservative 30-day cap.
+  const monthMatch = s.match(/(\d+(?:\.\d+)?)\s*m(?:onth)?s?\b/);
   if (monthMatch) return 30; // cap at the schema max
   // Bare integer ("5") — assume days.
   const bareNum = s.match(/^\d+$/);
@@ -82,6 +177,14 @@ router.post("/", requireAction("doctor-orders.write"), credentialExpiryBlocker("
       body.hamFlag = checkHAM(name);
       body.twoNurseRequired = body.hamFlag;
       body.highRisk = body.hamFlag;
+    }
+
+    // R7hr-83 — strip ServiceMaster pick fields if the orderType can't map
+    // to a ServiceMaster row (e.g. Investigation). Mongoose strict-mode
+    // would persist them otherwise, and the Phase C billing trigger would
+    // misfire for a category that has no catalog entry.
+    if (body.orderDetails && !SERVICE_MASTER_MAPPABLE_TYPES.has(body.orderType)) {
+      for (const k of SERVICE_MASTER_PICK_KEYS) delete body.orderDetails[k];
     }
 
     // R7bv — stamp clinical linkage fields so the patient-history aggregator
@@ -180,12 +283,18 @@ router.post("/", requireAction("doctor-orders.write"), credentialExpiryBlocker("
       !body.isVerbal              // verbal orders are pre-validated by a co-sign step elsewhere
     ) {
       const since = new Date(Date.now() - 30_000);
+      // R7hr-12-S? (P2-5): include `route` and `dilutionVolume` in the dedup
+      // key — pre-fix two identical-name doses prescribed via PO and IV in
+      // the same 30s window would have collapsed into a single 409. Same
+      // dose dissolved in different diluent volumes is a different order.
       const dup = await DoctorOrder.findOne({
         UHID: body.UHID,
         orderType: body.orderType,
         "orderDetails.medicineName": body.orderDetails?.medicineName,
         "orderDetails.dose":         body.orderDetails?.dose,
         "orderDetails.frequency":    body.orderDetails?.frequency,
+        "orderDetails.route":        body.orderDetails?.route,
+        "orderDetails.dilutionVolume": body.orderDetails?.dilutionVolume,
         status: { $nin: ["Cancelled","Stopped"] },
         orderedAt: { $gte: since },
       }).select("_id orderedAt orderDetails.medicineName").lean();
@@ -476,6 +585,12 @@ router.post("/bulk", requireAction("doctor-orders.write"), credentialExpiryBlock
       o.twoNurseRequired = o.hamFlag;
       o.highRisk = o.hamFlag;
 
+      // R7hr-83 — mirror POST / scoping: strip ServiceMaster pick fields if
+      // this orderType can't map to a ServiceMaster row.
+      if (o.orderDetails && !SERVICE_MASTER_MAPPABLE_TYPES.has(o.orderType)) {
+        for (const k of SERVICE_MASTER_PICK_KEYS) delete o.orderDetails[k];
+      }
+
       // R7bv — stamp admissionId / ipdNo / admissionNumber from the
       // patient's active admission so the aggregator can surface this
       // order under the IPD patient file.
@@ -520,27 +635,65 @@ router.post("/bulk", requireAction("doctor-orders.write"), credentialExpiryBlock
     // the last 30s. Skip duplicates and surface them in the failed list so the
     // caller can recover idempotently; non-duplicate rows still flow into
     // insertMany below.
+    //
+    // R7hr-12-S? (P2-7): batched dedup. Pre-fix this loop did one findOne
+    // per row — 50-row indents produced 50 sequential round-trips per request.
+    // Now we collect every candidate's dedup key into a single $or query, build
+    // an in-memory Map of (UHID|med|dose|freq) → existing _id, and filter the
+    // batch in O(n) without per-row I/O.
     const failed = [];
     const toInsert = [];
     {
       const sinceTs = Date.now() - 30_000;
       const since = new Date(sinceTs);
+      const keyOf = (uhid, med, dose, freq) =>
+        `${uhid || ""}|${med || ""}|${dose || ""}|${freq || ""}`;
+
+      // Build a parallel array of indices into `enriched` that need dedup.
+      const dedupCandidates = [];
       for (let i = 0; i < enriched.length; i++) {
         const o = enriched[i];
         const shouldDedupe =
           (o.orderType === "Medication" || o.orderType === "IV_Fluid") &&
           o.priority !== "STAT" &&
           !o.isVerbal;
-        if (!shouldDedupe) { toInsert.push(o); continue; }
-        const dup = await DoctorOrder.findOne({
+        if (shouldDedupe) dedupCandidates.push({ i, o });
+      }
+
+      // Single batched query for ALL candidates.
+      let existingMap = new Map();
+      if (dedupCandidates.length > 0) {
+        const dedupOr = dedupCandidates.map(({ o }) => ({
           UHID: o.UHID,
-          orderType: o.orderType,
           "orderDetails.medicineName": o.orderDetails?.medicineName,
           "orderDetails.dose":         o.orderDetails?.dose,
           "orderDetails.frequency":    o.orderDetails?.frequency,
-          status: { $nin: ["Cancelled","Stopped"] },
           orderedAt: { $gte: since },
-        }).select("_id orderedAt orderDetails.medicineName").lean();
+        }));
+        const existing = await DoctorOrder.find({
+          $or: dedupOr,
+          status: { $nin: ["Cancelled","Stopped"] },
+        }).select("_id UHID orderedAt orderDetails.medicineName orderDetails.dose orderDetails.frequency").lean();
+        for (const row of existing) {
+          const k = keyOf(
+            row.UHID,
+            row.orderDetails?.medicineName,
+            row.orderDetails?.dose,
+            row.orderDetails?.frequency,
+          );
+          // Keep the most recent existing row per key (first hit is fine — the
+          // matter is whether ANY recent dup exists, not which one).
+          if (!existingMap.has(k)) existingMap.set(k, row);
+        }
+      }
+
+      // Now walk every enriched row and decide insert vs failed.
+      const candidateIndexSet = new Set(dedupCandidates.map(c => c.i));
+      for (let i = 0; i < enriched.length; i++) {
+        const o = enriched[i];
+        if (!candidateIndexSet.has(i)) { toInsert.push(o); continue; }
+        const k = keyOf(o.UHID, o.orderDetails?.medicineName, o.orderDetails?.dose, o.orderDetails?.frequency);
+        const dup = existingMap.get(k);
         if (dup) {
           failed.push({
             index: i,
@@ -597,13 +750,34 @@ router.post("/bulk", requireAction("doctor-orders.write"), credentialExpiryBlock
 // any patient.
 router.get("/", requireAction("doctor-notes.read"), async (req, res) => {
   try {
-    const { UHID, visitId, status, orderType } = req.query;
+    const { UHID, visitId, admissionId, ipdNo, status, orderType } = req.query;
+    // R7hr-12-S? (P1-2): mandatory patient-scope filter. Pre-fix any caller
+    // with doctor-notes.read could pull EVERY doctor order across the entire
+    // hospital — drug name, dose, HAM flag, administration record — which
+    // is a cross-ward PHI leak (NABH IMS.5 / HIPAA §164.502 minimum necessary).
+    // Now we require at least one of UHID / visitId / admissionId / ipdNo.
+    // TODO: layer role-scoped ward filtering (e.g. restrictToOwnNurseWard) on
+    // top of this gate as a follow-up — out of scope for this pass.
+    if (!UHID && !visitId && !admissionId && !ipdNo) {
+      return res.status(400).json({
+        ok: false,
+        error: "GET /doctor-orders requires UHID, visitId, admissionId, or ipdNo filter",
+      });
+    }
     const filter = {};
-    if (UHID)      filter.UHID = UHID;
-    if (visitId)   filter.visitId = visitId;
-    if (status)    filter.status = { $in: status.split(",") };
-    if (orderType) filter.orderType = orderType;
-    const orders = await DoctorOrder.find(filter).sort({ orderedAt: -1, createdAt: -1 });
+    if (UHID)        filter.UHID = UHID;
+    if (visitId)     filter.visitId = visitId;
+    if (admissionId) filter.admissionId = admissionId;
+    if (ipdNo)       filter.ipdNo = ipdNo;
+    if (status)      filter.status = { $in: status.split(",") };
+    if (orderType)   filter.orderType = orderType;
+    // R7hr-12-S? (P1-2): defensive max-limit cap. Even with the filter above
+    // a single bad query (e.g. status=Pending across a long-stay patient) can
+    // still pull a thousand rows. Cap at 1000, default 200.
+    const lim = Math.min(parseInt(req.query.limit) || 200, 1000);
+    const orders = await DoctorOrder.find(filter)
+      .sort({ orderedAt: -1, createdAt: -1 })
+      .limit(lim);
     res.json({ ok: true, data: orders, count: orders.length });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
@@ -629,8 +803,12 @@ router.get("/:id", validateObjectIdParam("id"), requireAction("doctor-notes.read
 // Now whitelisted to fields the workflow genuinely needs to mutate from
 // the generic PATCH path. Other changes go through dedicated endpoints
 // (administer / rate-change / step / stop) that enforce business rules.
+// R7hr-12-S? (P2-4): removed `status`, `stopReason`, `stoppedAt`, `stoppedBy`
+// from the PATCH whitelist. Status changes MUST go through /doctor-action,
+// /step, /administer, /infusion-rate, or DELETE — all of which now route
+// through moveStatus() so the ALLOWED_TRANSITIONS matrix + audit emit fire.
+// Allowing PATCH /:id to mutate status bypassed every guard.
 const PATCH_ALLOWED = new Set([
-  "status", "stopReason", "stoppedAt", "stoppedBy",
   "nurseNotes", "consentObtained", "consentNotes",
   // R7bq-H — field names corrected to match the schema (`infusionStarted` /
   // `infusionStopped`, not `*At` / `*EndedAt`). Pre-fix, PATCH accepted the
@@ -643,8 +821,26 @@ const PATCH_ALLOWED = new Set([
   "infusionStartedAt", "infusionEndedAt",
   "holdUntil", "holdReason", "delayReason",
   "remarks", "priority",
+  // R7hr-83 — ServiceMaster pick fields carried on the order. Accepted on
+  // PATCH for late binding (doctor picks the catalog row after order entry).
+  // Scope-checked below against the ServiceMaster-mappable orderType set
+  // and rewritten onto `orderDetails.<field>` dotted-path $set targets.
+  "serviceMasterId", "serviceCode", "serviceName", "unitPrice",
 ]);
-router.patch("/:id", validateObjectIdParam("id"), requireAction("doctor-orders.write"), async (req, res) => {
+// R7hr-83 — orderTypes that can map to a ServiceMaster row (see
+// ServiceMasterModel.doctorOrderCategory enum). `Investigation` is intentionally
+// excluded — pathology investigations are billed via the lab dispatch path,
+// not via ServiceMaster.
+const SERVICE_MASTER_MAPPABLE_TYPES = new Set([
+  "Medication","IV_Fluid","Lab","Radiology","Procedure","BloodTransfusion",
+  "Diet","Oxygen","Physiotherapy","Activity","Nursing","Consultation",
+]);
+const SERVICE_MASTER_PICK_KEYS = ["serviceMasterId","serviceCode","serviceName","unitPrice"];
+// R7hr-12-S? (P0-3): credentialExpiryBlocker('NMC_REG') now matches POST /,
+// POST /bulk, /doctor-action, /restart. PATCH /:id is a licensed clinical
+// act (rate change defaults, hold-until window adjustments, infusion start
+// confirmation) and must demand a valid NMC registration.
+router.patch("/:id", validateObjectIdParam("id"), requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
   try {
     const safe = {};
     for (const [k, v] of Object.entries(req.body || {})) {
@@ -656,39 +852,35 @@ router.patch("/:id", validateObjectIdParam("id"), requireAction("doctor-orders.w
     delete safe.infusionStartedAt;
     delete safe.infusionEndedAt;
 
-    if (Object.keys(safe).length === 0) {
-      return res.status(400).json({ ok: false, message: "No allowed fields to update — use the dedicated /administer or /rate-change endpoints" });
+    // R7hr-83 — rewrite ServiceMaster pick keys onto orderDetails dotted-path
+    // $set targets, but only for orderTypes that can map to ServiceMaster
+    // (see SERVICE_MASTER_MAPPABLE_TYPES above). If the order isn't mappable
+    // the keys are dropped silently so a billing trigger never fires on a
+    // category that has no catalog row.
+    const pickKeysPresent = SERVICE_MASTER_PICK_KEYS.filter(k =>
+      Object.prototype.hasOwnProperty.call(safe, k),
+    );
+    if (pickKeysPresent.length) {
+      const head = await DoctorOrder.findById(req.params.id).select("orderType").lean();
+      if (!head) return res.status(404).json({ ok: false, message: "Not found" });
+      if (SERVICE_MASTER_MAPPABLE_TYPES.has(head.orderType)) {
+        for (const k of pickKeysPresent) {
+          safe[`orderDetails.${k}`] = safe[k];
+          delete safe[k];
+        }
+      } else {
+        for (const k of pickKeysPresent) delete safe[k];
+      }
     }
 
-    // R7bq-H — auto-stamp infusionStarted when the order flips to "Active"
-    // or "InProgress" for IV_Fluid. Without this the hourly infusion cron
-    // never sees the order as "running" and skips it.
-    let preStamp = null;
-    if ((safe.status === "Active" || safe.status === "InProgress") && !safe.infusionStarted) {
-      const existing = await DoctorOrder.findById(req.params.id).select("orderType infusionStarted").lean();
-      if (existing?.orderType === "IV_Fluid" && !existing?.infusionStarted) {
-        safe.infusionStarted = new Date();
-        preStamp = safe.infusionStarted;
-      }
+    if (Object.keys(safe).length === 0) {
+      return res.status(400).json({ ok: false, message: "No allowed fields to update — use the dedicated /administer, /rate-change, /doctor-action endpoints for status / stop transitions" });
     }
 
     const order = await DoctorOrder.findByIdAndUpdate(
       req.params.id, { $set: safe }, { new: true, runValidators: true }
     );
     if (!order) return res.status(404).json({ ok: false, message: "Not found" });
-
-    if (preStamp) {
-      // Audit-trail the auto-start so it's clear who flipped it (NABH MOM.4).
-      try {
-        order.auditLog.push({
-          step: "Infusion started (auto on status=Active)",
-          doneBy: req.user?.fullName || req.user?.email || "System",
-          doneAt: preStamp,
-          notes: `currentRate=${safe.currentRate || order.currentRate || "?"}`,
-        });
-        await order.save();
-      } catch (_) { /* non-fatal */ }
-    }
 
     res.json({ ok: true, data: order });
   } catch (err) {
@@ -730,18 +922,21 @@ router.post("/:id/step", validateObjectIdParam("id"), requireAction("order.ackno
       );
     const dontDowngrade = current.status === "Completed" || medAlreadyGiven;
 
-    const update = {
-      $push: { auditLog: { step, doneBy, doneAt: new Date(), notes: notes || "" } },
-      $set: {
-        currentStepIndex: nextIndex,
-        status: (isLastStep || dontDowngrade) ? "Completed" : "InProgress",
-      },
-    };
+    // R7hr-12-S? (P0-1): route the status mutation through moveStatus so
+    // ALLOWED_TRANSITIONS + audit-emit fire. Non-status fields (auditLog,
+    // currentStepIndex, completedBy/At) are applied directly on the doc
+    // before the moveStatus save so a single .save() roundtrip persists
+    // everything atomically.
+    current.auditLog.push({ step, doneBy, doneAt: new Date(), notes: notes || "" });
+    current.currentStepIndex = nextIndex;
+    const nextStatus = (isLastStep || dontDowngrade) ? "Completed" : "InProgress";
     if (isLastStep || dontDowngrade) {
-      update.$set.completedBy = doneBy;
-      update.$set.completedAt = new Date();
+      current.completedBy = doneBy;
+      current.completedAt = new Date();
     }
-    const order = await DoctorOrder.findByIdAndUpdate(req.params.id, update, { new: true });
+    const order = await moveStatus(current, nextStatus, { actor: req.user?._id || doneBy });
+    // R7hr-83 Phase C — auto-bill on completion.
+    if (nextStatus === "Completed") await fireAutoBillOnCompletion(order);
     res.json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
@@ -938,8 +1133,11 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
       else order.administrationRecord.push(entry);
     }
 
-    // Update order-level status
-    if (status === "hold") order.status = "OnHold";
+    // Update order-level status — compute desired next status; the actual
+    // mutation is done through moveStatus() so ALLOWED_TRANSITIONS + audit
+    // emit fire uniformly.
+    let nextStatus = null;
+    if (status === "hold") nextStatus = "OnHold";
     if (status === "given") {
       // R7bq-K — Per workflow spec from user: a Medication order is
       // considered "system-complete" as soon as the FIRST non-STAT dose
@@ -958,7 +1156,7 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
       //   - Lab / Procedure use the /step endpoint, not /administer.
       const isMedFirstDoseRule = order.orderType === "Medication" && !isStatDose;
       if (isMedFirstDoseRule) {
-        order.status = "Completed";
+        nextStatus = "Completed";
       } else {
         const regularRecords = order.administrationRecord.filter(r => !r.isStatDose);
         // R7bq-J1 — include "missed" in the terminal set.
@@ -969,12 +1167,12 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
           ? new Date(order.endDate) <= startOfToday
           : true;
         if (regularDone && order.orderDetails?.frequency !== "Continuous" && courseWindowClosed) {
-          order.status = "Completed";
+          nextStatus = "Completed";
         } else if (order.status !== "Completed") {
           // Don't downgrade from Completed (covers Medication path where a
           // later STAT or held-then-given dose comes through after the
           // first-dose-complete flip).
-          order.status = "InProgress";
+          nextStatus = "InProgress";
         }
       }
     }
@@ -994,7 +1192,22 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
       order.auditLog.push({ step: "Adverse Event Reported", doneBy: givenBy, doneAt: new Date(), notes: adverseDetails || "Adverse drug reaction noted" });
     }
 
-    await order.save();
+    // R7hr-12-S? (P0-1): route status mutation through moveStatus when there's
+    // an actual transition. Otherwise just persist the auditLog / admin-record
+    // edits via plain save().
+    if (nextStatus && nextStatus !== order.status) {
+      await moveStatus(order, nextStatus, { actor: req.user?._id || givenBy });
+    } else {
+      await order.save();
+    }
+
+    // R7hr-83 Phase C — auto-bill on completion. The /administer path is
+    // primarily Medication (which fireAutoBillOnCompletion early-returns on,
+    // because autoBillingService.onMARAdministration is already firing from
+    // the MAR controller). For non-Medication administrations that legitimately
+    // close out via this route (e.g. an IV_Fluid bag finishing), the wrapper
+    // still gates on admissionId and orderType.
+    if (nextStatus === "Completed") await fireAutoBillOnCompletion(order);
 
     // ─── R7bq-3 — Auto I/O ledger: write an intake row when a dose is
     // GIVEN and the order carries a diluent volume. The service is
@@ -1175,23 +1388,54 @@ router.post("/:id/infusion-monitor", validateObjectIdParam("id"), requireAction(
  *   }
  * }
  */
+// R7hr-12-S? (P1-3): per-verb permission map. The route-level requireAction
+// gate stays at 'order.stop' (loosest of the bunch — every doctor can stop an
+// order) so the chain still rejects non-doctor roles upfront. Inside the
+// handler we re-check the SPECIFIC permission for the requested verb via
+// roleCan() — pre-fix all five verbs (stop/hold/resume/modify/substitute)
+// shared a single 'order.stop' gate, so a role allowed to stop was implicitly
+// allowed to modify or substitute even if permissions.js disagreed.
+const ACTION_PERMS = {
+  stop: "order.stop",
+  hold: "order.hold",
+  resume: "order.resume",
+  modify: "order.modify",
+  substitute: "order.substitute",
+};
 router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("order.stop"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
   try {
     const { type, doneBy, reason, reasonDetail, holdUntil, orderDetails, substituteWith } = req.body;
     if (!type || !doneBy)
       return res.status(400).json({ ok: false, message: "type and doneBy required" });
 
+    // R7hr-12-S? (P1-3): per-verb permission check. NOTE: this is defense-in-
+    // depth on TOP of the route-level requireAction('order.stop') gate, not a
+    // replacement — the route-level gate runs first to reject roles that have
+    // no business in this endpoint at all. If permissions.js doesn't define a
+    // specific verb (e.g. 'order.substitute' may not exist yet), the lookup
+    // falls back to the route gate.
+    const verbPerm = ACTION_PERMS[type];
+    if (verbPerm && !roleCan(req.user?.role, verbPerm)) {
+      return res.status(403).json({
+        ok: false,
+        message: `Access denied. Action '${verbPerm}' is not permitted for role '${req.user?.role}'.`,
+        action: verbPerm,
+        role: req.user?.role,
+      });
+    }
+
     const order = await DoctorOrder.findById(req.params.id);
     if (!order) return res.status(404).json({ ok: false, message: "Not found" });
 
     let auditNote = reason || "";
     let newOrder  = null;
+    let nextStatus = null;
 
     switch (type) {
       case "stop":
         if (!reason)
           return res.status(400).json({ ok: false, message: "reason required to stop/discontinue an order" });
-        order.status         = "Stopped";
+        nextStatus           = "Stopped";
         order.stopReason     = reason;
         order.completedBy    = doneBy;
         order.completedAt    = new Date();
@@ -1201,19 +1445,24 @@ router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("or
       case "hold":
         if (!reason)
           return res.status(400).json({ ok: false, message: "reason required to hold an order" });
-        order.status     = "OnHold";
+        nextStatus       = "OnHold";
         order.nurseNotes = `HOLD by Dr. ${doneBy}: ${reason}${holdUntil ? ` — hold until ${holdUntil}` : ""}`;
         auditNote = `Order held: ${reason}${holdUntil ? ` (until ${holdUntil})` : ""}`;
         break;
 
       case "resume":
-        order.status = "InProgress";
+        nextStatus = "InProgress";
         auditNote = `Order resumed by doctor${reason ? `: ${reason}` : ""}`;
         break;
 
       case "modify": {
         if (!orderDetails)
           return res.status(400).json({ ok: false, message: "orderDetails required for modify" });
+        // R7hr-83 — drop ServiceMaster pick fields from the incoming patch if
+        // this order's type can't map to a ServiceMaster row, before the merge.
+        if (!SERVICE_MASTER_MAPPABLE_TYPES.has(order.orderType)) {
+          for (const k of SERVICE_MASTER_PICK_KEYS) delete orderDetails[k];
+        }
         // Merge new fields into existing orderDetails
         const existing = order.orderDetails.toObject ? order.orderDetails.toObject() : { ...order.orderDetails };
         order.orderDetails = { ...existing, ...orderDetails };
@@ -1231,7 +1480,7 @@ router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("or
 
       case "substitute": {
         // Step 1: Stop current order
-        order.status      = "Stopped";
+        nextStatus        = "Stopped";
         order.stopReason  = `Substituted by: ${substituteWith?.medicineName || "new drug"}. ${reason || ""}`.trim();
         order.completedBy = doneBy;
         order.completedAt = new Date();
@@ -1242,6 +1491,36 @@ router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("or
           const today = new Date(); today.setHours(0,0,0,0);
           const newName = substituteWith.medicineName;
           const hamNew  = checkHAM(newName);
+
+          // R7hr-12-S? (P1-3): route substitute through the SAME 30s dedup
+          // pipeline that POST / uses. Pre-fix a substitute could create a
+          // duplicate of an existing recent order because the dedup logic
+          // only fired on POST /. Mirror the dedup keys (UHID, orderType,
+          // medicineName, dose, frequency, route, dilutionVolume) and 409
+          // if a recent identical order already exists.
+          if (order.orderType === "Medication" || order.orderType === "IV_Fluid") {
+            const since = new Date(Date.now() - 30_000);
+            const dup = await DoctorOrder.findOne({
+              UHID: order.UHID,
+              orderType: order.orderType,
+              "orderDetails.medicineName": substituteWith.medicineName,
+              "orderDetails.dose":         substituteWith.dose,
+              "orderDetails.frequency":    substituteWith.frequency,
+              "orderDetails.route":        substituteWith.route,
+              "orderDetails.dilutionVolume": substituteWith.dilutionVolume,
+              status: { $nin: ["Cancelled","Stopped"] },
+              orderedAt: { $gte: since },
+            }).select("_id orderedAt orderDetails.medicineName").lean();
+            if (dup) {
+              return res.status(409).json({
+                ok: false,
+                code: "DUPLICATE_ORDER",
+                duplicateId: String(dup._id),
+                message: `Substitution refused — an identical ${dup.orderDetails?.medicineName || order.orderType} order was placed ${Math.round((Date.now() - new Date(dup.orderedAt).getTime())/1000)}s ago.`,
+              });
+            }
+          }
+
           const FREQ_TIMES_MAP = {
             "OD":["08:00"],"BD":["08:00","20:00"],"TDS":["08:00","14:00","20:00"],
             "QID":["06:00","12:00","18:00","00:00"],"Q8H":["06:00","14:00","22:00"],
@@ -1276,7 +1555,15 @@ router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("or
     }
 
     order.auditLog.push({ step: `doctor:${type}`, doneBy, doneAt: new Date(), notes: auditNote });
-    await order.save();
+
+    // R7hr-12-S? (P0-1): status transitions flow through moveStatus so the
+    // ALLOWED_TRANSITIONS matrix + ClinicalAudit emit fire uniformly. Modify
+    // doesn't change status, so just save() the field updates directly.
+    if (nextStatus && nextStatus !== order.status) {
+      await moveStatus(order, nextStatus, { actor: req.user?._id || doneBy, reason });
+    } else {
+      await order.save();
+    }
 
     res.json({ ok: true, data: order, newOrder: newOrder || undefined });
   } catch (err) {
@@ -1297,6 +1584,12 @@ router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("or
 // production.
 router.post("/seed-demo", adminOnly, async (req, res) => {
   try {
+    // R7hr-12-S? (P2-6): hard-block the demo seeder in production. Even with
+    // adminOnly, a logged-in Admin could accidentally inject fake orders
+    // into the live patient file. The seeder is for staging / training only.
+    if (process.env.NODE_ENV === "production") {
+      return res.status(403).json({ ok: false, error: "seed-demo disabled in production" });
+    }
     const { UHID, patientName, visitId, createdBy = "Dr. Demo" } = req.body;
     if (!UHID) return res.status(400).json({ ok: false, message: "UHID required" });
 
@@ -1407,9 +1700,33 @@ router.post("/seed-demo", adminOnly, async (req, res) => {
       },
     ];
 
-    // Clear existing demo data
+    // Clear existing demo data.
+    // R7hr-12-S? (P2-6, deferred): IDEALLY we would tag every seeded row with
+    // `isDemo: true` and `deleteMany({ isDemo: true })` so the deletion is
+    // self-scoped regardless of `orderedBy`. The DoctorOrder schema has no
+    // `isDemo` field yet (sibling agent owns the model), and Mongoose strict
+    // mode would silently drop the field on insert AND on the deleteMany
+    // query — which would make deleteMany match EVERY row. So we keep the
+    // legacy `orderedBy: "Dr. Demo"` scope here and hand the flag work to a
+    // schema follow-up.
     await DoctorOrder.deleteMany({ UHID, orderedBy: "Dr. Demo" });
     const created = await DoctorOrder.insertMany(DEMO_ORDERS, { ordered: false });
+
+    // R7hr-12-S? (P2-6): audit-trail the demo seed so a surveyor inspecting
+    // the clinical audit collection can immediately distinguish demo data
+    // from real orders. Non-blocking — never fail the seed call.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "SEED_DEMO",
+        UHID,
+        patientName,
+        targetType: "DoctorOrder",
+        after: { count: created.length, orderedBy: createdBy, env: process.env.NODE_ENV || "unknown" },
+      });
+    } catch (_) { /* silent */ }
+
     res.status(201).json({ ok: true, message: `${created.length} demo orders created`, data: created });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
@@ -1417,12 +1734,25 @@ router.post("/seed-demo", adminOnly, async (req, res) => {
 });
 
 // DELETE /:id — cancel order
+// R7hr-12-S? (P1-1, P0-1): hardened.
+//   - cancelReason is now mandatory (NABH MOM.6 traceability).
+//   - Status transition flows through moveStatus() so the
+//     ALLOWED_TRANSITIONS matrix + ClinicalAudit emit fire (pre-fix used
+//     findByIdAndUpdate which bypassed the pre-save guard).
 router.delete("/:id", validateObjectIdParam("id"), requireAction("doctor-orders.write"), async (req, res) => {
   try {
-    await DoctorOrder.findByIdAndUpdate(req.params.id, { status: "Cancelled" });
-    res.json({ ok: true, message: "Order cancelled" });
+    const cancelReason = (req.body && typeof req.body.cancelReason === "string")
+      ? req.body.cancelReason.trim()
+      : "";
+    if (!cancelReason) {
+      return res.status(400).json({ ok: false, error: "cancelReason is required (NABH MOM.6 — every cancellation needs a documented reason)" });
+    }
+    const order = await DoctorOrder.findById(req.params.id);
+    if (!order) return res.status(404).json({ ok: false, message: "Not found" });
+    await moveStatus(order, "Cancelled", { actor: req.user?._id, reason: cancelReason });
+    res.json({ ok: true, order });
   } catch (err) {
-    res.status(500).json({ ok: false, message: err.message });
+    res.status(err?.status || 500).json({ ok: false, message: err.message, code: err?.code });
   }
 });
 

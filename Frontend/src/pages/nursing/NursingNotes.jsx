@@ -29,6 +29,9 @@ import { printNurseNote, buildNurseNoteCardHtml } from "./printNurseNote";
 // inline JSX that lived here pre-R7bi (with R7bg's QR/IPD/age/diagnosis
 // enhancements now promoted into the shared component).
 import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
+// R7hr-86 — alert chips (allergies + assessment compliance) ride beside
+// the All Sections back button now, not inside the patient card footer.
+import PatientAlertStrip from "../../Components/clinical/PatientAlertStrip";
 // R7bi — QRCodeSVG import removed; the QR now lives inside the shared
 // PatientHeaderCard component, so this file no longer references it.
 
@@ -930,6 +933,15 @@ function NursingNotesContent({ selectedPatient }) {
               : "Provisional",
           icd10Code: top.icd10Code || "",
           icd10Description: top.icd10Description || "",
+          // R7hr-87 — pull the doctor's last patient-status call so it
+          // shows up on the nursing banner too.
+          status: top.patientStatus || "",
+          // R7hr-87.1 — also carry every filled tier so the nurse
+          // banner reaches full parity with the doctor banner (one
+          // chip per tier rather than a single Final chip).
+          provisional: top.provisionalDiagnosis || "",
+          working:     top.workingDiagnosis     || "",
+          final:       top.finalDiagnosis       || "",
           updatedAt: top.createdAt,
         });
       } else {
@@ -1671,16 +1683,32 @@ function NursingNotesContent({ selectedPatient }) {
             </div>
           )}
 
-          {/* ── Back-to-grid button (when a tile is open) ── */}
+          {/* ── Back-to-grid button (when a tile is open) ──
+              R7hr-86: alert chips ride next to the back button. */}
           {activeTile && (
-            <button
-              type="button"
-              onClick={() => setActiveTile(null)}
-              className="dnp-back-btn"
-              aria-label="Back to all sections"
-            >
-              <i className="pi pi-arrow-left" aria-hidden /> All Sections
-            </button>
+            <div className="dnp-back-bar" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+              <button
+                type="button"
+                onClick={() => setActiveTile(null)}
+                className="dnp-back-btn"
+                aria-label="Back to all sections"
+                style={{ margin: 0 }}
+              >
+                <i className="pi pi-arrow-left" aria-hidden /> All Sections
+              </button>
+              <PatientAlertStrip
+                patientId={patient?._id}
+                allergies={patient?.allergies || patient?.knownAllergies}
+              />
+            </div>
+          )}
+          {/* R7hr-86 — surface alerts in a slim row above the tile grid
+              when no tile is open, so allergies / OVERDUE stay visible. */}
+          {!activeTile && patient && (
+            <PatientAlertStrip
+              patientId={patient?._id}
+              allergies={patient?.allergies || patient?.knownAllergies}
+            />
           )}
 
           {/* ── Doctor's Active Orders (NurseOrdersPanel) ── */}

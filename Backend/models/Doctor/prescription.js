@@ -194,8 +194,12 @@ prescriptionSchema.pre("save", function (next) {
 // remain a feature, not a bug — this is a safety net, not a substitute
 // for clinical judgment.
 prescriptionSchema.pre("save", async function (next) {
-  // Skip on docs with no medicines or when the override is set
-  if (!this.isModified("medicines") && !this.isNew) return next();
+  // R7hr-12-S3 (D1-10): Skip the allergy gate when this is an existing
+  // doc whose medicines[] is unchanged — metadata-only saves (status
+  // flip, printCount $inc, etc.) shouldn't pay the Patient.findById
+  // lookup tax or risk re-throwing on an unchanged set. New docs and
+  // any save that touches medicines[] still run the full check.
+  if (!this.isNew && !this.isModified("medicines")) return next();
   if (!Array.isArray(this.medicines) || this.medicines.length === 0) return next();
 
   // Gather allergy strings from the prescription's own clinicalDetails
@@ -217,9 +221,25 @@ prescriptionSchema.pre("save", async function (next) {
       }
     }
   } catch (e) {
-    // Patient lookup failed — don't block the Rx because of an
-    // infrastructure hiccup. Log and continue.
+    // R7hr-12-S3 (D1-10): FAIL-CLOSED on Patient lookup failure. This
+    // is a clinical safety gate — silently bypassing it on an infra
+    // hiccup is the wrong default (fail-open hides Mongo outages from
+    // the prescriber and lets an allergic prescription land in MAR).
+    // Surface the error so the operator can resolve and retry; the
+    // override flag (_allergyOverrideReason) remains the documented
+    // escape hatch — if the clinician has already set it, honour the
+    // override even on infra failure (the audit trail is preserved).
     console.error("[Prescription] allergy patient lookup failed:", e.message);
+    if (this._allergyOverrideReason) {
+      console.warn(
+        `[Prescription] OVERRIDE: patient ${this.UHID} prescribed with allergy override (Patient lookup failed) — reason: ${this._allergyOverrideReason}`,
+      );
+      return next();
+    }
+    return next(new Error(
+      `Allergy gate unavailable — patient allergy lookup failed (${e.message}). ` +
+      `Retry the save, or set _allergyOverrideReason with a documented clinical reason to proceed.`,
+    ));
   }
   const allergens = [...new Set(allergyStrings.map((s) => s.trim()).filter(Boolean))];
 

@@ -13,6 +13,7 @@
 import React, { useEffect, useState } from "react";
 import "./print.css";
 import { recordPrintAudit } from "../../utils/printUtils";
+import { PrintCountContext } from "./printCountContext";
 
 const PAPERS = [
   { value: "a4",       label: "A4 (210 × 297 mm)"           },
@@ -42,6 +43,11 @@ const PrintPreviewPage = ({
   // they tick the toolbar checkbox before clicking Print.
   const [doubleOnA4, setDoubleOnA4] = useState(false);
   const [auditing, setAuditing] = useState(false);
+  // R7hr-12 (D7-02): post-bump printCount returned by recordPrintAudit().
+  // Surfaced to the rendered subtree via PrintCountContext so PrintWatermark
+  // gates on the count AFTER the POST has incremented it — so the first
+  // reprint shows DUPLICATE instead of looking like another original.
+  const [printCountOverride, setPrintCountOverride] = useState(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-paper",  paper);
@@ -116,11 +122,30 @@ const PrintPreviewPage = ({
             // window.print(). The /api/print-audit POST also bumps
             // the entity's printCount, so the next reprint sees a
             // higher count and the DUPLICATE watermark renders.
+            //
+            // R7hr-12 (D7-02): capture the POST's returned printCount
+            // (the post-bump value) and surface it into the subtree
+            // via PrintCountContext, then wait one animation frame so
+            // React commits the new tree BEFORE window.print() snaps
+            // the DOM. Without this the FIRST reprint of any entity
+            // (pharmacy bill, OPD receipt, advance, refund, lab
+            // report…) printed without the DUPLICATE watermark —
+            // a GST §48(4) / NABH IMS.4 compliance leak.
             if (printAudit?.entityType && printAudit?.entityId) {
               setAuditing(true);
-              try { await recordPrintAudit(printAudit); }
-              catch (_e) { /* never block print on audit failure */ }
+              try {
+                const res = await recordPrintAudit(printAudit);
+                if (res && Number.isFinite(Number(res.printCount))) {
+                  setPrintCountOverride(Number(res.printCount));
+                }
+              } catch (_e) { /* never block print on audit failure */ }
               setAuditing(false);
+              // Two rAFs: first lets React flush the state update,
+              // second guarantees the browser has painted the watermark
+              // before the print snapshot is taken.
+              await new Promise((resolve) =>
+                requestAnimationFrame(() => requestAnimationFrame(resolve))
+              );
             }
             window.print();
           }}>
@@ -131,20 +156,28 @@ const PrintPreviewPage = ({
       {/* Document body — single copy by default. When Double-on-A4 is
           active for Half-A4, a clone is rendered after the original
           with a dashed cut-line in between. The clone is purely visual
-          (no React state inside the printables) so re-rendering is safe. */}
-      <div className="pr-doc">
-        <div className="pr-doc-copy">{children}</div>
-        {showDouble && (
-          <>
-            <div className="pr-doc-cutline pr-no-print-fold">
-              <span>✂ cut here</span>
-            </div>
-            <div className="pr-doc-copy pr-doc-copy--duplicate" aria-hidden="true">
-              {children}
-            </div>
-          </>
-        )}
-      </div>
+          (no React state inside the printables) so re-rendering is safe.
+
+          R7hr-12 (D7-02): wrap the body in PrintCountContext so the
+          post-bump printCount (if recordPrintAudit has returned by
+          now) flows down to every PrintWatermark instance without
+          each printable having to be rewired. `null` means "no
+          override" — PrintWatermark falls back to its prop. */}
+      <PrintCountContext.Provider value={printCountOverride}>
+        <div className="pr-doc">
+          <div className="pr-doc-copy">{children}</div>
+          {showDouble && (
+            <>
+              <div className="pr-doc-cutline pr-no-print-fold">
+                <span>✂ cut here</span>
+              </div>
+              <div className="pr-doc-copy pr-doc-copy--duplicate" aria-hidden="true">
+                {children}
+              </div>
+            </>
+          )}
+        </div>
+      </PrintCountContext.Provider>
     </>
   );
 };

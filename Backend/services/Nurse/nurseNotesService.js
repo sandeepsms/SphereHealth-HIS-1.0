@@ -142,11 +142,54 @@ const createNurseNote = async (data, nurseUserId) => {
 
   const noteStatus = status || "submitted";
 
+  // ── R7hr-89-A2: one Initial Assessment per admission (NABH AAC.1) ──
+  // Fast-path guard so the API returns a clean 409 with a typed code
+  // BEFORE we hit the partial-unique index. The pre-save hook on the
+  // model still catches the race-condition path (two concurrent IA
+  // creates landing in the same millisecond) and rethrows the same
+  // typed error — defence in depth.
+  if ((noteType || "general") === "initial") {
+    const dupeFilter = {
+      noteType: "initial",
+      $or: [],
+    };
+    if (admForLinkage?._id) {
+      dupeFilter.$or.push({ admissionId: admForLinkage._id });
+    }
+    if (resolvedIpdNo) {
+      dupeFilter.$or.push({ ipdNo: resolvedIpdNo });
+    }
+    // Skip if neither lookup key is available — nothing reliable to
+    // dedupe on; the orphan-write guard above already refused this
+    // path. Defensive guard against an accidental $or:[] match-all.
+    if (dupeFilter.$or.length) {
+      const existing = await NurseNotes.findOne(dupeFilter)
+        .select("_id ipdNo admissionId")
+        .lean()
+        .catch(() => null);
+      if (existing) {
+        const e = new Error(
+          "Initial Assessment already exists for this admission (NABH AAC.1 — one per admission)",
+        );
+        e.statusCode = 409;
+        e.code = "DUPLICATE_INITIAL_ASSESSMENT";
+        e.existingNoteId = existing._id;
+        throw e;
+      }
+    }
+  }
+
   const note = await NurseNotes.create({
     patient: patient?._id || resolvedPatientId || undefined,
     patientName: data.patientName || patient?.fullName || "",
     patientUHID: data.patientUHID || data.UHID || patient?.UHID || "",
     ipdNo: resolvedIpdNo,
+    // R7hr-89-A2 — stamp the resolved admissionId so the partial-unique
+    // (admissionId, noteType) index can actually function. Falls back to
+    // null when the admission lookup missed (legacy / pre-admission
+    // saves), in which case the (ipdNo, noteType) fallback index takes
+    // over the dedupe duty.
+    admissionId: admForLinkage?._id || null,
     noteDate: noteDate || new Date(),
     shift: shift || "general",
     nurse: nurse?._id || undefined,
@@ -721,6 +764,200 @@ const updateBloodTransfusionStatus = async (noteId, status, notes = "") => {
 };
 
 /* ─────────────────────────────────────────────────────────────
+   R7hr-72-A2 — Amend SUBMITTED nurse note (NABH HIC.7)
+   Append-only amendment trail. Each call:
+     1. Guards: only SUBMITTED or already-AMENDED notes are amendable.
+        Draft notes mutate in place via updateNurseNote.
+     2. Optimistic concurrency: caller passes the doc __v; mismatch → 409.
+     3. Applies the whitelisted field set (vitals / I-O / careplan /
+        nursingAssessment / etc. — mirrors the post-submission editable
+        surface used by updateNurseNote allowed[]).
+     4. Pushes one entry onto amendments[] with before/after snapshot,
+        reason, actor identity, mutated field list.
+     5. Flips status → "amended", stamps updatedBy.
+     6. Emits ClinicalAudit kind=NURSE_NOTE_AMENDED (7y retention floor
+        via LONG_RETENTION_EVENTS).
+   Mirrors the doctor-note A1 spec; the schema doesn't have a separate
+   "signed" status (submit IS the legal attestation here), so the lock
+   condition is status ∈ {submitted, amended}.
+───────────────────────────────────────────────────────────── */
+const AMEND_WHITELIST = [
+  // Vitals + pain
+  "vitals",
+  "painScore",
+  "painAssessment",
+  // Intake / Output ledger
+  "intakeOutput",
+  // IV line + IV infusion
+  "ivLine",
+  "ivInfusion",
+  // Bedside care + orders execution + general condition
+  "generalCondition",
+  "nursingCare",
+  "ordersExecuted",
+  // Module-specific structured payloads (carePlan, nursingAssessment,
+  // neuroAssessment, woundCare, fallRisk, mewsScore, dailyAssessment,
+  // initialAssessment, etc.) all land under noteData (Mixed) — one
+  // whitelist entry covers the lot.
+  "noteData",
+  // Tags + free-text + critical-event flag
+  "tags",
+  "remarks",
+  "isCriticalEvent",
+];
+
+const amendNurseNote = async (id, data, actor, expectedVersion) => {
+  const note = await NurseNotes.findById(id);
+  if (!note) {
+    const e = new Error("Note not found");
+    e.statusCode = 404;
+    throw e;
+  }
+
+  // R7hr-72-A2 — guard: only submitted/amended notes can be amended.
+  // Drafts go through the regular PUT path (updateNurseNote).
+  if (note.status !== "submitted" && note.status !== "amended") {
+    const e = new Error(`Cannot amend a ${note.status} note — only submitted/amended notes are amendable (NABH HIC.7)`);
+    e.statusCode = 400;
+    throw e;
+  }
+
+  // R7hr-72-A2 — author + admin override only. The route gate
+  // (requireAction("nurse.write")) already enforces Admin|Nurse role;
+  // here we additionally restrict ordinary Nurse callers to their own
+  // notes. Admin role bypasses the author-only rule.
+  const actorId = actor?.id || actor?._id;
+  const isAdmin = String(actor?.role || "").toLowerCase() === "admin";
+  if (!isAdmin && note.nurse && actorId && note.nurse.toString() !== actorId.toString()) {
+    const e = new Error("Not authorised to amend another nurse's note");
+    e.statusCode = 403;
+    throw e;
+  }
+
+  // R7hr-72-A2 — optimistic concurrency. Caller must echo back the doc
+  // version it loaded (Mongoose __v); mismatch means a concurrent amend
+  // landed in between → reject with 409 so the caller can refetch +
+  // re-merge instead of silently overwriting.
+  if (expectedVersion != null && Number.isFinite(Number(expectedVersion))) {
+    if (Number(note.__v) !== Number(expectedVersion)) {
+      const e = new Error("Note has been amended by another user — reload and retry");
+      e.statusCode = 409;
+      e.code = "VERSION_CONFLICT";
+      throw e;
+    }
+  }
+
+  const reason = String(data?.reason || data?.amendmentReason || "").trim();
+  if (!reason) {
+    const e = new Error("Amendment requires a non-empty reason (NABH HIC.7 — post-submission edit justification)");
+    e.statusCode = 400;
+    throw e;
+  }
+
+  // Build before/after snapshots for the whitelisted fields the caller
+  // actually changed. We DON'T snapshot the whole note (300KB+ with
+  // signature payload) — only the field set that mutates.
+  const before = {};
+  const after = {};
+  const mutatedFields = [];
+  for (const f of AMEND_WHITELIST) {
+    if (data[f] === undefined) continue;
+    // Deep-clone via JSON to detach from the live doc before mutation.
+    before[f] = note[f] !== undefined ? JSON.parse(JSON.stringify(note[f])) : undefined;
+    after[f] = data[f];
+    mutatedFields.push(f);
+  }
+
+  if (!mutatedFields.length) {
+    const e = new Error("Amendment must mutate at least one whitelisted field");
+    e.statusCode = 400;
+    throw e;
+  }
+
+  // Apply whitelisted update + push amendments entry + flip status.
+  for (const f of mutatedFields) {
+    note[f] = data[f];
+    // Mixed-type fields need an explicit markModified for Mongoose
+    // change detection.
+    if (f === "noteData" || f === "painAssessment" || f === "ivInfusion") {
+      note.markModified(f);
+    }
+  }
+
+  note.amendments = note.amendments || [];
+  note.amendments.push({
+    at:      new Date(),
+    by:      actorId || undefined,
+    byName:  actor?.name || actor?.fullName || "",
+    byEmpId: actor?.employeeId || "",
+    byRole:  actor?.role || "Nurse",
+    reason,
+    fields:  mutatedFields,
+    before,
+    after,
+  });
+
+  note.status = "amended";
+  note.updatedBy = actorId || undefined;
+  note.markModified("amendments");
+  await note.save();
+
+  // R7az-D10 hash-chained activity log row for the amend.
+  activityLogger.log({
+    UHID: note.patientUHID || "",
+    patientId: note.patient || null,
+    ipdNo: note.ipdNo || "",
+    action: "amend",
+    module: "NurseNote",
+    sourceModel: "NurseNotes",
+    sourceId: note._id,
+    summary: `Amendment to nurse note ${note._id} (${mutatedFields.join(", ")}) — ${reason}`,
+    userId: actorId || null,
+    userName: actor?.name || "",
+    userRole: actor?.role || "",
+    before: { _id: note._id, status: "submitted", fields: before },
+    after:  { _id: note._id, status: "amended",   fields: after, reason },
+  }).catch((e) => console.error("[nurseNotes] amend activity log failed:", e.message));
+
+  // ClinicalAudit emit — NABH HIC.7 / IMS.2. Wrapped in try/catch — audit
+  // failure must never sink the amendment write that already landed.
+  try {
+    emitClinicalAudit({
+      event: "NURSE_NOTE_AMENDED",
+      UHID: note.patientUHID || "",
+      admissionId: null,
+      patientId: note.patient || null,
+      patientName: note.patientName || "",
+      targetType: "NurseNote",
+      targetId: note._id,
+      before: {
+        _id: note._id,
+        status: "submitted",
+        noteType: note.noteType,
+        shift: note.shift,
+        fields: before,
+      },
+      after: {
+        _id: note._id,
+        status: note.status,
+        noteType: note.noteType,
+        shift: note.shift,
+        fields: after,
+        amendmentCount: note.amendments.length,
+      },
+      reason,
+      actor: {
+        _id: actorId || null,
+        fullName: actor?.name || actor?.fullName || "",
+        role: actor?.role || "Nurse",
+      },
+    });
+  } catch (_) { /* silent — audit emit is non-blocking */ }
+
+  return note;
+};
+
+/* ─────────────────────────────────────────────────────────────
    Internal helper
 ───────────────────────────────────────────────────────────── */
 function _applyDateFilter(filter, dateStr) {
@@ -738,6 +975,7 @@ module.exports = {
   getTodayNotes,
   getNoteById,
   updateNurseNote,
+  amendNurseNote,
   confirmSingleOrder,
   deleteNurseNote,
   addBloodMonitoringEntry,

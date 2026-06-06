@@ -65,7 +65,15 @@ function playChime() {
   } catch (_) { /* ignored — user hasn't interacted yet */ }
 }
 
-export default function PharmacyIndentsPage({ embedded = false } = {}) {
+// R7hr-4 — `onShowLedger(admissionId, seedPatient)` lets the parent
+// (PharmacyHomePage) handle the Live Ledger button without changing the
+// URL. When provided we call it instead of navigate(...) so the IPD
+// Credit tab can render the embedded ledger in-place. In standalone
+// route mode it stays undefined and the original route fallback runs.
+export default function PharmacyIndentsPage({
+  embedded = false,
+  onShowLedger,
+} = {}) {
   const navigate = useNavigate();
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -208,7 +216,44 @@ export default function PharmacyIndentsPage({ embedded = false } = {}) {
 
   const submitRelease = async () => {
     if (!release.indent) return;
-    const itemsPayload = (release.indent._formItems || [])
+    const formItems = release.indent._formItems || [];
+    // R7hr-12-S3 (D9-06): block submit while any row's FEFO fetch is still
+    // in flight — _availableQty === null means the pharmacist hasn't yet
+    // seen the live stock + suggested batch. Releasing now ships an empty
+    // batchNumber for manual lines and risks the pharmacist over-issuing
+    // before the "insufficient" hint can render.
+    if (formItems.some(it => it._availableQty === null)) {
+      return toast.warn("Stock check still loading — please wait a moment");
+    }
+    // R7hr-12-S3 (D9-12): block submit when any released row exceeds the
+    // available FEFO stock. The "· insufficient" red hint already shows on
+    // the row; this is the hard gate so the backend reservation can't
+    // fail mid-shift after the pharmacist has walked away.
+    const overStockRow = formItems.find(it =>
+      Number(it._issuedNow) > 0
+      && it._availableQty != null
+      && Number(it._issuedNow) > Number(it._availableQty)
+    );
+    if (overStockRow) {
+      return toast.warn(`Cannot release more than available stock for ${overStockRow.drugName || "item"}`);
+    }
+    // R7hr-12-S3 (D9-06): every released line needs a batch number for
+    // Schedule H register traceability (D&C Rules §65 / NABH MOM.4). The
+    // backend re-runs FEFO and stamps batchNumber for items with a drugId,
+    // but manual lines (no drugId) fall through with an empty batch. Guard
+    // here so the pharmacist gets a clear toast instead of an audit gap.
+    const missingBatchRow = formItems.find(it => Number(it._issuedNow) > 0 && !String(it._batch || "").trim());
+    if (missingBatchRow) {
+      return toast.warn(`Batch # required for ${missingBatchRow.drugName || "released item"}`);
+    }
+    // R7hr-12-S3 (D9-06): unit price > 0 required so a typo'd 0 doesn't
+    // silently leave the indent at the indent-time snapshot (which may
+    // itself be 0 for manual lines). Surface the warning to the pharmacist.
+    const zeroPriceRow = formItems.find(it => Number(it._issuedNow) > 0 && !(Number(it._unitPrice) > 0));
+    if (zeroPriceRow) {
+      return toast.warn(`Unit price > 0 required for ${zeroPriceRow.drugName || "released item"}`);
+    }
+    const itemsPayload = formItems
       .filter(it => Number(it._issuedNow) > 0)
       .map(it => ({
         itemId:      it._id,
@@ -437,7 +482,34 @@ export default function PharmacyIndentsPage({ embedded = false } = {}) {
                       <i className="pi pi-send" style={{ marginRight: 4 }} /> Release stock
                     </button>
                   )}
-                  <button onClick={() => navigate(`/billing/ipd/${indent.admissionId}`)} style={{
+                  {/* R7hr-3: pharmacist-scoped ledger (pharmacy slice only).
+                      R7hr-4: when the parent provides onShowLedger we call
+                      it so the IPD Credit tab can render the ledger in-
+                      place — no URL change, user stays inside /pharmacy.
+                      The route-based fallback still works for standalone
+                      navigation. */}
+                  <button onClick={() => {
+                    const seed = {
+                      UHID:            indent.patientUHID || "",
+                      patientName:     indent.patientName || "",
+                      admissionNumber: indent.admissionNumber || "",
+                      bed:             indent.bedNumber ? `${indent.bedNumber}${indent.wardName ? ` · ${indent.wardName}` : ""}` : "",
+                      consultant:      indent.consultantName || "",
+                    };
+                    if (typeof onShowLedger === "function") {
+                      onShowLedger(indent.admissionId, seed);
+                      return;
+                    }
+                    // R7hr-12 (D9-01): never put PHI (UHID / patient name /
+                    // IPD admission no / bed / consultant) in the URL —
+                    // browser history, server access logs, reverse-proxy
+                    // logs and analytics beacons all capture URLs. Pass the
+                    // seed via React Router's history-state object instead:
+                    // PharmacyLedgerPage hydrates it from useLocation().state
+                    // and falls back to fetching `/admissions/:id` when no
+                    // state is present (deep links / page refresh).
+                    navigate(`/pharmacy/ledger/${indent.admissionId}`, { state: { seedPatient: seed } });
+                  }} style={{
                     padding: "6px 14px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,
                     borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, fontSize: 12,
                   }}>
@@ -561,18 +633,45 @@ export default function PharmacyIndentsPage({ embedded = false } = {}) {
               On release, each item fires a reservation charge on the patient's IPD bill (Pharmacy / Medications category). The charge becomes final when the nurse marks the drug as GIVEN in MAR.
             </div>
 
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button onClick={closeRelease} disabled={busy} style={{
-                padding: "8px 16px", background: "#fff", color: C.dark, border: `1px solid ${C.border}`,
-                borderRadius: 8, cursor: busy ? "wait" : "pointer", fontFamily: "inherit", fontWeight: 600,
-              }}>Cancel</button>
-              <button onClick={submitRelease} disabled={busy} style={{
-                padding: "8px 18px", background: C.primary, color: "#fff", border: "none",
-                borderRadius: 8, cursor: busy ? "wait" : "pointer", fontFamily: "inherit", fontWeight: 800,
-              }}>
-                {busy ? <><i className="pi pi-spin pi-spinner" /> Releasing…</> : <><i className="pi pi-send" style={{ marginRight: 6 }} />Release to ward</>}
-              </button>
-            </div>
+            {(() => {
+              // R7hr-12-S3 (D9-06 + D9-12): compute disable state + tooltip
+              // for the Release button. Mirrors the toast-based hard gates
+              // inside submitRelease so the pharmacist sees the button is
+              // unclickable BEFORE clicking it: FEFO loading, over-stock,
+              // empty batch, or ₹0 price on any released row.
+              const fi = release.indent._formItems || [];
+              const fefoLoading = fi.some(it => it._availableQty === null);
+              const overStock = fi.some(it =>
+                Number(it._issuedNow) > 0
+                && it._availableQty != null
+                && Number(it._issuedNow) > Number(it._availableQty)
+              );
+              const missingBatch = fi.some(it => Number(it._issuedNow) > 0 && !String(it._batch || "").trim());
+              const zeroPrice = fi.some(it => Number(it._issuedNow) > 0 && !(Number(it._unitPrice) > 0));
+              const blocked = fefoLoading || overStock || missingBatch || zeroPrice;
+              const blockReason =
+                fefoLoading  ? "Stock check still loading…" :
+                overStock    ? "One or more rows exceed available stock" :
+                missingBatch ? "Batch # required on every released line" :
+                zeroPrice    ? "Unit price > 0 required on every released line" :
+                "";
+              const disabled = busy || blocked;
+              return (
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                  <button onClick={closeRelease} disabled={busy} style={{
+                    padding: "8px 16px", background: "#fff", color: C.dark, border: `1px solid ${C.border}`,
+                    borderRadius: 8, cursor: busy ? "wait" : "pointer", fontFamily: "inherit", fontWeight: 600,
+                  }}>Cancel</button>
+                  <button onClick={submitRelease} disabled={disabled} title={blockReason || undefined} style={{
+                    padding: "8px 18px", background: disabled ? "#94a3b8" : C.primary, color: "#fff", border: "none",
+                    borderRadius: 8, cursor: busy ? "wait" : (disabled ? "not-allowed" : "pointer"),
+                    fontFamily: "inherit", fontWeight: 800,
+                  }}>
+                    {busy ? <><i className="pi pi-spin pi-spinner" /> Releasing…</> : <><i className="pi pi-send" style={{ marginRight: 6 }} />Release to ward</>}
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

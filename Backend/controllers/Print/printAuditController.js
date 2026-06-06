@@ -25,6 +25,14 @@ const ENTITY_MODEL = {
   Bill:               "PatientBill",
   Receipt:            "PatientBill", // payment receipt prints off the bill
   PharmacyBill:       "PharmacySale",
+  // R7hr-12-S2 (D7-05): consolidated interim/final pharmacy bill spans
+  // multiple PharmacySale rows. There is no single backing doc, so
+  // mapping to null forces the fallback PrintAudit row-count path
+  // (entityType + entityId) — admissionId is used as the entityId
+  // anchor, with the consolidated billNumber as entityNumber. This way
+  // INT-PHM-2602 reprints get their own duplicate counter without
+  // polluting Admission.printCount (used by IPDFile/MARSheet).
+  PharmacyConsolidatedBill: null,
   RefundReceipt:      "PatientBill", // refund is also a bill payment row
   AdvanceReceipt:     "PatientAdvance",
   // R7bh-F1: model is registered as "LabReport" in labRecordsModels.js,

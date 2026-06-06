@@ -114,12 +114,21 @@ export default function NurseOPDQueuePage() {
   const [search, setSearch] = useState("");
   const [lastRefresh, setLastRefresh] = useState(null);
 
-  // Vitals modal
+  // Vitals modal — R7hf: BP split into S/D, RBS sub-section added
   const [vitalsModal, setVitalsModal] = useState(false);
   const [selectedVisit, setSelectedVisit] = useState(null);
   const [vitals, setVitals] = useState({
     weight: null, height: null, temperature: null,
-    bloodPressure: "", pulse: null, respiratoryRate: null, oxygenSaturation: null,
+    bloodPressure: "",
+    bloodPressureSystolic: null,
+    bloodPressureDiastolic: null,
+    pulse: null, respiratoryRate: null, oxygenSaturation: null,
+    // Random blood sugar (auto-feeds NABH RBS register)
+    bloodSugarRandom: null,
+    bloodSugarUnit: "mg/dL",
+    bloodSugarSampleType: "capillary",
+    bloodSugarFasting: "Random",
+    bloodSugarNotes: "",
     chiefComplaint: "", allergyHistory: "",
   });
   const [savingVitals, setSavingVitals] = useState(false);
@@ -161,16 +170,54 @@ export default function NurseOPDQueuePage() {
 
   const openVitals = (visit) => {
     setSelectedVisit(visit);
+    const v = visit.vitals || {};
+    // R7hf — derive split BP from the schema fields if present, else
+    // parse the legacy "120/80" string so editing an old record still
+    // shows two boxes filled in.
+    let sys = v.bloodPressureSystolic ?? null;
+    let dia = v.bloodPressureDiastolic ?? null;
+    if ((sys == null || dia == null) && typeof v.bloodPressure === "string" && v.bloodPressure.includes("/")) {
+      const [s, d] = v.bloodPressure.split("/").map((x) => Number(x.trim()));
+      if (Number.isFinite(s)) sys = s;
+      if (Number.isFinite(d)) dia = d;
+    }
+    // R7hg — auto-fill Known Allergies from the patient's REGISTRATION
+    // record so the nurse never starts with a blank field when the
+    // patient already declared allergies at the front desk. Priority:
+    //   1. nurse's own previous entry on this visit (visit.allergyHistory)
+    //   2. structured allergyList[] on Patient master (typed ledger)
+    //   3. legacy Patient.knownAllergies free-text
+    const allergyListStr = Array.isArray(visit.patientId?.allergyList)
+      ? visit.patientId.allergyList
+          .map((row) => row?.allergen)
+          .filter(Boolean)
+          .join(", ")
+      : "";
+    const registrationAllergy =
+      allergyListStr ||
+      (typeof visit.patientId?.knownAllergies === "string"
+        ? visit.patientId.knownAllergies.trim()
+        : "");
     setVitals({
-      weight: visit.vitals?.weight || null,
-      height: visit.vitals?.height || null,
-      temperature: visit.vitals?.temperature || null,
-      bloodPressure: visit.vitals?.bloodPressure || "",
-      pulse: visit.vitals?.pulse || null,
-      respiratoryRate: visit.vitals?.respiratoryRate || null,
-      oxygenSaturation: visit.vitals?.oxygenSaturation || null,
+      weight: v.weight || null,
+      height: v.height || null,
+      temperature: v.temperature || null,
+      bloodPressure: v.bloodPressure || "",
+      bloodPressureSystolic: sys,
+      bloodPressureDiastolic: dia,
+      pulse: v.pulse || null,
+      respiratoryRate: v.respiratoryRate || null,
+      oxygenSaturation: v.oxygenSaturation || null,
+      bloodSugarRandom: v.bloodSugarRandom ?? null,
+      bloodSugarUnit: v.bloodSugarUnit || "mg/dL",
+      bloodSugarSampleType: v.bloodSugarSampleType || "capillary",
+      bloodSugarFasting: v.bloodSugarFasting || "Random",
+      bloodSugarNotes: v.bloodSugarNotes || "",
       chiefComplaint: visit.chiefComplaint || "",
-      allergyHistory: visit.allergyHistory || "",
+      allergyHistory: visit.allergyHistory || registrationAllergy || "",
+      // Carry the registration value separately so the modal can show
+      // a "From registration" chip even after the nurse edits the field.
+      _registrationAllergy: registrationAllergy,
     });
     setVitalsModal(true);
   };
@@ -179,7 +226,11 @@ export default function NurseOPDQueuePage() {
     if (!selectedVisit) return;
     setSavingVitals(true);
     try {
-      await opdService.updateVitals(selectedVisit.visitNumber, vitals, user?.name || user?.username || "Nurse");
+      // R7hg — strip internal-only UI fields (prefixed with _) before
+      // sending so Mongoose strict mode doesn't drop the real fields
+      // and the backend payload stays clean.
+      const { _registrationAllergy, ...payload } = vitals;
+      await opdService.updateVitals(selectedVisit.visitNumber, payload, user?.name || user?.username || "Nurse");
       toast.current?.show({ severity: "success", summary: "Vitals saved", detail: `Vitals updated for ${selectedVisit.UHID}`, life: 3000 });
       setVitalsModal(false);
       loadQueue();
@@ -227,101 +278,128 @@ export default function NurseOPDQueuePage() {
     : null;
 
   return (
-    <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "'DM Sans',sans-serif" }}>
+    <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "'DM Sans',sans-serif", padding: "16px 20px 60px" }}>
       <ToastContainer toasts={toasts} />
 
-      {/* ── Header ── */}
+      {/* ── Hero (R7he — matches system UI / IPD Live Ledger pattern) ── */}
       <div style={{
-        background: "linear-gradient(135deg,#1e293b,#0f766e)",
-        padding: "22px 28px",
-        marginBottom: 24,
-        borderRadius: 16,
-        color: "#fff",
-        boxShadow: "0 4px 20px rgba(15,118,110,.25)",
+        background: C.card,
+        border: `1px solid ${C.border}`,
+        borderRadius: 12,
+        padding: "14px 18px",
+        marginBottom: 12,
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        boxShadow: "0 1px 2px rgba(15,23,42,.04)",
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        {/* Accent left strip */}
+        <div style={{
+          width: 4, alignSelf: "stretch", borderRadius: 4,
+          background: `linear-gradient(180deg,${C.primary},${C.primaryMid})`,
+        }} />
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: C.primary, letterSpacing: ".7px", textTransform: "uppercase" }}>
+            Nurse · OPD Desk
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginTop: 2, letterSpacing: "-.2px" }}>
+            OPD Queue — Today
+          </div>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 3, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <i className="pi pi-calendar" style={{ fontSize: 10 }} />
+            {fmtDate()}
+            {lastRefresh && (
+              <>
+                <span style={{ color: "#cbd5e1" }}>·</span>
+                <span>Refreshed {fmtTime(lastRefresh)}</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{
+            background: shift.label === "Morning" ? C.amberL : shift.label === "Evening" ? C.blueL : C.purpleL,
+            color: shift.color,
+            border: `1px solid ${shift.label === "Morning" ? C.amberB : shift.label === "Evening" ? C.blueB : "#ddd6fe"}`,
+            borderRadius: 20,
+            padding: "4px 12px",
+            fontSize: 11,
+            fontWeight: 700,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            whiteSpace: "nowrap",
+          }}>
+            <i className="pi pi-clock" style={{ fontSize: 10 }} />
+            {shift.label} Shift
+          </span>
+
+          <button
+            onClick={loadQueue}
+            disabled={loading}
+            style={{
+              padding: "7px 14px",
+              borderRadius: 8,
+              border: `1px solid ${C.border}`,
+              background: "#fff",
+              color: C.text,
+              fontWeight: 600,
+              fontSize: 12,
+              cursor: loading ? "not-allowed" : "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              fontFamily: "'DM Sans',sans-serif",
+            }}
+          >
+            <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} style={{ fontSize: 11 }} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* ── KPI strip (R7he) ── */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        {[
+          { label: "Total",          val: stats.total,         icon: "pi-users",        tone: C.primary, tint: C.primaryL,  border: "#a7f3d0" },
+          { label: "Waiting",        val: stats.waiting,       icon: "pi-clock",        tone: C.amber,   tint: C.amberL,    border: C.amberB },
+          { label: "In Progress",    val: stats.inProgress,    icon: "pi-spin pi-spinner", tone: C.blue, tint: C.blueL,     border: C.blueB  },
+          { label: "Completed",      val: stats.done,          icon: "pi-check-circle", tone: C.green,   tint: C.greenL,    border: C.greenB },
+          { label: "Vitals Pending", val: stats.vitalsPending, icon: "pi-heart",        tone: C.red,     tint: C.redL,      border: C.redB   },
+        ].map(({ label, val, icon, tone, tint, border }) => (
+          <div key={label} style={{
+            flex: "1 1 150px",
+            minWidth: 130,
+            background: C.card,
+            border: `1px solid ${C.border}`,
+            borderRadius: 12,
+            padding: "12px 14px",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            boxShadow: "0 1px 2px rgba(15,23,42,.03)",
+          }}>
             <div style={{
-              width: 48, height: 48, borderRadius: 14,
-              background: "rgba(255,255,255,.15)",
+              width: 36, height: 36, borderRadius: 10,
+              background: tint,
+              border: `1px solid ${border}`,
               display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0,
             }}>
-              <i className="pi pi-list" style={{ fontSize: 22, color: "#fff" }} />
+              <i className={`pi ${icon}`} style={{ fontSize: 14, color: tone }} />
             </div>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.3px" }}>OPD Queue — Today</div>
-              <div style={{ fontSize: 13, opacity: .75, marginTop: 2, display: "flex", alignItems: "center", gap: 8 }}>
-                <i className="pi pi-calendar" style={{ fontSize: 11 }} />
-                {fmtDate()}
-                {lastRefresh && (
-                  <span style={{ opacity: .7 }}>· Refreshed {fmtTime(lastRefresh)}</span>
-                )}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", fontWeight: 700, letterSpacing: ".4px" }}>
+                {label}
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: tone, lineHeight: 1.1, marginTop: 1 }}>
+                {val}
               </div>
             </div>
           </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            {/* Shift badge */}
-            <span style={{
-              background: "rgba(255,255,255,.15)",
-              border: "1px solid rgba(255,255,255,.25)",
-              borderRadius: 20,
-              padding: "5px 14px",
-              fontSize: 12,
-              fontWeight: 700,
-            }}>
-              <i className="pi pi-clock" style={{ fontSize: 11, marginRight: 5 }} />
-              {shift.label} Shift
-            </span>
-
-            <button
-              onClick={loadQueue}
-              disabled={loading}
-              style={{
-                background: "rgba(255,255,255,.18)",
-                border: "1.5px solid rgba(255,255,255,.35)",
-                borderRadius: 9,
-                padding: "8px 18px",
-                color: "#fff",
-                fontWeight: 600,
-                fontSize: 13,
-                cursor: loading ? "not-allowed" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 7,
-                fontFamily: "'DM Sans',sans-serif",
-              }}
-            >
-              <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} style={{ fontSize: 13 }} />
-              Refresh
-            </button>
-          </div>
-        </div>
-
-        {/* Stat cards */}
-        <div style={{ display: "flex", gap: 12, marginTop: 20, flexWrap: "wrap" }}>
-          {[
-            { label: "Total",          val: stats.total,         icon: "pi-users",       col: "rgba(255,255,255,.95)" },
-            { label: "Waiting",        val: stats.waiting,       icon: "pi-clock",       col: "#fbbf24" },
-            { label: "In Progress",    val: stats.inProgress,    icon: "pi-spin pi-spinner", col: "#60a5fa" },
-            { label: "Completed",      val: stats.done,          icon: "pi-check-circle",col: "#4ade80" },
-            { label: "Vitals Pending", val: stats.vitalsPending, icon: "pi-heart",       col: "#f87171" },
-          ].map(({ label, val, icon, col }) => (
-            <div key={label} style={{
-              background: "rgba(255,255,255,.12)",
-              border: "1px solid rgba(255,255,255,.18)",
-              borderRadius: 12,
-              padding: "12px 20px",
-              minWidth: 110,
-              textAlign: "center",
-              backdropFilter: "blur(4px)",
-            }}>
-              <i className={`pi ${icon}`} style={{ fontSize: 14, color: col, marginBottom: 4, display: "block" }} />
-              <div style={{ fontSize: 26, fontWeight: 800, color: col, lineHeight: 1 }}>{val}</div>
-              <div style={{ fontSize: 11, opacity: .75, marginTop: 3 }}>{label}</div>
-            </div>
-          ))}
-        </div>
+        ))}
       </div>
 
       {/* ── Filter bar ── */}
@@ -423,179 +501,474 @@ export default function NurseOPDQueuePage() {
         </div>
       )}
 
-      {/* ── Vitals Modal ── */}
+      {/* ── Vitals Modal (R7he — system UI: centered, white card, accent rail) ── */}
       {vitalsModal && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(15,23,42,.45)",
-          backdropFilter: "blur(3px)",
-          zIndex: 1000,
-          display: "flex", alignItems: "flex-end", justifyContent: "center",
-          animation: "fadeIn .15s ease",
-        }}>
-          <style>{`@keyframes fadeIn{from{opacity:0}to{opacity:1}} @keyframes slideUp{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
-          <div style={{
-            background: "#fff",
-            borderRadius: "20px 20px 0 0",
-            width: "100%",
-            maxWidth: 600,
-            maxHeight: "92vh",
-            overflow: "auto",
-            animation: "slideUp .2s ease",
-            boxShadow: "0 -8px 40px rgba(0,0,0,.18)",
+        <div
+          onClick={() => setVitalsModal(false)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(15,23,42,.55)",
+            backdropFilter: "blur(2px)",
+            zIndex: 1000,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: 20,
+            animation: "fadeIn .12s ease",
           }}>
-            {/* Modal header */}
-            <div style={{
-              background: "linear-gradient(135deg,#1e293b,#0f766e)",
-              padding: "18px 24px",
-              borderRadius: "20px 20px 0 0",
-              display: "flex", justifyContent: "space-between", alignItems: "center",
+          <style>{`@keyframes fadeIn{from{opacity:0}to{opacity:1}} @keyframes slideIn{from{transform:translateY(10px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: C.card,
+              border: `1px solid ${C.border}`,
+              borderRadius: 14,
+              width: "100%",
+              maxWidth: 660,
+              maxHeight: "92vh",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+              animation: "slideIn .15s ease",
+              boxShadow: "0 18px 50px rgba(15,23,42,.18), 0 4px 12px rgba(15,23,42,.06)",
             }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{
-                  width: 36, height: 36, borderRadius: 10,
-                  background: "rgba(255,255,255,.15)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}>
-                  <i className="pi pi-heart" style={{ fontSize: 16, color: "#fff" }} />
+            {/* Modal title bar — white card + accent rail */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 12,
+              padding: "14px 18px",
+              borderBottom: `1px solid ${C.border}`,
+              background: C.card,
+            }}>
+              <div style={{
+                width: 4, alignSelf: "stretch", borderRadius: 4,
+                background: `linear-gradient(180deg,${C.primary},${C.primaryMid})`,
+              }} />
+              <div style={{
+                width: 38, height: 38, borderRadius: 10,
+                background: C.primaryL,
+                border: `1px solid #a7f3d0`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                flexShrink: 0,
+              }}>
+                <i className="pi pi-heart" style={{ fontSize: 16, color: C.primary }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: C.primary, letterSpacing: ".7px", textTransform: "uppercase" }}>
+                  OPD Pre-Assessment
                 </div>
-                <div>
-                  <div style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>
-                    Nurse Pre-Assessment
-                  </div>
-                  <div style={{ color: "rgba(255,255,255,.7)", fontSize: 12, marginTop: 1 }}>
-                    {selectedVisit?.patientName} · {selectedVisit?.UHID} · Token #{selectedVisit?.tokenNumber}
-                  </div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: C.text, marginTop: 1, lineHeight: 1.2 }}>
+                  Vitals &amp; Chief Complaint
                 </div>
               </div>
               <button onClick={() => setVitalsModal(false)} style={{
-                background: "rgba(255,255,255,.15)",
-                border: "none", borderRadius: 8,
-                width: 32, height: 32,
+                background: "#fff",
+                border: `1px solid ${C.border}`, borderRadius: 8,
+                width: 30, height: 30,
                 display: "flex", alignItems: "center", justifyContent: "center",
-                cursor: "pointer", color: "#fff",
+                cursor: "pointer", color: C.muted,
               }}>
-                <i className="pi pi-times" style={{ fontSize: 13 }} />
+                <i className="pi pi-times" style={{ fontSize: 12 }} />
               </button>
             </div>
 
-            {/* Patient info strip */}
+            {/* Patient identity strip — 4-column system info layout */}
             <div style={{
-              background: C.primaryL,
-              border: `1px solid ${C.greenB}`,
-              padding: "10px 24px",
-              display: "flex", alignItems: "center", gap: 8,
-              fontSize: 13,
+              padding: "12px 18px",
+              background: "#fafafa",
+              borderBottom: `1px solid ${C.border}`,
+              display: "grid",
+              gridTemplateColumns: "1.4fr 1fr 1fr 0.8fr",
+              gap: 16,
+              alignItems: "start",
             }}>
-              <i className="pi pi-comment" style={{ color: C.primary, fontSize: 12 }} />
-              <strong style={{ color: C.primary }}>{selectedVisit?.UHID}</strong>
-              <span style={{ color: C.muted }}>·</span>
-              <span style={{ color: C.muted }}>{selectedVisit?.chiefComplaint}</span>
+              <div>
+                <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", fontWeight: 700, letterSpacing: ".4px" }}>Patient</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginTop: 2 }}>
+                  {selectedVisit?.patientName || "—"}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", fontWeight: 700, letterSpacing: ".4px" }}>UHID</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.primary, marginTop: 4, fontFamily: "'DM Mono',monospace" }}>
+                  {selectedVisit?.UHID || "—"}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", fontWeight: 700, letterSpacing: ".4px" }}>OPD No</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginTop: 4, fontFamily: "'DM Mono',monospace" }}>
+                  {selectedVisit?.visitNumber || "—"}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", fontWeight: 700, letterSpacing: ".4px" }}>Token</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.text, marginTop: 4 }}>
+                  #{selectedVisit?.tokenNumber || "—"}
+                </div>
+              </div>
             </div>
 
-            {/* Pre-assessment form */}
-            <div style={{ padding: "20px 24px" }}>
-              {/* ── Chief Complaint + Allergy (required before vitals) ── */}
-              <div style={{
-                background: "#fffbeb", border: "1.5px solid #fde68a", borderRadius: 10,
-                padding: "14px 16px", marginBottom: 16,
-              }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>
-                  <i className="pi pi-exclamation-circle" style={{ marginRight: 5 }} />
+            {/* Form body — scrollable */}
+            <div style={{ padding: "16px 18px", overflow: "auto", flex: 1 }}>
+              {/* ── Section: Clinical Information ── */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  fontSize: 10, fontWeight: 800, color: C.amber,
+                  textTransform: "uppercase", letterSpacing: ".6px",
+                  marginBottom: 8,
+                }}>
+                  <i className="pi pi-exclamation-circle" style={{ fontSize: 11 }} />
                   Clinical Information
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div style={{
+                  background: C.amberL,
+                  border: `1px solid ${C.amberB}`,
+                  borderRadius: 10,
+                  padding: "12px 14px",
+                  display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12,
+                }}>
                   <div>
-                    <label className="his-label">Chief Complaint *</label>
-                    <input value={vitals.chiefComplaint} onChange={e => vSet("chiefComplaint", e.target.value)}
+                    <label style={{ fontSize: 10, color: "#92400e", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Chief Complaint <span style={{ color: C.red }}>*</span>
+                    </label>
+                    <input
+                      value={vitals.chiefComplaint}
+                      onChange={(e) => vSet("chiefComplaint", e.target.value)}
                       placeholder="e.g. Fever, cough, chest pain…"
-                      className="his-field" style={{ borderColor: vitals.chiefComplaint ? "#86efac" : "#fcd34d" }} />
+                      style={{
+                        width: "100%",
+                        marginTop: 4,
+                        padding: "7px 10px",
+                        borderRadius: 7,
+                        border: `1.5px solid ${vitals.chiefComplaint ? "#a7f3d0" : "#fcd34d"}`,
+                        background: "#fff",
+                        fontSize: 13,
+                        color: C.text,
+                        fontFamily: "'DM Sans',sans-serif",
+                        outline: "none",
+                      }}
+                    />
                   </div>
                   <div>
-                    <label className="his-label">Known Allergies</label>
-                    <input value={vitals.allergyHistory} onChange={e => vSet("allergyHistory", e.target.value)}
+                    <label style={{ fontSize: 10, color: "#92400e", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Known Allergies
+                    </label>
+                    <input
+                      value={vitals.allergyHistory}
+                      onChange={(e) => vSet("allergyHistory", e.target.value)}
                       placeholder="e.g. Penicillin, Sulfa, NKDA"
-                      className="his-field" />
+                      style={{
+                        width: "100%",
+                        marginTop: 4,
+                        padding: "7px 10px",
+                        borderRadius: 7,
+                        // R7hg — green border when pre-filled from registration
+                        // so the nurse instantly sees the field carries trusted
+                        // patient-master data.
+                        border: `1.5px solid ${vitals._registrationAllergy ? "#a7f3d0" : C.border}`,
+                        background: "#fff",
+                        fontSize: 13,
+                        color: C.text,
+                        fontFamily: "'DM Sans',sans-serif",
+                        outline: "none",
+                      }}
+                    />
+                    {/* R7hg — visible "from registration" provenance chip.
+                        Stays visible even after the nurse edits so she
+                        always has the original on-file value to compare. */}
+                    {vitals._registrationAllergy && (
+                      <div style={{
+                        marginTop: 5,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        padding: "3px 8px",
+                        borderRadius: 6,
+                        background: C.greenL,
+                        border: `1px solid ${C.greenB}`,
+                        fontSize: 10,
+                        color: C.green,
+                        fontWeight: 600,
+                      }}>
+                        <i className="pi pi-check-circle" style={{ fontSize: 9 }} />
+                        From registration: {vitals._registrationAllergy}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
 
-              {/* ── Vitals grid ── */}
-              <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>
-                <i className="pi pi-heart" style={{ marginRight: 5, color: C.primary }} />
-                Vitals
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                <VitalInputCustom label="Weight (kg)" value={vitals.weight} onChange={v => vSet("weight", v)} placeholder="e.g. 70" />
-                <VitalInputCustom label="Height (cm)" value={vitals.height} onChange={v => vSet("height", v)} placeholder="e.g. 170" />
-                <VitalInputCustom label="Temperature (°F)" value={vitals.temperature} onChange={v => vSet("temperature", v)} placeholder="e.g. 98.6" />
-                <div>
-                  <label className="his-label">Blood Pressure</label>
-                  <input
-                    value={vitals.bloodPressure}
-                    onChange={e => vSet("bloodPressure", e.target.value)}
-                    placeholder="120/80"
-                    className="his-field"
-                  />
+              {/* ── Section: Vitals ── */}
+              <div>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  fontSize: 10, fontWeight: 800, color: C.primary,
+                  textTransform: "uppercase", letterSpacing: ".6px",
+                  marginBottom: 8,
+                }}>
+                  <i className="pi pi-heart" style={{ fontSize: 11 }} />
+                  Vitals
                 </div>
-                <VitalInputCustom label="Pulse (bpm)" value={vitals.pulse} onChange={v => vSet("pulse", v)} placeholder="e.g. 72" />
-                <VitalInputCustom label="Respiratory Rate (/min)" value={vitals.respiratoryRate} onChange={v => vSet("respiratoryRate", v)} placeholder="e.g. 16" />
-                <VitalInputCustom label="SpO2 (%)" value={vitals.oxygenSaturation} onChange={v => vSet("oxygenSaturation", v)} placeholder="e.g. 98" />
+                <div style={{
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 10,
+                  padding: "14px",
+                  background: "#fff",
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 12,
+                }}>
+                  <VitalInputCustom label="Weight (kg)" value={vitals.weight} onChange={(v) => vSet("weight", v)} placeholder="e.g. 70" />
+                  <VitalInputCustom label="Height (cm)" value={vitals.height} onChange={(v) => vSet("height", v)} placeholder="e.g. 170" />
+                  <VitalInputCustom label="Temperature (°F)" value={vitals.temperature} onChange={(v) => vSet("temperature", v)} placeholder="e.g. 98.6" />
+                  <VitalInputCustom label="Pulse (bpm)" value={vitals.pulse} onChange={(v) => vSet("pulse", v)} placeholder="e.g. 72" />
 
-                {/* Live BMI */}
-                {bmi ? (
-                  <div style={{
-                    background: C.greenL,
-                    border: `1.5px solid ${C.greenB}`,
-                    borderRadius: 10,
-                    padding: "12px 16px",
-                    display: "flex", flexDirection: "column", justifyContent: "center",
-                  }}>
-                    <label className="his-label" style={{ color: C.green }}>BMI (calculated)</label>
-                    <div style={{ fontSize: 28, fontWeight: 800, color: C.green, lineHeight: 1 }}>{bmi}</div>
-                    <div style={{ fontSize: 11, color: C.green, opacity: .8, marginTop: 3 }}>
-                      {bmi < 18.5 ? "Underweight" : bmi < 25 ? "Normal" : bmi < 30 ? "Overweight" : "Obese"}
+                  {/* R7hf — BP split into Systolic + Diastolic mini-grid */}
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Blood Pressure (mmHg)
+                    </label>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center", marginTop: 4 }}>
+                      <input
+                        type="number"
+                        value={vitals.bloodPressureSystolic ?? ""}
+                        onChange={(e) => vSet("bloodPressureSystolic", e.target.value === "" ? null : Number(e.target.value))}
+                        placeholder="Systolic · 120"
+                        style={{
+                          width: "100%", padding: "7px 10px", borderRadius: 7,
+                          border: `1.5px solid ${C.border}`, background: "#fff",
+                          fontSize: 13, color: C.text,
+                          fontFamily: "'DM Sans',sans-serif", outline: "none",
+                        }}
+                      />
+                      <span style={{ fontSize: 16, fontWeight: 700, color: C.muted, padding: "0 4px" }}>/</span>
+                      <input
+                        type="number"
+                        value={vitals.bloodPressureDiastolic ?? ""}
+                        onChange={(e) => vSet("bloodPressureDiastolic", e.target.value === "" ? null : Number(e.target.value))}
+                        placeholder="Diastolic · 80"
+                        style={{
+                          width: "100%", padding: "7px 10px", borderRadius: 7,
+                          border: `1.5px solid ${C.border}`, background: "#fff",
+                          fontSize: 13, color: C.text,
+                          fontFamily: "'DM Sans',sans-serif", outline: "none",
+                        }}
+                      />
                     </div>
                   </div>
-                ) : (
-                  <div style={{
-                    background: "#f8fafc",
-                    border: "1.5px dashed #e2e8f0",
-                    borderRadius: 10,
-                    padding: "12px 16px",
-                    display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center",
-                    color: C.muted, fontSize: 12,
-                  }}>
-                    <i className="pi pi-calculator" style={{ fontSize: 18, marginBottom: 4 }} />
-                    Enter weight & height<br />to see BMI
-                  </div>
-                )}
+
+                  <VitalInputCustom label="Respiratory Rate (/min)" value={vitals.respiratoryRate} onChange={(v) => vSet("respiratoryRate", v)} placeholder="e.g. 16" />
+                  <VitalInputCustom label="SpO2 (%)" value={vitals.oxygenSaturation} onChange={(v) => vSet("oxygenSaturation", v)} placeholder="e.g. 98" />
+
+                  {/* BMI tile — full-row at the end */}
+                  {bmi ? (
+                    <div style={{
+                      background: C.greenL,
+                      border: `1px solid ${C.greenB}`,
+                      borderRadius: 8,
+                      padding: "10px 12px",
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                    }}>
+                      <div>
+                        <div style={{ fontSize: 10, color: C.green, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                          BMI (calculated)
+                        </div>
+                        <div style={{ fontSize: 11, color: C.green, opacity: .85, marginTop: 2 }}>
+                          {bmi < 18.5 ? "Underweight" : bmi < 25 ? "Normal" : bmi < 30 ? "Overweight" : "Obese"}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 24, fontWeight: 800, color: C.green, lineHeight: 1 }}>{bmi}</div>
+                    </div>
+                  ) : (
+                    <div style={{
+                      background: "#f8fafc",
+                      border: `1px dashed ${C.border}`,
+                      borderRadius: 8,
+                      padding: "10px 12px",
+                      display: "flex", alignItems: "center", gap: 10,
+                      color: C.muted, fontSize: 11,
+                    }}>
+                      <i className="pi pi-calculator" style={{ fontSize: 14 }} />
+                      Enter weight &amp; height to see BMI
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* Actions */}
-              <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
-                <button onClick={() => setVitalsModal(false)} style={{
-                  padding: "10px 22px", borderRadius: 9,
-                  border: "1.5px solid #e2e8f0",
-                  background: "#fff", color: C.muted,
-                  fontWeight: 600, fontSize: 13, cursor: "pointer",
-                  fontFamily: "'DM Sans',sans-serif",
+              {/* ── Section: Random Blood Sugar (R7hf) ── */}
+              {/* Optional — when entered, auto-creates an NABH RBS Register row
+                  with sample-type + fasting-state provenance. Only one extra
+                  field (Notes) is asked for to keep the OPD desk fast. */}
+              <div style={{ marginTop: 16 }}>
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  fontSize: 10, fontWeight: 800, color: "#854d0e",
+                  textTransform: "uppercase", letterSpacing: ".6px",
+                  marginBottom: 8,
                 }}>
-                  Cancel
-                </button>
-                <button onClick={saveVitals} disabled={savingVitals} style={{
-                  padding: "10px 26px", borderRadius: 9,
-                  border: "none",
-                  background: savingVitals ? "#94a3b8" : `linear-gradient(135deg,${C.primary},${C.primaryMid})`,
-                  color: "#fff",
-                  fontWeight: 700, fontSize: 13, cursor: savingVitals ? "not-allowed" : "pointer",
-                  display: "flex", alignItems: "center", gap: 8,
-                  fontFamily: "'DM Sans',sans-serif",
-                  boxShadow: savingVitals ? "none" : "0 2px 8px rgba(15,118,110,.3)",
+                  <i className="pi pi-chart-line" style={{ fontSize: 11 }} />
+                  Random Blood Sugar (RBS)
+                  <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 600, color: C.muted, textTransform: "none", letterSpacing: 0 }}>
+                    · feeds NABH RBS register
+                  </span>
+                </div>
+                <div style={{
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 10,
+                  padding: "14px",
+                  background: "#fff",
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 12,
                 }}>
-                  <i className={`pi ${savingVitals ? "pi-spin pi-spinner" : "pi-check"}`} style={{ fontSize: 13 }} />
-                  {savingVitals ? "Saving…" : "Save Pre-Assessment"}
-                </button>
+                  {/* Reading + Unit (combo) */}
+                  <div>
+                    <label style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Reading
+                    </label>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 100px", gap: 6, marginTop: 4 }}>
+                      <input
+                        type="number"
+                        value={vitals.bloodSugarRandom ?? ""}
+                        onChange={(e) => vSet("bloodSugarRandom", e.target.value === "" ? null : Number(e.target.value))}
+                        placeholder="e.g. 110"
+                        style={{
+                          width: "100%", padding: "7px 10px", borderRadius: 7,
+                          border: `1.5px solid ${C.border}`, background: "#fff",
+                          fontSize: 13, color: C.text,
+                          fontFamily: "'DM Sans',sans-serif", outline: "none",
+                        }}
+                      />
+                      <select
+                        value={vitals.bloodSugarUnit}
+                        onChange={(e) => vSet("bloodSugarUnit", e.target.value)}
+                        style={{
+                          width: "100%", padding: "7px 8px", borderRadius: 7,
+                          border: `1.5px solid ${C.border}`, background: "#fff",
+                          fontSize: 12, color: C.text,
+                          fontFamily: "'DM Sans',sans-serif", outline: "none",
+                        }}
+                      >
+                        <option value="mg/dL">mg/dL</option>
+                        <option value="mmol/L">mmol/L</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Sample type */}
+                  <div>
+                    <label style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Sample Type
+                    </label>
+                    <select
+                      value={vitals.bloodSugarSampleType}
+                      onChange={(e) => vSet("bloodSugarSampleType", e.target.value)}
+                      style={{
+                        width: "100%", marginTop: 4, padding: "7px 10px", borderRadius: 7,
+                        border: `1.5px solid ${C.border}`, background: "#fff",
+                        fontSize: 13, color: C.text,
+                        fontFamily: "'DM Sans',sans-serif", outline: "none",
+                      }}
+                    >
+                      <option value="capillary">Capillary (finger-prick)</option>
+                      <option value="venous">Venous</option>
+                      <option value="arterial">Arterial</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </div>
+
+                  {/* Fasting state */}
+                  <div>
+                    <label style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Fasting State
+                    </label>
+                    <select
+                      value={vitals.bloodSugarFasting}
+                      onChange={(e) => vSet("bloodSugarFasting", e.target.value)}
+                      style={{
+                        width: "100%", marginTop: 4, padding: "7px 10px", borderRadius: 7,
+                        border: `1.5px solid ${C.border}`, background: "#fff",
+                        fontSize: 13, color: C.text,
+                        fontFamily: "'DM Sans',sans-serif", outline: "none",
+                      }}
+                    >
+                      <option value="Random">Random (GRBS)</option>
+                      <option value="Fasting">Fasting (FBS)</option>
+                      <option value="PostPrandial">Post-Prandial (PPBS)</option>
+                    </select>
+                  </div>
+
+                  {/* Notes — free text */}
+                  <div>
+                    <label style={{ fontSize: 10, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                      Notes <span style={{ fontWeight: 500, textTransform: "none", color: C.muted, fontSize: 9 }}>(glucometer, lot no, anything else)</span>
+                    </label>
+                    <input
+                      value={vitals.bloodSugarNotes}
+                      onChange={(e) => vSet("bloodSugarNotes", e.target.value)}
+                      placeholder="e.g. Accu-Chek lot 4521, last meal 2 h ago"
+                      style={{
+                        width: "100%", marginTop: 4, padding: "7px 10px", borderRadius: 7,
+                        border: `1.5px solid ${C.border}`, background: "#fff",
+                        fontSize: 13, color: C.text,
+                        fontFamily: "'DM Sans',sans-serif", outline: "none",
+                      }}
+                    />
+                  </div>
+
+                  {/* Critical-value live hint — surfaces NABH <70 / >300 mg/dL threshold */}
+                  {(() => {
+                    const v = Number(vitals.bloodSugarRandom);
+                    if (!Number.isFinite(v) || v <= 0) return null;
+                    const mgdl = vitals.bloodSugarUnit === "mmol/L" ? Math.round(v * 18) : v;
+                    const critical = mgdl < 70 || mgdl > 300;
+                    return (
+                      <div style={{
+                        gridColumn: "1 / -1",
+                        background: critical ? C.redL : C.greenL,
+                        border: `1px solid ${critical ? C.redB : C.greenB}`,
+                        borderRadius: 8,
+                        padding: "8px 12px",
+                        display: "flex", alignItems: "center", gap: 8,
+                        fontSize: 12, color: critical ? C.red : C.green,
+                        fontWeight: 600,
+                      }}>
+                        <i className={`pi ${critical ? "pi-exclamation-triangle" : "pi-check-circle"}`} style={{ fontSize: 13 }} />
+                        {critical
+                          ? `Critical value (${mgdl} mg/dL) — will auto-flag in RBS register + alert clinician.`
+                          : `Within range (${mgdl} mg/dL) · NABH normal 70–300 mg/dL.`}
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
+            </div>
+
+            {/* Footer actions — system pattern: white bar, separated buttons */}
+            <div style={{
+              borderTop: `1px solid ${C.border}`,
+              background: "#fafafa",
+              padding: "12px 18px",
+              display: "flex", gap: 8, justifyContent: "flex-end",
+            }}>
+              <button onClick={() => setVitalsModal(false)} style={{
+                padding: "8px 18px", borderRadius: 8,
+                border: `1px solid ${C.border}`,
+                background: "#fff", color: C.text,
+                fontWeight: 600, fontSize: 12, cursor: "pointer",
+                fontFamily: "'DM Sans',sans-serif",
+              }}>
+                Cancel
+              </button>
+              <button onClick={saveVitals} disabled={savingVitals} style={{
+                padding: "8px 22px", borderRadius: 8,
+                border: "none",
+                background: savingVitals ? "#94a3b8" : C.primary,
+                color: "#fff",
+                fontWeight: 700, fontSize: 12, cursor: savingVitals ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", gap: 6,
+                fontFamily: "'DM Sans',sans-serif",
+              }}>
+                <i className={`pi ${savingVitals ? "pi-spin pi-spinner" : "pi-check"}`} style={{ fontSize: 12 }} />
+                {savingVitals ? "Saving…" : "Save Pre-Assessment"}
+              </button>
             </div>
           </div>
         </div>
@@ -604,17 +977,31 @@ export default function NurseOPDQueuePage() {
   );
 }
 
-// ─── Vital input (numeric, custom) ────────────────────────────────────────────
+// ─── Vital input (numeric, system-styled) ─────────────────────────────────────
 function VitalInputCustom({ label, value, onChange, placeholder }) {
   return (
     <div>
-      <label className="his-label">{label}</label>
+      <label style={{
+        fontSize: 10, color: C.muted, fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: ".4px",
+      }}>{label}</label>
       <input
         type="number"
         value={value === null || value === undefined ? "" : value}
         onChange={e => onChange(e.target.value === "" ? null : Number(e.target.value))}
         placeholder={placeholder}
-        className="his-field"
+        style={{
+          width: "100%",
+          marginTop: 4,
+          padding: "7px 10px",
+          borderRadius: 7,
+          border: `1.5px solid ${C.border}`,
+          background: "#fff",
+          fontSize: 13,
+          color: C.text,
+          fontFamily: "'DM Sans',sans-serif",
+          outline: "none",
+        }}
       />
     </div>
   );

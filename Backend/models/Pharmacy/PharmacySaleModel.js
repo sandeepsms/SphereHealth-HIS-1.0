@@ -40,6 +40,12 @@ const SALE_ITEM = new mongoose.Schema(
     batchId:    { type: mongoose.Schema.Types.ObjectId, ref: "PharmacyDrugBatch", default: null },
     batchNo:    { type: String, default: "" },
     expiryDate: { type: Date, default: null },
+    // R7hr-31: MRP snapshot from the batch (DrugBatch.mrp) at dispense
+    // time. The bill print shows MRP alongside Rate so the customer sees
+    // the discount-off-MRP signal — Legal Metrology Rules expect MRP on
+    // every retail bill. Snapshotting here (not reading the batch live)
+    // preserves the MRP-at-billing-time even if mfg later revises it.
+    mrp:        { type: Number, default: 0, min: 0 },
 
     quantity:   { type: Number, required: true, min: 1 },
     unitPrice:  { type: Dec, required: true },
@@ -49,6 +55,15 @@ const SALE_ITEM = new mongoose.Schema(
     // changed (e.g. CBIC reclassifies a product). GSTR-1 line 12
     // HSN-summary block reads this column.
     hsnCode:    { type: String, default: "" },
+    // R7hr-12-S2 (D8-07): per-item prescriber identity snapshot. Sch H/H1/X
+    // dispense requires the script-writer's name + MCI/state-council
+    // registration number on the statutory register (D&C Form 2 / Sch H1).
+    // Per-item because a single sale may carry items from multiple
+    // prescribers; if blank, the top-level prescriberName /
+    // prescriberRegistrationNo on the sale doc is the authority. Captured
+    // at dispense time from the Doctor master when the prescriber resolves.
+    prescriberName:             { type: String, default: "" },
+    prescriberRegistrationNo:   { type: String, default: "" },
     // R7bg-1-HIGH-1: constrain gstRate to the legal Indian slabs. The
     // previous `default: 12, type: Number` would silently accept a
     // decimal typo (180 instead of 18) and over-tax the patient by 10x.
@@ -91,6 +106,15 @@ const PharmacySaleSchema = new mongoose.Schema(
     age:         { type: Number, default: null },
     gender:      { type: String, default: "" },
     doctorName:  { type: String, default: "" },
+    // R7hr-12-S2 (D8-07): top-level prescriber registration number for
+    // Schedule H / H1 / X register completeness. D&C Form 2 + Schedule H1
+    // register explicitly mandate "the name, address and registration
+    // number of the prescriber" for every prescription-mandatory dispense.
+    // Auto-populated from Doctor master at dispense time when the prescriber
+    // resolves; otherwise required from req.body for H/H1/X items. Kept as
+    // free-text (not ref) because legacy/external prescribers don't have
+    // Doctor master rows but still must carry their MCI/state-council reg.
+    prescriberRegistrationNo: { type: String, default: "", trim: true },
 
     // Source
     saleType: {
@@ -102,6 +126,19 @@ const PharmacySaleSchema = new mongoose.Schema(
     admissionId:    { type: mongoose.Schema.Types.ObjectId, ref: "Admission", default: null, index: true },
     admissionNumber:{ type: String, default: "" },           // denormalised for quick search/display
     prescriptionRef:{ type: String, default: "" },
+
+    // R7hr-23: D&C Rules 65 — when a Walk-in counter dispense includes
+    // any Schedule H / H1 / X drug, the pharmacist must preserve a
+    // photocopy of the prescription for 5 years. The frontend opens an
+    // attestation modal that captures prescriber + Rx ref + a checkbox
+    // signed by the pharmacist on duty; this flag snapshots that
+    // attestation on the sale doc itself so the Sch-H register and any
+    // inspector audit can verify the photocopy-retention claim per sale.
+    // Backend dispense controller refuses Sch H/H1/X Walk-in lines when
+    // this is falsy (code RX_PHOTOCOPY_REQUIRED). OPD/IPD/Homecare sales
+    // are exempt — the prescription is already on the patient file in
+    // those flows.
+    rxPhotocopyPreserved: { type: Boolean, default: false, index: true },
 
     items:       { type: [SALE_ITEM], default: [] },
 
@@ -132,9 +169,36 @@ const PharmacySaleSchema = new mongoose.Schema(
     igstAmount:       { type: Dec, default: () => toDec(0) },
 
     // Payment
-    paymentMode: { type: String, enum: ["Cash","Card","UPI","Mixed","Credit"], default: "Cash" },
+    // R7hr-5: "Advance" lets a sale that was settled entirely from the
+    // patient's advance pool surface the correct top-level mode so prints
+    // and analytics don't mis-label it as "Cash" or "Credit".
+    paymentMode: { type: String, enum: ["Cash","Card","UPI","Mixed","Credit","Advance"], default: "Cash" },
     amountPaid:  { type: Dec, default: () => toDec(0) },
     balanceDue:  { type: Dec, default: () => toDec(0) },
+    // R7hp-2: structured payment-mode metadata.
+    // - Card sales capture last-4 + cardholder name (PCI-DSS safe — no PAN).
+    // - UPI sales capture txnRef (UTR / VPA / PSP reference).
+    // - Mixed sales carry a splits[] array — Cash + Card + UPI portions
+    //   with per-row amount + ref. The sum must equal amountPaid; the
+    //   service trusts the client today, hard-enforces in a follow-up.
+    paymentDetails: {
+      type: new mongoose.Schema({
+        cardLast4:       { type: String, default: "" },
+        cardHolderName:  { type: String, default: "" },
+        upiTxnRef:       { type: String, default: "" },
+        splits: {
+          type: [ new mongoose.Schema({
+            mode:   { type: String, enum: ["Cash","Card","UPI"], required: true },
+            amount: { type: Dec, default: () => toDec(0) },
+            txnRef: { type: String, default: "" },
+          }, { _id: false }) ],
+          default: [],
+        },
+      }, { _id: false }),
+      default: () => ({ cardLast4: "", cardHolderName: "", upiTxnRef: "", splits: [] }),
+    },
+    // R7hp-1: pharmacist counter identity for the bill footer.
+    counter: { type: String, default: "" },
     // R7cu — Credit-collection log. Every payment received AFTER the
     // original dispense (i.e. against an IPD/Credit sale that was
     // booked with balanceDue > 0) appends a row here so the pharmacy
@@ -147,12 +211,19 @@ const PharmacySaleSchema = new mongoose.Schema(
       type: [{
         _id: false,
         amount:        { type: Dec, required: true },
-        mode:          { type: String, enum: ["Cash","Card","UPI","Mixed","Credit"], default: "Cash" },
+        // R7hr-5: "Advance" mode lets the pharmacist apply patient
+        // advance against an outstanding pharmacy bill — the row's
+        // sourceAdvanceId then back-references the PatientAdvance row
+        // we consumed so audit / refund flows can walk the link.
+        mode:          { type: String, enum: ["Cash","Card","UPI","Mixed","Credit","Advance"], default: "Cash" },
         txnRef:        { type: String, default: "" },
         receiptNumber: { type: String, default: "" }, // PHM-COLL-... if generated
         collectedAt:   { type: Date, default: Date.now },
         collectedBy:   { type: String, default: "" },
         collectedById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        // R7hr-5: optional back-link to the PatientAdvance row this
+        // collection consumed (only set when mode === "Advance").
+        sourceAdvanceId: { type: mongoose.Schema.Types.ObjectId, ref: "PatientAdvance", default: null },
         notes:         { type: String, default: "" },
       }],
       default: [],
@@ -261,6 +332,34 @@ const PharmacySaleSchema = new mongoose.Schema(
     createdBy:   { type: String, default: "" },
     createdById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     remarks:     { type: String, default: "" },
+
+    // R7hr-12-S3 (D1-02): cancel audit anchor. Pre-fix, cancelSale wrote
+    // `cancelledById`/`cancelledByName`/`cancelledAt` via $set on findOneAndUpdate
+    // but the schema declared none of these paths — Mongoose default strict
+    // mode silently stripped them, leaving the status flip and balanceDue
+    // zeroing in place but losing the actor/timestamp on the doc itself.
+    // Audit redundancy in ClinicalAudit + remarks + (admin-override) BillingAudit
+    // already covered the NABH AAC.7 trail, but per-bill schema-hygiene matters
+    // (mirrors PharmacyIndentModel / KitchenIndentModel / PatientBillModel which
+    // all declare these fields explicitly). cancelReason added so a future UI
+    // dropdown ("Wrong patient", "Customer changed mind", etc.) lands cleanly.
+    cancelledById:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    cancelledByName:{ type: String, default: "" },
+    cancelledAt:    { type: Date, default: null },
+    cancelReason:   { type: String, default: "" },
+
+    // R7hr-12-S3 (D7-06): encounter context snapshot at billing time. Pre-fix,
+    // PharmacySale persisted only patientUHID + admissionNumber — bed / ward /
+    // attending consultant lived only on the live Admission doc, so a re-print
+    // after a bed transfer or consultant change showed the CURRENT context, not
+    // the encounter context at issue time. GST §31 expects a tax invoice to
+    // snapshot the buyer's address (i.e. bed) at issue, not retro-hydrate from
+    // a live source. Denormalised here at dispense for IPD/Homecare sales;
+    // walk-in / OPD legitimately leave these blank and the printable falls
+    // back to "—". Schema additions are zero-risk for legacy rows (default "").
+    bedNumber:      { type: String, default: "" },
+    wardName:       { type: String, default: "" },
+    consultantName: { type: String, default: "" },
   },
   {
     timestamps: true,
@@ -273,10 +372,63 @@ const PharmacySaleSchema = new mongoose.Schema(
   }
 );
 
+// R7hr-12 (D1-01): enable optimistic concurrency so every save() includes
+// the __v guard. Without this, retryVersionError wrappers in pharmacyController
+// (collectCredit, applyAdvanceToSale fallback, cancelSale credit-update) were
+// dead code — concurrent cashiers/terminals collecting on the same sale
+// silently last-writer-wins on amountPaid/balanceDue/patientCredit/paymentMode
+// while the collectionLog $push survives, producing an over-recorded audit
+// trail and under-recorded accounting. Mirrors PatientBillModel.js:793.
+PharmacySaleSchema.set("optimisticConcurrency", true);
+
+// R7hr-12-S3 (D1-09): conditional-required for patientUHID + admissionNumber
+// on IPD/Homecare sales. Defence-in-depth alongside the controller checks in
+// pharmacyController.createSale (L709/L719) so any future write path (direct
+// service call, migration, console fix) still anchors IPD/Homecare dispenses
+// to a patient. NABH MOM.4 expects every IPD pharmacy dispense to link to a
+// patient identity; blank UHID rows break the R7hr-10 IPD Ledger dedup key
+// (admissionNumber + UHID) and disappear from outstanding lists. Walk-in /
+// OPD legitimately allow blanks (anonymous counter sale), so a blanket
+// `required: true` would break those flows — pre('validate') hook is the
+// right granularity.
+PharmacySaleSchema.pre("validate", function (next) {
+  if (this.saleType === "IPD" || this.saleType === "Homecare") {
+    if (!this.patientUHID || !String(this.patientUHID).trim()) {
+      return next(new Error("patientUHID required for IPD/Homecare sales"));
+    }
+    if (!this.admissionNumber || !String(this.admissionNumber).trim()) {
+      return next(new Error("admissionNumber required for IPD/Homecare sales"));
+    }
+  }
+  next();
+});
+
 PharmacySaleSchema.index({ createdAt: -1 });
 // R7ap-F14/D8-07: pharmacyController.gstSummary filters by status + createdAt
 // — the previous single-field createdAt index forced a COLLSCAN over the
 // status filter. Compound covers it.
 PharmacySaleSchema.index({ status: 1, createdAt: -1 });
+// R7hr-12-S2 (D10-02): pharmacyController.listIpdCreditAdmissions runs
+// `Sale.find({ saleType: $in, status: $in, admissionId: $ne null })` on every
+// IPD-credit-pill open. Pre-fix only single-field indexes existed on
+// saleType/admissionId/status, forcing the planner to pick one and filter
+// the rest in memory (effectively partial collection scan). Compound
+// covers all three predicates so the query hits a single B-tree walk
+// proportional to the result-size not the full sales history.
+PharmacySaleSchema.index({ status: 1, saleType: 1, admissionId: 1 });
+
+// R7hr-33 (audit P1-2): compound index for the R7hr-28 walk-in patient
+// lookup. The aggregation matches {saleType:{Walk-in,Homecare}, contactNumber:
+// /^digits/, status:{Completed,Partial-Return,Supplemented}} sorted by
+// createdAt desc. Without this index the regex hits a full collection
+// scan on every keystroke (typing 4-7 digits then debouncing fires 1-3
+// queries through 250 ms debounce). Order matters: contactNumber leads
+// because its regex is the most selective predicate (prefix-anchored
+// after R7hr-33), then saleType partitions by 2-bucket cardinality,
+// finally createdAt sorts within the match set.
+PharmacySaleSchema.index(
+  { contactNumber: 1, saleType: 1, createdAt: -1 },
+  { name: "walkin_lookup_v1" },
+);
 
 module.exports = mongoose.model("PharmacySale", PharmacySaleSchema);

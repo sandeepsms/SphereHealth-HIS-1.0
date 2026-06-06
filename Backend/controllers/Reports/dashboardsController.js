@@ -79,6 +79,15 @@ const _abcCache    = lruCache({ max: 5,  ttlMs: 60 * 60 * 1000 });   // 1h
 const _agingCache  = lruCache({ max: 30, ttlMs: 5 * 60 * 1000 });
 const _censusCache = lruCache({ max: 5,  ttlMs: 30 * 1000 });        // 30s
 
+// R7hr-12-S3 (D10-10): cache busters for ABC analysis (post-sale) and AR
+// aging (post-payment / post-bill-generate). Without these the dashboards
+// were stale by up to 1h (ABC) and 5min (aging) after a write. Callers in
+// pharmacyController.createSale + billingController.recordPayment /
+// generateBill invoke these best-effort (try/catch swallow) so a cache
+// hiccup never blocks the underlying write.
+exports.invalidateAbcCache   = () => _abcCache.clear();
+exports.invalidateAgingCache = () => _agingCache.clear();
+
 // ════════════════════════════════════════════════════════════════════
 // A6-CRIT-7: today's revenue (excludes ADVANCE_DEPOSIT)
 // ════════════════════════════════════════════════════════════════════

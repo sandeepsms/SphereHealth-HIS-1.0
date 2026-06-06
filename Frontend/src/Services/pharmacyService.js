@@ -8,7 +8,22 @@ const BASE = `${API_ENDPOINTS.BASE}/pharmacy`;
 
 const _j = async (r) => {
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d?.message || `HTTP ${r.status}`);
+  if (!r.ok) {
+    // R7hr-23: surface structured error payload (code, drugName, schedule,
+    // missing[], saleType, …) on the thrown Error so callers can branch
+    // on `.code` instead of regex-matching `.message`. Preserves the legacy
+    // human-readable .message so existing toast.error(e.message) keeps
+    // working for callers that haven't migrated to the structured path.
+    const err = new Error(d?.message || `HTTP ${r.status}`);
+    err.code     = d?.code   || null;
+    err.status   = r.status;
+    err.data     = d         || null;
+    err.drugName = d?.drugName || null;
+    err.schedule = d?.schedule || null;
+    err.missing  = Array.isArray(d?.missing) ? d.missing : [];
+    err.saleType = d?.saleType || null;
+    throw err;
+  }
   return d;
 };
 const _qs = (p) => { const s = new URLSearchParams(p).toString(); return s ? "?" + s : ""; };
@@ -44,10 +59,25 @@ export const recordGRN     = (b)               => _post(`/grn`, b);
 export const listBatches   = (params = {})     => _get(`/batches${_qs(params)}`);
 export const stockRollup   = ()                => _get(`/stock`);
 
+// R7hr-16: parse supplier invoice (PDF/JSON) → pre-fills GRN form. Multipart
+// upload — purposely do NOT set Content-Type (browser sets the multipart
+// boundary; authFetch only injects Authorization, never overrides headers).
+export const parseInvoice = async (file) => {
+  const fd = new FormData();
+  fd.append("file", file, file.name);
+  const r = await authFetch(`${BASE}/grn/parse-invoice`, { method: "POST", body: fd });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d?.message || `HTTP ${r.status}`);
+  return d;
+};
+
 // Sales
 export const dispense      = (b)               => _post(`/sales`, b);
 export const listSales     = (params = {}, opts) => _get(`/sales${_qs(params)}`, opts);
 export const getSale       = (id)              => _get(`/sales/${id}`);
+// R7hr-28: lookup previously-registered Walk-in / Homecare patients by
+// mobile-number prefix. Returns up to 8 matches, latest-seen first.
+export const lookupWalkInPatients = (q, opts)  => _get(`/walk-in-patients?q=${encodeURIComponent(q)}`, opts);
 export const cancelSale    = (id)              => _post(`/sales/${id}/cancel`);
 export const returnSaleItems = (id, body)       => _post(`/sales/${id}/return`, body);
 export const addItemsToSale  = (id, body)       => _post(`/sales/${id}/add-items`, body);
@@ -76,7 +106,7 @@ export const SALE_TYPES    = ["Walk-in","OPD","IPD","Homecare"];
 export default {
   listDrugs, searchDrugs, createDrug, updateDrug, deleteDrug,
   listSuppliers, createSupplier, updateSupplier, deleteSupplier,
-  recordGRN, listBatches, stockRollup,
+  recordGRN, listBatches, stockRollup, parseInvoice,  // R7hr-16
   dispense, listSales, getSale, cancelSale, returnSaleItems, addItemsToSale,
   getStats, getAlerts,
   getPharmacySettings, updatePharmacySettings,

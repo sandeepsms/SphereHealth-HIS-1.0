@@ -11,6 +11,7 @@ import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import SharedDrugAutocomplete, { parseStrength, drugDisplayName } from "../clinical/DrugAutocomplete";
+import ServiceMasterAutocomplete from "../services/ServiceMasterAutocomplete";
 import { confirm } from "../common/ConfirmDialog";
 import { createProcedureNote } from "../../Services/procedureNoteService";
 
@@ -196,6 +197,107 @@ function DrugAutocomplete({ form, set, label, name, placeholder }) {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   ServicePicker — form-bound wrapper around <ServiceMasterAutocomplete>.
+
+   Replaces the free-text "Test name / Procedure name / Fluid /
+   Speciality / Diet …" inputs across the 10 non-Medication tabs.
+   When the doctor picks a row from the service catalogue we mirror
+   the full {serviceMasterId, serviceCode, serviceName, unitPrice}
+   onto the form AND copy serviceName into whatever bare-text key
+   the existing payload + downstream prints expect (medicineName /
+   testName / procedureName / dietType / deliveryDevice / ptType /
+   activityLevel / instruction / speciality). The "Not in catalog?
+   Type manually" toggle clears the 4 ServiceMaster fields and lets
+   the existing free-text path stand untouched so legacy items still
+   save. Inline price preview renders below when unitPrice is set.
+══════════════════════════════════════════════════════════════ */
+function ServicePicker({ form, set, label, category, nameField, placeholder }) {
+  const manual = !!form.__manualEntry;
+  const setManual = (v) => set("__manualEntry", v);
+
+  const clearServiceFields = () => {
+    set("serviceMasterId", "");
+    set("serviceCode", "");
+    set("serviceName", "");
+    set("unitPrice", "");
+  };
+
+  const handlePick = (row) => {
+    if (!row) return;
+    const serviceMasterId = row._id || row.id || row.serviceMasterId;
+    const serviceCode     = row.serviceCode || row.code || "";
+    const serviceName     = row.serviceName || row.name || "";
+    const unitPrice       = row.defaultPrice ?? row.unitPrice ?? row.price ?? "";
+    set("serviceMasterId", serviceMasterId);
+    set("serviceCode", serviceCode);
+    set("serviceName", serviceName);
+    set("unitPrice", unitPrice);
+    // Mirror into the legacy bare-text field the existing payload expects
+    if (nameField) set(nameField, serviceName);
+  };
+
+  return (
+    <div>
+      {!manual ? (
+        <>
+          <ServiceMasterAutocomplete
+            label={label}
+            category={category}
+            value={form.serviceName || form[nameField] || ""}
+            onChange={(v) => {
+              set("serviceName", v);
+              if (nameField) set(nameField, v);
+            }}
+            onPick={handlePick}
+            placeholder={placeholder}
+          />
+          {form.unitPrice !== undefined && form.unitPrice !== "" && (
+            <div style={{ marginTop: 4, fontSize: 11, color: C.primary, fontWeight: 700 }}>
+              ₹{form.unitPrice}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => { clearServiceFields(); setManual(true); }}
+            style={{ marginTop: 4, padding: "2px 8px", border: `1px solid ${C.border}`, borderRadius: 6, background: "white", color: C.muted, fontSize: 10, cursor: "pointer" }}
+          >
+            Not in catalog? Type manually
+          </button>
+        </>
+      ) : (
+        <>
+          <label className="his-label">{label}</label>
+          <input
+            className="his-field" type="text" placeholder={placeholder}
+            value={form[nameField] || ""}
+            onChange={(e) => set(nameField, e.target.value)}
+          />
+          <button
+            type="button"
+            onClick={() => setManual(false)}
+            style={{ marginTop: 4, padding: "2px 8px", border: `1px solid ${C.border}`, borderRadius: 6, background: "white", color: C.muted, fontSize: 10, cursor: "pointer" }}
+          >
+            Pick from catalog
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ORDER META — single fallback so OrderForm header + OrderCard
+   chip stay in sync for unknown / legacy orderType values.
+   Replaces the divergent Medication-purple (OrderForm) vs
+   Nursing-pink (OrderCard) fallbacks that drifted silently.
+══════════════════════════════════════════════════════════════ */
+function getOrderMeta(type) {
+  const meta = TYPE_MAP?.[type];
+  if (meta) return meta;
+  return { color: "#64748b" /* slate */, icon: "pi-list", label: type || "Order", bg: "#f1f5f9", border: "#cbd5e1" };
+}
+
+/* ══════════════════════════════════════════════════════════════
    ORDER FORM — dynamic fields per type
 ══════════════════════════════════════════════════════════════ */
 function OrderForm({ typeId, form, set }) {
@@ -219,6 +321,9 @@ function OrderForm({ typeId, form, set }) {
         <Field form={form} set={set} label="Duration" name="durationValue" type="number" placeholder="e.g. 5"
           unitOptions={["days","hrs","weeks"]} unitName="durationUnit"/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+      </div>
+      <div style={g("1fr 1fr")}>
+        <Field form={form} set={set} label="Meal Status" name="mealStatus" options={["BeforeFood","WithFood","AfterFood","EmptyStomach","NotApplicable"]}/>
       </div>
       {/* IV Dilution — shown for IV / IM routes; auto-logs to patient Input chart on each dose given.
           R7bq-1 — added `infuseOverMinutes` (give over N min) so the nurse knows the drip rate at which
@@ -318,8 +423,9 @@ function OrderForm({ typeId, form, set }) {
   if (typeId === "IV_Fluid") return (
     <>
       <div style={g("2fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Fluid / Solution *" name="medicineName" placeholder="e.g. NS 0.9%, RL, DNS, Dextrose 5%"/>
-        <Field form={form} set={set} label="Volume *" name="dose" type="number" placeholder="500" unit="ml"/>
+        <ServicePicker form={form} set={set} label="Fluid / Solution *" category="IV_Fluid"
+          nameField="medicineName" placeholder="e.g. NS 0.9%, RL, DNS, Dextrose 5%"/>
+        <Field form={form} set={set} label="Volume *" name="totalVolume" type="number" placeholder="500" unit="ml"/>
         <Field form={form} set={set} label="Rate" name="rate" type="number" placeholder="83" unit="ml / hr"/>
       </div>
       <div style={g("1fr 1fr 1fr 1fr")}>
@@ -330,13 +436,13 @@ function OrderForm({ typeId, form, set }) {
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
       {/* Infusion schedule preview */}
-      {(form.dose > 0 && form.rate > 0) && (() => {
+      {(form.totalVolume > 0 && form.rate > 0) && (() => {
         const hrs = form.durationValue > 0
           ? (form.durationUnit === "mins" ? form.durationValue / 60 : form.durationUnit === "days" ? form.durationValue * 24 : form.durationValue)
-          : form.dose / form.rate;
+          : form.totalVolume / form.rate;
         return (
           <div style={{ padding: "10px 14px", background: "#f0fdf4", border: "1.5px solid #86efac", borderRadius: 8, marginBottom: 6, fontSize: 11, color: "#15803d" }}>
-            📊 <strong>{form.dose} ml</strong> at <strong>{form.rate} ml/hr</strong> → runs for <strong>~{Math.round(hrs * 10) / 10} hrs</strong>
+            📊 <strong>{form.totalVolume} ml</strong> at <strong>{form.rate} ml/hr</strong> → runs for <strong>~{Math.round(hrs * 10) / 10} hrs</strong>
             {Math.ceil(hrs) > 1 && <> · <strong>{Math.ceil(hrs)} hourly entries</strong> will be auto-created in the Input/Output chart when nurse starts the infusion</>}
           </div>
         );
@@ -347,14 +453,14 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "Lab") return (
     <>
-      <div style={g("2fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Test Name(s) *" name="testName" placeholder="CBC, LFT, RFT, Blood Culture, Coagulation…" span={2}/>
-        <Field form={form} set={set} label="Urgency" name="urgency" options={["Routine","Urgent","STAT"]}/>
+      <div style={g("2fr 1fr")}>
+        <ServicePicker form={form} set={set} label="Test Name(s) *" category="Lab"
+          nameField="testName" placeholder="CBC, LFT, RFT, Blood Culture, Coagulation…"/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
-      <div style={g("1fr 1fr 1fr")}>
+      <div style={g("1fr 1fr")}>
         <Field form={form} set={set} label="Sample Type" name="sampleType" options={["Venous Blood","Arterial Blood","Urine (Spot)","Urine (24hr)","Stool","Sputum","Swab","CSF","Pleural Fluid","Ascitic Fluid","Tissue Biopsy"]}/>
         <Field form={form} set={set} label="Fasting Required" name="fasting" options={["No","Yes — 8 hrs","Yes — 12 hrs"]}/>
-        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
       <Field form={form} set={set} label="Clinical Details / Special Instructions" name="notes" placeholder="Pre-antibiotic, timing, paired samples…" type="textarea"/>
     </>
@@ -363,15 +469,15 @@ function OrderForm({ typeId, form, set }) {
   if (typeId === "Radiology") return (
     <>
       <div style={g("2fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Scan / Study *" name="testName" placeholder="e.g. CECT Chest, USG Abdomen, MRI Brain, X-Ray PA"/>
+        <ServicePicker form={form} set={set} label="Scan / Study *" category="Radiology"
+          nameField="testName" placeholder="e.g. CECT Chest, USG Abdomen, MRI Brain, X-Ray PA"/>
         <Field form={form} set={set} label="Region / Body Part" name="region" placeholder="e.g. Chest, Abdomen-Pelvis"/>
-        <Field form={form} set={set} label="Urgency" name="urgency" options={["Routine","Urgent","STAT"]}/>
+        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
-      <div style={g("1fr 1fr 1fr 1fr")}>
+      <div style={g("1fr 1fr 1fr")}>
         <Field form={form} set={set} label="Contrast" name="contrast" options={["Plain (No Contrast)","With IV Contrast","With Oral Contrast","Both"]}/>
         <Field form={form} set={set} label="Sedation Required" name="sedation" options={["No","Yes"]}/>
         <Field form={form} set={set} label="Laterality" name="laterality" options={["—","Right","Left","Bilateral"]}/>
-        <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
       <Field form={form} set={set} label="Clinical Indication / History" name="notes" placeholder="Relevant clinical details, allergy to contrast, prior imaging…" type="textarea"/>
     </>
@@ -380,7 +486,8 @@ function OrderForm({ typeId, form, set }) {
   if (typeId === "Procedure") return (
     <>
       <div style={g("2fr 1fr")}>
-        <Field form={form} set={set} label="Procedure Name *" name="procedureName" placeholder="e.g. Chest Drain Insertion, Lumbar Puncture, IV Cannula"/>
+        <ServicePicker form={form} set={set} label="Procedure Name *" category="Procedure"
+          nameField="procedureName" placeholder="e.g. Chest Drain Insertion, Lumbar Puncture, IV Cannula"/>
         <Field form={form} set={set} label="Type" name="procedureType" options={["Minor","Major","Diagnostic","Therapeutic","Bedside"]}/>
       </div>
       <div style={g("1fr 1fr 1fr")}>
@@ -412,8 +519,9 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "BloodTransfusion") return (
     <>
-      <div style={g("1fr 1fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Blood Product *" name="medicineName" options={["Packed Red Cells","Whole Blood","Fresh Frozen Plasma","Platelets","Cryoprecipitate","Albumin"]}/>
+      <div style={g("2fr 1fr 1fr 1fr")}>
+        <ServicePicker form={form} set={set} label="Blood Product *" category="BloodTransfusion"
+          nameField="medicineName" placeholder="e.g. Packed Red Cells, FFP, Platelets, Cryoprecipitate"/>
         <Field form={form} set={set} label="Units / Volume" name="dose" placeholder="e.g. 2 units / 400ml"/>
         <Field form={form} set={set} label="Rate" name="rate" placeholder="e.g. 4 hrs/unit"/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
@@ -492,8 +600,9 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "Diet") return (
     <>
-      <div style={g("1fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Diet Type *" name="dietType" options={["Regular/Normal","Soft","Semi-Solid","Liquid","Clear Liquid","NPO (Nil by Mouth)","Diabetic Diet","Low Salt","Low Fat","High Protein","Renal Diet","Hepatic Diet","Enteral (NG Tube)","TPN (Total Parenteral)"]}/>
+      <div style={g("2fr 1fr 1fr")}>
+        <ServicePicker form={form} set={set} label="Diet Type *" category="Diet"
+          nameField="dietType" placeholder="e.g. Regular, Diabetic, Renal, NPO, Enteral…"/>
         <Field form={form} set={set} label="Caloric Target (kcal)" name="calories" placeholder="e.g. 2000"/>
         <Field form={form} set={set} label="Protein Target (g)" name="protein" placeholder="e.g. 80"/>
       </div>
@@ -508,15 +617,18 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "Oxygen") return (
     <>
-      <div style={g("1fr 1fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Delivery Device *" name="deliveryDevice" options={["Nasal Prongs","Simple Face Mask","Non-Rebreather Mask","Venturi Mask","High-Flow Nasal Cannula (HFNC)","CPAP Mask","BiPAP Mask","Tracheostomy Collar","Incubator / Hood","Room Air"]}/>
+      <div style={g("2fr 1fr 1fr 1fr")}>
+        <ServicePicker form={form} set={set} label="Delivery Device *" category="Oxygen"
+          nameField="deliveryDevice" placeholder="e.g. Nasal Prongs, HFNC, BiPAP, Venturi…"/>
         <Field form={form} set={set} label="Flow Rate (L/min)" name="flowRate" placeholder="e.g. 4"/>
         <Field form={form} set={set} label="FiO₂ (%)" name="fio2" placeholder="e.g. 40"/>
         <Field form={form} set={set} label="Target SpO₂ (%)" name="targetSpo2" placeholder="e.g. ≥95"/>
       </div>
-      <div style={g("1fr 1fr 1fr")}>
+      <div style={g("1fr 1fr 1fr 1fr")}>
         <Field form={form} set={set} label="HFNC Flow (L/min)" name="hfncFlow" placeholder="e.g. 40 (if HFNC)"/>
-        <Field form={form} set={set} label="Duration" name="duration" placeholder="e.g. Continuous, PRN, 6 hrs"/>
+        <Field form={form} set={set} label="Duration" name="durationValue" type="number" placeholder="e.g. 6"
+          unitOptions={["hrs","mins","days","Continuous","PRN"]} unitName="durationUnit"/>
+        <Field form={form} set={set} label="Duration (free-text)" name="duration" placeholder="e.g. Continuous, PRN, 6 hrs"/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
       <Field form={form} set={set} label="Weaning Instructions / Special Notes" name="notes" placeholder="Wean by 2 L/min every 4 hrs if SpO₂ stable…" type="textarea"/>
@@ -525,10 +637,17 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "Physiotherapy") return (
     <>
-      <div style={g("1fr 1fr 1fr")}>
-        <Field form={form} set={set} label="PT Type *" name="ptType" options={["Chest Physiotherapy","Respiratory Exercises","Limb Exercises (Passive)","Limb Exercises (Active)","Ambulation","Transfer Training","Strengthening","Range of Motion","Incentive Spirometry","Postural Drainage","Traction","Ultrasound Therapy"]}/>
+      <div style={g("2fr 1fr 1fr")}>
+        <ServicePicker form={form} set={set} label="PT Type *" category="Physiotherapy"
+          nameField="ptType" placeholder="e.g. Chest PT, Limb Exercises, Ambulation, Incentive Spirometry…"/>
         <Field form={form} set={set} label="Frequency" name="frequency" options={["Once Daily","Twice Daily","Three Times Daily","PRN","Every 4 hrs","Post Op (Immediately)"]}/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+      </div>
+      <div style={g("1fr 1fr 1fr")}>
+        <Field form={form} set={set} label="Sessions / Day" name="sessionsPerDay" type="number" placeholder="e.g. 2"/>
+        <Field form={form} set={set} label="Duration" name="durationValue" type="number" placeholder="e.g. 5"
+          unitOptions={["days","weeks","sessions"]} unitName="durationUnit"/>
+        <Field form={form} set={set} label="Modality" name="modality" placeholder="e.g. Manual, Ultrasound, TENS"/>
       </div>
       <div style={g("1fr 1fr")}>
         <Field form={form} set={set} label="Goals" name="goals" placeholder="e.g. Improve sputum clearance, prevent DVT, restore ambulation"/>
@@ -540,8 +659,9 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "Activity") return (
     <>
-      <div style={g("1fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Activity Level *" name="activityLevel" options={["Bed Rest (Strict)","Bed Rest with Commode","Bed Rest with BRP","Dangle at Bedside","Chair Sit (30 min)","Ambulate in Room","Ambulate in Corridor","Independent Ambulation","As Tolerated"]}/>
+      <div style={g("2fr 1fr 1fr")}>
+        <ServicePicker form={form} set={set} label="Activity Level *" category="Activity"
+          nameField="activityLevel" placeholder="e.g. Bed Rest, Dangle, Chair Sit, Ambulate…"/>
         <Field form={form} set={set} label="Assistance Level" name="assistanceLevel" options={["Independent","Supervision Only","Minimum Assist (< 25%)","Moderate Assist (25–50%)","Maximum Assist (> 50%)","Dependent / Full Assist"]}/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
@@ -556,12 +676,15 @@ function OrderForm({ typeId, form, set }) {
   if (typeId === "Nursing") return (
     <>
       <div style={g("2fr 1fr")}>
-        <Field form={form} set={set} label="Nursing Instruction *" name="instruction" placeholder="e.g. 2-hourly position change, hourly urine output, wound care"/>
+        <ServicePicker form={form} set={set} label="Nursing Instruction *" category="Nursing"
+          nameField="instruction" placeholder="e.g. 2-hourly position change, hourly urine output, wound care"/>
         <Field form={form} set={set} label="Frequency" name="frequency" options={["Stat (Once)","Hourly","2-Hourly","4-Hourly","6-Hourly","8-Hourly","12-Hourly","Daily","BD","TDS","PRN","Continuous"]}/>
       </div>
-      <div style={g("1fr 1fr 1fr")}>
+      <div style={g("1fr 1fr 1fr 1fr")}>
         <Field form={form} set={set} label="Care Category" name="careCategory" options={["Wound Care","Catheter Care","NG Tube Care","Tracheostomy Care","Pressure Area Care","Oral Hygiene","Eye Care","IV Site Care","Drain Care","Monitoring","Medication-Related","Other"]}/>
-        <Field form={form} set={set} label="Duration" name="duration" placeholder="e.g. Until DC, 3 days"/>
+        <Field form={form} set={set} label="Duration" name="durationValue" type="number" placeholder="e.g. 3"
+          unitOptions={["days","hrs","weeks","Until DC"]} unitName="durationUnit"/>
+        <Field form={form} set={set} label="Duration (free-text)" name="duration" placeholder="e.g. Until DC, 3 days"/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
       <Field form={form} set={set} label="Detailed Instructions" name="notes" placeholder="Step-by-step nursing instructions, product to use, documentation required…" type="textarea"/>
@@ -570,14 +693,14 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "Consultation") return (
     <>
-      <div style={g("1fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Speciality *" name="speciality" options={["Cardiology","Neurology","Nephrology","Pulmonology","Gastroenterology","Endocrinology","Haematology","Oncology","Infectious Disease","Orthopaedics","General Surgery","Urology","Gynaecology","Ophthalmology","ENT","Dermatology","Psychiatry","Anaesthesia","ICU / Critical Care","Palliative Care","Dietitian","Physiotherapy","Social Work"]}/>
+      <div style={g("2fr 1fr 1fr")}>
+        <ServicePicker form={form} set={set} label="Speciality *" category="Consultation"
+          nameField="speciality" placeholder="e.g. Cardiology, Neurology, Nephrology…"/>
         <Field form={form} set={set} label="Consultant Name" name="consultantName" placeholder="e.g. Dr. Sharma"/>
-        <Field form={form} set={set} label="Urgency" name="urgency" options={["Routine (Within 24 hrs)","Urgent (Within 4 hrs)","Emergency (Immediate)"]}/>
-      </div>
-      <div style={g("1fr 1fr")}>
-        <Field form={form} set={set} label="Referred By" name="referredBy" placeholder="Referring doctor name"/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
+      </div>
+      <div style={g("1fr")}>
+        <Field form={form} set={set} label="Referred By" name="referredBy" placeholder="Referring doctor name"/>
       </div>
       <Field form={form} set={set} label="Reason for Referral / Clinical Summary *" name="reason" placeholder="Brief history, key findings, specific question for consultant…" type="textarea"/>
       <Field form={form} set={set} label="Investigations Shared" name="notes" placeholder="CBC, CT scan, ECG reports shared…" type="textarea"/>
@@ -976,7 +1099,7 @@ function CompleteProcedureModal({ order, onClose, onSaved }) {
 /* ══════════════════════════════════════════════════════════════
    ORDER CARD
 ══════════════════════════════════════════════════════════════ */
-function OrderCard({ order, onCancel, onComplete }) {
+function OrderCard({ order, onCancel, onComplete, onEdit }) {
   const [expanded, setExpanded] = useState(false);
   const meta   = TYPE_MAP[order.orderType] || ORDER_TYPES[10];
   const status = STAT_STYLE[order.status] || STAT_STYLE.Pending;
@@ -995,15 +1118,39 @@ function OrderCard({ order, onCancel, onComplete }) {
     || order.orderDetails?.speciality
     || "—";
 
-  const subtitle = [
-    order.orderDetails?.dose,
-    order.orderDetails?.route,
-    order.orderDetails?.frequency,
-    order.orderDetails?.duration,
-    order.orderDetails?.urgency,
-    order.orderDetails?.region,
-    order.orderDetails?.flowRate && `${order.orderDetails.flowRate} L/min`,
-  ].filter(Boolean).join(" · ");
+  // P1-6: orderType-aware subtitle composition. Medication / Investigation /
+  // Procedure keep the canonical dose+route+frequency+duration shape; the
+  // rest pick the fields their form actually populates so cards don't render
+  // blank or generic "Routine · —" strings.
+  const od = order.orderDetails || {};
+  const subtitle = (() => {
+    switch (order.orderType) {
+      case "Diet":
+        return [od.calories && `${od.calories} kcal`, od.restrictions, od.consistency].filter(Boolean).join(" · ");
+      case "Activity":
+        return [od.activityLevel, od.assistanceLevel].filter(Boolean).join(" · ");
+      case "Oxygen":
+        return [od.deliveryDevice, od.fio2 && `FiO2 ${od.fio2}`, od.targetSpo2 && `SpO2 ${od.targetSpo2}`, od.flowRate && `${od.flowRate} L/min`].filter(Boolean).join(" · ");
+      case "Consultation":
+        return [od.speciality, od.consultantName].filter(Boolean).join(" · ");
+      case "Nursing":
+        return [od.instruction, od.careCategory, od.frequency].filter(Boolean).join(" · ");
+      case "Physiotherapy":
+        return [od.ptType, od.sessionsPerDay && `${od.sessionsPerDay}/day`, od.modality, od.frequency].filter(Boolean).join(" · ");
+      case "IV_Fluid":
+        return [od.totalVolume && `${od.totalVolume} ml`, od.rate && `${od.rate} ml/hr`, od.accessSite, od.duration].filter(Boolean).join(" · ");
+      default:
+        return [
+          od.dose,
+          od.route,
+          od.frequency,
+          od.duration,
+          od.priority && od.priority !== "Routine" ? od.priority : null,
+          od.region,
+          od.flowRate && `${od.flowRate} L/min`,
+        ].filter(Boolean).join(" · ");
+    }
+  })();
 
   return (
     <div style={{ background: C.card, border: `1.5px solid ${expanded ? meta.border : C.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 8, transition: "border-color .2s" }}>
@@ -1058,6 +1205,17 @@ function OrderCard({ order, onCancel, onComplete }) {
                   <i className="pi pi-check-circle" style={{ marginRight: 5 }}/> Complete Procedure
                 </button>
               )}
+            {/* P1-5: Edit (modify) — NABH MOM.3 amend with reason. Only for
+                still-actionable orders; once Completed/Cancelled, amendments
+                are not allowed (would invalidate the audit trail). */}
+            {order.status !== "Completed" && order.status !== "Cancelled" && onEdit && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onEdit(order); }}
+                style={{ padding: "5px 12px", border: `1px solid ${C.blueB}`, borderRadius: 7, background: C.blueL, color: C.blue, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+              >
+                <i className="pi pi-pencil" style={{ marginRight: 5 }}/> Edit
+              </button>
+            )}
             {order.status !== "Completed" && order.status !== "Cancelled" && (
               <button
                 onClick={async (e) => {
@@ -1102,6 +1260,10 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
   // OT procedure-completion modal — the order being completed lives here
   // so the modal can read its details / doctorOrderId.
   const [completeOrder, setCompleteOrder] = useState(null);
+  // P1-5: edit-an-existing-order. When non-null, OrderForm is prefilled with
+  // this order's data and the save handler POSTs to /doctor-action with
+  // action=modify + amendReason (NABH MOM.3).
+  const [editingOrder, setEditingOrder] = useState(null);
 
   /* fetch orders — R7az-D4-HIGH-6/D4-HIGH-7: abort on UHID change and on
      unmount so the 30s polling timer doesn't keep firing requests after
@@ -1141,7 +1303,32 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
 
   /* helpers */
   const setField = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const resetForm = () => { setSelType(null); setForm({}); setShowForm(false); };
+  const resetForm = () => { setSelType(null); setForm({}); setShowForm(false); setEditingOrder(null); };
+
+  // P1-5: Edit click handler — prefill OrderForm from existing order data so
+  // the doctor can amend it (NABH MOM.3 modify-with-reason).
+  const startEdit = (order) => {
+    const od = order.orderDetails || {};
+    // Flatten orderDetails + top-level fields back into the form shape the
+    // OrderForm understands. `dose` may already be a combined "500mg" string;
+    // we leave it as-is (Field renders it; saver will recombine on output).
+    setForm({
+      ...od,
+      priority: order.priority || od.priority || "Routine",
+      medicineName: order.medicineName || od.medicineName || "",
+      testName: order.testName || od.testName || "",
+      procedureName: order.procedureName || od.procedureName || "",
+      reason: order.reason || od.reason || "",
+      hamFlag: !!order.hamFlag,
+      twoNurseRequired: !!order.twoNurseRequired,
+      concentratedElectrolyte: !!order.concentratedElectrolyte,
+      highRisk: !!order.highRisk,
+      amendReason: "",
+    });
+    setSelType(order.orderType);
+    setShowForm(true);
+    setEditingOrder(order);
+  };
 
   /* ── map form → DoctorOrderModel shape ── */
   const buildPayload = () => {
@@ -1159,6 +1346,13 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
     delete d.priority;
     // Strip root-level HAM flags from orderDetails (they live at root, not nested)
     delete d.hamFlag; delete d.twoNurseRequired; delete d.concentratedElectrolyte; delete d.highRisk;
+    // P1-5: amendReason is a sibling of `changes` on the modify request; do not
+    // leak it into the saved orderDetails when amending.
+    delete d.amendReason;
+    // ServiceMaster UI helper — local toggle only, never sent to the server.
+    // (serviceMasterId / serviceCode / serviceName / unitPrice DO stay on
+    // orderDetails so downstream billing can charge the picked catalog item.)
+    delete d.__manualEntry;
     // R7du — Strip Pre-Transfusion Checklist flat keys from orderDetails;
     // they collect into a root-level `preTransfusion` object below so the
     // NABH MOM.4 emitter (services/Compliance/nabhRegisterEmitter.js →
@@ -1171,17 +1365,38 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
     if (d.dose !== undefined && d.dose !== "" && d.doseUnit) {
       d.dose = `${d.dose}${d.doseUnit}`;
     }
-    // Combine durationValue + unit into duration string (e.g. "6 hrs") for display
+    // Combine durationValue + unit into duration string (e.g. "6 hrs" / "5 days") for display.
+    // P1-12: For Medication default to 'days'; for IV_Fluid default to 'hrs'; otherwise 'hrs'.
     if (d.durationValue !== undefined && d.durationValue !== "") {
-      d.duration = `${d.durationValue} ${d.durationUnit || "hrs"}`;
+      const defaultUnit = selType === "Medication" ? "days" : "hrs";
+      d.duration = `${d.durationValue} ${d.durationUnit || defaultUnit}`;
+    }
+
+    // P1-9: IV_Fluid totalVolume — write structured value to orderDetails
+    if (selType === "IV_Fluid") {
+      d.totalVolume = Number(form.totalVolume) || 0;
+    }
+
+    // P1-8: Medication mealStatus — write to orderDetails (default NotApplicable)
+    if (selType === "Medication") {
+      d.mealStatus = form.mealStatus || "NotApplicable";
+    }
+
+    // P1-7: Consultation reason at root (not under orderDetails)
+    if (selType === "Consultation") {
+      base.reason = form.reason || "";
+      delete d.reason;
     }
 
     base.orderDetails = d;
 
     // HAM root-level flags (Medication only)
+    // P2-11: hamFlag mirrors visually-displayed state — disabled-but-checked when auto-detected
     if (selType === "Medication") {
-      base.hamFlag              = !!form.hamFlag;
-      base.twoNurseRequired     = !!form.twoNurseRequired;
+      const HAM_KW = ["insulin","heparin","enoxaparin","warfarin","digoxin","amiodarone","kcl","potassium","magnesium sulphate","mgso4","morphine","fentanyl","pethidine","tramadol iv","noradrenaline","norepinephrine","adrenaline","epinephrine","dopamine","dobutamine","vasopressin","suxamethonium","succinylcholine","vecuronium","rocuronium","streptokinase","alteplase","methotrexate","cyclophosphamide","cisplatin","vincristine","oxytocin","nitroprusside","ketamine","propofol","midazolam iv","vancomycin iv","gentamicin iv","amikacin iv","dextrose 25%","dextrose 50%","concentrated sodium","hypertonic saline","fondaparinux","acenocoumarol","lidocaine","lignocaine"];
+      const autoHAM = HAM_KW.some(k => (form.medicineName || "").toLowerCase().includes(k));
+      base.hamFlag              = !!form.hamFlag || autoHAM;
+      base.twoNurseRequired     = !!form.twoNurseRequired || autoHAM;
       base.concentratedElectrolyte = !!form.concentratedElectrolyte;
       base.highRisk             = !!form.highRisk;
     }
@@ -1210,7 +1425,9 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
     }
     if (selType === "Lab" || selType === "Radiology") {
       base.testName = form.testName;
-      base.urgency  = form.urgency;
+      // P2-8: canonical field is `priority`. Mirror to urgency for backward-compat
+      // on any downstream code that still reads it.
+      base.urgency  = form.priority;
     }
     if (selType === "Procedure") {
       base.procedureName = form.procedureName;
@@ -1219,10 +1436,11 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
       // B3-T06 — OT flag. If the doctor never touched the toggle (form.requiresOT
       // is undefined/blank), apply the same auto-default the UI shows: Major/Surgical
       // type OR GA/Sedation anaesthesia ⇒ Yes; everything else ⇒ No.
+      // P1-11: requiresOT lives under orderDetails — Mongoose strips unknown root fields.
       const otValue = form.requiresOT
         || ((form.procedureType === "Major" || form.procedureType === "Surgical"
              || form.anaesthesia   === "GA"    || form.anaesthesia   === "Sedation") ? "Yes" : "No");
-      base.requiresOT = otValue === "Yes";
+      base.orderDetails.requiresOT = otValue === "Yes";
     }
     base.notes = form.notes || "";
     base.displayName = form.medicineName || form.testName || form.procedureName
@@ -1244,10 +1462,16 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
       Radiology: "testName", Procedure: "procedureName",
       BloodTransfusion: "medicineName", Diet: "dietType", Oxygen: "deliveryDevice",
       Physiotherapy: "ptType", Activity: "activityLevel", Nursing: "instruction",
-      Consultation: "speciality",
+      // P1-7: Consultation requires `reason` (clinical summary), not just speciality —
+      // the backend rejects without it.
+      Consultation: "reason",
     };
     const reqField = required[selType];
     if (reqField && !form[reqField]) return toast.error("Fill in the required fields (*)");
+    // P1-5: amend reason is mandatory when modifying (NABH MOM.3)
+    if (editingOrder && !(form.amendReason || "").trim()) {
+      return toast.error("Amend reason is required");
+    }
 
     setSaving(true);
     try {
@@ -1255,8 +1479,24 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
       // (reads `his_token`). Manual headers using the wrong key
       // (`localStorage.getItem("token")` → null) used to send `Bearer null`
       // and trigger a 401 + session wipe — removed.
-      await axios.post(API_ENDPOINTS.DOCTOR_ORDERS, buildPayload());
-      toast.success(`${TYPE_MAP[selType]?.label} order placed`);
+      if (editingOrder) {
+        // P1-5: NABH MOM.3 modify path — POST to /doctor-action so the
+        // backend records the amendment in the audit log with the reason.
+        const payload = buildPayload();
+        // Strip the read-only routing fields from the changes delta — the
+        // backend uses the order id from the URL, not the payload.
+        const { UHID: _u, visitId: _v, visitType: _t, orderType: _o,
+                orderedBy: _b, orderedByRole: _r, doctor: _d, status: _s,
+                ...changes } = payload;
+        await axios.post(
+          `${API_ENDPOINTS.DOCTOR_ORDERS}/${editingOrder._id}/doctor-action`,
+          { action: "modify", amendReason: form.amendReason.trim(), changes }
+        );
+        toast.success(`${TYPE_MAP[selType]?.label} order amended`);
+      } else {
+        await axios.post(API_ENDPOINTS.DOCTOR_ORDERS, buildPayload());
+        toast.success(`${TYPE_MAP[selType]?.label} order placed`);
+      }
       resetForm();
       fetchOrders();
     } catch (e) {
@@ -1287,12 +1527,13 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
 
   /* ── filter ── */
   const ACTIVE_STATUSES  = ["Pending","Acknowledged","InProgress","OnHold"];
+  // P2-12: Status filter now matches individual statuses OR the "Active"
+  // meta-bucket (union of ACTIVE_STATUSES). "all" / "All" = no status filter.
   const filtered = orders.filter(o => {
     const typeOk = filterType === "All" || o.orderType === filterType;
-    const statOk = filterStat === "All"
-      || (filterStat === "Active"    && ACTIVE_STATUSES.includes(o.status))
-      || (filterStat === "Completed" && o.status === "Completed")
-      || (filterStat === "Cancelled" && o.status === "Cancelled");
+    const statOk = filterStat === "All" || filterStat === "all"
+      || (filterStat === "Active" && ACTIVE_STATUSES.includes(o.status))
+      || (o.status === filterStat);
     return typeOk && statOk;
   });
 
@@ -1371,7 +1612,7 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
             <>
               {/* Back + type title */}
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-                <button onClick={() => { setSelType(null); setForm({}); }} style={{ border: `1px solid ${C.border}`, background: "white", borderRadius: 7, padding: "4px 10px", fontSize: 11, cursor: "pointer", color: C.muted }}>
+                <button onClick={() => { setSelType(null); setForm({}); setEditingOrder(null); }} style={{ border: `1px solid ${C.border}`, background: "white", borderRadius: 7, padding: "4px 10px", fontSize: 11, cursor: "pointer", color: C.muted }}>
                   <i className="pi pi-arrow-left" style={{ marginRight: 5 }}/>Back
                 </button>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1379,11 +1620,32 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
                     <i className={`pi ${TYPE_MAP[selType]?.icon}`} style={{ fontSize: 13, color: TYPE_MAP[selType]?.color }}/>
                   </div>
                   <div>
-                    <div style={{ fontWeight: 800, color: TYPE_MAP[selType]?.color, fontSize: 14 }}>{TYPE_MAP[selType]?.label}</div>
+                    <div style={{ fontWeight: 800, color: TYPE_MAP[selType]?.color, fontSize: 14 }}>
+                      {editingOrder ? `Edit ${TYPE_MAP[selType]?.label}` : TYPE_MAP[selType]?.label}
+                    </div>
                     <div style={{ fontSize: 11, color: C.muted }}>Dr. {doctorName} · {new Date().toLocaleString("en-IN", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" })}</div>
                   </div>
                 </div>
               </div>
+
+              {/* P1-5: Amend reason — required when modifying an existing order (NABH MOM.3) */}
+              {editingOrder && (
+                <div style={{ background: C.amberL, border: `1.5px solid ${C.amberB}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <i className="pi pi-exclamation-triangle" style={{ fontSize: 13, color: C.amber }}/>
+                    <span style={{ fontWeight: 800, fontSize: 12, color: C.amber, letterSpacing: ".3px" }}>
+                      Amending Existing Order — NABH MOM.3
+                    </span>
+                  </div>
+                  <label className="his-label">Reason for amendment *</label>
+                  <textarea
+                    className="his-textarea" rows={2}
+                    placeholder="e.g. Dose adjusted per renal function, frequency changed after consultation…"
+                    value={form.amendReason || ""}
+                    onChange={(e) => setField("amendReason", e.target.value)}
+                  />
+                </div>
+              )}
 
               {/* Dynamic form */}
               <div style={{ background: "white", borderRadius: 10, border: `1px solid ${C.border}`, padding: 14 }}>
@@ -1400,7 +1662,9 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
                   disabled={saving}
                   style={{ padding: "8px 22px", border: "none", borderRadius: 8, background: `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", fontSize: 12, fontWeight: 800, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? .7 : 1, display: "flex", alignItems: "center", gap: 6 }}
                 >
-                  {saving ? <><i className="pi pi-spin pi-spinner" style={{ fontSize: 12 }}/> Placing…</> : <><i className="pi pi-check" style={{ fontSize: 11 }}/> Place Order</>}
+                  {saving
+                    ? <><i className="pi pi-spin pi-spinner" style={{ fontSize: 12 }}/> {editingOrder ? "Amending…" : "Placing…"}</>
+                    : <><i className="pi pi-check" style={{ fontSize: 11 }}/> {editingOrder ? "Amend Order" : "Place Order"}</>}
                 </button>
               </div>
             </>
@@ -1411,11 +1675,19 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
       {/* ═══════════════ FILTERS ═══════════════ */}
       <div style={{ padding: "8px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", background: C.grayL }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>Filter:</div>
-        {["Active","Completed","Cancelled","All"].map(s => (
-          <button key={s} onClick={() => setFilterStat(s)} style={{ padding: "3px 10px", borderRadius: 10, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1px solid ${filterStat === s ? C.primary : C.border}`, background: filterStat === s ? C.primaryL : "white", color: filterStat === s ? C.primary : C.muted }}>
-            {s}
-          </button>
-        ))}
+        {/* P2-12: expanded status filter — individual statuses + "Active (any)"
+            meta-bucket. Default selection is Active for the common case. */}
+        <select className="his-select" style={{ width: "auto", fontSize: 11, padding: "3px 8px", minWidth: 140 }} value={filterStat} onChange={e => setFilterStat(e.target.value)}>
+          <option value="all">All</option>
+          <option value="Pending">Pending</option>
+          <option value="Acknowledged">Acknowledged</option>
+          <option value="InProgress">In Progress</option>
+          <option value="OnHold">On Hold</option>
+          <option value="Active">Active (any)</option>
+          <option value="Completed">Completed</option>
+          <option value="Cancelled">Cancelled</option>
+          <option value="Stopped">Stopped</option>
+        </select>
         <div style={{ width: 1, height: 16, background: C.border, margin: "0 4px" }}/>
         <select className="his-select" style={{ width: "auto", fontSize: 11, padding: "3px 8px", minWidth: 120 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
           <option value="All">All Types</option>
@@ -1445,6 +1717,7 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
             order={order}
             onCancel={cancelOrder}
             onComplete={setCompleteOrder}
+            onEdit={startEdit}
           />
         ))}
       </div>

@@ -29,10 +29,8 @@
  *   • Optional diagnosis tier pill (Final / Working / Provisional)
  *   • Ward fallback chain — wardName → wardId.wardName → department
  */
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { QRCodeSVG } from "qrcode.react";
-import axios from "axios";
-import { API_ENDPOINTS } from "../../config/api";
 import useHospitalSettings from "../print/useHospitalSettings";
 import "./PatientHeaderCard.css";
 
@@ -134,13 +132,78 @@ export default function PatientHeaderCard({
   // Ward fallback chain — denormalised wardName → populated Ward → department
   const wardVal    = patient.wardName || patient.wardId?.wardName || patient.department || "—";
   const admDate    = fmtDate(patient.admissionDate);
-  // Prefer latestDiagnosis (live from doctor notes) over admission's
-  // admittingDiagnosis (often empty / stale at the time of read).
-  const diagText   = latestDiagnosis?.text
-    || patient.diagnosis
-    || patient.admittingDiagnosis
-    || patient.provisionalDiagnosis
-    || "—";
+  // R7hr-84 — Pick the strongest available diagnosis tier so the
+  // banner shows the doctor's most authoritative call. Priority is
+  // Final → Working → Provisional. Sources, in order of trust:
+  //   1. `diagnosis` prop (doctor's in-flight edit state on /doctor-notes)
+  //   2. `latestDiagnosis` prop (pulled from saved notes on nursing side)
+  //   3. patient.* legacy admittingDiagnosis fields
+  const pickedDx = (() => {
+    const d = diagnosis;
+    if (d && (d.final || d.working || d.provisional)) {
+      if (d.final)      return { tier: "Final",       text: d.final,       icd10Code: d.icd10Code, icd10Description: d.icd10Description };
+      if (d.working)    return { tier: "Working",     text: d.working,     icd10Code: d.icd10Code, icd10Description: d.icd10Description };
+      return              { tier: "Provisional", text: d.provisional, icd10Code: d.icd10Code, icd10Description: d.icd10Description };
+    }
+    if (latestDiagnosis?.text) return latestDiagnosis;
+    return null;
+  })();
+  const diagTier   = pickedDx?.tier || null;
+  const diagText   = (() => {
+    if (pickedDx?.text) {
+      const code = pickedDx.icd10Code ? ` · ${pickedDx.icd10Code}` : "";
+      const desc = pickedDx.icd10Description ? ` — ${pickedDx.icd10Description}` : "";
+      return `${pickedDx.text}${code}${desc}`;
+    }
+    return patient.diagnosis
+      || patient.admittingDiagnosis
+      || patient.provisionalDiagnosis
+      || "—";
+  })();
+  // R7hr-85 — Build all three tiers (whichever are filled) for the
+  // prominent in-banner clinical strip. Each tier carries its own text,
+  // and the ICD-10 code+description are attached to the *highest* filled
+  // tier (matches the doctor's intent — ICD-10 always belongs to the
+  // most-final call).
+  const dxTiersFull = (() => {
+    // Inline helper: build an ordered array of per-tier chips from a
+    // {provisional, working, final, icd10Code, icd10Description}
+    // object. Used for BOTH the doctor's in-flight `diagnosis` prop
+    // and the nurse's saved-notes `latestDiagnosis` prop so both
+    // banners render identically (R7hr-87.1).
+    const buildTiers = (src) => {
+      const out = [];
+      if (src.provisional) out.push({ tier: "Provisional", text: src.provisional });
+      if (src.working)     out.push({ tier: "Working",     text: src.working });
+      if (src.final)       out.push({ tier: "Final",       text: src.final });
+      if (out.length && (src.icd10Code || src.icd10Description)) {
+        out[out.length - 1].icd10Code = src.icd10Code;
+        out[out.length - 1].icd10Description = src.icd10Description;
+      }
+      return out;
+    };
+    const d = diagnosis;
+    if (d && (d.final || d.working || d.provisional)) return buildTiers(d);
+    if (latestDiagnosis && (latestDiagnosis.final || latestDiagnosis.working || latestDiagnosis.provisional)) {
+      return buildTiers(latestDiagnosis);
+    }
+    // Legacy single-tier shape (older callers): one chip for the
+    // most-final tier the saved-notes pull supplied.
+    if (latestDiagnosis?.text) {
+      return [{
+        tier: latestDiagnosis.tier || "Provisional",
+        text: latestDiagnosis.text,
+        icd10Code: latestDiagnosis.icd10Code,
+        icd10Description: latestDiagnosis.icd10Description,
+      }];
+    }
+    return [];
+  })();
+  // R7hr-87 — doctor's patient-status call (Stable / Improving /
+  // Unchanged / Deteriorating / Critical / Ready for Discharge).
+  // Comes from the in-flight doctor edit state OR from the saved-note
+  // pull (latestDiagnosis.status, populated by NursingNotes).
+  const patientStatus = diagnosis?.status || latestDiagnosis?.status || patient.patientStatus || "";
   const consultant = patient.attendingDoctor || patient.doctorName || patient.consultantName || "—";
   const admType    = patient.admissionType?.toUpperCase() || "IPD";
   const allergies  = (patient.allergies || patient.knownAllergies || []).filter(Boolean);
@@ -148,25 +211,9 @@ export default function PatientHeaderCard({
     ? Math.floor((Date.now() - new Date(patient.admissionDate)) / (1000 * 60 * 60 * 24))
     : null;
 
-  // R7bn-5 / D6-fix: pull the twice-daily compliance summary so we can
-  // render a red OVERDUE / amber DUE_SOON banner. Re-fetches every 60s
-  // (and once on patient change) — the backend cron flips status every
-  // 15 min so 60s polling on the client is sufficient.
-  const [compliance, setCompliance] = useState(null);
-  useEffect(() => {
-    if (!patient?._id) { setCompliance(null); return; }
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await axios.get(`${API_ENDPOINTS.BASE}/compliance/assessment-status/${patient._id}`);
-        if (cancelled) return;
-        setCompliance(res.data?.summary || null);
-      } catch (_) { /* silent — compliance is a soft UX nudge */ }
-    };
-    load();
-    const id = setInterval(load, 60 * 1000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [patient?._id]);
+  // R7hr-86 — Compliance state + 60s poll moved out into the shared
+  // PatientAlertStrip component. Parents render that strip beside their
+  // "All Sections" / nav bar so the patient card stays compact.
 
   /* QR payload — plain text so any phone-camera QR reader shows the
      patient's identity + key data on scan. Rendered client-side via
@@ -189,13 +236,10 @@ export default function PatientHeaderCard({
     allergies.length > 0 ? `Allergies: ${allergies.join(", ")}` : null,
   ].filter(Boolean).join("\n");
 
-  /* Doctor-specific diagnosis fields (optional) */
-  const dxFields = diagnosis ? [
-    { label: "Provisional Dx", value: diagnosis.provisional || patient.admittingDiagnosis || patient.provisionalDiagnosis || "" },
-    { label: "Working Dx",     value: diagnosis.working || "" },
-    { label: "Final Dx",       value: diagnosis.final || "" },
-    { label: "ICD-10",         value: diagnosis.icd10Code ? `${diagnosis.icd10Code}${diagnosis.icd10Description ? " — " + diagnosis.icd10Description : ""}` : "" },
-  ].filter(f => f.value) : [];
+  // R7hr-85.1 — `dxFields` grid (Provisional / Working / Final / ICD-10
+  // as separate rows) was redundant once the clinical strip below the
+  // meta-row started showing every filled tier with its own pill. It
+  // doubled the patient header's vertical footprint for no extra info.
 
   return (
     <div className="phc-card">
@@ -225,6 +269,52 @@ export default function PatientHeaderCard({
                 <span className="phc-meta">🏥 <strong>{wardVal}</strong> · <strong>{bedVal}</strong></span>
                 <span className="phc-meta">📅 <strong>{admDate}</strong></span>
               </div>
+              {/* R7hr-85.1 — Clinical strip lives INSIDE the left info
+                  column, directly below the meta-row. Avoids the empty
+                  gap that opened up when it sat below the full row
+                  (QR column on the right was taller than the info
+                  column on the left, pushing the strip down). */}
+              {(consultant !== "—" || dxTiersFull.length > 0 || patientStatus) && (
+                <div className="phc-clinical-strip">
+                  {consultant !== "—" && (
+                    <div className="phc-clin-chip phc-clin-chip--consultant" title="Attending consultant">
+                      <i className="pi pi-user-edit phc-clin-icon" />
+                      <span className="phc-clin-label">Consultant</span>
+                      <span className="phc-clin-value">{consultant}</span>
+                    </div>
+                  )}
+                  {/* R7hr-87 — Patient Status chip (Stable / Improving /
+                      Unchanged / Deteriorating / Critical / Ready for
+                      Discharge). Colour matches clinical severity so
+                      both doctor + nurse see it at a glance. */}
+                  {patientStatus && (
+                    <div
+                      className={`phc-clin-chip phc-clin-chip--status phc-status--${patientStatus.toLowerCase().replace(/\s+/g, "-")}`}
+                      title="Doctor's current patient-status call"
+                    >
+                      <i className="pi pi-heart-fill phc-clin-icon" />
+                      <span className="phc-clin-tier">Status</span>
+                      <span className="phc-clin-value">{patientStatus}</span>
+                    </div>
+                  )}
+                  {dxTiersFull.map((row) => (
+                    <div
+                      key={row.tier}
+                      className={`phc-clin-chip phc-clin-chip--dx ${tierClass(row.tier)}`}
+                      title={`${row.tier} diagnosis${row.icd10Code ? ` · ICD-10 ${row.icd10Code}` : ""}`}
+                    >
+                      <i className="pi pi-tag phc-clin-icon" />
+                      <span className="phc-clin-tier">{row.tier}</span>
+                      <span className="phc-clin-value">{row.text}</span>
+                      {row.icd10Code && (
+                        <span className="phc-clin-icd">
+                          {row.icd10Code}{row.icd10Description ? ` — ${row.icd10Description}` : ""}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -254,63 +344,15 @@ export default function PatientHeaderCard({
           </div>
         </div>
 
-        {/* Footer: consultant + diagnosis + allergies */}
-        <div className="phc-footer">
-          <div className="phc-footer-item">
-            <i className="pi pi-stethoscope phc-footer-icon" />
-            <span className="phc-footer-label">Consultant:</span>
-            <span className="phc-footer-value">{consultant}</span>
-          </div>
-          <div className="phc-footer-item">
-            <i className="pi pi-tag phc-footer-icon" />
-            <span className="phc-footer-label">Diagnosis:</span>
-            <span className="phc-footer-value">{diagText}</span>
-            {latestDiagnosis?.tier && (
-              <span className={`phc-tier-pill ${tierClass(latestDiagnosis.tier)}`}>
-                {latestDiagnosis.tier}
-              </span>
-            )}
-          </div>
-          {allergies.length > 0 && (
-            <div className="phc-allergies">
-              <span className="phc-allergy-label">
-                <i className="pi pi-exclamation-triangle" /> ALLERGY:
-              </span>
-              {allergies.map((a) => (
-                <span key={a} className="phc-allergy-chip">{a}</span>
-              ))}
-            </div>
-          )}
-          {/* R7bn-5 / D6-fix: twice-daily compliance status banner.
-              Surfaces OVERDUE (red) or DUE_SOON (amber) only — when
-              everything is on schedule we render nothing so the header
-              stays compact. */}
-          {compliance && compliance.worst !== "OK" && (
-            <div className={`phc-compliance phc-compliance--${compliance.worst.toLowerCase()}`} title="Twice-daily assessment schedule (NABH COP.17)">
-              <i className={`pi ${compliance.worst === "OVERDUE" ? "pi-exclamation-circle" : "pi-clock"}`} />
-              <span className="phc-compliance-label">
-                {compliance.worst === "OVERDUE" ? "OVERDUE" : "DUE SOON"}
-              </span>
-              <span className="phc-compliance-count">
-                {compliance.overdue > 0 && <>{compliance.overdue} overdue</>}
-                {compliance.overdue > 0 && compliance.dueSoon > 0 && " · "}
-                {compliance.dueSoon > 0 && <>{compliance.dueSoon} due soon</>}
-              </span>
-            </div>
-          )}
-        </div>
+        {/* Footer: allergies + twice-daily compliance only — consultant
+            and diagnosis now live in the prominent strip above (inside
+            the left info column, right under the meta-row). */}
 
-        {/* Doctor-specific extended diagnosis fields */}
-        {dxFields.length > 0 && (
-          <div className="phc-dx-grid">
-            {dxFields.map((f) => (
-              <div key={f.label} className="phc-dx-item">
-                <div className="phc-dx-label">{f.label}</div>
-                <div className="phc-dx-value">{f.value}</div>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* R7hr-86 — .phc-footer dropped. Allergies + twice-daily
+            compliance now live in the shared PatientAlertStrip
+            component that parents render beside their "All Sections"
+            back button. Saves ~50 px of vertical chrome inside the
+            patient card. */}
       </div>
     </div>
   );

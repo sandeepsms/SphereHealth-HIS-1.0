@@ -3,6 +3,43 @@ const Patient   = require("../../models/Patient/patientModel");
 const Admission = require("../../models/Patient/admissionModel");
 const { nextSequence } = require("../../utils/counter");
 
+// R7hg — OPD.patientId is `type: String` (legacy denormalised reference,
+// no `ref`), so mongoose .populate() silently no-ops. We hand-merge the
+// allergy data by UHID after fetching the visit batch.
+//
+// Output: each visit gets `visit.patientId` replaced by an object shaped
+// like a populated row so the receiving FE code can read
+//   visit.patientId.knownAllergies / .allergyList
+// without changing any other call site.
+async function _attachPatientAllergies(visits) {
+  if (!Array.isArray(visits) || visits.length === 0) return visits;
+  const uhids = [...new Set(visits.map((v) => v.UHID).filter(Boolean))];
+  if (uhids.length === 0) return visits;
+  const patients = await Patient.find(
+    { UHID: { $in: uhids } },
+    "_id UHID fullName knownAllergies allergyList",
+  ).lean();
+  const byUhid = new Map();
+  patients.forEach((p) => byUhid.set(p.UHID, p));
+  return visits.map((v) => {
+    const p = byUhid.get(v.UHID);
+    if (!p) return v;
+    // Replace the string patientId with an object that has the same
+    // shape Mongoose populate would have produced, plus the allergy
+    // fields the Pre-Assessment modal reads.
+    return {
+      ...v,
+      patientId: {
+        _id: p._id,
+        UHID: p.UHID,
+        fullName: p.fullName,
+        knownAllergies: p.knownAllergies || "",
+        allergyList: Array.isArray(p.allergyList) ? p.allergyList : [],
+      },
+    };
+  });
+}
+
 // ── Generate OPD admission number ──────────────────────────────────────────
 // R7bd-A-7 / A1-HIGH-8 — atomic via utils/counter.
 // Pre-R7bd this used `findOne({admissionNumber: /^prefix/}).sort(-1)` then
@@ -17,21 +54,31 @@ const { nextSequence } = require("../../utils/counter");
 // We seed FROM the existing same-day max ONCE so a redeploy mid-day
 // doesn't re-issue numbers that already left the building.
 async function generateOPDAdmissionNumber() {
+  // R7hb — Short, readable OPD format: OPD-YY-NN (continuous within the
+  // year, auto-widens past 99). Mirrors the IPD-YY-NN scheme set by R7ag
+  // so admission numbers stay short on receipts. Pre-R7hb this used
+  // OPD-YYYYMMDD-NNNN (daily 4-digit pad) which read as e.g.
+  // "OPD-20260603-0001" on the payment receipt — long, hard to dictate.
   const today = new Date();
-  const datePart = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,"0")}${String(today.getDate()).padStart(2,"0")}`;
-  const prefix = `OPD-${datePart}-`;
-  const key = `opd-admission:${datePart}`;
+  const yy = String(today.getFullYear()).slice(-2);
+  const prefix = `OPD-${yy}-`;
+  const key = `opd-admission:${yy}`;
 
   const Counter = require("../../models/CounterModel");
   const existing = await Counter.findOne({ _id: key }).lean();
   let seed = null;
   if (!existing) {
+    // Seed from the existing same-year max so a redeploy mid-year doesn't
+    // re-issue numbers that already left the building. Also tolerates the
+    // legacy OPD-YYYYMMDD-NNNN rows post-migration — if migration mapped
+    // those to OPD-YY-NN, the regex still finds them; if not, the seed is 0
+    // and OPDService keeps going from there.
     const last = await Admission.findOne({ admissionNumber: { $regex: `^${prefix}` } })
       .sort({ admissionNumber: -1 }).lean();
-    seed = last ? (parseInt(last.admissionNumber.slice(-4), 10) || 0) : 0;
+    seed = last ? (parseInt(last.admissionNumber.slice(prefix.length), 10) || 0) : 0;
   }
   const seq = await nextSequence(key, seed);
-  return `${prefix}${String(seq).padStart(4, "0")}`;
+  return `${prefix}${String(seq).padStart(2, "0")}`;
 }
 
 class OPDService {
@@ -60,6 +107,89 @@ class OPDService {
     // Get patient's current OPD visit count before saving
     const patient = await Patient.findById(opdData.patientId);
     if (!patient) throw new Error("Patient not found");
+
+    // R7hr-47 / R23 — block new OPD registration when patient currently has
+    // an active IPD admission. User rule (verbatim): "agar koi patient hmare
+    // pass IPD me admitted hai to uska opd me registration ho he nhi sakta".
+    // Same-day dedupe above already returned an existing legitimate OPD if
+    // one was created BEFORE admission. This guards only NEW OPD creation.
+    // Logic symmetry: admissionService.js already auto-closes any active OPD
+    // when a new IPD/ER/Daycare is created (R7en-OPD-BLOCKER-FIX) — this
+    // closes the reverse loophole.
+    //
+    // IMPORTANT: admissionType enum does NOT contain "IPD". A real inpatient
+    // stay is identified by hasBed:true AND admissionType IN
+    // ("Planned","Emergency","Transfer"). Day Care also gets a bed but is a
+    // same-day stay — outside this rule per user scope (only IPD). Bedless
+    // types (OPD/Services) are lightweight admission rows, not inpatient.
+    const activeIPD = await Admission.findOne({
+      patientId: opdData.patientId,
+      status: "Active",
+      hasBed: true,
+      admissionType: { $in: ["Planned", "Emergency", "Transfer"] },
+    }).select("admissionNumber wardName admissionType admissionDate").lean();
+    if (activeIPD) {
+      const ipdNo = activeIPD.admissionNumber || "active IPD";
+      const ward  = activeIPD.wardName ? ` (${activeIPD.wardName})` : "";
+      const err = new Error(
+        `Patient is currently admitted in IPD ${ipdNo}${ward}. ` +
+        `Discharge first, or use IPD Live Ledger to add this consult/service to the running admission.`
+      );
+      err.code             = "PATIENT_ALREADY_IPD";
+      err.status           = 409;
+      err.admissionId      = activeIPD._id;
+      err.admissionNumber  = activeIPD.admissionNumber;
+      err.wardName         = activeIPD.wardName;
+      throw err;
+    }
+
+    // R7hr-51 / R24 — Honor the receptionist's Doctor Availability Live Queue.
+    // User rule (verbatim): "yaha agar receptionist ne kisi doctor ko available
+    // option me se Available ya on leave select kiya hai to uske hisab se he
+    // same doctor ke liye registration hoga ya nhi hoga decide hoga".
+    //
+    // The Live Queue dropdown on ReceptionDashboard PATCHes
+    // /api/doctors/:id/availability with one of 5 statuses. We split them:
+    //   on-duty (allow OPD)  : Available, InConsultation, OnBreak
+    //   off-duty (block OPD) : OnLeave, Offline
+    // OnBreak is allowed because the doctor is back shortly; OnLeave/Offline
+    // are not safe to register against — the visit would just queue against
+    // an absent doctor and the bill (consultation fee) would land on a
+    // patient who is never going to see a doctor that session.
+    if (opdData.doctorId) {
+      try {
+        const Doctor = require("../../models/Doctor/doctorModel");
+        const doc = await Doctor.findById(opdData.doctorId).select("availability personalInfo.firstName personalInfo.lastName fullName").lean();
+        if (doc) {
+          const status = doc.availability?.status || "Available";
+          const offDuty = ["OnLeave", "Offline"];
+          if (offDuty.includes(status)) {
+            const docName =
+              doc.fullName ||
+              `${doc.personalInfo?.firstName || ""} ${doc.personalInfo?.lastName || ""}`.trim() ||
+              "the selected doctor";
+            const note = doc.availability?.note ? ` Note: ${doc.availability.note}.` : "";
+            const human = status === "OnLeave" ? "On Leave" : "Offline";
+            const err = new Error(
+              `${docName} is currently marked ${human} in the Doctor Availability Live Queue.${note} ` +
+              `Pick another doctor or update the availability before registering.`
+            );
+            err.code             = "DOCTOR_NOT_AVAILABLE";
+            err.status           = 409;
+            err.doctorId         = opdData.doctorId;
+            err.doctorName       = docName;
+            err.availabilityStatus = status;
+            err.availabilityNote   = doc.availability?.note || "";
+            throw err;
+          }
+        }
+      } catch (err) {
+        // Re-throw our own structured error, swallow other Doctor-lookup
+        // failures (the visit can still be created without a doctor in
+        // some legacy flows — don't block on transient DB hiccups).
+        if (err.code === "DOCTOR_NOT_AVAILABLE") throw err;
+      }
+    }
 
     const seq = (patient.totalOPDVisits || 0) + 1;
     opdData.patientVisitSeq = seq;
@@ -266,10 +396,18 @@ class OPDService {
     if (filters.doctorId) query.doctorId = filters.doctorId;
     if (filters.vitalsStatus) query.vitalsStatus = filters.vitalsStatus;
 
-    return OPD.find(query)
+    // R7hg — carry the patient's registration allergies so the Nurse
+    // Pre-Assessment modal can pre-fill "Known Allergies" from the
+    // patient master. NOTE: OPD.patientId is declared as `type: String`
+    // (legacy, denormalised by UHID — no `ref` on the field), so
+    // mongoose .populate() silently no-ops on it. We hand-merge below
+    // by UHID instead.
+    const visits = await OPD.find(query)
       .sort({ tokenNumber: 1 })
       .populate("departmentId", "departmentName")
-      .populate("doctorId", "personalInfo doctorId");
+      .populate("doctorId", "personalInfo doctorId")
+      .lean();
+    return _attachPatientAllergies(visits);
   }
 
   /* ── Visits by department (recent, with optional date filter) ── */
@@ -282,10 +420,12 @@ class OPDService {
       d2.setDate(d.getDate() + 1);
       query.visitDate = { $gte: d, $lt: d2 };
     }
-    return OPD.find(query)
+    const visits = await OPD.find(query)
       .sort({ visitDate: -1, tokenNumber: 1 })
       .populate("departmentId", "departmentName")
-      .populate("doctorId", "personalInfo doctorId");
+      .populate("doctorId", "personalInfo doctorId")
+      .lean();
+    return _attachPatientAllergies(visits);
   }
 
   /* ── Visits by doctor ── */
@@ -298,10 +438,12 @@ class OPDService {
       d2.setDate(d.getDate() + 1);
       query.visitDate = { $gte: d, $lt: d2 };
     }
-    return OPD.find(query)
+    const visits = await OPD.find(query)
       .sort({ visitDate: -1, tokenNumber: 1 })
       .populate("departmentId", "departmentName")
-      .populate("doctorId", "personalInfo doctorId");
+      .populate("doctorId", "personalInfo doctorId")
+      .lean();
+    return _attachPatientAllergies(visits);
   }
 
   /* ── Follow-up due ── */
@@ -331,8 +473,22 @@ class OPDService {
   }
 
   /* ── Nurse updates vitals ── */
-  async updateVitals(visitNumber, vitalsData, nurseName) {
+  async updateVitals(visitNumber, vitalsData, nurseName, actor = null) {
     const { chiefComplaint, allergyHistory, ...pureVitals } = vitalsData;
+
+    // R7hf — Auto-compose the legacy `bloodPressure: "S/D"` string from
+    // the split fields so every existing print/discharge consumer that
+    // still reads vitals.bloodPressure keeps working unchanged.
+    if (
+      pureVitals.bloodPressureSystolic != null &&
+      pureVitals.bloodPressureDiastolic != null
+    ) {
+      const sys = Number(pureVitals.bloodPressureSystolic);
+      const dia = Number(pureVitals.bloodPressureDiastolic);
+      if (Number.isFinite(sys) && Number.isFinite(dia)) {
+        pureVitals.bloodPressure = `${sys}/${dia}`;
+      }
+    }
 
     const update = {
       vitals: pureVitals,
@@ -367,6 +523,47 @@ class OPDService {
       } catch (e) {
         const { logErr } = require("../../utils/logErr");
         logErr("autoBilling", "load failure on OPD vitals")(e);
+      }
+    }
+
+    // R7hf — Auto-feed NABH RBS Register when a blood-sugar reading is
+    // entered with the vitals. Carries sample-type + fasting context so
+    // the surveyor view shows full provenance (no manual back-fill).
+    if (updatedVisit) {
+      const rbsVal = Number(pureVitals.bloodSugarRandom);
+      if (Number.isFinite(rbsVal) && rbsVal > 0) {
+        try {
+          const patient = await Patient.findById(updatedVisit.patientId).lean();
+          if (patient && patient.UHID) {
+            const { emitBloodSugar } = require("../Compliance/nabhRegisterEmitter");
+            const fastingState = pureVitals.bloodSugarFasting || "Random";
+            // Map nurse-side fasting label → NABH register readingType
+            const readingType = fastingState === "Fasting"
+              ? "FBS"
+              : fastingState === "PostPrandial"
+                ? "PPBS"
+                : "RBS";
+            await emitBloodSugar({
+              patient,
+              admission: null, // OPD readings — admissionId left null per RBS schema
+              reading: {
+                value: rbsVal,
+                unit: pureVitals.bloodSugarUnit || "mg/dL",
+                type: readingType,
+                sampleType: pureVitals.bloodSugarSampleType || "capillary",
+                location: "OPD",
+                sourceType: "VitalSheet",
+                sourceRef: updatedVisit._id,
+                takenAt: pureVitals.bloodSugarTakenAt || updatedVisit.vitalsEnteredAt || new Date(),
+                notes: pureVitals.bloodSugarNotes || `OPD pre-assessment · ${updatedVisit.visitNumber}`,
+              },
+              actor: actor || { name: nurseName || "Nurse", role: "Nurse" },
+            });
+          }
+        } catch (e) {
+          const { logErr } = require("../../utils/logErr");
+          logErr("rbsRegister", `OPD vitals emit ${updatedVisit?.visitNumber}`)(e);
+        }
       }
     }
 
@@ -454,6 +651,13 @@ class OPDService {
       hopiAssociatedSymptoms: assessmentData.hopiAssociatedSymptoms || [],
       hopiAggravating:        pick(assessmentData.hopiAggravating),
       hopiRelieving:          pick(assessmentData.hopiRelieving),
+      // R7hi — pain-toggle + general-HOPI fields
+      hopiPainPresent:        typeof assessmentData.hopiPainPresent === "boolean"
+                                ? assessmentData.hopiPainPresent
+                                : undefined,
+      hopiNarrative:          pick(assessmentData.hopiNarrative),
+      hopiTreatmentTried:     pick(assessmentData.hopiTreatmentTried),
+      hopiResponseSoFar:      pick(assessmentData.hopiResponseSoFar),
       // Chronic illnesses
       chronicConditions:      assessmentData.chronicConditions      || [],
       chronicOthers:          pick(assessmentData.chronicOthers),

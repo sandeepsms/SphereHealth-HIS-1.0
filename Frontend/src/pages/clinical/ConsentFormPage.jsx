@@ -653,39 +653,57 @@ function ConsentPrintView({ data, type, onClose }) {
             {data.body}
           </div>
 
-          {/* Risks */}
-          {data.risks?.length > 0 && (
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6, color: C.red }}>
-                <i className="pi pi-exclamation-triangle" style={{ marginRight: 6 }} />Risks and Potential Complications
-              </div>
-              <ul style={{ paddingLeft: 20, margin: 0 }}>
-                {data.risks.filter(Boolean).map((r, i) => <li key={i} style={{ marginBottom: 4, fontSize: 13 }}>{r}</li>)}
-              </ul>
-            </div>
-          )}
-
-          {/* Benefits */}
-          {data.benefits?.length > 0 && (
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6, color: C.green }}>
-                <i className="pi pi-check-circle" style={{ marginRight: 6 }} />Expected Benefits
-              </div>
-              <ul style={{ paddingLeft: 20, margin: 0 }}>
-                {data.benefits.filter(Boolean).map((b, i) => <li key={i} style={{ marginBottom: 4, fontSize: 13 }}>{b}</li>)}
-              </ul>
-            </div>
-          )}
-
-          {/* Alternatives */}
-          {data.alternatives?.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6, color: C.blue }}>
-                <i className="pi pi-arrow-right-arrow-left" style={{ marginRight: 6 }} />Alternatives Discussed
-              </div>
-              <ul style={{ paddingLeft: 20, margin: 0 }}>
-                {data.alternatives.filter(Boolean).map((a, i) => <li key={i} style={{ marginBottom: 4, fontSize: 13 }}>{a}</li>)}
-              </ul>
+          {/* R7hr-82 — Risks / Benefits / Alternatives in a 3-column
+              polished card grid (mirrors the capture-form and patient-
+              panel layout). Replaces the prior stacked-list layout so
+              the View / Print preview shows the same shape the doctor
+              filled in. Falls back gracefully when individual lists
+              are empty (e.g. consent types without benefits). */}
+          {((data.risks?.length || 0) + (data.benefits?.length || 0) + (data.alternatives?.length || 0)) > 0 && (
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 10, marginBottom: 16,
+            }}>
+              {data.risks?.length > 0 && (
+                <div style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", border: `1.5px solid ${C.border}`, borderTop: `4px solid ${C.red}` }}>
+                  <div style={{ fontWeight: 800, fontSize: 12, color: C.red, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    <i className="pi pi-exclamation-triangle" />
+                    <span>Risks & Complications</span>
+                  </div>
+                  <ul style={{ paddingLeft: 18, margin: 0 }}>
+                    {data.risks.filter(Boolean).map((r, i) => (
+                      <li key={i} style={{ marginBottom: 4, fontSize: 12, lineHeight: 1.5 }}>{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {data.benefits?.length > 0 && (
+                <div style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", border: `1.5px solid ${C.border}`, borderTop: `4px solid ${C.green}` }}>
+                  <div style={{ fontWeight: 800, fontSize: 12, color: C.green, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    <i className="pi pi-check-circle" />
+                    <span>Expected Benefits</span>
+                  </div>
+                  <ul style={{ paddingLeft: 18, margin: 0 }}>
+                    {data.benefits.filter(Boolean).map((b, i) => (
+                      <li key={i} style={{ marginBottom: 4, fontSize: 12, lineHeight: 1.5 }}>{b}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {data.alternatives?.length > 0 && (
+                <div style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", border: `1.5px solid ${C.border}`, borderTop: `4px solid ${C.blue}` }}>
+                  <div style={{ fontWeight: 800, fontSize: 12, color: C.blue, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    <i className="pi pi-arrow-right-arrow-left" />
+                    <span>Alternatives Discussed</span>
+                  </div>
+                  <ul style={{ paddingLeft: 18, margin: 0 }}>
+                    {data.alternatives.filter(Boolean).map((a, i) => (
+                      <li key={i} style={{ marginBottom: 4, fontSize: 12, lineHeight: 1.5 }}>{a}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
@@ -1071,6 +1089,21 @@ export function ConsentFormPageContent({ selectedPatient }) {
       admissionDate: found.admissionDate ? new Date(found.admissionDate).toLocaleDateString("en-IN") : "",
     }));
     toast.success(`Patient loaded: ${found.patientName || found.UHID}`);
+    // R7hr-78 — Auto-fetch the patient's previously-saved consent forms
+    // so "Previous Consent Forms" populates immediately. Previously this
+    // only ran when the staff clicked "Load Patient", which meant the
+    // embedded /doctor-notes view (loaded via selectedPatient) showed an
+    // empty picker — the user's existing consents were invisible.
+    // Fetch directly against the live UHID to avoid the trim()-gated
+    // helper which depends on the `uhid` state being in sync.
+    (async () => {
+      try {
+        const u = (found.UHID || "").trim();
+        if (!u) return;
+        const res = await axios.get(`${API}/uhid/${u}`, { headers });
+        setSavedForms(Array.isArray(res.data?.data) ? res.data.data : []);
+      } catch { setSavedForms([]); }
+    })();
   }, [selectedPatient?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleTypeSelect = (type) => {
@@ -1081,7 +1114,12 @@ export function ConsentFormPageContent({ selectedPatient }) {
     setAlternatives([...type.template.alternatives]);
     setConsentData(p => ({
       ...p, consentTitle: type.template.title,
-      doctorName: user?.fullName || user?.firstName || "",
+      // R7hr-74 — Respect the attending doctor already pre-filled from the
+      // loaded admission (`_doctorFromFound(found)` ran in either the patient-
+      // pick or search path). Only fall back to the logged-in user if nothing
+      // is there yet — clobbering this is what caused the preview to show
+      // "System Admin" instead of the actual attending consultant.
+      doctorName: p.doctorName || user?.fullName || user?.firstName || "",
     }));
     setView("form");
   };
@@ -1122,7 +1160,21 @@ export function ConsentFormPageContent({ selectedPatient }) {
           try {
             const { data } = JSON.parse(raw);
             if (data) {
-              if (data.consentData) setConsentData(p => ({ ...p, ...data.consentData }));
+              if (data.consentData) {
+                // R7hr-74 — Never let an older draft override the LIVE admission's
+                // identifiers (UHID/name/age/gender/IPD-no/ward-bed/admission-date/
+                // attending-doctor/department). Those should always reflect the
+                // patient record we just fetched — only user-typed clinical fields
+                // (guardian, witness, language, additional notes, consentBy…) and
+                // the consent title belong in the draft replay.
+                const {
+                  UHID: _u, patientName: _n, age: _a, gender: _g,
+                  ipdNo: _i, wardBed: _w, admissionDate: _d,
+                  doctorName: _dn, department: _dp,
+                  ...userTyped
+                } = data.consentData;
+                setConsentData(p => ({ ...p, ...userTyped }));
+              }
               if (data.body !== undefined) setBody(data.body);
               if (data.risks) setRisks(data.risks);
               if (data.benefits) setBenefits(data.benefits);
@@ -1132,6 +1184,13 @@ export function ConsentFormPageContent({ selectedPatient }) {
           } catch { /* ignore */ }
         }
         toast.success("Patient loaded");
+        // R7hr-78 — Also load any previously-saved consents alongside the
+        // search so the user sees them without having to click anything
+        // else (mirrors the auto-fetch in the selectedPatient effect).
+        try {
+          const res = await axios.get(`${API}/uhid/${found.UHID}`, { headers });
+          setSavedForms(Array.isArray(res.data?.data) ? res.data.data : []);
+        } catch { /* keep current savedForms */ }
       } else {
         toast.warn("No active admission found");
       }
@@ -1396,7 +1455,10 @@ export function ConsentFormPageContent({ selectedPatient }) {
                 Previous Consent Forms — {consentData.UHID}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {savedForms.map(f => {
+                {/* R7hr-77 — Sort latest first by signedAt fallback createdAt */}
+                {[...savedForms].sort((a, b) =>
+                  new Date(b.signedAt || b.createdAt || 0) - new Date(a.signedAt || a.createdAt || 0)
+                ).map(f => {
                   const cat = CONSENT_CATALOGUE.find(c => c.key === f.consentType);
                   const sc = STATUS_COLORS[f.status] || STATUS_COLORS.PENDING;
                   // R7r: Audit trail surfacing (NABH PRE.3 / PRE.4).
@@ -1424,7 +1486,31 @@ export function ConsentFormPageContent({ selectedPatient }) {
                         </div>
                         <span style={{ padding: "3px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700,
                           background: sc.bg, color: sc.text }}>{f.status}</span>
-                        <button onClick={() => { setPreviewData({ ...f, body: f.procedureDescription, risks: f.risksDisclosed, benefits: f.benefitsExplained, alternatives: f.alternativesDisclosed }); setPreviewType(cat); }}
+                        <button onClick={() => {
+                          // R7hr-80 — Consents saved before R7hr-74's auto-fill landed
+                          // have empty wardBed/admissionDate/doctorName/department
+                          // baked into the backend doc. Falling back to the LIVE
+                          // admission (patInfo / consentData) when those fields are
+                          // blank ensures the preview shows the right ward/bed/etc
+                          // instead of "—" — same fallback the patient panel card
+                          // does in R7hr-76.
+                          const liveWardBed = `${patInfo?.wardId?.wardName || patInfo?.wardName || ""} / ${patInfo?.bedNumber || ""}`.replace(/^\s*\/\s*$/, "");
+                          const liveAdmDate = patInfo?.admissionDate ? new Date(patInfo.admissionDate).toLocaleDateString("en-IN") : "";
+                          const liveDoctor  = patInfo?.attendingDoctor || patInfo?.attendingDoctorName || consentData.doctorName || "";
+                          const liveDept    = patInfo?.department || patInfo?.wardId?.department || consentData.department || "";
+                          setPreviewData({
+                            ...f,
+                            body:         f.procedureDescription,
+                            risks:        f.risksDisclosed,
+                            benefits:     f.benefitsExplained,
+                            alternatives: f.alternativesDisclosed,
+                            wardBed:       f.wardBed       || liveWardBed,
+                            admissionDate: f.admissionDate || liveAdmDate,
+                            doctorName:    f.doctorName    || liveDoctor,
+                            department:    f.department    || liveDept,
+                          });
+                          setPreviewType(cat);
+                        }}
                           style={{ padding: "5px 12px", borderRadius: 7, border: "none", background: "#eef2ff",
                             color: "#6366f1", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                           <i className="pi pi-eye" style={{ marginRight: 4 }} />View
@@ -1574,25 +1660,57 @@ export function ConsentFormPageContent({ selectedPatient }) {
             </div>
           </Section>
 
-          {/* Risks */}
-          <Section title="Risks & Potential Complications" icon="pi-exclamation-triangle" color={C.red}>
-            <EditableList items={risks} setItems={setRisks}
-              placeholder="Describe a risk or complication…" color={C.red} />
-          </Section>
+          {/* R7hr-81 — Risks / Benefits / Alternatives shown side-by-side
+              in a polished 3-column card grid (mirrors the patient-panel
+              + preview layout) so the doctor / staff see the same shape
+              they'll explain to the patient. Each card keeps its own
+              colour header + bulleted editable list. */}
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+            gap: 12, marginTop: 14,
+          }}>
+            {/* Risks */}
+            <div style={{
+              background: C.card, borderRadius: 12, padding: "16px 18px",
+              border: `1.5px solid ${C.border}`, borderTop: `4px solid ${C.red}`,
+            }}>
+              <div style={{ fontWeight: 800, fontSize: 13, color: C.red, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                <i className="pi pi-exclamation-triangle" />
+                <span>Risks & Potential Complications</span>
+              </div>
+              <EditableList items={risks} setItems={setRisks}
+                placeholder="Describe a risk or complication…" color={C.red} />
+            </div>
 
-          {/* Benefits */}
-          {selectedType.template.benefits.length > 0 && (
-            <Section title="Expected Benefits" icon="pi-check-circle" color={C.green}>
-              <EditableList items={benefits} setItems={setBenefits}
-                placeholder="Describe an expected benefit…" color={C.green} />
-            </Section>
-          )}
+            {/* Benefits */}
+            {selectedType.template.benefits.length > 0 && (
+              <div style={{
+                background: C.card, borderRadius: 12, padding: "16px 18px",
+                border: `1.5px solid ${C.border}`, borderTop: `4px solid ${C.green}`,
+              }}>
+                <div style={{ fontWeight: 800, fontSize: 13, color: C.green, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                  <i className="pi pi-check-circle" />
+                  <span>Expected Benefits</span>
+                </div>
+                <EditableList items={benefits} setItems={setBenefits}
+                  placeholder="Describe an expected benefit…" color={C.green} />
+              </div>
+            )}
 
-          {/* Alternatives */}
-          <Section title="Alternatives Discussed" icon="pi-arrow-right-arrow-left" color={C.blue}>
-            <EditableList items={alternatives} setItems={setAlternatives}
-              placeholder="Describe an alternative…" color={C.blue} />
-          </Section>
+            {/* Alternatives */}
+            <div style={{
+              background: C.card, borderRadius: 12, padding: "16px 18px",
+              border: `1.5px solid ${C.border}`, borderTop: `4px solid ${C.blue}`,
+            }}>
+              <div style={{ fontWeight: 800, fontSize: 13, color: C.blue, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                <i className="pi pi-arrow-right-arrow-left" />
+                <span>Alternatives Discussed</span>
+              </div>
+              <EditableList items={alternatives} setItems={setAlternatives}
+                placeholder="Describe an alternative…" color={C.blue} />
+            </div>
+          </div>
 
           {/* Communication */}
           <Section title="Communication & Language" icon="pi-comments" color="#0891b2">

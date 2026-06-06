@@ -127,7 +127,15 @@ export default function PatientPanelShell({
   // submits a reason, we remember it for the session (per UHID) so the
   // modal doesn't keep popping up while the user is actively reviewing.
   const { user } = useAuth() || {};
-  const isPrivilegedRole = ["Admin", "MedicalSuperintendent", "QualityCoordinator"].includes(user?.role);
+  // R7hr-98 — Nurses MUST be able to open any admitted patient on their
+  // ward without a break-glass justification: bedside nursing care is
+  // the canonical, not exceptional, access pattern. The previous list
+  // excluded Nurse → every nurse opening a patient triaged by Dr.
+  // Sandeep saw the justification modal because her name didn't appear
+  // in the admission.attendingDoctor string. Break-glass remains in
+  // force for OPD-only roles whose default access pattern is NOT this
+  // admitted patient (Receptionist, TPA Coordinator, Pharmacist).
+  const isPrivilegedRole = ["Admin", "MedicalSuperintendent", "QualityCoordinator", "Nurse", "MRD"].includes(user?.role);
   const treatingTeam = useMemo(() => {
     if (!admission) return [];
     const list = [
@@ -392,11 +400,17 @@ export default function PatientPanelShell({
                   {tabs.map((t, i) => {
                     const isActive = t.id === activeTab;
                     const count = tabCounts[t.id];
+                    // R7hr-73 — Dim tabs we KNOW are empty (count === 0) and
+                    // surface a "0" badge so the doctor instantly sees which
+                    // sections are filled vs empty. Tabs without a count
+                    // entry (e.g. launcher cards) render normally.
+                    const isEmpty = count === 0 && !isActive;
+                    const showCount = count != null;
                     return (
                       <button
                         key={t.id}
                         ref={(el) => (tabRefs.current[i] = el)}
-                        className={`pf-tabs__btn ${isActive ? "pf-tabs__btn--active" : ""}`}
+                        className={`pf-tabs__btn ${isActive ? "pf-tabs__btn--active" : ""} ${isEmpty ? "pf-tabs__btn--empty" : ""}`}
                         onClick={() => handleTabChange(t.id)}
                         onKeyDown={(e) => handleTabKey(e, i)}
                         role="tab"
@@ -406,8 +420,13 @@ export default function PatientPanelShell({
                         tabIndex={isActive ? 0 : -1}
                       >
                         {t.label}
-                        {count != null && count > 0 && (
-                          <span className="pf-tabs__count" aria-label={`${count} records`}>{count}</span>
+                        {showCount && (
+                          <span
+                            className={`pf-tabs__count ${count === 0 ? "pf-tabs__count--zero" : ""}`}
+                            aria-label={`${count} record${count === 1 ? "" : "s"}`}
+                          >
+                            {count}
+                          </span>
                         )}
                       </button>
                     );

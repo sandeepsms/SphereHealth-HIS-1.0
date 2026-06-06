@@ -211,7 +211,12 @@ const OPDReceipt = ({ settings = {}, receipt = {} }) => {
       </div>
 
       <div className="pr-amount-words" style={{ fontStyle: "italic" }}>
-        Received an amount of (Rs.) {numberToIndianWords(grand)} only
+        {/* R7hr-12-S2 (D7-03): numberToIndianWords() already terminates
+            with " Only" (utils/printUtils.js L99) — the literal " only"
+            suffix double-stamped patient-facing receipts as
+            "Rupees X Only only". Drop the suffix and terminate with a
+            period, mirroring PharmacyBill's R7hr-7 Fix #5 pattern. */}
+        Received an amount of (Rs.) {numberToIndianWords(grand)}.
       </div>
 
       {/* Payment method chip */}

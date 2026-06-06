@@ -53,6 +53,16 @@ const ScheduleXEntrySchema = new Schema(
     doctorName:      { type: String, default: "" },
     patientUHID:     { type: String, uppercase: true, trim: true, default: "" },
 
+    // R7hr-12-S3 (D8-12): NDPS surveyors ask "show me the prescription for
+    // this dispense row" — the string prescriptionRef alone forces a manual
+    // hunt through the chart. These ObjectId refs let the register UI/print
+    // surface a direct "View Rx" link back to the original Prescription /
+    // DoctorOrder document. recordDispense() should accept and persist
+    // either (or both) when available; both remain optional so legacy
+    // walk-in dispenses without a digitised Rx still record cleanly.
+    prescriptionId:  { type: Schema.Types.ObjectId, ref: "Prescription" },
+    doctorOrderId:   { type: Schema.Types.ObjectId, ref: "DoctorOrder" },
+
     // Two-person witness mandated by NDPS for narcotic dispense.
     // The service refuses to record a dispense where witness == dispenser.
     dispensedBy:    { type: String, default: "" },

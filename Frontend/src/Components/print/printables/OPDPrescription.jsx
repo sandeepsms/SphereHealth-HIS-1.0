@@ -7,24 +7,32 @@ import React from "react";
 import { QRCodeSVG } from "qrcode.react";
 import PrintShell from "../PrintShell";
 
-const VitalCell = ({ label, value, unit }) => (
-  <div style={{
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-    borderRadius: 6,
-    padding: "6px 10px",
-    fontSize: 10.5,
-    flex: 1,
-    minWidth: 90,
-  }}>
-    <div style={{ fontSize: 9.5, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: ".5px" }}>
-      {label}
+/* R7hn-3: compact vital chip — small padding + tiny font so a full
+   vitals row fits inline rather than wrapping onto a second strip.
+   Skips entirely when the value is empty so a "—" cell never shows. */
+const VitalCell = ({ label, value, unit }) => {
+  if (value === "" || value == null) return null;
+  return (
+    <div style={{
+      background: "#f8fafc",
+      border: "1px solid #e2e8f0",
+      borderRadius: 4,
+      padding: "2px 7px",
+      fontSize: 9.5,
+      lineHeight: 1.2,
+      flex: "0 1 auto",
+      minWidth: 0,
+      whiteSpace: "nowrap",
+    }}>
+      <span style={{ fontSize: 8.5, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: ".4px", marginRight: 4 }}>
+        {label}
+      </span>
+      <span style={{ fontWeight: 800, color: "#0f172a" }}>
+        {value}{unit ? <span style={{ fontSize: 8.5, color: "#64748b", fontWeight: 500 }}> {unit}</span> : null}
+      </span>
     </div>
-    <div style={{ fontWeight: 800, color: "#0f172a" }}>
-      {value || "—"}{value && unit ? <span style={{ fontSize: 9.5, color: "#64748b", fontWeight: 500 }}> {unit}</span> : null}
-    </div>
-  </div>
-);
+  );
+};
 
 /* OPD-PRINT-AUDIT Item 19: bordered diagnosis tier pill.
    Color + 1px border + uppercase short label so the tier remains
@@ -146,18 +154,33 @@ const OPDPrescription = ({ settings, receipt = {} }) => {
          + signedAt for the doctor's block in the footer. */
       signatureImage={receipt.signatureImage || receipt.doctor?.signatureImage}
       signedAt={receipt.signedAt || receipt.doctor?.signedAt}
+      /* R7hn-3: compact particulars grid. Pairs related fields onto a
+         single row (Patient + Age/Sex, OPD No + Token, Doctor + Reg No,
+         Department + Payment, Visit Date + Registered) to cut the
+         vertical block from ~11 rows to 6-7 rows. Each value is a
+         joined string so the existing PrintShell two-col grid still
+         renders them without per-cell padding. */
       infoItems={[
-        { label: "Patient",    value: receipt.patientName },
-        { label: "UHID",       value: receipt.uhid },
-        { label: "Age / Sex",  value: [receipt.age && `${receipt.age}Y`, receipt.gender].filter(Boolean).join(" / ") },
-        { label: "Mobile",     value: receipt.mobile },
-        { label: "Doctor",     value: receipt.doctorName },
-        { label: "Reg. No",    value: regLine },
-        { label: "Department", value: receipt.department },
-        { label: "Visit Date", value: receipt.visitDate
-            ? new Date(receipt.visitDate).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
-            : new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) },
-      ]}
+        { label: "Patient",
+          value: [receipt.patientName, [receipt.age && `${receipt.age}Y`, receipt.gender].filter(Boolean).join(" / ")].filter(Boolean).join(" · ") },
+        { label: "UHID",
+          value: [receipt.uhid, receipt.mobile && `📞 ${receipt.mobile}`, receipt.bloodGroup && `🩸 ${receipt.bloodGroup}`].filter(Boolean).join(" · ") },
+        { label: visitTypeRaw === "IPD" ? "IPD No" : "OPD No",
+          value: [receipt.rxNo || receipt.visitNo, receipt.tokenNumber && `Token #${receipt.tokenNumber}`, receipt.visitType && `${receipt.visitType}`].filter(Boolean).join(" · ") },
+        { label: "Doctor",
+          value: [receipt.doctorName, regLine && regLine !== "—" && `Reg: ${regLine}`].filter(Boolean).join(" · ") },
+        { label: "Department",
+          value: [receipt.department, receipt.paymentType && `Payment: ${receipt.paymentType}`].filter(Boolean).join(" · ") },
+        { label: "Visit",
+          value: [
+            receipt.visitDate
+              ? new Date(receipt.visitDate).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+              : new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }),
+            receipt.consultationFee && `Fee: ₹${Number(receipt.consultationFee).toLocaleString("en-IN")}${receipt.feeType ? ` (${receipt.feeType})` : ""}`,
+          ].filter(Boolean).join(" · ") },
+        ...(receipt.registrationDate ? [{ label: "Registered", value:
+            new Date(receipt.registrationDate).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) }] : []),
+      ].filter(it => it && it.value !== undefined && it.value !== "" && it.value !== "—")}
       /* OPD-PRINT-AUDIT Item 20: verification QR top-right of patient strip. */
       headerExtra={
         <div style={{ textAlign: "center" }}>
@@ -210,20 +233,188 @@ const OPDPrescription = ({ settings, receipt = {} }) => {
         </div>
       )}
 
-      {/* ── Vitals strip ── */}
-      {(vitals.bp || vitals.pulse || vitals.temp || vitals.spo2 || vitals.weight || vitals.height) && (
-        <div className="pr-section">
-          <div className="pr-section__title">Vitals on Examination</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <VitalCell label="BP"      value={vitals.bp}      unit="mmHg" />
-            <VitalCell label="Pulse"   value={vitals.pulse}   unit="bpm"  />
-            <VitalCell label="Temp"    value={vitals.temp}    unit="°F"   />
-            <VitalCell label="SpO₂"    value={vitals.spo2}    unit="%"    />
-            <VitalCell label="RR"      value={vitals.rr}      unit="/min" />
-            <VitalCell label="Weight"  value={vitals.weight}  unit="kg"   />
-            <VitalCell label="Height"  value={vitals.height}  unit="cm"   />
-            <VitalCell label="BMI"     value={vitals.bmi}                 />
-          </div>
+      {/* ── Nurse Pre-Assessment (Vitals + RBS panel + nurse meta) ──
+           R7hn-2: Single card that surfaces EVERY field the nurse
+           captures on the OPD Pre-Assessment form so the printout is
+           a faithful copy of what's on screen. Sections inside the
+           card:
+             1. Vitals chips — BP / Pulse / Temp / SpO₂ / RR / Wt / Ht / BMI
+                (BP renders the systolic/diastolic split when present, so
+                the doctor sees both the composed string and the raw
+                components).
+             2. RBS row — only when reading is present. Shows mg/dL
+                value, sample type, fasting state and free-text notes
+                in a tinted band so the doctor can spot critical values
+                without scanning. Mirrors the on-screen card layout.
+             3. Pain score + GCS chips — when filled.
+             4. Provenance line — "Entered by Nurse {name} at {time}"
+                so the audit trail is visible on paper.
+       */}
+      {(vitals.bp || vitals.bpSystolic || vitals.pulse || vitals.temp || vitals.spo2 ||
+        vitals.weight || vitals.height || vitals.bloodSugarRandom ||
+        vitals.painScore || vitals.gcsScore || vitals.enteredBy || receipt.nurseChiefComplaint) && (
+        <div className="pr-section" style={{ marginBottom: 8 }}>
+          <div className="pr-section__title" style={{ marginBottom: 4 }}>Nurse Pre-Assessment</div>
+
+          {/* Nurse's chief-complaint capture — separate from the doctor's
+              S note. Renders only when populated. R7hn-3: inline pill
+              instead of a banner so it doesn't eat a line of its own. */}
+          {receipt.nurseChiefComplaint && (
+            <div style={{
+              background: "#fdf2f8", border: "1px solid #fbcfe8",
+              borderLeft: "3px solid #db2777",
+              padding: "3px 8px", borderRadius: 4,
+              marginBottom: 4,
+              fontSize: 9.5,
+              display: "flex", alignItems: "baseline", gap: 6,
+            }}>
+              <span style={{
+                fontSize: 8.5, fontWeight: 800, color: "#9d174d",
+                textTransform: "uppercase", letterSpacing: ".4px",
+                flexShrink: 0,
+              }}>
+                CC (Nurse):
+              </span>
+              <span style={{ color: "#0f172a", fontWeight: 600 }}>
+                {receipt.nurseChiefComplaint}
+              </span>
+            </div>
+          )}
+
+          {/* Vitals strip — R7hn-3: single flex row, compact chips, no
+              second-row wrap on typical OPD entries. */}
+          {(vitals.bp || vitals.bpSystolic || vitals.pulse || vitals.temp ||
+            vitals.spo2 || vitals.weight || vitals.height) && (
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4 }}>
+              {vitals.bpSystolic || vitals.bpDiastolic ? (
+                <>
+                  <VitalCell label="BP Sys" value={vitals.bpSystolic}  unit="mmHg" />
+                  <VitalCell label="BP Dia" value={vitals.bpDiastolic} unit="mmHg" />
+                </>
+              ) : (
+                <VitalCell label="BP"      value={vitals.bp}      unit="mmHg" />
+              )}
+              <VitalCell label="Pulse"   value={vitals.pulse}   unit="bpm"  />
+              <VitalCell label="Temp"    value={vitals.temp}    unit="°F"   />
+              <VitalCell label="SpO₂"    value={vitals.spo2}    unit="%"    />
+              <VitalCell label="RR"      value={vitals.rr}      unit="/min" />
+              <VitalCell label="Wt"      value={vitals.weight}  unit="kg"   />
+              <VitalCell label="Ht"      value={vitals.height}  unit="cm"   />
+              <VitalCell label="BMI"     value={vitals.bmi}                 />
+              {vitals.painScore !== "" && vitals.painScore != null && (
+                <VitalCell label="Pain"  value={vitals.painScore} unit="/10" />
+              )}
+              {vitals.gcsScore && (
+                <VitalCell label="GCS"   value={vitals.gcsScore}            />
+              )}
+            </div>
+          )}
+
+          {/* RBS panel — R7hn-3: tighter padding + smaller fonts. */}
+          {vitals.bloodSugarRandom && (() => {
+            const v = Number(vitals.bloodSugarRandom);
+            const isCritical = vitals.bloodSugarUnit === "mg/dL" && (v < 70 || v > 300);
+            const tone = isCritical
+              ? { bg: "#fee2e2", border: "#dc2626", labelFg: "#7f1d1d", valueFg: "#b91c1c" }
+              : { bg: "#ecfeff", border: "#22d3ee", labelFg: "#0e7490", valueFg: "#155e75" };
+            return (
+              <div style={{
+                background: tone.bg, border: `1px solid ${tone.border}`,
+                borderLeft: `3px solid ${tone.border}`,
+                padding: "4px 10px", borderRadius: 4,
+                display: "grid",
+                gridTemplateColumns: "auto 1fr 1fr 2fr",
+                gap: 10,
+                fontSize: 9.5,
+                alignItems: "center",
+              }}>
+                <div>
+                  <span style={{
+                    fontSize: 8.5, fontWeight: 800, color: tone.labelFg,
+                    textTransform: "uppercase", letterSpacing: ".4px",
+                    marginRight: 4,
+                  }}>RBS{isCritical ? " · CRITICAL" : ""}</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: tone.valueFg }}>
+                    {vitals.bloodSugarRandom}
+                  </span>
+                  <span style={{ fontSize: 9, color: "#64748b", marginLeft: 2 }}>
+                    {vitals.bloodSugarUnit || "mg/dL"}
+                  </span>
+                </div>
+                {vitals.bloodSugarSampleType && (
+                  <div>
+                    <span style={{ fontSize: 8.5, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px", marginRight: 4 }}>Sample</span>
+                    <span style={{ fontWeight: 600, color: "#0f172a", textTransform: "capitalize" }}>{vitals.bloodSugarSampleType}</span>
+                  </div>
+                )}
+                {vitals.bloodSugarFasting && (
+                  <div>
+                    <span style={{ fontSize: 8.5, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px", marginRight: 4 }}>State</span>
+                    <span style={{ fontWeight: 600, color: "#0f172a" }}>{vitals.bloodSugarFasting}</span>
+                  </div>
+                )}
+                {vitals.bloodSugarNotes && (
+                  <div>
+                    <span style={{ fontSize: 8.5, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px", marginRight: 4 }}>Notes</span>
+                    <span style={{ color: "#0f172a" }}>{vitals.bloodSugarNotes}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* R7hn-3: Nurse sign-off row at the bottom of the Pre-Asmt
+              card. Replaces the loose "Entered by Nurse" caption with a
+              proper attested footer: Name (Employee ID) · Date · Time
+              · Signature. Signature renders the image when nurse pre-
+              signed (e.g. via the digital signature hook), otherwise a
+              blank line for handwritten sign at the counter. */}
+          {(vitals.enteredBy || vitals.recordedAt) && (() => {
+            const ts = vitals.recordedAt || vitals.bloodSugarTakenAt;
+            const tsDate = ts ? new Date(ts) : null;
+            return (
+              <div style={{
+                marginTop: 6, borderTop: "1px dashed #cbd5e1", paddingTop: 4,
+                display: "grid",
+                gridTemplateColumns: "1.4fr 0.9fr 0.7fr 1fr",
+                gap: 10,
+                fontSize: 9, color: "#475569",
+                alignItems: "end",
+              }}>
+                <div>
+                  <div style={{ fontSize: 8, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px" }}>Nurse</div>
+                  <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 10 }}>
+                    {vitals.enteredBy || "—"}
+                    {vitals.enteredByEmployeeId && (
+                      <span style={{ fontWeight: 500, color: "#64748b", marginLeft: 4 }}>
+                        ({vitals.enteredByEmployeeId})
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 8, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px" }}>Date</div>
+                  <div style={{ fontWeight: 600, color: "#0f172a", fontSize: 10 }}>
+                    {tsDate ? tsDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 8, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px" }}>Time</div>
+                  <div style={{ fontWeight: 600, color: "#0f172a", fontSize: 10 }}>
+                    {tsDate ? tsDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—"}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 8, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px" }}>Signature</div>
+                  {vitals.enteredBySignature ? (
+                    <img src={vitals.enteredBySignature} alt="Nurse signature" style={{ maxHeight: 22, maxWidth: 120, objectFit: "contain" }} />
+                  ) : (
+                    <div style={{ borderBottom: "1px solid #94a3b8", height: 18, marginTop: 2 }} />
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 

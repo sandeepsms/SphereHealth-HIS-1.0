@@ -6,6 +6,9 @@ import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientHeaderCard from "../../Components/clinical/PatientHeaderCard";
+// R7hr-86 — patient-safety alert chips (allergies + assessment compliance)
+// now live next to the All Sections back button, not inside the card footer.
+import PatientAlertStrip from "../../Components/clinical/PatientAlertStrip";
 // R7cb-C: hospital settings for the printed note header.
 import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
 // R7fq Track C: shared print shell — replaces inline hospital header/footer
@@ -509,7 +512,7 @@ function DoctorNotesContent({ selectedPatient }) {
       setNotes(sorted);
       // Populate diag state from the most recent note that has any diagnosis data
       const withDiag = sorted.find(n =>
-        n.provisionalDiagnosis || n.workingDiagnosis || n.finalDiagnosis || n.icd10Code
+        n.provisionalDiagnosis || n.workingDiagnosis || n.finalDiagnosis || n.icd10Code || n.patientStatus
       );
       if (withDiag) {
         setDiagNoteId(withDiag._id);
@@ -520,6 +523,10 @@ function DoctorNotesContent({ selectedPatient }) {
           final:          withDiag.finalDiagnosis         || prev.final,
           icd10Code:      withDiag.icd10Code              || prev.icd10Code,
           icd10Description: withDiag.icd10Description     || prev.icd10Description,
+          // R7hr-87 — restore the last-saved patient status so the
+          // doctor's clinical-status call doesn't reset to "Stable" on
+          // reload.
+          status:         withDiag.patientStatus          || prev.status,
         }));
       } else if (sorted.length > 0) {
         setDiagNoteId(sorted[0]._id);
@@ -617,6 +624,11 @@ function DoctorNotesContent({ selectedPatient }) {
       } : undefined,
       provisionalDiagnosis: diag.provisional, workingDiagnosis: diag.working, finalDiagnosis: diag.final,
       icd10Code: diag.icd10Code, icd10Description: diag.icd10Description,
+      // R7hr-87 — patientStatus (Stable/Improving/Unchanged/Deteriorating/
+      // Critical/Ready for Discharge) was filed in the schema but never
+      // sent. Now it persists and surfaces on the patient banner for
+      // both doctor + nurse views.
+      patientStatus: diag.status,
       investigations: invx ? invx.split(",").map(s => s.trim()).filter(Boolean) : [],
       orders: orders.map(o => ({
         // FIX (audit P12-B1): the legacy whitelist coerced `infusion` and
@@ -751,12 +763,23 @@ function DoctorNotesContent({ selectedPatient }) {
                   hamFlag, twoNurseRequired: hamFlag, highRisk: hamFlag,
                   orderDetails: {
                     medicineName: inf.drugFluid, displayName: inf.drugFluid,
+                    fluidName: inf.drugFluid,
                     dose: inf.volume ? `${inf.volume}ml` : "",
                     route: "IV Infusion",
                     frequency: "Continuous",
                     rate: inf.rate, totalVolume: inf.volume,
                     dilution: inf.dilution, titrationGoal: inf.titrationGoal,
                     startTime: inf.startTime,
+                    // P1-10 — surface MAR/Treatment-Chart fields so nurse sees
+                    // "Dilute in N ml … infuse over M min" and the auto-I/O
+                    // hook can stamp diluent volume. IA infusion state does
+                    // not yet collect these (emptyInfRow lacks them); default
+                    // to "" so payload validates while keys remain present.
+                    dilutionVolume:     inf.dilutionVolume     ?? "",
+                    dilutionFluid:      inf.dilutionFluid      ?? "",
+                    infuseOverMinutes:  inf.infuseOverMinutes  ?? "",
+                    additives:          inf.additives          ?? "",
+                    accessSite:         inf.accessSite         ?? "",
                   },
                   orderedBy: doctorName, orderedByRole: "Doctor", orderedAt: new Date(),
                   currentRate: inf.rate,
@@ -886,19 +909,38 @@ function DoctorNotesContent({ selectedPatient }) {
       if (diagNoteId) {
         await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${diagNoteId}/diagnosis`, payload, { headers });
       } else {
-        // No note yet — create a minimal draft note to anchor the diagnosis
-        const res = await axios.post(API_ENDPOINTS.DOCTOR_NOTES, {
-          ...payload,
-          patient: patient.patientId?._id || patient.patient,
-          patientName: patient.patientName || patient.patientId?.fullName || "",
-          patientUHID: patient.UHID || patient.uhid || searchUHID,
-          ipdNo,
-          visitDate: new Date(),
-          shift, noteType: "daily",
-          doctorName: user?.personalInfo ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim() : user?.name || "",
-        }, { headers });
-        const saved = res.data?.data || res.data;
-        if (saved?._id) setDiagNoteId(saved._id);
+        // R7hr-102 — Before spawning a fresh draft, look for an existing
+        // Initial Assessment for this patient. The IA is the canonical home
+        // for the patient's diagnosis (provisional/working/final/ICD), and
+        // previously this path created a phantom "Daily Progress" draft
+        // every time the diagnosis card was saved while diagNoteId hadn't
+        // hydrated yet — leaving stale empty daily-progress draft cards
+        // littering the Doctor Notes timeline right after the IA was signed.
+        // Reusing the IA via PATCH keeps R26 intact (no parallel
+        // role-mismatched record) and stops the "draft auto-saved after
+        // sign+save" regression the user flagged. Falls back to POST only
+        // when no IA exists at all (very early flow).
+        const existingIA = (notes || []).find(
+          (n) => n.noteType === "initial" || n.noteType === "initialAssessment",
+        );
+        if (existingIA?._id) {
+          await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${existingIA._id}/diagnosis`, payload, { headers });
+          setDiagNoteId(existingIA._id);
+        } else {
+          // No IA yet — create a minimal draft note to anchor the diagnosis
+          const res = await axios.post(API_ENDPOINTS.DOCTOR_NOTES, {
+            ...payload,
+            patient: patient.patientId?._id || patient.patient,
+            patientName: patient.patientName || patient.patientId?.fullName || "",
+            patientUHID: patient.UHID || patient.uhid || searchUHID,
+            ipdNo,
+            visitDate: new Date(),
+            shift, noteType: "daily",
+            doctorName: user?.personalInfo ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}`.trim() : user?.name || "",
+          }, { headers });
+          const saved = res.data?.data || res.data;
+          if (saved?._id) setDiagNoteId(saved._id);
+        }
       }
       toast.success("Diagnosis updated ✓");
       await fetchNotes(ipdNo);
@@ -1802,7 +1844,12 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
 
   /* ══════════════════════════════════════════════════════════════ */
   return (
-    <div style={{ marginLeft: 260, padding: "24px 28px", minHeight: "100vh", background: C.bg, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text }}>
+    // R7hr-63: dropped redundant marginLeft: 260 — ClinicalLayout's
+    // flex parent already reserves the AdmittedPatientPanel slot, so
+    // the old margin was just wasted whitespace between the panel and
+    // the content (page looked congested on the right because content
+    // was being squeezed 260px to the right of where it belonged).
+    <div style={{ padding: "24px 28px", minHeight: "100vh", background: C.bg, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text }}>
 
       {/* ── Page Header ── */}
       <div style={{ background: `linear-gradient(135deg, ${C.primary} 0%, ${C.primaryMid} 100%)`, borderRadius: 16, padding: "20px 26px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: `0 8px 24px ${C.primary}30` }}>
@@ -2067,16 +2114,35 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
             </div>
           )}
 
-          {/* ── Back-to-grid button (when a tile is open) ── */}
+          {/* ── Back-to-grid button (when a tile is open) ──
+              R7hr-86: alert chips now sit beside the back button so
+              allergies / OVERDUE compliance stay visible without
+              inflating the patient card. */}
           {patient && activeTile && (
-            <button
-              type="button"
-              onClick={() => setActiveTile(null)}
-              className="dnp-back-btn"
-              aria-label="Back to all sections"
-            >
-              <i className="pi pi-arrow-left" aria-hidden /> All Sections
-            </button>
+            <div className="dnp-back-bar" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+              <button
+                type="button"
+                onClick={() => setActiveTile(null)}
+                className="dnp-back-btn"
+                aria-label="Back to all sections"
+                style={{ margin: 0 }}
+              >
+                <i className="pi pi-arrow-left" aria-hidden /> All Sections
+              </button>
+              <PatientAlertStrip
+                patientId={patient?._id}
+                allergies={patient?.allergies || patient?.knownAllergies}
+              />
+            </div>
+          )}
+          {/* R7hr-86 — When no tile is open the alerts still belong
+              alongside the tile grid; show them in a slim row right
+              above the grid so allergies / OVERDUE remain visible. */}
+          {patient && !activeTile && (
+            <PatientAlertStrip
+              patientId={patient?._id}
+              allergies={patient?.allergies || patient?.knownAllergies}
+            />
           )}
 
           {/* ══ DIAGNOSIS PANEL ══════════════════════════════════════════════ */}
@@ -2360,7 +2426,7 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
               <div className="dnp-embedded-panel" style={{ marginBottom: 14 }}>
                 {isER
                   ? <EmergencyAssessmentPageContent selectedPatient={patient} onSign={handleAssessmentSigned} />
-                  : <IPDInitialAssessmentContent  selectedPatient={patient} onSign={handleAssessmentSigned} />}
+                  : <IPDInitialAssessmentContent  selectedPatient={patient} onSign={handleAssessmentSigned} defaultViewRole="doctor" />}
               </div>
             );
           })()}

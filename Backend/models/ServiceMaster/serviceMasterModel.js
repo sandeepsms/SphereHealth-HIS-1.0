@@ -51,6 +51,17 @@ const ServiceMasterSchema = new mongoose.Schema(
       ],
     },
 
+    // R7hr-83 — Doctor Order categorization (Phase A).
+    // Tags this service so it appears in the doctor-order autocomplete for
+    // that order type, and so completing the order auto-fires a billing
+    // trigger using this service's price.
+    doctorOrderCategory: {
+      type: String,
+      enum: ["Medication","IV_Fluid","Lab","Radiology","Procedure","BloodTransfusion","Diet","Oxygen","Physiotherapy","Activity","Nursing","Consultation"],
+      default: null,
+      index: true,
+    },
+
     subCategory: { type: String, trim: true },
 
     // Where this service can be billed
@@ -184,6 +195,7 @@ const ServiceMasterSchema = new mongoose.Schema(
 );
 
 ServiceMasterSchema.index({ category: 1 });
+ServiceMasterSchema.index({ doctorOrderCategory: 1, isActive: 1 });
 ServiceMasterSchema.index({ domain: 1 });
 ServiceMasterSchema.index({ applicableTo: 1 });
 ServiceMasterSchema.index({ isActive: 1 });

@@ -657,6 +657,11 @@ const _cancelStuckTrigger = scheduleDaily("stuck-trigger-sweeper", 1, 0, async (
   const cutoff = new Date(Date.now() - 60 * 60 * 1000);
   // Pull at most 50 stuck triggers — bigger backlogs likely indicate a
   // systemic issue that needs a human-in-the-loop investigation.
+  // R7hr-12-S3 / D10-09: both this find() and the multi-status aggregate
+  // below are backed by the new {status:1, updatedAt:1} index on
+  // BillingTriggerSchema (was: status equality used {status,createdAt}
+  // index and then in-memory filtered on updatedAt — collscan-ish at
+  // 1M+ rows).
   const stuck = await BillingTrigger.find({
     status:    "pending-review",
     updatedAt: { $lt: cutoff },
@@ -782,6 +787,125 @@ const _cancelReorderNotifier = scheduleDaily("reorder-notifier", 8, 0, async () 
     return { items: items.length, sent: out.sent, channel: out.channel };
   } catch (e) {
     console.error("[reorder-notifier] cron error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
+// R7hr-12-S2 (D8-10) — pharmacy-expiry-watch. Daily at 06:30 IST sweep of
+// DrugBatch for batches within 90 days of expiry (or already expired but
+// still on shelf with remaining > 0). NABH MOM.4 requires proactive
+// identification + removal of expiring meds; the on-demand
+// `/api/pharmacy/alerts` tile + the `expiryRegister` endpoint exist but
+// rely on someone navigating to them. This cron is the push-side mirror:
+// console log + BillingAudit summary + reorderNotifier.notifyExpiry fan-out.
+// Dispense() already blocks expired-batch picks (FEFO scan filters by
+// expiryDate >= today), so the worst case here is shelf clutter — but
+// surveyors flag any expired stock physically present.
+const _cancelExpiryWatch = scheduleDaily("pharmacy-expiry-watch", 6, 30, async () => {
+  try {
+    const DrugBatchM = require("./models/Pharmacy/DrugBatchModel");
+    const reorder    = require("./services/Notification/reorderNotifier");
+    const { istStartOfToday, istStartOfDayPlus } = require("./utils/queryGuards");
+    const now     = istStartOfToday();
+    const horizon = istStartOfDayPlus(90);
+    // Single query — batches with remaining > 0 whose expiry already lapsed
+    // OR will lapse within 90 days. Sort ascending so the most urgent
+    // shows first in the audit row's sample slice.
+    const batches = await DrugBatchM.find({
+      isActive: true, remaining: { $gt: 0 },
+      expiryDate: { $lte: horizon },
+    }).sort({ expiryDate: 1 }).limit(500).lean();
+    if (batches.length === 0) {
+      return { items: 0, sent: 0, channel: "noop" };
+    }
+    const items = batches.map((b) => {
+      const exp  = new Date(b.expiryDate);
+      const days = Math.floor((exp.getTime() - now.getTime()) / 86400000);
+      return {
+        drugId:       b.drugId,
+        drugName:     b.drugName || "(unknown drug)",
+        batchNo:      b.batchNo,
+        expiryDate:   b.expiryDate,
+        daysToExpiry: days,
+        remaining:    b.remaining,
+        supplierName: b.supplierName || "",
+        salePrice:    Number(b.salePrice || 0),
+      };
+    });
+    const out = await reorder.notifyExpiry(items, []);
+    return { items: items.length, sent: out.sent, channel: out.channel, buckets: out.buckets };
+  } catch (e) {
+    console.error("[pharmacy-expiry-watch] cron error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
+// R7hr-12-S2 (D8-03) — drug-license-expiry-watch. Daily at 08:15 IST.
+// Reads PharmacySettings.drugLicenseExp (singleton _id="default") and
+// emits a graduated warning when the license is within 60 days of
+// expiry, or a WARN-level BillingAudit row when it has already lapsed.
+// Mirrors the credential-pre-expiry-email cron registered for HR creds
+// (line 850 below) but for the pharmacy's statutory drug license under
+// NABH AAC.1 / Drugs & Cosmetics Act §18-A. The dispense() guard at the
+// pharmacy controller is the hard stop; this cron is the proactive
+// alerter so the licensee sees the expiry coming weeks in advance.
+const _cancelLicenseExpiryWatch = scheduleDaily("drug-license-expiry-watch", 8, 15, async () => {
+  try {
+    const SettingsM = require("./models/Pharmacy/PharmacySettingsModel");
+    const BillingAudit = require("./models/Billing/BillingAudit");
+    const { istStartOfToday } = require("./utils/queryGuards");
+    const row = await SettingsM.findById("default")
+      .select("drugLicenseNo drugLicenseExp drugLicenseExpiryOverride pharmacyName")
+      .lean();
+    if (!row || !row.drugLicenseExp) {
+      return { skipped: "no drugLicenseExp configured" };
+    }
+    const today  = istStartOfToday();
+    const exp    = new Date(row.drugLicenseExp);
+    if (Number.isNaN(exp.getTime())) {
+      return { skipped: "drugLicenseExp not a valid date" };
+    }
+    const days = Math.floor((exp.getTime() - today.getTime()) / 86400000);
+    const status =
+      days < 0   ? "EXPIRED"  :
+      days <= 30 ? "URGENT"   :
+      days <= 60 ? "SOON"     :
+                   "OK";
+    // Only emit an audit row when there's something to flag (don't bloat
+    // the audit collection with daily "OK" rows for a year-out license).
+    if (status === "OK") {
+      console.log(`[drug-license-expiry-watch] license OK — ${days} day(s) remaining`);
+      return { status, daysToExpiry: days };
+    }
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[drug-license-expiry-watch] ${status} — Drug license ${row.drugLicenseNo || "(none)"} ` +
+      `expires on ${exp.toISOString().slice(0, 10)} (${days} day(s)). ` +
+      `Override flag: ${row.drugLicenseExpiryOverride ? "ON" : "off"}.`,
+    );
+    try {
+      if (BillingAudit && typeof BillingAudit.emitBillingAudit === "function") {
+        await BillingAudit.emitBillingAudit({
+          event:     "MASTER_DRUG_PRICE_CHANGED",
+          actorName: "System (drug-license-expiry-watch)",
+          reason:    `Drug-license expiry watch: status=${status}, daysToExpiry=${days}, ` +
+                     `licenseNo=${row.drugLicenseNo || "(none)"}, override=${row.drugLicenseExpiryOverride ? "ON" : "off"}`,
+          after: {
+            licenseNo:           row.drugLicenseNo || "",
+            drugLicenseExp:      exp,
+            daysToExpiry:        days,
+            status,
+            overrideOn:          !!row.drugLicenseExpiryOverride,
+            pharmacyName:        row.pharmacyName || "",
+          },
+        });
+      }
+    } catch (e) {
+      console.warn(`[drug-license-expiry-watch] audit emit failed: ${e.message}`);
+    }
+    return { status, daysToExpiry: days };
+  } catch (e) {
+    console.error("[drug-license-expiry-watch] cron error:", e.stack || e.message);
     return { error: e.message };
   }
 });
@@ -940,6 +1064,38 @@ const _cancelRetentionReview = scheduleDaily("retention-review", 4, 0, async () 
   }
 })();
 
+// R7hr-12 / D10-01 — Boot-time self-test for cron module dependencies.
+// Pre-fix, the assessment-compliance interval require()d a non-existent
+// './utils/distributedLock' inside its try{} and the MODULE_NOT_FOUND was
+// silently swallowed every 15 min — leaving NABH MOM.4 / AAC.7 assessment
+// cadence unenforced for the entire deploy lifetime. We surface any future
+// cron-dependency drift at boot rather than in a log file no one reads.
+// Mirrors the retention startup-self-test pattern directly above.
+(() => {
+  const cronDeps = [
+    { name: "cronScheduler", path: "./utils/cronScheduler", needs: ["acquireLock", "releaseLock"] },
+  ];
+  const failures = [];
+  for (const dep of cronDeps) {
+    try {
+      const mod = require(dep.path);
+      const missing = (dep.needs || []).filter((k) => typeof mod?.[k] !== "function");
+      if (missing.length) {
+        failures.push({ name: dep.name, reason: `missing exports: ${missing.join(", ")}` });
+      }
+    } catch (e) {
+      failures.push({ name: dep.name, reason: e.message });
+    }
+  }
+  if (failures.length) {
+    for (const f of failures) {
+      console.warn(`[startup:cron-self-test] FAIL ${f.name}: ${f.reason}`);
+    }
+  } else {
+    console.log(`[startup:cron-self-test] OK — ${cronDeps.length} cron module(s) reachable`);
+  }
+})();
+
 // R7bj-F9 — visitor-pass expiry every 5 min (moves expensive updateMany off
 // the visitorPassController hot path). Stale passes auto-flip Active → Expired
 // with autoExpiredAt stamp. setInterval (not IST-anchored cron) — cadence-based.
@@ -1017,7 +1173,12 @@ const _cancelAssessmentComplianceSweeper = (() => {
   const interval = setInterval(async () => {
     const start = Date.now();
     try {
-      const { acquireLock, releaseLock } = require('./utils/distributedLock');
+      // R7hr-12 / D10-01 — was require('./utils/distributedLock') which does
+      // not exist; the distributed-lock helpers live in cronScheduler.js.
+      // Pre-fix, every 15-min tick after boot threw MODULE_NOT_FOUND and was
+      // silently swallowed by the surrounding catch, leaving NABH MOM.4 +
+      // AAC.7 assessment-cadence compliance unenforced.
+      const { acquireLock, releaseLock } = require('./utils/cronScheduler');
       const acquired = await acquireLock('cron:assessment-compliance', 14 * 60);
       if (!acquired) return; // another replica
       try {
@@ -1062,6 +1223,8 @@ const _autoBillingInterval = {
     _cancelAuditArchive();           // R7ar-P1-20
     _cancelStuckTrigger();           // R7ar-P2-37
     _cancelReorderNotifier();        // R7bd-E-3
+    _cancelExpiryWatch();            // R7hr-12-S2 / D8-10
+    _cancelLicenseExpiryWatch();     // R7hr-12-S2 / D8-03
     _cancelExpireCredentials();      // R7bf-G / A5-CRIT-6
     _cancelPreExpiryEmail();         // R7bm-F8 / R7bl close-out
     if (_cvAlertInterval) clearInterval(_cvAlertInterval); // R7bf-G / A5-CRIT-1

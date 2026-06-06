@@ -181,7 +181,17 @@ const LEGAL_TRANSITIONS = {
   PharmacyIndent: {
     Raised:             ["Acknowledged", "Cancelled"],
     Acknowledged:       ["PartiallyReleased", "Released", "Cancelled"],
-    PartiallyReleased:  ["Released"],         // R7bf-I: cannot cancel — stock already moved
+    // R7hr-12-S3 (D5-11): PartiallyReleased → Cancelled is now legal IN THE
+    // MATRIX but the cancelIndent service (Backend/services/Pharmacy/indentService.js
+    // L581) still 409s the casual path. The transition is reachable only when
+    // returnIndent has restocked every issuedQty unit AND the caller passes
+    // force:true + adminUserId — at that point the indent has no live
+    // inventory/billing ghost, so closing it as Cancelled is safe. Before
+    // R7hr-12-S3 this state was a terminal trap on data-entry mistakes
+    // (e.g. wrong patient, issuedQty=1 of 10 by accident): the matrix
+    // forced the pharmacist to release the remaining 9 just to dispose
+    // of the indent, doubling down on the error.
+    PartiallyReleased:  ["Released", "Cancelled"],
     Released:           [],                    // terminal — use return flow
     Cancelled:          [],
   },

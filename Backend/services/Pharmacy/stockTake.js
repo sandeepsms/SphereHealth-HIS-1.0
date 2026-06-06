@@ -71,7 +71,14 @@ async function createCount({ date, drugIds = [], title = "", scope = "", user = 
 }
 
 // ── enterPhysical ────────────────────────────────────────────────
-async function enterPhysical(stockTakeId, { batchId, physicalQty, reason = "" } = {}) {
+// R7hr-12-S2 (D6-04): now accepts `user` so the per-line actor (the
+// pharmacist who walked the shelf) is captured separately from the
+// stock-take creator. Pre-fix the controller dropped req.user here and
+// the per-line entry was attributed implicitly to countedBy — a
+// second-shift counter left no audit trace, and the verify-time SOD
+// check (NABH AAC.7) only compared verifier vs creator, so a
+// [creator → entrant → verifier=entrant] flow silently passed.
+async function enterPhysical(stockTakeId, { batchId, physicalQty, reason = "", user = {} } = {}) {
   if (physicalQty == null || !Number.isFinite(Number(physicalQty)) || Number(physicalQty) < 0) {
     const e = new Error("physicalQty must be a non-negative number");
     e.code = "INVALID_QTY"; e.status = 400; throw e;
@@ -93,6 +100,14 @@ async function enterPhysical(stockTakeId, { batchId, physicalQty, reason = "" } 
     e.code = "REASON_REQUIRED"; e.status = 400; throw e;
   }
   line.varianceReason = reason.trim();
+
+  // R7hr-12-S2 (D6-04): stamp the entrant on the line. Each edit of the
+  // same line overwrites the stamp — the most recent entrant wins, which
+  // is what SOD wants (the verifier mustn't equal whoever last touched
+  // the line).
+  line.enteredBy   = user.fullName || user.employeeId || "";
+  line.enteredById = user._id || user.id || null;
+  line.enteredAt   = new Date();
 
   if (doc.status === "DRAFT") {
     doc.status = "SUBMITTED";
@@ -122,6 +137,19 @@ async function verifyAndAdjust(stockTakeId, { verifierId, verifierName } = {}) {
     const e = new Error("Verifier must be different from the counter (NABH AAC.7 separation of duties)");
     e.code = "VERIFIER_SELF"; e.status = 409; throw e;
   }
+  // R7hr-12-S2 (D6-04): extended SOD — verifier must not match ANY
+  // per-line entrant either. Pre-fix this check only blocked the
+  // creator (countedById); a flow where User A creates, User B walks
+  // the shelf and enters physical counts, then User B verifies passed
+  // because countedById=A != verifier=B — but the actual counter
+  // (B) was also the verifier, defeating NABH AAC.7 SOD on the
+  // variance adjustments that $inc DrugBatch.remaining.
+  for (const line of (doc.lines || [])) {
+    if (line.enteredById && String(line.enteredById) === String(verifierId)) {
+      const e = new Error("Verifier must be different from the pharmacist who entered the physical count (NABH AAC.7 separation of duties)");
+      e.code = "VERIFIER_SELF"; e.status = 409; throw e;
+    }
+  }
 
   // Walk every line that has a physicalQty set (we tolerate partially-
   // counted submissions — uncounted lines stay null and aren't adjusted).
@@ -141,17 +169,58 @@ async function verifyAndAdjust(stockTakeId, { verifierId, verifierName } = {}) {
     // verify (in which case the new remaining differs from systemQty; we
     // still apply the same variance delta so the count reflects the
     // CHANGE the counter observed, not a stale absolute).
+    // R7hr-12-S2 (D3-04): preserve the invariant
+    // `remaining = quantityIn - quantityOut - vendorReturned` so the
+    // pre-save hook on DrugBatchModel (which recomputes `remaining` on
+    // every batch.save()) can't silently reverse a positive-variance
+    // adjustment the next time a vendor return / save() fires.
+    //
+    // Pre-fix: positive variance simply did
+    //   remaining   = max(0, remaining   + variance)
+    //   quantityOut = max(0, quantityOut - variance)
+    // — the two $max clamps were independent. When variance > quantityOut
+    // (e.g. fresh batch with quantityOut=0 and ANY +ve found), quantityOut
+    // clamped at 0 but remaining still gained the full variance, breaking
+    // the invariant. The next batch.save() on a vendor return ran the
+    // pre-save hook (remaining = in - out - vendorReturned) and silently
+    // erased the credit, leaving an audit row with no live data change.
+    //
+    // Fix: split the positive variance into two legs that respect the
+    // invariant — first decrement quantityOut by up to its current value,
+    // then promote any overflow into quantityIn (treat it as a "missed
+    // receipt" backfill). Negative variance still increments quantityOut
+    // (no clamp risk because quantityOut + |variance| >= 0 always).
+    // Finally, recompute `remaining` from the just-updated counters so
+    // the invariant holds at write time.
+    const variance = Number(line.variance || 0);
     const updated = await DrugBatch.findOneAndUpdate(
       { _id: line.batchId },
       [
         { $set: {
-            // Clamp to 0 — a wildly negative adjustment can't drive stock
-            // below zero. The unaccounted-for piece becomes the new
-            // "shrinkage" remainder which the next count will catch.
-            remaining: { $max: [0, { $add: ["$remaining", line.variance] }] },
-            // Mirror into quantityOut (positive variance = stock found,
-            // so DECREMENT quantityOut; negative = stock lost, INCREMENT).
-            quantityOut: { $max: [0, { $subtract: ["$quantityOut", line.variance] }] },
+            // If +ve variance > current quantityOut, the overflow lands
+            // in quantityIn as a back-dated receipt. If -ve or small +ve,
+            // quantityIn is unchanged (max(0, variance - quantityOut) is 0).
+            quantityIn: {
+              $add: [
+                { $ifNull: ["$quantityIn", 0] },
+                { $max: [0, { $subtract: [variance, { $ifNull: ["$quantityOut", 0] }] }] },
+              ],
+            },
+            // quantityOut decrements by variance (positive variance shrinks
+            // quantityOut; negative variance grows it). Clamped at 0 — the
+            // overflow case is absorbed by the quantityIn bump above.
+            quantityOut: {
+              $max: [0, { $subtract: [{ $ifNull: ["$quantityOut", 0] }, variance] }],
+            },
+        } },
+        // Second pipeline stage so the recompute sees the updated counters.
+        { $set: {
+            remaining: {
+              $max: [0, { $subtract: [
+                { $subtract: ["$quantityIn", "$quantityOut"] },
+                { $ifNull: ["$vendorReturned", 0] },
+              ] }],
+            },
         } },
       ],
       { new: true },
@@ -174,13 +243,26 @@ async function verifyAndAdjust(stockTakeId, { verifierId, verifierName } = {}) {
     // STOCK_TAKE_ADJUST to BillingAudit.event enum in a follow-up cycle.
     try {
       if (typeof BillingAudit.emitBillingAudit === "function") {
+        // R7hr-12-S2 (D6-04): include the per-line entrant identity in
+        // the audit row so the chronological trail traces creator →
+        // entrant → verifier. Pre-fix the row only captured the
+        // verifier; the entrant (who actually walked the shelf) was
+        // invisible to the GST/NABH register.
+        const enteredByLabel = line.enteredBy
+          ? `${line.enteredBy}${line.enteredById ? ` (${line.enteredById})` : ""}`
+          : "(unknown entrant)";
         await BillingAudit.emitBillingAudit({
           event:    "MASTER_DRUG_PRICE_CHANGED",   // closest existing enum — true STOCK_TAKE_ADJUST pending enum extension
           actorId:  verifierId,
           actorName: verifierName || "Pharmacist",
-          reason:   `Stock take ${doc._id} adjusted ${line.drugName} batch ${line.batchNo}: ${line.variance > 0 ? "+" : ""}${line.variance} (${line.varianceReason || "no reason"})`,
+          reason:   `Stock take ${doc._id} adjusted ${line.drugName} batch ${line.batchNo}: ${line.variance > 0 ? "+" : ""}${line.variance} (${line.varianceReason || "no reason"}) — physical count entered by ${enteredByLabel}`,
           before:   { remaining: before, systemQty: line.systemQty, batchNo: line.batchNo },
-          after:    { remaining: after,  physicalQty: line.physicalQty, batchNo: line.batchNo, variance: line.variance },
+          after:    {
+            remaining: after, physicalQty: line.physicalQty, batchNo: line.batchNo, variance: line.variance,
+            enteredById: line.enteredById || null,
+            enteredBy:   line.enteredBy   || "",
+            enteredAt:   line.enteredAt   || null,
+          },
         });
       }
     } catch (_) { /* audit best-effort */ }

@@ -31,13 +31,16 @@ const DEMO = {
     paymentMethod: "upi", paymentRef: "UPI/24913XX",
   },
   "payment-receipt": {
-    receiptNo: "PAY-2026-01108",
-    patientName: "Demo Patient", uhid: "UH00000099", ipdNo: "IPD-2026-0042",
+    // R7hb — demo now shows the short format + dynamic visit-No label.
+    // OPD receipt (most common): PAY-BILL-26-08-P1 / UH08 / OPD-26-08.
+    receiptNo: "BILL-26-08-P1",
+    patientName: "Demo Patient", uhid: "UH08",
+    visitType: "OPD", visitNo: "OPD-26-08",
     amount: 5000,
     method: "card", refNo: "TXN-0099887", cardLast4: "4242",
     receivedBy: "Cashier · System Admin",
-    purpose: "IPD running bill — partial payment",
-    runningBalance: 12350,
+    purpose: "OPD bill — full settlement",
+    runningBalance: 0,
   },
   "advance-receipt": {
     receiptNo: "ADV-2026-00012",

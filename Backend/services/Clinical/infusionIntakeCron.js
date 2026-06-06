@@ -68,6 +68,40 @@ async function tickOnce() {
       $or: [{ infusionStopped: null }, { infusionStopped: { $exists: false } }],
     }).lean();
 
+    // R7hr-12-S3: Collapse per-order N+1 aggregation into a single $in query
+    // grouped by meta.orderId, then look up per-order via Map inside the loop.
+    // Previously each running infusion triggered its own aggregation round-trip;
+    // at 50+ concurrent IV infusions that became a measurable sweep cost. The
+    // partial compound index on { meta.orderId, meta.hourBucket } with
+    // partialFilterExpression source=INFUSION_CRON still serves this single
+    // grouped aggregation efficiently.
+    const orderIds = orders.map((o) => o._id);
+    const infusedByOrder = new Map();
+    if (orderIds.length > 0) {
+      try {
+        const aggAll = await IntakeOutputEntry.aggregate([
+          {
+            $match: {
+              source: "INFUSION_CRON",
+              voided: { $ne: true },
+              "meta.orderId": { $in: orderIds },
+            },
+          },
+          { $group: { _id: "$meta.orderId", sum: { $sum: "$volumeML" } } },
+        ]);
+        for (const row of aggAll || []) {
+          // _id may be ObjectId; stringify for consistent Map lookups regardless
+          // of how the order._id is shaped downstream.
+          infusedByOrder.set(String(row._id), row.sum || 0);
+        }
+      } catch (e) {
+        // Non-fatal: fall through with empty Map; per-order loop will treat each
+        // as alreadyInfused=0 and continue. The partial unique index on
+        // (meta.orderId, meta.hourBucket) still prevents double-writes.
+        logErr("infusionIntakeCron", "prior-infusion sum aggregation")(e);
+      }
+    }
+
     for (const order of orders) {
       processed++;
       try {
@@ -80,40 +114,50 @@ async function tickOnce() {
         const total = parseRate(order.orderDetails?.totalVolume) || Infinity;
 
         // 3) How much have we logged from this order so far?
-        const aggResult = await IntakeOutputEntry.aggregate([
-          {
-            $match: {
-              source: "INFUSION_CRON",
-              "meta.orderId": order._id,
-              voided: { $ne: true },
-            },
-          },
-          { $group: { _id: null, sum: { $sum: "$volumeML" } } },
-        ]);
-        const alreadyInfused = aggResult?.[0]?.sum || 0;
+        // R7hr-12-S3: Map lookup replaces per-order aggregation (see batch above).
+        const alreadyInfused = infusedByOrder.get(String(order._id)) || 0;
 
         // 4) Remaining capacity — never write past totalVolume.
         const remaining = total - alreadyInfused;
         if (remaining <= 0) {
           // Mark the order as Completed and let the nurse confirm. Best-effort,
-          // non-throwing.
+          // non-throwing. Use load + .save() so the DoctorOrderModel pre('save')
+          // hook enforces ALLOWED_TRANSITIONS — findByIdAndUpdate would bypass
+          // the state machine entirely and let an already-Stopped/Cancelled
+          // order flip back to Completed.
           try {
-            await DoctorOrder.findByIdAndUpdate(order._id, {
-              $set: {
-                status: "Completed",
-                infusionStopped: now,
-                stopReason: "Total volume infused (auto by cron)",
-              },
-              $push: {
-                auditLog: {
-                  step: "Infusion auto-stopped — totalVolume reached",
-                  doneBy: "SYSTEM",
-                  doneAt: now,
-                  notes: `cron sweep at ${bucket} — sum=${alreadyInfused}, total=${total}`,
-                },
-              },
-            });
-            completed++;
+            const orderDoc = await DoctorOrder.findById(order._id);
+            if (orderDoc && orderDoc.status !== "Completed") {
+              orderDoc.status = "Completed";
+              orderDoc.infusionStopped = now;
+              orderDoc.stopReason = "Total volume infused (auto by cron)";
+              orderDoc.statusChangedAt = now;
+              orderDoc.completedAt = now;
+              orderDoc.auditLog.push({
+                step: "Infusion auto-stopped — totalVolume reached",
+                doneBy: "SYSTEM",
+                doneAt: now,
+                notes: `cron sweep at ${bucket} — sum=${alreadyInfused}, total=${total}`,
+              });
+              await orderDoc.save();
+              completed++;
+              // Emit a clinical audit row so the surveyor can trace the
+              // auto-stop back to the cron sweep. Non-blocking — never let
+              // an audit failure unwind the status change.
+              try {
+                const { emitClinicalAudit } = require("../Compliance/clinicalAuditService");
+                await emitClinicalAudit({
+                  event: "STATUS_CHANGE",
+                  targetType: "DoctorOrder",
+                  targetId: orderDoc._id,
+                  UHID: orderDoc.UHID,
+                  admissionId: orderDoc.admissionId,
+                  patientId: orderDoc.patientId,
+                  actor: { _id: "SYSTEM", fullName: "infusion-intake-cron" },
+                  after: { status: "Completed", reason: "Total volume infused (auto by cron)" },
+                });
+              } catch (_) { /* silent */ }
+            }
           } catch (e) { /* leave as-is; nurse will see Completed flag next tick */ }
           continue;
         }

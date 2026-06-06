@@ -10,6 +10,12 @@ const DrugBatchSchema = new mongoose.Schema(
     drugId:       { type: mongoose.Schema.Types.ObjectId, ref: "PharmacyDrug", required: true, index: true },
     drugName:     { type: String, default: "" },   // denormalized for quick lookup
 
+    // R7hr-12-S3 (D1-12): keep `required: true` so the API still rejects
+    // missing batchNo at the surface, but the (drugId, batchNo) unique
+    // index below uses a partialFilterExpression that only kicks in when
+    // batchNo is a non-empty string. Together they prevent the cryptic
+    // E11000 the GRN clerk used to see when two batches arrived with
+    // whitespace-only batchNo (trimmed to '') for the same drug.
     batchNo:      { type: String, required: true, trim: true },
     expiryDate:   { type: Date, required: true, index: true },
     mfgDate:      { type: Date, default: null },
@@ -29,6 +35,26 @@ const DrugBatchSchema = new mongoose.Schema(
     mrp:          { type: Number, default: 0 },
     salePrice:    { type: Number, default: 0 },     // per-unit selling rate (post-discount, pre-GST)
 
+    // R7hr-50 — capture the GST rate AT THE TIME OF RECEIPT so the batch
+    // carries an immutable tax classification independent of future Drug
+    // master edits. Pre-R7hr-50 GST was sourced from `Drug.gstRate` at the
+    // moment of dispense, meaning a mid-stream Drug master edit (e.g.,
+    // admin re-classifying HSN) would silently change the tax on stock
+    // already in the building — bad for audit trail. Now each batch
+    // memorialises its own gstRate. recordGRN resolves it from
+    // HSNMasterModel via the linked Drug.hsnCode at receipt time.
+    gstRate:      {
+      type: Number,
+      default: 12,
+      enum: {
+        values: [0, 0.25, 3, 5, 12, 18, 28],
+        message: "gstRate {VALUE} is not a valid GST slab",
+      },
+    },
+    // Snapshot of the HSN at GRN time so a later Drug.hsnCode edit doesn't
+    // rewrite history on the printed GST register.
+    hsnCodeAtReceipt: { type: String, default: "" },
+
     supplierId:   { type: mongoose.Schema.Types.ObjectId, ref: "PharmacySupplier", default: null },
     supplierName: { type: String, default: "" },
     grnNumber:    { type: String, default: "" },
@@ -44,7 +70,26 @@ const DrugBatchSchema = new mongoose.Schema(
 );
 
 DrugBatchSchema.index({ drugId: 1, expiryDate: 1, remaining: 1 });
-DrugBatchSchema.index({ drugId: 1, batchNo: 1 }, { unique: true });
+// R7hr-12-S3 (D1-12): partial filter so the compound unique only fires for
+// non-empty batchNo. Previously a blank/whitespace batchNo (some suppliers
+// don't print one on the strip) trimmed to '' and the *second* such GRN
+// for the same drug failed with E11000 — confusing the GRN clerk into
+// thinking they had a real duplicate. With the partial filter, multiple
+// "no batch number" GRNs for the same drug are allowed; the moment a real
+// batchNo is recorded the dedupe is enforced.
+DrugBatchSchema.index(
+  { drugId: 1, batchNo: 1 },
+  { unique: true, partialFilterExpression: { batchNo: { $type: "string", $gt: "" } } },
+);
+// R7hr-12-S2 (D8-06): unique grnNumber so the monotonic Counter-driven
+// GRN sequence (pharmacyController.recordGRN) detects collisions and the
+// D&C "sequential purchase register" assumption holds. Partial filter
+// expression skips legacy rows with empty grnNumber so the new index
+// doesn't collide on the pre-fix Math.random()-suffix history.
+DrugBatchSchema.index(
+  { grnNumber: 1 },
+  { unique: true, partialFilterExpression: { grnNumber: { $gt: "" } } },
+);
 
 // Auto-compute remaining on save.
 // R7bb-FIX-E-11: include vendorReturned in the consumption side so a

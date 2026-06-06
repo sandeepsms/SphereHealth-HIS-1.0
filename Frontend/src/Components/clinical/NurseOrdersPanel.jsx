@@ -43,7 +43,17 @@ function getSteps(order) {
     return ["Consent Taken", "Patient Prepped", "Procedure Done"];
   }
   if (type === "Medication") {
-    return ["Prepared", "Administered"];
+    // R7hr-53 [P1-14] — prepend 'Acknowledged' so the medication step flow
+    // mirrors the explicit acknowledge → prepare → administer sequence used
+    // elsewhere on the chart. (Backend /step route must accept these names —
+    // see deferred note re: per-type step allowlist validation.)
+    return ["Acknowledged", "Prepared", "Administered"];
+  }
+  // R7hr-53 [P1-14] — IV_Fluid was falling through to the generic
+  // ['Acknowledged','Done'] flow, hiding bag-spike + monitoring milestones
+  // that the NABH IV register expects. Explicit branch restores the audit trail.
+  if (type === "IV_Fluid") {
+    return ["Acknowledged", "Bag-Spiked", "Started", "Monitoring", "Completed"];
   }
   if (type === "Diet") {
     return ["Ordered", "Prepared", "Delivered"];
@@ -107,6 +117,31 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
     details.consentRequired &&
     order.consentStatus === "Pending";
 
+  // R7hr-84 — Phase C billing surfacing on the Complete buttons.
+  // The nurse's step buttons end with the order's final step, which
+  // POSTs to /api/doctor-orders/:id/step. The backend route moves
+  // the order to status:'Completed' on the last step (or when an
+  // already-Completed order is touched), which is the Phase C
+  // billing trigger when orderDetails.serviceMasterId is set.
+  //
+  // - If serviceMasterId is set: append a "Will bill ₹{unitPrice}"
+  //   chip next to the step buttons so the nurse can see the order
+  //   will auto-bill on completion.
+  // - If serviceMasterId is null AND orderType is one of the 11
+  //   ServiceMaster-mappable types (the full mappable set minus
+  //   Medication, which renders via MedOrderCard, and Investigation,
+  //   which is billed via the lab dispatch path), show a soft amber
+  //   inline note ABOVE the step buttons so the nurse knows the
+  //   completion won't auto-bill and the order needs a service pick.
+  const BILLABLE_ORDER_TYPES = new Set([
+    "IV_Fluid", "Lab", "Radiology", "Procedure", "BloodTransfusion",
+    "Diet", "Oxygen", "Physiotherapy", "Activity", "Nursing", "Consultation",
+  ]);
+  const hasServicePick   = details.serviceMasterId != null && details.serviceMasterId !== "";
+  const isBillableType   = BILLABLE_ORDER_TYPES.has(order.orderType);
+  const showWillBillChip = hasServicePick && details.unitPrice != null;
+  const showNoPickNote   = !hasServicePick && isBillableType;
+
   // Running status text e.g. "New → Sample Collected → Sample Sent"
   const flowText = ["New", ...(order.auditLog || []).map(l => l.step)].join(" → ");
 
@@ -141,6 +176,24 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
 
             {/* Order name */}
             <div style={{ fontSize: 13, fontWeight: 700, color: C.dark, marginBottom: 2 }}>{displayName}</div>
+
+            {/* R7hr-83 — Catalogued service pill (read-only): shows the ServiceMaster
+                row the doctor picked at order time, so the nurse can see the
+                billable service name + price. Only renders when the order was
+                placed against a catalogued service. */}
+            {details.serviceCode && (
+              <div style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                fontSize: 11, padding: "2px 8px", borderRadius: 20,
+                background: "#f3f4f6", border: "1px solid #e5e7eb",
+                color: C.dark, marginBottom: 4, marginTop: 2,
+              }}>
+                <span style={{ fontSize: 9, fontWeight: 800, color: C.muted, letterSpacing: ".3px" }}>SVC</span>
+                <span style={{ fontWeight: 700 }}>{details.serviceCode}</span>
+                {details.serviceName && <span style={{ color: C.muted }}>— {details.serviceName}</span>}
+                {details.unitPrice != null && <span style={{ color: C.muted }}>· ₹{details.unitPrice}</span>}
+              </div>
+            )}
 
             {/* Details */}
             <div style={{ fontSize: 11, color: C.muted, display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
@@ -183,6 +236,23 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
           </div>
         </div>
 
+        {/* ── R7hr-84 — Soft amber inline note ABOVE the step buttons when
+                the order is a billable type but the doctor never picked a
+                ServiceMaster row. Completion will move the order to
+                'Completed' but Phase C billing won't fire, so the nurse
+                needs to know the charge has to be added separately. ── */}
+        {!allDone && !readOnly && showNoPickNote && (
+          <div style={{
+            marginTop: 10, padding: "6px 10px", borderRadius: 6,
+            background: "#fffbeb", border: "1px solid #fde68a",
+            color: "#92400e", fontSize: 10.5, fontWeight: 600,
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <i className="pi pi-exclamation-triangle" style={{ fontSize: 11, color: C.amber }} />
+            No ServiceMaster pick — completion won't auto-bill. Add a service via Doctor Orders.
+          </div>
+        )}
+
         {/* ── Step buttons ── */}
         {!allDone && !readOnly && (
           <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -209,6 +279,22 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
                 </button>
               );
             })}
+            {/* R7hr-84 — "Will bill ₹{unitPrice}" chip rendered inline next
+                to the step buttons whenever the doctor picked a ServiceMaster
+                row at order time. Tells the nurse the next/last step click
+                will auto-fire the Phase C billing trigger. */}
+            {showWillBillChip && (
+              <span title={`ServiceMaster pick: ${details.serviceCode || ""}${details.serviceName ? " — " + details.serviceName : ""}`}
+                style={{
+                  padding: "4px 10px", fontSize: 10.5, fontWeight: 700,
+                  borderRadius: 20, background: "#ecfdf5",
+                  border: `1px solid ${C.success}40`, color: C.success,
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                }}>
+                <i className="pi pi-indian-rupee" style={{ fontSize: 10 }} />
+                Will bill ₹{details.unitPrice}
+              </span>
+            )}
           </div>
         )}
 
@@ -306,6 +392,20 @@ function MedOrderCard({ order, inProgress }) {
           {order.hamFlag && <span style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fca5a5", fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 4 }}>🔴 HAM</span>}
         </div>
         <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a" }}>{details.medicineName || "Medication"}</div>
+        {/* R7hr-83 — Catalogued service pill (read-only). Mirrors OrderCard. */}
+        {details.serviceCode && (
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 4,
+            fontSize: 11, padding: "2px 8px", borderRadius: 20,
+            background: "#f3f4f6", border: "1px solid #e5e7eb",
+            color: "#0f172a", alignSelf: "flex-start", marginTop: 2,
+          }}>
+            <span style={{ fontSize: 9, fontWeight: 800, color: "#64748b", letterSpacing: ".3px" }}>SVC</span>
+            <span style={{ fontWeight: 700 }}>{details.serviceCode}</span>
+            {details.serviceName && <span style={{ color: "#64748b" }}>— {details.serviceName}</span>}
+            {details.unitPrice != null && <span style={{ color: "#64748b" }}>· ₹{details.unitPrice}</span>}
+          </div>
+        )}
         <div style={{ fontSize: 11, color: "#64748b" }}>
           {details.dose && <span>{details.dose}</span>}
           {details.frequency && <span> · {details.frequency}</span>}
@@ -521,8 +621,23 @@ export default function NurseOrdersPanel({ UHID, onConsentRequest, refreshTrigge
   };
 
   // Group orders into buckets
-  const newOrders     = displayOrders.filter(o => o.status === "Pending").sort((a,b) => a.priority === "STAT" ? -1 : b.priority === "STAT" ? 1 : 0);
-  const inProgressAll = displayOrders.filter(o => ["InProgress","OnHold","Acknowledged"].includes(o.status));
+  // R7hr-53 [P1-13] — priority-rank comparator with oldest-first tiebreaker.
+  // Pre-fix the sort was binary (STAT vs not), so Urgent ranked identically to
+  // Routine and queue order within a priority was non-deterministic.
+  const priorityRank = { STAT: 0, Urgent: 1, Routine: 2, Default: 3 };
+  const newOrders     = displayOrders.filter(o => o.status === "Pending").sort((a, b) => {
+    const ra = priorityRank[a.priority] ?? 3;
+    const rb = priorityRank[b.priority] ?? 3;
+    if (ra !== rb) return ra - rb;
+    // tiebreaker: oldest first
+    const ta = new Date(a.orderedAt || a.createdAt || 0).getTime();
+    const tb = new Date(b.orderedAt || b.createdAt || 0).getTime();
+    return ta - tb;
+  });
+  // R7hr-53 [P0-5] — add 'Active' (backend stamp for IV_Fluid) and 'Modified'
+  // (result of doctor 'modify' action) to the in-progress bucket so they
+  // don't silently disappear from the nurse panel.
+  const inProgressAll = displayOrders.filter(o => ["InProgress","OnHold","Acknowledged","Active","Modified"].includes(o.status));
   const inProgress    = inProgressAll.filter(todayActionable);
   const todayDone     = inProgressAll.filter(o => !todayActionable(o));
   const completed     = displayOrders.filter(o => o.status === "Completed");

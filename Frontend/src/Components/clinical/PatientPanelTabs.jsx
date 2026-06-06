@@ -66,10 +66,14 @@ const dayKeyToMidnight = (d) => {
    returns a self-contained HTML string with its own inline styles
    (.dfx-* / .nfx-* classes) — safe to drop in via dangerouslySetInnerHTML.
 */
-function NoteCardEmbed({ note, role }) {
+function NoteCardEmbed({ note, role, hideNursingExtras = false }) {
+  // R7hr-100 — hideNursingExtras forwards to buildDoctorNoteCardHtml so
+  // the Initial Assessment tab can suppress the "NURSING INTAKE — CROSS-
+  // DISCIPLINARY" block when no separate Nurse IA exists. Default false
+  // preserves all existing call sites (prints, timelines, MLC tab).
   const html = role === "nurse"
     ? buildNurseNoteCardHtml(note)
-    : buildDoctorNoteCardHtml(note);
+    : buildDoctorNoteCardHtml(note, { hideNursingExtras });
   return (
     <div
       className={`ppt-embed-card ppt-embed-card--${role}`}
@@ -152,30 +156,44 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
           // Latest first — Initial Assessment is usually one record but
           // amendments / re-sign attempts can produce extras; show newest
           // at top so the most current sign is the first thing read.
+          /* R7hr-100 — Hide the doctor-card's embedded "NURSING INTAKE
+             — CROSS-DISCIPLINARY" block while no separate Nurse IA
+             record exists. Doctors used to see Barthel max scores +
+             dropdown defaults baked into the doctor note's nursingNabh
+             payload (legacy combined-form artifact) even when nursing
+             hadn't started — confusing and clinically misleading. The
+             flag is forwarded all the way through NoteCardEmbed →
+             buildDoctorNoteCardHtml; print + timeline call sites pass
+             nothing → default-preserving (R25 safe). */
           [...docInitial]
             .sort((a, b) => new Date(b.visitDate || b.createdAt) - new Date(a.visitDate || a.createdAt))
-            .map((n) => <NoteCardEmbed key={n._id} note={n} role="doctor" />)
+            .map((n) => <NoteCardEmbed key={n._id} note={n} role="doctor" hideNursingExtras={nurseInitial.length === 0} />)
         )}
       </div>
 
-      <div className="ppt-card ppt-card--nurse">
-        <div className="ppt-section-title">
-          <span className="ppt-section-icon">👩‍⚕️</span>
-          Nursing Initial Assessment
-          <span className={`ppt-badge ${nurseInitial.length ? "ppt-badge--ok" : "ppt-badge--warn"}`}>
-            {nurseInitial.length ? `${nurseInitial.length} record(s)` : "Not recorded"}
-          </span>
-        </div>
-        {nurseInitial.length === 0 ? (
-          <div className="ppt-empty">
-            ⚠️ Nursing initial assessment pending. NABH IPSG.6.
+      {/* R7hr-95 — Hide the entire Nursing IA card until a nurse has
+          actually submitted/signed their Initial Assessment. The
+          earlier "Not recorded · Nursing initial assessment pending"
+          placeholder confused doctors when they opened a freshly-
+          admitted patient's IA panel before the nurse had filled
+          anything. Now the section appears only after the nurse
+          actually contributes a record — nurses fill theirs from the
+          dedicated Nursing Initial Assessment tile, not from this
+          aggregate view. */}
+      {nurseInitial.length > 0 && (
+        <div className="ppt-card ppt-card--nurse">
+          <div className="ppt-section-title">
+            <span className="ppt-section-icon">👩‍⚕️</span>
+            Nursing Initial Assessment
+            <span className="ppt-badge ppt-badge--ok">
+              {nurseInitial.length} record(s)
+            </span>
           </div>
-        ) : (
-          [...nurseInitial]
+          {[...nurseInitial]
             .sort((a, b) => new Date(b.noteDate || b.createdAt) - new Date(a.noteDate || a.createdAt))
-            .map((n) => <NoteCardEmbed key={n._id} note={n} role="nurse" />)
-        )}
-      </div>
+            .map((n) => <NoteCardEmbed key={n._id} note={n} role="nurse" />)}
+        </div>
+      )}
     </div>
   );
 }

@@ -49,6 +49,14 @@
  *                           2016 training is not in the credential-type
  *                           enum yet; HRD captures it as OTHER with a
  *                           descriptive title.
+ *   PHARMACIST_REG        → ["PHARMACIST_REG", "LICENCE"+councilName
+ *                           ~ pharmacy council, "OTHER"+title ~ PCI]
+ *                           — PCI / State Pharmacy Council practising
+ *                           registration. Required for NDPS Schedule-X
+ *                           dispense/verify (D&C Rules 65 + NDPS §8).
+ *                           Three-shape match for back-compat with HR
+ *                           rows captured before a first-class enum
+ *                           value lands. R7hr-12-S2 (D6-06).
  *
  * Behaviour
  * ─────────
@@ -112,6 +120,48 @@ const LOGICAL_TYPE_MAP = {
         // Future-proof: if HR ever adds BMW_HANDLER to the enum the
         // middleware works without code change.
         { credentialType: "BMW_HANDLER" },
+      ],
+    },
+  },
+  // R7hr-12-S2 (D6-06): PCI / State Pharmacy Council practising
+  // registration for Schedule-X NDPS dispense/verify. D&C Rules 65 +
+  // NDPS Act §8 require the dispensing pharmacist to hold a current
+  // State Pharmacy Council registration on the date of the act.
+  //
+  // The Credential model does NOT yet carry a first-class
+  // PHARMACIST_REG enum value (only the pharmacy *degrees*
+  // DIPLOMA_PHARMACY / BPHARM / MPHARM are there — a degree on file
+  // ≠ a current practising registration). Following the BMW_HANDLER
+  // precedent we accept three shapes:
+  //   1. a future-proof first-class PHARMACIST_REG row (if HR adds
+  //      that enum value later, the middleware Just Works);
+  //   2. a LICENCE row whose councilName matches "pharmacy council"
+  //      (case-insensitive) — the common back-compat shape since
+  //      State Pharmacy Council registrations are sometimes captured
+  //      as LICENCE rows;
+  //   3. an OTHER row whose title contains "PCI", "pharmacy council",
+  //      or "pharmacist registration" — the BMW-style escape hatch
+  //      for hospitals that haven't migrated their HR onboarding yet.
+  PHARMACIST_REG: {
+    description:
+      "PCI / State Pharmacy Council practising registration " +
+      "(required for NDPS Schedule-X dispense/verify under D&C Rules 65)",
+    filter: {
+      $or: [
+        // Future-proof: if HR adds PHARMACIST_REG to the enum.
+        { credentialType: "PHARMACIST_REG" },
+        // Back-compat: State Pharmacy Council captured as a LICENCE row.
+        {
+          credentialType: "LICENCE",
+          councilName: { $regex: /pharmacy\s*council|pci/i },
+        },
+        // Back-compat: captured as OTHER + descriptive title.
+        {
+          credentialType: "OTHER",
+          title: {
+            $regex: /pci|pharmacy\s*council|pharmacist\s*registration/i,
+          },
+        },
       ],
     },
   },

@@ -256,7 +256,148 @@
 }
 .phc-btn i { font-size: 11px; }
 
-/* Footer strip: consultant + diagnosis + allergies */
+/* R7hr-85 — Prominent in-banner clinical strip: consultant + all filled
+   diagnosis tiers with ICD-10. Sits right inside the patient card,
+   directly below the meta-row (inside .phc-info / left column), so the
+   QR on the right does NOT push it down with empty vertical gap.
+   R7hr-85.1 — moved inside .phc-info; tighter margin + flatter chrome
+   so it reads as a "sub-row" of the patient card, not a separate panel. */
+.phc-clinical-strip {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.phc-clin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a1d23;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+  max-width: 100%;
+  line-height: 1.3;
+}
+.phc-clin-chip--consultant {
+  border-left: 3px solid #2563eb;
+  background: #eff6ff;
+}
+.phc-clin-icon {
+  font-size: 11px;
+  color: #64748b;
+}
+.phc-clin-chip--consultant .phc-clin-icon { color: #2563eb; }
+.phc-clin-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  color: #64748b;
+}
+.phc-clin-chip--consultant .phc-clin-label { color: #1d4ed8; }
+.phc-clin-value {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.phc-clin-tier {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin-right: 4px;
+}
+.phc-clin-chip--dx.phc-tier-final {
+  border-left: 3px solid #16a34a;
+  background: #f0fdf4;
+}
+.phc-clin-chip--dx.phc-tier-final .phc-clin-tier { background: #16a34a; color: #fff; }
+.phc-clin-chip--dx.phc-tier-working {
+  border-left: 3px solid #2563eb;
+  background: #eff6ff;
+}
+.phc-clin-chip--dx.phc-tier-working .phc-clin-tier { background: #2563eb; color: #fff; }
+.phc-clin-chip--dx.phc-tier-provisional {
+  border-left: 3px solid #d97706;
+  background: #fffbeb;
+}
+.phc-clin-chip--dx.phc-tier-provisional .phc-clin-tier { background: #d97706; color: #fff; }
+
+/* R7hr-87 — Patient Status chip. Severity drives the colour so the
+   doctor's clinical call is readable at a glance. Critical = red,
+   Deteriorating = orange, Unchanged = grey, Improving = teal,
+   Stable = blue, Ready for Discharge = green. */
+.phc-clin-chip--status .phc-clin-tier {
+  background: #64748b;
+  color: #fff;
+}
+.phc-clin-chip--status.phc-status--critical {
+  border-left: 3px solid #dc2626;
+  background: #fef2f2;
+}
+.phc-clin-chip--status.phc-status--critical .phc-clin-tier { background: #dc2626; }
+.phc-clin-chip--status.phc-status--critical .phc-clin-value { color: #991b1b; }
+
+.phc-clin-chip--status.phc-status--deteriorating {
+  border-left: 3px solid #ea580c;
+  background: #fff7ed;
+}
+.phc-clin-chip--status.phc-status--deteriorating .phc-clin-tier { background: #ea580c; }
+.phc-clin-chip--status.phc-status--deteriorating .phc-clin-value { color: #9a3412; }
+
+.phc-clin-chip--status.phc-status--unchanged {
+  border-left: 3px solid #64748b;
+  background: #f8fafc;
+}
+
+.phc-clin-chip--status.phc-status--improving {
+  border-left: 3px solid #0d9488;
+  background: #f0fdfa;
+}
+.phc-clin-chip--status.phc-status--improving .phc-clin-tier { background: #0d9488; }
+.phc-clin-chip--status.phc-status--improving .phc-clin-value { color: #115e59; }
+
+.phc-clin-chip--status.phc-status--stable {
+  border-left: 3px solid #2563eb;
+  background: #eff6ff;
+}
+.phc-clin-chip--status.phc-status--stable .phc-clin-tier { background: #2563eb; }
+.phc-clin-chip--status.phc-status--stable .phc-clin-value { color: #1d4ed8; }
+
+.phc-clin-chip--status.phc-status--ready-for-discharge {
+  border-left: 3px solid #16a34a;
+  background: #f0fdf4;
+}
+.phc-clin-chip--status.phc-status--ready-for-discharge .phc-clin-tier { background: #16a34a; }
+.phc-clin-chip--status.phc-status--ready-for-discharge .phc-clin-value { color: #166534; }
+.phc-clin-icd {
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  padding: 2px 6px;
+  background: #f1f5f9;
+  border-radius: 4px;
+  margin-left: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+
+/* Footer strip: allergies + compliance (consultant + diagnosis moved
+   up to the .phc-clinical-strip in R7hr-85) */
 .phc-footer {
   margin-top: 14px;
   padding-top: 12px;

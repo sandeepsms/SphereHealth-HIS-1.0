@@ -70,6 +70,40 @@ const TARGETS = [
     floorDays: FLOORS.clinical,
     dateField: "createdAt",
   },
+  // R7hr-12-S2 (D8-05): Add pharmacy collections to the retention sweep so
+  // NABH IMS.3 / D&C Rule §65 / NDPS Rule 65 floors are visible in the
+  // daily CRON_RECONCILED audit row. Without these entries the cron's
+  // summary row falsely implies the hospital's pharmacy stack is being
+  // scanned. PharmacySale + DrugBatch + PharmacyVendorReturn ride the
+  // 8-year billing floor (financial records). ScheduleXEntry is appended
+  // under NDPS Rule 65 — practical archive floor of 10y (8y * 1.25);
+  // surveyors treat NDPS retention as effectively perpetual so this is
+  // the queue-to-archive trigger, NOT a destruction trigger (review still
+  // requires admin sign-off — see no-auto-purge note at top of file).
+  {
+    label: "PharmacySale",
+    model: "PharmacySale",
+    floorDays: FLOORS.bills,
+    dateField: "createdAt",
+  },
+  {
+    label: "ScheduleXEntry",
+    model: "ScheduleXEntry",
+    floorDays: Math.round(FLOORS.bills * 1.25), // ~10y NDPS Rule 65
+    dateField: "createdAt",
+  },
+  {
+    label: "DrugBatch",
+    model: "PharmacyDrugBatch",
+    floorDays: FLOORS.bills,
+    dateField: "createdAt",
+  },
+  {
+    label: "PharmacyVendorReturn",
+    model: "PharmacyVendorReturn",
+    floorDays: FLOORS.bills,
+    dateField: "returnedAt",
+  },
 ];
 
 function _modelOrNull(name) {
@@ -150,7 +184,21 @@ async function runRetentionReview() {
  * fail silently every night for weeks at 04:00 IST.
  */
 async function startupSelfTest() {
-  const KNOWN_MODELS = ['DoctorNotes', 'MAR', 'ConsentForm', 'PatientBill', 'DischargeSummary', 'Prescription'];
+  // R7hr-12-S2 (D8-05): mirror the pharmacy additions in TARGETS above so
+  // boot-time sanity flags a typo / missing model bootstrap require for
+  // any of the four new pharmacy retention targets.
+  const KNOWN_MODELS = [
+    'DoctorNotes',
+    'MAR',
+    'ConsentForm',
+    'PatientBill',
+    'DischargeSummary',
+    'Prescription',
+    'PharmacySale',
+    'ScheduleXEntry',
+    'PharmacyDrugBatch',
+    'PharmacyVendorReturn',
+  ];
   const results = [];
   for (const name of KNOWN_MODELS) {
     const Model = mongoose.modelNames().includes(name) ? mongoose.model(name) : null;

@@ -179,18 +179,30 @@ async function seedAllActiveAdmissions() {
     let skipped  = 0;
     let errored  = 0;
 
+    // R7hr-12-S2 (D10-05): Collapse the previous nested sequential
+    // updateOne loop (admissions × EXPECTED_TUPLES = 11×N round-trips per
+    // 15-min tick) into chunked bulkWrite calls with `ordered:false`. At
+    // N=200 active admissions this drops 2200 sequential Mongo round-trips
+    // to ~3 bulkWrite calls (chunked at 1000 ops). The chunking matches the
+    // wire-protocol soft cap and keeps individual batches well under the
+    // 16MB BSON limit. Duplicate-key races (parallel boot tick + cron tick)
+    // are surfaced via `writeErrors` and counted as `skipped`, preserving
+    // the previous behaviour of the per-updateOne `catch (e.code === 11000)`
+    // branch.
+    const BULK_CHUNK = 1000;
+    const ops = [];
     for (const adm of admissions) {
       const baseAt = adm.admissionDate ? new Date(adm.admissionDate) : now;
       for (const tuple of EXPECTED_TUPLES) {
         const nextDueAt = new Date(baseAt.getTime() + tuple.cadenceHours * 60 * 60 * 1000);
-        try {
-          const r = await AssessmentCompliance.updateOne(
-            {
+        ops.push({
+          updateOne: {
+            filter: {
               admissionId: adm._id,
               assessmentType: tuple.assessmentType,
               role: tuple.role,
             },
-            {
+            update: {
               $setOnInsert: {
                 admissionId: adm._id,
                 UHID: adm.UHID || "",
@@ -203,13 +215,47 @@ async function seedAllActiveAdmissions() {
                 status: nextDueAt <= now ? "OVERDUE" : "NOT_DUE_YET",
               },
             },
-            { upsert: true },
-          );
-          if (r.upsertedCount) inserted++;
-          else skipped++;
-        } catch (e) {
-          // Duplicate-key race (parallel call) — count as skipped, not errored.
-          if (e?.code === 11000) skipped++; else { errored++; }
+            upsert: true,
+          },
+        });
+      }
+    }
+
+    // Drain ops in chunks. With `ordered:false`, a single dup-key write
+    // failure inside a chunk does NOT abort the rest of the chunk —
+    // we read those back from result.writeErrors below.
+    for (let i = 0; i < ops.length; i += BULK_CHUNK) {
+      const chunk = ops.slice(i, i + BULK_CHUNK);
+      try {
+        const res = await AssessmentCompliance.bulkWrite(chunk, { ordered: false });
+        // `upsertedCount` is the canonical aggregate for "new rows created".
+        // Existing matched-but-not-modified rows show as `matchedCount`
+        // (no $set in $setOnInsert path → no modification). Treat them as
+        // skipped (idempotent re-seed of an already-seeded admission).
+        const upserted = res?.upsertedCount || 0;
+        const matched  = res?.matchedCount  || 0;
+        inserted += upserted;
+        skipped  += matched;
+      } catch (e) {
+        // BulkWriteError carries .writeErrors[] when ordered:false; the
+        // partial success is still applied. Split dup-key races into
+        // `skipped` (parallel writer beat us) vs `errored` (anything else).
+        const writeErrors = e?.writeErrors || e?.result?.result?.writeErrors || [];
+        // The partial result is exposed via e.result for legacy driver
+        // versions and e.result.result for newer ones — defensively read both.
+        const partial = e?.result || e?.result?.result || {};
+        const upserted = partial?.upsertedCount || partial?.nUpserted || 0;
+        const matched  = partial?.matchedCount  || partial?.nMatched  || 0;
+        inserted += upserted;
+        skipped  += matched;
+        if (writeErrors.length) {
+          for (const we of writeErrors) {
+            if (we?.code === 11000) skipped++; else errored++;
+          }
+        } else {
+          // Whole-chunk failure with no per-op breakdown (network/timeout) —
+          // count every op in the chunk as errored so we don't undercount.
+          errored += chunk.length - upserted - matched;
         }
       }
     }
