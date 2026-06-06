@@ -1621,6 +1621,114 @@ async function onInvestigationResulted(orderDoc) {
   }
 }
 
+/* ────────────────────────────────────────────────────────────────────
+   R7hr-83 Phase C — auto-bill on doctor-order completion.
+   Reads serviceCode/unitPrice that Phase B writes on order placement;
+   fires once per (sourceType, sourceRef) to prevent double-billing on
+   retry/restart.
+──────────────────────────────────────────────────────────────────── */
+// Maps DoctorOrder.orderType → category hint stamped on the trigger.
+// NOTE: BillingTrigger schema has no top-level `category` field — the
+// IPDLedger byCategory aggregator derives the category from the
+// serviceCode prefix (e.g. "LAB-CBC-001" → "LAB"). We persist this map
+// on the trigger's `department` field as a secondary hint and rely on
+// the serviceCode set by Phase B for the canonical category bucket.
+const DOCTOR_ORDER_CATEGORY_MAP = {
+  Lab:              "LAB",
+  Radiology:        "RADIOLOGY",
+  Investigation:    "LAB",            // alias for Lab in the orderType enum
+  Procedure:        "PROCEDURE",
+  BloodTransfusion: "BLOOD",
+  IV_Fluid:         "PHARMACY",       // IV fluids billed under pharmacy line
+  Diet:             "DIET",
+  Oxygen:           "OXYGEN",
+  Physiotherapy:    "PHYSIO",
+  Activity:         "NURSING",        // activity orders billed under nursing line
+  Nursing:          "NURSING",
+  Consultation:     "CONSULTATION",
+  Medication:       "PHARMACY",       // safety net; pharmacy MAR path is the primary biller
+};
+
+async function onDoctorOrderCompleted(order) {
+  try {
+    // 1. Guards.
+    if (!order || !order._id) return null;
+    const od = order.orderDetails || {};
+    if (!od.serviceCode || od.unitPrice == null) return null;   // no ServiceMaster pick — nothing to bill
+    if (!order.admissionId) return null;                        // IPD-only path; OPD bills via Services & Orders panel
+
+    // 2. Idempotency — one trigger per (sourceType, sourceRef).
+    const existing = await BillingTrigger.findOne({
+      sourceType: "DoctorOrder",
+      sourceRef:  order._id,
+    });
+    if (existing) return existing;
+
+    // 3. Compose the trigger doc.
+    const category = DOCTOR_ORDER_CATEGORY_MAP[order.orderType] || null;
+    const unitPrice  = toNum(od.unitPrice);
+    const quantity   = 1;
+    const totalPrice = unitPrice * quantity;
+    const completedById = order.completedById || order.updatedBy || null;
+    const completedByName = order.completedBy || order.updatedByName || null;
+
+    // BillingTrigger schema stores money as Decimal128 + price/qty/name
+    // at top-level (not as `lineItems[]`); the IPD ledger byCategory tab
+    // derives the section from `serviceCode.split("-")[0]`, so the
+    // category map above is recorded on `department` as a hint and
+    // mirrored into `notes` for audit greppability. Status enum is
+    // lowercase ("pending") per the schema.
+    const trigger = await _emitTrigger({
+      admissionId: order.admissionId,
+      patientId:   order.patientId,
+      UHID:        order.patientUHID || order.UHID,
+      patientType: "IPD",
+
+      // Service line.
+      serviceId:   od.serviceMasterId || null,
+      serviceCode: od.serviceCode,
+      serviceName: od.serviceName,
+      quantity,
+      unitPrice,
+      totalAmount: totalPrice,
+
+      // Source linkage — sourceRef is the R7hr-83 dedup key (partial-unique
+      // index on (sourceType, sourceRef) lives on the schema). We also
+      // populate the legacy sourceDocumentId/Model pair so any older
+      // audit/retry path that joins on those keeps working.
+      sourceType:          "DoctorOrder",
+      sourceRef:           order._id,
+      sourceDocumentId:    order._id,
+      sourceDocumentModel: "DoctorOrder",
+
+      // Subcategory + category hint — schema has no `subCategory` field,
+      // so we encode the orderType in notes and the ledger-bucket hint
+      // in department.
+      department: category,
+      notes:      `subCategory:${order.orderType}${category ? ` · ledgerBucket:${category}` : ""}`,
+
+      // Actor.
+      orderedBy:      order.orderedBy || null,
+      orderedById:    order.orderedById || null,
+      orderedByRole:  order.orderedByRole || "Doctor",
+      completedBy:    completedByName,
+      completedById:  completedById,
+      completedByRole: order.completedByRole || "Doctor",
+      completedAt:    order.completedAt || new Date(),
+
+      status: "pending",   // PatientBill picker will materialise this row
+    }, completedByName ? { name: completedByName, userId: completedById, role: order.completedByRole || "Doctor" } : null);
+
+    return trigger;
+  } catch (e) {
+    // Async-emit pattern (per R7gw-B4 cron-handler convention) — the
+    // upstream order-completion flow cannot rollback this billing emit,
+    // so we log and swallow. The next sweep / manual retry can re-fire.
+    console.error("[AutoBilling] onDoctorOrderCompleted error:", e && e.message);
+    return null;
+  }
+}
+
 /**
  * Fire when nursing equipment / consumable is logged from
  * nursingChargesService.logItems(). Routes through the standard
@@ -4718,6 +4826,10 @@ module.exports = {
   onPharmacyReturn,
   onInvestigationOrdered,
   onInvestigationResulted,
+  // R7hr-83 Phase C — auto-bill on doctor-order completion (idempotent
+  // per (sourceType, sourceRef)). Wired from the DoctorOrder completion
+  // flow after Phase B has stamped serviceCode/unitPrice on the order.
+  onDoctorOrderCompleted,
   onEquipmentCharged,
   confirmAndBillTrigger,
   getAuditTrail,

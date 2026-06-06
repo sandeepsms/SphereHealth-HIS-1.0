@@ -1,6 +1,11 @@
 const router   = require("express").Router();
 const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
 const User = require("../../models/User/userModel");
+// R7hr-83 Phase C — auto-bill on completion. Wired at every site that
+// transitions a DoctorOrder to status="Completed". The service is
+// idempotent (joinKey dedup) so re-fires are safe; the catch below
+// guarantees a billing failure never breaks the clinical save.
+const autoBillingService = require("../../services/Billing/autoBillingService");
 // R7m: Apply role-based action gates to every write route. Reads stay
 // open (any authenticated clinician can view orders). Writes are
 // scoped to the appropriate role per Backend/config/permissions.js.
@@ -53,6 +58,45 @@ async function moveStatus(orderDoc, nextStatus, { actor, reason, session } = {})
     });
   } catch (e) { /* never let audit emit break the route */ }
   return orderDoc;
+}
+
+/* ─────────────────────────────────────────────────────
+   R7hr-83 Phase C — auto-bill on completion.
+   Centralised wrapper called from every completion path
+   (PATCH /step, /administer, …). Guards:
+   - IPD only (admissionId required — OPD orders bill via
+     a different route).
+   - Skips Medication: the MAR /administer path goes through
+     autoBillingService.onMARAdministration which already
+     creates the BillingTrigger; firing here would just lean
+     on the service's idempotency check for no gain.
+   - Skips Investigation: that category is excluded from
+     SERVICE_MASTER_MAPPABLE_TYPES (Phase B) and bills via
+     autoBillingService.onInvestigationResulted on the
+     Investigation /resulted path.
+   The catch logs and swallows — billing must never roll back
+   the clinical save.
+───────────────────────────────────────────────────── */
+async function fireAutoBillOnCompletion(order) {
+  try {
+    if (!order) return;
+    // IPD-only: OPD orders are billed via a separate channel.
+    if (!order.admissionId) return;
+    // R7hr-83 Phase C — auto-bill on completion: skip Medication
+    // (handled by autoBillingService.onMARAdministration) and
+    // Investigation (handled by onInvestigationResulted).
+    if (order.orderType === "Medication") return;
+    if (order.orderType === "Investigation") return;
+    // Re-fetch a fresh lean copy so the service receives the
+    // persisted post-save state (status=Completed, completedAt,
+    // any late field-mutations the route applied).
+    const freshOrder = await DoctorOrder.findById(order._id).lean();
+    if (!freshOrder || freshOrder.status !== "Completed") return;
+    await autoBillingService.onDoctorOrderCompleted(freshOrder);
+  } catch (e) {
+    // R7hr-83 Phase C — auto-bill on completion: never throw upstream.
+    console.error("[doctor-orders] autoBilling onDoctorOrderCompleted failed:", e?.message);
+  }
 }
 
 /* ─────────────────────────────────────────────────────
@@ -891,6 +935,8 @@ router.post("/:id/step", validateObjectIdParam("id"), requireAction("order.ackno
       current.completedAt = new Date();
     }
     const order = await moveStatus(current, nextStatus, { actor: req.user?._id || doneBy });
+    // R7hr-83 Phase C — auto-bill on completion.
+    if (nextStatus === "Completed") await fireAutoBillOnCompletion(order);
     res.json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
@@ -1154,6 +1200,14 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
     } else {
       await order.save();
     }
+
+    // R7hr-83 Phase C — auto-bill on completion. The /administer path is
+    // primarily Medication (which fireAutoBillOnCompletion early-returns on,
+    // because autoBillingService.onMARAdministration is already firing from
+    // the MAR controller). For non-Medication administrations that legitimately
+    // close out via this route (e.g. an IV_Fluid bag finishing), the wrapper
+    // still gates on admissionId and orderType.
+    if (nextStatus === "Completed") await fireAutoBillOnCompletion(order);
 
     // ─── R7bq-3 — Auto I/O ledger: write an intake row when a dose is
     // GIVEN and the order carries a diluent volume. The service is

@@ -117,6 +117,31 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
     details.consentRequired &&
     order.consentStatus === "Pending";
 
+  // R7hr-84 — Phase C billing surfacing on the Complete buttons.
+  // The nurse's step buttons end with the order's final step, which
+  // POSTs to /api/doctor-orders/:id/step. The backend route moves
+  // the order to status:'Completed' on the last step (or when an
+  // already-Completed order is touched), which is the Phase C
+  // billing trigger when orderDetails.serviceMasterId is set.
+  //
+  // - If serviceMasterId is set: append a "Will bill ₹{unitPrice}"
+  //   chip next to the step buttons so the nurse can see the order
+  //   will auto-bill on completion.
+  // - If serviceMasterId is null AND orderType is one of the 11
+  //   ServiceMaster-mappable types (the full mappable set minus
+  //   Medication, which renders via MedOrderCard, and Investigation,
+  //   which is billed via the lab dispatch path), show a soft amber
+  //   inline note ABOVE the step buttons so the nurse knows the
+  //   completion won't auto-bill and the order needs a service pick.
+  const BILLABLE_ORDER_TYPES = new Set([
+    "IV_Fluid", "Lab", "Radiology", "Procedure", "BloodTransfusion",
+    "Diet", "Oxygen", "Physiotherapy", "Activity", "Nursing", "Consultation",
+  ]);
+  const hasServicePick   = details.serviceMasterId != null && details.serviceMasterId !== "";
+  const isBillableType   = BILLABLE_ORDER_TYPES.has(order.orderType);
+  const showWillBillChip = hasServicePick && details.unitPrice != null;
+  const showNoPickNote   = !hasServicePick && isBillableType;
+
   // Running status text e.g. "New → Sample Collected → Sample Sent"
   const flowText = ["New", ...(order.auditLog || []).map(l => l.step)].join(" → ");
 
@@ -211,6 +236,23 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
           </div>
         </div>
 
+        {/* ── R7hr-84 — Soft amber inline note ABOVE the step buttons when
+                the order is a billable type but the doctor never picked a
+                ServiceMaster row. Completion will move the order to
+                'Completed' but Phase C billing won't fire, so the nurse
+                needs to know the charge has to be added separately. ── */}
+        {!allDone && !readOnly && showNoPickNote && (
+          <div style={{
+            marginTop: 10, padding: "6px 10px", borderRadius: 6,
+            background: "#fffbeb", border: "1px solid #fde68a",
+            color: "#92400e", fontSize: 10.5, fontWeight: 600,
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <i className="pi pi-exclamation-triangle" style={{ fontSize: 11, color: C.amber }} />
+            No ServiceMaster pick — completion won't auto-bill. Add a service via Doctor Orders.
+          </div>
+        )}
+
         {/* ── Step buttons ── */}
         {!allDone && !readOnly && (
           <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -237,6 +279,22 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
                 </button>
               );
             })}
+            {/* R7hr-84 — "Will bill ₹{unitPrice}" chip rendered inline next
+                to the step buttons whenever the doctor picked a ServiceMaster
+                row at order time. Tells the nurse the next/last step click
+                will auto-fire the Phase C billing trigger. */}
+            {showWillBillChip && (
+              <span title={`ServiceMaster pick: ${details.serviceCode || ""}${details.serviceName ? " — " + details.serviceName : ""}`}
+                style={{
+                  padding: "4px 10px", fontSize: 10.5, fontWeight: 700,
+                  borderRadius: 20, background: "#ecfdf5",
+                  border: `1px solid ${C.success}40`, color: C.success,
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                }}>
+                <i className="pi pi-indian-rupee" style={{ fontSize: 10 }} />
+                Will bill ₹{details.unitPrice}
+              </span>
+            )}
           </div>
         )}
 

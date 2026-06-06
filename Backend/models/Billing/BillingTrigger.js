@@ -49,7 +49,7 @@ const BillingTriggerSchema = new mongoose.Schema({
   // tripping the schema enum validator.
   sourceType: {
     type: String,
-    enum: ["NurseNote","DoctorNote","DoctorAssessment","MAR","MAR_RESERVATION","InvestigationOrder",
+    enum: ["NurseNote","DoctorNote","DoctorAssessment","DoctorOrder","MAR","MAR_RESERVATION","InvestigationOrder",
            "Equipment","CarePlan","Discharge","Procedure","DoctorVisit","Manual","AutoCharge",
            "Admission","BedCharge","Emergency",
            // R7bj-F5 / R7bi-6-TBA-MED-1: support-staff kinds
@@ -247,6 +247,9 @@ BillingTriggerSchema.index({ status: 1, updatedAt: 1 });
 // scanned all sourceTypes per admission — fine at small scale but slow
 // at long-stay-ICU cardinalities (~1k+ triggers per admission).
 BillingTriggerSchema.index({ admissionId: 1, createdAt: -1 });
+
+// R7hr-83 — idempotency for DoctorOrder completion auto-bill.
+BillingTriggerSchema.index({ sourceType: 1, sourceRef: 1 }, { unique: true, partialFilterExpression: { sourceRef: { $type: 'objectId' } } });
 
 // R7bh-F3 / R7bg-1-CRIT-6: serialize Decimal128 money fields back to plain
 // JS Numbers on toJSON / toObject so the wire shape stays unchanged for
