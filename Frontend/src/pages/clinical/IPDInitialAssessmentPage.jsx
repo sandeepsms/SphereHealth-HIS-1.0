@@ -972,6 +972,12 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   const { savedAt, hasDraft, clearDraft } = useAutoSave(
     draftKey,
     { admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit, consciousnessLevel, mobility, allergy, chiefComplaint, vitals, painPresent, painScore, painLocation, painCharacter, devices, skinIntact, skinNotes, morse, braden, nutri, vte, nursingProblems, nursingGoals, nursingNotes, doctorName, regNo, hopi, psh, famHx, socHx, pshStruct, famHxStruct, socHxStruct, docAllergy, genExam, cvs, rs, abdomen, cns, provDx, finalDx, icd10, investigations, rxRows, treatmentPlan, followupNotes, dietAdvice, activityAdvice,
+      // R7hr-72 — structured panels added during R7hr-58..69; without
+      // them in this dep object the autosave hook would never re-fire
+      // when the doctor edited Investigations / Prescription / Infusion
+      // / Clinical Examination / Diagnosis-extras, so the draft silently
+      // froze on the field that was open when autosave last ran.
+      meds, invests, infusions, clinExam, icd10Description, patientStatus,
       // R7fb · doctor P0 fields
       docCC, ccDuration, allergyList, noKnownAllergies, medRecon, workingDx, differentialDx, comorbid, codeStatus, codeStatusDiscussedWith, codeStatusLimitations, elosDays, goalOfCare, docRiskAck, ros,
       // R7fc · nurse P0 fields
@@ -1239,6 +1245,22 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             if (Array.isArray(d.meds))      setMeds(d.meds);          // R7hr-59
             if (Array.isArray(d.invests))   setInvests(d.invests);    // R7hr-59
             if (Array.isArray(d.infusions)) setInfusions(d.infusions);// R7hr-59
+            // R7hr-72 — Clinical Examination structured state was missing
+            // from the localStorage restore path. Without this the doctor
+            // would lose all general + systemic exam findings on refresh.
+            if (d.clinExam) {
+              setClinExam(c => ({
+                ...c,
+                ...d.clinExam,
+                genExam: { ...c.genExam, ...(d.clinExam.genExam || {}) },
+                sysExam: {
+                  cvs: { ...c.sysExam.cvs, ...(d.clinExam.sysExam?.cvs || {}) },
+                  rs:  { ...c.sysExam.rs,  ...(d.clinExam.sysExam?.rs  || {}) },
+                  cns: { ...c.sysExam.cns, ...(d.clinExam.sysExam?.cns || {}) },
+                  pa:  { ...c.sysExam.pa,  ...(d.clinExam.sysExam?.pa  || {}) },
+                },
+              }));
+            }
             if (d.treatmentPlan)      setTreatmentPlan(d.treatmentPlan);
             if (d.followupNotes)      setFollowupNotes(d.followupNotes);
             if (d.dietAdvice)         setDietAdvice(d.dietAdvice);
