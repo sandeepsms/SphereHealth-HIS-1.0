@@ -1751,6 +1751,49 @@ const SERVICES = [
   { serviceCode: "IVF-NS",  serviceName: "Normal Saline 500ml",            domain: "IPD", category: "PROCEDURE", subCategory: "IV Fluid", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_UNIT", defaultPrice: 80,  isAutoCharged: false, unitLabel: "per bottle", displayOrder: 9160, doctorOrderCategory: "IV_Fluid" },
   { serviceCode: "IVF-RL",  serviceName: "Ringer Lactate 500ml",           domain: "IPD", category: "PROCEDURE", subCategory: "IV Fluid", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_UNIT", defaultPrice: 90,  isAutoCharged: false, unitLabel: "per bottle", displayOrder: 9161, doctorOrderCategory: "IV_Fluid" },
   { serviceCode: "IVF-DNS", serviceName: "Dextrose Normal Saline 500ml",   domain: "IPD", category: "PROCEDURE", subCategory: "IV Fluid", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_UNIT", defaultPrice: 100, isAutoCharged: false, unitLabel: "per bottle", displayOrder: 9162, doctorOrderCategory: "IV_Fluid" },
+
+  // ════════════════════════════════════════════════════════════════
+  // R7hr-83 / Phase B top-up — thicken under-populated doctorOrder
+  // categories so Phase B autocomplete returns useful results.
+  // Phase A backfill left these thin: Physiotherapy=1, Activity=0,
+  // Diet=8, Oxygen=6, IV_Fluid=2. These rows top each up to >=5 new
+  // entries. Upserts in seedServices() are $setOnInsert keyed on
+  // serviceCode → idempotent and safe to re-run.
+  // ════════════════════════════════════════════════════════════════
+
+  // ── Physiotherapy (top-up) ──────────────────────────────────────
+  { serviceCode: "PHYSIO-CHEST-PT", serviceName: "Chest Physiotherapy",       domain: "IPD", category: "PROCEDURE", subCategory: "Physiotherapy", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_SESSION", defaultPrice: 300, isAutoCharged: false, unitLabel: "per session", displayOrder: 9170, doctorOrderCategory: "Physiotherapy" },
+  { serviceCode: "PHYSIO-PASS-ROM", serviceName: "Passive Range of Motion",   domain: "IPD", category: "PROCEDURE", subCategory: "Physiotherapy", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_SESSION", defaultPrice: 200, isAutoCharged: false, unitLabel: "per session", displayOrder: 9171, doctorOrderCategory: "Physiotherapy" },
+  { serviceCode: "PHYSIO-AMBUL",    serviceName: "Assisted Ambulation",       domain: "IPD", category: "PROCEDURE", subCategory: "Physiotherapy", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_SESSION", defaultPrice: 250, isAutoCharged: false, unitLabel: "per session", displayOrder: 9172, doctorOrderCategory: "Physiotherapy" },
+  { serviceCode: "PHYSIO-POST-OP",  serviceName: "Post-Op Mobilisation",      domain: "IPD", category: "PROCEDURE", subCategory: "Physiotherapy", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_SESSION", defaultPrice: 400, isAutoCharged: false, unitLabel: "per session", displayOrder: 9173, doctorOrderCategory: "Physiotherapy" },
+  { serviceCode: "PHYSIO-RESP-EX",  serviceName: "Respiratory Exercises",     domain: "IPD", category: "PROCEDURE", subCategory: "Physiotherapy", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_SESSION", defaultPrice: 250, isAutoCharged: false, unitLabel: "per session", displayOrder: 9174, doctorOrderCategory: "Physiotherapy" },
+
+  // ── Activity (top-up) ───────────────────────────────────────────
+  { serviceCode: "ACT-BED-REST",    serviceName: "Strict Bed Rest",           domain: "IPD", category: "NURSING", subCategory: "Activity", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 0, isAutoCharged: false, unitLabel: "per day", displayOrder: 9180, doctorOrderCategory: "Activity" },
+  { serviceCode: "ACT-CHAIR",       serviceName: "Chair as Tolerated",        domain: "IPD", category: "NURSING", subCategory: "Activity", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 0, isAutoCharged: false, unitLabel: "per day", displayOrder: 9181, doctorOrderCategory: "Activity" },
+  { serviceCode: "ACT-AMBUL-ASSIS", serviceName: "Ambulate with Assistance",  domain: "IPD", category: "NURSING", subCategory: "Activity", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 0, isAutoCharged: false, unitLabel: "per day", displayOrder: 9182, doctorOrderCategory: "Activity" },
+  { serviceCode: "ACT-AMBUL-FREE",  serviceName: "Ambulate Ad Lib",           domain: "IPD", category: "NURSING", subCategory: "Activity", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 0, isAutoCharged: false, unitLabel: "per day", displayOrder: 9183, doctorOrderCategory: "Activity" },
+  { serviceCode: "ACT-NO-LIFT",     serviceName: "No Lifting > 5 kg",         domain: "IPD", category: "NURSING", subCategory: "Activity", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 0, isAutoCharged: false, unitLabel: "per day", displayOrder: 9184, doctorOrderCategory: "Activity" },
+
+  // ── IV Fluid (top-up) ───────────────────────────────────────────
+  { serviceCode: "IVF-NS-500",     serviceName: "Normal Saline 500 ml",        domain: "IPD", category: "PROCEDURE", subCategory: "IV Fluid", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_UNIT", defaultPrice: 120, isAutoCharged: false, unitLabel: "per bottle", displayOrder: 9190, doctorOrderCategory: "IV_Fluid" },
+  { serviceCode: "IVF-NS-1000",    serviceName: "Normal Saline 1000 ml",       domain: "IPD", category: "PROCEDURE", subCategory: "IV Fluid", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_UNIT", defaultPrice: 180, isAutoCharged: false, unitLabel: "per bottle", displayOrder: 9191, doctorOrderCategory: "IV_Fluid" },
+  { serviceCode: "IVF-DNS-500",    serviceName: "DNS 500 ml",                  domain: "IPD", category: "PROCEDURE", subCategory: "IV Fluid", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_UNIT", defaultPrice: 130, isAutoCharged: false, unitLabel: "per bottle", displayOrder: 9192, doctorOrderCategory: "IV_Fluid" },
+  { serviceCode: "IVF-RL-500",     serviceName: "Ringer Lactate 500 ml",       domain: "IPD", category: "PROCEDURE", subCategory: "IV Fluid", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_UNIT", defaultPrice: 140, isAutoCharged: false, unitLabel: "per bottle", displayOrder: 9193, doctorOrderCategory: "IV_Fluid" },
+  { serviceCode: "IVF-DEXT-5-500", serviceName: "Dextrose 5% 500 ml",          domain: "IPD", category: "PROCEDURE", subCategory: "IV Fluid", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_UNIT", defaultPrice: 130, isAutoCharged: false, unitLabel: "per bottle", displayOrder: 9194, doctorOrderCategory: "IV_Fluid" },
+
+  // ── Diet (top-up) ───────────────────────────────────────────────
+  { serviceCode: "DIET-NPO",      serviceName: "NPO / Nil Per Oral",  domain: "IPD", category: "SUPPORT", subCategory: "Diet", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 0,   isAutoCharged: false, unitLabel: "per day", displayOrder: 9200, doctorOrderCategory: "Diet" },
+  { serviceCode: "DIET-LIQUID",   serviceName: "Liquid Diet",         domain: "IPD", category: "SUPPORT", subCategory: "Diet", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 150, isAutoCharged: false, unitLabel: "per day", displayOrder: 9201, doctorOrderCategory: "Diet" },
+  { serviceCode: "DIET-SOFT",     serviceName: "Soft Diet",           domain: "IPD", category: "SUPPORT", subCategory: "Diet", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 180, isAutoCharged: false, unitLabel: "per day", displayOrder: 9202, doctorOrderCategory: "Diet" },
+  { serviceCode: "DIET-RT-FEED",  serviceName: "Ryle's Tube Feeding", domain: "IPD", category: "SUPPORT", subCategory: "Diet", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 400, isAutoCharged: false, unitLabel: "per day", displayOrder: 9203, doctorOrderCategory: "Diet" },
+  { serviceCode: "DIET-LOW-SALT", serviceName: "Low-Salt Diet",       domain: "IPD", category: "SUPPORT", subCategory: "Diet", applicableTo: ["IPD", "DAYCARE"], billingType: "PER_DAY", defaultPrice: 200, isAutoCharged: false, unitLabel: "per day", displayOrder: 9204, doctorOrderCategory: "Diet" },
+
+  // ── Oxygen (top-up) ─────────────────────────────────────────────
+  { serviceCode: "OXY-MASK-LFOW", serviceName: "Oxygen Mask Low Flow",            domain: "IPD", category: "NURSING", subCategory: "Oxygen", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_HOUR",    defaultPrice: 150,  isAutoCharged: false, unitLabel: "per hour",    displayOrder: 9210, doctorOrderCategory: "Oxygen" },
+  { serviceCode: "OXY-MASK-NRB",  serviceName: "Non-Rebreather Mask",             domain: "IPD", category: "NURSING", subCategory: "Oxygen", applicableTo: ["IPD", "DAYCARE", "EMERGENCY"], billingType: "PER_HOUR",    defaultPrice: 400,  isAutoCharged: false, unitLabel: "per hour",    displayOrder: 9211, doctorOrderCategory: "Oxygen" },
+  { serviceCode: "OXY-NIV",       serviceName: "NIV (BiPAP/CPAP) per session",    domain: "IPD", category: "ICU",     subCategory: "Oxygen", applicableTo: ["IPD", "EMERGENCY"],            billingType: "PER_SESSION", defaultPrice: 1500, isAutoCharged: false, unitLabel: "per session", displayOrder: 9212, doctorOrderCategory: "Oxygen" },
+  { serviceCode: "OXY-VENTI",     serviceName: "Mechanical Ventilation per day",  domain: "IPD", category: "ICU",     subCategory: "Oxygen", applicableTo: ["IPD", "EMERGENCY"],            billingType: "PER_DAY",     defaultPrice: 6000, isAutoCharged: false, unitLabel: "per day",     displayOrder: 9213, doctorOrderCategory: "Oxygen" },
 ];
 
 // ── Seed function ─────────────────────────────────────────────

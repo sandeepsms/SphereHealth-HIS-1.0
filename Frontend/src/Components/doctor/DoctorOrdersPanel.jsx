@@ -11,6 +11,7 @@ import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import SharedDrugAutocomplete, { parseStrength, drugDisplayName } from "../clinical/DrugAutocomplete";
+import ServiceMasterAutocomplete from "../services/ServiceMasterAutocomplete";
 import { confirm } from "../common/ConfirmDialog";
 import { createProcedureNote } from "../../Services/procedureNoteService";
 
@@ -196,6 +197,95 @@ function DrugAutocomplete({ form, set, label, name, placeholder }) {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   ServicePicker — form-bound wrapper around <ServiceMasterAutocomplete>.
+
+   Replaces the free-text "Test name / Procedure name / Fluid /
+   Speciality / Diet …" inputs across the 10 non-Medication tabs.
+   When the doctor picks a row from the service catalogue we mirror
+   the full {serviceMasterId, serviceCode, serviceName, unitPrice}
+   onto the form AND copy serviceName into whatever bare-text key
+   the existing payload + downstream prints expect (medicineName /
+   testName / procedureName / dietType / deliveryDevice / ptType /
+   activityLevel / instruction / speciality). The "Not in catalog?
+   Type manually" toggle clears the 4 ServiceMaster fields and lets
+   the existing free-text path stand untouched so legacy items still
+   save. Inline price preview renders below when unitPrice is set.
+══════════════════════════════════════════════════════════════ */
+function ServicePicker({ form, set, label, category, nameField, placeholder }) {
+  const manual = !!form.__manualEntry;
+  const setManual = (v) => set("__manualEntry", v);
+
+  const clearServiceFields = () => {
+    set("serviceMasterId", "");
+    set("serviceCode", "");
+    set("serviceName", "");
+    set("unitPrice", "");
+  };
+
+  const handlePick = (row) => {
+    if (!row) return;
+    const serviceMasterId = row._id || row.id || row.serviceMasterId;
+    const serviceCode     = row.serviceCode || row.code || "";
+    const serviceName     = row.serviceName || row.name || "";
+    const unitPrice       = row.defaultPrice ?? row.unitPrice ?? row.price ?? "";
+    set("serviceMasterId", serviceMasterId);
+    set("serviceCode", serviceCode);
+    set("serviceName", serviceName);
+    set("unitPrice", unitPrice);
+    // Mirror into the legacy bare-text field the existing payload expects
+    if (nameField) set(nameField, serviceName);
+  };
+
+  return (
+    <div>
+      {!manual ? (
+        <>
+          <ServiceMasterAutocomplete
+            label={label}
+            category={category}
+            value={form.serviceName || form[nameField] || ""}
+            onChange={(v) => {
+              set("serviceName", v);
+              if (nameField) set(nameField, v);
+            }}
+            onPick={handlePick}
+            placeholder={placeholder}
+          />
+          {form.unitPrice !== undefined && form.unitPrice !== "" && (
+            <div style={{ marginTop: 4, fontSize: 11, color: C.primary, fontWeight: 700 }}>
+              ₹{form.unitPrice}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => { clearServiceFields(); setManual(true); }}
+            style={{ marginTop: 4, padding: "2px 8px", border: `1px solid ${C.border}`, borderRadius: 6, background: "white", color: C.muted, fontSize: 10, cursor: "pointer" }}
+          >
+            Not in catalog? Type manually
+          </button>
+        </>
+      ) : (
+        <>
+          <label className="his-label">{label}</label>
+          <input
+            className="his-field" type="text" placeholder={placeholder}
+            value={form[nameField] || ""}
+            onChange={(e) => set(nameField, e.target.value)}
+          />
+          <button
+            type="button"
+            onClick={() => setManual(false)}
+            style={{ marginTop: 4, padding: "2px 8px", border: `1px solid ${C.border}`, borderRadius: 6, background: "white", color: C.muted, fontSize: 10, cursor: "pointer" }}
+          >
+            Pick from catalog
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
    ORDER META — single fallback so OrderForm header + OrderCard
    chip stay in sync for unknown / legacy orderType values.
    Replaces the divergent Medication-purple (OrderForm) vs
@@ -333,7 +423,8 @@ function OrderForm({ typeId, form, set }) {
   if (typeId === "IV_Fluid") return (
     <>
       <div style={g("2fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Fluid / Solution *" name="medicineName" placeholder="e.g. NS 0.9%, RL, DNS, Dextrose 5%"/>
+        <ServicePicker form={form} set={set} label="Fluid / Solution *" category="IV_Fluid"
+          nameField="medicineName" placeholder="e.g. NS 0.9%, RL, DNS, Dextrose 5%"/>
         <Field form={form} set={set} label="Volume *" name="totalVolume" type="number" placeholder="500" unit="ml"/>
         <Field form={form} set={set} label="Rate" name="rate" type="number" placeholder="83" unit="ml / hr"/>
       </div>
@@ -363,7 +454,8 @@ function OrderForm({ typeId, form, set }) {
   if (typeId === "Lab") return (
     <>
       <div style={g("2fr 1fr")}>
-        <Field form={form} set={set} label="Test Name(s) *" name="testName" placeholder="CBC, LFT, RFT, Blood Culture, Coagulation…"/>
+        <ServicePicker form={form} set={set} label="Test Name(s) *" category="Lab"
+          nameField="testName" placeholder="CBC, LFT, RFT, Blood Culture, Coagulation…"/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
       <div style={g("1fr 1fr")}>
@@ -377,7 +469,8 @@ function OrderForm({ typeId, form, set }) {
   if (typeId === "Radiology") return (
     <>
       <div style={g("2fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Scan / Study *" name="testName" placeholder="e.g. CECT Chest, USG Abdomen, MRI Brain, X-Ray PA"/>
+        <ServicePicker form={form} set={set} label="Scan / Study *" category="Radiology"
+          nameField="testName" placeholder="e.g. CECT Chest, USG Abdomen, MRI Brain, X-Ray PA"/>
         <Field form={form} set={set} label="Region / Body Part" name="region" placeholder="e.g. Chest, Abdomen-Pelvis"/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
@@ -393,7 +486,8 @@ function OrderForm({ typeId, form, set }) {
   if (typeId === "Procedure") return (
     <>
       <div style={g("2fr 1fr")}>
-        <Field form={form} set={set} label="Procedure Name *" name="procedureName" placeholder="e.g. Chest Drain Insertion, Lumbar Puncture, IV Cannula"/>
+        <ServicePicker form={form} set={set} label="Procedure Name *" category="Procedure"
+          nameField="procedureName" placeholder="e.g. Chest Drain Insertion, Lumbar Puncture, IV Cannula"/>
         <Field form={form} set={set} label="Type" name="procedureType" options={["Minor","Major","Diagnostic","Therapeutic","Bedside"]}/>
       </div>
       <div style={g("1fr 1fr 1fr")}>
@@ -425,8 +519,9 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "BloodTransfusion") return (
     <>
-      <div style={g("1fr 1fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Blood Product *" name="medicineName" options={["Packed Red Cells","Whole Blood","Fresh Frozen Plasma","Platelets","Cryoprecipitate","Albumin"]}/>
+      <div style={g("2fr 1fr 1fr 1fr")}>
+        <ServicePicker form={form} set={set} label="Blood Product *" category="BloodTransfusion"
+          nameField="medicineName" placeholder="e.g. Packed Red Cells, FFP, Platelets, Cryoprecipitate"/>
         <Field form={form} set={set} label="Units / Volume" name="dose" placeholder="e.g. 2 units / 400ml"/>
         <Field form={form} set={set} label="Rate" name="rate" placeholder="e.g. 4 hrs/unit"/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
@@ -505,8 +600,9 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "Diet") return (
     <>
-      <div style={g("1fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Diet Type *" name="dietType" options={["Regular/Normal","Soft","Semi-Solid","Liquid","Clear Liquid","NPO (Nil by Mouth)","Diabetic Diet","Low Salt","Low Fat","High Protein","Renal Diet","Hepatic Diet","Enteral (NG Tube)","TPN (Total Parenteral)"]}/>
+      <div style={g("2fr 1fr 1fr")}>
+        <ServicePicker form={form} set={set} label="Diet Type *" category="Diet"
+          nameField="dietType" placeholder="e.g. Regular, Diabetic, Renal, NPO, Enteral…"/>
         <Field form={form} set={set} label="Caloric Target (kcal)" name="calories" placeholder="e.g. 2000"/>
         <Field form={form} set={set} label="Protein Target (g)" name="protein" placeholder="e.g. 80"/>
       </div>
@@ -521,8 +617,9 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "Oxygen") return (
     <>
-      <div style={g("1fr 1fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Delivery Device *" name="deliveryDevice" options={["Nasal Prongs","Simple Face Mask","Non-Rebreather Mask","Venturi Mask","High-Flow Nasal Cannula (HFNC)","CPAP Mask","BiPAP Mask","Tracheostomy Collar","Incubator / Hood","Room Air"]}/>
+      <div style={g("2fr 1fr 1fr 1fr")}>
+        <ServicePicker form={form} set={set} label="Delivery Device *" category="Oxygen"
+          nameField="deliveryDevice" placeholder="e.g. Nasal Prongs, HFNC, BiPAP, Venturi…"/>
         <Field form={form} set={set} label="Flow Rate (L/min)" name="flowRate" placeholder="e.g. 4"/>
         <Field form={form} set={set} label="FiO₂ (%)" name="fio2" placeholder="e.g. 40"/>
         <Field form={form} set={set} label="Target SpO₂ (%)" name="targetSpo2" placeholder="e.g. ≥95"/>
@@ -540,8 +637,9 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "Physiotherapy") return (
     <>
-      <div style={g("1fr 1fr 1fr")}>
-        <Field form={form} set={set} label="PT Type *" name="ptType" options={["Chest Physiotherapy","Respiratory Exercises","Limb Exercises (Passive)","Limb Exercises (Active)","Ambulation","Transfer Training","Strengthening","Range of Motion","Incentive Spirometry","Postural Drainage","Traction","Ultrasound Therapy"]}/>
+      <div style={g("2fr 1fr 1fr")}>
+        <ServicePicker form={form} set={set} label="PT Type *" category="Physiotherapy"
+          nameField="ptType" placeholder="e.g. Chest PT, Limb Exercises, Ambulation, Incentive Spirometry…"/>
         <Field form={form} set={set} label="Frequency" name="frequency" options={["Once Daily","Twice Daily","Three Times Daily","PRN","Every 4 hrs","Post Op (Immediately)"]}/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
@@ -561,8 +659,9 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "Activity") return (
     <>
-      <div style={g("1fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Activity Level *" name="activityLevel" options={["Bed Rest (Strict)","Bed Rest with Commode","Bed Rest with BRP","Dangle at Bedside","Chair Sit (30 min)","Ambulate in Room","Ambulate in Corridor","Independent Ambulation","As Tolerated"]}/>
+      <div style={g("2fr 1fr 1fr")}>
+        <ServicePicker form={form} set={set} label="Activity Level *" category="Activity"
+          nameField="activityLevel" placeholder="e.g. Bed Rest, Dangle, Chair Sit, Ambulate…"/>
         <Field form={form} set={set} label="Assistance Level" name="assistanceLevel" options={["Independent","Supervision Only","Minimum Assist (< 25%)","Moderate Assist (25–50%)","Maximum Assist (> 50%)","Dependent / Full Assist"]}/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
@@ -577,7 +676,8 @@ function OrderForm({ typeId, form, set }) {
   if (typeId === "Nursing") return (
     <>
       <div style={g("2fr 1fr")}>
-        <Field form={form} set={set} label="Nursing Instruction *" name="instruction" placeholder="e.g. 2-hourly position change, hourly urine output, wound care"/>
+        <ServicePicker form={form} set={set} label="Nursing Instruction *" category="Nursing"
+          nameField="instruction" placeholder="e.g. 2-hourly position change, hourly urine output, wound care"/>
         <Field form={form} set={set} label="Frequency" name="frequency" options={["Stat (Once)","Hourly","2-Hourly","4-Hourly","6-Hourly","8-Hourly","12-Hourly","Daily","BD","TDS","PRN","Continuous"]}/>
       </div>
       <div style={g("1fr 1fr 1fr 1fr")}>
@@ -593,8 +693,9 @@ function OrderForm({ typeId, form, set }) {
 
   if (typeId === "Consultation") return (
     <>
-      <div style={g("1fr 1fr 1fr")}>
-        <Field form={form} set={set} label="Speciality *" name="speciality" options={["Cardiology","Neurology","Nephrology","Pulmonology","Gastroenterology","Endocrinology","Haematology","Oncology","Infectious Disease","Orthopaedics","General Surgery","Urology","Gynaecology","Ophthalmology","ENT","Dermatology","Psychiatry","Anaesthesia","ICU / Critical Care","Palliative Care","Dietitian","Physiotherapy","Social Work"]}/>
+      <div style={g("2fr 1fr 1fr")}>
+        <ServicePicker form={form} set={set} label="Speciality *" category="Consultation"
+          nameField="speciality" placeholder="e.g. Cardiology, Neurology, Nephrology…"/>
         <Field form={form} set={set} label="Consultant Name" name="consultantName" placeholder="e.g. Dr. Sharma"/>
         <Field form={form} set={set} label="Priority" name="priority" options={["Routine","Urgent","STAT"]}/>
       </div>
@@ -1248,6 +1349,10 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
     // P1-5: amendReason is a sibling of `changes` on the modify request; do not
     // leak it into the saved orderDetails when amending.
     delete d.amendReason;
+    // ServiceMaster UI helper — local toggle only, never sent to the server.
+    // (serviceMasterId / serviceCode / serviceName / unitPrice DO stay on
+    // orderDetails so downstream billing can charge the picked catalog item.)
+    delete d.__manualEntry;
     // R7du — Strip Pre-Transfusion Checklist flat keys from orderDetails;
     // they collect into a root-level `preTransfusion` object below so the
     // NABH MOM.4 emitter (services/Compliance/nabhRegisterEmitter.js →

@@ -152,6 +152,24 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
             {/* Order name */}
             <div style={{ fontSize: 13, fontWeight: 700, color: C.dark, marginBottom: 2 }}>{displayName}</div>
 
+            {/* R7hr-83 — Catalogued service pill (read-only): shows the ServiceMaster
+                row the doctor picked at order time, so the nurse can see the
+                billable service name + price. Only renders when the order was
+                placed against a catalogued service. */}
+            {details.serviceCode && (
+              <div style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                fontSize: 11, padding: "2px 8px", borderRadius: 20,
+                background: "#f3f4f6", border: "1px solid #e5e7eb",
+                color: C.dark, marginBottom: 4, marginTop: 2,
+              }}>
+                <span style={{ fontSize: 9, fontWeight: 800, color: C.muted, letterSpacing: ".3px" }}>SVC</span>
+                <span style={{ fontWeight: 700 }}>{details.serviceCode}</span>
+                {details.serviceName && <span style={{ color: C.muted }}>— {details.serviceName}</span>}
+                {details.unitPrice != null && <span style={{ color: C.muted }}>· ₹{details.unitPrice}</span>}
+              </div>
+            )}
+
             {/* Details */}
             <div style={{ fontSize: 11, color: C.muted, display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
               {details.dose && <span>Dose: {details.dose}</span>}
@@ -316,6 +334,20 @@ function MedOrderCard({ order, inProgress }) {
           {order.hamFlag && <span style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fca5a5", fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 4 }}>🔴 HAM</span>}
         </div>
         <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a" }}>{details.medicineName || "Medication"}</div>
+        {/* R7hr-83 — Catalogued service pill (read-only). Mirrors OrderCard. */}
+        {details.serviceCode && (
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 4,
+            fontSize: 11, padding: "2px 8px", borderRadius: 20,
+            background: "#f3f4f6", border: "1px solid #e5e7eb",
+            color: "#0f172a", alignSelf: "flex-start", marginTop: 2,
+          }}>
+            <span style={{ fontSize: 9, fontWeight: 800, color: "#64748b", letterSpacing: ".3px" }}>SVC</span>
+            <span style={{ fontWeight: 700 }}>{details.serviceCode}</span>
+            {details.serviceName && <span style={{ color: "#64748b" }}>— {details.serviceName}</span>}
+            {details.unitPrice != null && <span style={{ color: "#64748b" }}>· ₹{details.unitPrice}</span>}
+          </div>
+        )}
         <div style={{ fontSize: 11, color: "#64748b" }}>
           {details.dose && <span>{details.dose}</span>}
           {details.frequency && <span> · {details.frequency}</span>}

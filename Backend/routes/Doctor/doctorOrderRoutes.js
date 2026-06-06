@@ -135,6 +135,14 @@ router.post("/", requireAction("doctor-orders.write"), credentialExpiryBlocker("
       body.highRisk = body.hamFlag;
     }
 
+    // R7hr-83 — strip ServiceMaster pick fields if the orderType can't map
+    // to a ServiceMaster row (e.g. Investigation). Mongoose strict-mode
+    // would persist them otherwise, and the Phase C billing trigger would
+    // misfire for a category that has no catalog entry.
+    if (body.orderDetails && !SERVICE_MASTER_MAPPABLE_TYPES.has(body.orderType)) {
+      for (const k of SERVICE_MASTER_PICK_KEYS) delete body.orderDetails[k];
+    }
+
     // R7bv — stamp clinical linkage fields so the patient-history aggregator
     // (which filters DoctorOrder by `{ $or: [{admissionId}, {ipdNo}] }`)
     // can find this order. Pre-R7bv the DoctorOrder schema didn't even
@@ -533,6 +541,12 @@ router.post("/bulk", requireAction("doctor-orders.write"), credentialExpiryBlock
       o.twoNurseRequired = o.hamFlag;
       o.highRisk = o.hamFlag;
 
+      // R7hr-83 — mirror POST / scoping: strip ServiceMaster pick fields if
+      // this orderType can't map to a ServiceMaster row.
+      if (o.orderDetails && !SERVICE_MASTER_MAPPABLE_TYPES.has(o.orderType)) {
+        for (const k of SERVICE_MASTER_PICK_KEYS) delete o.orderDetails[k];
+      }
+
       // R7bv — stamp admissionId / ipdNo / admissionNumber from the
       // patient's active admission so the aggregator can surface this
       // order under the IPD patient file.
@@ -763,7 +777,21 @@ const PATCH_ALLOWED = new Set([
   "infusionStartedAt", "infusionEndedAt",
   "holdUntil", "holdReason", "delayReason",
   "remarks", "priority",
+  // R7hr-83 — ServiceMaster pick fields carried on the order. Accepted on
+  // PATCH for late binding (doctor picks the catalog row after order entry).
+  // Scope-checked below against the ServiceMaster-mappable orderType set
+  // and rewritten onto `orderDetails.<field>` dotted-path $set targets.
+  "serviceMasterId", "serviceCode", "serviceName", "unitPrice",
 ]);
+// R7hr-83 — orderTypes that can map to a ServiceMaster row (see
+// ServiceMasterModel.doctorOrderCategory enum). `Investigation` is intentionally
+// excluded — pathology investigations are billed via the lab dispatch path,
+// not via ServiceMaster.
+const SERVICE_MASTER_MAPPABLE_TYPES = new Set([
+  "Medication","IV_Fluid","Lab","Radiology","Procedure","BloodTransfusion",
+  "Diet","Oxygen","Physiotherapy","Activity","Nursing","Consultation",
+]);
+const SERVICE_MASTER_PICK_KEYS = ["serviceMasterId","serviceCode","serviceName","unitPrice"];
 // R7hr-12-S? (P0-3): credentialExpiryBlocker('NMC_REG') now matches POST /,
 // POST /bulk, /doctor-action, /restart. PATCH /:id is a licensed clinical
 // act (rate change defaults, hold-until window adjustments, infusion start
@@ -779,6 +807,27 @@ router.patch("/:id", validateObjectIdParam("id"), requireAction("doctor-orders.w
     if (safe.infusionEndedAt   && !safe.infusionStopped) safe.infusionStopped = safe.infusionEndedAt;
     delete safe.infusionStartedAt;
     delete safe.infusionEndedAt;
+
+    // R7hr-83 — rewrite ServiceMaster pick keys onto orderDetails dotted-path
+    // $set targets, but only for orderTypes that can map to ServiceMaster
+    // (see SERVICE_MASTER_MAPPABLE_TYPES above). If the order isn't mappable
+    // the keys are dropped silently so a billing trigger never fires on a
+    // category that has no catalog row.
+    const pickKeysPresent = SERVICE_MASTER_PICK_KEYS.filter(k =>
+      Object.prototype.hasOwnProperty.call(safe, k),
+    );
+    if (pickKeysPresent.length) {
+      const head = await DoctorOrder.findById(req.params.id).select("orderType").lean();
+      if (!head) return res.status(404).json({ ok: false, message: "Not found" });
+      if (SERVICE_MASTER_MAPPABLE_TYPES.has(head.orderType)) {
+        for (const k of pickKeysPresent) {
+          safe[`orderDetails.${k}`] = safe[k];
+          delete safe[k];
+        }
+      } else {
+        for (const k of pickKeysPresent) delete safe[k];
+      }
+    }
 
     if (Object.keys(safe).length === 0) {
       return res.status(400).json({ ok: false, message: "No allowed fields to update — use the dedicated /administer, /rate-change, /doctor-action endpoints for status / stop transitions" });
@@ -1355,6 +1404,11 @@ router.post("/:id/doctor-action", validateObjectIdParam("id"), requireAction("or
       case "modify": {
         if (!orderDetails)
           return res.status(400).json({ ok: false, message: "orderDetails required for modify" });
+        // R7hr-83 — drop ServiceMaster pick fields from the incoming patch if
+        // this order's type can't map to a ServiceMaster row, before the merge.
+        if (!SERVICE_MASTER_MAPPABLE_TYPES.has(order.orderType)) {
+          for (const k of SERVICE_MASTER_PICK_KEYS) delete orderDetails[k];
+        }
         // Merge new fields into existing orderDetails
         const existing = order.orderDetails.toObject ? order.orderDetails.toObject() : { ...order.orderDetails };
         order.orderDetails = { ...existing, ...orderDetails };

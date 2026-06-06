@@ -361,6 +361,11 @@ const DoctorOrderSchema = new mongoose.Schema({
     instruction: String, careCategory: String,
     // Consultation fields
     speciality: String, consultantName: String, reason: String, referredBy: String,
+    // R7hr-83 — set on order placement from /api/services/lookup; consumed by Phase C billing trigger on completion.
+    serviceMasterId: { type: mongoose.Schema.Types.ObjectId, ref: 'ServiceMaster', default: null },
+    serviceCode:     { type: String, trim: true, default: null, index: true },
+    serviceName:     { type: String, trim: true, default: null },
+    unitPrice:       { type: Number, min: 0, default: null },
     // Common
     notes: String, displayName: String,
   },
