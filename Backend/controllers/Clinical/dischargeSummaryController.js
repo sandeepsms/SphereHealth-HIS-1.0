@@ -198,6 +198,33 @@ class DischargeSummaryController {
     // reason, both of which land on the discharge summary's audit
     // trail (nursingHandoverOverride*).
     const draftSummary = await DischargeSummary.findById(req.params.id).lean();
+
+    // R7hr-113 — PROM + PREM mandatory at discharge (NABH PSQ + COP.6.b)
+    // Patient voice MUST be recorded before discharge locks. Refuse
+    // finalize unless ONE signed PROM AND ONE signed PREM exist for this
+    // admission. Bypass via allowOverride: true + overrideReason for
+    // LAMA / Death / Patient-refused cases — same escape valve as the
+    // nursing handover gate below.
+    if (draftSummary?.admissionId && !allowOverride) {
+      try {
+        const PROMPREMSurvey = require("../../models/Clinical/PROMPREMSurveyModel");
+        const readiness = await PROMPREMSurvey.checkDischargeReadiness(draftSummary.admissionId);
+        if (!readiness.prom || !readiness.prem) {
+          return res.status(409).json({
+            success: false,
+            message: `Cannot finalize discharge — patient-reported survey missing. Required: ${[!readiness.prom && "PROM (outcome)", !readiness.prem && "PREM (experience)"].filter(Boolean).join(" + ")}. Capture via /clinical/prom-prem-survey or pass { allowOverride: true, overrideReason: "..." } for LAMA / refused / death cases.`,
+            code: "PROM_PREM_REQUIRED",
+            missing: { prom: !readiness.prom, prem: !readiness.prem },
+          });
+        }
+      } catch (err) {
+        // Model load failure should NOT block discharge (e.g. fresh
+        // install where the model file isn't deployed yet). Log + proceed.
+        const { logErr } = require("../../utils/logErr");
+        logErr("dischargeFinalize.promPremGate", req.params?.id)(err);
+      }
+    }
+
     if (draftSummary?.admissionId) {
       const adm = await Admission.findById(draftSummary.admissionId).lean();
       const nurseFlagged = !!adm?.initialAssessment?.nurseCompleted;

@@ -287,6 +287,8 @@ const EquipmentDashboardPage   = lazy(() => import("./pages/maintenance/Equipmen
 const PharmacyHomePage         = lazy(() => import("./pages/pharmacy/PharmacyHomePage"));
 const DischargeSummaryPage = lazy(() => import("./pages/clinical/DischargeSummaryPage"));
 const ConsentFormPage = lazy(() => import("./pages/clinical/ConsentFormPage"));
+// R7hr-113 — Paperless PROM/PREM survey (gates discharge finalize)
+const PROMPREMSurveyPage = lazy(() => import("./pages/clinical/PROMPREMSurveyPage"));
 const IPDInitialAssessmentPage = lazy(() => import("./pages/clinical/IPDInitialAssessmentPage"));
 const InvestigationOrders     = lazy(() => import("./Components/Investigation/InvestigationOrders"));
 const InvestigationMaster     = lazy(() => import("./Components/Investigation/InvestigationMaster"));
@@ -961,6 +963,11 @@ function AppLayout({ collapsed, setCollapsed }) {
                 on every save. */}
             <Route path="/consent-forms" element={
               <RoleGuard action="consent.write"><ConsentFormPage /></RoleGuard>
+            } />
+            {/* R7hr-113 — Paperless PROM/PREM survey. Gates discharge finalize:
+                one signed PROM + one signed PREM must exist per admission. */}
+            <Route path="/clinical/prom-prem-survey" element={
+              <RoleGuard action="nursing.write"><PROMPREMSurveyPage /></RoleGuard>
             } />
             {/* R7bb-E/D5-HIGH-2 — Nursing assessment writes gated by mar.write
                 (Admin/Nurse). Doctor still has POST gates server-side via the
