@@ -360,8 +360,148 @@ async function fanOutInfusionsToDoctorOrders(note) {
   return out;
 }
 
+/**
+ * R7hr-110 — Fan out IPD IA `invests[]` (InvestigationsPanel rows) into
+ * DoctorOrder Investigation entries so they immediately appear in the
+ * nurse's "Doctor Orders → Investigation" queue. Without this, the
+ * doctor's lab orders from the IA stayed locked inside `noteDetails`
+ * and the nurse had no actionable task → samples never got drawn.
+ *
+ * Invest row shape: { name, urgency?, instructions? }
+ * DoctorOrder schema requires `testName` for orderType=Investigation —
+ * we map `name` → `testName`.
+ *
+ * Idempotency: sourceRef = iainvests:<noteId>:<rowIdx>
+ *
+ * R25 — additive only; existing 3 fan-outs untouched.
+ */
+async function fanOutInvestsToDoctorOrders(note) {
+  const out = { created: 0, skipped: 0, reasons: {} };
+  if (!note || note.noteType !== "initial") return out;
+  const rows = note?.noteDetails?.doctor?.invests;
+  if (!Array.isArray(rows) || rows.length === 0) return out;
+
+  const admission = await resolveAdmission(note);
+  if (!admission) {
+    out.reasons.noAdmission = rows.length;
+    out.skipped += rows.length;
+    return out;
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const inv = rows[i] || {};
+    const sourceRef = `iainvests:${note._id}:${i}`;
+    try {
+      const testName = (inv.name || "").trim();
+      if (!testName) { out.skipped++; out.reasons.blankTest = (out.reasons.blankTest || 0) + 1; continue; }
+      const exists = await DoctorOrder.findOne({ sourceRef }).select("_id").lean();
+      if (exists) { out.skipped++; out.reasons.alreadyExists = (out.reasons.alreadyExists || 0) + 1; continue; }
+
+      const urgency = (inv.urgency || "").trim();
+      // Normalize urgency to DoctorOrder.priority enum (Routine / Urgent / STAT)
+      const priority =
+        /^stat/i.test(urgency) ? "STAT" :
+        /^urgent/i.test(urgency) ? "Urgent" :
+        "Routine";
+
+      await DoctorOrder.create({
+        UHID: admission.UHID || note.patientUHID,
+        patientId: admission.patientId || note.patient,
+        patientName: admission.patientName || note.patientName,
+        admissionId: admission._id,
+        ipdNo: admission.admissionNumber || admission.ipdNo,
+        admissionNumber: admission.admissionNumber || admission.ipdNo,
+        visitType: "IPD",
+        orderType: "Investigation",
+        priority,
+        orderDetails: {
+          testName,
+          displayName: testName,
+          urgency: urgency || "ROUTINE",
+          instructions: inv.instructions || "",
+          notes: `Ordered at Initial Assessment${urgency ? ` — ${urgency}` : ""}`,
+        },
+        orderedBy: note.signedByName || note.doctorName,
+        orderedByRole: "Doctor",
+        orderedAt: note.signedAt || new Date(),
+        status: "Active",
+        sourceRef,
+      });
+      out.created++;
+    } catch (err) {
+      out.skipped++;
+      out.reasons.error = (out.reasons.error || 0) + 1;
+      const { logErr } = require("../../utils/logErr");
+      logErr("iaInvestsFanOut", `row ${i} test=${inv.name} sourceRef=${sourceRef}`)(err);
+    }
+  }
+  return out;
+}
+
+/**
+ * R7hr-109 — Backfill admission.reasonForAdmission + admission.provisionalDiagnosis
+ * from the signed Doctor Initial Assessment. The receptionist registration
+ * form does NOT enforce these fields (often the doctor only firms up the
+ * diagnosis after first assessment), so the Admission Summary card stayed
+ * "—" forever even after a complete IA. Now the doctor's IA sign mirrors
+ * his chief complaint + provisional diagnosis to the admission record so
+ * every downstream surface (Patient Panel Admission Summary, banner,
+ * discharge summary header, print) lights up automatically.
+ *
+ * Idempotency: only sets fields that are currently blank/null/"—" — never
+ * overwrites a value the receptionist or doctor explicitly typed.
+ */
+async function backfillAdmissionFromIA(note) {
+  const out = { updated: false, fields: [] };
+  if (!note || note.noteType !== "initial") return out;
+  const admission = await resolveAdmission(note);
+  if (!admission) return out;
+
+  const isBlank = (v) => v == null || String(v).trim() === "" || String(v).trim() === "—";
+
+  // Pull candidate values from the signed note. Top-level fields are mirrored
+  // by IPDInitialAssessmentPage.buildPayload (R7fj-HIGH-1) so we prefer those.
+  const chiefComplaint =
+    (note.chiefComplaint && String(note.chiefComplaint).trim()) ||
+    (note.noteDetails?.nabh?.chiefComplaint && String(note.noteDetails.nabh.chiefComplaint).trim()) ||
+    // R7hr-109 — last-resort HOPI fallback. DoctorNotes schema doesn't define
+    // top-level chiefComplaint so strict-mode drops it silently; doctor.hopi
+    // is the only narrative field reliably saved for the chief complaint
+    // story. Surfacing it here is better than leaving admission.reasonForAdmission blank.
+    (note.noteDetails?.doctor?.hopi && String(note.noteDetails.doctor.hopi).trim()) ||
+    (note.historyOfPresentIllness && String(note.historyOfPresentIllness).trim()) ||
+    "";
+  const provDx =
+    (note.provisionalDiagnosis && String(note.provisionalDiagnosis).trim()) ||
+    (note.noteDetails?.doctor?.provDx && String(note.noteDetails.doctor.provDx).trim()) ||
+    "";
+
+  const $set = {};
+  if (chiefComplaint && isBlank(admission.reasonForAdmission)) {
+    $set.reasonForAdmission = chiefComplaint;
+    out.fields.push("reasonForAdmission");
+  }
+  if (provDx && isBlank(admission.provisionalDiagnosis)) {
+    $set.provisionalDiagnosis = provDx;
+    out.fields.push("provisionalDiagnosis");
+  }
+
+  if (Object.keys($set).length === 0) return out;
+
+  try {
+    await Admission.updateOne({ _id: admission._id }, { $set });
+    out.updated = true;
+  } catch (err) {
+    const { logErr } = require("../../utils/logErr");
+    logErr("backfillAdmissionFromIA", `admission ${admission._id}`)(err);
+  }
+  return out;
+}
+
 module.exports = {
   fanOutMedReconToDoctorOrders,
   fanOutMedsToDoctorOrders,
   fanOutInfusionsToDoctorOrders,
+  fanOutInvestsToDoctorOrders,
+  backfillAdmissionFromIA,
 };

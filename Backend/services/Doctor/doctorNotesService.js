@@ -498,6 +498,13 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
       try { summary.medRecon  = await fanOuts.fanOutMedReconToDoctorOrders(note); } catch (e) { logErr("medReconFanOut", `note ${note._id}`)(e); }
       try { summary.meds      = await fanOuts.fanOutMedsToDoctorOrders(note);     } catch (e) { logErr("iaMedsFanOut",  `note ${note._id}`)(e); }
       try { summary.infusions = await fanOuts.fanOutInfusionsToDoctorOrders(note);} catch (e) { logErr("iaInfusionFanOut", `note ${note._id}`)(e); }
+      // R7hr-110 — Investigation fan-out so the nurse sees lab orders on her queue.
+      try { summary.invests   = await fanOuts.fanOutInvestsToDoctorOrders(note);  } catch (e) { logErr("iaInvestsFanOut", `note ${note._id}`)(e); }
+      // R7hr-109 — Backfill Admission.reasonForAdmission + provisionalDiagnosis
+      // from the signed Doctor IA so the Admission Summary card / banner /
+      // discharge summary header all stop showing "—". Idempotent + only fills
+      // blanks (never overwrites a value the receptionist already typed).
+      try { summary.admBackfill = await fanOuts.backfillAdmissionFromIA(note);    } catch (e) { logErr("backfillAdmissionFromIA", `note ${note._id}`)(e); }
       try { logErr("iaFanOut", `note ${note._id} ${JSON.stringify(summary)}`)(null); } catch (_) {}
     } catch (err) {
       const { logErr } = require("../../utils/logErr");

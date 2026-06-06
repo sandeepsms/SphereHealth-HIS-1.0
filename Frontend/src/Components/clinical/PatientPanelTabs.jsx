@@ -114,6 +114,40 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
   const docInitial   = doctorNotes.filter((n) => n.noteType === "initial" || n.noteType === "initialAssessment");
   const nurseInitial = nursingNotes.filter((n) => n.noteType === "initial" || n.noteType === "initialAssessment");
 
+  // R7hr-109 — Read-side fallback for empty Admission Summary fields.
+  // Receptionist registration doesn't enforce Reason for Admission or
+  // Provisional Diagnosis (often the doctor only firms those up during
+  // first assessment), so without a fallback the card stays "—" forever.
+  // The Doctor IA sign now backfills the admission record (backfillAdmissionFromIA),
+  // but for already-signed historical records we also derive on the read
+  // side so the card lights up without a re-sign cycle. R25-safe — purely
+  // additive; the admission field stays the source of truth when filled.
+  const _docIAsorted = [...docInitial].sort(
+    (a, b) => new Date(b.signedAt || b.createdAt || 0) - new Date(a.signedAt || a.createdAt || 0)
+  );
+  const _latestDocIA = _docIAsorted[0] || null;
+  const _isBlank = (v) => v == null || String(v).trim() === "" || String(v).trim() === "—";
+  const _derivedChiefComplaint =
+    _latestDocIA?.chiefComplaint ||
+    _latestDocIA?.noteDetails?.nabh?.chiefComplaint ||
+    // R7hr-109 — last-resort fallback to HOPI. The legacy DoctorNotes schema
+    // strict-stripped top-level chiefComplaint (it isn't a defined field), so
+    // for historic signed IAs the only populated free-text complaint is
+    // noteDetails.doctor.hopi. Better to surface that than render "—".
+    _latestDocIA?.noteDetails?.doctor?.hopi ||
+    _latestDocIA?.historyOfPresentIllness ||
+    "";
+  const _derivedProvDx =
+    _latestDocIA?.provisionalDiagnosis ||
+    _latestDocIA?.noteDetails?.doctor?.provDx ||
+    "";
+  const _reasonForAdmission = _isBlank(admission?.reasonForAdmission)
+    ? _derivedChiefComplaint
+    : admission?.reasonForAdmission;
+  const _provisionalDiagnosis = _isBlank(admission?.provisionalDiagnosis)
+    ? _derivedProvDx
+    : admission?.provisionalDiagnosis;
+
   return (
     <div className="ppt-tab">
       <div className="ppt-tab-header">
@@ -127,8 +161,8 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
           <div className="ppt-detail-grid">
             <Field label="IPD / Admission No." value={admission.admissionNumber} mono />
             <Field label="Admitted On"          value={fmtDateTime(admission.admissionDate)} />
-            <Field label="Reason for Admission" value={admission.reasonForAdmission} wide />
-            <Field label="Provisional Diagnosis" value={admission.provisionalDiagnosis} wide />
+            <Field label="Reason for Admission" value={_reasonForAdmission} wide />
+            <Field label="Provisional Diagnosis" value={_provisionalDiagnosis} wide />
             <Field label="Attending Doctor"     value={admission.attendingDoctor} />
             <Field label="Department"           value={admission.department} />
             <Field label="Bed / Ward"           value={[admission.bedNumber, admission.wardName].filter(Boolean).join(" — ")} />
