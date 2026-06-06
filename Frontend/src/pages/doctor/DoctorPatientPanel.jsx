@@ -2265,10 +2265,15 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
         }).catch(()=>{}),
 
         // R7hr-75 — Consent forms for the Consent Forms tab list view.
+        // R7hr-77 — Sort by the date the card actually displays (signedAt ||
+        // createdAt), newest at the top so the latest taken consent is always
+        // first and the first-ever consent ends up at the bottom of the list.
         axios.get(`${BASE}/consent-forms/uhid/${u}`, { signal: ctrl.signal }).then(r=>{
           if (ctrl.signal.aborted) return;
           const l = Array.isArray(r.data)?r.data:(r.data?.data||[]);
-          setConsents(l.sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0)));
+          setConsents(l.sort((a,b)=>
+            new Date(b.signedAt || b.createdAt || 0) - new Date(a.signedAt || a.createdAt || 0)
+          ));
         }).catch(()=>{}),
       ]);
 

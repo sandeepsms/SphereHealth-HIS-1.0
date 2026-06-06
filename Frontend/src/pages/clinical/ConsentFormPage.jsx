@@ -1071,6 +1071,21 @@ export function ConsentFormPageContent({ selectedPatient }) {
       admissionDate: found.admissionDate ? new Date(found.admissionDate).toLocaleDateString("en-IN") : "",
     }));
     toast.success(`Patient loaded: ${found.patientName || found.UHID}`);
+    // R7hr-78 — Auto-fetch the patient's previously-saved consent forms
+    // so "Previous Consent Forms" populates immediately. Previously this
+    // only ran when the staff clicked "Load Patient", which meant the
+    // embedded /doctor-notes view (loaded via selectedPatient) showed an
+    // empty picker — the user's existing consents were invisible.
+    // Fetch directly against the live UHID to avoid the trim()-gated
+    // helper which depends on the `uhid` state being in sync.
+    (async () => {
+      try {
+        const u = (found.UHID || "").trim();
+        if (!u) return;
+        const res = await axios.get(`${API}/uhid/${u}`, { headers });
+        setSavedForms(Array.isArray(res.data?.data) ? res.data.data : []);
+      } catch { setSavedForms([]); }
+    })();
   }, [selectedPatient?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleTypeSelect = (type) => {
@@ -1151,6 +1166,13 @@ export function ConsentFormPageContent({ selectedPatient }) {
           } catch { /* ignore */ }
         }
         toast.success("Patient loaded");
+        // R7hr-78 — Also load any previously-saved consents alongside the
+        // search so the user sees them without having to click anything
+        // else (mirrors the auto-fetch in the selectedPatient effect).
+        try {
+          const res = await axios.get(`${API}/uhid/${found.UHID}`, { headers });
+          setSavedForms(Array.isArray(res.data?.data) ? res.data.data : []);
+        } catch { /* keep current savedForms */ }
       } else {
         toast.warn("No active admission found");
       }
@@ -1415,7 +1437,10 @@ export function ConsentFormPageContent({ selectedPatient }) {
                 Previous Consent Forms — {consentData.UHID}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {savedForms.map(f => {
+                {/* R7hr-77 — Sort latest first by signedAt fallback createdAt */}
+                {[...savedForms].sort((a, b) =>
+                  new Date(b.signedAt || b.createdAt || 0) - new Date(a.signedAt || a.createdAt || 0)
+                ).map(f => {
                   const cat = CONSENT_CATALOGUE.find(c => c.key === f.consentType);
                   const sc = STATUS_COLORS[f.status] || STATUS_COLORS.PENDING;
                   // R7r: Audit trail surfacing (NABH PRE.3 / PRE.4).
