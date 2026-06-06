@@ -1060,6 +1060,30 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [homeMeds]);
 
+  // R7hr-88 — Anthropometry auto-fills from "Vitals on Admission".
+  // Nursing IPD Initial Assessment captures Weight (kg) and Height (cm)
+  // in the Vitals on Admission section; this effect pushes those into
+  // the N4 Anthropometry block (heightCm / weightKg / BMI) so the nurse
+  // doesn't have to re-enter the same numbers. Skips overwriting an
+  // existing manual Anthropometry entry — only fills when the
+  // Anthropometry field is still blank, so a deliberate post-admission
+  // measurement re-take isn't clobbered.
+  useEffect(() => {
+    const v_h = String(vitals.height || "").trim();
+    const v_w = String(vitals.weight || "").trim();
+    if (!v_h && !v_w) return;
+    setAnthropo(prev => {
+      const next = { ...prev };
+      if (v_h && !prev.heightCm) next.heightCm = v_h;
+      if (v_w && !prev.weightKg) next.weightKg = v_w;
+      const h = Number(next.heightCm) / 100;
+      const w = Number(next.weightKg);
+      next.bmi = (h && w) ? (w / (h * h)).toFixed(1) : prev.bmi;
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vitals.height, vitals.weight]);
+
   // D · Anthropometry — nurse measures Ht/Wt with calibrated scale at
   // admission. Doctor's section mirrors nurse's values (read-only) and
   // only IBW (Devine formula) stays doctor-editable.
