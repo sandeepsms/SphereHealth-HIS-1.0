@@ -257,17 +257,19 @@
 .phc-btn i { font-size: 11px; }
 
 /* R7hr-85 — Prominent in-banner clinical strip: consultant + all filled
-   diagnosis tiers with ICD-10. Sits right inside the patient card
-   between the meta-row and the (slim) allergies footer so the clinical
-   context is impossible to miss. */
+   diagnosis tiers with ICD-10. Sits right inside the patient card,
+   directly below the meta-row (inside .phc-info / left column), so the
+   QR on the right does NOT push it down with empty vertical gap.
+   R7hr-85.1 — moved inside .phc-info; tighter margin + flatter chrome
+   so it reads as a "sub-row" of the patient card, not a separate panel. */
 .phc-clinical-strip {
-  margin-top: 14px;
-  padding: 10px 12px;
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: #f8fafc;
   border: 1px solid #e2e8f0;
-  border-radius: 10px;
+  border-radius: 8px;
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
   align-items: center;
 }

@@ -239,13 +239,10 @@ export default function PatientHeaderCard({
     allergies.length > 0 ? `Allergies: ${allergies.join(", ")}` : null,
   ].filter(Boolean).join("\n");
 
-  /* Doctor-specific diagnosis fields (optional) */
-  const dxFields = diagnosis ? [
-    { label: "Provisional Dx", value: diagnosis.provisional || patient.admittingDiagnosis || patient.provisionalDiagnosis || "" },
-    { label: "Working Dx",     value: diagnosis.working || "" },
-    { label: "Final Dx",       value: diagnosis.final || "" },
-    { label: "ICD-10",         value: diagnosis.icd10Code ? `${diagnosis.icd10Code}${diagnosis.icd10Description ? " — " + diagnosis.icd10Description : ""}` : "" },
-  ].filter(f => f.value) : [];
+  // R7hr-85.1 — `dxFields` grid (Provisional / Working / Final / ICD-10
+  // as separate rows) was redundant once the clinical strip below the
+  // meta-row started showing every filled tier with its own pill. It
+  // doubled the patient header's vertical footprint for no extra info.
 
   return (
     <div className="phc-card">
@@ -275,6 +272,38 @@ export default function PatientHeaderCard({
                 <span className="phc-meta">🏥 <strong>{wardVal}</strong> · <strong>{bedVal}</strong></span>
                 <span className="phc-meta">📅 <strong>{admDate}</strong></span>
               </div>
+              {/* R7hr-85.1 — Clinical strip lives INSIDE the left info
+                  column, directly below the meta-row. Avoids the empty
+                  gap that opened up when it sat below the full row
+                  (QR column on the right was taller than the info
+                  column on the left, pushing the strip down). */}
+              {(consultant !== "—" || dxTiersFull.length > 0) && (
+                <div className="phc-clinical-strip">
+                  {consultant !== "—" && (
+                    <div className="phc-clin-chip phc-clin-chip--consultant" title="Attending consultant">
+                      <i className="pi pi-user-edit phc-clin-icon" />
+                      <span className="phc-clin-label">Consultant</span>
+                      <span className="phc-clin-value">{consultant}</span>
+                    </div>
+                  )}
+                  {dxTiersFull.map((row) => (
+                    <div
+                      key={row.tier}
+                      className={`phc-clin-chip phc-clin-chip--dx ${tierClass(row.tier)}`}
+                      title={`${row.tier} diagnosis${row.icd10Code ? ` · ICD-10 ${row.icd10Code}` : ""}`}
+                    >
+                      <i className="pi pi-tag phc-clin-icon" />
+                      <span className="phc-clin-tier">{row.tier}</span>
+                      <span className="phc-clin-value">{row.text}</span>
+                      {row.icd10Code && (
+                        <span className="phc-clin-icd">
+                          {row.icd10Code}{row.icd10Description ? ` — ${row.icd10Description}` : ""}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -304,40 +333,9 @@ export default function PatientHeaderCard({
           </div>
         </div>
 
-        {/* R7hr-85 — Prominent in-banner clinical strip (Consultant + all
-            filled diagnosis tiers with ICD-10). Sits right inside the
-            patient card so the clinical context is visible at a glance,
-            not buried in the smaller footer below. */}
-        {(consultant !== "—" || dxTiersFull.length > 0) && (
-          <div className="phc-clinical-strip">
-            {consultant !== "—" && (
-              <div className="phc-clin-chip phc-clin-chip--consultant" title="Attending consultant">
-                <i className="pi pi-user-edit phc-clin-icon" />
-                <span className="phc-clin-label">Consultant</span>
-                <span className="phc-clin-value">{consultant}</span>
-              </div>
-            )}
-            {dxTiersFull.map((row) => (
-              <div
-                key={row.tier}
-                className={`phc-clin-chip phc-clin-chip--dx ${tierClass(row.tier)}`}
-                title={`${row.tier} diagnosis${row.icd10Code ? ` · ICD-10 ${row.icd10Code}` : ""}`}
-              >
-                <i className="pi pi-tag phc-clin-icon" />
-                <span className="phc-clin-tier">{row.tier}</span>
-                <span className="phc-clin-value">{row.text}</span>
-                {row.icd10Code && (
-                  <span className="phc-clin-icd">
-                    {row.icd10Code}{row.icd10Description ? ` — ${row.icd10Description}` : ""}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
         {/* Footer: allergies + twice-daily compliance only — consultant
-            and diagnosis now live in the prominent strip above. */}
+            and diagnosis now live in the prominent strip above (inside
+            the left info column, right under the meta-row). */}
         <div className="phc-footer">
           {allergies.length > 0 && (
             <div className="phc-allergies">
@@ -368,17 +366,11 @@ export default function PatientHeaderCard({
           )}
         </div>
 
-        {/* Doctor-specific extended diagnosis fields */}
-        {dxFields.length > 0 && (
-          <div className="phc-dx-grid">
-            {dxFields.map((f) => (
-              <div key={f.label} className="phc-dx-item">
-                <div className="phc-dx-label">{f.label}</div>
-                <div className="phc-dx-value">{f.value}</div>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* R7hr-85.1 — Doctor-specific dx grid (Provisional Dx / Working
+            Dx / Final Dx / ICD-10 rows) removed. The clinical strip
+            above the footer now carries every filled tier with its own
+            colour-coded pill + ICD-10 attached, so a second grid that
+            repeats the same data was just adding vertical bloat. */}
       </div>
     </div>
   );
