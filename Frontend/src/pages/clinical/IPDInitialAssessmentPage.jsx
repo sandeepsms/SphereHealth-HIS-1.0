@@ -513,6 +513,12 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   const [provDx, setProvDx]             = useState("");
   const [finalDx, setFinalDx]           = useState("");
   const [icd10, setIcd10]               = useState("");
+  // R7hr-65 — bring IPD Diagnosis card to parity with OPD: ICD-10
+  // description (free-text alongside the code) + Patient Status pill
+  // (Stable / Improving / Unchanged / Deteriorating / Critical /
+  // Ready for Discharge). Empty defaults so old saved IAs still load.
+  const [icd10Description, setIcd10Description] = useState("");
+  const [patientStatus, setPatientStatus]       = useState("");
   const [investigations, setInvestigations] = useState("");
   const [rxRows, setRxRows]             = useState([blankRx()]);
   // R7hr-59 — Adopt OPD-style structured Investigations + Rx + Infusion.
@@ -1054,6 +1060,9 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             if (d.provDx)             setProvDx(d.provDx);
             if (d.finalDx)            setFinalDx(d.finalDx);
             if (d.icd10)              setIcd10(d.icd10);
+            // R7hr-65 — new fields, may be missing on older drafts
+            if (d.icd10Description)   setIcd10Description(d.icd10Description);
+            if (d.patientStatus)      setPatientStatus(d.patientStatus);
             if (d.investigations)     setInvestigations(d.investigations);
             if (d.rxRows)             setRxRows(d.rxRows);
             if (Array.isArray(d.meds))      setMeds(d.meds);          // R7hr-59
@@ -1190,6 +1199,9 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             if (doc.provDx)             setProvDx(doc.provDx);
             if (doc.finalDx)            setFinalDx(doc.finalDx);
             if (doc.icd10)              setIcd10(doc.icd10);
+            // R7hr-65 — saved-from-server pull (icd10Description + patientStatus)
+            if (doc.icd10Description)   setIcd10Description(doc.icd10Description);
+            if (doc.patientStatus)      setPatientStatus(doc.patientStatus);
             if (doc.investigations)     setInvestigations(doc.investigations);
             if (Array.isArray(doc.rxRows) && doc.rxRows.length) setRxRows(doc.rxRows);
             if (Array.isArray(doc.meds))      setMeds(doc.meds);          // R7hr-59
@@ -1301,6 +1313,10 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
     workingDiagnosis: workingDx || "",
     finalDiagnosis: finalDx || "",
     icdCode: icd10 || "",
+    // R7hr-65 — mirror to top-level so discharge summary / file print can
+    // surface the description + status without digging through noteDetails.
+    icdDescription: icd10Description || "",
+    patientStatus: patientStatus || "",
     diagnosis: finalDx || workingDx || provDx || "",
     // R7fb/R7fc — DoctorNotes schema is strict; the only catch-all field is
     // `noteDetails` (Mixed). Pack the entire role-specific form data here so
@@ -1320,7 +1336,10 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
       doctor: {
         doctorName, regNo, hopi, pmh, psh, famHx, socHx, docAllergy,
         genExam, cvs, rs, abdomen, cns,
-        provDx, finalDx, icd10, investigations,
+        // R7hr-65 — icd10Description + patientStatus mirror what OPD writes,
+        // so the same downstream consumers (discharge summary, patient file
+        // print, narrative theme) light up without per-source plumbing.
+        provDx, finalDx, icd10, icd10Description, patientStatus, investigations,
         rxRows: rxRows.filter(r => r.drug.trim()),
         meds,           // R7hr-59 — structured Rx (PrescriptionPanel shape)
         invests,        // R7hr-59 — structured Investigations
@@ -1775,7 +1794,11 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         ${kv("Provisional", provDx, true)}
         ${kv("Working", workingDx, true)}
         ${kv("Final / Confirmed", finalDx, true)}
-        ${kv("ICD-10", icd10)}
+        <div class="grid grid-2">
+          ${kv("ICD-10 Code", icd10)}
+          ${kv("ICD-10 Description", icd10Description)}
+        </div>
+        ${kv("Patient Status", patientStatus)}
         ${kv("Differentials", differentialDx, true)}`)}
 
       ${block("Anthropometry (Doctor confirms)", "Drug-dosing safety", `
@@ -3818,35 +3841,119 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               across OPD and IPD doctors. */}
           <ClinicalExaminationCard value={clinExam} onChange={setClinExam} color={C.teal} />
 
-          {/* ── D4 · 3-tier Diagnosis + Differentials (NABH AAC.1) ── */}
+          {/* ── D4 · 3-tier Diagnosis + Differentials (NABH AAC.1) ──
+              R7hr-65: Adopt the OPD Assessment "Patient Diagnosis" card
+              layout — three color-coded tiles (Provisional amber /
+              Working blue / Final green), an ICD-10 Code + Description
+              row in purple, and a Patient Status chip strip. Differential
+              Diagnoses kept below as an IPD-specific add (OPD doesn't
+              have it). Single source of truth for what a diagnosis card
+              looks like across OPD and IPD. */}
           <Section title="Diagnosis" icon="pi-tag" color={C.accent} badge="NABH AAC.1 · 3-tier">
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <Field label="Provisional Diagnosis * (on admission, based on Hx + Exam)">
-                <textarea value={provDx} onChange={e => setProvDx(e.target.value)}
-                  placeholder="Initial clinical impression…"
-                  className="his-textarea" style={{ minHeight: 56 }} />
-              </Field>
-              <Field label="Working Diagnosis (after initial investigations)">
-                <textarea value={workingDx} onChange={e => setWorkingDx(e.target.value)}
-                  placeholder="Refined diagnosis after labs/imaging during the stay…"
-                  className="his-textarea" style={{ minHeight: 56 }} />
-              </Field>
-              <Grid2>
-                <Field label="Final / Confirmed Diagnosis">
-                  <textarea value={finalDx} onChange={e => setFinalDx(e.target.value)}
-                    placeholder="Confirmed at discharge…" className="his-textarea" style={{ minHeight: 56 }} />
-                </Field>
-                <Field label="ICD-10 Code">
-                  <input value={icd10} onChange={e => setIcd10(e.target.value)}
-                    placeholder="e.g. J18.9, K35.9…" className="his-field" />
-                </Field>
-              </Grid2>
-              <Field label="Differential Diagnoses">
-                <textarea value={differentialDx} onChange={e => setDifferentialDx(e.target.value)}
-                  placeholder="Alternative diagnoses to rule out — one per line"
-                  className="his-textarea" style={{ minHeight: 56 }} />
-              </Field>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
+              Provisional → Working → Final + ICD-10 coding
             </div>
+
+            {/* Three diagnosis tiers — color-coded by clinical certainty */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+              {/* Provisional (orange) — first-contact impression */}
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#f59e0b", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: ".6px" }}>Provisional Dx *</span>
+                </div>
+                <textarea
+                  value={provDx}
+                  onChange={e => setProvDx(e.target.value)}
+                  placeholder="Initial clinical impression on admission"
+                  style={{ width: "100%", border: "1.5px solid #fcd34d", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#fffbeb", boxSizing: "border-box", minHeight: 64, resize: "vertical" }}
+                />
+              </div>
+              {/* Working (blue) — evolving impression */}
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#3b82f6", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: ".6px" }}>Working Dx</span>
+                </div>
+                <textarea
+                  value={workingDx}
+                  onChange={e => setWorkingDx(e.target.value)}
+                  placeholder="Refined after labs / imaging"
+                  style={{ width: "100%", border: "1.5px solid #93c5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#eff6ff", boxSizing: "border-box", minHeight: 64, resize: "vertical" }}
+                />
+              </div>
+              {/* Final (green) — confirmed at discharge */}
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: ".6px" }}>Final Dx</span>
+                </div>
+                <textarea
+                  value={finalDx}
+                  onChange={e => setFinalDx(e.target.value)}
+                  placeholder="Confirmed at discharge"
+                  style={{ width: "100%", border: "1.5px solid #86efac", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#f0fdf4", boxSizing: "border-box", minHeight: 64, resize: "vertical" }}
+                />
+              </div>
+            </div>
+
+            {/* ICD-10 row — code + description applied to the episode */}
+            <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 12, marginBottom: 12 }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#8b5cf6", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: ".6px" }}>ICD-10 Code</span>
+                </div>
+                <input
+                  value={icd10}
+                  onChange={e => setIcd10(e.target.value)}
+                  placeholder="e.g. J18.9"
+                  style={{ width: "100%", border: "1.5px solid #c4b5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: "#5b21b6", outline: "none", background: "#faf5ff", boxSizing: "border-box", letterSpacing: ".5px" }}
+                />
+              </div>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#8b5cf6", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: ".6px" }}>ICD-10 Description</span>
+                </div>
+                <input
+                  value={icd10Description}
+                  onChange={e => setIcd10Description(e.target.value)}
+                  placeholder="e.g. Unspecified pneumonia, Type 2 DM with complications…"
+                  style={{ width: "100%", border: "1.5px solid #c4b5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#faf5ff", boxSizing: "border-box" }}
+                />
+              </div>
+            </div>
+
+            {/* Patient Status chips — clinical trajectory at a glance.
+                Click an already-selected chip to clear it (toggle), since
+                "no status set" is a valid state for a fresh admission. */}
+            <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>Patient Status:</span>
+              {["Stable","Improving","Unchanged","Deteriorating","Critical","Ready for Discharge"].map(s => (
+                <button key={s} type="button"
+                  onClick={() => setPatientStatus(p => p === s ? "" : s)}
+                  style={{
+                    padding: "4px 13px", borderRadius: 20,
+                    border: `1.5px solid ${patientStatus === s ? "#2563eb" : C.border}`,
+                    background: patientStatus === s ? "#2563eb" : "white",
+                    color: patientStatus === s ? "white" : C.muted,
+                    fontFamily: "inherit", fontSize: 11, fontWeight: 700,
+                    cursor: "pointer", transition: "all .15s ease",
+                  }}>
+                  {s}
+                </button>
+              ))}
+            </div>
+
+            {/* Differential Diagnoses — IPD-specific addition (OPD card
+                doesn't include this; we keep it for the admission flow
+                because the doctor often lists 2-3 dx to rule out). */}
+            <Field label="Differential Diagnoses">
+              <textarea value={differentialDx} onChange={e => setDifferentialDx(e.target.value)}
+                placeholder="Alternative diagnoses to rule out — one per line"
+                className="his-textarea" style={{ minHeight: 56 }} />
+            </Field>
           </Section>
 
           {/* ── R7hr-59 · Structured Investigations (OPD-style) ── */}
