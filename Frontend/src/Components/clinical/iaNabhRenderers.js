@@ -115,7 +115,17 @@ export function renderImmunisation(nabh, H) {
     ["Pneumococcal", im.pneumococcal],
   ];
   const filledRows = rows.filter(([, v]) => v && (v.vaccinated || v.lastDate));
-  const hasAny = filledRows.length || _isFilled(im.other) || im.upToDateForAge === false;
+  // R7hr-106 — Show the card when the doctor has affirmatively marked the
+  // patient up-to-date for age (positive statement deserves rendering),
+  // not only when a specific vaccine row is filled or the patient is flagged
+  // not-up-to-date. Without this gate, picking "Up to date for age = Yes"
+  // and submitting silently dropped the entire Immunisation Status block
+  // from the card, leaving the doctor unable to verify their entry.
+  const hasAny =
+    filledRows.length ||
+    _isFilled(im.other) ||
+    im.upToDateForAge === false ||
+    im.upToDateForAge === true;
   if (!hasAny) return "";
   const tbl = `<table class="${H.cssPrefix}-tbl"><tr><th>Vaccine</th><th>Status</th><th>Last Date</th><th>Notes</th></tr>${
     rows.map(([lbl, v]) => {
@@ -128,7 +138,9 @@ export function renderImmunisation(nabh, H) {
   }${im.other ? `<tr><td colspan="4"><strong>Other:</strong> ${esc(im.other)}</td></tr>` : ""}</table>${
     im.upToDateForAge === false
       ? '<p style="margin:6px 0 0;font-size:11px;color:#dc2626;font-weight:600">⚠ Patient is NOT up-to-date for age.</p>'
-      : ""
+      : im.upToDateForAge === true
+        ? '<p style="margin:6px 0 0;font-size:11px;color:#16a34a;font-weight:600">✓ Patient is up-to-date for age (per NABH AAC.1).</p>'
+        : ""
   }`;
   return H._section("Immunisation Status (NABH AAC.1)", "#0d9488", tbl);
 }

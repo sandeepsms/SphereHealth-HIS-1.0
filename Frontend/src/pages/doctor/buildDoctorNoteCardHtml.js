@@ -391,14 +391,87 @@ const buildBuilder = (note, opts = {}) => {
         : "";
 
       // Examination findings
-      const exam = _section("Examination Findings", "#475569", _grid([
-        _kv("General", docPayload.genExam, true),
-        _kv("CVS", docPayload.cvs),
-        _kv("RS", docPayload.rs),
-        _kv("Abdomen", docPayload.abdomen),
-        _kv("CNS", docPayload.cns),
-        _kv("Local Exam", nabh.localExamination, true),
-      ]));
+      // R7hr-106 — Surface the structured Clinical Examination (R7hr-58)
+      // alongside the legacy free-text fields. Pre-R7hr-58 the form had
+      // 5 free-text textareas (genExam / cvs / rs / abdomen / cns) and the
+      // builder read those directly. R7hr-58 replaced them with a
+      // structured form that writes to `nabh.clinicalExamination.genExam`
+      // (built / nourishment / consciousness / orientation / pallor /
+      // pedalEdema / hydration / jvp / icterus / cyanosis / clubbing /
+      // lymphadenopathy / febrile) plus `sysExam.{cvs,rs,cns,pa}` each
+      // with rich sub-fields, but the card kept reading the now-empty
+      // legacy keys so post-R7hr-58 IAs rendered empty Exam sections even
+      // when the doctor filled everything (Ramesh's IA: all 4 sysExam
+      // blocks fully populated, but card showed only Local Exam).
+      // We now render BOTH: legacy free-text first (if filled) for
+      // back-compat with older records, then the structured General
+      // Examination as a chip grid, then per-system CVS/RS/CNS/P-A blocks
+      // with their structured findings. Empty blocks stay hidden.
+      const clinExam = nabh.clinicalExamination || {};
+      const ge = clinExam.genExam || {};
+      const sx = clinExam.sysExam || {};
+      const genHasContent = Object.values(ge).some(v => v !== "" && v !== false && v != null);
+      const sysHasContent = ["cvs","rs","cns","pa"].some(k => {
+        const blk = sx[k] || {};
+        return Object.values(blk).some(v => v !== "" && v !== false && v != null);
+      });
+      const legacyExam = (docPayload.genExam || docPayload.cvs || docPayload.rs || docPayload.abdomen || docPayload.cns);
+      const renderGenExamChips = () => {
+        const labelMap = {
+          built: "Built", nourishment: "Nourishment", consciousness: "Consciousness",
+          orientation: "Orientation", pallor: "Pallor", pedalEdema: "Pedal Edema",
+          hydration: "Hydration", jvp: "JVP", icterus: "Icterus", cyanosis: "Cyanosis",
+          clubbing: "Clubbing", lymphadenopathy: "Lymphadenopathy", febrile: "Febrile",
+          lymphLocation: "Lymph Location",
+        };
+        const cells = Object.entries(ge)
+          .filter(([k, v]) => v !== "" && v != null && v !== false)
+          .map(([k, v]) => {
+            const lbl = labelMap[k] || k;
+            const val = typeof v === "boolean" ? (v ? "✓ Yes" : "No") : v;
+            return _kv(lbl, val);
+          });
+        return cells.length ? _grid(cells) : "";
+      };
+      const renderSysBlock = (key, label) => {
+        const b = sx[key] || {};
+        const cells = Object.entries(b)
+          .filter(([k, v]) => v !== "" && v != null && v !== false && k !== "other" && !k.endsWith("Details") && !k.endsWith("Location"))
+          .map(([k, v]) => {
+            const niceK = k.charAt(0).toUpperCase() + k.slice(1).replace(/([A-Z])/g, " $1");
+            const val = typeof v === "boolean" ? "✓ Yes" : v;
+            return _kv(niceK, val);
+          });
+        // tail: structured "details" / "location" / "other" fields
+        const extras = [];
+        if (b.tenderLocation) extras.push(_kv("Tender Location", b.tenderLocation));
+        if (b.murmurDetails) extras.push(_kv("Murmur Details", b.murmurDetails, true));
+        if (b.organomegalyDetails) extras.push(_kv("Organomegaly Details", b.organomegalyDetails, true));
+        if (b.other) extras.push(_kv("Other", b.other, true));
+        const all = cells.concat(extras);
+        if (!all.length) return "";
+        return `<div style="margin-top:8px"><div style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">${label}</div>${_grid(all)}</div>`;
+      };
+      const examInner = [
+        legacyExam ? _grid([
+          _kv("General", docPayload.genExam, true),
+          _kv("CVS", docPayload.cvs),
+          _kv("RS", docPayload.rs),
+          _kv("Abdomen", docPayload.abdomen),
+          _kv("CNS", docPayload.cns),
+        ]) : "",
+        genHasContent ? `<div style="margin-top:${legacyExam ? "10px" : "0"}"><div style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">General Examination</div>${renderGenExamChips()}</div>` : "",
+        sysHasContent ? renderSysBlock("cvs", "CVS — Cardiovascular") : "",
+        sysHasContent ? renderSysBlock("rs", "RS — Respiratory") : "",
+        sysHasContent ? renderSysBlock("cns", "CNS — Central Nervous System") : "",
+        sysHasContent ? renderSysBlock("pa", "P/A — Per Abdomen") : "",
+        clinExam.generalExamination ? _grid([_kv("General Notes", clinExam.generalExamination, true)]) : "",
+        clinExam.systemicExamination ? _grid([_kv("Systemic Notes", clinExam.systemicExamination, true)]) : "",
+        nabh.localExamination ? _grid([_kv("Local Exam", nabh.localExamination, true)]) : "",
+      ].filter(Boolean).join("");
+      const exam = examInner
+        ? _section("Examination Findings", "#475569", examInner)
+        : "";
 
       // Medication Reconciliation (NABH MOM.5 / COP.2) — falls back to
       // nurse-side homeMedications list mapped onto the same shape.
