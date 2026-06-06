@@ -653,39 +653,57 @@ function ConsentPrintView({ data, type, onClose }) {
             {data.body}
           </div>
 
-          {/* Risks */}
-          {data.risks?.length > 0 && (
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6, color: C.red }}>
-                <i className="pi pi-exclamation-triangle" style={{ marginRight: 6 }} />Risks and Potential Complications
-              </div>
-              <ul style={{ paddingLeft: 20, margin: 0 }}>
-                {data.risks.filter(Boolean).map((r, i) => <li key={i} style={{ marginBottom: 4, fontSize: 13 }}>{r}</li>)}
-              </ul>
-            </div>
-          )}
-
-          {/* Benefits */}
-          {data.benefits?.length > 0 && (
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6, color: C.green }}>
-                <i className="pi pi-check-circle" style={{ marginRight: 6 }} />Expected Benefits
-              </div>
-              <ul style={{ paddingLeft: 20, margin: 0 }}>
-                {data.benefits.filter(Boolean).map((b, i) => <li key={i} style={{ marginBottom: 4, fontSize: 13 }}>{b}</li>)}
-              </ul>
-            </div>
-          )}
-
-          {/* Alternatives */}
-          {data.alternatives?.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6, color: C.blue }}>
-                <i className="pi pi-arrow-right-arrow-left" style={{ marginRight: 6 }} />Alternatives Discussed
-              </div>
-              <ul style={{ paddingLeft: 20, margin: 0 }}>
-                {data.alternatives.filter(Boolean).map((a, i) => <li key={i} style={{ marginBottom: 4, fontSize: 13 }}>{a}</li>)}
-              </ul>
+          {/* R7hr-82 — Risks / Benefits / Alternatives in a 3-column
+              polished card grid (mirrors the capture-form and patient-
+              panel layout). Replaces the prior stacked-list layout so
+              the View / Print preview shows the same shape the doctor
+              filled in. Falls back gracefully when individual lists
+              are empty (e.g. consent types without benefits). */}
+          {((data.risks?.length || 0) + (data.benefits?.length || 0) + (data.alternatives?.length || 0)) > 0 && (
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 10, marginBottom: 16,
+            }}>
+              {data.risks?.length > 0 && (
+                <div style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", border: `1.5px solid ${C.border}`, borderTop: `4px solid ${C.red}` }}>
+                  <div style={{ fontWeight: 800, fontSize: 12, color: C.red, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    <i className="pi pi-exclamation-triangle" />
+                    <span>Risks & Complications</span>
+                  </div>
+                  <ul style={{ paddingLeft: 18, margin: 0 }}>
+                    {data.risks.filter(Boolean).map((r, i) => (
+                      <li key={i} style={{ marginBottom: 4, fontSize: 12, lineHeight: 1.5 }}>{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {data.benefits?.length > 0 && (
+                <div style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", border: `1.5px solid ${C.border}`, borderTop: `4px solid ${C.green}` }}>
+                  <div style={{ fontWeight: 800, fontSize: 12, color: C.green, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    <i className="pi pi-check-circle" />
+                    <span>Expected Benefits</span>
+                  </div>
+                  <ul style={{ paddingLeft: 18, margin: 0 }}>
+                    {data.benefits.filter(Boolean).map((b, i) => (
+                      <li key={i} style={{ marginBottom: 4, fontSize: 12, lineHeight: 1.5 }}>{b}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {data.alternatives?.length > 0 && (
+                <div style={{ background: "#fff", borderRadius: 10, padding: "12px 14px", border: `1.5px solid ${C.border}`, borderTop: `4px solid ${C.blue}` }}>
+                  <div style={{ fontWeight: 800, fontSize: 12, color: C.blue, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    <i className="pi pi-arrow-right-arrow-left" />
+                    <span>Alternatives Discussed</span>
+                  </div>
+                  <ul style={{ paddingLeft: 18, margin: 0 }}>
+                    {data.alternatives.filter(Boolean).map((a, i) => (
+                      <li key={i} style={{ marginBottom: 4, fontSize: 12, lineHeight: 1.5 }}>{a}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
