@@ -1468,7 +1468,31 @@ export function ConsentFormPageContent({ selectedPatient }) {
                         </div>
                         <span style={{ padding: "3px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700,
                           background: sc.bg, color: sc.text }}>{f.status}</span>
-                        <button onClick={() => { setPreviewData({ ...f, body: f.procedureDescription, risks: f.risksDisclosed, benefits: f.benefitsExplained, alternatives: f.alternativesDisclosed }); setPreviewType(cat); }}
+                        <button onClick={() => {
+                          // R7hr-80 — Consents saved before R7hr-74's auto-fill landed
+                          // have empty wardBed/admissionDate/doctorName/department
+                          // baked into the backend doc. Falling back to the LIVE
+                          // admission (patInfo / consentData) when those fields are
+                          // blank ensures the preview shows the right ward/bed/etc
+                          // instead of "—" — same fallback the patient panel card
+                          // does in R7hr-76.
+                          const liveWardBed = `${patInfo?.wardId?.wardName || patInfo?.wardName || ""} / ${patInfo?.bedNumber || ""}`.replace(/^\s*\/\s*$/, "");
+                          const liveAdmDate = patInfo?.admissionDate ? new Date(patInfo.admissionDate).toLocaleDateString("en-IN") : "";
+                          const liveDoctor  = patInfo?.attendingDoctor || patInfo?.attendingDoctorName || consentData.doctorName || "";
+                          const liveDept    = patInfo?.department || patInfo?.wardId?.department || consentData.department || "";
+                          setPreviewData({
+                            ...f,
+                            body:         f.procedureDescription,
+                            risks:        f.risksDisclosed,
+                            benefits:     f.benefitsExplained,
+                            alternatives: f.alternativesDisclosed,
+                            wardBed:       f.wardBed       || liveWardBed,
+                            admissionDate: f.admissionDate || liveAdmDate,
+                            doctorName:    f.doctorName    || liveDoctor,
+                            department:    f.department    || liveDept,
+                          });
+                          setPreviewType(cat);
+                        }}
                           style={{ padding: "5px 12px", borderRadius: 7, border: "none", background: "#eef2ff",
                             color: "#6366f1", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                           <i className="pi pi-eye" style={{ marginRight: 4 }} />View
