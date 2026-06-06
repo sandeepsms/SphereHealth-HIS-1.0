@@ -134,13 +134,34 @@ export default function PatientHeaderCard({
   // Ward fallback chain — denormalised wardName → populated Ward → department
   const wardVal    = patient.wardName || patient.wardId?.wardName || patient.department || "—";
   const admDate    = fmtDate(patient.admissionDate);
-  // Prefer latestDiagnosis (live from doctor notes) over admission's
-  // admittingDiagnosis (often empty / stale at the time of read).
-  const diagText   = latestDiagnosis?.text
-    || patient.diagnosis
-    || patient.admittingDiagnosis
-    || patient.provisionalDiagnosis
-    || "—";
+  // R7hr-84 — Pick the strongest available diagnosis tier so the
+  // banner shows the doctor's most authoritative call. Priority is
+  // Final → Working → Provisional. Sources, in order of trust:
+  //   1. `diagnosis` prop (doctor's in-flight edit state on /doctor-notes)
+  //   2. `latestDiagnosis` prop (pulled from saved notes on nursing side)
+  //   3. patient.* legacy admittingDiagnosis fields
+  const pickedDx = (() => {
+    const d = diagnosis;
+    if (d && (d.final || d.working || d.provisional)) {
+      if (d.final)      return { tier: "Final",       text: d.final,       icd10Code: d.icd10Code, icd10Description: d.icd10Description };
+      if (d.working)    return { tier: "Working",     text: d.working,     icd10Code: d.icd10Code, icd10Description: d.icd10Description };
+      return              { tier: "Provisional", text: d.provisional, icd10Code: d.icd10Code, icd10Description: d.icd10Description };
+    }
+    if (latestDiagnosis?.text) return latestDiagnosis;
+    return null;
+  })();
+  const diagTier   = pickedDx?.tier || null;
+  const diagText   = (() => {
+    if (pickedDx?.text) {
+      const code = pickedDx.icd10Code ? ` · ${pickedDx.icd10Code}` : "";
+      const desc = pickedDx.icd10Description ? ` — ${pickedDx.icd10Description}` : "";
+      return `${pickedDx.text}${code}${desc}`;
+    }
+    return patient.diagnosis
+      || patient.admittingDiagnosis
+      || patient.provisionalDiagnosis
+      || "—";
+  })();
   const consultant = patient.attendingDoctor || patient.doctorName || patient.consultantName || "—";
   const admType    = patient.admissionType?.toUpperCase() || "IPD";
   const allergies  = (patient.allergies || patient.knownAllergies || []).filter(Boolean);
@@ -265,9 +286,9 @@ export default function PatientHeaderCard({
             <i className="pi pi-tag phc-footer-icon" />
             <span className="phc-footer-label">Diagnosis:</span>
             <span className="phc-footer-value">{diagText}</span>
-            {latestDiagnosis?.tier && (
-              <span className={`phc-tier-pill ${tierClass(latestDiagnosis.tier)}`}>
-                {latestDiagnosis.tier}
+            {diagTier && (
+              <span className={`phc-tier-pill ${tierClass(diagTier)}`}>
+                {diagTier}
               </span>
             )}
           </div>
