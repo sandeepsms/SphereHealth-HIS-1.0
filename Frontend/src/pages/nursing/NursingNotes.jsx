@@ -936,6 +936,12 @@ function NursingNotesContent({ selectedPatient }) {
           // R7hr-87 — pull the doctor's last patient-status call so it
           // shows up on the nursing banner too.
           status: top.patientStatus || "",
+          // R7hr-87.1 — also carry every filled tier so the nurse
+          // banner reaches full parity with the doctor banner (one
+          // chip per tier rather than a single Final chip).
+          provisional: top.provisionalDiagnosis || "",
+          working:     top.workingDiagnosis     || "",
+          final:       top.finalDiagnosis       || "",
           updatedAt: top.createdAt,
         });
       } else {

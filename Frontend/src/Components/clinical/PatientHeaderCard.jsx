@@ -166,19 +166,29 @@ export default function PatientHeaderCard({
   // tier (matches the doctor's intent — ICD-10 always belongs to the
   // most-final call).
   const dxTiersFull = (() => {
-    const d = diagnosis;
-    if (d && (d.final || d.working || d.provisional)) {
+    // Inline helper: build an ordered array of per-tier chips from a
+    // {provisional, working, final, icd10Code, icd10Description}
+    // object. Used for BOTH the doctor's in-flight `diagnosis` prop
+    // and the nurse's saved-notes `latestDiagnosis` prop so both
+    // banners render identically (R7hr-87.1).
+    const buildTiers = (src) => {
       const out = [];
-      if (d.provisional) out.push({ tier: "Provisional", text: d.provisional });
-      if (d.working)     out.push({ tier: "Working",     text: d.working });
-      if (d.final)       out.push({ tier: "Final",       text: d.final });
-      // attach ICD-10 to the highest tier present
-      if (out.length && (d.icd10Code || d.icd10Description)) {
-        out[out.length - 1].icd10Code = d.icd10Code;
-        out[out.length - 1].icd10Description = d.icd10Description;
+      if (src.provisional) out.push({ tier: "Provisional", text: src.provisional });
+      if (src.working)     out.push({ tier: "Working",     text: src.working });
+      if (src.final)       out.push({ tier: "Final",       text: src.final });
+      if (out.length && (src.icd10Code || src.icd10Description)) {
+        out[out.length - 1].icd10Code = src.icd10Code;
+        out[out.length - 1].icd10Description = src.icd10Description;
       }
       return out;
+    };
+    const d = diagnosis;
+    if (d && (d.final || d.working || d.provisional)) return buildTiers(d);
+    if (latestDiagnosis && (latestDiagnosis.final || latestDiagnosis.working || latestDiagnosis.provisional)) {
+      return buildTiers(latestDiagnosis);
     }
+    // Legacy single-tier shape (older callers): one chip for the
+    // most-final tier the saved-notes pull supplied.
     if (latestDiagnosis?.text) {
       return [{
         tier: latestDiagnosis.tier || "Provisional",
