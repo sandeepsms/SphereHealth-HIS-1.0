@@ -38,6 +38,76 @@ class BedService {
       .sort({ floorNumber: 1, roomNumber: 1, bedNumber: 1 })
       .lean();
 
+    // R7hr-103 — Defensive auto-heal of orphan-occupied beds.
+    // Background: discharge / wipe / cleanup scripts that delete an
+    // Admission record sometimes forgot to call dischargeBed() on the
+    // associated bed. The bed then sat in status="Occupied" with a
+    // dangling currentAdmission ObjectId pointing at a deleted (or
+    // Discharged/Cancelled) admission — the Bed Visual UI rendered it as
+    // "Occupied / Patient data loading..." forever.
+    // Now every read of the bed list checks for this drift: if a bed
+    // claims a non-Available state but its currentAdmission populated to
+    // null OR has a non-Active admission.status, we reset the bed to
+    // Available and clear the patient/admission refs. The write is
+    // best-effort (failure is logged but never blocks the read).
+    // This is purely additive — beds that ARE legitimately occupied
+    // (currentAdmission resolves to an Active admission, or status is
+    // Maintenance / Blocked / Reserved with a deliberate hold) are
+    // untouched. Idempotent — repeated calls are no-ops.
+    const healIds = [];
+    for (const b of beds) {
+      const nonAvailable = ["Occupied", "Cleaning"].includes(b.status);
+      if (!nonAvailable) continue;
+      const hadRef =
+        b.currentAdmission != null || b.patient != null;
+      if (!hadRef) continue;
+      // currentAdmission was populated above; if the populated value is
+      // null/undefined, the ref pointed at a deleted document.
+      const populated = b.currentAdmission;
+      const isDead =
+        populated == null ||
+        (typeof populated === "object" &&
+          populated.status &&
+          populated.status !== "Active");
+      if (isDead) {
+        healIds.push(b._id);
+        // Mutate the in-memory bed so the response we send is already
+        // healed (no second round-trip).
+        b.status = "Available";
+        b.patient = null;
+        b.currentAdmission = null;
+      }
+    }
+    if (healIds.length > 0) {
+      // Fire-and-forget DB write. We don't await to keep read latency
+      // unchanged; the healed state is already in the response. Failure
+      // here just means the next read will heal again — idempotent.
+      Bed.updateMany(
+        { _id: { $in: healIds } },
+        {
+          $set: { status: "Available" },
+          $unset: {
+            patient: "",
+            currentAdmission: "",
+            // Phantom field names some legacy scripts wrote (not in
+            // schema but persisted on pre-strict docs). Best-effort.
+            currentPatient: "",
+            currentPatientId: "",
+            currentAdmissionId: "",
+            "currentBooking.actualDischargeDate": "",
+          },
+        },
+      ).catch((e) => {
+        console.error(
+          "[bedService] orphan-bed heal write failed:",
+          e.message,
+        );
+      });
+      console.log(
+        `[bedService] auto-healed ${healIds.length} orphan-occupied bed(s)`,
+      );
+    }
+
     return beds;
   }
 
