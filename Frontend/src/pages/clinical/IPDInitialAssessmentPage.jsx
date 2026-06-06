@@ -3627,7 +3627,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               print block + downstream consumers without a schema
               change. */}
           <Section title="Co-morbidities" icon="pi-list-check" color={C.purple} badge="NABH AAC.1">
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8, fontSize: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 12 }}>
               {[
                 ["diabetes", "Diabetes Mellitus"],   ["hypertension", "Hypertension"],
                 ["cad", "CAD / IHD"],                ["ckd", "Chronic Kidney Disease"],
