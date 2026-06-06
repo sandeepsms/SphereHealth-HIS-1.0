@@ -108,6 +108,13 @@ const INCIDENT_REGISTERS = [
   { id: "hai-surveillance", label: "HAI Surveillance",     icon: "pi-search",               path: "/compliance/nabh-registers/haisurveillance", apiPath: "nabh-registers/hai-surveillance",   nabhRef: "HIC.5",  desc: "Healthcare-associated infection surveillance + device-day rates" },
   { id: "hand-hygiene",     label: "Hand Hygiene",         icon: "pi-thumbs-up",            path: "/compliance/nabh-registers/handhygiene",     apiPath: "nabh-registers/handhygiene",        nabhRef: "HIC.3",  desc: "5-moments hand-hygiene observations + compliance rate" },
   { id: "lama",             label: "LAMA / DAMA",          icon: "pi-sign-out",             path: "/compliance/nabh-registers/lama",            apiPath: "nabh-registers/lama",               nabhRef: "AAC.13", desc: "Leave Against / Discharge Against Medical Advice" },
+  // IA Amendments — chronological WHO/WHAT/WHEN/WHY for every post-sign
+  // edit to a doctor or nurse Initial Assessment. Drives the AAC.1 /
+  // IMS.2 traceability question on surveyor visits. Live row count is
+  // expensive to derive on this surface (the generic /clinical-audit
+  // endpoint requires a `kind=` filter) so the tile shows "—" and the
+  // count surfaces only on the destination page.
+  { id: "ia-amendments",    label: "IA Amendments",        icon: "pi-history",              path: "/compliance/ia-amendments",                  apiPath: "clinical-audit",                    nabhRef: "AAC.1",  desc: "Initial Assessment edit trail (NABH AAC.1)" },
 ];
 const INCIDENT_ACCENT = "#b45309";
 

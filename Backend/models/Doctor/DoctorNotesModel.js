@@ -120,6 +120,31 @@ const DoctorNotesSchema = new mongoose.Schema(
       default: "draft" },
     signedAt: { type: Date },
 
+    // ── Post-sign amendment trail (NABH IMS.2 / MCI Indian Medical
+    // Records Act 1956 §3) ───────────────────────────────────────────
+    // SIGNED notes that need a correction are flipped to status="amended"
+    // by the /:id/amend route; the original signedAt / signedByName stay
+    // untouched so the legal attestation chain is preserved. Each push
+    // here captures who changed what, when, and why — every entry is
+    // mirrored to ClinicalAudit (event DOCTOR_NOTE_AMENDED, 7y floor).
+    amendments: [
+      {
+        amendedAt:     { type: Date, default: Date.now },
+        amendedBy:     { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        amendedById:   { type: String },
+        amendedByName: { type: String, trim: true },
+        amendedByRole: { type: String, trim: true },
+        reason:        { type: String, required: true, trim: true, maxlength: 1000 },
+        changes: [
+          {
+            field:    { type: String, trim: true },
+            oldValue: { type: mongoose.Schema.Types.Mixed },
+            newValue: { type: mongoose.Schema.Types.Mixed },
+          },
+        ],
+      },
+    ],
+
     // Extended NABH fields
     // FIX (audit P11-B1): noteType is now an enum so the frontend can't slip
     // a junk value through and end up with un-bucketed notes that no view

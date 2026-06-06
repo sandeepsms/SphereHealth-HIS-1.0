@@ -238,6 +238,12 @@ const MedicationErrorRegisterPage   = lazy(() => import("./pages/compliance/Medi
 // discharge is finalised with disposition === "LAMA"; manual entries for
 // Compliance / MRD backfill.
 const LAMARegisterPage              = lazy(() => import("./pages/compliance/LAMARegisterPage"));
+// NABH AAC.1 / IMS.2 — IA Amendments register. Chronological WHO / WHAT /
+// WHEN / WHY trail for every post-sign edit to a doctor or nurse Initial
+// Assessment. Read-only surveyor surface — actual amendments still happen
+// on the IA pages and emit DOCTOR_NOTE_AMENDED / NURSE_NOTE_AMENDED rows
+// to the ClinicalAudit collection.
+const IAAmendmentsRegisterPage      = lazy(() => import("./pages/compliance/IAAmendmentsRegisterPage"));
 // R7gw-B9-B9-T03 — NABH Root Cause Analysis Register (QPS.1 + AAC.7).
 // Auto-pre-created from sentinel events (linkedSentinelId set, status
 // Initiated). QPS chair files manual entries for serious near-miss or
@@ -812,6 +818,14 @@ function AppLayout({ collapsed, setCollapsed }) {
                 manual POST for compliance / MRD backfill. */}
             <Route path="/compliance/nabh-registers/lama" element={
               <RoleGuard action="compliance.nabh.read"><LAMARegisterPage /></RoleGuard>
+            } />
+            {/* NABH AAC.1 / IMS.2 — IA Amendments register. Chronological
+                audit-log mirror of every post-sign edit to a doctor or
+                nurse Initial Assessment. Read-only; the actual amendments
+                happen on the IA pages themselves and emit DOCTOR_NOTE_AMENDED
+                / NURSE_NOTE_AMENDED rows to the ClinicalAudit collection. */}
+            <Route path="/compliance/ia-amendments" element={
+              <RoleGuard action="reports.audit"><IAAmendmentsRegisterPage /></RoleGuard>
             } />
             {/* R7gw-B9-B9-T03 — Root Cause Analysis Register (NABH QPS.1).
                 Auto-pre-created from sentinel events; QPS chair / Quality

@@ -43,7 +43,7 @@ const C = {
 };
 
 /* ── Section card ── */
-function Section({ title, icon, color = C.accent, badge, children, defaultOpen = true }) {
+function Section({ title, icon, color = C.accent, badge, children, defaultOpen = true, disabled = false }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div style={{ background: C.card, border: `1.5px solid ${color}25`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
@@ -61,10 +61,23 @@ function Section({ title, icon, color = C.accent, badge, children, defaultOpen =
             <span style={{ background: color + "18", color, border: `1px solid ${color}30`,
               fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 4 }}>{badge}</span>
           )}
+          {disabled && (
+            <span title="Locked - click Amend at the top of the page to edit"
+              style={{ background: "#fee2e2", color: "#b91c1c", border: "1px solid #fecaca",
+                fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 4 }}>LOCKED</span>
+          )}
         </div>
         <i className={`pi ${open ? "pi-chevron-up" : "pi-chevron-down"}`} style={{ fontSize: 10, color: C.muted }} />
       </div>
-      {open && <div style={{ padding: "16px 18px" }}>{children}</div>}
+      {open && (
+        <div
+          aria-disabled={disabled || undefined}
+          style={{
+            padding: "16px 18px",
+            ...(disabled ? { pointerEvents: "none", opacity: 0.7, filter: "saturate(0.85)" } : null),
+          }}
+        >{children}</div>
+      )}
     </div>
   );
 }
@@ -537,6 +550,23 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   // R7fm — separate NurseNote id for the nursing-section mirror write
   // (NurseNotes collection / nursing timeline). See R7fm.
   const [nurseNoteId, setNurseNoteId] = useState(null);
+  // R7hr-72/lock — One-shot fill, explicit Amend ceremony. Once the
+  // restored role-specific note has status signed/amended, the page
+  // drops into LOCKED mode: every Section becomes read-only behind the
+  // `ro` helper, the bottom Save/Sign buttons hide, and a red ribbon
+  // exposes a single Amend button. Clicking it pops a modal that
+  // captures a reason (min 5 chars), snapshots the full form state,
+  // then unlocks the page for editing. On save, a diff payload + the
+  // reason posts to /{role-notes}/:id/amend so the backend logs the
+  // audit row and re-signs.
+  const [iaLocked,         setIaLocked]         = useState(false);
+  const [amendMode,        setAmendMode]        = useState(false);
+  const [amendReason,      setAmendReason]      = useState("");
+  const [amendModalOpen,   setAmendModalOpen]   = useState(false);
+  const [preAmendSnapshot, setPreAmendSnapshot] = useState(null);
+  // Lock ribbon metadata sourced from the restored note.
+  const [lockedSignedByName, setLockedSignedByName] = useState("");
+  const [lockedSignedAt,     setLockedSignedAt]     = useState(null);
   // R7bd — activeTab + Doctor Initial Assessment tab removed. This page
   // is now nursing-only: the Doctor's initial assessment lives in the
   // dedicated Doctor Notes → Initial Assessment flow, and combining
@@ -1486,6 +1516,24 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               `Nurse data ready — fill the Doctor section and Sign to add your assessment.`,
               { autoClose: 3500 },
             );
+
+            // R7hr-72/lock — Drop into LOCKED mode if the ROLE-SPECIFIC
+            // restored note is already signed/amended. Doctor view checks
+            // the doctor-section note; nurse view checks the nurse-section
+            // note. If only the OTHER role's note is signed (common: nurse
+            // signed first, doctor still drafting) the active form stays
+            // editable.
+            const lockSrc = isDoctorRole ? doctorSec : nurseSec;
+            if (lockSrc && (lockSrc.status === "signed" || lockSrc.status === "amended")) {
+              setIaLocked(true);
+              setLockedSignedByName(
+                lockSrc.signedByName
+                || (isDoctorRole ? (lockSrc.noteDetails?.doctor?.doctorName || doctorName)
+                                 : (lockSrc.noteDetails?.nursing?.nurseName || nurseName))
+                || "",
+              );
+              setLockedSignedAt(lockSrc.signedAt || lockSrc.updatedAt || lockSrc.createdAt || null);
+            }
           }
 
           // Also resolve the NurseNote mirror id so future sign-offs PUT
@@ -2484,6 +2532,145 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   const setV = key => val => setVitals(v => ({ ...v, [key]: val }));
   const setDev = key => e => setDevices(d => ({ ...d, [key]: e.target.checked }));
 
+  /* ── R7hr-72/lock — Read-only helper. Every Section gets disabled={ro}
+     so its body becomes non-interactive once locked. The bottom Save
+     Draft / Sign buttons also gate on this; the Amend button (top
+     ribbon) stays clickable. */
+  const ro = iaLocked && !amendMode;
+
+  /* ── R7hr-72/lock — Pretty-print signed-at for the locked ribbon. */
+  const fmtDT = (d) => {
+    if (!d) return "—";
+    try {
+      return new Date(d).toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      });
+    } catch { return String(d); }
+  };
+
+  /* ── R7hr-72/lock — Snapshot every top-level form-state bucket BEFORE
+     we unlock the page. The diff at save-time walks pre-amend vs current
+     and emits a [{ field, oldValue, newValue }] list. Listing every state
+     slot here keeps the audit trail honest — anything a doctor or nurse
+     might touch during an amend must be captured. */
+  const captureFormSnapshot = () => ({
+    // Nursing general
+    admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit,
+    consciousnessLevel, mobility, allergy, chiefComplaint,
+    vitals, painPresent, painScore, painLocation, painCharacter,
+    devices, skinIntact, skinNotes,
+    morse, braden, nutri, vte,
+    nursingProblems, nursingGoals, nursingNotes,
+    // Doctor general + history
+    doctorName, regNo, hopi, psh, famHx, socHx,
+    pshStruct, famHxStruct, socHxStruct,
+    docAllergy, genExam, cvs, rs, abdomen, cns,
+    provDx, finalDx, icd10, icd10Description, patientStatus,
+    investigations, rxRows, meds, invests, infusions,
+    treatmentPlan, followupNotes, dietAdvice, activityAdvice,
+    // Doctor P0 NABH
+    docCC, ccDuration, allergyList, noKnownAllergies, medRecon,
+    workingDx, differentialDx, comorbid,
+    codeStatus, codeStatusDiscussedWith, codeStatusLimitations,
+    elosDays, goalOfCare, docRiskAck, ros, clinExam,
+    // Doctor P1 NABH
+    docAnthropo, localExam, referrals, prognosis, consentNeeded,
+    // Doctor P2 NABH
+    obGyn, immunisation, ecog, spiritual,
+    // Nurse P0 NABH
+    idBand, nurseAllergyList, nurseNoKnownAllergies, nurseBriefPmh,
+    homeMeds, anthropo, psychosocial, barthel, bodyChart,
+    dischargePlan, educationNeeds, precautions,
+    // Nurse P1 NABH
+    cognitive, cultural, elimination, sleep, valuables, caregiver, highRisk,
+    // Nurse P2 NABH
+    mobilityGait, preAnaesthesia, nrsQuick, promPrem,
+  });
+
+  /* ── R7hr-72/lock — Walk pre-amend vs current and emit a flat list
+     of [{ field, oldValue, newValue }]. Primitives compare directly;
+     arrays / objects are JSON-stringified for compare and emit a single
+     root-level entry when they deep-differ. Compact + reliable for the
+     audit row — surveyors care about WHAT changed, not the leaf-level
+     breakdown. */
+  const computeAmendChanges = (before, after) => {
+    if (!before) return [];
+    const changes = [];
+    const isPrimitive = (v) => v == null || (typeof v !== "object");
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    for (const k of keys) {
+      const a = before[k], b = after[k];
+      if (isPrimitive(a) && isPrimitive(b)) {
+        if (a !== b) changes.push({ field: k, oldValue: a, newValue: b });
+      } else {
+        const aj = JSON.stringify(a);
+        const bj = JSON.stringify(b);
+        if (aj !== bj) changes.push({
+          field: k,
+          oldValue: JSON.parse(aj ?? "null"),
+          newValue: JSON.parse(bj ?? "null"),
+        });
+      }
+    }
+    return changes;
+  };
+
+  /* ── R7hr-72/lock — Amend dispatch. Called by the bottom Save buttons
+     (and the role-specific sign-off buttons) when amendMode is true.
+     Routes to the right collection: doctor amends hit /doctor-notes/:id
+     /amend, nurse amends hit the same canonical row (DoctorNotes section
+     ="nursing") + mirror the amend onto /nursing-notes/:id/amend for the
+     nursing-timeline log. Reason + diff travel together. */
+  const handleAmendSave = async (section = "nursing") => {
+    if (!patient) { toast.warn("Load a patient first"); return; }
+    if (!amendReason || amendReason.trim().length < 5) {
+      toast.error("Amend reason is required (min 5 characters)");
+      return;
+    }
+    setSaving(true);
+    try {
+      const after  = captureFormSnapshot();
+      const changes = computeAmendChanges(preAmendSnapshot, after);
+      const payload = {
+        reason: amendReason.trim(),
+        changes,
+        ...buildPayload(section, "signed"),
+      };
+      const sectionNoteId = section === "doctor" ? doctorNoteId : nurseSectionNoteId;
+      if (!sectionNoteId) {
+        // No id to amend against — fall back to the existing save path so
+        // the row is created + signed cleanly (still records the reason
+        // in noteDetails for the audit).
+        toast.warn("No existing signed note found — saving as a fresh signed entry instead.");
+        await handleSave(true, section);
+      } else {
+        // Primary canonical row.
+        await axios.post(
+          `${API_ENDPOINTS.DOCTOR_NOTES}/${sectionNoteId}/amend`,
+          payload,
+        );
+        // Nurse-section amend also mirrors onto the NurseNotes timeline.
+        if (section === "nursing" && nurseNoteId) {
+          try {
+            await axios.post(
+              `${API_ENDPOINTS.NURSING_NOTES}/${nurseNoteId}/amend`,
+              { reason: amendReason.trim(), changes },
+            );
+          } catch (_) { /* non-fatal — DoctorNotes amend already landed */ }
+        }
+      }
+      toast.success("Amendment saved & re-signed ✓ (audit logged)");
+      // Stay LOCKED — status is 'amended', still a locked record.
+      setAmendMode(false);
+      setAmendReason("");
+      setPreAmendSnapshot(null);
+      setLockedSignedAt(new Date().toISOString());
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Amend save failed");
+    } finally { setSaving(false); }
+  };
+
   /* ═══════════ RENDER ═══════════ */
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -2559,20 +2746,23 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               For doctor mode they'd save the wrong role, so the buttons
               are hidden — the doctor uses the dedicated Doctor sign-off
               block at the bottom of the doctor form which calls
-              handleSave(true, "doctor"). */}
-          {!isDoctorRole && (<>
+              handleSave(true, "doctor").
+              R7hr-72/lock — also hidden when LOCKED & !amendMode; the
+              red Amend ribbon owns the only path back to editing. */}
+          {!isDoctorRole && !(iaLocked && !amendMode) && (<>
             <button onClick={() => handleSave(false)} disabled={saving}
               style={{ padding: "8px 18px", border: `1.5px solid ${C.border}`, borderRadius: 8,
                 background: "white", cursor: saving ? "not-allowed" : "pointer",
                 fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
               <i className="pi pi-save" style={{ marginRight: 6, fontSize: 12 }} />Save Draft
             </button>
-            <button onClick={() => handleSave(true)} disabled={saving || !patient}
+            <button onClick={() => amendMode ? handleAmendSave("nursing") : handleSave(true)} disabled={saving || !patient}
               style={{ padding: "8px 22px", border: "none", borderRadius: 8,
-                background: saving ? "#93c5fd" : C.accent, cursor: saving ? "not-allowed" : "pointer",
+                background: saving ? "#93c5fd" : (amendMode ? "#d97706" : C.accent),
+                cursor: saving ? "not-allowed" : "pointer",
                 fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white" }}>
               <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
-              {saving ? "Saving…" : "Sign & Submit"}
+              {saving ? "Saving…" : (amendMode ? "Save Amendment" : "Sign & Submit")}
             </button>
           </>)}
         </div>
@@ -2623,6 +2813,82 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
 
       {patient && (<>
 
+        {/* ── R7hr-72/lock · LOCKED ribbon ─────────────────────────────
+            Visible when the restored note for the active role is signed
+            or amended. Amend opens the modal — the only way into edit
+            mode. Backend logs the audit row on /amend dispatch. */}
+        {iaLocked && !amendMode && (
+          <div role="status" style={{
+            background: "#fef2f2", border: "2px solid #dc2626", borderRadius: 10,
+            padding: "12px 16px", marginBottom: 14, color: "#7f1d1d",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 18 }} aria-hidden="true">{"🔒"}</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: ".3px" }}>
+                  LOCKED — signed by {lockedSignedByName || "—"} on {fmtDT(lockedSignedAt)}.
+                </div>
+                <div style={{ fontSize: 11, color: "#9f1239", marginTop: 2 }}>
+                  Click Amend to edit (audit logged).
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAmendModalOpen(true)}
+              style={{
+                padding: "8px 18px", border: "none", borderRadius: 8,
+                background: "#dc2626", color: "white", cursor: "pointer",
+                fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 800,
+                boxShadow: "0 4px 12px rgba(220,38,38,.35)", whiteSpace: "nowrap",
+              }}
+            >
+              <i className="pi pi-pencil" style={{ fontSize: 11, marginRight: 6 }} />
+              Amend
+            </button>
+          </div>
+        )}
+
+        {/* ── R7hr-72/lock · AMENDING ribbon ───────────────────────────
+            Amber banner while amendMode is true. Cancel reverts the
+            mode-flip (snapshot is dropped; we never mutated form state
+            on "Begin Amend", just flipped the gate). */}
+        {amendMode && (
+          <div role="status" style={{
+            background: "#fffbeb", border: "2px solid #d97706", borderRadius: 10,
+            padding: "12px 16px", marginBottom: 14, color: "#78350f",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 18 }} aria-hidden="true">{"✏"}</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: ".3px" }}>
+                  AMENDING — reason: «{amendReason}».
+                </div>
+                <div style={{ fontSize: 11, color: "#92400e", marginTop: 2 }}>
+                  Make changes then click Save Amendment.
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setAmendMode(false);
+                setAmendReason("");
+                setPreAmendSnapshot(null);
+              }}
+              style={{
+                padding: "8px 16px", border: "1.5px solid #d97706", borderRadius: 8,
+                background: "white", color: "#92400e", cursor: "pointer",
+                fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
+              }}
+            >
+              Cancel Amend
+            </button>
+          </div>
+        )}
+
         {/* R7ff · Cross-check banner — appears at top whenever nurse's
             and doctor's independently-captured fields disagree. Sticky
             visibility forces reconciliation before sign-off. */}
@@ -2667,7 +2933,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         {!isDoctorRole && (<>
 
           {/* ── Admission Details ── */}
-          <Section title="Admission Details" icon="pi-calendar-plus" color={C.teal}>
+          <Section title="Admission Details" icon="pi-calendar-plus" color={C.teal} disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 14 }}>
               <Field label="Admit Date"><input type="date" value={admitDate} onChange={e => setAdmitDate(e.target.value)} className="his-field" /></Field>
               <Field label="Admit Time"><input type="time" value={admitTime} onChange={e => setAdmitTime(e.target.value)} className="his-field" /></Field>
@@ -2701,7 +2967,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── Vitals ── */}
-          <Section title="Vitals on Admission" icon="pi-heart-fill" color={C.red} badge="NABH Required">
+          <Section title="Vitals on Admission" icon="pi-heart-fill" color={C.red} badge="NABH Required" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 12 }}>
               {[
                 { label: "BP Systolic", key: "bpSys", unit: "mmHg" },
@@ -2735,7 +3001,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── Pain ── */}
-          <Section title="Pain Assessment" icon="pi-exclamation-circle" color={C.orange}>
+          <Section title="Pain Assessment" icon="pi-exclamation-circle" color={C.orange} disabled={ro}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
               <input type="checkbox" id="painPresent" checked={painPresent} onChange={e => setPainPresent(e.target.checked)}
                 style={{ accentColor: C.orange, width: 16, height: 16 }} />
@@ -2761,7 +3027,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── Skin & Devices ── */}
-          <Section title="Skin Integrity & Medical Devices" icon="pi-user" color={C.purple}>
+          <Section title="Skin Integrity & Medical Devices" icon="pi-user" color={C.purple} disabled={ro}>
             <Grid2>
               <div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase",
@@ -2808,7 +3074,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── MORSE FALL SCALE ── */}
-          <Section title="Morse Fall Scale" icon="pi-exclamation-triangle" color={C.amber} badge="NABH Required">
+          <Section title="Morse Fall Scale" icon="pi-exclamation-triangle" color={C.amber} badge="NABH Required" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 20, alignItems: "start" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {MORSE_ITEMS.map(item => (
@@ -2842,7 +3108,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── BRADEN SCALE ── */}
-          <Section title="Braden Scale — Pressure Ulcer Risk" icon="pi-th-large" color={C.purple} badge="NABH Required">
+          <Section title="Braden Scale — Pressure Ulcer Risk" icon="pi-th-large" color={C.purple} badge="NABH Required" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 20, alignItems: "start" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {BRADEN_ITEMS.map(item => (
@@ -2877,7 +3143,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── NRS-2002 Nutritional Screen ── */}
-          <Section title="Nutritional Risk Screening (NRS-2002)" icon="pi-chart-bar" color={C.green} badge="NABH Required">
+          <Section title="Nutritional Risk Screening (NRS-2002)" icon="pi-chart-bar" color={C.green} badge="NABH Required" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 20, alignItems: "start" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {NUTRI_ITEMS.map(item => (
@@ -2932,7 +3198,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               ══════════════════════════════════════════════════════════ */}
 
           {/* ── N1 · Patient Identification (PSQ.1 two-identifier) ── */}
-          <Section title="Patient Identification" icon="pi-id-card" color={C.teal} badge="NABH PSQ.1">
+          <Section title="Patient Identification" icon="pi-id-card" color={C.teal} badge="NABH PSQ.1" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12, fontSize: 12 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input type="checkbox" checked={idBand.bandAttached}
@@ -2962,7 +3228,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N4 · Anthropometry (drug dosing safety) ── */}
-          <Section title="Anthropometry" icon="pi-chart-bar" color={C.teal}>
+          <Section title="Anthropometry" icon="pi-chart-bar" color={C.teal} disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <Field label="Height (cm)">
                 <input type="number" value={anthropo.heightCm}
@@ -2991,7 +3257,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N2 · Allergies (independent of doctor capture) ── */}
-          <Section title="Allergies (Nursing check)" icon="pi-shield" color={C.red} badge="NABH PSQ.4">
+          <Section title="Allergies (Nursing check)" icon="pi-shield" color={C.red} badge="NABH PSQ.4" disabled={ro}>
             <div style={{ marginBottom: 8 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: C.muted, cursor: "pointer" }}>
                 <input type="checkbox" checked={nurseNoKnownAllergies}
@@ -3044,7 +3310,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N3 · Brief PMH + Home Medications ── */}
-          <Section title="Brief History & Home Medications" icon="pi-list" color={C.purple} badge="NABH MOM">
+          <Section title="Brief History & Home Medications" icon="pi-list" color={C.purple} badge="NABH MOM" disabled={ro}>
             <Field label="Past Medical History (brief — for nursing context)" style={{ marginBottom: 10 }}>
               <textarea value={nurseBriefPmh} onChange={e => setNurseBriefPmh(e.target.value)}
                 placeholder="e.g. DM on insulin since 2018, HTN, post-MI 2022…"
@@ -3080,7 +3346,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N5 · Psychosocial Assessment ── */}
-          <Section title="Psychosocial Assessment" icon="pi-heart" color={C.pink} badge="NABH AAC.1.b">
+          <Section title="Psychosocial Assessment" icon="pi-heart" color={C.pink} badge="NABH AAC.1.b" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <Field label="Emotional state">
                 <select value={psychosocial.emotionalState} onChange={e => setPsychosocial(p => ({ ...p, emotionalState: e.target.value }))} className="his-field">
@@ -3106,7 +3372,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N6 · Functional / ADL (Barthel Index) ── */}
-          <Section title="Functional Assessment — Barthel ADL" icon="pi-check-square" color={C.teal} badge="NABH AAC.1.b">
+          <Section title="Functional Assessment — Barthel ADL" icon="pi-check-square" color={C.teal} badge="NABH AAC.1.b" disabled={ro}>
             {(() => {
               const cfg = [
                 ["feeding", "Feeding", [[0,"Unable"],[5,"Needs help"],[10,"Independent"]]],
@@ -3146,7 +3412,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N7 · Body Chart / Wound Documentation ── */}
-          <Section title="Body Chart — Existing wounds / bruises / scars" icon="pi-user-edit" color={C.purple} badge="NABH IPC + AAC.6">
+          <Section title="Body Chart — Existing wounds / bruises / scars" icon="pi-user-edit" color={C.purple} badge="NABH IPC + AAC.6" disabled={ro}>
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               Document all existing skin findings AT ADMISSION — defends against "developed in hospital" claims.
             </div>
@@ -3166,7 +3432,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N10 · Special Precautions ── */}
-          <Section title="Special Precautions" icon="pi-exclamation-triangle" color={C.warn} badge="NABH IPC + PSQ.4">
+          <Section title="Special Precautions" icon="pi-exclamation-triangle" color={C.warn} badge="NABH IPC + PSQ.4" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
               <div>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 600, marginBottom: 6, cursor: "pointer" }}>
@@ -3221,7 +3487,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N9 · Education Needs ── */}
-          <Section title="Patient Education Needs" icon="pi-book" color={C.green} badge="NABH AAC.6 + PRE.5">
+          <Section title="Patient Education Needs" icon="pi-book" color={C.green} badge="NABH AAC.6 + PRE.5" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12 }}>
               <Field label="Preferred language">
                 <select value={educationNeeds.preferredLanguage}
@@ -3262,7 +3528,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N8 · Discharge Planning (initiated Day 1) ── */}
-          <Section title="Discharge Planning — Day 1" icon="pi-home" color={C.accent} badge="NABH AAC.4">
+          <Section title="Discharge Planning — Day 1" icon="pi-home" color={C.accent} badge="NABH AAC.4" disabled={ro}>
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               Discharge planning starts at admission — gives time to arrange home support, equipment, follow-up.
             </div>
@@ -3318,7 +3584,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               ══════════════════════════════════════════════════════════ */}
 
           {/* ── N11 · Cognitive / Communication ── */}
-          <Section title="Cognitive & Communication" icon="pi-eye" color={C.purple} badge="NABH AAC.1.b">
+          <Section title="Cognitive & Communication" icon="pi-eye" color={C.purple} badge="NABH AAC.1.b" disabled={ro}>
             <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
               Orientation
             </div>
@@ -3372,7 +3638,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N12 · Cultural / Spiritual ── */}
-          <Section title="Cultural & Spiritual Preferences" icon="pi-globe" color={C.green} badge="NABH ROP">
+          <Section title="Cultural & Spiritual Preferences" icon="pi-globe" color={C.green} badge="NABH ROP" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Field label="Religion">
                 <select value={cultural.religion}
@@ -3402,7 +3668,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N13 · Bowel / Bladder Pattern ── */}
-          <Section title="Bowel / Bladder Pattern" icon="pi-sync" color={C.teal}>
+          <Section title="Bowel / Bladder Pattern" icon="pi-sync" color={C.teal} disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Bowel</div>
@@ -3451,7 +3717,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N14 · Sleep Pattern ── */}
-          <Section title="Sleep Pattern" icon="pi-moon" color={C.accent}>
+          <Section title="Sleep Pattern" icon="pi-moon" color={C.accent} disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <Field label="Hours per night">
                 <input type="number" value={sleep.hoursPerNight}
@@ -3485,7 +3751,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N15 · Valuables / Belongings ── */}
-          <Section title="Valuables & Belongings" icon="pi-briefcase" color={C.warn} badge="NABH ROP + PSQ">
+          <Section title="Valuables & Belongings" icon="pi-briefcase" color={C.warn} badge="NABH ROP + PSQ" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Field label="Status">
                 <select value={valuables.status}
@@ -3513,7 +3779,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N16 · Family / Caregiver Identification ── */}
-          <Section title="Family & Primary Caregiver" icon="pi-users" color={C.pink} badge="NABH AAC.6">
+          <Section title="Family & Primary Caregiver" icon="pi-users" color={C.pink} badge="NABH AAC.6" disabled={ro}>
             <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
               Primary caregiver
             </div>
@@ -3562,7 +3828,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N17 · High-Risk Patient Flag ── */}
-          <Section title="High-Risk Patient Flag" icon="pi-flag-fill" color={C.red} badge="NABH PSQ.4">
+          <Section title="High-Risk Patient Flag" icon="pi-flag-fill" color={C.red} badge="NABH PSQ.4" disabled={ro}>
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               Flag drives observation frequency, escalation protocols, and discharge planning urgency.
             </div>
@@ -3597,7 +3863,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               ══════════════════════════════════════════════════════════ */}
 
           {/* ── N18 · Mobility / Gait ── */}
-          <Section title="Mobility & Gait" icon="pi-arrow-right" color={C.teal}>
+          <Section title="Mobility & Gait" icon="pi-arrow-right" color={C.teal} disabled={ro}>
             <div style={{ display: "flex", gap: 18, fontSize: 12, flexWrap: "wrap" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                 <input type="checkbox" checked={mobilityGait.independent} onChange={e => setMobilityGait(p => ({ ...p, independent: e.target.checked }))} />
@@ -3621,7 +3887,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N19 · Pre-anaesthesia basics (elective surgery quick screen) ── */}
-          <Section title="Pre-Anaesthesia Screen (if elective surgery planned)" icon="pi-bolt" color={C.warn}>
+          <Section title="Pre-Anaesthesia Screen (if elective surgery planned)" icon="pi-bolt" color={C.warn} disabled={ro}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
               <input type="checkbox" checked={preAnaesthesia.plannedSurgery} onChange={e => setPreAnaesthesia(p => ({ ...p, plannedSurgery: e.target.checked }))} />
               Elective surgery planned this admission
@@ -3663,7 +3929,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N20 · NRS-2002 Quick Screen ── */}
-          <Section title="Nutritional Quick Screen (NRS-2002 short)" icon="pi-bookmark" color={C.green}>
+          <Section title="Nutritional Quick Screen (NRS-2002 short)" icon="pi-bookmark" color={C.green} disabled={ro}>
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               4-question rapid triage. Any "Yes" triggers dietitian referral. Full NRS-2002 is in the
               "Nutritional Risk Screening" section above.
@@ -3695,7 +3961,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── N21 · PROM / PREM Surveys (NABH PSQ) ── */}
-          <Section title="Outcome & Experience Surveys (PROM / PREM)" icon="pi-comments" color={C.accent} badge="NABH PSQ">
+          <Section title="Outcome & Experience Surveys (PROM / PREM)" icon="pi-comments" color={C.accent} badge="NABH PSQ" disabled={ro}>
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               Schedule patient-reported outcomes (PROM) and experience (PREM) at discharge.
             </div>
@@ -3728,7 +3994,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── Nursing Plan (existing) ── */}
-          <Section title="Nursing Problems & Care Goals" icon="pi-pencil" color={C.pink}>
+          <Section title="Nursing Problems & Care Goals" icon="pi-pencil" color={C.pink} disabled={ro}>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <Field label="Identified Nursing Problems">
                 <textarea value={nursingProblems} onChange={e => setNursingProblems(e.target.value)}
@@ -3751,12 +4017,17 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           {/* ── Nursing sign-off — only shown when the mounter is a NURSE
               (or unknown role, for the legacy standalone /ipd-initial-
               assessment route). When a DOCTOR mounts via DoctorNotes the
-              Doctor sign-off block below renders instead. R7ey-F79. ── */}
-          {!isDoctorRole && (
-          <div style={{ background: "#fdf2f8", border: `1px solid ${C.pink}30`, borderRadius: 12,
+              Doctor sign-off block below renders instead. R7ey-F79.
+              R7hr-72/lock — hidden when LOCKED & !amendMode (the red
+              ribbon's Amend button is the only path back in); when
+              amendMode is on, the "Sign" button morphs into "Save
+              Amendment" and dispatches via handleAmendSave. */}
+          {!isDoctorRole && !(iaLocked && !amendMode) && (
+          <div style={{ background: amendMode ? "#fffbeb" : "#fdf2f8",
+            border: `1px solid ${amendMode ? "#d97706" : C.pink}30`, borderRadius: 12,
             padding: "14px 20px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.pink }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: amendMode ? "#92400e" : C.pink }}>
                 <i className="pi pi-verified" style={{ marginRight: 6 }} />Nurse's Digital Signature
               </div>
               <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
@@ -3764,20 +4035,33 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               </div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => handleSave(false, "nursing")} disabled={saving}
-                style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-                  background: "white", cursor: saving ? "not-allowed" : "pointer",
-                  fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
-                Save Draft
-              </button>
-              <button onClick={async () => { await handleSave(true, "nursing"); onSign?.("nurse"); }} disabled={saving}
-                style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: C.pink,
-                  cursor: saving ? "not-allowed" : "pointer",
-                  fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
-                  boxShadow: `0 4px 14px ${C.pink}40` }}>
-                <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
-                {saving ? "Saving…" : "Sign Nursing Assessment"}
-              </button>
+              {!amendMode && (
+                <button onClick={() => handleSave(false, "nursing")} disabled={saving}
+                  style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8,
+                    background: "white", cursor: saving ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
+                  Save Draft
+                </button>
+              )}
+              {amendMode ? (
+                <button onClick={() => handleAmendSave("nursing")} disabled={saving}
+                  style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: "#d97706",
+                    cursor: saving ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
+                    boxShadow: "0 4px 14px rgba(217,119,6,.4)" }}>
+                  <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
+                  {saving ? "Saving…" : "Save Amendment"}
+                </button>
+              ) : (
+                <button onClick={async () => { await handleSave(true, "nursing"); onSign?.("nurse"); }} disabled={saving}
+                  style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: C.pink,
+                    cursor: saving ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
+                    boxShadow: `0 4px 14px ${C.pink}40` }}>
+                  <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
+                  {saving ? "Saving…" : "Sign Nursing Assessment"}
+                </button>
+              )}
             </div>
           </div>
           )}
@@ -3794,7 +4078,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         {isDoctorRole && (<>
 
           {/* ── Doctor Header ── */}
-          <Section title="Doctor & Admission Info" icon="pi-id-card" color={C.accent}>
+          <Section title="Doctor & Admission Info" icon="pi-id-card" color={C.accent} disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
               <Field label="Doctor Name" required>
                 <input value={doctorName} onChange={e => setDoctorName(e.target.value)} placeholder="Dr. Full Name" className="his-field" />
@@ -3809,7 +4093,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── D1 · Chief Complaint (NABH AAC.1 — distinct from HPI) ── */}
-          <Section title="Chief Complaint" icon="pi-comment" color={C.accent} badge="NABH AAC.1">
+          <Section title="Chief Complaint" icon="pi-comment" color={C.accent} badge="NABH AAC.1" disabled={ro}>
             <Grid2>
               <Field label="Chief Complaint *">
                 <input value={docCC} onChange={e => setDocCC(e.target.value)}
@@ -3828,7 +4112,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               Family / Social History upgraded from plain textareas to
               checkbox-grid pickers matching the Co-morbidities pattern;
               free-text "Other" stays for anything off-menu. */}
-          <Section title="History" icon="pi-book" color={C.purple}>
+          <Section title="History" icon="pi-book" color={C.purple} disabled={ro}>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <Field label="History of Present Illness *">
                 <textarea value={hopi} onChange={e => setHopi(e.target.value)}
@@ -3921,7 +4205,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               shape survives and the year-of-onset shows up in the
               print block + downstream consumers without a schema
               change. */}
-          <Section title="Co-morbidities" icon="pi-list-check" color={C.purple} badge="NABH AAC.1">
+          <Section title="Co-morbidities" icon="pi-list-check" color={C.purple} badge="NABH AAC.1" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 12 }}>
               {[
                 ["diabetes", "Diabetes Mellitus"],   ["hypertension", "Hypertension"],
@@ -3980,7 +4264,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
 
           {/* ── D2+D3 · Structured Allergies + Medication Reconciliation
                        (NABH PSQ.4 + MOM + AAC.4) ────────────────────────── */}
-          <Section title="Allergies & Medication Reconciliation" icon="pi-shield" color={C.red} badge="NABH PSQ.4 + MOM">
+          <Section title="Allergies & Medication Reconciliation" icon="pi-shield" color={C.red} badge="NABH PSQ.4 + MOM" disabled={ro}>
             {/* Allergies — structured list */}
             <div style={{ marginBottom: 14 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -4144,7 +4428,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               Diagnoses kept below as an IPD-specific add (OPD doesn't
               have it). Single source of truth for what a diagnosis card
               looks like across OPD and IPD. */}
-          <Section title="Diagnosis" icon="pi-tag" color={C.accent} badge="NABH AAC.1 · 3-tier">
+          <Section title="Diagnosis" icon="pi-tag" color={C.accent} badge="NABH AAC.1 · 3-tier" disabled={ro}>
             <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
               Provisional → Working → Final + ICD-10 coding
             </div>
@@ -4259,7 +4543,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               with the urgency + instructions set above. Free-text
               entries also work — pressing Enter on any value not in
               the catalog still chips it. */}
-          <Section title="Investigations Ordered" icon="pi-list-check" color={C.purple} badge={`${invests.length} test${invests.length===1?"":"s"}`}>
+          <Section title="Investigations Ordered" icon="pi-list-check" color={C.purple} badge={`${invests.length} test${invests.length===1?"":"s"}`} disabled={ro}>
             <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
               Order labs / imaging / procedures — type to search, pick multiple, then click Add
             </div>
@@ -4462,7 +4746,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               R7hr-67 polish: subtitle bar above the panel for visual
               parity with Diagnosis. PrescriptionPanel itself is shared
               with OPD so we don't touch internals — just wrap better. */}
-          <Section title="Prescription / Medications" icon="pi-file-edit" color={C.green} badge={`${meds.length} drug${meds.length===1?"":"s"}`}>
+          <Section title="Prescription / Medications" icon="pi-file-edit" color={C.green} badge={`${meds.length} drug${meds.length===1?"":"s"}`} disabled={ro}>
             <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
               Inpatient medications — drug · dose · frequency · meal · duration · route
             </div>
@@ -4473,7 +4757,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               R7hr-67 polish: subtitle bar. InfusionPanel internals stay
               untouched (shared with OPD); HAM auto-tag banner lives
               inside the panel. */}
-          <Section title="Infusion / IV Fluids" icon="pi-bolt" color={C.teal} badge={`${infusions.length} order${infusions.length===1?"":"s"}`}>
+          <Section title="Infusion / IV Fluids" icon="pi-bolt" color={C.teal} badge={`${infusions.length} order${infusions.length===1?"":"s"}`} disabled={ro}>
             <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
               IV fluids / drips — routes to nurse's Infusion Orders & Monitoring tab on save
             </div>
@@ -4481,7 +4765,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── Treatment Plan ── */}
-          <Section title="Treatment Plan" icon="pi-list" color={C.green}>
+          <Section title="Treatment Plan" icon="pi-list" color={C.green} disabled={ro}>
             <Field label="Treatment Plan / Management">
               <textarea value={treatmentPlan} onChange={e => setTreatmentPlan(e.target.value)}
                 placeholder="Conservative / surgical plan, monitoring required, nursing orders, special instructions…"
@@ -4490,7 +4774,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── D6 + D7 + D8 · Care Decisions (NABH AAC.4 / ROP.1 / PSQ.4) ── */}
-          <Section title="Care Decisions" icon="pi-flag" color={C.accent} badge="NABH AAC.4 + ROP.1">
+          <Section title="Care Decisions" icon="pi-flag" color={C.accent} badge="NABH AAC.4 + ROP.1" disabled={ro}>
             {/* Code Status */}
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>
@@ -4591,7 +4875,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           {(() => {
             const fromNursing = !!(anthropo.heightCm || anthropo.weightKg);
             return (
-              <Section title="Anthropometry" icon="pi-chart-line" color={C.teal} badge="Drug-dosing safety">
+              <Section title="Anthropometry" icon="pi-chart-line" color={C.teal} badge="Drug-dosing safety" disabled={ro}>
                 {fromNursing && (
                   <div style={{ background: "#fdf2f8", border: `1.5px solid ${C.pink}40`, borderRadius: 6, padding: "6px 10px", marginBottom: 10, fontSize: 11, color: C.pink, fontWeight: 600 }}>
                     <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
@@ -4641,7 +4925,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           })()}
 
           {/* ── D11 · Local examination (surgical/focused) ── */}
-          <Section title="Local / Focused Examination" icon="pi-search" color={C.purple}>
+          <Section title="Local / Focused Examination" icon="pi-search" color={C.purple} disabled={ro}>
             <Field label="Local examination findings (relevant to chief complaint)">
               <textarea value={localExam} onChange={e => setLocalExam(e.target.value)}
                 placeholder="e.g. RIF tender, McBurney's positive, Rovsing's negative, no rebound. Wound: clean, healthy granulation, 4×3 cm, no slough…"
@@ -4650,7 +4934,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── D12 · Cross-Consultation / Referrals ── */}
-          <Section title="Cross-Consultation / Referrals" icon="pi-users" color={C.accent} badge="NABH COP">
+          <Section title="Cross-Consultation / Referrals" icon="pi-users" color={C.accent} badge="NABH COP" disabled={ro}>
             {referrals.length > 0 && (
               <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 8, fontSize: 11.5 }}>
                 <thead>
@@ -4688,7 +4972,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── D13 · Prognosis Discussion ── */}
-          <Section title="Prognosis Discussed With" icon="pi-comments" color={C.pink} badge="NABH PRE.4">
+          <Section title="Prognosis Discussed With" icon="pi-comments" color={C.pink} badge="NABH PRE.4" disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Field label="Discussed with (name + relation)">
                 <input value={prognosis.discussedWith}
@@ -4717,7 +5001,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── D14 · Consent Linkage ── */}
-          <Section title="Consents Required" icon="pi-id-card" color={C.green} badge="NABH PRE.3 + PRE.4">
+          <Section title="Consents Required" icon="pi-id-card" color={C.green} badge="NABH PRE.3 + PRE.4" disabled={ro}>
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               Flag which consents must be obtained before procedures. Each flagged consent must be captured
               with biometric + staff e-sign via the Consent Forms page (R7ez).
@@ -4747,7 +5031,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               ══════════════════════════════════════════════════════════ */}
 
           {/* ── D15 · Menstrual / Obstetric (women of childbearing age) ── */}
-          <Section title="Menstrual & Obstetric History" icon="pi-heart" color={C.pink}>
+          <Section title="Menstrual & Obstetric History" icon="pi-heart" color={C.pink} disabled={ro}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
               <input type="checkbox" checked={obGyn.isApplicable} onChange={e => setObGyn(p => ({ ...p, isApplicable: e.target.checked }))} />
               Patient is female of childbearing age — capture below
@@ -4795,7 +5079,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── D16 · Immunisation Status ── */}
-          <Section title="Immunisation Status" icon="pi-shield" color={C.green}>
+          <Section title="Immunisation Status" icon="pi-shield" color={C.green} disabled={ro}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
               <input type="checkbox" checked={immunisation.upToDateForAge} onChange={e => setImmunisation(p => ({ ...p, upToDateForAge: e.target.checked }))} />
               Up-to-date for age per national schedule
@@ -4824,7 +5108,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── D17 · Functional / ECOG ── */}
-          <Section title="Functional Status (ECOG)" icon="pi-user" color={C.teal}>
+          <Section title="Functional Status (ECOG)" icon="pi-user" color={C.teal} disabled={ro}>
             <Field label="ECOG Performance Status (0–4)">
               <select value={ecog.score} onChange={e => setEcog(p => ({ ...p, score: e.target.value }))} className="his-field">
                 <option value="">— Select —</option>
@@ -4846,7 +5130,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── D18 · Spiritual / Existential Needs ── */}
-          <Section title="Spiritual / Existential Needs" icon="pi-star" color={C.purple}>
+          <Section title="Spiritual / Existential Needs" icon="pi-star" color={C.purple} disabled={ro}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 10 }}>
               <input type="checkbox" checked={spiritual.distressNoted} onChange={e => setSpiritual(p => ({ ...p, distressNoted: e.target.checked }))} />
               Spiritual / existential distress noted at this visit
@@ -4861,7 +5145,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           </Section>
 
           {/* ── Diet, Activity & Follow-up ── */}
-          <Section title="Diet, Activity & Follow-up" icon="pi-calendar-clock" color={C.teal}>
+          <Section title="Diet, Activity & Follow-up" icon="pi-calendar-clock" color={C.teal} disabled={ro}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <Field label="Diet Advice">
                 <textarea value={dietAdvice} onChange={e => setDietAdvice(e.target.value)}
@@ -4878,11 +5162,17 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             </div>
           </Section>
 
-          {/* ── Doctor sign-off ── */}
-          <div style={{ background: C.accentL, border: `1px solid ${C.accent}30`, borderRadius: 12,
+          {/* ── Doctor sign-off ──
+              R7hr-72/lock — hidden when LOCKED & !amendMode (the red
+              ribbon's Amend button is the only path back in); when
+              amendMode is on, the "Sign" button morphs into "Save
+              Amendment" and dispatches via handleAmendSave. */}
+          {!(iaLocked && !amendMode) && (
+          <div style={{ background: amendMode ? "#fffbeb" : C.accentL,
+            border: `1px solid ${amendMode ? "#d97706" : C.accent}30`, borderRadius: 12,
             padding: "14px 20px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.accent }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: amendMode ? "#92400e" : C.accent }}>
                 <i className="pi pi-verified" style={{ marginRight: 6 }} />Doctor's Digital Signature
               </div>
               <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
@@ -4890,22 +5180,36 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               </div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => handleSave(false, "doctor")} disabled={saving}
-                style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8,
-                  background: "white", cursor: saving ? "not-allowed" : "pointer",
-                  fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
-                Save Draft
-              </button>
-              <button onClick={async () => { await handleSave(true, "doctor"); onSign?.("doctor"); }} disabled={saving}
-                style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: C.accent,
-                  cursor: saving ? "not-allowed" : "pointer",
-                  fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
-                  boxShadow: `0 4px 14px ${C.accent}40` }}>
-                <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
-                {saving ? "Submitting…" : "Sign Doctor Initial Assessment"}
-              </button>
+              {!amendMode && (
+                <button onClick={() => handleSave(false, "doctor")} disabled={saving}
+                  style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8,
+                    background: "white", cursor: saving ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600, color: C.muted }}>
+                  Save Draft
+                </button>
+              )}
+              {amendMode ? (
+                <button onClick={() => handleAmendSave("doctor")} disabled={saving}
+                  style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: "#d97706",
+                    cursor: saving ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
+                    boxShadow: "0 4px 14px rgba(217,119,6,.4)" }}>
+                  <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
+                  {saving ? "Saving…" : "Save Amendment"}
+                </button>
+              ) : (
+                <button onClick={async () => { await handleSave(true, "doctor"); onSign?.("doctor"); }} disabled={saving}
+                  style={{ padding: "9px 22px", border: "none", borderRadius: 8, background: C.accent,
+                    cursor: saving ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 700, color: "white",
+                    boxShadow: `0 4px 14px ${C.accent}40` }}>
+                  <i className="pi pi-check-circle" style={{ marginRight: 6, fontSize: 12 }} />
+                  {saving ? "Submitting…" : "Sign Doctor Initial Assessment"}
+                </button>
+              )}
             </div>
           </div>
+          )}
 
         </>)}
 
@@ -4916,6 +5220,105 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           onSave={async (dataUrl) => { await saveSignature(dataUrl); setShowSetup(false); }}
           onCancel={() => setShowSetup(false)}
         />
+      )}
+
+      {/* ── R7hr-72/lock · Amend modal ────────────────────────────────
+          Centred overlay with a mandatory reason textarea (min 5 chars).
+          Begin Amend captures the full form snapshot, flips amendMode
+          on, and dismisses itself; the AMENDING ribbon + editable form
+          take over. */}
+      {amendModalOpen && (
+        <div
+          role="dialog" aria-modal="true" aria-labelledby="amend-modal-title"
+          style={{
+            position: "fixed", inset: 0, background: "rgba(15,23,42,.55)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 9999, padding: 20,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setAmendModalOpen(false); }}
+        >
+          <div style={{
+            background: "white", borderRadius: 14, width: "100%", maxWidth: 520,
+            border: "1px solid #e2e6ea", boxShadow: "0 24px 70px rgba(15,23,42,.35)",
+            overflow: "hidden",
+          }}>
+            <div style={{
+              padding: "14px 20px", borderBottom: "1px solid #e2e6ea",
+              background: "#fef2f2", display: "flex", alignItems: "center", gap: 8,
+            }}>
+              <span style={{ fontSize: 16 }} aria-hidden="true">{"🔒"}</span>
+              <div id="amend-modal-title" style={{ fontSize: 14, fontWeight: 800, color: "#7f1d1d" }}>
+                Amend Initial Assessment
+              </div>
+            </div>
+            <div style={{ padding: "16px 20px" }}>
+              <div style={{ fontSize: 12, color: C.muted, marginBottom: 8, lineHeight: 1.5 }}>
+                This record is signed. Amendments are <strong>permanent + audit-logged</strong>.
+                Please describe why the assessment must change.
+              </div>
+              <label style={{
+                display: "block", fontSize: 11, fontWeight: 700, color: C.muted,
+                textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 4,
+              }}>
+                Reason for amendment <span style={{ color: C.red, marginLeft: 3 }}>*</span>
+              </label>
+              <textarea
+                value={amendReason}
+                onChange={(e) => setAmendReason(e.target.value)}
+                placeholder="Reason for amendment (required) — e.g. lab corrected, vitals re-checked, history clarified…"
+                style={{
+                  width: "100%", minHeight: 92, padding: "8px 10px",
+                  border: `1.5px solid ${amendReason.trim().length >= 5 ? C.border : "#fecaca"}`,
+                  borderRadius: 8, fontSize: 13, fontFamily: "'DM Sans', sans-serif",
+                  resize: "vertical", boxSizing: "border-box",
+                }}
+                autoFocus
+              />
+              <div style={{ fontSize: 10, color: amendReason.trim().length >= 5 ? C.muted : "#b91c1c", marginTop: 4 }}>
+                {amendReason.trim().length}/5 characters minimum
+              </div>
+            </div>
+            <div style={{
+              padding: "12px 20px", borderTop: "1px solid #e2e6ea",
+              background: "#f8fafc", display: "flex", justifyContent: "flex-end", gap: 8,
+            }}>
+              <button
+                type="button"
+                onClick={() => { setAmendModalOpen(false); }}
+                style={{
+                  padding: "8px 18px", border: `1.5px solid ${C.border}`, borderRadius: 8,
+                  background: "white", color: C.muted, cursor: "pointer",
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={amendReason.trim().length < 5}
+                onClick={() => {
+                  const reason = amendReason.trim();
+                  if (reason.length < 5) return;
+                  setPreAmendSnapshot(captureFormSnapshot());
+                  setAmendMode(true);
+                  setAmendModalOpen(false);
+                  setAmendReason(reason);
+                }}
+                style={{
+                  padding: "8px 18px", border: "none", borderRadius: 8,
+                  background: amendReason.trim().length >= 5 ? "#dc2626" : "#fca5a5",
+                  color: "white",
+                  cursor: amendReason.trim().length >= 5 ? "pointer" : "not-allowed",
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 800,
+                  boxShadow: amendReason.trim().length >= 5 ? "0 4px 12px rgba(220,38,38,.35)" : "none",
+                }}
+              >
+                <i className="pi pi-pencil" style={{ fontSize: 10, marginRight: 5 }} />
+                Begin Amend
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -24,6 +24,12 @@ router.put("/:id",                          validateObjectIdParam("id"), require
 router.patch("/:id/confirm-order",          validateObjectIdParam("id"), requireAction("mar.write"),        ctrl.confirmOrder);
 router.patch("/:id/blood-monitoring",       validateObjectIdParam("id"), requireAction("mar.write"),        ctrl.addBloodMonitoring);
 router.patch("/:id/blood-status",           validateObjectIdParam("id"), requireAction("mar.write"),        ctrl.updateBloodStatus);
+// R7hr-72-A2 — post-submission amendment (NABH HIC.7). Guarded by the
+// dedicated nurse.write action (Admin + Nurse only) — author + admin
+// override is enforced inside the service. Discharged-admission write
+// gate is already covered by the existing POST /\/nurse-notes(\/|$|\?)/
+// rule in middleware/auth.js.
+router.post("/:id/amend",                   validateObjectIdParam("id"), requireAction("nurse.write"),      ctrl.amendNote);
 router.delete("/:id",                       validateObjectIdParam("id"), requireAction("mar.write"),        ctrl.deleteNote);
 
 module.exports = router;

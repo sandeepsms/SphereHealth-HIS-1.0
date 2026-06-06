@@ -501,6 +501,22 @@ const docOrderByIdResolver = async (req) => {
   }
 };
 
+// Post-sign amend on a doctor note carries only the note id in the URL —
+// resolve the admission via the DoctorNotes doc so the discharge gate
+// can fire on a discharged admission's amendment attempt.
+const doctorNoteByIdResolver = async (req) => {
+  const m = req.path.match(/^\/doctor-notes\/([^/]+)\//);
+  if (!m) return req.body?.admissionId || null;
+  try {
+    const DoctorNotes = require("../models/Doctor/DoctorNotesModel");
+    const doc = await DoctorNotes.findById(m[1]).select("admissionId").lean();
+    return doc?.admissionId || req.body?.admissionId || null;
+  } catch (e) {
+    console.warn("[discharge-gate] doctorNoteByIdResolver failed:", e.message);
+    return req.body?.admissionId || null;
+  }
+};
+
 const prescriptionByIdResolver = async (req) => {
   const m = req.path.match(/^\/prescriptions\/([^/]+)/);
   if (!m) return req.body?.admissionId || null;
@@ -598,6 +614,10 @@ const uhidPathResolver = async (req) => {
 
 const ENFORCE_DISCHARGE_WRITE_RULES = [
   // ── R7az-A original surfaces ────────────────────────────────────────
+  // Doctor-note POST /:id/amend is matched ahead of the bare-POST create
+  // rule so the resolver can pull admissionId off the note doc (the amend
+  // body doesn't carry admissionId — only the clinical overlay fields).
+  { method: "POST",   regex: /\/doctor-notes\/[^/]+\/amend(\/|$|\?)/,          resolveAdmissionId: doctorNoteByIdResolver },
   { method: "POST",   regex: /\/doctor-notes(\/|$|\?)/,                        resolveAdmissionId: defaultResolver },
   { method: "PUT",    regex: /\/doctor-notes\/[^/]+(\/|$|\?)/,                 resolveAdmissionId: defaultResolver },
   { method: "PATCH",  regex: /\/doctor-notes\/[^/]+\/[^/]+(\/|$|\?)/,          resolveAdmissionId: defaultResolver },

@@ -127,6 +127,11 @@ const ACTIONS = {
   "ipd.discharge-summary": ["Admin", "Doctor"],
   "vitals.write":          ["Admin", "Nurse", "Doctor"],
   "mar.write":             ["Admin", "Nurse"],
+  // R7hr-72-A2 — nurse-note amendment surface. Post-submission edits
+  // (NABH HIC.7) require a dedicated action so a Nurse who can MAR-write
+  // doesn't automatically inherit the legal-grade amend verb. Mirror of
+  // doctor.write (A1). Author + Admin only.
+  "nurse.write":           ["Admin", "Nurse"],
   // R7ei — ICU Bundles of Care (VAP/CAUTI/CLABSI/DVT/Sepsis/SUP).
   // Distinct from mar.write because bundles are quality-of-care
   // checklists charted by the bedside clinician (intensivist OR

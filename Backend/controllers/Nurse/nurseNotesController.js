@@ -152,6 +152,36 @@ class NurseNotesController {
     return res.json({ success: true, data: note });
   });
 
+  // POST /api/nurse-notes/:id/amend
+  // R7hr-72-A2 — append-only post-submission amendment (NABH HIC.7).
+  // Guard: only SUBMITTED or already-AMENDED notes are amendable; draft
+  // notes mutate in place via PUT. Each call pushes one entry onto
+  // amendments[] (before/after snapshot + reason + actor), applies a
+  // whitelisted field set, flips status → "amended", emits
+  // NURSE_NOTE_AMENDED on ClinicalAudit. Optimistic concurrency via
+  // If-Match → __v gate inside the service.
+  amendNote = handle(async (req, res) => {
+    const nurseUserId = req.user?.id || req.user?._id;
+    if (!nurseUserId) {
+      return res.status(401).json({
+        success: false,
+        code: "AUTH_REQUIRED",
+        message: "Authenticated nurse identity required",
+      });
+    }
+    const ifMatch = req.get("If-Match");
+    const expectedVersion = ifMatch != null && ifMatch !== ""
+      ? Number(String(ifMatch).replace(/^"|"$/g, ""))
+      : (req.body?.__v != null ? Number(req.body.__v) : undefined);
+    const note = await nurseNotesService.amendNurseNote(
+      req.params.id,
+      req.body || {},
+      { id: nurseUserId, name: req.user?.name, role: req.user?.role },
+      expectedVersion,
+    );
+    return res.json({ success: true, data: note });
+  });
+
   // DELETE /api/nurse-notes/:id
   deleteNote = handle(async (req, res) => {
     const nurseUserId = req.user?.id || req.user?._id;

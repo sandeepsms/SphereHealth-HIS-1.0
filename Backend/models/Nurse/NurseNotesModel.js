@@ -188,10 +188,28 @@ const NurseNotesSchema = new mongoose.Schema(
       remarks:   { type: String, trim: true },
     }],
 
-    status: { type: String, enum: ["draft", "submitted"], default: "draft" },
+    status: { type: String, enum: ["draft", "submitted", "amended"], default: "draft" },
     submittedAt: { type: Date },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
+
+    // ── Amendment trail (R7hr-72-A2, NABH HIC.7) ─────────────────────
+    // Each POST /:id/amend pushes one entry here BEFORE the whitelisted
+    // fields are mutated. Append-only — the audit row carries the
+    // pre-mutation snapshot so a surveyor can replay the timeline of
+    // every post-submission edit. Mirror of DoctorNote.amendments[] (A1).
+    amendments: [{
+      _id: false,
+      at:        { type: Date, default: Date.now },
+      by:        { type: mongoose.Schema.Types.ObjectId, ref: "NurseStaff" },
+      byName:    { type: String, trim: true },
+      byEmpId:   { type: String, trim: true },
+      byRole:    { type: String, trim: true },
+      reason:    { type: String, trim: true },
+      fields:    [{ type: String }],
+      before:    { type: mongoose.Schema.Types.Mixed },
+      after:     { type: mongoose.Schema.Types.Mixed },
+    }],
 
     // ── Addendum chain (R7az-D2-HIGH-4, NABH HIC.7) ──────────────────
     // SUBMITTED notes are append-only — corrections create a new doc

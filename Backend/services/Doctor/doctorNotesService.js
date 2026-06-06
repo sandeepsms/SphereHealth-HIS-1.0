@@ -823,6 +823,161 @@ const updateDiagnosis = async (id, data, actor = {}) => {
 };
 
 // ─────────────────────────────────────────────────────────────
+// Amend a SIGNED (or already amended) note — NABH IMS.2 / MCI
+// Indian Medical Records Act 1956 §3. The original signedAt /
+// signedByName attestation is preserved; the mutation is captured
+// as an entry on note.amendments[] (who, when, why, before→after
+// per field), the whitelisted clinical fields are overlaid in
+// place, status flips to "amended", and a ClinicalAudit row is
+// emitted under DOCTOR_NOTE_AMENDED (7y retention floor).
+//
+// Concurrency: read-mutate-save is wrapped in retryVersionError so
+// a parallel diagnosis update / re-sign on the same note doesn't
+// 500 with a Mongoose VersionError.
+// ─────────────────────────────────────────────────────────────
+const amendDoctorNote = async (id, data, actorUser, req = null) => {
+  const reason  = String(data?.reason || "").trim();
+  const changes = Array.isArray(data?.changes) ? data.changes : [];
+
+  if (!reason || reason.length < 5) {
+    const err = new Error("Amendment reason is required (5-1000 chars)");
+    err.statusCode = 400;
+    err.code = "AMEND_REASON_REQUIRED";
+    throw err;
+  }
+  if (reason.length > 1000) {
+    const err = new Error("Amendment reason exceeds 1000 chars");
+    err.statusCode = 400;
+    err.code = "AMEND_REASON_TOO_LONG";
+    throw err;
+  }
+
+  // Pre-flight ownership / status check on a lean snapshot so we 4xx
+  // before the version-retry loop and don't burn retries on a known-bad
+  // request.
+  const before = await DoctorNotes.findById(id).lean();
+  if (!before) {
+    const err = new Error("Note not found");
+    err.statusCode = 404;
+    throw err;
+  }
+  if (before.status !== "signed" && before.status !== "amended") {
+    const err = new Error("Only signed (or already-amended) notes can be amended");
+    err.statusCode = 409;
+    err.code = "AMEND_REQUIRES_SIGNED_NOTE";
+    throw err;
+  }
+
+  const actorId   = actorUser?.id || actorUser?._id || null;
+  const actorRole = actorUser?.role || "";
+  const isAuthor  = before.doctor && actorId
+                    && String(before.doctor) === String(actorId);
+  if (!isAuthor && actorRole !== "Admin") {
+    const err = new Error("Only the original author or Admin can amend this note");
+    err.statusCode = 403;
+    err.code = "AMEND_NOT_OWNER";
+    throw err;
+  }
+
+  // Whitelist of clinical fields the amend body may overwrite. Anything
+  // outside this list is silently ignored — DO NOT widen without an
+  // explicit policy review (the attestation chain depends on it).
+  const ALLOWED_FIELDS = [
+    "provisionalDiagnosis",
+    "workingDiagnosis",
+    "finalDiagnosis",
+    "icd10Code",
+    "icd10Description",
+    "patientStatus",
+    "soap",
+    "vitals",
+    "investigations",
+    "orders",
+    "noteDetails",
+    "tags",
+    "isCritical",
+  ];
+
+  const retryVE = require("../../utils/retryVersionError");
+  const prevStatus = before.status;
+
+  const note = await retryVE(async () => {
+    const doc = await DoctorNotes.findById(id);
+    if (!doc) {
+      const err = new Error("Note not found");
+      err.statusCode = 404;
+      throw err;
+    }
+    if (doc.status !== "signed" && doc.status !== "amended") {
+      const err = new Error("Only signed (or already-amended) notes can be amended");
+      err.statusCode = 409;
+      err.code = "AMEND_REQUIRES_SIGNED_NOTE";
+      throw err;
+    }
+
+    // Build the amendment entry from the JWT-resolved actor (NEVER from
+    // the request body — caller cannot impersonate another clinician).
+    const actorName = actorUser?.fullName
+      || [actorUser?.firstName, actorUser?.lastName].filter(Boolean).join(" ").trim()
+      || actorUser?.name
+      || "";
+    doc.amendments.push({
+      amendedAt:     new Date(),
+      amendedBy:     actorId || undefined,
+      amendedById:   actorUser?.employeeId || "",
+      amendedByName: actorName,
+      amendedByRole: actorRole,
+      reason,
+      changes: changes.map((c) => ({
+        field:    c?.field    || "",
+        oldValue: c?.oldValue,
+        newValue: c?.newValue,
+      })),
+    });
+
+    // Overlay the whitelisted clinical fields. We deliberately do NOT
+    // touch signedAt / signedByName / signedByReg / signedByEmpId /
+    // signature — the original attestation must survive the amendment.
+    ALLOWED_FIELDS.forEach((f) => {
+      if (data[f] !== undefined) doc[f] = data[f];
+    });
+
+    doc.status    = "amended";
+    doc.updatedBy = actorId || doc.updatedBy;
+    await doc.save();
+    return doc;
+  }, { label: "doctor-note-amend" });
+
+  // R7bn-1 / D9-fix: ClinicalAudit emit on amend (NABH IMS.2). The event
+  // is on the LONG_RETENTION_EVENTS list — 7y floor.
+  try {
+    const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+    emitClinicalAudit({
+      req,
+      event: "DOCTOR_NOTE_AMENDED",
+      UHID: note.patientUHID || note.UHID,
+      admissionId: note.admissionId,
+      patientId: note.patient,
+      patientName: note.patientName,
+      targetType: "DoctorNote",
+      targetId: note._id,
+      reason,
+      before: { status: prevStatus },
+      after: {
+        status: "amended",
+        reason,
+        changesCount: changes.length,
+        prevStatus,
+        newStatus: "amended",
+      },
+      actor: req ? undefined : { _id: actorId, fullName: actorUser?.fullName, role: actorRole },
+    });
+  } catch (_) { /* silent — audit emit is non-blocking */ }
+
+  return note;
+};
+
+// ─────────────────────────────────────────────────────────────
 // Delete draft note
 // ─────────────────────────────────────────────────────────────
 const deleteDoctorNote = async (id, doctorUserId, opts = {}) => {
@@ -887,5 +1042,6 @@ module.exports = {
   getNoteById,
   updateDoctorNote,
   updateDiagnosis,
+  amendDoctorNote,
   deleteDoctorNote,
 };

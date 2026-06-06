@@ -25,6 +25,13 @@ router.get("/:id",                    validateObjectIdParam("id"), requireAction
 router.put("/:id",                    validateObjectIdParam("id"), requireAction("doctor-orders.write"), ctrl.updateNote);
 router.patch("/:id/sign",             validateObjectIdParam("id"), requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), ctrl.signNote);
 router.patch("/:id/diagnosis",        validateObjectIdParam("id"), requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), ctrl.updateDiagnosis);
+// Post-sign amendment of a SIGNED Initial Assessment / progress note.
+// NABH IMS.2 + MCI Indian Medical Records Act 1956 §3: signed notes can
+// only be corrected via a tracked amendment that preserves the original
+// attestation. Controller pushes onto note.amendments[], flips status to
+// 'amended', and emits ClinicalAudit (event DOCTOR_NOTE_AMENDED, 7y floor).
+// Same write gates as /sign + /:id/diagnosis — action permission + NMC reg.
+router.post("/:id/amend",             validateObjectIdParam("id"), requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), ctrl.amendNote);
 router.delete("/:id",                 validateObjectIdParam("id"), requireAction("doctor-orders.write"), ctrl.deleteNote);
 
 module.exports = router;
