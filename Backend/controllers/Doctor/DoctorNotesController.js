@@ -31,10 +31,27 @@ class DoctorNotesController {
       return res.status(401).json({ success: false, code: "AUTH_REQUIRED", message: "Authenticated doctor identity required" });
     }
 
-    const note = await doctorNotesService.createDoctorNote(
-      req.body,
-      doctorUserId,
-    );
+    let note;
+    try {
+      note = await doctorNotesService.createDoctorNote(
+        req.body,
+        doctorUserId,
+      );
+    } catch (err) {
+      // R7hr-88 — ONE Initial Assessment per admission. The service
+      // (or the schema-level partial-unique index) throws this when a
+      // second IA is attempted. Surface 409 + the existing IA's id so
+      // the frontend can route the user to Amend on the original.
+      if (err.code === "DUPLICATE_INITIAL_ASSESSMENT") {
+        return res.status(409).json({
+          success: false,
+          code: "DUPLICATE_INITIAL_ASSESSMENT",
+          message: err.message,
+          existing: err.existing,
+        });
+      }
+      throw err;
+    }
     // ── Auto-billing hook ──────────────────────────────────────
     try {
       const { logErr } = require("../../utils/logErr");

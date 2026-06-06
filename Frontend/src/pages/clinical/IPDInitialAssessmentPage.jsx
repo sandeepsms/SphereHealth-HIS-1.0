@@ -567,6 +567,12 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   // Lock ribbon metadata sourced from the restored note.
   const [lockedSignedByName, setLockedSignedByName] = useState("");
   const [lockedSignedAt,     setLockedSignedAt]     = useState(null);
+  // R7hr-90 — Server-known existing role-specific signed/amended IA note
+  // (id only). Powers the pre-POST defensive guard and the 409 handler:
+  // the one-shot constraint says only ONE Initial Assessment per
+  // (admission, role) may exist signed. If this id is set, attempting to
+  // create another via Sign & Submit (without amendMode) is blocked.
+  const [existingSignedIaId, setExistingSignedIaId] = useState(null);
   // R7bd — activeTab + Doctor Initial Assessment tab removed. This page
   // is now nursing-only: the Doctor's initial assessment lives in the
   // dedicated Doctor Notes → Initial Assessment flow, and combining
@@ -1533,6 +1539,10 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                 || "",
               );
               setLockedSignedAt(lockSrc.signedAt || lockSrc.updatedAt || lockSrc.createdAt || null);
+              // R7hr-90 — Record the server-known existing IA id so the
+              // pre-POST guard + 409 handler can recognise it (even after
+              // the user dismisses LOCKED via a stale-state edge).
+              if (lockSrc._id) setExistingSignedIaId(lockSrc._id);
             }
           }
 

@@ -264,6 +264,72 @@ DoctorNotesSchema.index({ "orders.nurseStatus": 1 });
 DoctorNotesSchema.index({ ipdNo: 1, shift: 1, visitDate: -1 });
 DoctorNotesSchema.index({ admissionId: 1, visitDate: -1 });
 
+// R7hr-88 — Enforce ONE Initial Assessment per admission.
+// NABH AAC.4 requires a single, definitive doctor-side IA per admission;
+// subsequent corrections flow through the amend route (R7hr-89), NOT a
+// second IA document. Partial-unique indexes only fire when
+// noteType === "initial", so general / progress / daily / etc. notes are
+// unaffected. Two indexes give us belt-and-braces because the legacy
+// path stamps ipdNo only, while the canonical path stamps admissionId.
+DoctorNotesSchema.index(
+  { admissionId: 1, noteType: 1 },
+  {
+    name: "uniq_initial_per_admission",
+    unique: true,
+    partialFilterExpression: {
+      noteType: "initial",
+      admissionId: { $type: "objectId" },
+    },
+  },
+);
+DoctorNotesSchema.index(
+  { ipdNo: 1, noteType: 1 },
+  {
+    name: "uniq_initial_per_ipdNo",
+    unique: true,
+    partialFilterExpression: {
+      noteType: "initial",
+      ipdNo: { $type: "string" },
+    },
+  },
+);
+
+// R7hr-88 — defence-in-depth duplicate-IA guard at the schema layer.
+// The partial-unique indexes above are the authoritative gate, but a
+// pre("save") query catch surfaces a clean error code BEFORE Mongo
+// throws E11000, so the service / controller can route the user to the
+// existing IA rather than spitting a raw duplicate-key error.
+DoctorNotesSchema.pre("save", async function (next) {
+  try {
+    if (!this.isNew) return next();
+    if (this.noteType !== "initial") return next();
+
+    const ors = [];
+    if (this.admissionId) ors.push({ admissionId: this.admissionId });
+    if (this.ipdNo)       ors.push({ ipdNo: this.ipdNo });
+    if (!ors.length)      return next();
+
+    const existing = await this.constructor.findOne({
+      _id: { $ne: this._id },
+      noteType: "initial",
+      $or: ors,
+    }).select("_id").lean();
+
+    if (existing) {
+      const err = new Error(
+        "An Initial Assessment already exists for this admission. Open the existing one and use Amend instead of creating a new one.",
+      );
+      err.code = "DUPLICATE_INITIAL_ASSESSMENT";
+      err.statusCode = 409;
+      err.existing = existing;
+      return next(err);
+    }
+    return next();
+  } catch (e) {
+    return next(e);
+  }
+});
+
 // All pending orders for a patient — used by nurse
 DoctorNotesSchema.statics.getAllPendingOrders = async function (ipdNo) {
   const notes = await this.find({

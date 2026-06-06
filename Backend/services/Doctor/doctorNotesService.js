@@ -132,6 +132,32 @@ const createDoctorNote = async (data, doctorUserId) => {
   // for IPD admissions the frontend passes the admissionNumber as visitId.
   const finalIpdNo = resolvedIpdNo || resolvedAdmissionNumber || data.visitId || "N/A";
 
+  // R7hr-88 — ONE Initial Assessment per admission. The schema-level
+  // partial-unique indexes are the authoritative gate, but checking
+  // here first lets us return a friendly 409 with the existing IA's
+  // identity so the frontend can route the user straight to Amend
+  // rather than surfacing a raw duplicate-key error from Mongo.
+  if (noteType === "initial") {
+    const dupOr = [];
+    if (resolvedAdmissionId) dupOr.push({ admissionId: resolvedAdmissionId });
+    if (finalIpdNo && finalIpdNo !== "N/A") dupOr.push({ ipdNo: finalIpdNo });
+    if (dupOr.length) {
+      const existing = await DoctorNotes.findOne({
+        noteType: "initial",
+        $or: dupOr,
+      }).select("_id status signedByName signedAt").lean();
+      if (existing) {
+        const e = new Error(
+          "Initial Assessment already exists for this admission — use Amend instead.",
+        );
+        e.code = "DUPLICATE_INITIAL_ASSESSMENT";
+        e.statusCode = 409;
+        e.existing = existing;
+        throw e;
+      }
+    }
+  }
+
   const note = await DoctorNotes.create({
     patient: patRef || undefined,
     patientName: pName || "",

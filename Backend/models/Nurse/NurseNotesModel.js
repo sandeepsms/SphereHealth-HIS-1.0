@@ -83,6 +83,13 @@ const NurseNotesSchema = new mongoose.Schema(
     patientUHID: { type: String, index: true },
     ipdNo: { type: String, required: false, index: true },
 
+    // R7hr-89-A2 — admissionId is the join key for the partial-unique
+    // "one Initial Assessment per admission" guard below. The schema
+    // previously stripped this field silently; declaring it lets the
+    // (admissionId, noteType) partial-unique index actually function
+    // and gives the patient-history aggregator a second join lane.
+    admissionId: { type: mongoose.Schema.Types.ObjectId, ref: "Admission", index: true, default: null },
+
     noteDate: { type: Date, required: true, default: Date.now },
     shift: {
       type: String,
@@ -240,6 +247,77 @@ NurseNotesSchema.index({ patient: 1, noteDate: -1 });
 NurseNotesSchema.index({ ipdNo: 1, noteDate: -1 });
 NurseNotesSchema.index({ nurse: 1, noteDate: -1 });
 NurseNotesSchema.index({ ipdNo: 1, shift: 1, noteDate: -1 });
+
+// ── R7hr-89-A2: one Initial Assessment per admission (NABH AAC.1) ──
+// Two partial-unique indexes (admissionId is sometimes blank on legacy /
+// pre-resolution rows, so a single index on it would let duplicates slip
+// through whenever the admission lookup misses). The pre('save') hook
+// below converts the resulting E11000 into a typed
+// DUPLICATE_INITIAL_ASSESSMENT error so the controller can surface a
+// clean 409 instead of a stringly-typed Mongo write error.
+//
+// Primary lane keyed on admissionId — used when the service resolves the
+// active admission. Named so the service layer can detect the right
+// index by name in the E11000 path.
+NurseNotesSchema.index(
+  { admissionId: 1, noteType: 1 },
+  {
+    name: "uniq_initial_per_admission",
+    unique: true,
+    partialFilterExpression: {
+      noteType: "initial",
+      admissionId: { $type: "objectId" },
+    },
+  },
+);
+// Fallback lane keyed on ipdNo for the (still common) case where the
+// admission lookup missed and admissionId landed null. Guards against a
+// second Initial Assessment slipping through on the same admission
+// number.
+NurseNotesSchema.index(
+  { ipdNo: 1, noteType: 1 },
+  {
+    name: "uniq_initial_per_ipd",
+    unique: true,
+    partialFilterExpression: {
+      noteType: "initial",
+      ipdNo: { $type: "string", $gt: "" },
+    },
+  },
+);
+
+// ── R7hr-89-A2: DUPLICATE_INITIAL_ASSESSMENT pre-save guard ──────────
+// The partial-unique indexes above prevent a second Initial Assessment
+// from landing on the same admission at the storage layer, but the raw
+// E11000 a duplicate triggers is opaque ("E11000 duplicate key error
+// collection: nurse_notes index: uniq_initial_per_admission ..."). This
+// hook surfaces a typed error the service / controller can match on so
+// the API returns a clean 409 with code: DUPLICATE_INITIAL_ASSESSMENT.
+//
+// Mirror of DoctorNotes A1 (R7hr-89-A1) — same error shape, same code,
+// so the front-end can show a single "Initial Assessment already exists
+// for this admission" toast regardless of which note type collided.
+NurseNotesSchema.post("save", function (err, doc, next) {
+  // Mongoose dispatches the err-handling form of the post('save') hook
+  // for unique-index violations. We translate E11000 on either of the
+  // two IA-uniqueness indexes only — every other duplicate-key event
+  // (legacy compound indexes, future ones) passes through untouched.
+  if (
+    err &&
+    err.name === "MongoServerError" &&
+    err.code === 11000 &&
+    (err.message?.includes("uniq_initial_per_admission") ||
+      err.message?.includes("uniq_initial_per_ipd"))
+  ) {
+    const e = new Error(
+      "Initial Assessment already exists for this admission (NABH AAC.1 — one per admission)",
+    );
+    e.code = "DUPLICATE_INITIAL_ASSESSMENT";
+    e.statusCode = 409;
+    return next(e);
+  }
+  return next(err);
+});
 
 // Post-save: update DoctorNotes order statuses automatically
 NurseNotesSchema.post("save", async function (doc) {

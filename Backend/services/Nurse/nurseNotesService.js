@@ -142,11 +142,54 @@ const createNurseNote = async (data, nurseUserId) => {
 
   const noteStatus = status || "submitted";
 
+  // ── R7hr-89-A2: one Initial Assessment per admission (NABH AAC.1) ──
+  // Fast-path guard so the API returns a clean 409 with a typed code
+  // BEFORE we hit the partial-unique index. The pre-save hook on the
+  // model still catches the race-condition path (two concurrent IA
+  // creates landing in the same millisecond) and rethrows the same
+  // typed error — defence in depth.
+  if ((noteType || "general") === "initial") {
+    const dupeFilter = {
+      noteType: "initial",
+      $or: [],
+    };
+    if (admForLinkage?._id) {
+      dupeFilter.$or.push({ admissionId: admForLinkage._id });
+    }
+    if (resolvedIpdNo) {
+      dupeFilter.$or.push({ ipdNo: resolvedIpdNo });
+    }
+    // Skip if neither lookup key is available — nothing reliable to
+    // dedupe on; the orphan-write guard above already refused this
+    // path. Defensive guard against an accidental $or:[] match-all.
+    if (dupeFilter.$or.length) {
+      const existing = await NurseNotes.findOne(dupeFilter)
+        .select("_id ipdNo admissionId")
+        .lean()
+        .catch(() => null);
+      if (existing) {
+        const e = new Error(
+          "Initial Assessment already exists for this admission (NABH AAC.1 — one per admission)",
+        );
+        e.statusCode = 409;
+        e.code = "DUPLICATE_INITIAL_ASSESSMENT";
+        e.existingNoteId = existing._id;
+        throw e;
+      }
+    }
+  }
+
   const note = await NurseNotes.create({
     patient: patient?._id || resolvedPatientId || undefined,
     patientName: data.patientName || patient?.fullName || "",
     patientUHID: data.patientUHID || data.UHID || patient?.UHID || "",
     ipdNo: resolvedIpdNo,
+    // R7hr-89-A2 — stamp the resolved admissionId so the partial-unique
+    // (admissionId, noteType) index can actually function. Falls back to
+    // null when the admission lookup missed (legacy / pre-admission
+    // saves), in which case the (ipdNo, noteType) fallback index takes
+    // over the dedupe duty.
+    admissionId: admForLinkage?._id || null,
     noteDate: noteDate || new Date(),
     shift: shift || "general",
     nurse: nurse?._id || undefined,
