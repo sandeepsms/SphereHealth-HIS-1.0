@@ -69,6 +69,15 @@ const fmtVal = (v) => {
 // R25-safe: pure CSS tweak, no markup change, no field gain/loss.
 const COMPACT_GRID_CSS = `<style>
   .dfx-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:11.5px;margin:6px 0 10px}
+  /* R7hr-108 — 3-column variant for sections with many short key/value
+     pairs (Examination Findings sub-blocks — General Exam chips +
+     CVS / RS / CNS / P-A). Doctor's values here are mostly 1–2 word
+     answers (Yes / No / Normal / Conscious / Well hydrated / S1 S2
+     Normal / E4 V5 M6 / B/L equal etc.), so 3 columns pack tighter
+     without truncation. All other sections (History, Diagnosis,
+     Investigations & Plan) stay 2-column because their values are
+     longer free text. `.full` still spans the full row regardless. */
+  .dfx-grid--3col{grid-template-columns:1fr 1fr 1fr;gap:4px 14px}
   .dfx-grid .lbl{font-weight:800;color:#1e293b;font-size:11px;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:2px}
   .dfx-grid .val{color:#0f172a;font-size:11.5px;white-space:pre-wrap}
   .dfx-grid .full{grid-column:1 / -1}
@@ -90,6 +99,12 @@ const _section = (title, color, bodyHtml) =>
 const _grid = (cells) => {
   const kept = cells.filter(Boolean);
   return kept.length ? `<div class="dfx-grid">${kept.join("")}</div>` : "";
+};
+// R7hr-108 — 3-column grid for chip-style sections (used by
+// Examination Findings sub-blocks where each value is 1–2 words).
+const _grid3 = (cells) => {
+  const kept = cells.filter(Boolean);
+  return kept.length ? `<div class="dfx-grid dfx-grid--3col">${kept.join("")}</div>` : "";
 };
 const _narr = (text) => text ? `<div class="dfx-narr">${escapeHtml(String(text))}</div>` : "";
 
@@ -440,7 +455,8 @@ const buildBuilder = (note, opts = {}) => {
             const val = typeof v === "boolean" ? (v ? "✓ Yes" : "No") : v;
             return _kv(lbl, val);
           });
-        return cells.length ? _grid(cells) : "";
+        // R7hr-108 — 3-col grid (short chip values).
+        return cells.length ? _grid3(cells) : "";
       };
       const renderSysBlock = (key, label) => {
         const b = sx[key] || {};
@@ -452,6 +468,8 @@ const buildBuilder = (note, opts = {}) => {
             return _kv(niceK, val);
           });
         // tail: structured "details" / "location" / "other" fields
+        // (kept as `full` rows so they wrap the entire row regardless
+        //  of column count; they hold longer free-text answers).
         const extras = [];
         if (b.tenderLocation) extras.push(_kv("Tender Location", b.tenderLocation));
         if (b.murmurDetails) extras.push(_kv("Murmur Details", b.murmurDetails, true));
@@ -459,7 +477,8 @@ const buildBuilder = (note, opts = {}) => {
         if (b.other) extras.push(_kv("Other", b.other, true));
         const all = cells.concat(extras);
         if (!all.length) return "";
-        return `<div style="margin-top:8px"><div style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">${label}</div>${_grid(all)}</div>`;
+        // R7hr-108 — 3-col grid for CVS / RS / CNS / P-A.
+        return `<div style="margin-top:8px"><div style="font-size:11.5px;font-weight:800;color:#1e293b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${label}</div>${_grid3(all)}</div>`;
       };
       const examInner = [
         legacyExam ? _grid([
