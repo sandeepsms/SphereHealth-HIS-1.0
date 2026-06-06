@@ -1870,6 +1870,111 @@ function EmergencyTab({emergency=[]}) {
   );
 }
 
+/* ═══════════════════════════════════════════════════════ TAB: CONSENT FORMS
+   R7hr-75 — Previously the Consent tab was just a launcher card. Users were
+   confused because a signed consent existed but the tab showed nothing.
+   Now we render the actual list of saved consents (PENDING / SIGNED / REFUSED
+   / REVOKED) with quick metadata + a button that deep-links into the consent
+   module to view / print the form. */
+function ConsentFormsTab({ consents = [], uhid }) {
+  const STATUS_STYLE = {
+    SIGNED:  { bg: C.greenL, color: C.green,  label: "✓ SIGNED"   },
+    PENDING: { bg: C.amberL, color: C.amber,  label: "⌛ PENDING"  },
+    REFUSED: { bg: C.redL,   color: C.red,    label: "✕ REFUSED"  },
+    REVOKED: { bg: "#f1f5f9",color: C.muted,  label: "↶ REVOKED"  },
+  };
+  const openConsent = () => {
+    const u = uhid ? `?uhid=${encodeURIComponent(uhid)}` : "";
+    window.open(`/consent-forms${u}`, "_blank", "noopener");
+  };
+  if (!consents.length) {
+    return (
+      <div className="pf-tint--doctor" style={{display:"flex",flexDirection:"column",gap:14}}>
+        <Empty icon="📜" msg="No consent forms recorded for this patient yet"/>
+        <div style={{display:"flex",justifyContent:"center"}}>
+          <button
+            onClick={openConsent}
+            style={{
+              background: C.teal, color:"#fff", border:"none", borderRadius:8,
+              padding:"10px 18px", fontWeight:700, fontSize:13, cursor:"pointer",
+              boxShadow: "0 2px 6px rgba(13,148,136,0.25)",
+            }}
+          >📜 Capture New Consent ↗</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="pf-tint--doctor" style={{display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:15,color:C.dark}}>📜 Consent Forms</div>
+          <div style={{fontSize:11,color:C.muted}}>NABH PRE.3 / PRE.4 · {consents.length} record{consents.length===1?"":"s"}</div>
+        </div>
+        <button
+          onClick={openConsent}
+          style={{
+            background: C.teal, color:"#fff", border:"none", borderRadius:8,
+            padding:"8px 14px", fontWeight:700, fontSize:12, cursor:"pointer",
+          }}
+        >+ New Consent</button>
+      </div>
+      {consents.map((c, i) => {
+        const st = STATUS_STYLE[c.status] || STATUS_STYLE.PENDING;
+        const ts = c.signedAt || c.createdAt;
+        return (
+          <div
+            key={c._id || i}
+            className="pf-section-card"
+            style={{borderLeft:`4px solid ${st.color}`}}
+          >
+            <div className="pf-section-card__head">
+              <span className="pf-section-card__icon">📜</span>
+              <span className="pf-section-card__title">
+                {c.consentTitle || c.consentType || "Consent Form"}
+              </span>
+              <span
+                style={{
+                  marginLeft:"auto", padding:"3px 9px", borderRadius:999,
+                  background:st.bg, color:st.color, fontWeight:800, fontSize:11,
+                }}
+              >{st.label}</span>
+            </div>
+            <div className="pf-section-card__body pf-section-card__body--pad">
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px 16px",fontSize:12}}>
+                <div>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700}}>Consent ID</div>
+                  <div style={{fontWeight:700,fontFamily:"monospace"}}>{c._id?.slice(-8).toUpperCase() || "—"}</div>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700}}>NABH Ref</div>
+                  <div style={{fontWeight:700}}>{c.consentType || "—"}</div>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700}}>{c.signedAt ? "Signed" : "Created"}</div>
+                  <div style={{fontWeight:700}}>{ts ? fmtDT(ts) : "—"}</div>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700}}>Signed By</div>
+                  <div style={{fontWeight:700}}>{c.signedByName || c.consentingParty?.name || "—"}</div>
+                </div>
+                {c.biometric?.hardwareVerified && (
+                  <div style={{gridColumn:"1 / -1",marginTop:4}}>
+                    <span style={{
+                      display:"inline-block",padding:"2px 8px",borderRadius:999,
+                      background:C.tealL,color:C.teal,fontSize:10,fontWeight:800,
+                    }}>🔒 HARDWARE BIOMETRIC</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════ MAIN COMPONENT */
 function DoctorPatientPanelContent({ selectedAdmission }) {
   const [searchParams] = useSearchParams();
@@ -1891,6 +1996,10 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
   const [vitalSheet,    setVitalSheet]    = useState([]);
   const [emergency,     setEmergency]     = useState([]);
   const [doctorOrders,  setDoctorOrders]  = useState([]);
+  // R7hr-75 — Surface the patient's saved consent forms inside the panel's
+  // Consent tab instead of the bare launcher card. Backend exposes
+  // GET /consent-forms/uhid/:uhid and /admission/:admissionId.
+  const [consents,      setConsents]      = useState([]);
   const [loading,       setLoading]       = useState(false);
   const [error,         setError]         = useState("");
   const [loaded,        setLoaded]        = useState(false);
@@ -1938,6 +2047,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
     setLoading(true); setError(""); setLoaded(false);
     setPatient(null); setAdmission(null); setDoctorNotes([]); setNursingNotes([]);
     setBilling(null); setOpdVisits([]); setVitalSheet([]); setEmergency([]); setDoctorOrders([]);
+    setConsents([]);
     setActiveTab("overview");
     try {
       // Core patient + admission
@@ -2011,6 +2121,13 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
           if (ctrl.signal.aborted) return;
           const l = Array.isArray(r.data)?r.data:(r.data?.data||[]);
           setDoctorOrders(l);
+        }).catch(()=>{}),
+
+        // R7hr-75 — Consent forms for the Consent Forms tab list view.
+        axios.get(`${BASE}/consent-forms/uhid/${u}`, { signal: ctrl.signal }).then(r=>{
+          if (ctrl.signal.aborted) return;
+          const l = Array.isArray(r.data)?r.data:(r.data?.data||[]);
+          setConsents(l.sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0)));
         }).catch(()=>{}),
       ]);
 
@@ -2231,15 +2348,9 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       case "emergency":  return <EmergencyTab emergency={emergency}/>;
 
       // R7gm — Deep-link tabs that surface previously hidden modules.
-      case "consent":    return renderLauncher({
-        id: "consent", icon: "📜", color: C.teal,
-        title: "Consent Forms",
-        description: "Capture NABH PRE.3 / PRE.4 informed consent with TPM-backed fingerprint biometric + staff e-signature. Demographics auto-fill from this admission.",
-        nabh: "NABH PRE.3 · PRE.4 · IT-Act 2000 §3A",
-        url: ({ uhid }) => `/consent-forms?uhid=${encodeURIComponent(uhid)}`,
-        cta: "Open Consent Module ↗",
-        note: "Opens in a new tab so you don't lose your place here.",
-      });
+      // R7hr-75 — Replaced the bare launcher with a real saved-consent list.
+      // User feedback: a SIGNED consent existed but the tab was empty.
+      case "consent":    return <ConsentFormsTab consents={consents} uhid={patient?.UHID || activeUhid}/>;
       case "icubundles": return renderLauncher({
         id: "icubundles", icon: "🛡", color: "#0ea5e9",
         title: "Bundles of Care — ICU",
@@ -2297,6 +2408,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
 
   const tabCounts = {
     initial:   _initialCount,
+    consent:   consents.length, // R7hr-75
     mlc:       doctorNotes.length,
     nursing:   nursingNotes.length,
     vitals:    vitalSheet.length,

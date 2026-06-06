@@ -1916,6 +1916,74 @@ function EmergencyTab({emergency=[]}) {
   );
 }
 
+/* ══════════════════════════════════════════════════ TAB: CONSENT FORMS
+   R7hr-75 — Mirrors the DoctorPatientPanel.ConsentFormsTab. A nurse who
+   just witnessed a paperless consent needs to immediately see it in the
+   patient panel; the prior launcher card hid that. */
+function ConsentFormsTab({ consents = [], uhid }) {
+  const STATUS_STYLE = {
+    SIGNED:  { bg: C.greenL, color: C.green,  label: "✓ SIGNED"   },
+    PENDING: { bg: C.amberL, color: C.amber,  label: "⌛ PENDING"  },
+    REFUSED: { bg: C.redL,   color: C.red,    label: "✕ REFUSED"  },
+    REVOKED: { bg: "#f1f5f9",color: C.muted,  label: "↶ REVOKED"  },
+  };
+  const openConsent = () => {
+    const u = uhid ? `?uhid=${encodeURIComponent(uhid)}` : "";
+    window.open(`/consent-forms${u}`, "_blank", "noopener");
+  };
+  if (!consents.length) {
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        <Empty icon="📜" msg="No consent forms recorded for this patient yet"/>
+        <div style={{display:"flex",justifyContent:"center"}}>
+          <button
+            onClick={openConsent}
+            style={{background:C.teal,color:"#fff",border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:13,cursor:"pointer",boxShadow:"0 2px 6px rgba(13,148,136,0.25)"}}
+          >📜 Capture New Consent ↗</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:15,color:C.dark}}>📜 Consent Forms</div>
+          <div style={{fontSize:11,color:C.muted}}>NABH PRE.3 / PRE.4 · {consents.length} record{consents.length===1?"":"s"}</div>
+        </div>
+        <button
+          onClick={openConsent}
+          style={{background:C.teal,color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontWeight:700,fontSize:12,cursor:"pointer"}}
+        >+ New Consent</button>
+      </div>
+      {consents.map((c, i) => {
+        const st = STATUS_STYLE[c.status] || STATUS_STYLE.PENDING;
+        const ts = c.signedAt || c.createdAt;
+        return (
+          <div key={c._id || i} style={{background:"#fff",border:`1px solid ${C.border}`,borderLeft:`4px solid ${st.color}`,borderRadius:8,padding:"12px 14px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+              <span style={{fontSize:16}}>📜</span>
+              <span style={{fontWeight:800,fontSize:13,color:C.dark}}>{c.consentTitle || c.consentType || "Consent Form"}</span>
+              <span style={{marginLeft:"auto",padding:"3px 9px",borderRadius:999,background:st.bg,color:st.color,fontWeight:800,fontSize:11}}>{st.label}</span>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"6px 16px",fontSize:12}}>
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:700}}>Consent ID</div><div style={{fontWeight:700,fontFamily:"monospace"}}>{c._id?.slice(-8).toUpperCase() || "—"}</div></div>
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:700}}>NABH Ref</div><div style={{fontWeight:700}}>{c.consentType || "—"}</div></div>
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:700}}>{c.signedAt ? "Signed" : "Created"}</div><div style={{fontWeight:700}}>{ts ? fmtDT(ts) : "—"}</div></div>
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:700}}>Signed By</div><div style={{fontWeight:700}}>{c.signedByName || c.consentingParty?.name || "—"}</div></div>
+              {c.biometric?.hardwareVerified && (
+                <div style={{gridColumn:"1 / -1",marginTop:4}}>
+                  <span style={{display:"inline-block",padding:"2px 8px",borderRadius:999,background:C.tealL,color:C.teal,fontSize:10,fontWeight:800}}>🔒 HARDWARE BIOMETRIC</span>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════════ MAIN */
 function NursePatientPanelContent({ selectedAdmission }) {
   const navigate = useNavigate();
@@ -1935,6 +2003,10 @@ function NursePatientPanelContent({ selectedAdmission }) {
   const [doctorNotes,  setDoctorNotes]  = useState([]);
   const [billing,      setBilling]      = useState(null);
   const [vitalSheet,   setVitalSheet]   = useState([]);
+  // R7hr-75 — Real saved-consent list for the Consent Forms tab (mirrors
+  // DoctorPatientPanel). Replaces the bare launcher card so a nurse who
+  // just witnessed a consent immediately sees it here.
+  const [consents,     setConsents]     = useState([]);
   const [emergency,    setEmergency]    = useState([]);
   const [doctorOrders, setDoctorOrders] = useState([]);
 
@@ -1966,6 +2038,7 @@ function NursePatientPanelContent({ selectedAdmission }) {
     setLoading(true); setError(""); setLoaded(false);
     setPatient(null); setAdmission(null); setNursingNotes([]); setDoctorNotes([]);
     setBilling(null); setVitalSheet([]); setEmergency([]); setDoctorOrders([]);
+    setConsents([]);
     setPendingTransfer(null);
     setActiveTab("overview");
     try {
@@ -2026,6 +2099,12 @@ function NursePatientPanelContent({ selectedAdmission }) {
         axios.get(`${BASE}/doctor-orders?UHID=${u}`).then(r=>{
           const l=Array.isArray(r.data)?r.data:(r.data?.data||[]);
           setDoctorOrders(l);
+        }).catch(()=>{}),
+
+        // R7hr-75 — Consent forms (used by the Consent Forms tab list view).
+        axios.get(`${BASE}/consent-forms/uhid/${u}`).then(r=>{
+          const l=Array.isArray(r.data)?r.data:(r.data?.data||[]);
+          setConsents(l.sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0)));
         }).catch(()=>{}),
       ]);
 
@@ -2143,15 +2222,9 @@ function NursePatientPanelContent({ selectedAdmission }) {
       // R7gm — Deep-link tabs. Nurse role can VIEW + initiate (e.g. raise
       // consent, view discharge summary, fill ICU bundle daily checklist).
       // Backend gating decides what writes are allowed.
-      case "consent":    return renderLauncher({
-        id: "consent", icon: "📜", color: C.teal,
-        title: "Consent Forms",
-        description: "Witness, capture or print NABH PRE.3 / PRE.4 informed consents with TPM-backed fingerprint biometric + staff e-signature.",
-        nabh: "NABH PRE.3 · PRE.4 · IT-Act 2000 §3A",
-        url: ({ uhid }) => `/consent-forms?uhid=${encodeURIComponent(uhid)}`,
-        cta: "Open Consent Module ↗",
-        note: "Opens in a new tab so you don't lose your place here.",
-      });
+      // R7hr-75 — Real saved-consent list (mirrors doctor panel) so a nurse
+      // who just witnessed a consent immediately sees it here.
+      case "consent":    return <ConsentFormsTab consents={consents} uhid={patient?.UHID || activeUhid}/>;
       case "icubundles": return renderLauncher({
         id: "icubundles", icon: "🛡", color: "#0ea5e9",
         title: "Bundles of Care — ICU",
@@ -2209,6 +2282,7 @@ function NursePatientPanelContent({ selectedAdmission }) {
 
   const tabCounts = {
     initial:   _initialCount,
+    consent:   consents.length, // R7hr-75
     mlc:       doctorNotes.length,
     nursing:   nursingNotes.length,
     vitals:    vitalSheet.length,
