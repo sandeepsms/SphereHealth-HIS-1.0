@@ -698,6 +698,30 @@
   background: rgba(255, 255, 255, .25);
   color: #fff;
 }
+
+/* R7hr-73 — Visual cue for empty tabs.
+   When a tab's count === 0 (and it's not the currently selected tab),
+   dim the pill + zero-badge so the doctor instantly sees which sections
+   actually have data. Hover restores full opacity so empty tabs remain
+   discoverable for the first time data is added. */
+.pf-tabs__btn--empty {
+  opacity: 0.52;
+  filter: saturate(0.75);
+}
+.pf-tabs__btn--empty:hover,
+.pf-tabs__btn--empty:focus-visible {
+  opacity: 1;
+  filter: none;
+}
+.pf-tabs__count--zero {
+  background: color-mix(in srgb, var(--pf-muted, #9aa0a6) 18%, transparent);
+  color: var(--pf-muted, #6b7280);
+  font-weight: 700;
+}
+.pf-tabs__btn--active .pf-tabs__count--zero {
+  background: rgba(255, 255, 255, .18);
+  color: rgba(255, 255, 255, .82);
+}
 .pf-tabs__content {
   padding: 22px;
   min-height: 220px;

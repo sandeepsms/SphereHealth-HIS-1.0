@@ -2278,10 +2278,32 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
     }
   };
 
-  // ── Tab counters surfaced as pf-tabs__count badges
+  // ── Tab counters surfaced as pf-tabs__count badges.
+  // R7hr-73 — surface a count for EVERY tab we can cheaply compute from
+  // already-loaded state. Empty tabs (count===0) are dimmed by the shell so
+  // the doctor can tell at a glance which sections have data without
+  // clicking through 19 identical-looking pills.
+  // (Launcher tabs — consent / icubundles / discharge / medcerts / patientfile —
+  //  intentionally stay countless since they're nav cards into separate pages.)
+  const _initialCount = doctorNotes.filter(n => n.noteType === "initial" || n.noteType === "initialAssessment").length
+                      + nursingNotes.filter(n => n.noteType === "initial" || n.noteType === "initialAssessment").length;
+  const _handoverCount = doctorNotes.filter(n => n.noteType === "handover").length
+                       + nursingNotes.filter(n => ["handover","discharge","sbar"].includes(n.noteType)).length;
+  const _orderCount = (doctorNotes || []).reduce((a, n) => a + ((n.orders || []).length), 0);
+  const _treatmentCount = (doctorOrders || []).filter(o =>
+    ["Medication","IV_Fluid","Infusion","Procedure","Diet"].includes(o.orderType)
+  ).length;
+  const _billingCount = billing?.items?.length || (Number(billing?.totalAmount) > 0 ? 1 : 0);
+
   const tabCounts = {
+    initial:   _initialCount,
     mlc:       doctorNotes.length,
     nursing:   nursingNotes.length,
+    vitals:    vitalSheet.length,
+    handover:  _handoverCount,
+    treatment: _treatmentCount,
+    orders:    _orderCount,
+    billing:   _billingCount,
     emergency: emergency.length,
   };
 

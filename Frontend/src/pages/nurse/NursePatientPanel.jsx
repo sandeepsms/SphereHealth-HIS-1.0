@@ -2190,10 +2190,32 @@ function NursePatientPanelContent({ selectedAdmission }) {
     }
   };
 
+  // R7hr-73 — surface a count for every nurse-panel tab we can cheaply
+  // compute from already-loaded state. Empty tabs (count===0) are dimmed
+  // by the shell so the nurse can tell at a glance which sections have
+  // data. Fixes the stale "docnotes" key (no such tab id) → use "mlc".
+  // Launcher tabs (consent / icubundles / discharge / medcerts / patientfile)
+  // intentionally have no count.
+  const _initialCount = doctorNotes.filter((n) => n.noteType === "initial" || n.noteType === "initialAssessment").length
+                      + nursingNotes.filter((n) => n.noteType === "initial" || n.noteType === "initialAssessment").length;
+  const _handoverCount = doctorNotes.filter((n) => n.noteType === "handover").length
+                       + nursingNotes.filter((n) => ["handover","discharge","sbar"].includes(n.noteType)).length;
+  const _allOrders = doctorNotes.flatMap((n) => n.orders || []);
+  const _pendingOrderCount = _allOrders.filter((o) => !o.nurseStatus || o.nurseStatus === "pending").length;
+  const _treatmentCount = (doctorOrders || []).filter((o) =>
+    ["Medication","IV_Fluid","Infusion","Procedure","Diet"].includes(o.orderType)
+  ).length;
+  const _billingCount = billing?.items?.length || (Number(billing?.totalAmount) > 0 ? 1 : 0);
+
   const tabCounts = {
+    initial:   _initialCount,
+    mlc:       doctorNotes.length,
     nursing:   nursingNotes.length,
-    docnotes:  doctorNotes.length,
-    orders:    doctorNotes.flatMap((n) => n.orders || []).filter((o) => !o.nurseStatus || o.nurseStatus === "pending").length,
+    vitals:    vitalSheet.length,
+    handover:  _handoverCount,
+    treatment: _treatmentCount,
+    orders:    _pendingOrderCount,
+    billing:   _billingCount,
     emergency: emergency.length,
   };
 

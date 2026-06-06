@@ -392,11 +392,17 @@ export default function PatientPanelShell({
                   {tabs.map((t, i) => {
                     const isActive = t.id === activeTab;
                     const count = tabCounts[t.id];
+                    // R7hr-73 — Dim tabs we KNOW are empty (count === 0) and
+                    // surface a "0" badge so the doctor instantly sees which
+                    // sections are filled vs empty. Tabs without a count
+                    // entry (e.g. launcher cards) render normally.
+                    const isEmpty = count === 0 && !isActive;
+                    const showCount = count != null;
                     return (
                       <button
                         key={t.id}
                         ref={(el) => (tabRefs.current[i] = el)}
-                        className={`pf-tabs__btn ${isActive ? "pf-tabs__btn--active" : ""}`}
+                        className={`pf-tabs__btn ${isActive ? "pf-tabs__btn--active" : ""} ${isEmpty ? "pf-tabs__btn--empty" : ""}`}
                         onClick={() => handleTabChange(t.id)}
                         onKeyDown={(e) => handleTabKey(e, i)}
                         role="tab"
@@ -406,8 +412,13 @@ export default function PatientPanelShell({
                         tabIndex={isActive ? 0 : -1}
                       >
                         {t.label}
-                        {count != null && count > 0 && (
-                          <span className="pf-tabs__count" aria-label={`${count} records`}>{count}</span>
+                        {showCount && (
+                          <span
+                            className={`pf-tabs__count ${count === 0 ? "pf-tabs__count--zero" : ""}`}
+                            aria-label={`${count} record${count === 1 ? "" : "s"}`}
+                          >
+                            {count}
+                          </span>
                         )}
                       </button>
                     );
