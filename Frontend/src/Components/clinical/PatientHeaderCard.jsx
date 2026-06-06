@@ -162,6 +162,35 @@ export default function PatientHeaderCard({
       || patient.provisionalDiagnosis
       || "—";
   })();
+  // R7hr-85 — Build all three tiers (whichever are filled) for the
+  // prominent in-banner clinical strip. Each tier carries its own text,
+  // and the ICD-10 code+description are attached to the *highest* filled
+  // tier (matches the doctor's intent — ICD-10 always belongs to the
+  // most-final call).
+  const dxTiersFull = (() => {
+    const d = diagnosis;
+    if (d && (d.final || d.working || d.provisional)) {
+      const out = [];
+      if (d.provisional) out.push({ tier: "Provisional", text: d.provisional });
+      if (d.working)     out.push({ tier: "Working",     text: d.working });
+      if (d.final)       out.push({ tier: "Final",       text: d.final });
+      // attach ICD-10 to the highest tier present
+      if (out.length && (d.icd10Code || d.icd10Description)) {
+        out[out.length - 1].icd10Code = d.icd10Code;
+        out[out.length - 1].icd10Description = d.icd10Description;
+      }
+      return out;
+    }
+    if (latestDiagnosis?.text) {
+      return [{
+        tier: latestDiagnosis.tier || "Provisional",
+        text: latestDiagnosis.text,
+        icd10Code: latestDiagnosis.icd10Code,
+        icd10Description: latestDiagnosis.icd10Description,
+      }];
+    }
+    return [];
+  })();
   const consultant = patient.attendingDoctor || patient.doctorName || patient.consultantName || "—";
   const admType    = patient.admissionType?.toUpperCase() || "IPD";
   const allergies  = (patient.allergies || patient.knownAllergies || []).filter(Boolean);
@@ -275,23 +304,41 @@ export default function PatientHeaderCard({
           </div>
         </div>
 
-        {/* Footer: consultant + diagnosis + allergies */}
-        <div className="phc-footer">
-          <div className="phc-footer-item">
-            <i className="pi pi-stethoscope phc-footer-icon" />
-            <span className="phc-footer-label">Consultant:</span>
-            <span className="phc-footer-value">{consultant}</span>
-          </div>
-          <div className="phc-footer-item">
-            <i className="pi pi-tag phc-footer-icon" />
-            <span className="phc-footer-label">Diagnosis:</span>
-            <span className="phc-footer-value">{diagText}</span>
-            {diagTier && (
-              <span className={`phc-tier-pill ${tierClass(diagTier)}`}>
-                {diagTier}
-              </span>
+        {/* R7hr-85 — Prominent in-banner clinical strip (Consultant + all
+            filled diagnosis tiers with ICD-10). Sits right inside the
+            patient card so the clinical context is visible at a glance,
+            not buried in the smaller footer below. */}
+        {(consultant !== "—" || dxTiersFull.length > 0) && (
+          <div className="phc-clinical-strip">
+            {consultant !== "—" && (
+              <div className="phc-clin-chip phc-clin-chip--consultant" title="Attending consultant">
+                <i className="pi pi-user-edit phc-clin-icon" />
+                <span className="phc-clin-label">Consultant</span>
+                <span className="phc-clin-value">{consultant}</span>
+              </div>
             )}
+            {dxTiersFull.map((row) => (
+              <div
+                key={row.tier}
+                className={`phc-clin-chip phc-clin-chip--dx ${tierClass(row.tier)}`}
+                title={`${row.tier} diagnosis${row.icd10Code ? ` · ICD-10 ${row.icd10Code}` : ""}`}
+              >
+                <i className="pi pi-tag phc-clin-icon" />
+                <span className="phc-clin-tier">{row.tier}</span>
+                <span className="phc-clin-value">{row.text}</span>
+                {row.icd10Code && (
+                  <span className="phc-clin-icd">
+                    {row.icd10Code}{row.icd10Description ? ` — ${row.icd10Description}` : ""}
+                  </span>
+                )}
+              </div>
+            ))}
           </div>
+        )}
+
+        {/* Footer: allergies + twice-daily compliance only — consultant
+            and diagnosis now live in the prominent strip above. */}
+        <div className="phc-footer">
           {allergies.length > 0 && (
             <div className="phc-allergies">
               <span className="phc-allergy-label">
