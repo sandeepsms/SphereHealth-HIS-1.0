@@ -29,10 +29,10 @@ router.get("/patient/:patientId",     requireAction("doctor-notes.read"),  ctrl.
 router.get("/ipd/:ipdNo",             requireAction("doctor-notes.read"),  ctrl.getNotesByIPD);
 // R7hr-114 — POST/PUT/sign/amend accept doctor-orders.write OR nursing.write
 // so Nurse role can save her own IA section. Diagnosis + delete stay doctor-only.
-router.post("/",                      requireAnyAction("doctor-orders.write", "nursing.write"), credentialExpiryBlocker("NMC_REG"), ctrl.createNote);
+router.post("/",                      requireAnyAction("doctor-orders.write", "nurse.write"), credentialExpiryBlocker("NMC_REG"), ctrl.createNote);
 router.get("/:id",                    validateObjectIdParam("id"), requireAction("doctor-notes.read"),  ctrl.getNoteById);
-router.put("/:id",                    validateObjectIdParam("id"), requireAnyAction("doctor-orders.write", "nursing.write"), ctrl.updateNote);
-router.patch("/:id/sign",             validateObjectIdParam("id"), requireAnyAction("doctor-orders.write", "nursing.write"), credentialExpiryBlocker("NMC_REG"), ctrl.signNote);
+router.put("/:id",                    validateObjectIdParam("id"), requireAnyAction("doctor-orders.write", "nurse.write"), ctrl.updateNote);
+router.patch("/:id/sign",             validateObjectIdParam("id"), requireAnyAction("doctor-orders.write", "nurse.write"), credentialExpiryBlocker("NMC_REG"), ctrl.signNote);
 router.patch("/:id/diagnosis",        validateObjectIdParam("id"), requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), ctrl.updateDiagnosis);
 // Post-sign amendment of a SIGNED Initial Assessment / progress note.
 // NABH IMS.2 + MCI Indian Medical Records Act 1956 §3: signed notes can
@@ -40,7 +40,7 @@ router.patch("/:id/diagnosis",        validateObjectIdParam("id"), requireAction
 // attestation. Controller pushes onto note.amendments[], flips status to
 // 'amended', and emits ClinicalAudit (event DOCTOR_NOTE_AMENDED, 7y floor).
 // Same write gates as /sign + /:id/diagnosis — action permission + NMC reg.
-router.post("/:id/amend",             validateObjectIdParam("id"), requireAnyAction("doctor-orders.write", "nursing.write"), credentialExpiryBlocker("NMC_REG"), ctrl.amendNote);
+router.post("/:id/amend",             validateObjectIdParam("id"), requireAnyAction("doctor-orders.write", "nurse.write"), credentialExpiryBlocker("NMC_REG"), ctrl.amendNote);
 router.delete("/:id",                 validateObjectIdParam("id"), requireAction("doctor-orders.write"), ctrl.deleteNote);
 
 module.exports = router;

@@ -16,8 +16,8 @@ router.get("/", requireAction("patient.read"), ctrl.list);
 router.get("/:id", validateObjectIdParam("id"), requireAction("patient.read"), ctrl.getById);
 
 // CREATE / UPDATE / SIGN — gated on nursing.write (nurse / doctor / admin)
-router.post("/", requireAction("nursing.write"), ctrl.create);
-router.patch("/:id", validateObjectIdParam("id"), requireAction("nursing.write"), ctrl.update);
-router.post("/:id/sign", validateObjectIdParam("id"), requireAction("nursing.write"), ctrl.sign);
+router.post("/", requireAction("nurse.write"), ctrl.create);
+router.patch("/:id", validateObjectIdParam("id"), requireAction("nurse.write"), ctrl.update);
+router.post("/:id/sign", validateObjectIdParam("id"), requireAction("nurse.write"), ctrl.sign);
 
 module.exports = router;
