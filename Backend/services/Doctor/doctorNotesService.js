@@ -132,27 +132,42 @@ const createDoctorNote = async (data, doctorUserId) => {
   // for IPD admissions the frontend passes the admissionNumber as visitId.
   const finalIpdNo = resolvedIpdNo || resolvedAdmissionNumber || data.visitId || "N/A";
 
-  // R7hr-88 — ONE Initial Assessment per admission. The schema-level
-  // partial-unique indexes are the authoritative gate, but checking
-  // here first lets us return a friendly 409 with the existing IA's
-  // identity so the frontend can route the user straight to Amend
-  // rather than surfacing a raw duplicate-key error from Mongo.
+  // R7hr-88 + R7hr-116 — ONE Initial Assessment per ROLE per admission.
+  // After R26 split, Doctor IA and Nurse IA are SEPARATE records both
+  // with noteType: "initial". The dedupe filter MUST include section so
+  // a signed Doctor IA doesn't block the Nurse from saving hers (and
+  // vice versa). Legacy pre-R26 notes have no section field — we
+  // infer it from noteDetails.doctor.* / noteDetails.nursing.* below.
   if (noteType === "initial") {
+    const incomingSection = data.section || (
+      (data.noteDetails?.doctor || data.noteDetails?.nabh) ? "doctor" :
+      (data.noteDetails?.nursing || data.noteDetails?.nursingNabh) ? "nursing" :
+      null
+    );
     const dupOr = [];
     if (resolvedAdmissionId) dupOr.push({ admissionId: resolvedAdmissionId });
     if (finalIpdNo && finalIpdNo !== "N/A") dupOr.push({ ipdNo: finalIpdNo });
     if (dupOr.length) {
-      const existing = await DoctorNotes.findOne({
+      const candidates = await DoctorNotes.find({
         noteType: "initial",
         $or: dupOr,
-      }).select("_id status signedByName signedAt").lean();
-      if (existing) {
+      }).select("_id status signedByName signedAt section noteDetails").lean();
+      // Pick the candidate that matches the SAME role
+      const sameSection = candidates.find(c => {
+        const cSection = c.section || (
+          (c.noteDetails?.doctor || c.noteDetails?.nabh) ? "doctor" :
+          (c.noteDetails?.nursing || c.noteDetails?.nursingNabh) ? "nursing" :
+          null
+        );
+        return cSection && incomingSection && cSection === incomingSection;
+      });
+      if (sameSection) {
         const e = new Error(
-          "Initial Assessment already exists for this admission — use Amend instead.",
+          `${incomingSection === "nursing" ? "Nursing" : "Doctor"} Initial Assessment already exists for this admission — use Amend instead.`,
         );
         e.code = "DUPLICATE_INITIAL_ASSESSMENT";
         e.statusCode = 409;
-        e.existing = existing;
+        e.existing = sameSection;
         throw e;
       }
     }
