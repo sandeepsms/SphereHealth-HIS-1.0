@@ -234,6 +234,31 @@ const requireAction = (action) => (req, res, next) => {
   next();
 };
 
+/**
+ * R7hr-114 — requireAnyAction: passes if the user's role has ANY ONE of the
+ * listed actions. Used on endpoints serving multiple roles via different
+ * section semantics — e.g. /doctor-notes accepts BOTH doctor IA writes
+ * (gated by doctor-orders.write) AND nurse IA writes (gated by nursing.write)
+ * since R26 split. A single requireAction would lock out one role
+ * regardless of which section they're saving.
+ *
+ * Controller-level role validation still applies: the doctorNotesService
+ * filters noteDetails by section so a nurse can't write doctor blocks
+ * even if she reaches the controller. The OR gate just opens the door.
+ */
+const requireAnyAction = (...actions) => (req, res, next) => {
+  if (!req.user)
+    return res.status(500).json({ success: false, code: "INTERNAL_NO_USER", message: "Internal error — req.user not set after authenticate" });
+  const allowed = actions.some(a => roleCan(req.user.role, a));
+  if (!allowed)
+    return res.status(403).json({
+      message: `Access denied. None of the required actions [${actions.join(", ")}] are permitted for role '${req.user.role}'.`,
+      actions,
+      role: req.user.role,
+    });
+  next();
+};
+
 /* ── Soft authentication ──
    Try to verify the token but never block the request — if no/invalid
    token, req.user is left undefined and the request proceeds. Use this
@@ -819,6 +844,7 @@ module.exports = {
   authorize,
   adminOnly,
   requireAction,
+  requireAnyAction,
   attemptAuth,
   requirePasswordRotated,
   attachDoctorProfile,
