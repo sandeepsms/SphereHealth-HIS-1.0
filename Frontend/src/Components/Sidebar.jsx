@@ -430,6 +430,12 @@ const NAV = [
       // for accreditation. Admin-only — used during NABH prep / audit.
       { label: "NABH Signage",       icon: "pi-images",     path: "/admin/nabh-signage",  badge: "NEW" },
       { label: "Hospital Charges",   icon: "pi-dollar",     path: "/hospital-charges" },
+      // R7hr-164 — Nursing Equipment Master sits next to Hospital Charges
+      // as the master CRUD for the "Equipment Used This Shift" catalogue
+      // (oxygen mask, IV cannula, dressings…). Nurses tick chips on the
+      // NursingNotes Equipment tile; each tick fans into the IPD ledger via
+      // autoBillingService.onEquipmentCharged with chargeOncePerDay dedup.
+      { label: "Nursing Equipment",  icon: "pi-heart",      path: "/nursing-equipment", badge: "NEW" },
       // R7bf-G / NABH HRD.3 — staff credentialing register lives under
       // Masters & Admin since Admin owns the HR function today.
       { label: "Credentialing",      icon: "pi-id-card",    path: "/credentials",       badge: "NABH",  roles: [ADMIN] },

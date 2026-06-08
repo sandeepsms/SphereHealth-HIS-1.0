@@ -1039,6 +1039,21 @@ export function ConsentFormPageContent({ selectedPatient }) {
   const _doctorFromFound = (found) =>
     found?.attendingDoctor || found?.attendingDoctorName ||
     found?.consultantName || found?.consultant?.fullName || "";
+  // R7hr-162 — Pull the attending doctor's Registration Number from any
+  // shape the admission may carry it under (populated doctorId / nested
+  // profile / legacy flat field). Used to auto-fill "Doctor Reg. No." so
+  // the staff doesn't re-type a field the system already knows.
+  const _doctorRegNoFromFound = (found) =>
+    found?.attendingDoctorId?.registrationNumber
+    || found?.attendingDoctorId?.regNo
+    || found?.attendingDoctorId?.mciNo
+    || found?.attendingDoctorId?.mciNumber
+    || found?.attendingDoctorId?.medicalCouncilNo
+    || found?.consultant?.registrationNumber
+    || found?.consultant?.regNo
+    || found?.doctorRegistrationNumber
+    || found?.doctorRegNo
+    || "";
 
   // R7gm — URL-param prefill: when the consent module is launched from a
   // patient panel (Doctor/Nurse), the launcher passes `?uhid=UHID`. Read it
@@ -1084,6 +1099,9 @@ export function ConsentFormPageContent({ selectedPatient }) {
       // Pre-fill the consultant name for "Explained By (Doctor)" unless
       // the staff has already typed something else manually.
       doctorName: p.doctorName || _doctorFromFound(found),
+      // R7hr-162 — Mirror the doctor name with the registration number so
+      // the staff doesn't re-type what the admission already carries.
+      doctorRegNo: p.doctorRegNo || _doctorRegNoFromFound(found),
       ipdNo: found.admissionNumber || "",
       wardBed: `${found.wardId?.wardName || found.wardName || ""} / ${found.bedNumber || ""}`.replace(/^\s*\/\s*$/, ""),
       admissionDate: found.admissionDate ? new Date(found.admissionDate).toLocaleDateString("en-IN") : "",
@@ -1149,6 +1167,8 @@ export function ConsentFormPageContent({ selectedPatient }) {
           gender:     _genderFromFound(found),
           department: _deptFromFound(found),
           doctorName: p.doctorName || _doctorFromFound(found),
+          // R7hr-162 — auto-fill Reg No mirroring the doctor-name pre-fill.
+          doctorRegNo: p.doctorRegNo || _doctorRegNoFromFound(found),
           ipdNo: found.admissionNumber || "",
           wardBed: `${found.wardId?.wardName || ""} / ${found.bedNumber || ""}`,
           admissionDate: found.admissionDate ? new Date(found.admissionDate).toLocaleDateString("en-IN") : "",
@@ -1823,6 +1843,21 @@ export function ConsentFormPageContent({ selectedPatient }) {
                 initialBiometric={activeConsent.biometric}
                 initialStaffSignature={activeConsent.staffSignature}
                 initialBypass={activeConsent.bypass}
+                // R7hr-162 — Pre-fill consenting party from "Consent Given
+                // By" above so the receptionist doesn't re-type Name /
+                // Relation / Contact a second time. The biometric panel
+                // will only show ID Proof Type + Number when these are
+                // already known.
+                parentParty={{
+                  relation:      consentData.consentBy || "SELF",
+                  name:          consentData.consentBy === "SELF"
+                                   ? (consentData.patientName || "")
+                                   : (consentData.guardianName || ""),
+                  contactNumber: consentData.consentBy === "SELF"
+                                   ? (consentData.contactNumber || consentData.patientContact || "")
+                                   : (consentData.guardianContact || ""),
+                  relationOther: consentData.guardianRelation || "",
+                }}
                 onUpdated={(doc) => doc && setActiveConsent((prev) => ({ ...(prev || {}), ...doc }))}
                 onAllComplete={() => setBiometricReady(true)}
                 disabled={finalizing}

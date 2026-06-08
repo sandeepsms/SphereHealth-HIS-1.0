@@ -318,6 +318,11 @@ DoctorNotesSchema.index(
 // pre("save") query catch surfaces a clean error code BEFORE Mongo
 // throws E11000, so the service / controller can route the user to the
 // existing IA rather than spitting a raw duplicate-key error.
+// R7hr-118 — uniqueness is per (admission, role). After R26 split, the
+// Nurse IA and Doctor IA are SEPARATE records both with noteType:"initial".
+// The original section-blind guard blocked the second role from saving once
+// the first signed — now the section field participates: we only collide
+// when an existing IA shares the SAME admission AND the SAME section.
 DoctorNotesSchema.pre("save", async function (next) {
   try {
     if (!this.isNew) return next();
@@ -328,19 +333,41 @@ DoctorNotesSchema.pre("save", async function (next) {
     if (this.ipdNo)       ors.push({ ipdNo: this.ipdNo });
     if (!ors.length)      return next();
 
-    const existing = await this.constructor.findOne({
+    // Derive the incoming section: explicit field wins, else infer from
+    // wrappers on noteDetails (legacy pre-R26 path).
+    const incomingSection = this.section || (
+      (this.noteDetails?.doctor || this.noteDetails?.nabh) ? "doctor" :
+      (this.noteDetails?.nursing || this.noteDetails?.nursingNabh) ? "nursing" :
+      null
+    );
+
+    const candidates = await this.constructor.find({
       _id: { $ne: this._id },
       noteType: "initial",
       $or: ors,
-    }).select("_id").lean();
+    }).select("_id section noteDetails").lean();
 
-    if (existing) {
+    // Only block when a candidate shares the SAME section. Legacy notes
+    // without a section field have it inferred from their noteDetails
+    // wrappers exactly as on the incoming side, so a Nurse re-save will
+    // not collide with a pre-R26 Doctor IA that has only doctor.* wrappers.
+    const collision = candidates.find(c => {
+      const cSection = c.section || (
+        (c.noteDetails?.doctor || c.noteDetails?.nabh) ? "doctor" :
+        (c.noteDetails?.nursing || c.noteDetails?.nursingNabh) ? "nursing" :
+        null
+      );
+      return cSection && incomingSection && cSection === incomingSection;
+    });
+
+    if (collision) {
+      const roleLabel = incomingSection === "nursing" ? "Nursing" : "Doctor";
       const err = new Error(
-        "An Initial Assessment already exists for this admission. Open the existing one and use Amend instead of creating a new one.",
+        `${roleLabel} Initial Assessment already exists for this admission. Open the existing one and use Amend instead of creating a new one.`,
       );
       err.code = "DUPLICATE_INITIAL_ASSESSMENT";
       err.statusCode = 409;
-      err.existing = existing;
+      err.existing = { _id: collision._id };
       return next(err);
     }
     return next();

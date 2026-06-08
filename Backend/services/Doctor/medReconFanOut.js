@@ -256,6 +256,19 @@ async function fanOutMedsToDoctorOrders(note) {
       const courseDays = days;                         // null = open-ended
       const endDate    = days ? dateAtMidnightOffset(admDate, days) : null;
 
+      // R7hr-128 — Pull dilution metadata from the IA prescription row
+      // so it survives into the DoctorOrder. Without these three fields
+      // the MAR auto-feed (intakeOutputService.recordIntakeFromMAR)
+      // silently no-ops on every Given dose for parenteral meds and the
+      // I/O ledger under-reports intake. Coerce to Number where the
+      // schema requires it; preserve empty/blank as null so we don't
+      // pre-pollute existing orders' empty fields with 0.
+      const _dilVol  = m.dilutionVolume == null || m.dilutionVolume === "" ? null : Number(m.dilutionVolume);
+      const _dilOver = m.infuseOverMinutes == null || m.infuseOverMinutes === "" ? null : Number(m.infuseOverMinutes);
+      const dilutionVolume    = Number.isFinite(_dilVol) && _dilVol  > 0 ? _dilVol  : null;
+      const infuseOverMinutes = Number.isFinite(_dilOver) && _dilOver > 0 ? _dilOver : null;
+      const dilutionFluid     = (m.dilutionFluid || "").toString().trim();
+
       await DoctorOrder.create({
         UHID: admission.UHID || note.patientUHID,
         patientId: admission.patientId || note.patient,
@@ -274,6 +287,11 @@ async function fanOutMedsToDoctorOrders(note) {
           route: (m.route || deriveRoute(name)) || "Oral",
           mealStatus: ["BeforeFood","WithFood","AfterFood","EmptyStomach"].includes(m.mealStatus) ? m.mealStatus : "NotApplicable",
           duration: m.duration || "",
+          // R7hr-128 — flowed through from PrescriptionPanel's dilution
+          // strip so MAR can emit an Intake row per administered dose.
+          dilutionVolume,
+          dilutionFluid,
+          infuseOverMinutes,
           notes: `Ordered at Initial Assessment${m.duration ? ` — ${m.duration}` : " — no fixed duration"}`,
         },
         courseDays,

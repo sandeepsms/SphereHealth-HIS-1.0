@@ -369,8 +369,155 @@ function AssessmentTab({ uhid, patient: patientFromList, presetTemplate, onPrese
       // Preload most-recent ACTIVE plan into form so dietitian can review/edit.
       const last = plans.find(p => p.status === "active") || plans[0];
       if (last) loadPlanIntoForm(last);
+
+      // R7hr-151 — Auto-fetch from HIS so anthropometry + vitals + labs
+      // the nurse/doctor already filled in (IPD Initial Assessment + vital
+      // sheet + lab trend sheet) appear pre-populated. Only blank fields
+      // are touched — anything the dietitian already typed (or a prior
+      // plan loaded) is preserved.
+      await prefillFromHIS(uhid);
     })();
   }, [uhid, patientFromList]);
+
+  // R7hr-151 — Count of HIS-sourced fields actually applied, so we can
+  // surface a small "auto-filled" chip above the Anthropometry card.
+  const [hisFilledCount, setHisFilledCount] = useState(0);
+  const [hisSources,     setHisSources]     = useState([]);
+
+  /**
+   * R7hr-151 — prefillFromHIS(uhid)
+   * Parallel best-effort fetches from existing endpoints. Each promise
+   * catches its own error so a single failed source never breaks the
+   * other fills. After all settle, we merge into `form` using a strict
+   * "fill if blank" rule so we never overwrite user edits or the loaded
+   * plan history.
+   */
+  async function prefillFromHIS(targetUHID) {
+    if (!targetUHID) return;
+    setHisFilledCount(0); setHisSources([]);
+
+    // 1) Resolve active admission → ipdNo + admissionId.
+    const adm = await axios.get(`${API}/admissions/active?hasBed=true`, authHdr())
+      .then(r => (r.data?.data || r.data || []).find(a => a.UHID === targetUHID))
+      .catch(() => null);
+    const ipdNo = adm?.ipdNo || adm?.admissionNumber || null;
+
+    // 2) Parallel fetches — every failure becomes null/[] and skipped.
+    const [docNotes, vitalSheet, labTrends] = await Promise.all([
+      ipdNo ? axios.get(`${API}/doctor-notes/ipd/${ipdNo}`, authHdr())
+                .then(r => r.data?.data || r.data || [])
+                .catch(() => []) : Promise.resolve([]),
+      axios.get(`${API}/vitalsheet`, { ...authHdr(), params: { uhid: targetUHID } })
+        .then(r => r.data?.data || r.data || [])
+        .catch(() => []),
+      axios.get(`${API}/lab-records/trends`, { ...authHdr(), params: { UHID: targetUHID } })
+        .then(r => r.data?.data || r.data || [])
+        .catch(() => []),
+    ]);
+
+    const sources = [];
+    const draft = {};
+
+    // ── Initial Assessment anthropometry + vitals ──
+    // Search every doctor-note for noteType=initial (or section nurse/doctor).
+    const iaNotes = (docNotes || []).filter(n =>
+      n.noteType === "initial" || n.noteType === "initialAssessment"
+    );
+    if (iaNotes.length) {
+      // Prefer the nursing-section IA for anthropometry (nurse measures
+      // height/weight on admission); fall back to doctor IA.
+      const nurseIA  = iaNotes.find(n => n.section === "nursing");
+      const doctorIA = iaNotes.find(n => n.section === "doctor") || iaNotes[0];
+      const nurseND  = nurseIA?.noteDetails || {};
+      const docND    = doctorIA?.noteDetails || {};
+      const nNabh    = nurseND.nursingNabh || nurseND.nabh || {};
+      const dNabh    = docND.nabh || {};
+      const anthro   = nNabh.anthropometry || dNabh.anthropometry || {};
+      const vitals   = (nurseND.nursing || {}).vitals
+                    || (docND.doctor   || {}).vitals
+                    || nurseND.vitals  || docND.vitals || {};
+
+      if (anthro.heightCm) draft.height = anthro.heightCm;
+      else if (vitals.height) draft.height = vitals.height;
+      if (anthro.weightKg) draft.weight = anthro.weightKg;
+      else if (vitals.weight) draft.weight = vitals.weight;
+      if (anthro.waistCm)  draft.waist  = anthro.waistCm;
+      if (anthro.hipCm)    draft.hip    = anthro.hipCm;
+      if (anthro.recentWeightChangeKg != null) draft.recentWeightChange = anthro.recentWeightChangeKg;
+      if (vitals.bpSys && vitals.bpDia) draft.bp = `${vitals.bpSys}/${vitals.bpDia}`;
+      if (anthro.heightCm || anthro.weightKg || vitals.bpSys) sources.push("IPD Initial Assessment");
+    }
+
+    // ── Vital sheet — latest BP + BSL, latest height/weight as fallback ──
+    if (Array.isArray(vitalSheet) && vitalSheet.length) {
+      // Sort desc by date if available.
+      const latest = [...vitalSheet].sort((a, b) =>
+        new Date(b.date || b.createdAt || 0) - new Date(a.date || a.createdAt || 0)
+      )[0];
+      const v = latest?.values || latest || {};
+      if (!draft.bp && v.bp) draft.bp = String(v.bp);
+      if (!draft.bp && v.bp_sys && v.bp_dia) draft.bp = `${v.bp_sys}/${v.bp_dia}`;
+      if (!draft.height && v.height) draft.height = v.height;
+      if (!draft.weight && v.weight) draft.weight = v.weight;
+      // BSL → FBS (best-guess if no FBS lab reading later).
+      if (v.bsl && !draft.bloodSugarFasting) draft.bloodSugarFasting = v.bsl;
+      if (latest && (v.bp || v.bsl)) sources.push("Vital sheet");
+    }
+
+    // ── Lab trends — pick latest value per test name ──
+    // The lab tech writes tests with names like "Hb", "Creatinine",
+    // "Hba1c", "FBS", "PPBS", "Total Cholesterol", "Potassium". We
+    // match case-insensitively + tolerant of trailing units.
+    const labMap = {
+      bloodSugarFasting: /\b(fbs|fasting (blood )?(sugar|glucose))\b/i,
+      bloodSugarPP:      /\b(ppbs|post.?prandial|2.?hr post)/i,
+      hba1c:             /\bhba1c|glycos|glycated/i,
+      hemoglobin:        /\bhb\b|h[ae]moglobin/i,
+      cholesterol:       /\b(total )?cholesterol\b/i,
+      creatinine:        /\bcreatinine\b/i,
+      potassium:         /\bk[\+\b]|potassium/i,
+    };
+    const allTests = (Array.isArray(labTrends) ? labTrends : []).flatMap(t => t.tests || []);
+    let labHit = false;
+    for (const [field, rx] of Object.entries(labMap)) {
+      if (draft[field]) continue;
+      const matches = allTests.filter(t => rx.test(t.name || ""));
+      if (!matches.length) continue;
+      // Pick the latest reading across matched tests.
+      let best = null;
+      for (const t of matches) {
+        for (const r of (t.readings || [])) {
+          if (!r.value) continue;
+          if (!best || new Date(r.date) > new Date(best.date)) best = r;
+        }
+      }
+      if (best) { draft[field] = best.value; labHit = true; }
+    }
+    if (labHit) sources.push("Lab trend sheet");
+
+    // ── Apply: only blank fields get the HIS value. ──
+    // We snapshot the current form via a ref-style read so we can both
+    // compute the "applied" set synchronously (no async race for the chip
+    // counter) and commit the form update — without worrying about strict
+    // mode double-invocation or React 18 batching dropping the count.
+    setForm(prev => {
+      const next = { ...prev };
+      const appliedFields = [];
+      for (const [k, v] of Object.entries(draft)) {
+        if (v == null || v === "") continue;
+        if (prev[k] !== "" && prev[k] != null && prev[k] !== 0) continue;
+        next[k] = v; appliedFields.push(k);
+      }
+      // Schedule chip counter update right after this commit lands.
+      if (appliedFields.length > 0) {
+        setTimeout(() => {
+          setHisFilledCount(appliedFields.length);
+          setHisSources(sources);
+        }, 0);
+      }
+      return next;
+    });
+  }
 
   const loadPlanIntoForm = (p) => {
     const a = p.assessment || {};
@@ -564,6 +711,33 @@ function AssessmentTab({ uhid, patient: patientFromList, presetTemplate, onPrese
           {existing.length > 0 && <Badge value={`${existing.length} plan${existing.length > 1 ? "s" : ""} on file`} />}
         </div>
       </Card>
+
+      {/* R7hr-151 — Auto-filled-from-HIS chip. Shown only when the
+          prefill step actually applied at least one value, so the
+          dietitian sees the data provenance at a glance and knows the
+          values are NOT her own typed input. */}
+      {hisFilledCount > 0 && (
+        <div style={{
+          marginBottom: 10, padding: "8px 12px",
+          background: "linear-gradient(135deg,#ecfdf5,#f0fdf4)",
+          border: "1px solid #86efac", borderRadius: 8,
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          fontSize: 12, color: "#065f46", fontWeight: 600,
+        }}>
+          <i className="pi pi-sync" style={{ fontSize: 14, color: "#15803d" }} />
+          <span>Auto-filled <strong>{hisFilledCount}</strong> field{hisFilledCount === 1 ? "" : "s"} from HIS</span>
+          {hisSources.length > 0 && (
+            <span style={{ marginLeft: 4, color: "#15803d" }}>
+              · sources: {hisSources.map((s, i) => (
+                <span key={s} style={{ display: "inline-block", margin: "0 3px", padding: "2px 8px", background: "#dcfce7", borderRadius: 999, fontSize: 11 }}>{s}</span>
+              ))}
+            </span>
+          )}
+          <span style={{ marginLeft: "auto", fontSize: 10.5, fontStyle: "italic", color: "#15803d", opacity: 0.85 }}>
+            Values you type override these — only blank fields were filled.
+          </span>
+        </div>
+      )}
 
       {/* Anthropometry */}
       <Card title="Anthropometry" color={C.blue} icon="pi-chart-line" padding={14}>

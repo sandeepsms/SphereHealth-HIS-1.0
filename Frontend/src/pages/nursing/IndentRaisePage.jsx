@@ -115,6 +115,21 @@ export default function IndentRaisePage() {
   const [otherQty, setOtherQty] = useState(1);
   const [otherReason, setOtherReason] = useState("");
 
+  // R7hr-155 — Surgicals & Consumables tab state.
+  // The Drug Master collection has a `category` enum that includes
+  // "Surgical", "Consumable" and "IV Fluid" — those are the non-drug
+  // SKUs nurses constantly need at the bedside: syringes, IV sets,
+  // catheters, cannulas, dressings, gauze, NaCl/RL fluid bags etc.
+  // Pre-R7hr-155 the only way to indent any of these was to type their
+  // name into the Other Drug autocomplete — slow when a nurse just
+  // wants to grab a cannulation kit. This tab surfaces them grouped
+  // by sub-category with one-click add.
+  const [surgList, setSurgList] = useState([]);          // [{_id, name, category, pack, stock, ...}]
+  const [surgLoading, setSurgLoading] = useState(false);
+  const [surgCategory, setSurgCategory] = useState("All"); // chip filter
+  const [surgSearch, setSurgSearch] = useState("");        // optional inline search
+  const [surgQtyMap, setSurgQtyMap] = useState({});        // per-drug qty buffer { drugId: 1 }
+
   // Live stock rollup — one /stock call gives us every drug's current
   // remaining + nearest expiry. We expose it as a Map keyed by both
   // drugId (preferred — exact match) and lowercased drugName (fallback
@@ -193,11 +208,29 @@ export default function IndentRaisePage() {
         try {
           // R7hr-12-S3 (D9-05): chained call — pass { signal } so an admissionId
           // change aborts the in-flight fetch instead of letting it land late.
+          //
+          // R7hr-155 — also pass admissionId so IA-fanned DoctorOrders surface.
+          // The backend filter does $and across the four scope keys (UHID/
+          // visitId/admissionId/ipdNo); R7hr-131 noted IA-fanned orders may
+          // store visitId blank or the bare ObjectId, in which case a UHID-only
+          // search still finds them via the UHID predicate. Passing all three
+          // identifiers narrows the result set to THIS admission while widening
+          // tolerance for fan-out drift.
           const orderRes = await axios.get(
-            `${API_ENDPOINTS.BASE}/doctor-orders?UHID=${encodeURIComponent(uhid)}&visitId=${encodeURIComponent(visitId)}&orderType=Medication&status=${encodeURIComponent(ACTIVE_STATUSES)}`,
+            `${API_ENDPOINTS.BASE}/doctor-orders?UHID=${encodeURIComponent(uhid)}&admissionId=${encodeURIComponent(admissionId)}&orderType=Medication&status=${encodeURIComponent(ACTIVE_STATUSES)}`,
             { signal },
           );
           list = orderRes.data?.data || orderRes.data?.orders || [];
+          // If the admissionId-keyed query returns nothing (admissionId may be
+          // null on legacy orders), retry with visitId — the original keying.
+          if ((!Array.isArray(list) || list.length === 0) && visitId) {
+            const fallback = await axios.get(
+              `${API_ENDPOINTS.BASE}/doctor-orders?UHID=${encodeURIComponent(uhid)}&visitId=${encodeURIComponent(visitId)}&orderType=Medication&status=${encodeURIComponent(ACTIVE_STATUSES)}`,
+              { signal },
+            );
+            const fbList = fallback.data?.data || fallback.data?.orders || [];
+            if (Array.isArray(fbList) && fbList.length > 0) list = fbList;
+          }
         } catch (_) { /* leave list empty — the form still works via Other Drug */ }
       }
       if (signal.aborted) return;                              // R7hr-12-S3 (D9-05)
@@ -317,6 +350,47 @@ export default function IndentRaisePage() {
     return () => { if (loadAbortRef.current) loadAbortRef.current.abort(); };
   }, [load]);
 
+  /* R7hr-155 — Lazy-load the Surgical / Consumable / IV-Fluid catalog
+     the first time the nurse switches to that tab. Subsequent flips don't
+     re-fetch (the catalog is stable across a shift). Stock pills resolve
+     against the existing stockMap (no extra round-trip). */
+  const surgLoadedRef = useRef(false);
+  useEffect(() => {
+    if (tab !== "surgicals" || surgLoadedRef.current) return;
+    surgLoadedRef.current = true;
+    setSurgLoading(true);
+    const ctl = new AbortController();
+    (async () => {
+      try {
+        // Three category requests run in parallel — Drug Master indexes
+        // `category` so each is a cheap range scan. Merged into one list.
+        const cats = ["Surgical", "Consumable", "IV Fluid"];
+        const responses = await Promise.all(cats.map(c =>
+          axios.get(`${API_ENDPOINTS.BASE}/pharmacy/drugs`, {
+            params: { category: c },
+            signal: ctl.signal,
+          }).catch(() => ({ data: { data: [] } }))
+        ));
+        const merged = [];
+        responses.forEach((r, i) => {
+          const rows = Array.isArray(r.data?.data) ? r.data.data : [];
+          rows.forEach((d) => merged.push({ ...d, category: d.category || cats[i] }));
+        });
+        // De-duplicate by _id (defensive — categories shouldn't overlap)
+        const seenIds = new Set();
+        const deduped = merged.filter((d) => {
+          if (!d?._id || seenIds.has(String(d._id))) return false;
+          seenIds.add(String(d._id));
+          return true;
+        });
+        deduped.sort((a, b) => String(a.name || a.brandName || "").localeCompare(String(b.name || b.brandName || "")));
+        if (!ctl.signal.aborted) setSurgList(deduped);
+      } catch (_) { /* best-effort; show empty state */ }
+      finally { if (!ctl.signal.aborted) setSurgLoading(false); }
+    })();
+    return () => ctl.abort();
+  }, [tab]);
+
   /* ── DoctorOrder selection — tick a prescribed med ──────────── */
   const addFromOrder = (order) => {
     const detail = order.orderDetails || {};
@@ -379,6 +453,66 @@ export default function IndentRaisePage() {
   };
   const removeItem = (key) => setItems(prev => prev.filter(i => i.key !== key));
 
+  /* R7hr-155 — One-click add for the Surgicals / Consumables / IV
+     Fluid tab. Uses the per-drug qty buffer (default 1) so the nurse
+     can bump the count before clicking +. Reason is auto-filled from
+     the category so the server-side `requires-reason` guard never
+     blocks a routine cannulation-kit request. */
+  const addSurgical = (drug) => {
+    const qty = Math.max(1, Number(surgQtyMap[drug._id]) || 1);
+    if (items.some(i => String(i.drugId) === String(drug._id))) {
+      return toast.info("Already added — bump qty in the items table below");
+    }
+    const cat = drug.category || "Consumable";
+    const reasonByCat = {
+      "IV Fluid":   "Ward IV fluid stock",
+      "Surgical":   "Bedside surgical / dressing supplies",
+      "Consumable": "Bedside nursing consumables",
+    };
+    setItems(prev => [...prev, {
+      key:           `surg-${drug._id}-${Date.now()}`,
+      drugName:      drug.brandName || drug.name || drug.genericName || "Item",
+      drugId:        drug._id,
+      drugCode:      drug.itemCode || drug.drugCode || "",
+      dose:          drug.strength || "",
+      form:          drug.form || drug.pack || "",
+      requestedQty:  qty,
+      sourceType:    "Manual",
+      reason:        reasonByCat[cat] || "Nursing consumable",
+      unitPrice:     toMoney(drug.sellPriceCash ?? drug.defaultSalePrice ?? drug.salePrice ?? 0),
+      // R7hr-155 — Tag so the audit can later separate ad-hoc drug
+      // pulls from prescription-backed pulls.
+      category:      cat,
+    }]);
+    // Reset that row's buffer to 1 for the next quick add.
+    setSurgQtyMap(prev => ({ ...prev, [drug._id]: 1 }));
+  };
+
+  // R7hr-155 — Sub-category filter chips (sub-set of Drug.category enum
+  // tuned for nurses). "All" shows everything we loaded. The chip
+  // matching is by case-insensitive contains on category so "IV Fluid"
+  // → "IV" chip without a separate alias map.
+  const SURG_CATEGORY_CHIPS = [
+    { key: "All",        label: "All",         icon: "pi-th-large" },
+    { key: "IV Fluid",   label: "IV Fluids",   icon: "pi-bolt"     },
+    { key: "Consumable", label: "Consumables", icon: "pi-box"      },
+    { key: "Surgical",   label: "Surgicals",   icon: "pi-shield"   },
+  ];
+  const surgFiltered = (() => {
+    let rows = surgList;
+    if (surgCategory !== "All") {
+      rows = rows.filter(d => String(d.category || "").toLowerCase() === surgCategory.toLowerCase());
+    }
+    const q = surgSearch.trim().toLowerCase();
+    if (q.length >= 2) {
+      rows = rows.filter(d => {
+        const blob = `${d.name || ""} ${d.brandName || ""} ${d.genericName || ""} ${d.manufacturer || ""}`.toLowerCase();
+        return blob.includes(q);
+      });
+    }
+    return rows;
+  })();
+
   // R7hr-12-S3 (D9-02): synchronous ref-mutex to block the double-click
   // window between the user releasing the mouse and React flipping `saving`
   // to true. Without this, a quick double-click on "Raise indent to pharmacy"
@@ -434,17 +568,49 @@ export default function IndentRaisePage() {
 
   return (
     <div style={{ background: C.bg, minHeight: "100vh", padding: "16px 20px 60px" }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+      {/* Header — R7hr-155 pharmacy-style gradient ribbon so the page
+          visually belongs to the Pharmacy module (which is where the
+          indent will actually land). Same palette + chrome as the
+          Pharmacist's Live Indents page. */}
+      <div style={{
+        background: "linear-gradient(135deg, #1d4ed8 0%, #7c3aed 100%)",
+        borderRadius: 14, padding: "12px 16px",
+        marginBottom: 14, color: "#fff",
+        display: "flex", alignItems: "center", gap: 10,
+        boxShadow: "0 4px 18px rgba(29,78,216,.15)",
+      }}>
         <button onClick={() => navigate(-1)} style={{
-          padding: "6px 12px", background: "#fff", border: `1px solid ${C.border}`,
-          borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, color: C.dark,
+          padding: "6px 12px",
+          background: "rgba(255,255,255,.16)",
+          border: "1px solid rgba(255,255,255,.35)",
+          borderRadius: 8, cursor: "pointer", fontFamily: "inherit",
+          fontWeight: 700, color: "#fff", fontSize: 12,
         }}>
           <i className="pi pi-arrow-left" style={{ marginRight: 6, fontSize: 11 }} />
           Back
         </button>
-        <div style={{ fontSize: 18, fontWeight: 800, color: C.dark }}>Raise Pharmacy Indent</div>
-        <span style={{ marginLeft: "auto", fontSize: 12, color: C.muted }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{
+            width: 36, height: 36, borderRadius: 10,
+            background: "rgba(255,255,255,.16)",
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            fontSize: 18,
+          }}>💊</span>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: ".2px" }}>Raise Pharmacy Indent</div>
+            <div style={{ fontSize: 10.5, opacity: .85, marginTop: 1 }}>
+              Drugs · IV fluids · surgicals · consumables — routed to the IPD pharmacist
+            </div>
+          </div>
+        </div>
+        <span style={{
+          marginLeft: "auto",
+          padding: "5px 10px",
+          background: "rgba(255,255,255,.16)",
+          border: "1px solid rgba(255,255,255,.3)",
+          borderRadius: 999, fontFamily: "'DM Mono', monospace",
+          fontSize: 11, fontWeight: 800, letterSpacing: ".5px",
+        }}>
           {admission.admissionNumber}
         </span>
       </div>
@@ -535,10 +701,13 @@ export default function IndentRaisePage() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 4, borderBottom: `2px solid ${C.border}`, marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 4, borderBottom: `2px solid ${C.border}`, marginBottom: 12, flexWrap: "wrap" }}>
         {[
-          { id: "prescription", label: `From Prescription (${orders.length})`, icon: "pi-file-edit" },
-          { id: "other",        label: "Other Drug (free search)",             icon: "pi-search" },
+          { id: "prescription", label: `From Prescription (${orders.length})`,                         icon: "pi-file-edit" },
+          // R7hr-155 — New 3rd tab for nursing supplies (syringes, IV
+          // fluids, catheters, cannulas, dressings, gloves, gauze, etc.)
+          { id: "surgicals",    label: `Surgicals & Consumables${surgList.length ? ` (${surgList.length})` : ""}`, icon: "pi-shield" },
+          { id: "other",        label: "Other Drug (free search)",                                     icon: "pi-search" },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             padding: "10px 18px", background: tab === t.id ? C.card : "transparent",
@@ -582,6 +751,133 @@ export default function IndentRaisePage() {
                       {d.dose || ""} {d.frequency || ""} {d.route || ""} · prescribed by {o.orderedBy || "Doctor"}
                     </div>
                   </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* R7hr-155 — Surgicals / Consumables / IV Fluids tab.
+          Sub-category chip filter + optional inline search + product
+          card grid with stock pill + per-row qty stepper and a one-
+          click "+" that pushes the item into the indent items list. */}
+      {tab === "surgicals" && (
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+          {/* Category chips + search */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            {SURG_CATEGORY_CHIPS.map(chip => {
+              const active = surgCategory === chip.key;
+              const count  = chip.key === "All"
+                ? surgList.length
+                : surgList.filter(d => String(d.category || "").toLowerCase() === chip.key.toLowerCase()).length;
+              return (
+                <button key={chip.key} onClick={() => setSurgCategory(chip.key)} style={{
+                  padding: "6px 12px",
+                  background: active ? C.primary : "#fff",
+                  color:      active ? "#fff" : C.dark,
+                  border: `1.5px solid ${active ? C.primary : C.border}`,
+                  borderRadius: 999, cursor: "pointer", fontFamily: "inherit",
+                  fontWeight: 700, fontSize: 11, display: "inline-flex", alignItems: "center", gap: 6,
+                }}>
+                  <i className={`pi ${chip.icon}`} style={{ fontSize: 10 }} />
+                  {chip.label}
+                  <span style={{
+                    fontSize: 9, fontWeight: 800,
+                    background: active ? "rgba(255,255,255,.25)" : "#f1f5f9",
+                    color:      active ? "#fff" : C.muted,
+                    padding: "0 6px", borderRadius: 6, fontFamily: "'DM Mono', monospace",
+                  }}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+            <input type="text" value={surgSearch}
+              onChange={e => setSurgSearch(e.target.value)}
+              placeholder="🔎 Search syringe, cannula, NS 500…"
+              style={{
+                marginLeft: "auto", padding: "7px 12px",
+                border: `1px solid ${C.border}`, borderRadius: 8,
+                fontFamily: "inherit", fontSize: 12, minWidth: 240, boxSizing: "border-box",
+              }} />
+          </div>
+
+          {/* Grid */}
+          {surgLoading ? (
+            <div style={{ padding: 30, color: C.muted, textAlign: "center", fontSize: 12 }}>
+              <i className="pi pi-spin pi-spinner" style={{ marginRight: 8 }} />Loading catalog…
+            </div>
+          ) : surgFiltered.length === 0 ? (
+            <div style={{ padding: 30, color: C.muted, textAlign: "center", fontStyle: "italic", fontSize: 12 }}>
+              {surgList.length === 0
+                ? "No Surgical / Consumable / IV-Fluid items found in Drug Master."
+                : `No items in '${surgCategory}'${surgSearch ? ` matching “${surgSearch}”` : ""}.`}
+            </div>
+          ) : (
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+              gap: 10,
+              maxHeight: 480, overflowY: "auto", paddingRight: 4,
+            }}>
+              {surgFiltered.map(d => {
+                const stock = stockFor(d._id, d.brandName || d.name);
+                const already = items.some(i => String(i.drugId) === String(d._id));
+                const catTone = String(d.category || "").toLowerCase().includes("iv") ? "#0d9488"
+                              : String(d.category || "").toLowerCase().includes("surg") ? "#b45309"
+                              : "#7c3aed";
+                const qty = Math.max(1, Number(surgQtyMap[d._id]) || 1);
+                return (
+                  <div key={d._id} style={{
+                    border: `1px solid ${already ? "#86efac" : C.border}`,
+                    background: already ? "#f0fdf4" : "#fff",
+                    borderRadius: 10, padding: "9px 11px",
+                    display: "flex", flexDirection: "column", gap: 5,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 800, fontSize: 12.5, color: C.dark, lineHeight: 1.2 }}>
+                        {d.brandName || d.name || d.genericName || "Item"}
+                      </span>
+                      <span style={{
+                        fontSize: 9, fontWeight: 800, textTransform: "uppercase",
+                        background: "#f1f5f9", color: catTone,
+                        border: `1px solid ${catTone}33`,
+                        padding: "1px 6px", borderRadius: 4, letterSpacing: ".3px",
+                      }}>
+                        {d.category || "—"}
+                      </span>
+                    </div>
+                    {(d.genericName || d.strength || d.pack) && (
+                      <div style={{ fontSize: 10.5, color: C.muted, lineHeight: 1.3 }}>
+                        {d.genericName ? `${d.genericName} · ` : ""}{d.strength || ""}{d.pack ? ` · ${d.pack}` : ""}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <StockPill stock={stock} compact />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                      <label style={{ fontSize: 9, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Qty</label>
+                      <input type="number" min={1} value={qty}
+                        onChange={e => setSurgQtyMap(prev => ({ ...prev, [d._id]: Math.max(1, Number(e.target.value) || 1) }))}
+                        style={{
+                          width: 56, padding: "5px 6px",
+                          border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12,
+                          textAlign: "center", fontFamily: "inherit", boxSizing: "border-box",
+                        }} />
+                      <button onClick={() => addSurgical(d)} disabled={already} style={{
+                        marginLeft: "auto", padding: "5px 12px",
+                        background: already ? "#dcfce7" : C.primary,
+                        color: already ? "#15803d" : "#fff",
+                        border: "none", borderRadius: 6,
+                        cursor: already ? "default" : "pointer",
+                        fontFamily: "inherit", fontWeight: 800, fontSize: 11,
+                      }}>
+                        {already ? <><i className="pi pi-check" style={{ marginRight: 4 }} />Added</>
+                                 : <><i className="pi pi-plus" style={{ marginRight: 4 }} />Add</>}
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -685,14 +981,31 @@ export default function IndentRaisePage() {
                     )}
                   </td>
                   <td style={{ padding: "8px 10px" }}>
-                    <span style={{
-                      fontSize: 10, fontWeight: 700,
-                      background: it.sourceType === "DoctorOrder" ? "#dbeafe" : "#fef3c7",
-                      color:      it.sourceType === "DoctorOrder" ? "#1d4ed8" : "#a16207",
-                      padding: "2px 7px", borderRadius: 6, textTransform: "uppercase", letterSpacing: ".3px",
-                    }}>
-                      {it.sourceType === "DoctorOrder" ? "Rx" : "Manual"}
-                    </span>
+                    {/* R7hr-155 — three-state source pill: Rx (prescription
+                        backed), Supplies (Surgicals/Consumables/IV Fluid
+                        added from the new tab), Manual (free-search). The
+                        category tag survives on the item row so the
+                        pharmacist sees the intent at a glance. */}
+                    {(() => {
+                      const isRx   = it.sourceType === "DoctorOrder";
+                      const isSupply = it.sourceType === "Manual" &&
+                        (it.category === "Surgical" || it.category === "Consumable" || it.category === "IV Fluid");
+                      const label = isRx ? "Rx" : isSupply ? "Supplies" : "Manual";
+                      const tone  = isRx
+                        ? { bg: "#dbeafe", fg: "#1d4ed8" }
+                        : isSupply
+                          ? { bg: "#ede9fe", fg: "#6d28d9" }
+                          : { bg: "#fef3c7", fg: "#a16207" };
+                      return (
+                        <span style={{
+                          fontSize: 10, fontWeight: 700,
+                          background: tone.bg, color: tone.fg,
+                          padding: "2px 7px", borderRadius: 6, textTransform: "uppercase", letterSpacing: ".3px",
+                        }}>
+                          {label}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td style={{ padding: "8px 10px", textAlign: "center" }}>
                     <input type="number" min={1} value={it.requestedQty}

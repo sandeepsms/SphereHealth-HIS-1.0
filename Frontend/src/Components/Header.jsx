@@ -62,7 +62,7 @@ const MODULE_NAMES = {
   "/department":             "Department Management",
   "/updateVitalSheet":       "Update Vital Sheet",
   "/vitalSheet":             "Vital Sheet",
-  "/vitalsView":             "Vitals View",
+  // R7hr-158 — /vitalsView retired; trend opens as a modal in Nursing Notes.
 };
 
 const ROLE_COLORS = {

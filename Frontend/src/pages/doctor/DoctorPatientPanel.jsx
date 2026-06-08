@@ -10,6 +10,8 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientFileExport from "../../Components/clinical/PatientFileExport";
+// R7hr-157 — inline ICU bundle compliance display (parity with NursePatientPanel)
+import ICUBundlesTab from "../../Components/clinical/ICUBundlesTab";
 // Phase 2 shell — the pf-* design system, shared with NursePatientPanel.
 // Replaces ~225 lines of inline-styled chrome with a declarative invocation.
 import PatientPanelShell from "../../Components/clinical/PatientPanelShell";
@@ -26,6 +28,8 @@ import {
   BloodTransfusionRecordsTab,
   RBSMonitoringTab,
   HandoverNotesTab,
+  // R7hr-143 — Pending Investigation Reports shared tab
+  PendingInvestigationReportsTab,
 } from "../../Components/clinical/PatientPanelTabs";
 import { confirm } from "../../Components/common/ConfirmDialog";
 // R7az-D4-CRIT-1: toMoney() unwraps Decimal128/{$numberDecimal:"…"} wire
@@ -77,6 +81,10 @@ const TABS = [
   { id:"io",          label:"💧 Intake / Output"      },
   { id:"blood",       label:"🩸 Blood Transfusion"    },
   { id:"rbs",         label:"🩸 RBS Monitoring"       },
+  // R7hr-143 — Pending Investigation Reports tile. Visible in BOTH Doctor
+  // + Nurse panels so either role can mark a report collected the moment
+  // the result reaches the bedside.
+  { id:"pendingreports", label:"🧪 Pending Investigation Reports" },
   { id:"handover",    label:"🔄 Handover Notes"       },
   { id:"icubundles",  label:"🛡 ICU Bundles"         },
   { id:"treatment",   label:"💉 Treatment Chart"      },
@@ -1338,7 +1346,7 @@ function MedicationsTab({doctorNotes=[], doctorOrders=[]}) {
 }
 
 /* ═══════════════════════════════════════════════════════ TAB: ORDERS (date-wise + audit trail) */
-function OrdersTab({doctorNotes=[]}) {
+function OrdersTab({doctorNotes=[], doctorOrders=[]}) {
   const orderTypeIcon = t => t==="medication"?"💊":t==="iv_fluid"?"💧":t==="procedure"?"🔧":t==="diet"?"🍽️":"📋";
   const statColor = s => s==="done"?C.green:s==="partial"?C.amber:s==="skipped"?C.muted:C.amber;
 
@@ -1352,12 +1360,53 @@ function OrdersTab({doctorNotes=[]}) {
     });
   });
 
+  // R7hr-145 — Fold the REAL DoctorOrder collection into the same day map
+  // so the IA fan-out + standalone Lab/Rx/Infusion/Procedure orders show
+  // up alongside the legacy embedded note.orders. Each DoctorOrder row
+  // is normalised onto the same field shape the existing renderer below
+  // already understands (type, instruction, dose, route, frequency,
+  // duration, priority, nurseStatus, noteDate, doctorName).
+  (Array.isArray(doctorOrders) ? doctorOrders : []).forEach((o) => {
+    const dk = (o.orderedAt || o.createdAt)
+      ? new Date(o.orderedAt || o.createdAt).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    if (!byDate[dk]) byDate[dk] = [];
+    const det = o.orderDetails || {};
+    const inst =
+      det.testName || det.medicineName || det.displayName ||
+      det.fluidName || det.procedureName || det.dietName || o.orderType;
+    // Map status → nurseStatus the legacy renderer expects.
+    const nurseStatus =
+      o.status === "Completed" ? "done"
+      : o.status === "Cancelled" ? "skipped"
+      : (o.auditLog?.length || 0) > 0 ? "partial"
+      : "pending";
+    byDate[dk].push({
+      type: (o.orderType || "").toLowerCase(),
+      instruction: inst,
+      dose: det.dose,
+      route: det.route,
+      frequency: det.frequency,
+      duration: det.duration,
+      priority: o.priority,
+      noteDate: o.orderedAt || o.createdAt,
+      doctorName: o.orderedBy,
+      doctorEmployeeId: o.orderedByEmployeeId,
+      noteType: o.orderType,
+      nurseStatus,
+      nurseConfirmedAt: o.completedAt,
+      notes: Array.isArray(o.auditLog) && o.auditLog.length
+        ? ["New", ...o.auditLog.map((l) => l.step)].join(" → ")
+        : "",
+    });
+  });
+
   const dates = Object.keys(byDate).sort().reverse();
   const today = new Date().toISOString().slice(0,10);
-  const allOrders = doctorNotes.flatMap(n=>(n.orders||[]).map(o=>({...o,noteDate:n.createdAt,doctorName:n.doctorName})));
+  const allOrders = Object.values(byDate).flat();
   const [selDate, setSelDate] = useState(dates[0]||today);
 
-  if (!allOrders.length) return <Empty icon="📋" msg="No doctor orders found in notes"/>;
+  if (!allOrders.length) return <Empty icon="📋" msg="No doctor orders found"/>;
 
   const dateIdx      = dates.indexOf(selDate);
   const ordersOnDate = byDate[selDate]||[];
@@ -2570,11 +2619,18 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       case "io":         return <IntakeOutputChartTab nursingNotes={nursingNotes}/>;
       case "blood":      return <BloodTransfusionRecordsTab nursingNotes={nursingNotes}/>;
       case "rbs":        return <RBSMonitoringTab nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>;
+      // R7hr-143 — Pending Investigation Reports (doctor view = read-only,
+      // since doctors typically don't mark the result as collected; they
+      // review the result once a nurse uploads/marks it).
+      case "pendingreports": return <PendingInvestigationReportsTab admission={admission} patient={patient} canMarkReportCollected={true} actorName="Doctor"/>;
       case "handover":   return <HandoverNotesTab patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>;
       // R7gx-UI — "meds" tab removed; Treatment Chart covers the surface.
       case "medrecon":   return <MedReconciliationTab admission={admission} patient={patient}/>;
       case "treatment":  return <TreatmentChartTab doctorOrders={doctorOrders} doctorNotes={doctorNotes}/>;
-      case "orders":     return <OrdersTab doctorNotes={doctorNotes}/>;
+      // R7hr-145 — route real DoctorOrder array + admission to OrdersTab
+      // so the day-wise audit history reads the live collection, not the
+      // embedded note.orders array (which is empty for IA fan-out etc.).
+      case "orders":     return <OrdersTab doctorNotes={doctorNotes} doctorOrders={doctorOrders} admission={admission}/>;
       case "billing":    return <BillingTab billing={billing}/>;
       case "emergency":  return <EmergencyTab emergency={emergency}/>;
 
@@ -2582,15 +2638,12 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       // R7hr-75 — Replaced the bare launcher with a real saved-consent list.
       // User feedback: a SIGNED consent existed but the tab was empty.
       case "consent":    return <ConsentFormsTab consents={consents} uhid={patient?.UHID || activeUhid} patient={patient} admission={admission}/>;
-      case "icubundles": return renderLauncher({
-        id: "icubundles", icon: "🛡", color: "#0ea5e9",
-        title: "Bundles of Care — ICU",
-        description: "Daily VAP / CLABSI / CAUTI / DVT prophylaxis bundle compliance with checklist + auto Infection Control (HIC.5) emit.",
-        nabh: "NABH HIC.5 · ICU Care Bundles",
-        url: ({ uhid }) => `/icu-bundles?uhid=${encodeURIComponent(uhid)}`,
-        cta: "Open ICU Bundles ↗",
-        note: "Available for ICU-admitted patients; non-ICU patients see a guard message.",
-      });
+      // R7hr-157 — Inline ICU bundle compliance display. Mirrors the
+      // nurse-side change so a doctor reviewing the patient panel can
+      // see at a glance which bundles the nursing staff have charted
+      // for the latest shift + compliance % per bundle + recent
+      // history. Full editor at /icu-bundles is one click away.
+      case "icubundles": return <ICUBundlesTab uhid={patient?.UHID || activeUhid} role="Doctor" />;
       case "discharge":  return renderLauncher({
         id: "discharge", icon: "🚪", color: "#dc2626",
         title: "Discharge Summary",

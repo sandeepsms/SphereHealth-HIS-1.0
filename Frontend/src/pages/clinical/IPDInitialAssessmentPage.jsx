@@ -2166,7 +2166,19 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
       ${block("Prescription",
         `${meds.length || rxRows.filter(r=>r.drug).length} drug(s)`,
         meds.length > 0
-          ? `<table><thead><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th></tr></thead><tbody>${meds.map(m => `<tr><td>${esc(m.name)}</td><td>${esc(m.dose||"")}</td><td>${esc(m.route||"")}</td><td>${esc(m.frequency||"")}</td><td>${esc(m.duration||"")}</td></tr>`).join("")}</tbody></table>`
+          ? `<table><thead><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th></tr></thead><tbody>${meds.map(m => {
+              // R7hr-128-FIX — Mirror buildDoctorNoteCardHtml: surface
+              // dilution sub-label under the drug name on the IA print
+              // so the printed copy carries the parenteral dilution that
+              // the doctor entered + PrescriptionPanel saved + the MAR
+              // fan-out is already using. Smallest-diff (no extra column).
+              const dv = Number(m.dilutionVolume);
+              const ov = Number(m.infuseOverMinutes);
+              const dil = (Number.isFinite(dv) && dv > 0)
+                ? `<div style="font-size:10px;color:#0369a1;font-weight:600;margin-top:2px">💧 in ${dv} mL ${esc(m.dilutionFluid || "NS 0.9%")}${(Number.isFinite(ov) && ov > 0) ? ` over ${ov} min` : ""}</div>`
+                : "";
+              return `<tr><td>${esc(m.name)}${dil}</td><td>${esc(m.dose||"")}</td><td>${esc(m.route||"")}</td><td>${esc(m.frequency||"")}</td><td>${esc(m.duration||"")}</td></tr>`;
+            }).join("")}</tbody></table>`
           : (rxRows.filter(r=>r.drug).length === 0
               ? `<div class="empty">No medications prescribed</div>`
               : `<table><thead><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead>

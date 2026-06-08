@@ -118,24 +118,12 @@ class NurseNotesController {
     return res.json({ success: true, data: [], count: 0 });
   });
 
-  // GET /api/nurse-notes/report/:ipdNo  — full patient nursing record for print/PDF/insurance
-  getPatientReport = handle(async (req, res) => {
-    const notes = await nurseNotesService.getNotesByIPD(req.params.ipdNo, {});
-    // Group by date and sort
-    const grouped = {};
-    notes.forEach(n => {
-      const day = new Date(n.noteDate || n.createdAt).toISOString().slice(0, 10);
-      if (!grouped[day]) grouped[day] = [];
-      grouped[day].push(n);
-    });
-    return res.json({
-      success: true,
-      ipdNo: req.params.ipdNo,
-      totalNotes: notes.length,
-      grouped,
-      notes,
-    });
-  });
+  // R7hr-156 — getPatientReport handler removed. The parallel
+  // /nurse-notes/report/:ipdNo endpoint it backed (used only by the
+  // retired Nursing Notes "Print / PDF Report" tile) is gone. Insurance
+  // / NABH audit print needs are now served exclusively by the Patient
+  // File / Complete File print pipeline, which already groups by day and
+  // renders every nurse note through the shared per-type card builder.
 
   // PATCH /api/nurse-notes/:id/blood-monitoring  — add a monitoring entry to an active transfusion
   addBloodMonitoring = handle(async (req, res) => {

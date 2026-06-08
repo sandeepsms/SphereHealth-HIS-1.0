@@ -566,10 +566,67 @@ const buildBuilder = (note, opts = {}) => {
         _kv("ICD-10", docPayload.icd10 || note.icd10Code),
       ]));
 
-      // Investigations + Plan + Advice
-      const planSection = (docPayload.investigations || docPayload.treatmentPlan || docPayload.followupNotes || docPayload.dietAdvice || docPayload.activityAdvice)
-        ? _section("Investigations & Plan", "#16a34a", _grid([
-            _kv("Investigations", docPayload.investigations, true),
+      // R7hr-123 — Structured Lab orders / Prescription / Infusion lists.
+      // Pre-fix the IA card silently dropped these even when the doctor
+      // had ordered CBC, Amoxiclav, IV NS etc. — the payload lives at
+      // noteDetails.doctor.{invests, meds, infusions} as arrays of typed
+      // rows that the IPD IA form (R7hr-67/68/69) writes. Render each as
+      // its own colored table block so the consultant on rounds, the
+      // pharmacist, and the nurse at MAR all see what was actually
+      // ordered without opening the print. Empty arrays → block hidden.
+      const invList = Array.isArray(docPayload.invests) ? docPayload.invests
+                    : Array.isArray(docPayload.investigations) && typeof docPayload.investigations !== "string" ? docPayload.investigations
+                    : [];
+      const labOrdersHtml = invList.length
+        ? _section("Laboratory & Investigation Orders", "#0ea5e9",
+            `<table class="ndx-tbl"><tr><th>Test</th><th>Urgency</th><th>Instructions</th></tr>${invList.map(i => `<tr><td><strong>${escapeHtml(i.name || i.test || i.investigation || "—")}</strong></td><td>${i.urgency ? `<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:600;background:${/urgent|stat/i.test(i.urgency)?"#fee2e2":"#dbeafe"};color:${/urgent|stat/i.test(i.urgency)?"#dc2626":"#1d4ed8"}">${escapeHtml(i.urgency)}</span>` : "—"}</td><td>${escapeHtml(i.instructions || i.notes || "—")}</td></tr>`).join("")}</table>`)
+        : "";
+
+      const medsList = Array.isArray(docPayload.meds) ? docPayload.meds
+                     : Array.isArray(docPayload.rxRows) ? docPayload.rxRows
+                     : Array.isArray(docPayload.prescription) ? docPayload.prescription
+                     : [];
+      // R7hr-128-FIX — Render dilution sub-label (Vol mL / fluid / over min)
+      // under the drug name when the doctor filled it on the parenteral
+      // strip in PrescriptionPanel. Without this the meds card on patient
+      // panel / Doctor Notes timeline / Complete File print silently drops
+      // the dilution metadata even though the fan-out + DoctorOrder
+      // already carry it. Smallest-diff: same 6 columns, only the Drug
+      // cell grows by one sub-line when present.
+      const _medDilution = (m) => {
+        const vol = Number(m.dilutionVolume);
+        if (!Number.isFinite(vol) || vol <= 0) return "";
+        const fluid = (m.dilutionFluid || "NS 0.9%").toString();
+        const over = Number(m.infuseOverMinutes);
+        const overTxt = (Number.isFinite(over) && over > 0) ? ` over ${over} min` : "";
+        return `<div style="font-size:10px;color:#0369a1;font-weight:600;margin-top:2px">💧 in ${vol} mL ${escapeHtml(fluid)}${escapeHtml(overTxt)}</div>`;
+      };
+      const rxHtml = medsList.length
+        ? _section("Prescription / Medications", "#7c3aed",
+            `<table class="ndx-tbl"><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th><th>Notes</th></tr>${medsList.map(m => `<tr><td><strong>${escapeHtml(m.name || m.drug || "—")}</strong>${m.genericName ? `<div style="font-size:10px;color:#64748b">${escapeHtml(m.genericName)}</div>` : ""}${_medDilution(m)}</td><td>${escapeHtml(m.dose || "—")}</td><td>${escapeHtml(m.route || "—")}</td><td>${escapeHtml(m.frequency || "—")}</td><td>${escapeHtml(m.duration || "—")}</td><td>${escapeHtml([m.mealStatus, m.instructions, m.notes].filter(Boolean).join(" · ") || "—")}</td></tr>`).join("")}</table>`)
+        : "";
+
+      const infList = Array.isArray(docPayload.infusions) ? docPayload.infusions
+                    : Array.isArray(docPayload.infusion) ? docPayload.infusion
+                    : Array.isArray(docPayload.ivFluids) ? docPayload.ivFluids
+                    : [];
+      const infusionHtml = infList.length
+        ? _section("IV Fluids / Infusions", "#0d9488",
+            `<table class="ndx-tbl"><tr><th>Fluid</th><th>Volume</th><th>Rate</th><th>Duration</th><th>Route</th><th>Additives / Notes</th></tr>${infList.map(f => `<tr><td><strong>${escapeHtml(f.name || f.fluid || f.drug || "—")}</strong>${f.strength ? `<div style="font-size:10px;color:#64748b">${escapeHtml(f.strength)}</div>` : ""}</td><td>${escapeHtml(f.totalVolume ? `${f.totalVolume} ml` : f.volume || "—")}</td><td>${escapeHtml(f.rate ? `${f.rate} ml/hr` : "—")}</td><td>${escapeHtml(f.duration || "—")}</td><td>${escapeHtml(f.route || "—")}</td><td>${escapeHtml([f.additives, f.instructions, f.notes].filter(Boolean).join(" · ") || "—")}</td></tr>`).join("")}</table>`)
+        : "";
+
+      // Investigations + Plan + Advice (text fields — kept separate from
+      // the structured lab table above so a free-text Investigations note
+      // can co-exist with structured rows).
+      // R7hr-130 — User asked to rename this section header to just
+      // "Plan" because Investigations already has its own dedicated
+      // Lab Orders table above. The free-text Investigations sub-row
+      // stays inside this block so any narrative investigation note
+      // the doctor types in the IA form still surfaces, but the section
+      // title no longer double-counts it. R25-safe: copy change only.
+      const planSection = (docPayload.investigations && typeof docPayload.investigations === "string" || docPayload.treatmentPlan || docPayload.followupNotes || docPayload.dietAdvice || docPayload.activityAdvice)
+        ? _section("Plan", "#16a34a", _grid([
+            _kv("Investigations", typeof docPayload.investigations === "string" ? docPayload.investigations : null, true),
             _kv("Treatment Plan", docPayload.treatmentPlan, true),
             _kv("Follow-up Notes", docPayload.followupNotes, true),
             _kv("Diet Advice", docPayload.dietAdvice, true),
@@ -594,7 +651,7 @@ const buildBuilder = (note, opts = {}) => {
         ? `<div style="margin:18px 0 6px;padding:6px 12px;border-radius:6px;background:linear-gradient(90deg,#eef2ff,#fdf2f8);font-size:11px;font-weight:700;color:#312e81;letter-spacing:.5px;text-align:center">━━━ NURSING INTAKE — CROSS-DISCIPLINARY (NABH IPSG.6) ━━━</div>${nursingExtras}`
         : "";
 
-      return alertBanner + cc + history + vitalsHtml + exam + medRecHtml + nabhExtras + codeSection + riskHtml + consentHtml + dx + planSection + nursingBlock;
+      return alertBanner + cc + history + vitalsHtml + exam + medRecHtml + nabhExtras + codeSection + riskHtml + consentHtml + dx + labOrdersHtml + rxHtml + infusionHtml + planSection + nursingBlock;
     },
     // R7gp — initialAssessment is the alias the frontend sends from the
     // IPD Initial Assessment doctor form; route it to the same builder.

@@ -148,6 +148,19 @@ const InfusionMonitorSchema = new mongoose.Schema({
   remarks:       { type: String },
 }, { _id: false });
 
+// R7hr-147 — Bolus push entry. A bolus is a discrete mL volume given outside
+// the continuous drip rate (e.g. a 100 ml NS push for hypotension). The
+// running volume on the infusion progress bar must include drip mL + every
+// bolus mL — computeInfusionProgress on the frontend sums boluses[].volumeMl.
+const BolusSchema = new mongoose.Schema({
+  time:     { type: Date,   default: Date.now },
+  nurse:    { type: String, required: true },
+  volumeMl: { type: Number, required: true, min: 0.1 },
+  reason:   { type: String, required: true },
+  route:    { type: String, default: "IV" },
+  notes:    { type: String },
+}, { _id: false });
+
 /* ────────────── Main Schema ────────────── */
 const DoctorOrderSchema = new mongoose.Schema({
   UHID:      { type: String, required: true, index: true },
@@ -373,6 +386,12 @@ const DoctorOrderSchema = new mongoose.Schema({
   orderedBy:     String,
   orderedByRole: { type: String, default: "Doctor" },
   orderedAt:     { type: Date, default: Date.now },
+  // R7hr-142 — Stamp the prescriber's employee ID at order creation so
+  // the nurse panel + MAR print can show "Dr. Sandeep (EMP123)" without
+  // a server-side lookup at render. NABH MOM.4 + IPSG.2 — every order
+  // row must be traceable to a specific licensed prescriber.
+  orderedByEmployeeId: { type: String, default: "" },
+  orderedById:         { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
   // R7bq-J1 — course window. Set at order creation by parsing
   // `orderDetails.duration` ("5 days", "1 week", etc). Used by the
@@ -405,6 +424,9 @@ const DoctorOrderSchema = new mongoose.Schema({
   /* ── Infusion-specific nursing tracking ── */
   rateChanges:        [RateChangeSchema],
   infusionMonitoring: [InfusionMonitorSchema],
+  // R7hr-147 — boluses given outside the drip (push doses). Each entry adds
+  // to the bag's total mL infused for progress-bar math.
+  boluses:            [BolusSchema],
   currentRate:        { type: String },     // live rate (updated on rate change)
   infusionStarted:    { type: Date },
   infusionStopped:    { type: Date },
@@ -435,9 +457,30 @@ const DoctorOrderSchema = new mongoose.Schema({
   // TODO: enforce 24h cosign window via cron (R7az-MED-3)
   isVerbal:         { type: Boolean, default: false, index: true },
   verbalEnteredBy:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  verbalEnteredByName: { type: String, default: "" },
   verbalEnteredAt:  { type: Date },
   coSignedBy:       { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  coSignedByName:   { type: String, default: "" },
   coSignedAt:       { type: Date },
+  // R7hr-139 — surface the verbal-order context so the surveyor sees
+  // WHICH doctor gave the order, WHY (off-floor / phone / emergency),
+  // and whether the IPSG.2 read-back was confirmed. Without these
+  // fields the audit row only carries the nurse identity; NABH MOM.7c
+  // requires the prescribing doctor's identity too.
+  verbalFromDoctor:    { type: String, default: "" },
+  verbalFromDoctorId:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  verbalReason:        { type: String, default: "" },
+  readBackConfirmed:   { type: Boolean, default: false },
+  // R7hr-141 — Last time the 24h cosign-overdue cron fired an alert on
+  // this verbal order. Prevents the cron from spamming VERBAL_ORDER_
+  // OVERDUE_COSIGN every tick — we only re-emit if 24h have passed since
+  // the previous alert (or it's never been alerted before).
+  overdueAlertedAt:    { type: Date, default: null },
+  // R7hr-139 — when a nurse restarts a completed infusion as a fresh
+  // bag via verbal order, this stamp points back to the parent that was
+  // already exhausted/stopped. R7bq-L parentOrderId tracks the doctor-
+  // initiated restart; we reuse it but the isVerbal=true flag tells the
+  // two apart.
 
   consentStatus: {
     type: String,

@@ -64,17 +64,55 @@ const todayActionable = (o) => {
    nurse Infusion tab and drives the auto-stop when the bag is empty. */
 function computeInfusionProgress(order, atTime = new Date()) {
   if (!order || !order.infusionStarted) {
-    return { ml: 0, percent: 0, etaMinutes: null, exhausted: false, totalVol: 0 };
+    return { ml: 0, percent: 0, etaMinutes: null, exhausted: false, totalVol: 0, isPaused: false };
   }
   const totalVol = parseFloat(order.orderDetails?.totalVolume) || 0;
   const start = new Date(order.infusionStarted);
   const stop  = order.infusionStopped ? new Date(order.infusionStopped) : null;
-  // If already stopped, freeze the calc at stop time. If running, use
-  // current time clamped to "now" so we never project into the future
-  // even if the client clock drifts.
-  const evalEnd = stop ? stop : (atTime || new Date());
-  if (evalEnd <= start) {
-    return { ml: 0, percent: 0, etaMinutes: null, exhausted: false, totalVol };
+  // R7hr-146 — Detect "currently paused" state. Pre-fix, OnHold still
+  // ticked the bar because evalEnd was `atTime` regardless of status,
+  // so the nurse's Pause success toast fired but the volume kept
+  // climbing. Now: if status === "OnHold" and no stop yet, freeze the
+  // computation at the last "Infusion Paused" auditLog entry.
+  const isPausedNow = order.status === "OnHold" && !stop;
+  const hardEnd = stop ? stop : (atTime || new Date());
+
+  // R7hr-146 — Build "running intervals" from infusionStarted +
+  // Pause/Resume auditLog events. Each running segment contributes
+  // (duration × rate) to the total. Paused windows contribute zero —
+  // the bar freezes during pauses and resumes ticking from the next
+  // "Infusion Resumed" event.
+  // The result is NABH MOM.2 audit-faithful: the bag volume reflects
+  // ONLY the time the drip was actually flowing.
+  const audit = Array.isArray(order.auditLog) ? order.auditLog : [];
+  const pauseResumeEvents = audit
+    .filter((a) => a && a.doneAt && a.step)
+    .map((a) => ({ t: new Date(a.doneAt), step: a.step }))
+    .filter((e) => /Infusion Paused/i.test(e.step) || /Infusion Resumed/i.test(e.step))
+    .filter((e) => e.t > start && (!stop || e.t < stop))
+    .sort((a, b) => a.t - b.t);
+
+  // Walk events, building closed running segments.
+  const runningSegments = [];
+  let segStart = start;
+  let running = true;
+  for (const ev of pauseResumeEvents) {
+    if (/Infusion Paused/i.test(ev.step) && running) {
+      if (ev.t > segStart) runningSegments.push({ start: segStart, end: ev.t });
+      running = false;
+    } else if (/Infusion Resumed/i.test(ev.step) && !running) {
+      segStart = ev.t;
+      running = true;
+    }
+  }
+  // Close the final segment — if still running, run up to hardEnd;
+  // if paused (no resume yet), no segment to add.
+  if (running) {
+    if (hardEnd > segStart) runningSegments.push({ start: segStart, end: hardEnd });
+  }
+
+  if (runningSegments.length === 0) {
+    return { ml: 0, percent: 0, etaMinutes: null, exhausted: false, totalVol, isPaused: isPausedNow };
   }
 
   // Initial rate = orderDetails.rate (doctor's prescription); subsequent
@@ -83,37 +121,75 @@ function computeInfusionProgress(order, atTime = new Date()) {
     const n = parseFloat(String(v ?? "").replace(/[^\d.\-]/g, ""));
     return Number.isFinite(n) && n > 0 ? n : 0;
   };
-  let rate = parseR(order.orderDetails?.rate);
-  let segStart = start;
-  let totalMl = 0;
-
-  const changes = (order.rateChanges || [])
-    .map(rc => ({ t: new Date(rc.changedAt), rate: parseR(rc.newRate) }))
-    .filter(c => c.t > start && c.t < evalEnd && c.rate > 0)
+  const initialRate = parseR(order.orderDetails?.rate);
+  const rateChanges = (order.rateChanges || [])
+    .map((rc) => ({ t: new Date(rc.changedAt), rate: parseR(rc.newRate) }))
+    .filter((c) => c.rate > 0)
     .sort((a, b) => a.t - b.t);
 
-  for (const c of changes) {
-    const hrs = (c.t - segStart) / 3_600_000;
-    totalMl += hrs * rate;
-    segStart = c.t;
-    rate = c.rate;
+  // For each running segment, sum volume = duration × rate (split at
+  // any rateChanges that fall inside the segment).
+  const rateAt = (when) => {
+    let r = initialRate;
+    for (const rc of rateChanges) {
+      if (rc.t <= when) r = rc.rate;
+      else break;
+    }
+    return r;
+  };
+  let totalMl = 0;
+  let lastRateInRunningSegment = initialRate;
+  for (const seg of runningSegments) {
+    let cursor = seg.start;
+    let currentRate = rateAt(cursor);
+    // Apply rate changes that fall inside [seg.start, seg.end)
+    const changesInSeg = rateChanges.filter((rc) => rc.t > seg.start && rc.t < seg.end);
+    for (const rc of changesInSeg) {
+      const hrs = (rc.t - cursor) / 3_600_000;
+      totalMl += hrs * currentRate;
+      cursor = rc.t;
+      currentRate = rc.rate;
+    }
+    const tailHrs = (seg.end - cursor) / 3_600_000;
+    totalMl += tailHrs * currentRate;
+    lastRateInRunningSegment = currentRate;
   }
-  // Final segment to evalEnd
-  const finalHrs = (evalEnd - segStart) / 3_600_000;
-  totalMl += finalHrs * rate;
+
+  // R7hr-147 — Add bolus pushes (mL given outside the continuous drip).
+  // Only count boluses given before `hardEnd` (i.e. before stop or now),
+  // matching the same time horizon the drip math uses.
+  const bolusList = Array.isArray(order.boluses) ? order.boluses : [];
+  let bolusMl = 0;
+  for (const b of bolusList) {
+    if (!b || !b.time) continue;
+    const t = new Date(b.time);
+    if (t > hardEnd) continue;
+    const v = parseFloat(b.volumeMl);
+    if (Number.isFinite(v) && v > 0) bolusMl += v;
+  }
+  totalMl += bolusMl;
 
   // Cap at totalVol
   const exhausted = totalVol > 0 && totalMl >= totalVol;
   const ml = totalVol > 0 ? Math.min(totalMl, totalVol) : totalMl;
   const percent = totalVol > 0 ? Math.min(100, Math.round((ml / totalVol) * 100 * 10) / 10) : 0;
 
-  // ETA — how many minutes until totalVol reached, at current rate
+  // ETA — how many minutes until totalVol reached, at current rate.
+  // Suppress when paused (cannot project a finish time while frozen).
   let etaMinutes = null;
-  if (totalVol > 0 && !exhausted && !stop && rate > 0) {
+  if (totalVol > 0 && !exhausted && !stop && !isPausedNow && lastRateInRunningSegment > 0) {
     const remaining = totalVol - ml;
-    etaMinutes = Math.max(0, Math.round((remaining / rate) * 60));
+    etaMinutes = Math.max(0, Math.round((remaining / lastRateInRunningSegment) * 60));
   }
-  return { ml: Math.round(ml * 10) / 10, percent, etaMinutes, exhausted, totalVol, currentRate: rate };
+  return {
+    ml: Math.round(ml * 10) / 10,
+    percent,
+    etaMinutes,
+    exhausted,
+    totalVol,
+    currentRate: lastRateInRunningSegment,
+    isPaused: isPausedNow,
+  };
 }
 
 /* ── Frequency → scheduled times ── */
@@ -153,6 +229,7 @@ const DELAY_REASONS   = ["Patient was away for procedure","IV access not availab
 const RATE_REASONS    = ["Clinical condition change","Doctor order","Haemodynamic instability — MAP dropped","Fluid overload","Renal impairment — rate reduced","Hypotension","Hypertension","Titration protocol","Patient complaint","Extravasation — site changed","Infusion almost complete","Pump malfunction","Other"];
 const SITE_CONDITIONS = ["Patent","Swollen (oedema)","Leaking","Phlebitis","Changed — new site","Infiltration"];
 const INF_ACTIONS     = ["No Change","Rate Increased","Rate Decreased","Infusion Stopped","Infusion Restarted","Site Changed","Doctor Informed","Pump Alarm Resolved"];
+const BOLUS_REASONS   = ["Loading dose","Hypotension/shock","Volume replacement","Pre-procedure","Hypoglycaemia rescue","Electrolyte correction","Symptomatic relief","Per doctor's verbal order","Other"];
 const STOP_INF_REASONS = [
   "Total volume infused — course complete",
   "Doctor order — discontinue infusion",
@@ -166,6 +243,22 @@ const STOP_INF_REASONS = [
   "Patient request",
   "Other",
 ];
+// R7hr-132 — Reasons a held infusion gets resumed. Captured for NABH
+// MOM.2 audit trail; without these the resume is invisible on the
+// chart (you'd see Held → Running with no narrative of why nursing
+// restarted it).
+const RESUME_INF_REASONS = [
+  "Patient now stable — safe to resume",
+  "Pre-procedure NPO over — resuming maintenance",
+  "New IV access secured — resuming infusion",
+  "Doctor cleared resume after review",
+  "Vitals back within target range",
+  "Pain / agitation controlled — resume titration",
+  "Adverse reaction resolved — resume at lower rate",
+  "Held-until time reached — resuming per plan",
+  "Other",
+];
+
 const HOLD_INF_REASONS = [
   "Patient NPO — pre-procedure",
   "IV access lost — new site being prepared",
@@ -221,7 +314,21 @@ function FL({ label, children }) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-export default function TreatmentChart({ UHID, visitId, patientName, nurseMode = true, refreshTrigger = 0, onAdminSave, admissionId }) {
+export default function TreatmentChart({ UHID, visitId, patientName, nurseMode = true, refreshTrigger = 0, onAdminSave, admissionId, pinnedDate = null, hideDateNav = false, compactView = false }) {
+  // R7hr-124 — `pinnedDate` lets a parent (e.g. day-wise stack on the
+  // Patient Panel) lock this instance to a specific calendar day; the
+  // standalone /treatment-chart page leaves it null and keeps full
+  // Prev/Today/Next navigation. `hideDateNav` suppresses the picker row
+  // when the parent owns day selection.
+  // R7hr-125 — `compactView` strips the heavy chrome (dark gradient
+  // header with Refresh/Raise-Indent/Print buttons + the NABH status
+  // legend strip) so the day-wise stacked tabular presentation can
+  // render multiple days in succession without each one feeling like a
+  // standalone page. The drug × scheduled-doses table itself is already
+  // tabular and stays intact. Tabs remain visible so the viewer can
+  // still toggle Medication MAR ↔ Infusion Orders per day. All props
+  // default to legacy behaviour — standalone /treatment-chart page is
+  // unchanged (R25).
   const { user } = useAuth();
   const navigate = useNavigate();
   const nurseName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Nurse";
@@ -243,7 +350,18 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   const autoTimer = useRef(null);
 
   /* ── MAR date navigator ── */
-  const [marDate, setMarDate] = useState(() => new Date());
+  // R7hr-124 — when a parent pins the day (stacked view), initialise the
+  // navigator from pinnedDate; otherwise keep the standalone-page default
+  // of "today". setMarDate stays wired so the existing Prev/Next/Today
+  // buttons work unchanged on the legacy single-day pager.
+  const [marDate, setMarDate] = useState(() => {
+    if (pinnedDate instanceof Date && !isNaN(pinnedDate)) return new Date(pinnedDate);
+    if (typeof pinnedDate === "string" || typeof pinnedDate === "number") {
+      const d = new Date(pinnedDate);
+      if (!isNaN(d)) return d;
+    }
+    return new Date();
+  });
   const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
   const isMarToday = marDate.toDateString() === new Date().toDateString();
   const marDateStr = marDate.toDateString();
@@ -266,6 +384,13 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   const [monitorForm, setMonitorForm] = useState({
     currentRate: "", bp: "", pulse: "", spo2: "", urineOutput: "", volumeInfused: "", siteCondition: "", action: "No Change", remarks: "",
   });
+  // R7hr-147 — Bolus form. The nurse documents an extra mL push from
+  // the same regimen (flush, top-up, pre-load…). On save we POST to
+  // /:id/bolus which adds the volume to the infusion's accumulated
+  // total AND drops a CLINICAL_AUDIT row.
+  const [bolusForm, setBolusForm] = useState({
+    volumeMl: "", reason: "", reasonCustom: "", route: "IV", notes: "",
+  });
 
   /* ── Doctor action state ── */
   const [docModal,  setDocModal]  = useState(null);   // { order, type }
@@ -281,6 +406,25 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   const [infSaving, setInfSaving] = useState(false);
   const [infForm,   setInfForm]   = useState({
     reason: "", reasonCustom: "", holdUntil: "", notes: "",
+  });
+
+  /* ── R7hr-139 — Verbal/Telephonic Order modal state.
+       parentOrder is set when the nurse restarts a completed infusion
+       so the modal pre-fills the regimen for one-tap restart. */
+  const [verbalModal, setVerbalModal] = useState({ open: false, parentOrder: null });
+  const [verbalSaving, setVerbalSaving] = useState(false);
+  const [verbalForm, setVerbalForm] = useState({
+    orderType: "Medication",       // Medication | IV_Fluid
+    verbalFromDoctor: "",          // Prescribing doctor name (mandatory)
+    verbalReason: "",              // Phone consult / Off-floor / Emergency / Other
+    verbalReasonCustom: "",
+    readBackConfirmed: false,      // IPSG.2 mandatory
+    // Medication fields
+    medicineName: "", dose: "", route: "PO", frequency: "BD", duration: "",
+    indication: "", notes: "",
+    dilutionVolume: "", dilutionFluid: "", infuseOverMinutes: "",
+    // Infusion fields
+    fluidName: "", totalVolume: "", rate: "", infDuration: "", additives: "",
   });
 
   /* ── Fetch ── */
@@ -481,6 +625,45 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     } finally { setSaving(false); }
   };
 
+  /* ── R7hr-147 — Submit a Bolus push for an infusion.
+       The nurse enters a mL volume that's given manually outside the
+       continuous drip rate. The backend appends to the bag's `boluses`
+       array and bumps a running total that computeInfusionProgress
+       picks up — so the volume bar correctly reflects ALL fluid given,
+       drip + boluses. NABH MOM.2 emits CLINICAL_AUDIT INFUSION_BOLUS. */
+  const submitBolus = async () => {
+    if (!actionModal) return;
+    const { order } = actionModal;
+    const ml = parseFloat(bolusForm.volumeMl);
+    if (!Number.isFinite(ml) || ml <= 0) {
+      toast.error("Enter a positive bolus volume in ml");
+      return;
+    }
+    const finalReason = bolusForm.reason === "Other"
+      ? bolusForm.reasonCustom.trim()
+      : bolusForm.reason;
+    if (!finalReason) {
+      toast.error("Reason is required for NABH documentation");
+      return;
+    }
+    setSaving(true);
+    try {
+      await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}/bolus`, {
+        volumeMl: ml,
+        reason: finalReason,
+        route: bolusForm.route || "IV",
+        notes: bolusForm.notes || "",
+        nurse: nurseName,
+      });
+      toast.success(`Bolus ${ml} ml documented`);
+      setActionModal(null);
+      setBolusForm({ volumeMl: "", reason: "", reasonCustom: "", route: "IV", notes: "" });
+      await fetchOrders(true);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Bolus save failed");
+    } finally { setSaving(false); }
+  };
+
   /* ── Stop infusion — opens styled modal (replaces window.prompt) ── */
   const stopInfusion = (order) => {
     setInfModal({ order, type: "stop" });
@@ -493,7 +676,25 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     setInfForm({ reason: "", reasonCustom: "", holdUntil: "", notes: "" });
   };
 
-  /* ── Submit stop / hold infusion ── */
+  /* ── Resume infusion — opens styled modal (R7hr-132 — replaces the
+       silent PATCH-to-InProgress restartInfusion path so every resume
+       carries a documented NABH MOM.2 reason). */
+  const resumeInfusion = (order) => {
+    setInfModal({ order, type: "resume" });
+    setInfForm({ reason: "", reasonCustom: "", holdUntil: "", notes: "" });
+  };
+
+  /* ── Submit stop / hold / resume infusion ──
+     R7hr-134 — Reroute from PATCH /:id to POST /:id/nurse-infusion-action.
+     Pre-R7hr-134 these three actions called PATCH /:id with `status` in the
+     body; the PATCH_ALLOWED whitelist (R7hr-12-S?) silently dropped `status`
+     so the chart appeared to flip Running ↔ Held but the DB never changed
+     and no audit row landed (R7hr-132 was effectively a frontend-only UI
+     ceremony). The new POST endpoint persists the status, stamps
+     infusionStopped / stopReason / completedBy on stop, pushes a row to
+     auditLog ("kab, kisne, kya, kyu") and emits a CLINICAL_AUDIT event
+     (INFUSION_PAUSED / INFUSION_RESUMED / INFUSION_STOPPED) so the NABH
+     MOM.2 timeline is complete.                                          */
   const submitInfAction = async () => {
     if (!infModal) return;
     const { order, type } = infModal;
@@ -501,23 +702,30 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     const finalReason = f.reason === "Other" ? f.reasonCustom.trim() : f.reason;
     if (!finalReason) { toast.error("Reason is required for NABH documentation"); return; }
 
+    // Map UI type → backend action verb.
+    const ACTION_MAP = { stop: "stop", hold: "pause", resume: "resume" };
+    const action = ACTION_MAP[type];
+    if (!action) {
+      toast.error(`Unknown infusion action: ${type}`);
+      return;
+    }
+
     setInfSaving(true);
     try {
-      if (type === "stop") {
-        await axios.patch(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}`, {
-          status: "Stopped",
-          stopReason: finalReason,
-          infusionStopped: new Date().toISOString(),
-          nurseNotes: f.notes || undefined,
-        });
-        toast.success("Infusion stopped & documented");
-      } else {
-        await axios.patch(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}`, {
-          status: "Held",
-          nurseNotes: `Held: ${finalReason}${f.holdUntil ? ` until ${f.holdUntil}` : ""} — ${nurseName} @ ${new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})}${f.notes ? ` | ${f.notes}` : ""}`,
-        });
-        toast.success("Infusion held & documented");
-      }
+      await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}/nurse-infusion-action`, {
+        action,
+        reason: finalReason,
+        reasonDetail: undefined,
+        holdUntil: action === "pause" ? (f.holdUntil || undefined) : undefined,
+        notes: f.notes || undefined,
+        nurse: nurseName,
+      });
+      const SUCCESS_MSGS = {
+        stop: "Infusion stopped & documented",
+        pause: "Infusion paused & documented",
+        resume: "Infusion resumed & documented",
+      };
+      toast.success(SUCCESS_MSGS[action]);
       setInfModal(null);
       await fetchOrders(true);
     } catch (err) {
@@ -534,33 +742,130 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     } catch { toast.error("Failed"); }
   };
 
-  /* R7bq-L — Start a FRESH BAG of the same regimen. Clones the
-     completed/stopped order as a new DoctorOrder (same drug, same
-     diluent, same rate, same totalVolume) with status=Active and a
-     new infusionStarted=now. Used when the patient finishes a 500 ml
-     bag and needs another to continue treatment. The server endpoint
-     POST /:id/restart bypasses the 30-second dedup guard. */
-  const restartBag = async (order) => {
-    if (!window.confirm(`Start a FRESH BAG of ${order.orderDetails?.medicineName || "this infusion"} at ${order.currentRate || order.orderDetails?.rate || "—"} ml/hr?`)) return;
+  /* R7bq-L — Start a FRESH BAG of the same regimen.
+     R7hr-139 — Now opens the verbal-order modal pre-filled with the
+     previous bag's regimen instead of a silent confirm. This is
+     because restarting a completed infusion is a new clinical
+     decision (NABH MOM.7c) — even if it's "same drug same rate", the
+     restart needs a doctor's verbal authorisation that the nurse
+     documents with read-back + reason. The submit POSTs to
+     /doctor-orders/verbal which fan-outs as a new DoctorOrder with
+     isVerbal=true + parentOrderId pointing back at the exhausted bag. */
+  const restartBag = (order) => {
+    const det = order.orderDetails || {};
+    setVerbalForm((prev) => ({
+      ...prev,
+      orderType: "IV_Fluid",
+      fluidName: det.fluidName || det.displayName || det.medicineName || "",
+      totalVolume: det.totalVolume || "",
+      rate: order.currentRate || det.rate || "",
+      infDuration: det.duration || "",
+      additives: det.additives || "",
+      indication: `Restart fresh bag of ${det.fluidName || "previous infusion"}`,
+      verbalFromDoctor: "",
+      verbalReason: "",
+      verbalReasonCustom: "",
+      readBackConfirmed: false,
+    }));
+    setVerbalModal({ open: true, parentOrder: order });
+  };
+
+  /* ── R7hr-139 — Submit verbal/telephonic order.
+       Posts the captured order body + verbal metadata to the nurse-callable
+       POST /doctor-orders/verbal endpoint. Backend re-stamps isVerbal +
+       verbalEnteredBy from JWT (R7gw-B1-T01 pattern) so a malicious client
+       can't impersonate. Pre-validation here mirrors the backend (IPSG.2
+       read-back + doctor name + reason) so the nurse sees inline errors
+       before the round-trip. */
+  const submitVerbalOrder = async () => {
+    const f = verbalForm;
+    const finalReason = f.verbalReason === "Other" ? f.verbalReasonCustom.trim() : f.verbalReason;
+    if (!f.verbalFromDoctor.trim()) {
+      toast.error("Prescribing doctor name is required (NABH MOM.7c)");
+      return;
+    }
+    if (!finalReason) {
+      toast.error("Reason for verbal order is required");
+      return;
+    }
+    if (!f.readBackConfirmed) {
+      toast.error("Read-back confirmation is mandatory (NABH IPSG.2)");
+      return;
+    }
+
+    // Build the order body matching what the doctor-side POST expects.
+    let orderDetails = {};
+    if (f.orderType === "Medication") {
+      if (!f.medicineName.trim()) { toast.error("Medicine name is required"); return; }
+      orderDetails = {
+        medicineName: f.medicineName.trim(),
+        displayName: f.medicineName.trim(),
+        dose: f.dose,
+        route: f.route,
+        frequency: f.frequency,
+        duration: f.duration,
+        indication: f.indication,
+        notes: f.notes,
+        dilutionVolume: f.dilutionVolume,
+        dilutionFluid: f.dilutionFluid,
+        infuseOverMinutes: f.infuseOverMinutes,
+      };
+    } else {
+      if (!f.fluidName.trim()) { toast.error("Fluid name is required"); return; }
+      orderDetails = {
+        fluidName: f.fluidName.trim(),
+        displayName: f.fluidName.trim(),
+        totalVolume: f.totalVolume,
+        rate: f.rate,
+        route: "IV Infusion",
+        duration: f.infDuration,
+        additives: f.additives,
+        notes: f.notes,
+      };
+    }
+
+    setVerbalSaving(true);
     try {
-      const { data } = await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}/restart`, {});
-      toast.success(`New bag started — ${data?.data?.orderDetails?.medicineName || "infusion"}`);
+      await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/verbal`, {
+        UHID,
+        admissionId,
+        visitId,
+        orderType: f.orderType,
+        orderDetails,
+        status: "Pending",
+        verbalFromDoctor: f.verbalFromDoctor.trim(),
+        verbalReason: finalReason,
+        readBackConfirmed: true,
+        parentOrderId: verbalModal.parentOrder?._id || undefined,
+      });
+      toast.success(verbalModal.parentOrder
+        ? `Fresh bag started via verbal order from Dr. ${f.verbalFromDoctor}`
+        : `Verbal order documented — Dr. ${f.verbalFromDoctor} must cosign within 24h`);
+      setVerbalModal({ open: false, parentOrder: null });
       await fetchOrders(true);
     } catch (err) {
-      toast.error(err?.response?.data?.message || "Failed to restart bag");
-    }
+      toast.error(err?.response?.data?.message || "Verbal order failed");
+    } finally { setVerbalSaving(false); }
   };
 
   /* R7bq-L — Auto-stop a running infusion when computed volume reaches
      totalVolume. Called by the volume-bar render path the first time
      `exhausted` flips true. Idempotent — re-firing is harmless because
-     the route only flips Active→Completed and stamps infusionStopped. */
+     the route only flips Active→Completed and stamps infusionStopped.
+
+     R7hr-153 — Switched from PATCH /:id to POST /:id/auto-complete. The
+     generic PATCH whitelist (R7hr-12-S?) strips `status` + `stopReason`
+     so the pre-R7hr-153 implementation never actually flipped status —
+     only the cron caught up an hour later, and meanwhile the UI kept
+     showing live actions (Pause / Rate Change / Add Bolus / Stop). The
+     dedicated route goes through .save() so the state-machine fires
+     and the completion banner + Restart Fresh Bag surfaces immediately. */
   const autoStopExhausted = async (order, mlInfused) => {
     try {
-      await axios.patch(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}`, {
-        status: "Completed",
-        infusionStopped: new Date().toISOString(),
-        stopReason: `Total volume infused (${Math.round(mlInfused)} ml) — auto-stopped by Treatment Chart`,
+      await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/${order._id}/auto-complete`, {
+        nurse: nurseName || "Treatment Chart",
+        mlInfused: Math.round(mlInfused),
+        reason: `Total volume infused (${Math.round(mlInfused)} ml) — auto-stopped by Treatment Chart`,
       });
       await fetchOrders(true);
     } catch (_) { /* non-fatal — the cron will catch up on next tick */ }
@@ -815,7 +1120,14 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
   return (
     <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", marginBottom: 16, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text }}>
 
-      {/* ── Header ── */}
+      {/* ── Header ──
+          R7hr-125 — compactView omits this heavy dark gradient strip
+          (chart title + Refresh/Raise-Indent/Print MAR action buttons)
+          so the day-wise stack on the Patient Panel reads as a clean
+          tabular presentation rather than a chain of standalone-page
+          headers. The wrapper banner above each day already labels the
+          card (Today / Yesterday / Day N). */}
+      {!compactView && (
       <div style={{ padding: "12px 20px", background: `linear-gradient(135deg, #0f172a, ${C.primary})`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 36, height: 36, borderRadius: 9, background: "rgba(255,255,255,.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -850,11 +1162,51 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               <i className="pi pi-plus-circle" style={{ marginRight: 5, fontSize: 10 }} />Raise Indent
             </button>
           )}
-          <button onClick={() => window.print()} style={{ padding: "5px 12px", background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.25)", borderRadius: 6, color: "white", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+          {/* R7hr-139 — Take Verbal/Telephonic Order (NABH MOM.7c + IPSG.2).
+              Visible to the same actors who can raise indents (Nurse +
+              Doctor + Admin). Opens a modal that captures the prescribing
+              doctor, reason, read-back confirmation and the order body —
+              backend POST /doctor-orders/verbal stamps isVerbal=true and
+              waits for the doctor's 24h cosign. */}
+          {nurseMode && admissionId && (
+            <button
+              onClick={() => setVerbalModal({ open: true, parentOrder: null })}
+              title="Take a verbal/telephonic order from a doctor (NABH MOM.7c)"
+              style={{ padding: "5px 12px", background: "linear-gradient(135deg, #06b6d4, #0891b2)", border: "1px solid rgba(255,255,255,.35)", borderRadius: 6, color: "white", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+            >
+              <i className="pi pi-phone" style={{ marginRight: 5, fontSize: 10 }} />📞 Take Verbal Order
+            </button>
+          )}
+          <button
+            onClick={() => {
+              // R7hr-152 — Open the day-wise Treatment Chart digest in a
+              // print-friendly window (matches the patient panel layout
+              // 1:1: Vitals Chart, Medications Administered table, Infusions,
+              // Intake/Output, Other Observations — Yesterday + Today stacked).
+              // window.print() on this page would have dumped the live MAR
+              // table with all its action buttons + scroll bars; that's not
+              // what the ward expects on paper.
+              const qs = new URLSearchParams({
+                uhid: UHID || "",
+                visitId: visitId || "",
+                ipdNo: visitId || "",
+                admissionId: admissionId || "",
+                patientName: patientName || "",
+              }).toString();
+              const w = window.open(`/print/treatment-chart-mar?${qs}`, "_blank",
+                "popup=yes,width=1100,height=1200,resizable=yes,scrollbars=yes");
+              if (!w) {
+                alert("Browser blocked the print window. Allow popups for this site and try again.");
+              }
+            }}
+            title="Print the day-wise Treatment Chart digest (matches the patient panel)"
+            style={{ padding: "5px 12px", background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.25)", borderRadius: 6, color: "white", fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+          >
             <i className="pi pi-print" style={{ marginRight: 5, fontSize: 10 }} />Print MAR
           </button>
         </div>
       </div>
+      )}
 
       {/* ── Tabs ── */}
       <div style={{ display: "flex", borderBottom: `1px solid ${C.border}`, background: "#f8fafc" }}>
@@ -884,7 +1236,13 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
         </button>
       </div>
 
-      {/* ── MAR Date Navigator ── */}
+      {/* ── MAR Date Navigator ──
+          R7hr-124 — hideDateNav lets the day-wise stacked wrapper own
+          the per-day header (each instance is pinned to a single day
+          already, so the Prev/Next/Today buttons are redundant + would
+          let the user navigate off the pinned date). Default false
+          preserves the standalone /treatment-chart page exactly. */}
+      {!hideDateNav && (
       <div style={{ padding: "8px 16px", background: isMarToday ? "#f0fdf4" : "#fefce8", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px" }}>📅 Viewing MAR for:</span>
         <button onClick={prevMarDay} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: "white", cursor: "pointer", fontSize: 12, fontWeight: 700, color: C.blue }}>← Prev</button>
@@ -899,8 +1257,15 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
           <span style={{ fontSize: 10, color: C.amber, fontWeight: 600, marginLeft: 4 }}>📖 History view — administration actions disabled</span>
         )}
       </div>
+      )}
 
-      {/* ── NABH Legend ── */}
+      {/* ── NABH Legend ──
+          R7hr-125 — compactView omits this status-chip legend strip.
+          The chips for each status (Given/Pending/Hold/Refused/HAM)
+          are still rendered inline on every dose cell of the drug
+          table, so the legend is redundant when multiple day-stacked
+          instances render in succession. */}
+      {!compactView && (
       <div style={{ padding: "6px 16px", background: "#fafbff", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px" }}>Status:</span>
         {Object.entries(STATUS_CFG).map(([k, v]) => (
@@ -911,6 +1276,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
         <span style={{ marginLeft: "auto", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, padding: "1px 8px", fontSize: 10, fontWeight: 800, color: "#dc2626" }}>🔴 HAM = High Alert</span>
         <span style={{ background: "#fef3c7", border: "1px solid #fbbf24", borderRadius: 4, padding: "1px 8px", fontSize: 10, fontWeight: 700, color: "#92400e" }}>👥 2-Nurse Verify required</span>
       </div>
+      )}
 
       <div style={{ padding: "14px 16px" }}>
         {loading ? (
@@ -1019,6 +1385,21 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                             {hamBadge && (
                               <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 7px", fontSize: 9, fontWeight: 800, color: C.red, marginBottom: 4, display: "inline-block" }}>
                                 🔴 HAM {order.twoNurseRequired && "· 👥 2-Nurse"}
+                              </div>
+                            )}
+                            {/* R7hr-141 — Verbal-order badge. While the order is
+                                still uncosigned (NABH MOM.7c §3 24h window), every
+                                MAR row + every printed copy carries this badge so
+                                the chain of custody is visible. Once the doctor
+                                cosigns via DoctorOrdersPanel, badge disappears. */}
+                            {order.isVerbal && !order.coSignedBy && (
+                              <div className="verbal-order-badge" style={{ background: "#fffbeb", border: "1.5px solid #f59e0b", borderRadius: 4, padding: "2px 7px", fontSize: 9, fontWeight: 800, color: "#b45309", marginBottom: 4, display: "inline-block" }} title={`Verbal order from Dr. ${order.verbalFromDoctor || "?"} via nurse ${order.verbalEnteredByName || "?"} — pending cosign per NABH MOM.7c`}>
+                                📞 VERBAL — pending cosign
+                              </div>
+                            )}
+                            {order.isVerbal && order.coSignedBy && (
+                              <div style={{ background: "#ecfdf5", border: "1px solid #86efac", borderRadius: 4, padding: "2px 7px", fontSize: 9, fontWeight: 700, color: "#15803d", marginBottom: 4, display: "inline-block" }} title={`Verbal order — cosigned by ${order.coSignedByName || "doctor"}`}>
+                                ✓ verbal · cosigned
                               </div>
                             )}
                             <div style={{ color: isStopped ? C.muted : C.text }}>{order.orderDetails?.medicineName || "—"}</div>
@@ -1329,7 +1710,13 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                 {infOrders.filter(o => o.status !== "Pending").map(order => {
                   const hamBadge = order.hamFlag || isHAM(order.orderDetails?.medicineName || "");
                   const isStopped = ["Stopped","Cancelled"].includes(order.status);
-                  const isHeld    = order.status === "Held";
+                  // R7hr-147 — Backend's pause action sets status to "OnHold"
+                  // (not "Held"), and R7hr-146's progress engine uses the same
+                  // OnHold marker to freeze the volume bar. Pre-fix `isHeld`
+                  // only matched the literal "Held", so the top-right toggle
+                  // kept saying "Pause" even after a successful pause —
+                  // which is the bug the user just hit. Recognise both.
+                  const isHeld    = order.status === "Held" || order.status === "OnHold";
                   const lastMon   = order.infusionMonitoring?.slice(-1)[0];
                   const lastCheck = lastMon ? new Date(lastMon.time) : null;
                   const minutesSinceCheck = lastCheck ? Math.floor((Date.now() - lastCheck.getTime()) / 60000) : null;
@@ -1341,9 +1728,22 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                       <div style={{ padding: "10px 16px", background: hamBadge ? "#fef2f2" : isStopped ? "#f8fafc" : C.tealL, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           {hamBadge && <span style={{ background: C.redL, color: C.red, border: `1px solid ${C.redB}`, borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 800 }}>🔴 HAM · 👥 2-Nurse Rate Change</span>}
+                          {/* R7hr-141 — Verbal-order badge on infusion card (same
+                              treatment as the medication MAR row). Pending until
+                              doctor cosigns; turns green once they do. */}
+                          {order.isVerbal && !order.coSignedBy && (
+                            <span style={{ background: "#fffbeb", color: "#b45309", border: "1.5px solid #f59e0b", borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 800 }} title={`Verbal order from Dr. ${order.verbalFromDoctor || "?"} via nurse ${order.verbalEnteredByName || "?"} — pending cosign per NABH MOM.7c`}>
+                              📞 VERBAL — pending cosign
+                            </span>
+                          )}
+                          {order.isVerbal && order.coSignedBy && (
+                            <span style={{ background: "#ecfdf5", color: "#15803d", border: "1px solid #86efac", borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700 }} title={`Verbal order — cosigned by ${order.coSignedByName || "doctor"}`}>
+                              ✓ verbal · cosigned
+                            </span>
+                          )}
                           <div>
                             <div style={{ fontWeight: 800, fontSize: 13, color: isStopped ? C.muted : C.slate }}>
-                              {order.orderDetails?.displayName || order.orderDetails?.medicineName || "IV Infusion"}
+                              {order.orderDetails?.displayName || order.orderDetails?.medicineName || order.orderDetails?.fluidName || "IV Infusion"}
                             </div>
                             <div style={{ fontSize: 11, color: C.muted }}>
                               {order.orderDetails?.dilution && <span>{order.orderDetails.dilution} · </span>}
@@ -1360,10 +1760,55 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                               {order.currentRate || order.orderDetails?.rate || "—"} <span style={{ fontSize: 10, fontWeight: 400 }}>ml/hr</span>
                             </div>
                           </div>
-                          {/* Status */}
-                          <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: isStopped ? C.redL : isHeld ? C.blueL : C.greenL, color: isStopped ? C.red : isHeld ? C.blue : C.green, border: `1px solid ${isStopped ? C.redB : isHeld ? C.blueB : C.greenB}` }}>
-                            {isStopped ? "⏹ Stopped" : isHeld ? "⏸ Held" : "▶ Running"}
-                          </span>
+                          {/* Status / Play-Pause toggle
+                              R7hr-132 — In nurseMode, the status badge
+                              doubles as the prominent Play / Pause
+                              toggle so the bedside nurse doesn't have
+                              to scroll to the bottom row of actions.
+                              Running → click opens Pause (reason)
+                              Held    → click opens Resume (reason)
+                              Stopped → static (no clinical undo from
+                              this UI; if needed the doctor re-orders).
+                              Bottom Pause / Resume buttons still
+                              render too — they remain the explicit
+                              tap target for staff who prefer the
+                              actions row. */}
+                          {nurseMode && !isStopped && order.status !== "Completed" ? (
+                            <button
+                              type="button"
+                              onClick={() => isHeld ? resumeInfusion(order) : holdInfusion(order)}
+                              title={isHeld
+                                ? "Resume infusion — system will ask for NABH-compliant reason"
+                                : "Pause infusion — system will ask for NABH-compliant reason"}
+                              style={{
+                                padding: "5px 14px",
+                                borderRadius: 20,
+                                fontSize: 12,
+                                fontWeight: 800,
+                                background: isHeld ? C.greenL : C.amberL,
+                                color:      isHeld ? C.green  : C.amber,
+                                border: `1.5px solid ${isHeld ? C.greenB : C.amberB}`,
+                                cursor: "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 5,
+                                boxShadow: isHeld ? "0 1px 3px rgba(22,163,74,.20)" : "0 1px 3px rgba(217,119,6,.20)",
+                                transition: "transform .12s",
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.04)"; }}
+                              onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; }}
+                            >
+                              {/* R7hr-147 — User-requested copy: "Start Again"
+                                  reads more naturally for a paused drip than
+                                  the technical "Resume". Same backend action
+                                  (nurse-infusion-action / action=resume). */}
+                              {isHeld ? "▶ Start Again" : "❚❚ Pause"}
+                            </button>
+                          ) : (
+                            <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: order.status === "Completed" ? C.greenL : isStopped ? C.redL : isHeld ? C.blueL : C.greenL, color: order.status === "Completed" ? C.green : isStopped ? C.red : isHeld ? C.blue : C.green, border: `1px solid ${order.status === "Completed" ? C.greenB : isStopped ? C.redB : isHeld ? C.blueB : C.greenB}` }}>
+                              {order.status === "Completed" ? "✓ Completed" : isStopped ? "⏹ Stopped" : isHeld ? "⏸ Held" : "▶ Running"}
+                            </span>
+                          )}
                           {/* Hold-until badge — shown when infusion is held with a scheduled resume time */}
                           {isHeld && order.holdUntil && (
                             <span style={{ padding: "3px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: C.blueL, color: C.blue, border: `1px solid ${C.blueB}` }}>
@@ -1407,26 +1852,60 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                         if (prog.exhausted && !isStopped && order.status !== "Completed") {
                           setTimeout(() => autoStopExhausted(order, prog.ml), 0);
                         }
+                        // R7hr-146 — Paused-state styling. When the nurse hits
+                        // Pause, the bar should freeze visually + announce the
+                        // paused status so the success toast is matched by the
+                        // permanent visual state.
+                        const isPaused = !!prog.isPaused;
+                        const liveBadge = isStopped
+                          ? null
+                          : isPaused
+                          ? <span style={{ color: C.amber, marginLeft: 4 }}>⏸ PAUSED</span>
+                          : <span style={{ color: C.teal, marginLeft: 4 }}>● LIVE</span>;
                         return (
-                          <div style={{ padding: "8px 16px", background: "#f8fafc", borderBottom: `1px solid ${C.border}` }}>
+                          <div style={{
+                            padding: "8px 16px",
+                            background: isPaused ? "#fffbeb" : "#f8fafc",
+                            borderBottom: `1px solid ${isPaused ? C.amberB : C.border}`,
+                          }}>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5, flexWrap: "wrap", gap: 8 }}>
                               <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>
-                                Volume Progress {!isStopped && <span style={{ color: C.teal, marginLeft: 4 }}>● LIVE</span>}
+                                Volume Progress {liveBadge}
                               </span>
-                              <span style={{ fontSize: 11.5, fontWeight: 700, color: barColor, fontFamily: "'DM Mono', monospace" }}>
+                              <span style={{ fontSize: 11.5, fontWeight: 700, color: isPaused ? C.amber : barColor, fontFamily: "'DM Mono', monospace" }}>
                                 {prog.ml.toFixed(1)} ml / {totalVol} ml ({pct}%)
-                                {prog.etaMinutes != null && !prog.exhausted && (
+                                {isPaused && <span style={{ marginLeft: 8, color: C.amber, fontWeight: 700, fontFamily: "inherit" }}>· FROZEN AT PAUSE</span>}
+                                {!isPaused && prog.etaMinutes != null && !prog.exhausted && (
                                   <span style={{ marginLeft: 8, color: C.muted, fontWeight: 600, fontFamily: "inherit" }}>
                                     · ETA {prog.etaMinutes >= 60 ? `${Math.floor(prog.etaMinutes/60)}h ${prog.etaMinutes%60}m` : `${prog.etaMinutes}m`}
                                   </span>
                                 )}
-                                {almostDone && <span style={{ marginLeft: 6, color: C.amber }}> ⚠ Almost complete</span>}
+                                {!isPaused && almostDone && <span style={{ marginLeft: 6, color: C.amber }}> ⚠ Almost complete</span>}
                                 {prog.exhausted && <span style={{ marginLeft: 6, color: C.green }}> ✓ Bag complete</span>}
                               </span>
                             </div>
                             <div style={{ height: 8, background: "#e2e8f0", borderRadius: 4, overflow: "hidden" }}>
-                              <div style={{ height: "100%", width: `${pct}%`, background: barColor, borderRadius: 4, transition: "width .8s ease" }} />
+                              <div style={{
+                                height: "100%",
+                                width: `${pct}%`,
+                                background: isPaused ? `repeating-linear-gradient(45deg, ${C.amber}, ${C.amber} 6px, #fde68a 6px, #fde68a 12px)` : barColor,
+                                borderRadius: 4,
+                                transition: "width .8s ease",
+                              }} />
                             </div>
+                            {/* R7hr-147 — Bolus tally chip. Shows when 1+ bolus has been
+                                pushed on this bag so the nurse can see "drip is X but
+                                Y ml came from boluses" at a glance. */}
+                            {Array.isArray(order.boluses) && order.boluses.length > 0 && (() => {
+                              const totalBolus = order.boluses.reduce((s, b) => s + (parseFloat(b?.volumeMl) || 0), 0);
+                              return (
+                                <div style={{ marginTop: 6, fontSize: 10.5, color: "#6d28d9", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                                  <span style={{ background: "#ede9fe", border: "1px solid #c4b5fd", borderRadius: 4, padding: "1px 6px" }}>
+                                    + {totalBolus.toFixed(1)} ml from {order.boluses.length} bolus push{order.boluses.length === 1 ? "" : "es"}
+                                  </span>
+                                </div>
+                              );
+                            })()}
                           </div>
                         );
                       })()}
@@ -1509,6 +1988,109 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                         </div>
                       )}
 
+                      {/* R7hr-135 — Audit-ready Completion / Stopped banner.
+                          NABH MOM.2 requires the surveyor to see at a glance who
+                          started the infusion, when it began, when it finished
+                          and (for early stops) the documented reason. Pre-R7hr-135
+                          the only completion cue was a tiny "✓ Bag complete" text
+                          inside the nursing-actions row — which got truncated on
+                          narrow screens and never showed the start-actor or
+                          duration. This banner sits ABOVE both nurse + doctor
+                          action rows so every viewer sees the same audit ribbon.
+
+                          Data sources (all already persisted):
+                          • Started by — acknowledgedBy + infusionStarted (R7hr-133
+                            stamps infusionStarted on /step InProgress).
+                          • Stopped by — completedBy + completedAt (set by the
+                            R7hr-134 /nurse-infusion-action stop path or the
+                            R7bq-L auto-stop on bag-exhausted).
+                          • Reason — stopReason (mandatory at NABH MOM.2 surveys). */}
+                      {(() => {
+                        const isFinishedNow = isStopped || order.status === "Completed";
+                        if (!isFinishedNow) return null;
+                        const fmtDT = (d) => {
+                          if (!d) return "—";
+                          const dt = new Date(d);
+                          return `${dt.toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})} · ${dt.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",hour12:true})}`;
+                        };
+                        const startedAt = order.infusionStarted || order.acknowledgedAt;
+                        const endedAt   = order.completedAt || order.infusionStopped;
+                        let durLabel = "—";
+                        if (startedAt && endedAt) {
+                          const mins = Math.max(0, Math.round((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 60000));
+                          const h = Math.floor(mins / 60); const m = mins % 60;
+                          durLabel = h > 0 ? `${h}h ${m}m` : `${m}m`;
+                        }
+                        const headColor   = isStopped ? C.red    : C.green;
+                        const headBg      = isStopped ? "#fef2f2" : "#ecfdf5";
+                        const headBorder  = isStopped ? C.redB    : C.greenB;
+                        const headLabel   = isStopped ? "INFUSION STOPPED" : "INFUSION COMPLETED";
+                        const headIcon    = isStopped ? "⏹" : "✓";
+                        const endByLabel  = isStopped ? "Stopped by" : "Auto-completed by";
+                        const endByName   = order.completedBy || (isStopped ? "—" : "System (bag exhausted)");
+                        return (
+                          <div style={{
+                            padding: "12px 16px",
+                            background: headBg,
+                            borderTop: `1px solid ${C.border}`,
+                            borderBottom: `2px solid ${headBorder}`,
+                          }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                              <span style={{
+                                background: headColor, color: "white", borderRadius: 6,
+                                padding: "5px 12px", fontSize: 11, fontWeight: 800, letterSpacing: ".5px",
+                              }}>
+                                {headIcon} {headLabel}
+                              </span>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: headColor }}>
+                                on {fmtDT(endedAt)}
+                              </span>
+                            </div>
+                            <div style={{
+                              display: "grid",
+                              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                              gap: 8,
+                            }}>
+                              <div style={{ background: "white", border: `1px solid ${C.border}`, borderRadius: 7, padding: "7px 10px" }}>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 3 }}>
+                                  Started by
+                                </div>
+                                <div style={{ fontWeight: 700, color: C.slate, fontSize: 12 }}>{order.acknowledgedBy || "—"}</div>
+                                <div style={{ fontSize: 10, color: C.muted, fontFamily: "monospace", marginTop: 2 }}>
+                                  {fmtDT(startedAt)}
+                                </div>
+                              </div>
+                              <div style={{ background: "white", border: `1px solid ${C.border}`, borderRadius: 7, padding: "7px 10px" }}>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 3 }}>
+                                  {endByLabel}
+                                </div>
+                                <div style={{ fontWeight: 700, color: C.slate, fontSize: 12 }}>{endByName}</div>
+                                <div style={{ fontSize: 10, color: C.muted, fontFamily: "monospace", marginTop: 2 }}>
+                                  {fmtDT(endedAt)}
+                                </div>
+                              </div>
+                              <div style={{ background: "white", border: `1px solid ${C.border}`, borderRadius: 7, padding: "7px 10px" }}>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 3 }}>
+                                  Total infusion time
+                                </div>
+                                <div style={{ fontWeight: 700, color: C.slate, fontSize: 12, fontFamily: "monospace" }}>{durLabel}</div>
+                                <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
+                                  Vol: {order.orderDetails?.totalVolume || "—"} @ {order.currentRate || order.orderDetails?.rate || "—"} ml/hr
+                                </div>
+                              </div>
+                            </div>
+                            {order.stopReason && (
+                              <div style={{ marginTop: 8, padding: "6px 10px", background: "white", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 11 }}>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginRight: 6 }}>
+                                  Reason:
+                                </span>
+                                <span style={{ color: C.slate, fontWeight: 600 }}>{order.stopReason}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
                       {/* Nurse action buttons.
                           R7bq-L — `isFinished` = stopped OR auto-completed
                           (bag empty). When the bag is finished we hide the
@@ -1530,16 +2112,35 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                                 <i className="pi pi-chart-bar" style={{ fontSize: 10 }} /> Add Monitoring
                               </button>
                               {isHeld ? (
-                                <button onClick={() => restartInfusion(order)}
-                                  style={{ ...ACTBTN, background: C.greenL, color: C.green, border: `1.5px solid ${C.greenB}` }}>
-                                  <i className="pi pi-play" style={{ fontSize: 10 }} /> Resume
+                                // R7hr-147 — Renamed from "Resume" → "Start
+                                // Again" so the wording matches the user's
+                                // mental model + the paused-state ribbon.
+                                <button onClick={() => resumeInfusion(order)}
+                                  style={{ ...ACTBTN, background: C.greenL, color: C.green, border: `1.5px solid ${C.greenB}`, fontWeight: 800 }}>
+                                  <i className="pi pi-play" style={{ fontSize: 10 }} /> Start Again
                                 </button>
                               ) : (
+                                // R7hr-132 — Renamed from "Hold" to "Pause" so the
+                                // bedside nurse's mental model matches the
+                                // ▶ / ❚❚ play/pause toggle in the header.
                                 <button onClick={() => holdInfusion(order)}
                                   style={{ ...ACTBTN, background: C.amberL, color: C.amber, border: `1.5px solid ${C.amberB}` }}>
-                                  <i className="pi pi-pause" style={{ fontSize: 10 }} /> Hold
+                                  <i className="pi pi-pause" style={{ fontSize: 10 }} /> Pause
                                 </button>
                               )}
+                              {/* R7hr-147 — Bolus mL entry. Nurses sometimes
+                                  push a manual bolus from the same regimen
+                                  (e.g. flush, pre-load, top-up). That mL
+                                  needs to count toward the bag's running
+                                  total so the volume-progress bar stays
+                                  truthful. Available on every active card,
+                                  including paused — a bolus IS a moment
+                                  when fluid is given even though the drip
+                                  is on hold. */}
+                              <button onClick={() => openAction(order, "bolus")}
+                                style={{ ...ACTBTN, background: "#ede9fe", color: "#6d28d9", border: "1.5px solid #c4b5fd" }}>
+                                <i className="pi pi-plus-circle" style={{ fontSize: 10 }} /> Add Bolus
+                              </button>
                               <button onClick={() => stopInfusion(order)}
                                 style={{ ...ACTBTN, background: C.redL, color: C.red, border: `1.5px solid ${C.redB}` }}>
                                 <i className="pi pi-stop" style={{ fontSize: 10 }} /> Stop & Document
@@ -2067,17 +2668,29 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
         );
       })()}
 
-      {/* ── Stop / Hold Infusion Modal (replaces window.prompt) ── */}
+      {/* ── Stop / Pause / Resume Infusion Modal (replaces window.prompt)
+          R7hr-132 — Extended from 2-type (stop|hold) to 3-type
+          (stop|hold|resume). Resume reuses the same layout + reason
+          picker but with green styling and the RESUME_INF_REASONS
+          list — fields like Hold-Until are hidden because they only
+          make sense for the pause variant. */}
       {infModal && (() => {
         const { order, type } = infModal;
-        const isStop = type === "stop";
-        const reasons = isStop ? STOP_INF_REASONS : HOLD_INF_REASONS;
-        const color   = isStop ? C.red : C.amber;
-        const colorL  = isStop ? C.redL : C.amberL;
-        const colorB  = isStop ? C.redB : C.amberB;
-        const icon    = isStop ? "pi-stop" : "pi-pause";
-        const titleTx = isStop ? "Stop & Document Infusion" : "Hold Infusion";
-        const saveLbl = isStop ? "Stop Infusion" : "Hold Infusion";
+        const isStop   = type === "stop";
+        const isResume = type === "resume";
+        const reasons  = isStop ? STOP_INF_REASONS
+                      : isResume ? RESUME_INF_REASONS
+                                 : HOLD_INF_REASONS;
+        const color   = isStop ? C.red : isResume ? C.green : C.amber;
+        const colorL  = isStop ? C.redL : isResume ? C.greenL : C.amberL;
+        const colorB  = isStop ? C.redB : isResume ? C.greenB : C.amberB;
+        const icon    = isStop ? "pi-stop" : isResume ? "pi-play" : "pi-pause";
+        const titleTx = isStop ? "Stop & Document Infusion"
+                      : isResume ? "Resume Infusion"
+                                 : "Pause Infusion";
+        const saveLbl = isStop ? "Stop Infusion"
+                      : isResume ? "Resume Infusion"
+                                 : "Pause Infusion";
         const f       = infForm;
         return (
           <ModalOverlay onClose={() => setInfModal(null)}>
@@ -2092,12 +2705,14 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               <div style={{ background: colorL, border: `1.5px solid ${colorB}`, borderRadius: 10, padding: "10px 14px", fontSize: 12, color, fontWeight: 700 }}>
                 {isStop
                   ? "⚠ Stopping an infusion is a permanent action. Reason must be documented for NABH MOM.2 compliance."
-                  : "⏸ Infusion will be held. Document reason and expected resume time. Nursing staff will be notified."}
+                  : isResume
+                    ? "▶ Infusion will resume now. Document the clinical reason — this is captured in the NABH MOM.2 audit trail."
+                    : "❚❚ Infusion will be paused. Document reason and expected resume time. Nursing staff will be notified."}
               </div>
 
               {/* Reason dropdown */}
               <div>
-                <label style={lbl}>{isStop ? "Stop Reason *" : "Hold Reason *"}</label>
+                <label style={lbl}>{isStop ? "Stop Reason *" : isResume ? "Resume Reason *" : "Pause Reason *"}</label>
                 <select style={sel} value={f.reason} onChange={e => setInfForm(p => ({ ...p, reason: e.target.value, reasonCustom: "" }))}>
                   <option value="">— Select reason —</option>
                   {reasons.map(r => <option key={r}>{r}</option>)}
@@ -2115,10 +2730,10 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                 </div>
               )}
 
-              {/* Hold until (only for hold) */}
-              {!isStop && (
+              {/* Hold until (only for hold/pause — not for stop, not for resume) */}
+              {!isStop && !isResume && (
                 <div>
-                  <label style={lbl}>Hold Until (expected resume time)</label>
+                  <label style={lbl}>Pause Until (expected resume time)</label>
                   <input type="datetime-local" style={fld} value={f.holdUntil}
                     onChange={e => setInfForm(p => ({ ...p, holdUntil: e.target.value }))} />
                 </div>
@@ -2130,7 +2745,9 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                 <textarea style={ta} value={f.notes}
                   placeholder={isStop
                     ? "Volume infused, patient status at time of stopping, doctor informed…"
-                    : "Clinical details, doctor informed, restart plan…"}
+                    : isResume
+                      ? "Vitals at resume, response to hold, rate verification, doctor informed if relevant…"
+                      : "Clinical details, doctor informed, restart plan…"}
                   onChange={e => setInfForm(p => ({ ...p, notes: e.target.value }))} />
               </div>
 
@@ -2153,6 +2770,120 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               </div>
             </div>
             <ModalFooter onCancel={() => setInfModal(null)} onSave={submitInfAction} saving={infSaving} saveLabel={saveLbl} />
+          </ModalOverlay>
+        );
+      })()}
+
+      {/* ── R7hr-139 — Verbal/Telephonic Order Modal ── */}
+      {verbalModal.open && (() => {
+        const f = verbalForm;
+        const setF = (patch) => setVerbalForm((p) => ({ ...p, ...patch }));
+        const isMed = f.orderType === "Medication";
+        const titleTx = verbalModal.parentOrder ? "Restart Bag — Verbal Order" : "Take Verbal / Telephonic Order";
+        return (
+          <ModalOverlay onClose={() => setVerbalModal({ open: false, parentOrder: null })}>
+            <ModalHeader
+              title={titleTx}
+              sub="NABH MOM.7c — Doctor must cosign within 24h"
+              color="#0891b2" icon="pi-phone"
+              onClose={() => setVerbalModal({ open: false, parentOrder: null })}
+            />
+            <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+              {/* IPSG.2 read-back banner */}
+              <div style={{ background: "#ecfeff", border: "1.5px solid #67e8f9", borderRadius: 10, padding: "10px 14px", fontSize: 12, color: "#0e7490", fontWeight: 700 }}>
+                ⚠ NABH IPSG.2 — You MUST read back the order to the prescribing doctor. Confirm spelling, dose, route, frequency BEFORE you check the read-back box.
+              </div>
+
+              {/* Order type selector — hidden if restart context (always IV_Fluid) */}
+              {!verbalModal.parentOrder && (
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button type="button" onClick={() => setF({ orderType: "Medication" })}
+                    style={{ flex: 1, padding: "10px", border: `2px solid ${isMed ? "#0891b2" : "#e2e8f0"}`, background: isMed ? "#ecfeff" : "white", borderRadius: 8, fontWeight: 700, color: isMed ? "#0891b2" : "#64748b", cursor: "pointer" }}>
+                    💊 Medication
+                  </button>
+                  <button type="button" onClick={() => setF({ orderType: "IV_Fluid" })}
+                    style={{ flex: 1, padding: "10px", border: `2px solid ${!isMed ? "#0891b2" : "#e2e8f0"}`, background: !isMed ? "#ecfeff" : "white", borderRadius: 8, fontWeight: 700, color: !isMed ? "#0891b2" : "#64748b", cursor: "pointer" }}>
+                    💧 Infusion / IV Fluid
+                  </button>
+                </div>
+              )}
+
+              {/* Verbal-order metadata block */}
+              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "12px", display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "#0891b2", textTransform: "uppercase", letterSpacing: ".5px" }}>📞 Verbal Order Documentation (NABH MOM.7c)</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <FL label="Prescribing Doctor *">
+                    <input style={fld} value={f.verbalFromDoctor} placeholder="Dr. Sandeep / Dr. Mehta" onChange={(e) => setF({ verbalFromDoctor: e.target.value })} />
+                  </FL>
+                  <FL label="Reason *">
+                    <select style={fld} value={f.verbalReason} onChange={(e) => setF({ verbalReason: e.target.value })}>
+                      <option value="">— Select reason —</option>
+                      <option>Phone consult — doctor off-floor</option>
+                      <option>Doctor in OT / cannot write</option>
+                      <option>Emergency — code blue</option>
+                      <option>Weekend / night round</option>
+                      <option>Continuing previous regimen (restart)</option>
+                      <option>Other</option>
+                    </select>
+                  </FL>
+                </div>
+                {f.verbalReason === "Other" && (
+                  <FL label="Specify other reason">
+                    <input style={fld} value={f.verbalReasonCustom} onChange={(e) => setF({ verbalReasonCustom: e.target.value })} />
+                  </FL>
+                )}
+                <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: f.readBackConfirmed ? "#ecfdf5" : "#fef2f2", border: `1.5px solid ${f.readBackConfirmed ? "#86efac" : "#fecaca"}`, borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700, color: f.readBackConfirmed ? "#15803d" : "#dc2626" }}>
+                  <input type="checkbox" checked={f.readBackConfirmed} onChange={(e) => setF({ readBackConfirmed: e.target.checked })} style={{ width: 16, height: 16 }} />
+                  ✓ I have read back the order to the prescribing doctor (NABH IPSG.2 mandatory)
+                </label>
+              </div>
+
+              {/* Order body — medication */}
+              {isMed && (
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8 }}>
+                  <FL label="Medicine *"><input style={fld} value={f.medicineName} placeholder="Inj Amikacin" onChange={(e) => setF({ medicineName: e.target.value })} /></FL>
+                  <FL label="Dose"><input style={fld} value={f.dose} placeholder="500mg" onChange={(e) => setF({ dose: e.target.value })} /></FL>
+                  <FL label="Route">
+                    <select style={fld} value={f.route} onChange={(e) => setF({ route: e.target.value })}>
+                      {["PO","IV","IM","SC","SL","PR","Topical","Inhalation","NG","Other"].map(r => <option key={r}>{r}</option>)}
+                    </select>
+                  </FL>
+                  <FL label="Frequency">
+                    <select style={fld} value={f.frequency} onChange={(e) => setF({ frequency: e.target.value })}>
+                      {["OD","BD","TDS","QID","HS","SOS","STAT","Q4H","Q6H","Q8H"].map(r => <option key={r}>{r}</option>)}
+                    </select>
+                  </FL>
+                  <FL label="Duration"><input style={fld} value={f.duration} placeholder="5 days" onChange={(e) => setF({ duration: e.target.value })} /></FL>
+                </div>
+              )}
+
+              {/* Order body — infusion */}
+              {!isMed && (
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 8 }}>
+                  <FL label="Fluid *"><input style={fld} value={f.fluidName} placeholder="20% Human Albumin" onChange={(e) => setF({ fluidName: e.target.value })} /></FL>
+                  <FL label="Total Volume"><input style={fld} value={f.totalVolume} placeholder="100 ml" onChange={(e) => setF({ totalVolume: e.target.value })} /></FL>
+                  <FL label="Rate"><input style={fld} value={f.rate} placeholder="25 ml/hr" onChange={(e) => setF({ rate: e.target.value })} /></FL>
+                  <FL label="Duration"><input style={fld} value={f.infDuration} placeholder="Over 4 hours" onChange={(e) => setF({ infDuration: e.target.value })} /></FL>
+                </div>
+              )}
+
+              {!isMed && (
+                <FL label="Additives / Notes">
+                  <input style={fld} value={f.additives} placeholder="Hypoalbuminemia — slow infusion" onChange={(e) => setF({ additives: e.target.value })} />
+                </FL>
+              )}
+              {isMed && (
+                <FL label="Indication / Notes">
+                  <input style={fld} value={f.indication} placeholder="Fever spike / culture pending" onChange={(e) => setF({ indication: e.target.value })} />
+                </FL>
+              )}
+            </div>
+            <ModalFooter
+              onCancel={() => setVerbalModal({ open: false, parentOrder: null })}
+              onSave={submitVerbalOrder}
+              saving={verbalSaving}
+              saveLabel={verbalModal.parentOrder ? "Restart Bag (Verbal)" : "Save Verbal Order"}
+            />
           </ModalOverlay>
         );
       })()}
@@ -2198,6 +2929,46 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
               </FL>
             </div>
             <ModalFooter onCancel={() => setActionModal(null)} onSave={submitMonitoring} saving={saving} saveLabel="Add Entry" />
+          </ModalOverlay>
+        );
+      })()}
+
+      {/* ── Add Bolus mL Entry Modal (R7hr-147) ── */}
+      {actionModal?.type === "bolus" && (() => {
+        const order = actionModal.order;
+        return (
+          <ModalOverlay onClose={() => setActionModal(null)}>
+            <ModalHeader title="Add Bolus mL" sub={order.orderDetails?.displayName || order.orderDetails?.fluidName} color="#7c3aed" icon="pi-bolt" onClose={() => setActionModal(null)} />
+            <div style={{ padding: "18px 22px", display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ background: "#f5f3ff", border: "1px solid #c4b5fd", borderRadius: 8, padding: "8px 12px", fontSize: 11, color: "#6d28d9", fontWeight: 700 }}>
+                NABH MOM.2 — Bolus push given outside the continuous drip. Volume is added to the bag's total intake automatically.
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <FL label="Bolus Volume (ml) *">
+                  <input type="number" style={fld} value={bolusForm.volumeMl} placeholder="e.g. 100" onChange={e => setBolusForm(p => ({ ...p, volumeMl: e.target.value }))} />
+                </FL>
+                <FL label="Route">
+                  <select style={sel} value={bolusForm.route} onChange={e => setBolusForm(p => ({ ...p, route: e.target.value }))}>
+                    {["IV","IV Push","Central Line","Peripheral"].map(r => <option key={r}>{r}</option>)}
+                  </select>
+                </FL>
+              </div>
+              <FL label="Reason *">
+                <select style={sel} value={bolusForm.reason} onChange={e => setBolusForm(p => ({ ...p, reason: e.target.value, reasonCustom: "" }))}>
+                  <option value="">— Select reason —</option>
+                  {BOLUS_REASONS.map(r => <option key={r}>{r}</option>)}
+                </select>
+              </FL>
+              {bolusForm.reason === "Other" && (
+                <FL label="Specify Reason">
+                  <input style={fld} value={bolusForm.reasonCustom} placeholder="Free-text clinical reason…" onChange={e => setBolusForm(p => ({ ...p, reasonCustom: e.target.value }))} />
+                </FL>
+              )}
+              <FL label="Notes / Observations">
+                <textarea style={ta} value={bolusForm.notes} placeholder="Patient response, time of push, any concerns…" onChange={e => setBolusForm(p => ({ ...p, notes: e.target.value }))} />
+              </FL>
+            </div>
+            <ModalFooter onCancel={() => setActionModal(null)} onSave={submitBolus} saving={saving} saveLabel="Save Bolus" />
           </ModalOverlay>
         );
       })()}

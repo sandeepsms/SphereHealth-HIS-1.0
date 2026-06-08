@@ -47,6 +47,8 @@ import { MLCPageContent } from "../mlc/MLCPage";
 import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import TreatmentTeamPanel from "../../Components/clinical/TreatmentTeamPanel";
+// R7hr-143 — Pending Investigation Reports shared tab
+import { PendingInvestigationReportsTab } from "../../Components/clinical/PatientPanelTabs";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { useDigitalSignature } from "../../hooks/useDigitalSignature";
 import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
@@ -1956,6 +1958,19 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                   tint: "#ccfbf1",
                   badges: [{ label: "Open", tone: "info" }],
                 },
+                // R7hr-143 — Pending Investigation Reports tile (mirrors
+                // the same tile in NursingNotes hub). Re-uses shared
+                // PendingInvestigationReportsTab so filter + step logic
+                // stays single-sourced.
+                {
+                  id: "pendingreports",
+                  title: "Pending Investigation Reports",
+                  subtitle: "Samples sent — awaiting result (NABH AAC.4)",
+                  icon: "pi-flask",
+                  color: "#b45309",
+                  tint: "#fef3c7",
+                  badges: [{ label: "Open", tone: "warn" }],
+                },
                 {
                   id: "addnote",
                   title: "Add a Note",
@@ -2289,6 +2304,22 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
               UHID={patient?.UHID || patient?.uhid || searchUHID}
               refreshTrigger={ordersRefresh}
             />
+          )}
+
+          {/* ── R7hr-143 — Pending Investigation Reports (shared) ──
+              DoctorNotesPage doesn't carry a dedicated `admission` state
+              — its `patient` object already contains UHID + ipdNo +
+              admissionNumber + _id. The shared tab reads UHID / ipdNo
+              from either prop, so passing patient on both slots works. */}
+          {activeTile === "pendingreports" && (
+            <div style={{ background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,.04)' }}>
+              <PendingInvestigationReportsTab
+                admission={patient}
+                patient={patient}
+                canMarkReportCollected={true}
+                actorName="Doctor"
+              />
+            </div>
           )}
 
           {/* ── Add a Note: shift selector + module pill bar ──

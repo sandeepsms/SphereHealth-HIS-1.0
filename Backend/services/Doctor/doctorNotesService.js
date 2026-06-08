@@ -200,6 +200,15 @@ const createDoctorNote = async (data, doctorUserId) => {
     isCritical: isCritical || false,
     tags: tags || [],
     noteDetails: noteDetails || {},
+    // R7hr-118 — persist section so the partial-unique indexes
+    // (uniq_initial_per_admission_section / uniq_initial_per_ipdNo_section)
+    // can actually enforce per-role uniqueness in the DB. If the caller
+    // didn't pass one, fall back to the same inference the dedupe uses.
+    section: data.section || (
+      (noteDetails?.doctor || noteDetails?.nabh) ? "doctor" :
+      (noteDetails?.nursing || noteDetails?.nursingNabh) ? "nursing" :
+      null
+    ),
     signature,
     signedByName,
     signedByReg,
@@ -520,6 +529,33 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
       // discharge summary header all stop showing "—". Idempotent + only fills
       // blanks (never overwrites a value the receptionist already typed).
       try { summary.admBackfill = await fanOuts.backfillAdmissionFromIA(note);    } catch (e) { logErr("backfillAdmissionFromIA", `note ${note._id}`)(e); }
+      // R7hr-119 — Flip admission.initialAssessment.{role}Completed when the IA
+      // is signed. The Patient Panel / DoctorNotes / NursingNotes pages read
+      // these gate flags to unlock the day-2 tiles (R7hr-95 / R7hr-100). The
+      // sign flow previously only wrote noteDetails + signedAt fields and left
+      // the admission flag at its admission-time default (false), so the
+      // panel hid the Nurse IA section even after a signed nurse note existed.
+      try {
+        if (note.admissionId && note.section) {
+          const Admission = require("../../models/Patient/admissionModel");
+          const setFields = {};
+          if (note.section === "doctor") {
+            setFields["initialAssessment.doctorCompleted"]   = true;
+            setFields["initialAssessment.doctorCompletedAt"] = note.signedAt || new Date();
+            setFields["initialAssessment.doctorName"]        = note.signedByName || note.doctorName || "";
+          } else if (note.section === "nursing") {
+            setFields["initialAssessment.nurseCompleted"]    = true;
+            setFields["initialAssessment.nurseCompletedAt"]  = note.signedAt || new Date();
+            setFields["initialAssessment.nurseName"]         = note.signedByName || note.doctorName || "";
+          }
+          if (Object.keys(setFields).length) {
+            summary.gateFlag = await Admission.updateOne(
+              { _id: note.admissionId },
+              { $set: setFields },
+            );
+          }
+        }
+      } catch (e) { logErr("iaGateFlag", `note ${note._id}`)(e); }
       try { logErr("iaFanOut", `note ${note._id} ${JSON.stringify(summary)}`)(null); } catch (_) {}
     } catch (err) {
       const { logErr } = require("../../utils/logErr");

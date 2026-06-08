@@ -19,7 +19,7 @@ const PAGE_NAMES = {
   "/nurse-initial-assessment": "Nurse Initial Assessment",
   "/doctor-assessment": "Doctor Assessment",
   "/opd-assessment": "OPD Assessment",
-  "/vitalsView": "Vitals View",
+  // R7hr-158 — /vitalsView retired; trend opens as a modal in Nursing Notes.
   "/vitalSheet": "Vital Sheet",
   "/pain-assessment": "Pain Assessment",
   "/nursing-care-plan": "Nursing Care Plan",

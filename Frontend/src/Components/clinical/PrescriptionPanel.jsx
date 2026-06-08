@@ -23,7 +23,9 @@ import DrugAutocomplete, { drugDisplayName, parseStrength } from "./DrugAutocomp
  *   />
  *
  * Row shape (each element of `value`):
- *   { name, genericName?, form?, dose, frequency, mealStatus, duration, route }
+ *   { name, genericName?, form?, dose, frequency, mealStatus, duration, route,
+ *     // R7hr-128 — Parenteral dose dilution (drives MAR → I/O auto-feed):
+ *     dilutionVolume?, dilutionFluid?, infuseOverMinutes? }
  */
 
 const DEFAULT_THEME = {
@@ -43,7 +45,23 @@ const BLANK_MED = {
   mealStatus: "",
   duration: "",
   route: "Oral",
+  // R7hr-128 — IV/IM/SC dilution metadata so MAR can auto-emit an
+  // Intake row when nurse marks the dose GIVEN. Backend has carried
+  // these fields since R7bq-1; only the IA fan-out service + this
+  // form were missing the UI/wiring (R7hr-127 audit follow-up).
+  dilutionVolume:    "",   // string in form ("100" mL)
+  dilutionFluid:     "",   // diluent name (NS 0.9% / RL / D5W / SWFI / etc.)
+  infuseOverMinutes: "",   // push/drip duration in minutes
 };
+
+// R7hr-128 — Routes that require a dilution diluent. Includes the
+// common IV/IM/SC trio plus intrathecal/epidural where reconstitution
+// volume is also clinically relevant. Used to conditionally reveal the
+// dilution strip below the main 7-cell grid.
+const PARENTERAL_ROUTES = new Set([
+  "IV", "IM", "SC", "Intradermal", "Intra-articular", "Epidural", "Spinal",
+]);
+const isParenteralRoute = (r) => PARENTERAL_ROUTES.has(String(r || "").trim());
 
 /* ─────────────────────────────────────────────────────────────────
    R7hr-71 — Map a drug's form ("Tablet" / "Injection" / "Cream"…)
@@ -271,6 +289,81 @@ export default function PrescriptionPanel({ value = [], onChange, theme }) {
           {isAddingMed ? "Adding…" : "+ Add"}
         </button>
       </div>
+
+      {/* R7hr-128 — Dilution strip
+          Shown only for IV/IM/SC/intrathecal etc. Captures three small
+          fields that the MAR auto-feed needs to write a correct Intake
+          row: how many mL of diluent, which fluid, and the push/drip
+          time. Without these the dose is administered but I/O cannot
+          credit the volume to fluid balance (R7bq-3). For oral / topical
+          / inhalation drugs the strip stays hidden so the form doesn't
+          grow vertical noise.
+          */}
+      {isParenteralRoute(newMed.route) && (
+        <div
+          style={{
+            border: `1px solid ${C.border}`,
+            borderRadius: 8,
+            padding: "8px 12px",
+            marginBottom: 12,
+            background: "#f0f9ff",
+            display: "grid",
+            gridTemplateColumns: "auto minmax(0, 100px) minmax(0, 1.2fr) minmax(0, 110px)",
+            gap: 10,
+            alignItems: "center",
+          }}
+        >
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#0369a1" }}>
+            💧 Dilution<br/>
+            <span style={{ fontSize: 10, fontWeight: 500, color: "#0c4a6e" }}>(for I/O auto-credit)</span>
+          </div>
+          <input
+            type="number"
+            min="0"
+            max="5000"
+            value={newMed.dilutionVolume}
+            onChange={(e) => setNewMed(p => ({ ...p, dilutionVolume: e.target.value }))}
+            placeholder="Vol mL"
+            title="How many mL of diluent — e.g. 100 for '100 mL NS'"
+            style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, background: "#fff" }}
+          />
+          <input
+            list="pp-dilution-fluid-options"
+            value={newMed.dilutionFluid}
+            onChange={(e) => setNewMed(p => ({ ...p, dilutionFluid: e.target.value }))}
+            placeholder="Diluent (NS 0.9% / RL / D5W …)"
+            title="Which fluid to mix in — type or pick from suggestions"
+            style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, background: "#fff" }}
+          />
+          <datalist id="pp-dilution-fluid-options">
+            <option value="NS 0.9%" />
+            <option value="½ NS (0.45%)" />
+            <option value="RL — Ringer Lactate" />
+            <option value="D5W — 5% Dextrose" />
+            <option value="D10W — 10% Dextrose" />
+            <option value="D5 ½NS" />
+            <option value="D5 NS" />
+            <option value="SWFI — Sterile Water for Injection" />
+            <option value="WFI — Water for Injection" />
+            <option value="DNS — Dextrose Normal Saline" />
+            <option value="Isolyte M" />
+            <option value="Isolyte P" />
+            <option value="Isolyte G" />
+            <option value="Direct IV push (no diluent)" />
+          </datalist>
+          <input
+            type="number"
+            min="0"
+            max="720"
+            value={newMed.infuseOverMinutes}
+            onChange={(e) => setNewMed(p => ({ ...p, infuseOverMinutes: e.target.value }))}
+            placeholder="Over min"
+            title="Push / drip duration in minutes — e.g. 30 for 'infuse over 30 min'"
+            style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, background: "#fff" }}
+          />
+        </div>
+      )}
+
       {value.length === 0 ? (
         <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>No medications prescribed.</p>
       ) : (
@@ -281,9 +374,28 @@ export default function PrescriptionPanel({ value = [], onChange, theme }) {
             ))}
             <th style={{ width: 36, borderBottom: `1px solid ${C.border}` }} aria-label="Remove" />
           </tr></thead>
-          <tbody>{value.map((m, i) => (
+          <tbody>{value.map((m, i) => {
+            // R7hr-128 — Compose the dilution sub-label so it sits
+            // under the drug name on the same row. Only shown when the
+            // doctor actually filled at least dilutionVolume.
+            const hasDilution = m.dilutionVolume && Number(m.dilutionVolume) > 0;
+            const dilutionText = hasDilution
+              ? `in ${m.dilutionVolume} mL ${m.dilutionFluid || "NS 0.9%"}`
+                  + (m.infuseOverMinutes && Number(m.infuseOverMinutes) > 0
+                      ? ` over ${m.infuseOverMinutes} min`
+                      : "")
+              : null;
+            return (
             <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-              {["name", "dose", "frequency", "mealStatus", "duration", "route"].map(k => (
+              <td style={{ padding: "7px 10px", color: C.dark }}>
+                <div>{m.name || "—"}</div>
+                {dilutionText && (
+                  <div style={{ fontSize: 10, color: "#0369a1", fontWeight: 600, marginTop: 2 }}>
+                    💧 {dilutionText}
+                  </div>
+                )}
+              </td>
+              {["dose", "frequency", "mealStatus", "duration", "route"].map(k => (
                 <td key={k} style={{ padding: "7px 10px", color: C.dark }}>{m[k] || "—"}</td>
               ))}
               <td style={{ padding: "4px 6px", textAlign: "right" }}>
@@ -307,7 +419,8 @@ export default function PrescriptionPanel({ value = [], onChange, theme }) {
                 </button>
               </td>
             </tr>
-          ))}</tbody>
+            );
+          })}</tbody>
         </table>
       )}
     </div>
