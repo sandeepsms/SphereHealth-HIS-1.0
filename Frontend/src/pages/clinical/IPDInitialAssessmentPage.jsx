@@ -1120,22 +1120,29 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [homeMeds]);
 
-  // R7hr-88 — Anthropometry auto-fills from "Vitals on Admission".
+  // R7hr-88 + R7hr-115 — Anthropometry MIRRORS "Vitals on Admission".
   // Nursing IPD Initial Assessment captures Weight (kg) and Height (cm)
   // in the Vitals on Admission section; this effect pushes those into
   // the N4 Anthropometry block (heightCm / weightKg / BMI) so the nurse
-  // doesn't have to re-enter the same numbers. Skips overwriting an
-  // existing manual Anthropometry entry — only fills when the
-  // Anthropometry field is still blank, so a deliberate post-admission
-  // measurement re-take isn't clobbered.
+  // doesn't have to re-enter the same numbers AND so they can't drift.
+  //
+  // R7hr-115 — Earlier the effect skipped overwriting an existing
+  // Anthropometry value ("don't clobber"). In practice users typed
+  // single-digit placeholders into Anthropometry first ("1", "8"),
+  // then filled Vitals correctly (168, 89). The guard let the stale
+  // placeholders survive → BMI 80000 (catastrophic) and the
+  // cross-validation mismatch banner fired. Vitals on Admission and
+  // Anthropometry are recorded at the SAME moment by the SAME nurse;
+  // they MUST stay in sync. Vitals wins. The doctor's section has
+  // its own `docAnthropo` block for any later re-measurement.
   useEffect(() => {
     const v_h = String(vitals.height || "").trim();
     const v_w = String(vitals.weight || "").trim();
     if (!v_h && !v_w) return;
     setAnthropo(prev => {
       const next = { ...prev };
-      if (v_h && !prev.heightCm) next.heightCm = v_h;
-      if (v_w && !prev.weightKg) next.weightKg = v_w;
+      if (v_h) next.heightCm = v_h;        // always overwrite — Vitals is source of truth
+      if (v_w) next.weightKg = v_w;
       const h = Number(next.heightCm) / 100;
       const w = Number(next.weightKg);
       next.bmi = (h && w) ? (w / (h * h)).toFixed(1) : prev.bmi;
@@ -2159,7 +2166,19 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
       ${block("Prescription",
         `${meds.length || rxRows.filter(r=>r.drug).length} drug(s)`,
         meds.length > 0
-          ? `<table><thead><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th></tr></thead><tbody>${meds.map(m => `<tr><td>${esc(m.name)}</td><td>${esc(m.dose||"")}</td><td>${esc(m.route||"")}</td><td>${esc(m.frequency||"")}</td><td>${esc(m.duration||"")}</td></tr>`).join("")}</tbody></table>`
+          ? `<table><thead><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th></tr></thead><tbody>${meds.map(m => {
+              // R7hr-128-FIX — Mirror buildDoctorNoteCardHtml: surface
+              // dilution sub-label under the drug name on the IA print
+              // so the printed copy carries the parenteral dilution that
+              // the doctor entered + PrescriptionPanel saved + the MAR
+              // fan-out is already using. Smallest-diff (no extra column).
+              const dv = Number(m.dilutionVolume);
+              const ov = Number(m.infuseOverMinutes);
+              const dil = (Number.isFinite(dv) && dv > 0)
+                ? `<div style="font-size:10px;color:#0369a1;font-weight:600;margin-top:2px">💧 in ${dv} mL ${esc(m.dilutionFluid || "NS 0.9%")}${(Number.isFinite(ov) && ov > 0) ? ` over ${ov} min` : ""}</div>`
+                : "";
+              return `<tr><td>${esc(m.name)}${dil}</td><td>${esc(m.dose||"")}</td><td>${esc(m.route||"")}</td><td>${esc(m.frequency||"")}</td><td>${esc(m.duration||"")}</td></tr>`;
+            }).join("")}</tbody></table>`
           : (rxRows.filter(r=>r.drug).length === 0
               ? `<div class="empty">No medications prescribed</div>`
               : `<table><thead><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead>

@@ -58,17 +58,35 @@ const fmtVal = (v) => {
 // MCCD layer table, GCS row should never split mid-row). Card-level
 // avoid is dropped in the wrapper below — that fixed pages that
 // previously held a single Vital Signs / small card and the rest empty.
+// R7hr-107 — Bolder field-label headlines.
+// User feedback: the labels above doctor's text-field values were the same
+// weight (600) and a soft slate-600 grey, so the eye couldn't anchor on them
+// when scanning a long IA card. Bumping the label to 800 weight + darker
+// slate-800 colour + slightly larger 11px gives the labels a true headline
+// feel — the doctor can now skim the labels and jump straight to the line
+// they need. Section dividers and table headers nudged the same way for
+// consistency. Values unchanged (already near-black at 11.5px).
+// R25-safe: pure CSS tweak, no markup change, no field gain/loss.
 const COMPACT_GRID_CSS = `<style>
   .dfx-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:11.5px;margin:6px 0 10px}
-  .dfx-grid .lbl{font-weight:600;color:#475569;font-size:10px;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:1px}
+  /* R7hr-108 — 3-column variant for sections with many short key/value
+     pairs (Examination Findings sub-blocks — General Exam chips +
+     CVS / RS / CNS / P-A). Doctor's values here are mostly 1–2 word
+     answers (Yes / No / Normal / Conscious / Well hydrated / S1 S2
+     Normal / E4 V5 M6 / B/L equal etc.), so 3 columns pack tighter
+     without truncation. All other sections (History, Diagnosis,
+     Investigations & Plan) stay 2-column because their values are
+     longer free text. The .full class still spans the full row. */
+  .dfx-grid--3col{grid-template-columns:1fr 1fr 1fr;gap:4px 14px}
+  .dfx-grid .lbl{font-weight:800;color:#1e293b;font-size:11px;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:2px}
   .dfx-grid .val{color:#0f172a;font-size:11.5px;white-space:pre-wrap}
   .dfx-grid .full{grid-column:1 / -1}
-  .dfx-h{margin:10px 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:3px 8px;border-radius:4px}
+  .dfx-h{margin:10px 0 4px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;padding:4px 9px;border-radius:4px}
   .dfx-tbl{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0 8px;page-break-inside:avoid;break-inside:avoid}
-  .dfx-tbl th{padding:4px 6px;border:1px solid #cbd5e1;background:#f1f5f9;font-size:10px;text-align:left;color:#334155}
+  .dfx-tbl th{padding:4px 6px;border:1px solid #cbd5e1;background:#f1f5f9;font-size:10.5px;font-weight:800;text-align:left;color:#1e293b;text-transform:uppercase;letter-spacing:.3px}
   .dfx-tbl td{padding:4px 6px;border:1px solid #e2e8f0;color:#0f172a}
   .dfx-narr{margin:6px 0 10px;padding:8px 12px;background:#f8fafc;border-left:3px solid #94a3b8;font-size:11.5px;white-space:pre-wrap;line-height:1.45}
-  .dfx-banner{margin:6px 0 12px;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:600}
+  .dfx-banner{margin:6px 0 12px;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:700}
 </style>`;
 
 const _kv = (label, value, isFull = false) => {
@@ -81,6 +99,12 @@ const _section = (title, color, bodyHtml) =>
 const _grid = (cells) => {
   const kept = cells.filter(Boolean);
   return kept.length ? `<div class="dfx-grid">${kept.join("")}</div>` : "";
+};
+// R7hr-108 — 3-column grid for chip-style sections (used by
+// Examination Findings sub-blocks where each value is 1–2 words).
+const _grid3 = (cells) => {
+  const kept = cells.filter(Boolean);
+  return kept.length ? `<div class="dfx-grid dfx-grid--3col">${kept.join("")}</div>` : "";
 };
 const _narr = (text) => text ? `<div class="dfx-narr">${escapeHtml(String(text))}</div>` : "";
 
@@ -391,14 +415,91 @@ const buildBuilder = (note, opts = {}) => {
         : "";
 
       // Examination findings
-      const exam = _section("Examination Findings", "#475569", _grid([
-        _kv("General", docPayload.genExam, true),
-        _kv("CVS", docPayload.cvs),
-        _kv("RS", docPayload.rs),
-        _kv("Abdomen", docPayload.abdomen),
-        _kv("CNS", docPayload.cns),
-        _kv("Local Exam", nabh.localExamination, true),
-      ]));
+      // R7hr-106 — Surface the structured Clinical Examination (R7hr-58)
+      // alongside the legacy free-text fields. Pre-R7hr-58 the form had
+      // 5 free-text textareas (genExam / cvs / rs / abdomen / cns) and the
+      // builder read those directly. R7hr-58 replaced them with a
+      // structured form that writes to `nabh.clinicalExamination.genExam`
+      // (built / nourishment / consciousness / orientation / pallor /
+      // pedalEdema / hydration / jvp / icterus / cyanosis / clubbing /
+      // lymphadenopathy / febrile) plus `sysExam.{cvs,rs,cns,pa}` each
+      // with rich sub-fields, but the card kept reading the now-empty
+      // legacy keys so post-R7hr-58 IAs rendered empty Exam sections even
+      // when the doctor filled everything (Ramesh's IA: all 4 sysExam
+      // blocks fully populated, but card showed only Local Exam).
+      // We now render BOTH: legacy free-text first (if filled) for
+      // back-compat with older records, then the structured General
+      // Examination as a chip grid, then per-system CVS/RS/CNS/P-A blocks
+      // with their structured findings. Empty blocks stay hidden.
+      const clinExam = nabh.clinicalExamination || {};
+      const ge = clinExam.genExam || {};
+      const sx = clinExam.sysExam || {};
+      const genHasContent = Object.values(ge).some(v => v !== "" && v !== false && v != null);
+      const sysHasContent = ["cvs","rs","cns","pa"].some(k => {
+        const blk = sx[k] || {};
+        return Object.values(blk).some(v => v !== "" && v !== false && v != null);
+      });
+      const legacyExam = (docPayload.genExam || docPayload.cvs || docPayload.rs || docPayload.abdomen || docPayload.cns);
+      const renderGenExamChips = () => {
+        const labelMap = {
+          built: "Built", nourishment: "Nourishment", consciousness: "Consciousness",
+          orientation: "Orientation", pallor: "Pallor", pedalEdema: "Pedal Edema",
+          hydration: "Hydration", jvp: "JVP", icterus: "Icterus", cyanosis: "Cyanosis",
+          clubbing: "Clubbing", lymphadenopathy: "Lymphadenopathy", febrile: "Febrile",
+          lymphLocation: "Lymph Location",
+        };
+        const cells = Object.entries(ge)
+          .filter(([k, v]) => v !== "" && v != null && v !== false)
+          .map(([k, v]) => {
+            const lbl = labelMap[k] || k;
+            const val = typeof v === "boolean" ? (v ? "✓ Yes" : "No") : v;
+            return _kv(lbl, val);
+          });
+        // R7hr-108 — 3-col grid (short chip values).
+        return cells.length ? _grid3(cells) : "";
+      };
+      const renderSysBlock = (key, label) => {
+        const b = sx[key] || {};
+        const cells = Object.entries(b)
+          .filter(([k, v]) => v !== "" && v != null && v !== false && k !== "other" && !k.endsWith("Details") && !k.endsWith("Location"))
+          .map(([k, v]) => {
+            const niceK = k.charAt(0).toUpperCase() + k.slice(1).replace(/([A-Z])/g, " $1");
+            const val = typeof v === "boolean" ? "✓ Yes" : v;
+            return _kv(niceK, val);
+          });
+        // tail: structured "details" / "location" / "other" fields
+        // (kept as `full` rows so they wrap the entire row regardless
+        //  of column count; they hold longer free-text answers).
+        const extras = [];
+        if (b.tenderLocation) extras.push(_kv("Tender Location", b.tenderLocation));
+        if (b.murmurDetails) extras.push(_kv("Murmur Details", b.murmurDetails, true));
+        if (b.organomegalyDetails) extras.push(_kv("Organomegaly Details", b.organomegalyDetails, true));
+        if (b.other) extras.push(_kv("Other", b.other, true));
+        const all = cells.concat(extras);
+        if (!all.length) return "";
+        // R7hr-108 — 3-col grid for CVS / RS / CNS / P-A.
+        return `<div style="margin-top:8px"><div style="font-size:11.5px;font-weight:800;color:#1e293b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${label}</div>${_grid3(all)}</div>`;
+      };
+      const examInner = [
+        legacyExam ? _grid([
+          _kv("General", docPayload.genExam, true),
+          _kv("CVS", docPayload.cvs),
+          _kv("RS", docPayload.rs),
+          _kv("Abdomen", docPayload.abdomen),
+          _kv("CNS", docPayload.cns),
+        ]) : "",
+        genHasContent ? `<div style="margin-top:${legacyExam ? "10px" : "0"}"><div style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">General Examination</div>${renderGenExamChips()}</div>` : "",
+        sysHasContent ? renderSysBlock("cvs", "CVS — Cardiovascular") : "",
+        sysHasContent ? renderSysBlock("rs", "RS — Respiratory") : "",
+        sysHasContent ? renderSysBlock("cns", "CNS — Central Nervous System") : "",
+        sysHasContent ? renderSysBlock("pa", "P/A — Per Abdomen") : "",
+        clinExam.generalExamination ? _grid([_kv("General Notes", clinExam.generalExamination, true)]) : "",
+        clinExam.systemicExamination ? _grid([_kv("Systemic Notes", clinExam.systemicExamination, true)]) : "",
+        nabh.localExamination ? _grid([_kv("Local Exam", nabh.localExamination, true)]) : "",
+      ].filter(Boolean).join("");
+      const exam = examInner
+        ? _section("Examination Findings", "#475569", examInner)
+        : "";
 
       // Medication Reconciliation (NABH MOM.5 / COP.2) — falls back to
       // nurse-side homeMedications list mapped onto the same shape.
@@ -465,10 +566,67 @@ const buildBuilder = (note, opts = {}) => {
         _kv("ICD-10", docPayload.icd10 || note.icd10Code),
       ]));
 
-      // Investigations + Plan + Advice
-      const planSection = (docPayload.investigations || docPayload.treatmentPlan || docPayload.followupNotes || docPayload.dietAdvice || docPayload.activityAdvice)
-        ? _section("Investigations & Plan", "#16a34a", _grid([
-            _kv("Investigations", docPayload.investigations, true),
+      // R7hr-123 — Structured Lab orders / Prescription / Infusion lists.
+      // Pre-fix the IA card silently dropped these even when the doctor
+      // had ordered CBC, Amoxiclav, IV NS etc. — the payload lives at
+      // noteDetails.doctor.{invests, meds, infusions} as arrays of typed
+      // rows that the IPD IA form (R7hr-67/68/69) writes. Render each as
+      // its own colored table block so the consultant on rounds, the
+      // pharmacist, and the nurse at MAR all see what was actually
+      // ordered without opening the print. Empty arrays → block hidden.
+      const invList = Array.isArray(docPayload.invests) ? docPayload.invests
+                    : Array.isArray(docPayload.investigations) && typeof docPayload.investigations !== "string" ? docPayload.investigations
+                    : [];
+      const labOrdersHtml = invList.length
+        ? _section("Laboratory & Investigation Orders", "#0ea5e9",
+            `<table class="ndx-tbl"><tr><th>Test</th><th>Urgency</th><th>Instructions</th></tr>${invList.map(i => `<tr><td><strong>${escapeHtml(i.name || i.test || i.investigation || "—")}</strong></td><td>${i.urgency ? `<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:600;background:${/urgent|stat/i.test(i.urgency)?"#fee2e2":"#dbeafe"};color:${/urgent|stat/i.test(i.urgency)?"#dc2626":"#1d4ed8"}">${escapeHtml(i.urgency)}</span>` : "—"}</td><td>${escapeHtml(i.instructions || i.notes || "—")}</td></tr>`).join("")}</table>`)
+        : "";
+
+      const medsList = Array.isArray(docPayload.meds) ? docPayload.meds
+                     : Array.isArray(docPayload.rxRows) ? docPayload.rxRows
+                     : Array.isArray(docPayload.prescription) ? docPayload.prescription
+                     : [];
+      // R7hr-128-FIX — Render dilution sub-label (Vol mL / fluid / over min)
+      // under the drug name when the doctor filled it on the parenteral
+      // strip in PrescriptionPanel. Without this the meds card on patient
+      // panel / Doctor Notes timeline / Complete File print silently drops
+      // the dilution metadata even though the fan-out + DoctorOrder
+      // already carry it. Smallest-diff: same 6 columns, only the Drug
+      // cell grows by one sub-line when present.
+      const _medDilution = (m) => {
+        const vol = Number(m.dilutionVolume);
+        if (!Number.isFinite(vol) || vol <= 0) return "";
+        const fluid = (m.dilutionFluid || "NS 0.9%").toString();
+        const over = Number(m.infuseOverMinutes);
+        const overTxt = (Number.isFinite(over) && over > 0) ? ` over ${over} min` : "";
+        return `<div style="font-size:10px;color:#0369a1;font-weight:600;margin-top:2px">💧 in ${vol} mL ${escapeHtml(fluid)}${escapeHtml(overTxt)}</div>`;
+      };
+      const rxHtml = medsList.length
+        ? _section("Prescription / Medications", "#7c3aed",
+            `<table class="ndx-tbl"><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th><th>Notes</th></tr>${medsList.map(m => `<tr><td><strong>${escapeHtml(m.name || m.drug || "—")}</strong>${m.genericName ? `<div style="font-size:10px;color:#64748b">${escapeHtml(m.genericName)}</div>` : ""}${_medDilution(m)}</td><td>${escapeHtml(m.dose || "—")}</td><td>${escapeHtml(m.route || "—")}</td><td>${escapeHtml(m.frequency || "—")}</td><td>${escapeHtml(m.duration || "—")}</td><td>${escapeHtml([m.mealStatus, m.instructions, m.notes].filter(Boolean).join(" · ") || "—")}</td></tr>`).join("")}</table>`)
+        : "";
+
+      const infList = Array.isArray(docPayload.infusions) ? docPayload.infusions
+                    : Array.isArray(docPayload.infusion) ? docPayload.infusion
+                    : Array.isArray(docPayload.ivFluids) ? docPayload.ivFluids
+                    : [];
+      const infusionHtml = infList.length
+        ? _section("IV Fluids / Infusions", "#0d9488",
+            `<table class="ndx-tbl"><tr><th>Fluid</th><th>Volume</th><th>Rate</th><th>Duration</th><th>Route</th><th>Additives / Notes</th></tr>${infList.map(f => `<tr><td><strong>${escapeHtml(f.name || f.fluid || f.drug || "—")}</strong>${f.strength ? `<div style="font-size:10px;color:#64748b">${escapeHtml(f.strength)}</div>` : ""}</td><td>${escapeHtml(f.totalVolume ? `${f.totalVolume} ml` : f.volume || "—")}</td><td>${escapeHtml(f.rate ? `${f.rate} ml/hr` : "—")}</td><td>${escapeHtml(f.duration || "—")}</td><td>${escapeHtml(f.route || "—")}</td><td>${escapeHtml([f.additives, f.instructions, f.notes].filter(Boolean).join(" · ") || "—")}</td></tr>`).join("")}</table>`)
+        : "";
+
+      // Investigations + Plan + Advice (text fields — kept separate from
+      // the structured lab table above so a free-text Investigations note
+      // can co-exist with structured rows).
+      // R7hr-130 — User asked to rename this section header to just
+      // "Plan" because Investigations already has its own dedicated
+      // Lab Orders table above. The free-text Investigations sub-row
+      // stays inside this block so any narrative investigation note
+      // the doctor types in the IA form still surfaces, but the section
+      // title no longer double-counts it. R25-safe: copy change only.
+      const planSection = (docPayload.investigations && typeof docPayload.investigations === "string" || docPayload.treatmentPlan || docPayload.followupNotes || docPayload.dietAdvice || docPayload.activityAdvice)
+        ? _section("Plan", "#16a34a", _grid([
+            _kv("Investigations", typeof docPayload.investigations === "string" ? docPayload.investigations : null, true),
             _kv("Treatment Plan", docPayload.treatmentPlan, true),
             _kv("Follow-up Notes", docPayload.followupNotes, true),
             _kv("Diet Advice", docPayload.dietAdvice, true),
@@ -493,7 +651,7 @@ const buildBuilder = (note, opts = {}) => {
         ? `<div style="margin:18px 0 6px;padding:6px 12px;border-radius:6px;background:linear-gradient(90deg,#eef2ff,#fdf2f8);font-size:11px;font-weight:700;color:#312e81;letter-spacing:.5px;text-align:center">━━━ NURSING INTAKE — CROSS-DISCIPLINARY (NABH IPSG.6) ━━━</div>${nursingExtras}`
         : "";
 
-      return alertBanner + cc + history + vitalsHtml + exam + medRecHtml + nabhExtras + codeSection + riskHtml + consentHtml + dx + planSection + nursingBlock;
+      return alertBanner + cc + history + vitalsHtml + exam + medRecHtml + nabhExtras + codeSection + riskHtml + consentHtml + dx + labOrdersHtml + rxHtml + infusionHtml + planSection + nursingBlock;
     },
     // R7gp — initialAssessment is the alias the frontend sends from the
     // IPD Initial Assessment doctor form; route it to the same builder.

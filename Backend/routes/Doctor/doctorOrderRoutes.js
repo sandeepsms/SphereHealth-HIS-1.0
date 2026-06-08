@@ -167,6 +167,225 @@ function dateAtMidnightOffset(base, nDays) {
    DOCTOR ROUTES
 ═══════════════════════════════════════════════════ */
 
+/* ─────────────────────────────────────────────────────
+   R7hr-139 — POST /verbal — Nurse takes telephonic/verbal order
+   on doctor's behalf (NABH MOM.7c + IPSG.2).
+
+   Permission: mar.write (nurse + admin can call).
+   Body: same shape as POST / plus
+     verbalFromDoctor: String (mandatory)
+     verbalFromDoctorId: ObjectId (optional, if doctor is in User table)
+     verbalReason: String — "Phone consult" / "Off-floor" / etc
+     readBackConfirmed: Boolean — IPSG.2 mandatory true
+     parentOrderId: ObjectId (optional, when restarting a completed infusion)
+
+   Stamps:
+     isVerbal: true
+     verbalEnteredBy: req.user._id
+     verbalEnteredByName: req.user.fullName
+     verbalEnteredAt: now
+     coSignedBy: null (doctor must cosign within 24h)
+     coSignedAt: null
+
+   Audit emits:
+     VERBAL_ORDER_ENTERED — always
+     INFUSION_RESTARTED_VERBAL — additional emit when parentOrderId set
+                                   and orderType=IV_Fluid
+─────────────────────────────────────────────────────── */
+router.post("/verbal", requireAction("mar.write"), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const {
+      verbalFromDoctor, verbalFromDoctorId, verbalReason, readBackConfirmed,
+      parentOrderId, ...orderBody
+    } = body;
+
+    // IPSG.2: read-back is mandatory for verbal orders.
+    if (!readBackConfirmed) {
+      return res.status(400).json({
+        ok: false,
+        code: "READBACK_REQUIRED",
+        message: "Read-back confirmation is mandatory (NABH IPSG.2). Repeat the order to the doctor and confirm.",
+      });
+    }
+    if (!verbalFromDoctor || !String(verbalFromDoctor).trim()) {
+      return res.status(400).json({
+        ok: false,
+        code: "DOCTOR_REQUIRED",
+        message: "Name of the prescribing doctor is required for a verbal order (NABH MOM.7c).",
+      });
+    }
+    if (!verbalReason || !String(verbalReason).trim()) {
+      return res.status(400).json({
+        ok: false,
+        code: "REASON_REQUIRED",
+        message: "Reason for verbal order is required (e.g., Phone consult, Off-floor, Emergency).",
+      });
+    }
+
+    // Auto-set HAM flags as the doctor-side POST does — verbal orders
+    // for HAM drugs still need the dual-nurse verification on dispense.
+    const name = orderBody.orderDetails?.medicineName || orderBody.orderDetails?.displayName || orderBody.orderDetails?.fluidName || "";
+    if (name) {
+      orderBody.hamFlag = checkHAM(name);
+      orderBody.twoNurseRequired = orderBody.hamFlag;
+      orderBody.highRisk = orderBody.hamFlag;
+    }
+
+    // Strip non-mappable ServiceMaster picks (same logic as POST /).
+    if (orderBody.orderDetails && !SERVICE_MASTER_MAPPABLE_TYPES.has(orderBody.orderType)) {
+      for (const k of SERVICE_MASTER_PICK_KEYS) delete orderBody.orderDetails[k];
+    }
+
+    const now = new Date();
+    // Stamp verbal-order metadata. The actor identity comes from JWT
+    // (R7gw-B1-T01 pattern) so a malicious client can't claim
+    // verbalEnteredBy = someone-else.
+    orderBody.isVerbal           = true;
+    orderBody.verbalEnteredBy    = req.user?.id || req.user?._id;
+    orderBody.verbalEnteredByName= req.user?.fullName || "";
+    orderBody.verbalEnteredAt    = now;
+    orderBody.verbalFromDoctor   = String(verbalFromDoctor).trim();
+    if (verbalFromDoctorId) orderBody.verbalFromDoctorId = verbalFromDoctorId;
+    orderBody.verbalReason       = String(verbalReason).trim();
+    orderBody.readBackConfirmed  = true;
+    // Cosign fields remain null — the 24h cron (or doctor manually
+    // co-signing) will flip them.
+    orderBody.coSignedBy = null;
+    orderBody.coSignedAt = null;
+
+    // Parent linkage when this is a restart of a completed infusion.
+    if (parentOrderId) {
+      orderBody.parentOrderId = parentOrderId;
+      orderBody.restartedFrom = parentOrderId;
+    }
+
+    const order = await DoctorOrder.create(orderBody);
+
+    // CLINICAL_AUDIT emit — NABH MOM.7c immutable timeline.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "VERBAL_ORDER_ENTERED",
+        UHID: order.UHID,
+        admissionId: order.admissionId,
+        patientId: order.patientId,
+        targetType: `DoctorOrder.${order.orderType}`,
+        targetId: order._id,
+        after: {
+          verbalFromDoctor: orderBody.verbalFromDoctor,
+          verbalEnteredBy: orderBody.verbalEnteredByName,
+          verbalReason: orderBody.verbalReason,
+          readBackConfirmed: true,
+          orderType: order.orderType,
+          medicineName: order.orderDetails?.medicineName || order.orderDetails?.fluidName || "",
+          dose: order.orderDetails?.dose || "",
+          rate: order.orderDetails?.rate || "",
+        },
+        reason: `Verbal order from Dr. ${orderBody.verbalFromDoctor} — ${orderBody.verbalReason}`,
+      });
+      if (parentOrderId && order.orderType === "IV_Fluid") {
+        emitClinicalAudit({
+          req,
+          event: "INFUSION_RESTARTED_VERBAL",
+          UHID: order.UHID,
+          admissionId: order.admissionId,
+          patientId: order.patientId,
+          targetType: "DoctorOrder.infusion",
+          targetId: order._id,
+          before: { parentOrderId },
+          after: { newOrderId: order._id, fluid: order.orderDetails?.fluidName || order.orderDetails?.displayName || "" },
+          reason: `Fresh bag restarted by nurse on verbal order from Dr. ${orderBody.verbalFromDoctor}`,
+        });
+      }
+    } catch (_) { /* silent */ }
+
+    res.status(201).json({ ok: true, data: order });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+/* ─────────────────────────────────────────────────────
+   R7hr-141 — POST /:id/cosign-verbal — Doctor co-signs a
+   nurse-entered verbal/telephonic order (NABH MOM.7c §3 —
+   within 24h). Stamps coSignedBy/At from JWT actor identity
+   (R7gw-B1-T01 pattern — never trust client-supplied IDs).
+
+   Permission: doctor-orders.write (same gate as creating
+   orders directly — only roles licensed to write doctor
+   orders can validate verbal ones).
+
+   GET /verbal/pending — list every uncosigned verbal order
+   for the cosign dashboard. Same auth as the doctor-orders
+   read path.
+─────────────────────────────────────────────────────── */
+router.get("/verbal/pending", requireAction("doctor-notes.read"), async (req, res) => {
+  try {
+    const { UHID, admissionId, doctorId, overdueOnly } = req.query;
+    const q = { isVerbal: true, coSignedBy: null };
+    if (UHID) q.UHID = UHID;
+    if (admissionId && mongoose.isValidObjectId(admissionId)) q.admissionId = admissionId;
+    if (doctorId && mongoose.isValidObjectId(doctorId)) q.verbalFromDoctorId = doctorId;
+    if (overdueOnly === "true" || overdueOnly === "1") {
+      q.verbalEnteredAt = { $lt: new Date(Date.now() - 24 * 60 * 60 * 1000) };
+    }
+    const orders = await DoctorOrder.find(q).sort({ verbalEnteredAt: 1 }).limit(500).lean();
+    res.json({ ok: true, data: orders, count: orders.length });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+router.post("/:id/cosign-verbal", validateObjectIdParam("id"), requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
+  try {
+    const order = await DoctorOrder.findById(req.params.id);
+    if (!order) return res.status(404).json({ ok: false, message: "Order not found" });
+    if (!order.isVerbal) {
+      return res.status(400).json({ ok: false, code: "NOT_VERBAL", message: "This order is not a verbal order — nothing to cosign" });
+    }
+    if (order.coSignedBy) {
+      return res.status(409).json({ ok: false, code: "ALREADY_COSIGNED", message: "Order already co-signed" });
+    }
+
+    const now = new Date();
+    order.coSignedBy     = req.user?.id || req.user?._id;
+    order.coSignedByName = req.user?.fullName || "";
+    order.coSignedAt     = now;
+    order.auditLog.push({
+      step: "Verbal Order Co-signed",
+      doneBy: req.user?.fullName || "Doctor",
+      doneAt: now,
+      notes: `Cosigned by ${req.user?.fullName || "doctor"} — original verbal from Dr. ${order.verbalFromDoctor} via nurse ${order.verbalEnteredByName}${order.verbalReason ? ` (${order.verbalReason})` : ""}`,
+    });
+    await order.save();
+
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      const hoursElapsed = order.verbalEnteredAt
+        ? Math.round((now.getTime() - new Date(order.verbalEnteredAt).getTime()) / 3600000)
+        : null;
+      emitClinicalAudit({
+        req,
+        event: "VERBAL_ORDER_COSIGNED",
+        UHID: order.UHID,
+        admissionId: order.admissionId,
+        patientId: order.patientId,
+        targetType: `DoctorOrder.${order.orderType}`,
+        targetId: order._id,
+        before: { verbalEnteredBy: order.verbalEnteredByName, verbalFromDoctor: order.verbalFromDoctor, verbalEnteredAt: order.verbalEnteredAt },
+        after: { coSignedByName: order.coSignedByName, coSignedAt: order.coSignedAt },
+        reason: `Cosigned after ${hoursElapsed !== null ? hoursElapsed : "?"}h${hoursElapsed !== null && hoursElapsed > 24 ? " — OVERDUE per NABH MOM.7c §3" : ""}`,
+      });
+    } catch (_) { /* silent */ }
+
+    res.json({ ok: true, data: order });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
 // POST / — create single order (Doctor / Admin only)
 router.post("/", requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
   try {
@@ -306,6 +525,20 @@ router.post("/", requireAction("doctor-orders.write"), credentialExpiryBlocker("
           message: `Identical ${dup.orderDetails?.medicineName || body.orderType} order was placed ${Math.round((Date.now() - new Date(dup.orderedAt).getTime())/1000)}s ago — refusing the duplicate. Modify priority to STAT for genuine repeat doses.`,
         });
       }
+    }
+
+    // R7hr-142 — Stamp the prescriber's identity from JWT (R7gw-B1-T01
+    // pattern — client-supplied actor IDs are ignored). Pre-fix `orderedBy`
+    // was a free-text string the client could set to anything; the nurse
+    // panel and MAR print had no employee ID to display, just a name.
+    // Now every order carries the full triplet (id + name + employeeId)
+    // so the surveyor can trace every line back to a credentialed user.
+    if (req.user) {
+      if (req.user._id || req.user.id) body.orderedById = req.user._id || req.user.id;
+      if (req.user.employeeId) body.orderedByEmployeeId = String(req.user.employeeId);
+      // Don't clobber a deliberately-set orderedBy (e.g. seed scripts pre-
+      // populating "Dr. Demo"), but DO fill the gap if the caller didn't.
+      if (!body.orderedBy && req.user.fullName) body.orderedBy = req.user.fullName;
     }
 
     // R7gw-B3-T08 — defense-in-depth: high-risk Procedure orders auto-flag
@@ -934,6 +1167,31 @@ router.post("/:id/step", validateObjectIdParam("id"), requireAction("order.ackno
       current.completedBy = doneBy;
       current.completedAt = new Date();
     }
+
+    // R7hr-133 — When the nurse clicks "Start Infusion" (which posts a
+    // /step with step="Start Infusion") the order should transition into
+    // InProgress AND get its `infusionStarted` clock stamped so the
+    // VOLUME PROGRESS bar can compute elapsed-time × rate. Pre-fix only
+    // the status was flipped; infusionStarted stayed null and the live
+    // monitoring card forever read "0.0 ml / 100 ml (0%)" even though
+    // the bag was hanging at the bedside. The infusionIntakeCron also
+    // queries `infusionStarted IS NOT NULL` so without this stamp the
+    // hourly auto-intake feed never picked the bag up. Guard:
+    //   - Only IV_Fluid orders (medication / lab / procedure don't have
+    //     a continuous-time clock)
+    //   - Only when moving to InProgress (not Completed)
+    //   - Only when not already stamped (so re-acknowledge / re-step
+    //     doesn't reset the clock and lose elapsed minutes)
+    if (
+      current.orderType === "IV_Fluid" &&
+      nextStatus === "InProgress" &&
+      !current.infusionStarted
+    ) {
+      current.infusionStarted = new Date();
+      if (!current.currentRate) {
+        current.currentRate = current.orderDetails?.rate || "";
+      }
+    }
     const order = await moveStatus(current, nextStatus, { actor: req.user?._id || doneBy });
     // R7hr-83 Phase C — auto-bill on completion.
     if (nextStatus === "Completed") await fireAutoBillOnCompletion(order);
@@ -982,6 +1240,13 @@ router.post("/:id/restart", validateObjectIdParam("id"), requireAction("doctor-o
     delete o.infusionStopped;
     delete o.currentRate;
     delete o.mergedInto;
+    // R7hr-153 — Clear the previous bag's bolus history. Without this
+    // the new bag inherits boluses[] from the original, so the volume
+    // progress bar reads the old pushes as if they belonged to the
+    // fresh bag (the chip "+225 ml from 1 bolus push" surfaces on a
+    // bag where the nurse never pushed any bolus). Boluses are a
+    // per-bag artefact — they should not survive a restart.
+    delete o.boluses;
     o.status     = "Active";          // ready to run immediately
     o.orderedAt  = new Date();
     o.priority   = original.priority || "Routine";
@@ -1365,6 +1630,301 @@ router.post("/:id/infusion-monitor", validateObjectIdParam("id"), requireAction(
       { new: true }
     );
     if (!order) return res.status(404).json({ ok: false, message: "Not found" });
+
+    // R7hr-134 — emit ClinicalAudit on every vital-charting entry so the
+    // NABH MOM.2 timeline can answer "kab vital charting hui, kisne ki"
+    // for each infusion. Pre-fix this route just $push'd silently with
+    // no audit trail emitted.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "INFUSION_MONITORED",
+        UHID: order.UHID,
+        admissionId: order.admissionId,
+        patientId: order.patientId,
+        targetType: "DoctorOrder.infusion",
+        targetId: order._id,
+        after: { nurse, currentRate, bp, pulse, spo2, urineOutput, volumeInfused, siteCondition, action },
+        reason: remarks || action || "Routine monitoring",
+      });
+    } catch (_) { /* silent */ }
+
+    res.json({ ok: true, data: order });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+/* ═══════════════════════════════════════════════════
+   NURSE — INFUSION BOLUS PUSH (R7hr-147, NABH MOM.2)
+═══════════════════════════════════════════════════ */
+/**
+ * POST /:id/bolus
+ * Body: { volumeMl, reason, route?, notes?, nurse }
+ *
+ * A bolus is a discrete mL push given outside the continuous drip rate
+ * (e.g. 100 ml NS push for hypotension, 25 ml Dextrose for hypoglycemia).
+ * The volume MUST be added to the bag's running total so the progress bar
+ * reflects all fluid actually given (drip + boluses), and an auditLog row
+ * + ClinicalAudit emit make the push traceable for NABH MOM.2.
+ */
+router.post("/:id/bolus", validateObjectIdParam("id"), requireAction("mar.write"), async (req, res) => {
+  try {
+    const { volumeMl, reason, route, notes, nurse } = req.body || {};
+    if (!nurse) return res.status(400).json({ ok: false, message: "nurse required" });
+    const ml = Number(volumeMl);
+    if (!Number.isFinite(ml) || ml <= 0) {
+      return res.status(400).json({ ok: false, message: "volumeMl must be a positive number" });
+    }
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ ok: false, message: "reason is required for NABH documentation" });
+    }
+
+    const order = await DoctorOrder.findById(req.params.id);
+    if (!order) return res.status(404).json({ ok: false, message: "Not found" });
+    if (order.orderType !== "IV_Fluid") {
+      return res.status(400).json({ ok: false, message: `bolus only applies to IV_Fluid orders (got ${order.orderType})` });
+    }
+    if (order.status === "Stopped" || order.status === "Completed" || order.status === "Cancelled") {
+      return res.status(409).json({ ok: false, message: `Cannot add bolus to an order that is already ${order.status}` });
+    }
+
+    const trimmedReason = String(reason).trim();
+    const entry = {
+      time: new Date(),
+      nurse,
+      volumeMl: ml,
+      reason: trimmedReason,
+      route: route || "IV",
+      notes: notes || "",
+    };
+
+    order.boluses = order.boluses || [];
+    order.boluses.push(entry);
+    order.auditLog.push({
+      step: `Bolus ${ml} ml given (${route || "IV"})`,
+      doneBy: nurse,
+      doneAt: new Date(),
+      notes: `Reason: ${trimmedReason}${notes ? ` — ${notes}` : ""}`,
+    });
+
+    await order.save();
+
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "INFUSION_BOLUS",
+        UHID: order.UHID,
+        admissionId: order.admissionId,
+        patientId: order.patientId,
+        targetType: "DoctorOrder.infusion",
+        targetId: order._id,
+        after: { nurse, volumeMl: ml, reason: trimmedReason, route: route || "IV" },
+        reason: trimmedReason,
+      });
+    } catch (_) { /* silent */ }
+
+    res.json({ ok: true, data: order });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+/* ═══════════════════════════════════════════════════
+   R7hr-153 — AUTO-COMPLETE A BAG ON TREATMENT-CHART TICK
+═══════════════════════════════════════════════════
+   The Treatment Chart's live volume bar fires this when the computed
+   running ml hits totalVolume. Pre-R7hr-153 the frontend called PATCH
+   /:id with `{ status: "Completed", stopReason, infusionStopped }` —
+   but the PATCH_ALLOWED whitelist (R7hr-12-S?, P2-4) strips `status`
+   and `stopReason` so only `infusionStopped` was stamping and the UI
+   could never flip out of "live actions" until the hourly cron caught
+   up. Now we go through a dedicated nurse-callable route that uses
+   .save() so the DoctorOrderModel state-machine pre('save') hook fires
+   and ALLOWED_TRANSITIONS is honoured.
+
+   This endpoint is idempotent: re-calling on an already-Completed bag
+   returns 200 with the current doc (the cron also relies on this so
+   the two paths can race without 4xxs).
+
+   Body: { nurse?, mlInfused?, reason? }
+*/
+router.post("/:id/auto-complete", validateObjectIdParam("id"), requireAction("mar.write"), async (req, res) => {
+  try {
+    const { nurse, mlInfused, reason } = req.body || {};
+    const order = await DoctorOrder.findById(req.params.id);
+    if (!order) return res.status(404).json({ ok: false, message: "Not found" });
+    if (order.orderType !== "IV_Fluid") {
+      return res.status(400).json({ ok: false, message: `auto-complete only applies to IV_Fluid orders (got ${order.orderType})` });
+    }
+    // Idempotent — already finished, nothing to do.
+    if (order.status === "Completed" || order.status === "Stopped" || order.status === "Cancelled") {
+      return res.json({ ok: true, data: order, alreadyFinished: true });
+    }
+
+    const total = Number(order.orderDetails?.totalVolume) || 0;
+    const ml = Number.isFinite(Number(mlInfused)) && Number(mlInfused) > 0
+      ? Math.round(Number(mlInfused))
+      : (total || 0);
+
+    const now = new Date();
+    order.status = "Completed";
+    order.statusChangedAt = now;
+    order.infusionStopped = now;
+    order.completedAt = now;
+    order.completedBy = nurse || req.user?.fullName || req.user?.email || "Treatment Chart";
+    order.stopReason = (reason && String(reason).trim())
+      || `Total volume (${ml} ml) infused — auto-stopped by Treatment Chart`;
+    order.auditLog.push({
+      step: "Infusion auto-stopped — totalVolume reached",
+      doneBy: nurse || req.user?.fullName || "Treatment Chart",
+      doneAt: now,
+      notes: `mlInfused=${ml}, totalVolume=${total}`,
+    });
+
+    await order.save();
+
+    // Best-effort clinical-audit emit (NABH MOM.2). Non-blocking.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "STATUS_CHANGE",
+        UHID: order.UHID,
+        admissionId: order.admissionId,
+        patientId: order.patientId,
+        targetType: "DoctorOrder",
+        targetId: order._id,
+        after: { status: "Completed", reason: order.stopReason },
+      });
+    } catch (_) { /* silent */ }
+
+    // Reuse the same auto-bill fire path that /step and the cron use so
+    // EQUIP/IV_Fluid line items land in the IPD ledger.
+    try { await fireAutoBillOnCompletion(order); } catch (_) { /* silent */ }
+
+    res.json({ ok: true, data: order });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+/* ═══════════════════════════════════════════════════
+   NURSE — INFUSION PAUSE / RESUME / STOP (NABH MOM.2)
+═══════════════════════════════════════════════════ */
+/**
+ * POST /:id/nurse-infusion-action
+ * Body: { action: "pause"|"resume"|"stop", reason, reasonDetail?, holdUntil?, notes?, nurse }
+ *
+ * R7hr-134 — nurse-callable infusion lifecycle endpoint. Pre-R7hr-134 the
+ * TreatmentChart Pause/Resume/Stop modal PATCHed the order with
+ * `{ status, stopReason, nurseNotes, ... }`. PATCH_ALLOWED (R7hr-12-S?) drops
+ * the `status` field so the DB never moved — the chart appeared to flip
+ * Running ↔ Held but no state change was persisted and no audit row landed.
+ * `/doctor-action` requires `order.stop` (doctor-only), so the nurse path
+ * needs its own endpoint that:
+ *   1. persists the state change atomically,
+ *   2. stamps actor + timestamp + reason on every transition,
+ *   3. pushes a row to auditLog for the on-page history,
+ *   4. emits a CLINICAL_AUDIT row (long-term immutable timeline).
+ *
+ * NABH MOM.2: every infusion pause / resume / stop MUST be reason-justified
+ * and traceable to a specific nurse. Stop is allowed for safety reasons
+ * (extravasation, reaction, hypoglycemia, line block) — the doctor's `/doctor-action`
+ * stop is a clinical-order discontinuation; the nurse stop here is a bedside
+ * safety stop and is documented separately.
+ */
+router.post("/:id/nurse-infusion-action", validateObjectIdParam("id"), requireAction("mar.write"), async (req, res) => {
+  try {
+    const { action, reason, reasonDetail, holdUntil, notes, nurse } = req.body || {};
+    if (!nurse) return res.status(400).json({ ok: false, message: "nurse required" });
+    if (!action || !["pause", "resume", "stop"].includes(action)) {
+      return res.status(400).json({ ok: false, message: "action must be one of: pause, resume, stop" });
+    }
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ ok: false, message: "reason is required for NABH documentation" });
+    }
+
+    const order = await DoctorOrder.findById(req.params.id);
+    if (!order) return res.status(404).json({ ok: false, message: "Not found" });
+
+    // Only IV_Fluid orders are managed via this nurse infusion-lifecycle path.
+    // Medication / Lab / Procedure orders use the /administer or /step routes.
+    if (order.orderType !== "IV_Fluid") {
+      return res.status(400).json({ ok: false, message: `nurse-infusion-action only applies to IV_Fluid orders (got ${order.orderType})` });
+    }
+
+    // Guard against acting on already-terminal orders.
+    if (order.status === "Stopped" || order.status === "Completed" || order.status === "Cancelled") {
+      return res.status(409).json({ ok: false, message: `Cannot ${action} an order that is already ${order.status}` });
+    }
+
+    const now = new Date();
+    const trimmedReason = String(reason).trim();
+    const reasonLine = `${trimmedReason}${reasonDetail ? ` — ${reasonDetail}` : ""}`;
+    const beforeStatus = order.status;
+    let nextStatus = null;
+    let stepLabel = "";
+    let auditEvent = "";
+
+    if (action === "pause") {
+      nextStatus = "OnHold";
+      stepLabel = "Infusion Paused (Nurse)";
+      auditEvent = "INFUSION_PAUSED";
+      order.nurseNotes = `PAUSED by ${nurse}: ${trimmedReason}${holdUntil ? ` (until ${holdUntil})` : ""}${notes ? ` | ${notes}` : ""}`;
+    } else if (action === "resume") {
+      nextStatus = "InProgress";
+      stepLabel = "Infusion Resumed (Nurse)";
+      auditEvent = "INFUSION_RESUMED";
+      // R7hr-133 parity — if the order is being resumed but was never
+      // actually started (e.g. paused before the first acknowledge), stamp
+      // infusionStarted now so the volume-progress UI begins ticking.
+      if (!order.infusionStarted) {
+        order.infusionStarted = now;
+        if (!order.currentRate) order.currentRate = order.orderDetails?.rate || "";
+      }
+      order.nurseNotes = `RESUMED by ${nurse}: ${trimmedReason}${notes ? ` | ${notes}` : ""}`;
+    } else {
+      // stop
+      nextStatus = "Stopped";
+      stepLabel = "Infusion Stopped (Nurse — bedside safety)";
+      auditEvent = "INFUSION_STOPPED";
+      order.infusionStopped = now;
+      order.stopReason     = trimmedReason;
+      order.completedBy    = nurse;
+      order.completedAt    = now;
+      order.nurseNotes = `STOPPED by ${nurse}: ${trimmedReason}${notes ? ` | ${notes}` : ""}`;
+    }
+
+    order.status = nextStatus;
+    order.auditLog.push({
+      step: stepLabel,
+      doneBy: nurse,
+      doneAt: now,
+      notes: `Reason: ${reasonLine}${holdUntil ? ` | hold until ${holdUntil}` : ""}${notes ? ` | ${notes}` : ""}`,
+    });
+
+    await order.save();
+
+    // CLINICAL_AUDIT emit — immutable NABH timeline.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: auditEvent,
+        UHID: order.UHID,
+        admissionId: order.admissionId,
+        patientId: order.patientId,
+        targetType: "DoctorOrder.infusion",
+        targetId: order._id,
+        before: { status: beforeStatus },
+        after: { status: nextStatus, nurse, holdUntil: holdUntil || null },
+        reason: reasonLine,
+      });
+    } catch (_) { /* silent */ }
+
     res.json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });

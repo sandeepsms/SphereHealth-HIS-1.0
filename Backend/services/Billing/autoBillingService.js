@@ -653,6 +653,14 @@ async function createTrigger(config) {
     admissionId, patientId, UHID, patientType = "IPD",
     serviceCode, serviceName, serviceId, quantity = 1,
     sourceType, sourceDocumentId, sourceDocumentModel,
+    // R7hr-163 — Caller-supplied idempotency key. When passed (an
+    // ObjectId from the source document — e.g. NurseNote._id for blood-
+    // transfusion charges), the unique partial index
+    // `(sourceType, sourceRef)` on BillingTrigger enforces one-charge-
+    // per-source. Without this every amend / retry / double-POST of the
+    // same nurse note fired a fresh trigger. Investigation per-item
+    // idempotency still needs a separate schema redesign — deferred.
+    sourceRef,
     orderedBy, orderedById, orderedByRole = "System",
     completedBy, completedById, completedByRole,
     orderDetails, completionNotes,
@@ -811,6 +819,10 @@ async function createTrigger(config) {
     originalUnitPrice: unitPrice,
     originalQuantity:  quantity,
     sourceType, sourceDocumentId, sourceDocumentModel,
+    // R7hr-163 — only stamp sourceRef when caller supplied one; partial
+    // unique index on (sourceType, sourceRef) requires an ObjectId, so
+    // a null/undefined would just be ignored by the partial filter.
+    ...(sourceRef ? { sourceRef } : {}),
     orderedBy, orderedById, orderedByRole,
     orderedAt: new Date(),
     orderDetails,
@@ -999,6 +1011,11 @@ async function onNurseNoteSaved(noteDoc) {
       sourceType:  "NurseNote",
       sourceDocumentId:    noteDoc._id,
       sourceDocumentModel: "NurseNote",
+      // R7hr-163 — One NurseNote = at most one billing trigger. Without
+      // this key, amending / re-saving / a double-POST of the same blood-
+      // transfusion or RBS note silently created a second ₹1,500 charge.
+      // Partial unique index on (sourceType, sourceRef) enforces it.
+      sourceRef:           noteDoc._id,
       orderedBy:     nurseName,
       orderedByRole: "Nurse",
       completedBy:   nurseName,
@@ -1011,7 +1028,14 @@ async function onNurseNoteSaved(noteDoc) {
       shift:         noteDoc.shift,
     });
   } catch (e) {
-    console.error("[AutoBilling] onNurseNoteSaved error:", e.message);
+    // E11000 duplicate-key from the unique (sourceType, sourceRef) index
+    // is the expected outcome on a re-save/amend — log at info level
+    // (not error) so ops doesn't get noise. Same for any other duplicate.
+    if (e?.code === 11000) {
+      console.info(`[AutoBilling] onNurseNoteSaved deduped (sourceRef match) for note ${noteDoc._id}`);
+    } else {
+      console.error("[AutoBilling] onNurseNoteSaved error:", e.message);
+    }
   }
 }
 
@@ -1092,12 +1116,43 @@ async function onDoctorNoteSaved(noteDoc) {
   if (VISIT_CAP_CODES.has(visit.code)) {
     try {
       const dateKeyToday = getDateKey();
-      const activeVisitsToday = await BillingTrigger.countDocuments({
-        admissionId, dateKey: dateKeyToday,
-        serviceCode: { $in: Array.from(VISIT_CAP_CODES) },
-        status: { $nin: ["voided", "cancelled", "skipped"] },
-      });
-      if (activeVisitsToday >= 2) {
+      // R7hr-163 — Per-shift cap, not just per-day total.
+      //
+      // The old query counted ALL VISIT_CAP_CODES regardless of shift,
+      // then capped at 2. That fired for "1 morning + 1 evening = 2 → OK"
+      // (correct) but ALSO fired for "1 morning + 1 morning = 2 → OK"
+      // (incorrect — should have been blocked at the SECOND morning).
+      // When two clinicians each filed a morning note on the same day
+      // both rounds slipped through and double-billed.
+      //
+      // New rule: at most ONE round per (date, shift, codeFamily). The
+      // shift identity is taken from the incoming note. ICU and
+      // emergency-after-hours codes don't have a shift dimension; they
+      // fall back to the legacy total-of-2 cap as before.
+      const isShiftedRound = ["DOC-MORN-ROUND", "DOC-EVE-ROUND", "DOC-NIGHT-ROUND"].includes(visit.code);
+      let capQuery;
+      let capLimit;
+      if (isShiftedRound && noteDoc.shift) {
+        // Block second morning when first morning already exists; same
+        // for evening / night. Only the SAME shift counts toward the cap.
+        capQuery = {
+          admissionId, dateKey: dateKeyToday,
+          serviceCode: visit.code,
+          shift: noteDoc.shift,
+          status: { $nin: ["voided", "cancelled", "skipped"] },
+        };
+        capLimit = 1;
+      } else {
+        // ICU / Emergency-after-hours: legacy 2-per-day total cap.
+        capQuery = {
+          admissionId, dateKey: dateKeyToday,
+          serviceCode: { $in: Array.from(VISIT_CAP_CODES) },
+          status: { $nin: ["voided", "cancelled", "skipped"] },
+        };
+        capLimit = 2;
+      }
+      const activeVisitsToday = await BillingTrigger.countDocuments(capQuery);
+      if (activeVisitsToday >= capLimit) {
         // Cap hit — do NOT createTrigger. Drop a paper-trail trigger
         // tagged `status: "skipped"` so the audit tab shows that an
         // auto-bill attempt happened and was blocked. Operator can

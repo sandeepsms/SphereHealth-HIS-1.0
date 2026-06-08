@@ -104,7 +104,17 @@ const _narr = (text) => (text ? `<div class="nfx-narr">${escapeHtml(String(text)
 // so seeded shapes and live form shapes both work). Returns HTML body.
 
 const buildBuilder = (note) => {
-  const nd = note.noteData || {};
+  // R7hr-122 — DoctorNotes-shaped Nurse IA stores the structured payload
+  // under `noteDetails` (not `noteData`, which is the NurseNotes-collection
+  // shape). After R26 split, the Nurse Initial Assessment is a DoctorNotes
+  // doc with section="nursing" + noteDetails.nursing + noteDetails.nursingNabh.
+  // Pre-fix the BUILDERS.initial saw nd === {} so the card body rendered
+  // only the signature footer — every NABH sub-block (vitals, allergies,
+  // PMH, pain, ADL, Morse/Braden/MUST, contacts, PROM/PREM, nursing
+  // problems/goals) silently disappeared from the patient panel. Falling
+  // back to noteDetails preserves both shapes — legacy NurseNotes (noteData)
+  // still wins when present.
+  const nd = note.noteData || note.noteDetails || {};
   // Many seeded notes carry their structured payload at the TOP level
   // (e.g. seed-badal-nn.js) — merge as fallback.
   const topLvl = {
@@ -192,28 +202,76 @@ const buildBuilder = (note) => {
     // ─── PAIN ASSESSMENT ─────────────────────────────────────────────
     pain: () => {
       const p = get("painAssessment");
+      // R7hr-161-FIX — the live NursingNotes Pain form (saveNote L1091,
+      // state L572) saves `score / location / character / type / scale /
+      // analgesicGiven / analgesic / nonPharm` etc. Renderer was reading
+      // the legacy `painScore / painLocation / painCharacter / intervention`
+      // shape only, so every freshly-submitted pain card showed "—".
+      // Fallback chain reads BOTH shapes — legacy data stays correct,
+      // new data finally surfaces.
+      const score    = p.painScore ?? p.score;
+      const location = p.painLocation ?? p.location;
+      const character= p.painCharacter ?? p.character;
+      const intervention = p.intervention
+        ?? p.nonPharm
+        ?? (p.analgesicGiven && p.analgesic
+              ? `${p.analgesic}${p.analgesicRoute ? ` (${p.analgesicRoute})` : ""}${p.analgesicTime ? ` @ ${p.analgesicTime}` : ""}`
+              : null);
       return _section("Pain Assessment", "#f59e0b", _grid([
-        _kv("Pain Score", p.painScore != null ? `${p.painScore}/10` : null),
-        _kv("Location", p.painLocation),
-        _kv("Character", p.painCharacter),
+        _kv("Pain Score", score != null && score !== "" ? `${score}/10` : null),
+        _kv("Scale", p.scale),
+        _kv("Type", p.type),
+        _kv("Location", location),
+        _kv("Character", character),
+        _kv("Onset", p.onset),
+        _kv("Duration", p.duration),
+        _kv("Frequency", p.frequency),
         _kv("Aggravating", p.aggravating),
         _kv("Relieving", p.relieving),
-        _kv("Intervention", p.intervention, true),
+        _kv("Intervention", intervention, true),
+        _kv("Reassess Score", p.reassessScore != null && p.reassessScore !== "" ? `${p.reassessScore}/10` : null),
       ]));
     },
 
     // ─── WOUND CARE ──────────────────────────────────────────────────
     wound: () => {
       const w = get("woundCare");
+      // R7hr-161-FIX — the live form (state L573) saves
+      // `type / site / healingStage / exudateAmt / exudateType / odour(bool)
+      //  / surroundingSkin / dressing / painDuring / nextDressingDate /
+      //  length / width / depth / tunneling / undermining / swabSent`.
+      // Renderer was reading legacy `woundType / siteLocation / woundStage
+      // / drainage / nextDressing` only — every new wound card showed 5
+      // blank fields. Fallback chain reads BOTH; odour boolean → "Present"/"None".
+      const site    = w.siteLocation ?? w.site;
+      const wType   = w.woundType ?? w.type;
+      const stage   = w.woundStage ?? w.healingStage;
+      const nextDx  = w.nextDressing ?? w.nextDressingDate;
+      const odourTxt = typeof w.odour === "boolean"
+        ? (w.odour ? "Present" : "None")
+        : (w.odour || "");
+      // Drainage: explicit field if set, else compose from exudateAmt+Type
+      const drainage = w.drainage
+        || (w.exudateAmt || w.exudateType
+              ? [w.exudateAmt, w.exudateType].filter(Boolean).join(" · ")
+              : null);
+      const dimensions = (w.length || w.width || w.depth)
+        ? `${w.length || "?"} × ${w.width || "?"} × ${w.depth || "?"} cm`
+        : null;
       return _section("Wound / Dressing", "#dc2626", _grid([
-        _kv("Site Location", w.siteLocation, true),
-        _kv("Wound Type", w.woundType),
-        _kv("Wound Stage", w.woundStage),
+        _kv("Site Location", site, true),
+        _kv("Wound Type", wType),
+        _kv("Wound Stage", stage),
+        _kv("Dimensions", dimensions),
         _kv("Dressing", w.dressing, true),
-        _kv("Drainage", w.drainage),
-        _kv("Odour", w.odour),
+        _kv("Drainage", drainage),
+        _kv("Odour", odourTxt),
         _kv("Surrounding Skin", w.surroundingSkin, true),
-        _kv("Next Dressing", w.nextDressing),
+        _kv("Tunneling", w.tunneling ? "Yes" : null),
+        _kv("Undermining", w.undermining ? "Yes" : null),
+        _kv("Pain During Dressing", w.painDuring),
+        _kv("Swab Sent", w.swabSent ? "Yes" : null),
+        _kv("Next Dressing", nextDx),
       ]));
     },
 
@@ -236,35 +294,86 @@ const buildBuilder = (note) => {
     },
 
     // ─── FALL RISK / MORSE ───────────────────────────────────────────
+    // R7hr-148 — Live nurse Fall Risk form saves under m1..m6 keys
+    // (with intBedRails/intCallBell/etc. for precautions). Pre-fix the
+    // builder only knew the seeded shape (historyOfFall/...) so all
+    // patient-panel Fall Risk cards rendered an empty Morse table.
+    // Now: read both shapes, auto-sum the Morse total when m1..m6 are
+    // present, derive risk band, and surface the intervention checklist.
     fall: () => {
       const f = get("fallRisk");
+      // Live form rows take precedence; seeded labels remain fallback.
       const rows = [
-        ["History of Fall", f.historyOfFall],
-        ["Secondary Diagnosis", f.secondaryDiagnosis],
-        ["Ambulatory Aid", f.ambulatoryAid],
-        ["IV Therapy", f.ivTherapy],
-        ["Gait", f.gait],
-        ["Mental Status", f.mentalStatus],
+        ["History of Fall (Yes 25 / No 0)",    f.m1 ?? f.historyOfFall],
+        ["Secondary Diagnosis (Yes 15 / No 0)",f.m2 ?? f.secondaryDiagnosis],
+        ["Ambulatory Aid (0 / 15 / 30)",       f.m3 ?? f.ambulatoryAid],
+        ["IV Therapy / Saline Lock (0 / 20)",  f.m4 ?? f.ivTherapy],
+        ["Gait (0 / 10 / 20)",                 f.m5 ?? f.gait],
+        ["Mental Status (0 / 15)",             f.m6 ?? f.mentalStatus],
       ];
-      const tbl = `<table class="nfx-tbl"><tr><th>Morse Fall Scale Item</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${fmtVal(r[1]) || "—"}</td></tr>`).join("")}<tr style="background:#fef2f2"><td><strong>Total</strong></td><td><strong>${f.total ?? "—"}</strong></td></tr></table>`;
+      // Auto-sum when numeric m1..m6 supplied (live form), otherwise
+      // honour pre-computed `total` on seeded shapes.
+      const liveTotal = ["m1","m2","m3","m4","m5","m6"]
+        .map(k => Number(f[k]))
+        .filter(n => Number.isFinite(n))
+        .reduce((s, n) => s + n, 0);
+      const totalDisplay = f.total ?? (liveTotal > 0 || ["m1","m2","m3","m4","m5","m6"].some(k => f[k] != null) ? liveTotal : null);
+      const derivedBand = f.riskBand
+        || (totalDisplay == null ? null
+            : totalDisplay >= 45 ? "HIGH risk (≥45)"
+            : totalDisplay >= 25 ? "MODERATE risk (25–44)"
+            : "LOW risk (0–24)");
+      const tbl = `<table class="nfx-tbl"><tr><th>Morse Fall Scale Item</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${fmtVal(r[1]) || "—"}</td></tr>`).join("")}<tr style="background:#fef2f2"><td><strong>Total</strong></td><td><strong>${totalDisplay != null ? totalDisplay : "—"}</strong></td></tr></table>`;
+      // Precaution chips from intervention booleans (live form).
+      const precautionChips = [
+        f.intBedLowest    && "Bed in lowest position",
+        f.intBedRails     && "Bed rails up",
+        f.intCallBell     && "Call bell within reach",
+        f.intNonSlip      && "Non-slip footwear",
+        f.intSupervision  && "Supervised ambulation",
+        f.intPatientEd    && "Patient educated",
+        f.intFamilyEd     && "Family educated",
+      ].filter(Boolean);
+      const precautionHtml = precautionChips.length
+        ? `<div style="margin:6px 0 0;font-size:11px;color:#475569"><strong>Precautions in place:</strong> ${precautionChips.map(p => `<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;background:#fef3c7;border-radius:9999px;color:#92400e">${escapeHtml(p)}</span>`).join("")}</div>`
+        : "";
       return _section("Fall Risk (Morse)", "#b45309", tbl + _grid([
-        _kv("Risk Band", f.riskBand, true),
-        _kv("Precautions", f.precautions, true),
-      ]));
+        _kv("Risk Band", derivedBand, true),
+        _kv("Precautions (free text)", f.precautions, true),
+      ]) + precautionHtml);
     },
 
     // ─── NEURO ASSESSMENT ────────────────────────────────────────────
     neuro: () => {
       const n = get("neuroAssessment");
-      const gcs = [["Eye", n.gcsEye], ["Verbal", n.gcsVerbal], ["Motor", n.gcsMotor]];
-      const gcsTbl = `<table class="nfx-tbl"><tr><th>GCS</th>${gcs.map(g => `<th>${g[0]}</th>`).join("")}<th>Total</th></tr><tr><td>Score</td>${gcs.map(g => `<td>${fmtVal(g[1]) || "—"}</td>`).join("")}<td><strong>${n.gcsTotal ?? "—"}</strong></td></tr></table>`;
+      // R7hr-161-FIX — live form (state L571) saves `gcse / gcsv / gcsm /
+      // pupils / pupilSizeL / pupilSizeR / lightReflex / seizure /
+      // orientation / limbUL / limbUR / limbLL / limbLR`. Renderer was
+      // reading `gcsEye / gcsVerbal / gcsMotor / pupilsLeft / pupilsRight
+      // / motorLeft / motorRight / sensory` only — every new neuro card
+      // showed "—" for all GCS components. Fallback chain reads both.
+      const eye    = n.gcsEye    ?? n.gcse;
+      const verbal = n.gcsVerbal ?? n.gcsv;
+      const motor  = n.gcsMotor  ?? n.gcsm;
+      const totalCalc = Number(eye || 0) + Number(verbal || 0) + Number(motor || 0);
+      const gcsTotal = n.gcsTotal ?? (totalCalc > 0 ? totalCalc : null);
+      const gcs = [["Eye", eye], ["Verbal", verbal], ["Motor", motor]];
+      const gcsTbl = `<table class="nfx-tbl"><tr><th>GCS</th>${gcs.map(g => `<th>${g[0]}</th>`).join("")}<th>Total</th></tr><tr><td>Score</td>${gcs.map(g => `<td>${fmtVal(g[1]) || "—"}</td>`).join("")}<td><strong>${gcsTotal ?? "—"}</strong></td></tr></table>`;
+      // Pupils: legacy n.pupilsLeft/Right OR live form's pupils + sizeL/sizeR
+      const pupilsLeft  = n.pupilsLeft  || (n.pupils && n.pupilSizeL ? `${n.pupils} · ${n.pupilSizeL} mm` : n.pupils);
+      const pupilsRight = n.pupilsRight || (n.pupils && n.pupilSizeR ? `${n.pupils} · ${n.pupilSizeR} mm` : n.pupils);
+      // Motor: legacy n.motorLeft/Right OR live form's limbUL/UR/LL/LR
+      const motorLeft  = n.motorLeft  || [n.limbUL, n.limbLL].filter(Boolean).join(" / ") || null;
+      const motorRight = n.motorRight || [n.limbUR, n.limbLR].filter(Boolean).join(" / ") || null;
       return _section("Neurological Assessment", "#7c3aed", gcsTbl + _grid([
-        _kv("Pupils Left", n.pupilsLeft),
-        _kv("Pupils Right", n.pupilsRight),
-        _kv("Motor Left", n.motorLeft),
-        _kv("Motor Right", n.motorRight),
-        _kv("Sensory", n.sensory, true),
         _kv("Orientation", n.orientation, true),
+        _kv("Pupils Left",  pupilsLeft),
+        _kv("Pupils Right", pupilsRight),
+        _kv("Light Reflex", n.lightReflex),
+        _kv("Motor Left (UL/LL)",  motorLeft),
+        _kv("Motor Right (UR/LR)", motorRight),
+        _kv("Sensory", n.sensory, true),
+        _kv("Seizure Activity", n.seizure ? "Yes" : null),
       ]));
     },
 
@@ -286,20 +395,36 @@ const buildBuilder = (note) => {
     },
 
     // ─── BLOOD TRANSFUSION ───────────────────────────────────────────
+    // R7hr-148 — Live form saves under product / bagNo / crossMatchNo /
+    // volume / preBP_sys / preBP_dia / prePulse / preTemp / postBP_sys /
+    // postBP_dia / postPulse / reactionType / secondNurse / groupVerified
+    // / status. Pre-fix the builder only knew the seeded shape (component
+    // / bagNumber / preVitalsBP / ...) so every patient-panel blood card
+    // showed an empty body. Now read both shapes additively.
     blood: () => {
       const b = get("bloodTransfusion");
+      const preVitals  = b.preBP_sys || b.preBP_dia || b.prePulse || b.preTemp
+        ? `BP ${b.preBP_sys || "—"}/${b.preBP_dia || "—"}, Pulse ${b.prePulse || "—"}, Temp ${b.preTemp || "—"}`
+        : (b.preVitalsBP ? `BP ${b.preVitalsBP}, Pulse ${b.preVitalsPulse}, Temp ${b.preVitalsTemp}` : null);
+      const postVitals = b.postBP_sys || b.postBP_dia || b.postPulse
+        ? `BP ${b.postBP_sys || "—"}/${b.postBP_dia || "—"}, Pulse ${b.postPulse || "—"}`
+        : (b.postVitalsBP ? `BP ${b.postVitalsBP}, Pulse ${b.postVitalsPulse}, Temp ${b.postVitalsTemp}` : null);
+      const vol = b.volume || b.volumeMl;
       return _section("Blood Transfusion", "#b91c1c", _grid([
-        _kv("Component", b.component),
+        _kv("Component / Product", b.product || b.component),
         _kv("Blood Group", b.bloodGroup),
-        _kv("Bag Number", b.bagNumber),
-        _kv("Volume", b.volumeMl != null ? `${b.volumeMl} ml` : null),
+        _kv("Bag Number", b.bagNo || b.bagNumber),
+        _kv("Cross-match No.", b.crossMatchNo),
+        _kv("Volume", vol != null && vol !== "" ? `${vol} ml` : null),
         _kv("Start Time", b.startTime),
         _kv("End Time", b.endTime),
-        _kv("Pre-vitals", b.preVitalsBP ? `BP ${b.preVitalsBP}, Pulse ${b.preVitalsPulse}, Temp ${b.preVitalsTemp}` : null, true),
-        _kv("Post-vitals", b.postVitalsBP ? `BP ${b.postVitalsBP}, Pulse ${b.postVitalsPulse}, Temp ${b.postVitalsTemp}` : null, true),
-        _kv("Reaction", b.reaction),
+        _kv("Status", b.status),
+        _kv("Pre-vitals", preVitals, true),
+        _kv("Post-vitals", postVitals, true),
+        _kv("Group Verified (2-nurse)", b.groupVerified === true ? "Yes" : (b.groupVerified === false ? "No" : null)),
+        _kv("Reaction", b.reactionType || b.reaction),
         _kv("Given By", b.givenBy),
-        _kv("Witness", b.witnessedBy),
+        _kv("Witness / 2nd Nurse", b.secondNurse || b.witnessedBy),
       ]));
     },
 
@@ -318,9 +443,64 @@ const buildBuilder = (note) => {
     },
 
     // ─── DAILY ASSESSMENT ────────────────────────────────────────────
+    // R7hr-148 — Live form saves a rich head-to-toe assessment under
+    // bp_sys/bp_dia/pulse/rr/temp/spo2/gcs/bsl, system-status fields
+    // (neuroStatus/respiratoryStatus/cardiovascularStatus/giStatus/
+    // guStatus/musculoskeletalStatus/skinStatus) plus an intervention
+    // checklist (intCallBell, intDoctorNotified, ...). Pre-fix the
+    // builder only read generalCondition/appetiteHydration/mobility/...
+    // so every patient-panel Daily Assessment card body was blank.
+    // Keep the legacy keys as fallback.
     daily: () => {
       const d = get("dailyAssessment");
-      return _section("Daily Assessment", "#1d4ed8", _grid([
+      const bp = (d.bp_sys || d.bp_dia) ? `${d.bp_sys || "—"}/${d.bp_dia || "—"} mmHg` : null;
+      // Vitals strip — render only when at least one value is present.
+      const vitals = [
+        bp && _kv("BP", bp),
+        d.pulse && _kv("Pulse", `${d.pulse} /min`),
+        d.rr    && _kv("RR", `${d.rr} /min`),
+        d.temp  && _kv("Temp", `${d.temp} °C`),
+        d.spo2  && _kv("SpO₂", `${d.spo2}%`),
+        d.gcs   && _kv("GCS", d.gcs),
+        d.bsl   && _kv("BSL", `${d.bsl} mg/dL`),
+      ].filter(Boolean);
+      const vitalsHtml = vitals.length
+        ? `<div style="margin:4px 0 6px"><div style="font-size:10px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">Vitals</div><div class="nfx-grid">${vitals.join("")}</div></div>`
+        : "";
+      // Per-system status (head-to-toe) — only render when populated.
+      const systems = _grid([
+        _kv("Neuro", d.neuroStatus),
+        _kv("Respiratory", d.respiratoryStatus),
+        _kv("Cardiovascular", d.cardiovascularStatus),
+        _kv("GI", d.giStatus),
+        _kv("GU", d.guStatus),
+        _kv("Musculoskeletal", d.musculoskeletalStatus),
+        _kv("Skin", d.skinStatus),
+      ]);
+      // Intervention checklist (chips). Live form ships these as booleans.
+      const intChips = [
+        d.intCallBell          && "Call bell in reach",
+        d.intDoctorNotified    && "Doctor notified",
+        d.intDocumented        && "Documented",
+        d.intFallPrecautions   && "Fall precautions",
+        d.intFamilyUpdate      && "Family updated",
+        d.intFoleyCheck        && "Foley checked",
+        d.intIVCheck           && "IV checked",
+        d.intMedAdministered   && "Meds administered",
+        d.intNGTCheck          && "NGT checked",
+        d.intOralCare          && "Oral care",
+        d.intOxygenCheck       && "Oxygen checked",
+        d.intPatientEducation  && "Patient educated",
+        d.intPressureRelief    && "Pressure relief",
+        d.intRangeOfMotion     && "Range of motion",
+        d.intReposition        && "Repositioned",
+        d.intWoundCare         && "Wound care",
+      ].filter(Boolean);
+      const intHtml = intChips.length
+        ? `<div style="margin:6px 0 0;font-size:11px;color:#475569"><strong>Interventions completed:</strong> ${intChips.map(p => `<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;background:#dbeafe;border-radius:9999px;color:#1d4ed8">${escapeHtml(p)}</span>`).join("")}</div>`
+        : "";
+      // Legacy narrative fields — surface only if present.
+      const legacy = _grid([
         _kv("General Condition", d.generalCondition, true),
         _kv("Appetite / Hydration", d.appetiteHydration, true),
         _kv("Mobility", d.mobility),
@@ -328,7 +508,8 @@ const buildBuilder = (note) => {
         _kv("Sleep", d.sleep),
         _kv("Psychosocial", d.psychosocial),
         _kv("Shift Summary", d.shiftSummary, true),
-      ]));
+      ]);
+      return _section("Daily Assessment", "#1d4ed8", vitalsHtml + systems + legacy + intHtml);
     },
 
     // ─── CARE PLAN ───────────────────────────────────────────────────
@@ -359,17 +540,64 @@ const buildBuilder = (note) => {
     },
 
     // ─── PATIENT EDUCATION ───────────────────────────────────────────
+    // R7hr-148 — Live form saves topics/methods/barriers as arrays, plus
+    // language, response, understanding, sessionNotes, educator, date,
+    // nextSessionDate. Pre-fix the builder only read the singular legacy
+    // fields (topic/method/comprehensionLevel) so newer saves blanked.
+    // Keep legacy keys as fallback.
     education: () => {
       const e = get("patientEducation");
+      const arr = (v) => Array.isArray(v) ? v.join(", ") : v;
       return _section("Patient Education", "#7c3aed", _grid([
-        _kv("Topic", e.topic, true),
-        _kv("Method", e.method),
-        _kv("Learner", e.learner),
-        _kv("Comprehension Level", e.comprehensionLevel, true),
-        _kv("Barriers", e.barriers, true),
-        _kv("Follow-up Education", e.followUpEducation, true),
+        _kv("Topics", arr(e.topics) || e.topic, true),
+        _kv("Methods", arr(e.methods) || e.method, true),
+        _kv("Language", e.language),
+        _kv("Understanding", e.understanding || e.comprehensionLevel),
+        _kv("Response", e.response),
+        _kv("Barriers", arr(e.barriers), true),
+        _kv("Session Notes", e.sessionNotes, true),
         _kv("Educator", e.educator),
+        _kv("Session Date", e.date),
+        _kv("Next Session", e.nextSessionDate),
+        _kv("Follow-up Education", e.followUpEducation, true),
       ]));
+    },
+
+    // ─── DVT / VTE RISK (Caprini) ────────────────────────────────────
+    // R7hr-148 — No builder existed for the DVT noteType; cards fell
+    // through to `general` which only rendered the narrative chip strip,
+    // making the body look empty when the nurse filled the dedicated
+    // Caprini form. The Caprini score lives on the separate
+    // nursing-assessments record (not on the NurseNote noteData), so
+    // this builder reads from any DVT keys we DO have on the note
+    // (dvtAssessment / dvt / caprini) and surfaces the IV-line +
+    // intake/output + tags context the form always stamps.
+    dvt: () => {
+      const d = nd.dvtAssessment || nd.dvt || nd.caprini || note.dvtAssessment || note.dvt || note.caprini || {};
+      const total = d.capriniTotal ?? d.total;
+      const tier  = d.riskTier ?? d.tier;
+      const bleed = d.bleedTier ?? d.improveBleedTier;
+      const proph = d.prophylaxis ?? d.recommendation;
+      const hasStruct = total != null || tier || bleed || proph;
+      const structHtml = hasStruct
+        ? _grid([
+            _kv("Caprini Total", total),
+            _kv("Risk Tier", tier),
+            _kv("Bleed Tier (IMPROVE)", bleed),
+            _kv("Prophylaxis", proph, true),
+          ])
+        : `<div style="padding:6px 10px;background:#fef3c7;color:#92400e;border-radius:4px;font-size:11px">Caprini DVT assessment signed (full score detail in NABH DVT Register).</div>`;
+      // The NurseNote also stamps IV-line + intake-output + tags — surface
+      // any populated context so the card has body even on minimal saves.
+      const ivCond = note.ivLine?.condition;
+      const tags = (note.tags || []).filter(Boolean);
+      const extras = _grid([
+        _kv("IV Line", ivCond && ivCond !== "Patent" ? ivCond : null),
+      ]);
+      const tagHtml = tags.length
+        ? `<div style="margin:6px 0 0;font-size:11px;color:#475569"><strong>Confirmations:</strong> ${tags.map(p => `<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;background:#dcfce7;border-radius:9999px;color:#166534">${escapeHtml(p)}</span>`).join("")}</div>`
+        : "";
+      return _section("DVT / VTE Risk (Caprini)", "#0e7490", structHtml + extras + tagHtml);
     },
 
     // ─── DISCHARGE PLANNING ──────────────────────────────────────────
@@ -512,7 +740,7 @@ export function buildNurseNoteCardHtml(note) {
     pain: "Pain Assessment", wound: "Wound / Dressing", skin: "Skin Assessment",
     fall: "Fall Risk", neuro: "Neurological Assessment", mews: "MEWS Score",
     blood: "Blood Transfusion", procedure: "Procedure Note",
-    daily: "Daily Assessment", careplan: "Care Plan",
+    daily: "Daily Assessment", careplan: "Care Plan", dvt: "DVT / VTE Risk",
     nutrition: "Nutritional Assessment", education: "Patient Education",
     discharge: "Discharge Planning", initial: "Initial Assessment",
     general: "General Observation",
@@ -589,7 +817,7 @@ export function printNurseNote(note, hospitalSettings = {}) {
     pain: "Pain Assessment", wound: "Wound / Dressing", skin: "Skin Assessment",
     fall: "Fall Risk", neuro: "Neurological Assessment", mews: "MEWS Score",
     blood: "Blood Transfusion", procedure: "Procedure Note",
-    daily: "Daily Assessment", careplan: "Care Plan",
+    daily: "Daily Assessment", careplan: "Care Plan", dvt: "DVT / VTE Risk",
     nutrition: "Nutritional Assessment", education: "Patient Education",
     discharge: "Discharge Planning", initial: "Initial Assessment",
     general: "General Observation",

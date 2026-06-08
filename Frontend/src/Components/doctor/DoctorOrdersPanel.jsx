@@ -1543,6 +1543,30 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
   /* ── Priority counts for header badges ── */
   const statOrders = orders.filter(o => o.priority === "STAT" && ACTIVE_STATUSES.includes(o.status));
 
+  /* ── R7hr-141 — Verbal order cosign queue.
+       Every nurse-entered verbal/telephonic order (R7hr-139) sits with
+       coSignedBy=null until the prescribing doctor co-signs. NABH MOM.7c
+       §3 requires the cosign within 24h; the daily cron flags overdue
+       ones with VERBAL_ORDER_OVERDUE_COSIGN. The doctor sees this list
+       at the very top of their orders panel as a red banner so it can't
+       be missed during morning round. ─────────────────────────────── */
+  const pendingVerbalOrders = orders.filter(o => o.isVerbal && !o.coSignedBy);
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  const overdueVerbalOrders = pendingVerbalOrders.filter(o =>
+    o.verbalEnteredAt && (Date.now() - new Date(o.verbalEnteredAt).getTime()) > ONE_DAY_MS
+  );
+
+  const cosignVerbalOrder = async (orderId) => {
+    if (!window.confirm("Co-sign this verbal order? This permanently attaches your identity to the order per NABH MOM.7c.")) return;
+    try {
+      await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/${orderId}/cosign-verbal`);
+      toast.success("Verbal order co-signed");
+      fetchOrders();
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Co-sign failed");
+    }
+  };
+
   return (
     <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 16 }}>
 
@@ -1581,6 +1605,107 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
           )}
         </div>
       </div>
+
+      {/* R7hr-141 — Pending Verbal Orders banner (NABH MOM.7c §3 cosign).
+          Sits between the panel header and the order form so the
+          consultant cannot miss it during morning round. Red-tinted
+          when there's an overdue (>24h) verbal in the queue; amber
+          otherwise. Each row has a single-click Co-sign action. */}
+      {pendingVerbalOrders.length > 0 && (
+        <div style={{
+          background: overdueVerbalOrders.length > 0 ? "#fef2f2" : "#fffbeb",
+          border: `1.5px solid ${overdueVerbalOrders.length > 0 ? "#fecaca" : "#fde68a"}`,
+          borderRadius: 0,
+          borderTopWidth: 0,
+          borderLeftWidth: 0,
+          borderRightWidth: 0,
+          padding: "10px 16px",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <span style={{
+              background: overdueVerbalOrders.length > 0 ? "#dc2626" : "#d97706",
+              color: "white",
+              padding: "3px 10px",
+              borderRadius: 6,
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: ".3px",
+            }}>
+              📞 {pendingVerbalOrders.length} Verbal Order{pendingVerbalOrders.length > 1 ? "s" : ""} — pending your co-sign
+            </span>
+            {overdueVerbalOrders.length > 0 && (
+              <span style={{
+                background: "#7f1d1d",
+                color: "white",
+                padding: "2px 8px",
+                borderRadius: 4,
+                fontSize: 10,
+                fontWeight: 800,
+              }}>
+                ⚠ {overdueVerbalOrders.length} OVERDUE (>24h — NABH MOM.7c §3)
+              </span>
+            )}
+            <span style={{ fontSize: 10, color: "#78716c", fontWeight: 600, marginLeft: "auto" }}>
+              IPSG.2 read-back was confirmed by the nurse at intake.
+            </span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {pendingVerbalOrders.map(o => {
+              const enteredAt = o.verbalEnteredAt ? new Date(o.verbalEnteredAt) : null;
+              const hoursAgo = enteredAt ? Math.floor((Date.now() - enteredAt.getTime()) / 3600000) : null;
+              const isOverdue = hoursAgo !== null && hoursAgo > 24;
+              const drugName = o.orderDetails?.medicineName || o.orderDetails?.fluidName || o.orderDetails?.displayName || o.orderType;
+              const detail = o.orderType === "IV_Fluid"
+                ? `${o.orderDetails?.totalVolume || ""} @ ${o.orderDetails?.rate || ""}`.trim()
+                : `${o.orderDetails?.dose || ""} · ${o.orderDetails?.route || ""} · ${o.orderDetails?.frequency || ""}`.replace(/^ · | · $|· · /g, "");
+              return (
+                <div key={o._id} style={{
+                  background: "white",
+                  border: `1px solid ${isOverdue ? "#fecaca" : "#fde68a"}`,
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flexWrap: "wrap",
+                }}>
+                  <div style={{ flex: "1 1 250px", minWidth: 0 }}>
+                    <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 13 }}>
+                      {o.orderType === "IV_Fluid" ? "💧" : "💊"} {drugName}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#475569" }}>{detail}</div>
+                  </div>
+                  <div style={{ flex: "1 1 200px", fontSize: 11, color: "#475569" }}>
+                    <div><b>From:</b> {o.verbalFromDoctor || "—"}</div>
+                    <div><b>Via nurse:</b> {o.verbalEnteredByName || "—"}</div>
+                    {o.verbalReason && <div style={{ color: "#64748b", fontStyle: "italic" }}>{o.verbalReason}</div>}
+                  </div>
+                  <div style={{ fontSize: 11, color: isOverdue ? "#dc2626" : "#0891b2", fontWeight: 700, minWidth: 90, textAlign: "right" }}>
+                    {hoursAgo !== null ? `${hoursAgo}h ago` : "—"}
+                    {isOverdue && <div style={{ fontSize: 9, color: "#7f1d1d" }}>OVERDUE</div>}
+                  </div>
+                  <button
+                    onClick={() => cosignVerbalOrder(o._id)}
+                    style={{
+                      padding: "6px 14px",
+                      background: "linear-gradient(135deg, #16a34a, #15803d)",
+                      color: "white",
+                      border: "none",
+                      borderRadius: 7,
+                      fontSize: 12,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    ✓ Co-sign
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ═══════════════ ORDER FORM ═══════════════ */}
       {showForm && (

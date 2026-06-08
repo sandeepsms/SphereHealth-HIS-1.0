@@ -1129,6 +1129,22 @@ const _cancelInfusionIntakeCron = (() => {
   return arm({ intervalMs: 60 * 60 * 1000 });
 })();
 
+// R7hr-141 — Daily 06:00 IST sweep that flags nurse-entered verbal/
+// telephonic orders past the NABH MOM.7c §3 24h cosign window. The
+// /verbal endpoint (R7hr-139) lets nurses enter doctor's phone-orders
+// with isVerbal=true + readBackConfirmed=true. The doctor must cosign
+// within 24h; this cron emits VERBAL_ORDER_OVERDUE_COSIGN once per
+// order/day for any that aged past the window, so the governance
+// dashboard reads the gap.
+(() => {
+  try {
+    const { arm } = require("./services/Clinical/verbalOrderCosignCron");
+    arm({ hourIST: 6, minuteIST: 0 });
+  } catch (e) {
+    console.error("[boot] verbalOrderCosignCron arm failed:", e?.message);
+  }
+})();
+
 // R7bq-J1 — daily missed-dose sweep. Every 15 min, finds AR slots
 // with status="pending" whose scheduledDate is before today-midnight
 // and flips them to "missed" so the order-completion check can flip

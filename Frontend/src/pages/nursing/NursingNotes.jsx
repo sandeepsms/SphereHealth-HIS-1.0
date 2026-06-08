@@ -14,11 +14,21 @@ import "../../pages/patient/patient-file.css";
 import "../doctor/note-page-redesign.css";
 import NurseOrdersPanel from "../../Components/clinical/NurseOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
+// R7hr-143 — Pending Investigation Reports tile re-uses the shared tab
+import { PendingInvestigationReportsTab } from "../../Components/clinical/PatientPanelTabs";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 import IntegratedVitalsPanel from "../../Components/clinical/IntegratedVitalsPanel";
 import { saveVitalSheet, getVitalSheet } from "../../Services/vital/vitalService";
-import NursingPatientReport from "../../Components/nursing/NursingPatientReport";
-// R7cb-C: stop passing literal "SphereHealth Hospital" to NursingPatientReport.
+// R7hr-158 — Vitals Trend popup. The old /vitalsView page rendered an empty
+// placeholder; the trend now opens inline as a modal driven by nurse notes.
+import VitalsTrendModal from "../../Components/clinical/VitalsTrendModal";
+// R7hr-156 — NursingPatientReport (Print / PDF Report) feature retired
+// per user request. The tile, modal mount, state and the backend
+// /nurse-notes/report/:ipdNo route are all gone. Complete-File / Patient
+// File print covers the same surface from a single source of truth.
+// R7cb-C → R7hr-156: hospitalSettings is still consumed by printNurseNote
+// (per-note print path). The original NursingPatientReport consumer was
+// retired in R7hr-156.
 import useHospitalSettings from "../../Components/print/useHospitalSettings";
 // R7gc — per-type compact print for nursing notes (mirrors R7fx doctor-note pattern)
 // R7gv — also pull the embed-card HTML builder so the standalone Nursing Notes
@@ -110,8 +120,13 @@ const MODULES = [
     icon: "pi-cog",                  border: "#c4b5fd", color: C.purple, bg: C.purpleL },
   { id: "careplan",  label: "Care Plan",                  nabh: "COP.8",        description: "Nursing care plan with goals + interventions",
     icon: "pi-heart-fill",           border: "#6ee7b7", color: "#065f46", bg: "#ecfdf5" },
-  { id: "nutrition", label: "Nutritional Assessment",     nabh: "COP.16",       description: "NRS-2002 nutritional risk screening",
-    icon: "pi-apple",                border: "#86efac", color: "#15803d", bg: "#dcfce7" },
+  // R7hr-150 — Nutritional Assessment redirects to the Dietician Console
+  // because the form is filled by the Dietitian (NABH COP.16 staffing model),
+  // not the bedside nurse. Clicking the tile navigates to
+  // /dietitian?tab=assessment instead of opening the inline modal.
+  { id: "nutrition", label: "Nutritional Assessment",     nabh: "COP.16",       description: "Dietitian-led NRS-2002 screening → opens Dietician Console",
+    icon: "pi-apple",                border: "#86efac", color: "#15803d", bg: "#dcfce7",
+    href: "/dietitian?tab=assessment" },
   { id: "education", label: "Patient Education",          nabh: "PRE.5",        description: "Patient + family education session log",
     icon: "pi-book",                 border: "#c4b5fd", color: "#6d28d9", bg: "#f5f3ff" },
   { id: "discharge", label: "Discharge / Handover",       nabh: "AAC.4",        description: "RN-to-RN handover + discharge instructions",
@@ -356,7 +371,8 @@ function Section({ title, icon, color = C.primary, children }) {
 function NursingNotesContent({ selectedPatient }) {
   const navigate = useNavigate();
   const { user } = useAuth();
-  // R7cb-C: settings-driven hospital name passed into NursingPatientReport
+  // R7cb-C → R7hr-156: settings-driven hospital name (now consumed only
+  // by printNurseNote — the NursingPatientReport consumer was retired).
   // (replaces literal "SphereHealth Hospital" near the report mount).
   const { settings: hospitalSettings } = useHospitalSettings();
 
@@ -519,8 +535,17 @@ function NursingNotesContent({ selectedPatient }) {
        Tile keys: "orders" | "mar" | "addnote" | "equipment" | "timeline" */
   const [activeTile, setActiveTile] = useState(null);
 
-  /* ── Patient Report (print / PDF) ── */
-  const [showReport, setShowReport] = useState(false);
+  /* R7hr-156 — `showReport` + the NursingPatientReport modal were removed.
+     If a nursing print is needed in future, route through Complete File /
+     Patient File print (single source of truth) rather than re-introducing
+     a parallel report path. */
+
+  /* R7hr-158 — Vitals Trend modal. Replaces the empty /vitalsView page; the
+     tile now opens an inline popup that aggregates vitals across the 4
+     nurse-charted surfaces (Vital Signs, Daily Assessment, MEWS, Nursing
+     Initial Assessment) — Blood Transfusion + IV Infusion intentionally
+     excluded because they have their own dedicated monitoring blocks. */
+  const [showVitalsTrend, setShowVitalsTrend] = useState(false);
 
   /* ── Module-specific form state ── */
   const [vitals,    setVitals]    = useState({ bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
@@ -1017,7 +1042,7 @@ function NursingNotesContent({ selectedPatient }) {
 
   const toggleTag = (t) => setSelectedTags(ts => ts.includes(t) ? ts.filter(x => x !== t) : [...ts, t]);
 
-  const saveNote = async () => {
+  const saveNote = async (saveAsDraft = false) => {
     if (!patient) { toast.warn("No patient loaded"); return; }
     // Late-entry guard — backend enforces this too (NABH HIC.6), but
     // catching it here saves a round-trip and surfaces the requirement
@@ -1029,6 +1054,13 @@ function NursingNotesContent({ selectedPatient }) {
     const ipdNo = patient.ipdNo || patient.admissionNumber || patient._id;
     // patient is an admission object — patientId is the actual Patient ref (may be populated)
     const resolvedPatientId = patient.patientId?._id || patient.patientId || patient._id;
+    // R7hr-149 — Blood transfusion supports a DRAFT save so the bag stays
+    // in the "Running Blood Transfusions" banner and the nurse can add
+    // intra-transfusion vitals + Mark Complete via the PATCH endpoints.
+    // Backend addBloodMonitoringEntry refuses mutations on submitted notes
+    // (NABH MOM.4 append-only invariant), so the draft flag is the only
+    // path that keeps the ongoing-monitoring workflow live.
+    const desiredStatus = saveAsDraft ? "draft" : "submitted";
     let payload = {
       patientId: resolvedPatientId,
       patientUHID: patient.patientUHID || patient.uhid || patient.UHID || searchUHID,
@@ -1036,7 +1068,7 @@ function NursingNotesContent({ selectedPatient }) {
       UHID: patient.patientUHID || patient.UHID || searchUHID,
       admissionNumber: ipdNo,
       ipdNo, shift, noteType: activeModal, isCriticalEvent: isCritical,
-      remarks: noteText, tags: selectedTags, status: "submitted",
+      remarks: noteText, tags: selectedTags, status: desiredStatus,
       nurseName: user?.fullName || user?.name || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
       nurseEmployeeId: user?.employeeId || "",
       nurseId: user?._id || user?.id || undefined,
@@ -1053,7 +1085,23 @@ function NursingNotesContent({ selectedPatient }) {
     if (activeModal === "iv")       payload.ivInfusion = iv;
     if (activeModal === "intake") {
       const _autoMedVol = ivMedOrders.filter(o => includedMedIds.has(o.id)).reduce((s, o) => s + o.totalVol, 0);
-      payload.intakeOutput = { oral: Number(intake.oral), ivFluids: Number(intake.ivFluids) + _autoMedVol, ivMedFluids: _autoMedVol, urineOutput: Number(intake.urineOutput), nasogastricOutput: Number(intake.nasogastric), otherOutput: Number(intake.drainOutput) };
+      // R7hr-161-FIX — bloodProducts / drainOutput / bloodLoss / emesis
+      // were collected on the form but dropped from this payload, so the
+      // saved nurse-note card on the patient panel timeline showed those
+      // 4 fields blank. IOSchema (NurseNotesModel L52-72) already accepts
+      // every one of these keys; we just need to actually send them.
+      payload.intakeOutput = {
+        oral:              Number(intake.oral),
+        ivFluids:          Number(intake.ivFluids) + _autoMedVol,
+        ivMedFluids:       _autoMedVol,
+        bloodProducts:     Number(intake.bloodProducts || 0),   // R7hr-161-FIX
+        urineOutput:       Number(intake.urineOutput),
+        nasogastricOutput: Number(intake.nasogastric),
+        drainOutput:       Number(intake.drainOutput || 0),     // R7hr-161-FIX (was being aliased into otherOutput)
+        otherOutput:       Number(intake.drainOutput),          // legacy back-compat
+        bloodLoss:         Number(intake.bloodLoss || 0),       // R7hr-161-FIX
+        emesis:            Number(intake.emesis || 0),          // R7hr-161-FIX
+      };
     }
     if (activeModal === "neuro")    payload.neuroAssessment = neuro;
     if (activeModal === "pain")     payload.painAssessment = pain;
@@ -1075,7 +1123,57 @@ function NursingNotesContent({ selectedPatient }) {
 
     setLoading(true);
     try {
-      await axios.post(API_ENDPOINTS.NURSE_NOTES, payload);
+      const _noteResp = await axios.post(API_ENDPOINTS.NURSE_NOTES, payload);
+      const _noteId = _noteResp?.data?._id || _noteResp?.data?.data?._id || `note-${Date.now()}`;
+
+      /* ── R7hr-160 — Dual-write Intake/Output values to the ledger ──────
+         Without this, the form values save only to NurseNote.intakeOutput,
+         and the Treatment Chart digest's I/O strip (which reads
+         /api/intake-output rows) shows "No entries" even after the nurse
+         clearly filled urineOutput / drainOutput / NG / emesis / bloodLoss.
+         Each non-zero value becomes one ledger row, idempotent on the
+         sourceRef. ivFluids is intentionally skipped because R7bq-3 already
+         auto-credits dilution volumes when MAR doses are marked GIVEN — re-
+         posting the same number from the form would double-count.
+      ─────────────────────────────────────────────────────────────────── */
+      if (activeModal === "intake" && (patient?._id || patient?.admissionId)) {
+        const _admissionId = patient._id || patient.admissionId;
+        const _uhid        = patient.patientUHID || patient.UHID || patient.uhid || searchUHID;
+        const _pname       = patient.patientName || patient.patientId?.fullName || patient.patient?.name || "";
+        const _by          = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Nurse";
+        const _ts          = new Date().toISOString();
+        const _rows = [
+          { dir: "IN",  vol: Number(intake.oral || 0),          fluidType: "Oral",          label: "Oral fluid" },
+          { dir: "IN",  vol: Number(intake.bloodProducts || 0), fluidType: "Blood product", label: "Blood products" },
+          { dir: "OUT", vol: Number(intake.urineOutput || 0),   fluidType: "Urine",         label: "Urine output" },
+          { dir: "OUT", vol: Number(intake.drainOutput || 0),   fluidType: "Drain",         label: "Drain output" },
+          { dir: "OUT", vol: Number(intake.nasogastric || 0),   fluidType: "NG aspirate",   label: "NG aspirate" },
+          { dir: "OUT", vol: Number(intake.emesis || 0),        fluidType: "Emesis",        label: "Emesis" },
+          { dir: "OUT", vol: Number(intake.bloodLoss || 0),     fluidType: "Blood loss",    label: "Blood loss" },
+        ].filter(r => Number.isFinite(r.vol) && r.vol > 0);
+
+        for (const r of _rows) {
+          try {
+            await axios.post(API_ENDPOINTS.INTAKE_OUTPUT, {
+              admissionId: _admissionId,
+              UHID:        _uhid,
+              patientName: _pname,
+              direction:   r.dir,
+              volumeML:    r.vol,
+              fluidType:   r.fluidType,
+              label:       r.label,
+              notes:       `From Nursing Notes I/O modal · ${_by}`,
+              ts:          _ts,
+              sourceRef:   `nursenote-io:${_noteId}:${r.label}`,
+            });
+          } catch (err) {
+            // Best-effort — the NurseNote itself succeeded, so the data is
+            // not lost; only the per-row ledger surface is missing. Log
+            // for ops to backfill if needed, don't toast the nurse.
+            console.warn("[R7hr-160] I/O ledger fan-out failed for", r.label, err?.message || err);
+          }
+        }
+      }
 
       /* ── Dual-write to VitalSheet so the trend chart populates ───────────
          NurseNote.vitals lives on the clinical note doc; the trend chart
@@ -1505,6 +1603,21 @@ function NursingNotesContent({ selectedPatient }) {
                   tint: "#dbeafe",
                   badges: [{ label: "Auto-billed", tone: "info" }],
                 },
+                // R7hr-143 — Pending Investigation Reports tile. Surfaced
+                // directly in the Nursing Notes hub so the nurse can spot
+                // labs/imaging awaiting reports without leaving this
+                // page. Mirrors the same tab in NursePatientPanel /
+                // DoctorPatientPanel — single source of truth in
+                // PendingInvestigationReportsTab.
+                {
+                  id: "pendingreports",
+                  title: "Pending Investigation Reports",
+                  subtitle: "Samples sent — awaiting result · NABH AAC.4",
+                  icon: "pi-flask",
+                  color: "#b45309",
+                  tint: "#fef3c7",
+                  badges: [{ label: "Open", tone: "warn" }],
+                },
                 {
                   id: "timeline",
                   title: "Nursing Notes Timeline",
@@ -1541,12 +1654,13 @@ function NursingNotesContent({ selectedPatient }) {
                 {
                   id: "vitalstrend-nav",
                   title: "Vitals Trend",
-                  subtitle: "BP / HR / RR / SpO₂ / Temp graphs over time",
+                  subtitle: "Vitals from 4 charting surfaces, newest first",
                   icon: "pi-chart-bar",
                   color: "#0891b2",
                   tint: "#cffafe",
-                  badges: [{ label: "Open", tone: "info" }],
-                  action: () => navigate("/vitalsView"),
+                  badges: [{ label: "NABH AAC.5", tone: "info" }],
+                  // R7hr-158 — was navigate("/vitalsView"); now an inline modal.
+                  action: () => setShowVitalsTrend(true),
                 },
                 /* R7ca — Diabetic Chart tile. Same one-click entry pattern
                    as Vitals Trend / Care Plan above. Uses location.state for
@@ -1618,16 +1732,11 @@ function NursingNotesContent({ selectedPatient }) {
                   // (or the search box as a last resort).
                   action: () => navigate(`/ipd-assessment/${encodeURIComponent(patient?.UHID || patient?.uhid || searchUHID || "")}`),
                 },
-                {
-                  id: "print-nav",
-                  title: "Print / PDF Report",
-                  subtitle: "Nursing patient report for insurance / file",
-                  icon: "pi-print",
-                  color: "#9333ea",
-                  tint: "#f3e8ff",
-                  badges: [{ label: "Print", tone: "info" }],
-                  action: () => setShowReport(true),
-                },
+                // R7hr-156 — "Print / PDF Report" tile retired per user
+                // request. The Patient File / Complete File print already
+                // covers the insurance-claim and audit print use cases
+                // from a single source of truth, so a parallel nursing
+                // report tile here was redundant and drifted easily.
               ].map(t => {
                 // R7bj — Initial Assessment gate. The ONLY entry point
                 // to the nurse Initial Assessment is now the standalone
@@ -1726,9 +1835,19 @@ function NursingNotesContent({ selectedPatient }) {
           {/* ── NABH Treatment Chart (Nurse Administration View) ── */}
           {activeTile === "mar" && (
           <div style={{ marginBottom: 14 }}>
+            {/* R7hr-131 — Drop visitId. medReconFanOut + most IPD-side
+                doctor-order POST paths don't stamp visitId (they bind
+                via admissionId + ipdNo + admissionNumber instead), so
+                a `?UHID=&visitId=` backend query matched 0 docs and
+                this tile rendered "Medication MAR 0" while the patient
+                panel correctly showed 4 doses. NursePatientPanel's
+                TreatmentChartDayStack doesn't pass visitId either —
+                we mirror that here so the nurse on the Nursing Notes
+                page sees the same MAR she sees on the panel. UHID +
+                admissionId still scope the query to this patient +
+                this admission for the Raise-Indent CTA. */}
             <TreatmentChart
               UHID={patient.uhid || patient.UHID || searchUHID}
-              visitId={patient.ipdNo || patient.admissionNumber || patient._id}
               // R7j: admissionId enables the inline "Raise Indent" button
               // in the MAR header. patient._id is the Admission ObjectId
               // (this page sets patient to the admission doc — see line 537
@@ -1798,6 +1917,28 @@ function NursingNotesContent({ selectedPatient }) {
             </div>
           )}
 
+            {/* ── R7hr-149 — RUNNING BLOOD TRANSFUSIONS BANNER ──
+                Restores the launch-ready multi-bag transfusion module
+                (commit 0722fab, May 11 2026) that surfaced ALL currently-
+                Transfusing bags above the Select Note Type tile grid so
+                the nurse can add Q15 in-transfusion vitals, watch for
+                reactions, and Mark Complete without re-opening the modal.
+                The backend addBloodMonitoringEntry / updateBloodTransfusion-
+                Status services + PATCH /:id/blood-monitoring + PATCH /:id/
+                blood-status routes are STILL alive — only the frontend tab
+                bar + read-only header + add-reading PATCH form had been
+                lost. R25-safe: purely additive surface that wraps the
+                existing PATCH endpoints. */}
+            <RunningBloodTransfusionsBanner
+              notes={notes}
+              patient={patient}
+              user={user}
+              onAfterPatch={async () => {
+                const ipdNo = patient?.ipdNo || patient?.admissionNumber || patient?._id;
+                if (ipdNo) await fetchNotes(ipdNo);
+              }}
+            />
+
             {/* ── R7bf — Note type picker (card grid) ──
                 Mirrors Doctor Notes' "Select Note Type" layout (R7aw) so
                 nurses get the same visual language: icon square + label +
@@ -1821,7 +1962,14 @@ function NursingNotesContent({ selectedPatient }) {
                     <button
                       key={m.id}
                       type="button"
-                      onClick={() => openModal(m.id)}
+                      onClick={() => {
+                        // R7hr-150 — If the module has an `href`, route to it
+                        // instead of opening the inline note modal. Used by
+                        // Nutritional Assessment (filled by Dietitian, not
+                        // the nurse).
+                        if (m.href) { navigate(m.href); return; }
+                        openModal(m.id);
+                      }}
                       title={m.label}
                       style={{
                         background: "white",
@@ -1861,6 +2009,24 @@ function NursingNotesContent({ selectedPatient }) {
           </div>
           )}
           {/* /dnp-addnote-panel */}
+
+          {/* ── R7hr-143 — Pending Investigation Reports ──
+              Re-uses the shared PendingInvestigationReportsTab from
+              PatientPanelTabs so the data + filter logic is consistent
+              with the Doctor/Nurse patient-panel surfaces. NursingNotes
+              doesn't carry a separate `admission` state — the `patient`
+              object already contains ipdNo + UHID + admission fields,
+              and the shared tab reads either prop. */}
+          {activeTile === "pendingreports" && (
+            <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,.04)' }}>
+              <PendingInvestigationReportsTab
+                admission={patient}
+                patient={patient}
+                canMarkReportCollected={true}
+                actorName="Nurse"
+              />
+            </div>
+          )}
 
           {/* ── Equipment Used This Shift ── */}
           {activeTile === "equipment" && (() => {
@@ -4066,7 +4232,22 @@ function NursingNotesContent({ selectedPatient }) {
                   style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer", color: C.muted }}>
                   Cancel
                 </button>
-                <button onClick={saveNote} disabled={loading}
+                {/* R7hr-149 \u2014 Blood Transfusion gets a second "Save & Start
+                    Monitoring" button so the nurse can keep the bag in
+                    DRAFT state, then add Q15 vitals via the Running Blood
+                    Transfusions banner without triggering the append-only
+                    block on submitted notes (NABH MOM.4). Sign & Submit
+                    stays available for when the entire bag is filled in
+                    one sitting after the transfusion is already complete. */}
+                {activeModal === "blood" && (
+                  <button onClick={() => saveNote(true)} disabled={loading}
+                    style={{ padding: "9px 20px", background: "#7c3aed", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: "0 4px 12px rgba(124,58,237,.30)" }}
+                    title="Save bag info + pre-vitals as DRAFT. The bag will appear in 'Running Blood Transfusions' so you can keep adding Q15 vitals, then mark it Complete.">
+                    <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-play"}`} style={{ fontSize: 12 }} />
+                    Save & Start Monitoring
+                  </button>
+                )}
+                <button onClick={() => saveNote(false)} disabled={loading}
                   style={{ padding: "9px 28px", background: loading ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}35` }}>
                   <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-check"}`} style={{ fontSize: 12 }} />
                   {loading ? "Saving\u2026" : "Sign & Submit"}
@@ -4091,24 +4272,21 @@ function NursingNotesContent({ selectedPatient }) {
         />
       )}
 
-      {/* ── Nursing Patient Report (Print / PDF for insurance) ── */}
-      {showReport && patient && (
-        <NursingPatientReport
-          ipdNo={patient.ipdNo || patient.admissionNumber || patient._id}
-          patientName={patient.patientName || patient.patientId?.fullName || searchUHID}
-          patientUHID={patient.uhid || patient.UHID || searchUHID}
-          patientInfo={{
-            age: patient.age || patient.patientId?.age,
-            gender: patient.gender || patient.patientId?.gender,
-            ward: patient.wardName,
-            bed: patient.bedNumber,
-            admissionDate: patient.admissionDate,
-            diagnosis: patient.diagnosis || patient.admittingDiagnosis,
-            consultant: patient.doctorName || patient.consultantName,
-            bloodGroup: patient.bloodGroup,
-          }}
-          hospitalName={hospitalSettings?.hospitalName || ""}
-          onClose={() => setShowReport(false)}
+      {/* R7hr-156 — NursingPatientReport modal mount removed. The
+          Complete File / Patient File print is the single source of
+          truth for nursing print output (insurance, audit, discharge
+          file). Keeping a parallel modal here led to drift between
+          two printable bodies — now consolidated. */}
+
+      {/* R7hr-158 — Vitals Trend popup. Driven by the tile in the launcher
+          grid above; pulls vitals from nurse notes restricted to the 4
+          allowed sources (see VitalsTrendModal for the filter). */}
+      {showVitalsTrend && patient && (
+        <VitalsTrendModal
+          uhid={patient.UHID || patient.uhid || searchUHID}
+          ipdNo={patient.ipdNo || patient.admissionNumber}
+          patientName={patient.patientName || patient.patient?.name}
+          onClose={() => setShowVitalsTrend(false)}
         />
       )}
     </div>
@@ -4123,3 +4301,233 @@ export default function NursingNotes() {
     </ClinicalLayout>
   );
 }
+
+/* ─────────────────────────────────────────────────────────────
+   R7hr-149 — RunningBloodTransfusionsBanner
+   ─────────────────────────────────────────────────────────────
+   Restores the launch-ready multi-bag transfusion module (commit 0722fab).
+   For every nurse note where noteType="blood" AND
+   noteData.bloodTransfusion.status === "Transfusing", render an inline
+   live card that lets the nurse:
+     - View bag header (Product / Bag / Volume / Start)
+     - See every saved intra-transfusion vital reading
+     - Add a new Q15 reading via PATCH /:id/blood-monitoring
+     - Mark the bag Completed / Stopped via PATCH /:id/blood-status,
+       supplying End time + post-transfusion vitals + reaction type
+     - Finalise (Sign) by PUT /:id  to flip note.status=submitted
+   NABH MOM.4 append-only: the backend service rejects mutations on
+   submitted notes; the new "Save & Start Monitoring" button in the
+   Blood Transfusion modal saves the bag as DRAFT so this banner can
+   continue adding readings until completion.
+─────────────────────────────────────────────────────────────── */
+function RunningBloodTransfusionsBanner({ notes, patient, user, onAfterPatch }) {
+  // Detect active running bags — draft notes only (backend blocks PATCH
+  // on submitted blood notes per NABH MOM.4 append-only invariant).
+  const runningBags = (notes || []).filter((n) => {
+    if (n.noteType !== "blood") return false;
+    if (n.status === "submitted") return false; // append-only guard
+    const bt = n.noteData?.bloodTransfusion || {};
+    const s = String(bt.status || "").toLowerCase();
+    return s === "transfusing" || s === "running" || s === "" /* untracked → assume active */;
+  });
+
+  const [openId, setOpenId]     = useState(null);
+  const [reading, setReading]   = useState({ atMin: "", bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", reaction: "None", observation: "" });
+  const [closing, setClosing]   = useState({ action: "", endTime: "", reactionType: "None", postBP_sys: "", postBP_dia: "", postPulse: "", postTemp: "", postSpO2: "" });
+  const [busy, setBusy]         = useState(false);
+  const REACTIONS = ["None", "Febrile (non-haemolytic)", "Allergic / Urticaria", "Anaphylaxis", "Acute haemolytic", "Delayed haemolytic", "TACO (volume overload)", "TRALI", "Bacterial contamination", "Other"];
+
+  if (runningBags.length === 0) return null;
+
+  const ipdNo = patient?.ipdNo || patient?.admissionNumber || patient?._id;
+  const nurseName = user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Nurse";
+
+  const addReading = async (noteId) => {
+    const ml = parseFloat(reading.bp_sys);
+    if (!reading.bp_sys && !reading.pulse && !reading.temp) {
+      toast.warn("Enter at least one vital before saving");
+      return;
+    }
+    setBusy(true);
+    try {
+      const entry = {
+        at: new Date().toISOString(),
+        atMin: reading.atMin || undefined,
+        bp: (reading.bp_sys && reading.bp_dia) ? `${reading.bp_sys}/${reading.bp_dia}` : undefined,
+        pulse: reading.pulse || undefined,
+        temp: reading.temp || undefined,
+        spo2: reading.spo2 || undefined,
+        observation: reading.observation || "",
+        reaction: reading.reaction || "None",
+        recordedBy: nurseName,
+      };
+      await axios.patch(`${API_ENDPOINTS.NURSE_NOTES}/${noteId}/blood-monitoring`, { entry });
+      toast.success("Vital reading added");
+      setReading({ atMin: "", bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", reaction: "None", observation: "" });
+      if (onAfterPatch) await onAfterPatch();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Failed to add reading");
+    } finally { setBusy(false); }
+  };
+
+  const markComplete = async (noteId) => {
+    if (!closing.action) { toast.warn("Choose Completed / Stopped"); return; }
+    setBusy(true);
+    try {
+      // Step 1 — flip the transfusion sub-status + persist post-vitals
+      const now = new Date();
+      const hhmm = now.toTimeString().slice(0, 5);
+      const status = closing.action; // "Completed" | "Stopped"
+      const statusNotes = `Ended ${closing.endTime || hhmm}. Post-vitals: BP ${closing.postBP_sys || "—"}/${closing.postBP_dia || "—"}, Pulse ${closing.postPulse || "—"}, Temp ${closing.postTemp || "—"}, SpO₂ ${closing.postSpO2 || "—"}. Reaction: ${closing.reactionType || "None"}.`;
+      await axios.patch(`${API_ENDPOINTS.NURSE_NOTES}/${noteId}/blood-status`, { status, notes: statusNotes });
+
+      // Step 2 — finalise the parent NurseNote via PUT (status:"submitted")
+      // so the bag stops appearing in this banner and goes to history.
+      await axios.put(`${API_ENDPOINTS.NURSE_NOTES}/${noteId}`, { status: "submitted" });
+
+      toast.success(`Transfusion marked ${status} & signed`);
+      setOpenId(null);
+      setClosing({ action: "", endTime: "", reactionType: "None", postBP_sys: "", postBP_dia: "", postPulse: "", postTemp: "", postSpO2: "" });
+      if (onAfterPatch) await onAfterPatch();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Failed to finalise transfusion");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ background: "linear-gradient(135deg, #fef2f2, #fff)", border: "2px solid #fecaca", borderRadius: 12, padding: 14, marginTop: 14, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#dc2626", boxShadow: "0 0 0 3px #fecaca", animation: "pulse 1.4s ease-in-out infinite" }} />
+        <div style={{ fontWeight: 800, fontSize: 14, color: "#7f1d1d" }}>
+          🩸 Running Blood Transfusions ({runningBags.length})
+        </div>
+        <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: "#7f1d1d", background: "#fee2e2", padding: "3px 8px", borderRadius: 999, border: "1px solid #fca5a5" }}>
+          NABH COP.7 / MOM.4 · Q15 monitoring + reaction watch
+        </span>
+      </div>
+
+      {runningBags.map((n) => {
+        const bt   = n.noteData?.bloodTransfusion || {};
+        const mon  = Array.isArray(bt.monitoring) ? bt.monitoring : (Array.isArray(bt.intra) ? bt.intra : []);
+        const open = openId === n._id;
+        return (
+          <div key={n._id} style={{ background: "white", border: "1.5px solid #fecaca", borderRadius: 10, padding: 12, marginBottom: 10 }}>
+            {/* Header */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", borderBottom: "1px dashed #fecaca", paddingBottom: 8, marginBottom: 8 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: "#1f2937" }}>{bt.product || bt.component || "Blood Product"}</div>
+                <div style={{ fontSize: 11, color: "#64748b" }}>
+                  Bag: <strong>{bt.bagNo || bt.bagNumber || "—"}</strong>
+                  {bt.crossMatchNo && <> · X-match: <strong>{bt.crossMatchNo}</strong></>}
+                  {(bt.volume || bt.volumeMl) && <> · Volume: <strong>{bt.volume || bt.volumeMl} ml</strong></>}
+                  {bt.startTime && <> · Started: <strong>{bt.startTime}</strong></>}
+                </div>
+              </div>
+              <span style={{ fontSize: 10, fontWeight: 700, background: "#fee2e2", color: "#b91c1c", padding: "3px 8px", borderRadius: 999, border: "1px solid #fca5a5" }}>● TRANSFUSING</span>
+              <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                <button type="button" onClick={() => setOpenId(open ? null : n._id)} style={{ padding: "6px 14px", border: "none", borderRadius: 7, background: open ? "#fef2f2" : "#dc2626", color: open ? "#b91c1c" : "white", fontWeight: 700, fontSize: 11, cursor: "pointer" }}>
+                  {open ? "Hide" : `+ Add Reading (${mon.length})`}
+                </button>
+                <button type="button" onClick={() => { setOpenId(n._id); setClosing(p => ({ ...p, action: p.action || "Completed" })); }} style={{ padding: "6px 14px", border: "1.5px solid #16a34a", borderRadius: 7, background: "white", color: "#15803d", fontWeight: 700, fontSize: 11, cursor: "pointer" }}>
+                  ✓ Mark Complete
+                </button>
+              </div>
+            </div>
+
+            {/* Saved readings */}
+            {mon.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 4 }}>Intra-Transfusion Vitals ({mon.length})</div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead>
+                    <tr style={{ background: "#f1f5f9" }}>
+                      <th style={{ padding: "4px 8px", border: "1px solid #cbd5e1", textAlign: "left" }}>At</th>
+                      <th style={{ padding: "4px 8px", border: "1px solid #cbd5e1" }}>BP</th>
+                      <th style={{ padding: "4px 8px", border: "1px solid #cbd5e1" }}>Pulse</th>
+                      <th style={{ padding: "4px 8px", border: "1px solid #cbd5e1" }}>Temp</th>
+                      <th style={{ padding: "4px 8px", border: "1px solid #cbd5e1" }}>SpO₂</th>
+                      <th style={{ padding: "4px 8px", border: "1px solid #cbd5e1" }}>Reaction</th>
+                      <th style={{ padding: "4px 8px", border: "1px solid #cbd5e1", textAlign: "left" }}>Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mon.map((r, i) => (
+                      <tr key={i}>
+                        <td style={{ padding: "4px 8px", border: "1px solid #e2e8f0" }}>{r.atMin ? `${r.atMin} min` : (r.at ? new Date(r.at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—")}</td>
+                        <td style={{ padding: "4px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{r.bp || "—"}</td>
+                        <td style={{ padding: "4px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{r.pulse || "—"}</td>
+                        <td style={{ padding: "4px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{r.temp || "—"}</td>
+                        <td style={{ padding: "4px 8px", border: "1px solid #e2e8f0", textAlign: "center" }}>{r.spo2 || "—"}</td>
+                        <td style={{ padding: "4px 8px", border: "1px solid #e2e8f0", textAlign: "center", color: r.reaction && r.reaction !== "None" ? "#b91c1c" : "#0f172a", fontWeight: r.reaction && r.reaction !== "None" ? 700 : 400 }}>{r.reaction || "None"}</td>
+                        <td style={{ padding: "4px 8px", border: "1px solid #e2e8f0" }}>{r.observation || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {open && (
+              <>
+                {/* Add Reading form */}
+                <div style={{ background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, padding: 10, marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#9a3412", marginBottom: 6 }}>+ Add Intra-Transfusion Reading</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 8 }}>
+                    <input type="number" placeholder="At (min)" value={reading.atMin} onChange={(e) => setReading(p => ({ ...p, atMin: e.target.value }))} style={INPCSS} />
+                    <input type="number" placeholder="SBP" value={reading.bp_sys} onChange={(e) => setReading(p => ({ ...p, bp_sys: e.target.value }))} style={INPCSS} />
+                    <input type="number" placeholder="DBP" value={reading.bp_dia} onChange={(e) => setReading(p => ({ ...p, bp_dia: e.target.value }))} style={INPCSS} />
+                    <input type="number" placeholder="Pulse" value={reading.pulse} onChange={(e) => setReading(p => ({ ...p, pulse: e.target.value }))} style={INPCSS} />
+                    <input type="number" step="0.1" placeholder="Temp" value={reading.temp} onChange={(e) => setReading(p => ({ ...p, temp: e.target.value }))} style={INPCSS} />
+                    <input type="number" placeholder="SpO₂" value={reading.spo2} onChange={(e) => setReading(p => ({ ...p, spo2: e.target.value }))} style={INPCSS} />
+                    <select value={reading.reaction} onChange={(e) => setReading(p => ({ ...p, reaction: e.target.value }))} style={INPCSS}>
+                      {REACTIONS.map(r => <option key={r}>{r}</option>)}
+                    </select>
+                    <button type="button" disabled={busy} onClick={() => addReading(n._id)} style={{ background: "#16a34a", color: "white", border: "none", borderRadius: 6, fontWeight: 700, fontSize: 11, cursor: busy ? "not-allowed" : "pointer" }}>
+                      {busy ? "…" : "Save"}
+                    </button>
+                  </div>
+                  <input placeholder="Observation / note (optional)" value={reading.observation} onChange={(e) => setReading(p => ({ ...p, observation: e.target.value }))} style={{ ...INPCSS, width: "100%", marginTop: 6 }} />
+                </div>
+
+                {/* Close transfusion form */}
+                <div style={{ background: "#ecfdf5", border: "1px solid #86efac", borderRadius: 8, padding: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#065f46", marginBottom: 6 }}>✓ Mark Transfusion Complete / Stop & Sign</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+                    <select value={closing.action} onChange={(e) => setClosing(p => ({ ...p, action: e.target.value }))} style={INPCSS}>
+                      <option value="">— Action —</option>
+                      <option value="Completed">Completed</option>
+                      <option value="Stopped">Stopped (reaction)</option>
+                    </select>
+                    <input type="time" value={closing.endTime} onChange={(e) => setClosing(p => ({ ...p, endTime: e.target.value }))} style={INPCSS} />
+                    <input type="number" placeholder="Post SBP" value={closing.postBP_sys} onChange={(e) => setClosing(p => ({ ...p, postBP_sys: e.target.value }))} style={INPCSS} />
+                    <input type="number" placeholder="Post DBP" value={closing.postBP_dia} onChange={(e) => setClosing(p => ({ ...p, postBP_dia: e.target.value }))} style={INPCSS} />
+                    <input type="number" placeholder="Post Pulse" value={closing.postPulse} onChange={(e) => setClosing(p => ({ ...p, postPulse: e.target.value }))} style={INPCSS} />
+                    <input type="number" step="0.1" placeholder="Post Temp" value={closing.postTemp} onChange={(e) => setClosing(p => ({ ...p, postTemp: e.target.value }))} style={INPCSS} />
+                    <input type="number" placeholder="Post SpO₂" value={closing.postSpO2} onChange={(e) => setClosing(p => ({ ...p, postSpO2: e.target.value }))} style={INPCSS} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <select value={closing.reactionType} onChange={(e) => setClosing(p => ({ ...p, reactionType: e.target.value }))} style={{ ...INPCSS, flex: 1 }}>
+                      {REACTIONS.map(r => <option key={r}>{r}</option>)}
+                    </select>
+                    <button type="button" disabled={busy} onClick={() => markComplete(n._id)} style={{ padding: "8px 18px", background: "#16a34a", color: "white", border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: busy ? "not-allowed" : "pointer" }}>
+                      {busy ? "Saving…" : "Save Final Vitals & Sign"}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })}
+      <style>{`@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 3px #fecaca; } 50% { box-shadow: 0 0 0 5px #fca5a5; } }`}</style>
+    </div>
+  );
+}
+
+const INPCSS = {
+  padding: "6px 8px",
+  border: "1px solid #cbd5e1",
+  borderRadius: 5,
+  fontSize: 11,
+  fontFamily: "'DM Sans',sans-serif",
+};

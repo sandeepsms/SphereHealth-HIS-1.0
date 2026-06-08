@@ -32,28 +32,33 @@ function getSteps(order) {
   const subtype = order.orderDetails?.urgency || order.orderDetails?.procedureType || "";
 
   if (type === "Investigation") {
-    if (subtype === "Radiology" || (order.orderDetails?.testName || "").toLowerCase().includes("xray") ||
-        (order.orderDetails?.testName || "").toLowerCase().includes("ct") ||
-        (order.orderDetails?.testName || "").toLowerCase().includes("mri")) {
-      return ["Scheduled", "Done", "Report Collected"];
-    }
-    return ["Sample Collected", "Sample Sent", "Report Received"];
+    // R7hr-143 — One canonical pipeline for ALL investigations (lab + radiology):
+    //   Sample Collected → Sample Sent → Report Collected
+    // Pre-fix Radiology forked into Scheduled/Done/Report Collected, so the
+    // "Pending Investigation Reports" cross-panel section couldn't use a
+    // single filter. Unifying terminology also lets the audit register
+    // group every investigation under one step lexicon for NABH AAC.4.
+    return ["Sample Collected", "Sample Sent", "Report Collected"];
   }
   if (type === "Procedure") {
     return ["Consent Taken", "Patient Prepped", "Procedure Done"];
   }
-  if (type === "Medication") {
-    // R7hr-53 [P1-14] — prepend 'Acknowledged' so the medication step flow
-    // mirrors the explicit acknowledge → prepare → administer sequence used
-    // elsewhere on the chart. (Backend /step route must accept these names —
-    // see deferred note re: per-type step allowlist validation.)
-    return ["Acknowledged", "Prepared", "Administered"];
-  }
-  // R7hr-53 [P1-14] — IV_Fluid was falling through to the generic
-  // ['Acknowledged','Done'] flow, hiding bag-spike + monitoring milestones
-  // that the NABH IV register expects. Explicit branch restores the audit trail.
-  if (type === "IV_Fluid") {
-    return ["Acknowledged", "Bag-Spiked", "Started", "Monitoring", "Completed"];
+  // R7hr-144 — Medication + IV_Fluid orders on the NurseOrdersPanel
+  // (Doctor's Active Orders view) collapse to a SINGLE Acknowledge step.
+  // The full administration pipeline (Prepared → Administered for meds;
+  // Bag-Spiked → Started → Monitoring → Completed for infusions) runs
+  // ONLY on the Treatment Chart / Live MAR — which is the canonical
+  // dose-charting surface (NABH MOM.3 / COP.3).
+  //
+  // Why split:
+  // • One surface for "I see the order"; another for "I gave the drug".
+  // • Prevents a nurse from clicking Administered here without doing the
+  //   5-rights check and witness-sign on the MAR.
+  // • Audit trail still records Acknowledged here; the MAR's
+  //   /administer route records the actual dose with HAM witness +
+  //   reaction notes + dilution body.
+  if (type === "Medication" || type === "IV_Fluid") {
+    return ["Acknowledged"];
   }
   if (type === "Diet") {
     return ["Ordered", "Prepared", "Delivered"];
@@ -209,11 +214,42 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
             {/* Running flow text */}
             <div style={{ fontSize: 10, color: C.muted, fontStyle: "italic", marginBottom: 2 }}>{flowText}</div>
 
-            {/* Meta */}
-            <div style={{ fontSize: 10, color: "#94a3b8", display: "flex", gap: 6, alignItems: "center" }}>
-              <span>By {order.orderedBy || "Doctor"}</span>
+            {/* R7hr-142 — Audit-ready meta line.
+                Pre-fix: "By Doctor · 5m ago" — too thin for a NABH MOM.4 /
+                IPSG.2 record. Now shows full date · 12h time · prescriber
+                name + employee ID + role + verbal-order trail when present.
+                Falls back to relative time ("5m ago") if createdAt is
+                missing, but prefers absolute timestamp for audit value. */}
+            <div style={{ fontSize: 10, color: "#94a3b8", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 700, color: "#475569" }}>
+                {order.orderedByRole === "Nurse" ? "Entered by" : "Rx by"}: {order.orderedBy || "Doctor"}
+                {order.orderedByEmployeeId && (
+                  <span style={{ color: "#94a3b8", fontWeight: 600 }}> ({order.orderedByEmployeeId})</span>
+                )}
+              </span>
               <span>·</span>
-              <span>{timeAgo(order.createdAt)}</span>
+              <span style={{ fontFamily: "monospace", color: "#475569" }}>
+                {order.createdAt
+                  ? `${new Date(order.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} · ${new Date(order.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })}`
+                  : timeAgo(order.createdAt)}
+              </span>
+              {/* R7hr-139 — Verbal/telephonic order trail. When the order
+                  was entered by a nurse on doctor's behalf, the audit row
+                  must show BOTH the doctor (who gave the order) AND the
+                  nurse (who took it). The badge tells the next nurse at a
+                  glance whether the doctor cosigned. */}
+              {order.isVerbal && (
+                <span style={{
+                  background: order.coSignedBy ? "#ecfdf5" : "#fffbeb",
+                  color:      order.coSignedBy ? "#15803d" : "#b45309",
+                  border: `1px solid ${order.coSignedBy ? "#86efac" : "#fde68a"}`,
+                  borderRadius: 4, padding: "1px 6px", fontSize: 9, fontWeight: 800,
+                }}>
+                  📞 Verbal from Dr. {order.verbalFromDoctor || "?"}
+                  {order.verbalEnteredByName && <> · via nurse {order.verbalEnteredByName}</>}
+                  {order.coSignedBy ? " · ✓ cosigned" : " · pending cosign"}
+                </span>
+              )}
               {order.consentStatus && order.consentStatus !== "NotRequired" && (
                 <span style={{ fontWeight: 700, color: order.consentStatus === "Obtained" ? C.success : C.amber }}>
                   · Consent: {order.consentStatus}
@@ -259,11 +295,22 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
             {steps.map((step, i) => {
               const done = i < doneCount;
               const isNext = i === doneCount;
+              // R7hr-144 — For Medication / IV_Fluid, the panel only shows
+              // Acknowledge. We pass totalSteps=99 (a sentinel large value)
+              // to the backend /step handler so isLastStep stays FALSE and
+              // the order's status moves to InProgress, NOT Completed.
+              // Actual completion happens via:
+              //   • Medication: /administer route (first dose given = Completed, R7bq-K)
+              //   • IV_Fluid:   /step from TreatmentChart with step="Completed"
+              // For other order types (Procedure / Diet / etc.) which DO
+              // run their full pipeline here, we keep the real step count.
+              const acknowledgeOnly = order.orderType === "Medication" || order.orderType === "IV_Fluid";
+              const stepCountForBackend = acknowledgeOnly ? 99 : steps.length;
               return (
                 <button
                   key={step}
                   disabled={!isNext || !nurseName?.trim()}
-                  onClick={() => onStepDone(order._id, step, steps.length)}
+                  onClick={() => onStepDone(order._id, step, stepCountForBackend)}
                   title={!nurseName?.trim() ? "Enter your name above first" : done ? "Already done" : ""}
                   style={{
                     padding: "5px 12px", fontSize: 11, fontWeight: 600,
@@ -295,6 +342,42 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
                 Will bill ₹{details.unitPrice}
               </span>
             )}
+          </div>
+        )}
+
+        {/* R7hr-144 — "Continue in Treatment Chart" hint banner.
+            For Medication + IV_Fluid orders the actual administration
+            (Prepared / Administered / Bag-Spiked / Started / Completed)
+            happens ONLY on the Treatment Chart / Live MAR — never on
+            this panel. Render a clear amber strip telling the nurse
+            where to go next once Acknowledge is recorded, OR even
+            before, so the policy is visible upfront.
+            Hidden once the order is Completed / Cancelled — at that
+            point the dose history is final and pointing the nurse to
+            the MAR is just noise. */}
+        {(order.orderType === "Medication" || order.orderType === "IV_Fluid")
+          && !readOnly
+          && order.status !== "Completed"
+          && order.status !== "Cancelled" && (
+          <div style={{
+            marginTop: 10,
+            padding: "8px 12px",
+            background: "#fff7ed",
+            border: "1px solid #fed7aa",
+            borderLeft: "4px solid #ea580c",
+            borderRadius: 6,
+            fontSize: 11,
+            color: "#9a3412",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}>
+            <i className="pi pi-info-circle" style={{ fontSize: 13, color: "#ea580c" }} />
+            <span>
+              <strong>Acknowledge here.</strong> Then
+              {order.orderType === "Medication" ? " administer the dose" : " spike the bag, start + monitor the infusion"}
+              {" "}on the <strong>Treatment Chart / Live MAR</strong> tile — that's the single charting surface for actual administration (NABH MOM.3 / COP.3).
+            </span>
           </div>
         )}
 

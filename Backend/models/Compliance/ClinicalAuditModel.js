@@ -99,6 +99,40 @@ const ClinicalAuditSchema = new mongoose.Schema(
         "INFUSION_RATE_CHANGED",
         "INFUSION_STARTED",
         "INFUSION_STOPPED",
+        // R7hr-134 — Nurse-initiated infusion lifecycle (NABH MOM.2).
+        // Pre-fix: TreatmentChart Pause/Resume PATCHed status field which
+        // PATCH_ALLOWED whitelist (R7hr-12-S?) silently dropped — so the
+        // chart appeared to flip Running ↔ Held but the DB never moved
+        // and no audit row landed. New route POST /:id/nurse-infusion-action
+        // (mar.write) persists status + reason + actor + timestamp and
+        // emits these events so surveyors can reconstruct kab / kisne /
+        // kyu paused-resumed-stopped each infusion.
+        "INFUSION_PAUSED",
+        "INFUSION_RESUMED",
+        // INFUSION_MONITORED — every nurse-saved vital observation entry
+        // on the live infusion card (BP / pulse / SpO2 / urine / site /
+        // volumeInfused). Pre-R7hr-134 the /infusion-monitor route just
+        // $push'd to the array with no audit emit.
+        "INFUSION_MONITORED",
+        // R7hr-147 — Nurse-given bolus push (mL given outside the drip).
+        // Counts toward bag total volume, surfaces on the progress bar,
+        // and lands in the auditLog with reason for NABH MOM.2.
+        "INFUSION_BOLUS",
+        // R7hr-139 — Verbal/Telephonic order taken by nurse on doctor's
+        // behalf (NABH MOM.7c). Captures actor (nurse), verbalFromDoctor,
+        // reason, read-back confirmation (IPSG.2). The cosign workflow
+        // flips this to VERBAL_ORDER_COSIGNED when doctor signs within
+        // the 24h window; uncosigned orders past 24h become
+        // VERBAL_ORDER_OVERDUE_COSIGN for governance review.
+        "VERBAL_ORDER_ENTERED",
+        "VERBAL_ORDER_COSIGNED",
+        "VERBAL_ORDER_OVERDUE_COSIGN",
+        // R7hr-139 — Nurse-initiated fresh bag of an already-completed
+        // infusion, taken as a verbal order. Distinct from the doctor-
+        // initiated /restart path so the surveyor can see "nurse restarted
+        // bag with verbal order from Dr X" vs "doctor explicitly
+        // re-ordered same regimen".
+        "INFUSION_RESTARTED_VERBAL",
 
         // Consent (NABH PRE.4)
         "CONSENT_SIGNED",

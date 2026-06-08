@@ -324,15 +324,29 @@ export default function ReceptionBilling() {
     // as current — covers walk-in service rows added before R7bw landed
     // the visitId wiring. Older paid bills, and ALL bills from prior visits
     // (even today's earlier visit), flow to History.
+    // R7hr-165 — OPD bills carry `visitId = OPDVisit.visitNumber` (string
+    // like "OPD-26-02"), NOT the ObjectId — see Backend/services/Billing/
+    // billingService.js L175. Pre-R7hr-165 the matcher only compared
+    // against patient.currentVisit._id (ObjectId), so the bill for the
+    // very visit being viewed slipped into History and the KPI strip
+    // collapsed to ₹0 — both Current Visit + every KPI tile showed empty
+    // even when the current visit had legitimate billing. Fix: compare
+    // against both the ObjectId AND the visitNumber so either shape of
+    // bill.visitId stamps onto the right bucket. (IPD path above stays
+    // unchanged — IPD bills are matched by admissionNumber, not visitId.)
     const cvId = patient?.currentVisit?._id
               || patient?.currentVisit?.visitId
               || patient?.currentVisit?.id
               || null;
-    const cvKey = cvId ? String(cvId) : null;
+    const cvVisitNumber = patient?.currentVisit?.visitNumber || null;
+    const cvKey   = cvId          ? String(cvId)          : null;
+    const cvKeyVN = cvVisitNumber ? String(cvVisitNumber) : null;
     const sameVisit = (b) => {
-      if (!cvKey) return false;
+      if (!cvKey && !cvKeyVN) return false;
       const bv = b.visitId?._id || b.visitId;
-      return bv ? String(bv) === cvKey : false;
+      if (!bv) return false;
+      const bvStr = String(bv);
+      return (cvKey && bvStr === cvKey) || (cvKeyVN && bvStr === cvKeyVN);
     };
     const currentVisitBills = bills.filter(b =>
       b.visitType !== "IPD" && (
@@ -360,7 +374,11 @@ export default function ReceptionBilling() {
     // re-evaluates after the async /opd/patient/:pid probe (line ~447)
     // resolves and stamps patient.currentVisit. Without this dep, the
     // filter runs once with currentVisit=undefined and never refreshes.
-  }, [bills, advances, patient?.currentVisit?._id]);
+    // R7hr-165 — visitNumber added so the matcher also re-runs after
+    // the visit's `visitNumber` (the actual key bill.visitId stores)
+    // arrives — without this, a probe that arrives _after_ first render
+    // could leave the matcher reading stale state.
+  }, [bills, advances, patient?.currentVisit?._id, patient?.currentVisit?.visitNumber]);
 
   // Pick the active list based on the toggle
   const displayBills    = showHistory ? pastBills    : currentBills;

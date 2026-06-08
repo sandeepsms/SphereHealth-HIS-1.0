@@ -111,8 +111,67 @@ function groupByDayChrono(notes, getAt) {
    so the team sees the full intake picture in one place.
 */
 export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admission }) {
-  const docInitial   = doctorNotes.filter((n) => n.noteType === "initial" || n.noteType === "initialAssessment");
-  const nurseInitial = nursingNotes.filter((n) => n.noteType === "initial" || n.noteType === "initialAssessment");
+  // R7hr-120 — section-aware split. After R26 the Doctor IA and Nurse IA
+  // BOTH live in the DoctorNotes collection with noteType:"initial" but
+  // differ by `section` ("doctor" vs "nursing"). Pre-fix the filter just
+  // matched on noteType so the Nurse IA landed in the doctor bucket and
+  // the "Nursing Initial Assessment" card never rendered — even though
+  // the gate flag was flipped and the count badge said "2". Now we route
+  // section="nursing" rows from DoctorNotes into nurseInitial, alongside
+  // any legacy NurseNotes collection rows. Legacy doctor notes without a
+  // section field still default to the doctor bucket (treat unknown as
+  // doctor to preserve old data).
+  const _allInitialFromDocCol = doctorNotes.filter(
+    (n) => n.noteType === "initial" || n.noteType === "initialAssessment",
+  );
+  const _isNurseSection = (n) => {
+    if (n.section === "nursing") return true;
+    if (n.section === "doctor") return false;
+    // Pre-R26 fallback — sniff wrappers when section is missing.
+    if (n.noteDetails?.nursing || n.noteDetails?.nursingNabh) {
+      const hasDoctorWrappers = !!(n.noteDetails?.doctor || n.noteDetails?.nabh);
+      if (!hasDoctorWrappers) return true;
+    }
+    return false;
+  };
+  const docInitial         = _allInitialFromDocCol.filter((n) => !_isNurseSection(n));
+  const _nurseInDocCol     = _allInitialFromDocCol.filter(_isNurseSection);
+  const _nurseFromNurseCol = nursingNotes.filter((n) => n.noteType === "initial" || n.noteType === "initialAssessment");
+  const nurseInitial       = [..._nurseInDocCol, ..._nurseFromNurseCol];
+
+  // R7hr-109 — Read-side fallback for empty Admission Summary fields.
+  // Receptionist registration doesn't enforce Reason for Admission or
+  // Provisional Diagnosis (often the doctor only firms those up during
+  // first assessment), so without a fallback the card stays "—" forever.
+  // The Doctor IA sign now backfills the admission record (backfillAdmissionFromIA),
+  // but for already-signed historical records we also derive on the read
+  // side so the card lights up without a re-sign cycle. R25-safe — purely
+  // additive; the admission field stays the source of truth when filled.
+  const _docIAsorted = [...docInitial].sort(
+    (a, b) => new Date(b.signedAt || b.createdAt || 0) - new Date(a.signedAt || a.createdAt || 0)
+  );
+  const _latestDocIA = _docIAsorted[0] || null;
+  const _isBlank = (v) => v == null || String(v).trim() === "" || String(v).trim() === "—";
+  const _derivedChiefComplaint =
+    _latestDocIA?.chiefComplaint ||
+    _latestDocIA?.noteDetails?.nabh?.chiefComplaint ||
+    // R7hr-109 — last-resort fallback to HOPI. The legacy DoctorNotes schema
+    // strict-stripped top-level chiefComplaint (it isn't a defined field), so
+    // for historic signed IAs the only populated free-text complaint is
+    // noteDetails.doctor.hopi. Better to surface that than render "—".
+    _latestDocIA?.noteDetails?.doctor?.hopi ||
+    _latestDocIA?.historyOfPresentIllness ||
+    "";
+  const _derivedProvDx =
+    _latestDocIA?.provisionalDiagnosis ||
+    _latestDocIA?.noteDetails?.doctor?.provDx ||
+    "";
+  const _reasonForAdmission = _isBlank(admission?.reasonForAdmission)
+    ? _derivedChiefComplaint
+    : admission?.reasonForAdmission;
+  const _provisionalDiagnosis = _isBlank(admission?.provisionalDiagnosis)
+    ? _derivedProvDx
+    : admission?.provisionalDiagnosis;
 
   return (
     <div className="ppt-tab">
@@ -127,8 +186,8 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
           <div className="ppt-detail-grid">
             <Field label="IPD / Admission No." value={admission.admissionNumber} mono />
             <Field label="Admitted On"          value={fmtDateTime(admission.admissionDate)} />
-            <Field label="Reason for Admission" value={admission.reasonForAdmission} wide />
-            <Field label="Provisional Diagnosis" value={admission.provisionalDiagnosis} wide />
+            <Field label="Reason for Admission" value={_reasonForAdmission} wide />
+            <Field label="Provisional Diagnosis" value={_provisionalDiagnosis} wide />
             <Field label="Attending Doctor"     value={admission.attendingDoctor} />
             <Field label="Department"           value={admission.department} />
             <Field label="Bed / Ward"           value={[admission.bedNumber, admission.wardName].filter(Boolean).join(" — ")} />
@@ -1804,6 +1863,293 @@ function Field({ label, value, mono, wide, danger }) {
       <div className={`ppt-field-value ${mono ? "ppt-mono" : ""} ${danger ? "ppt-danger" : ""}`}>
         {isEmpty ? "—" : value}
       </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   R7hr-143 — Pending Investigation Reports
+
+   Shared tab visible inside BOTH Doctor Notes and Nursing Notes patient
+   panels. Lists every Investigation order whose auditLog contains a
+   `Sample Sent` step but no `Report Collected` step — i.e. the bench
+   is processing it and the result hasn't come back yet.
+
+   Why this matters (NABH AAC.4 / IPSG.2):
+   • Surveyor question: "Where do you see, at a glance, every lab/imaging
+     report you're still waiting on for this patient?"
+   • Pre-fix, that list only existed inside the order panel which was
+     mixed with new orders, completed orders, and other order types.
+     Doctors had no way to scan an at-a-glance "waiting" list.
+
+   Workflow:
+   • Nurse clicks Sample Collected → Sample Sent on the order card. The
+     order's `auditLog` now contains a `Sample Sent` row → the order
+     shows up here.
+   • When report arrives, the nurse clicks "✅ Mark Report Collected"
+     here → POSTs /step with step="Report Collected" → backend's
+     existing /step handler closes the order (status Completed) and
+     stamps `completedBy`/`completedAt`. The auto-bill hook fires.
+
+   Render contract:
+   • `admission` provides admissionId / ipdNo / UHID for the GET.
+   • `canMarkReportCollected` (default true) — set false for read-only
+     surfaces. Caller (Nurse vs Doctor panel) decides based on perms.
+   • Component is data-driven via its own fetch so the parent doesn't
+     need to know about DoctorOrder shape.
+───────────────────────────────────────────────────────────────────── */
+export function PendingInvestigationReportsTab({ admission, patient, canMarkReportCollected = true, actorName = "" }) {
+  const [orders, setOrders]   = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState("");
+  const [busyId, setBusyId]   = useState(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  const UHID  = patient?.UHID || admission?.UHID || "";
+  const ipdNo = admission?.ipdNo || admission?.admissionNo || "";
+
+  useEffect(() => {
+    if (!UHID && !ipdNo) { setOrders([]); return; }
+    let cancelled = false;
+    setLoading(true); setError("");
+    const params = new URLSearchParams();
+    if (UHID)  params.set("UHID", UHID);
+    if (ipdNo) params.set("ipdNo", ipdNo);
+    params.set("orderType", "Investigation");
+    params.set("limit", "500");
+    axios.get(`${API_ENDPOINTS.BASE}/doctor-orders?${params.toString()}`)
+      .then((r) => {
+        if (cancelled) return;
+        const all = r.data?.data || [];
+        setOrders(all);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e?.response?.data?.error || e.message || "Failed to load");
+        setOrders([]);
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [UHID, ipdNo, refreshTick]);
+
+  /* ── Filter: orders that hit "Sample Sent" but NOT "Report Collected" ── */
+  // Backward compat: pre-R7hr-143 imaging orders used "Done" instead of
+  // "Sample Sent" and "Report Received" instead of "Report Collected".
+  // Keep those aliases in the membership test so legacy orders surface
+  // here too (per R25: don't regress already-flowing data).
+  const SAMPLE_SENT_ALIASES   = new Set(["Sample Sent", "Done"]);
+  const REPORT_DONE_ALIASES   = new Set(["Report Collected", "Report Received"]);
+
+  const pending = useMemo(() => {
+    return (orders || [])
+      .filter((o) => o.orderType === "Investigation")
+      .filter((o) => o.status !== "Cancelled")
+      .map((o) => {
+        const log = Array.isArray(o.auditLog) ? o.auditLog : [];
+        const sentRow   = log.find((r) => SAMPLE_SENT_ALIASES.has(r.step));
+        const reportRow = log.find((r) => REPORT_DONE_ALIASES.has(r.step));
+        return { ...o, _sentRow: sentRow, _reportRow: reportRow };
+      })
+      .filter((o) => o._sentRow && !o._reportRow)
+      .sort((a, b) => new Date(a._sentRow?.doneAt || 0) - new Date(b._sentRow?.doneAt || 0));
+  }, [orders]);
+
+  const completedToday = useMemo(() => {
+    const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
+    return (orders || []).filter((o) => {
+      const log = Array.isArray(o.auditLog) ? o.auditLog : [];
+      const reportRow = log.find((r) => REPORT_DONE_ALIASES.has(r.step));
+      return reportRow && new Date(reportRow.doneAt) >= startToday;
+    });
+  }, [orders]);
+
+  async function markReportCollected(orderId) {
+    if (!canMarkReportCollected) return;
+    if (busyId) return;
+    setBusyId(orderId);
+    try {
+      // R7hr-143 — Drive the same /step pipeline the order card uses so
+      // the backend auto-bill hook + ClinicalAudit emit + status
+      // moveStatus() machinery all fire identically. We pass
+      // totalSteps=3 so the route treats this as the last step and
+      // flips status to Completed.
+      await axios.post(`${API_ENDPOINTS.BASE}/doctor-orders/${orderId}/step`, {
+        step: "Report Collected",
+        doneBy: actorName || "Nurse",
+        totalSteps: 3,
+      });
+      setRefreshTick((t) => t + 1);
+    } catch (e) {
+      alert(e?.response?.data?.message || e.message || "Failed to mark report collected");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const fmtAgo = (d) => {
+    if (!d) return "—";
+    const mins = Math.floor((Date.now() - new Date(d).getTime()) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+  };
+
+  const urgencyColor = (u) => {
+    const x = (u || "").toUpperCase();
+    if (x === "STAT")    return { bg: "#fef2f2", fg: "#dc2626", bd: "#fecaca" };
+    if (x === "URGENT")  return { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a" };
+    return { bg: "#f1f5f9", fg: "#475569", bd: "#cbd5e1" };
+  };
+
+  return (
+    <div style={{ padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>
+            🧪 Pending Investigation Reports
+          </div>
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+            Samples sent — awaiting report. Click <strong>Mark Report Collected</strong> when the result arrives.
+          </div>
+        </div>
+        <button
+          onClick={() => setRefreshTick((t) => t + 1)}
+          style={{
+            background: "#f1f5f9", border: "1px solid #cbd5e1", borderRadius: 6,
+            padding: "6px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600, color: "#475569",
+          }}
+        >
+          ↻ Refresh
+        </button>
+      </div>
+
+      {/* KPI strip */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
+        <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: 12 }}>
+          <div style={{ fontSize: 11, color: "#92400e", fontWeight: 700, letterSpacing: 0.5 }}>AWAITING REPORT</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#b45309", marginTop: 2 }}>{pending.length}</div>
+        </div>
+        <div style={{ background: "#ecfdf5", border: "1px solid #86efac", borderRadius: 8, padding: 12 }}>
+          <div style={{ fontSize: 11, color: "#166534", fontWeight: 700, letterSpacing: 0.5 }}>REPORTS RECEIVED TODAY</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#15803d", marginTop: 2 }}>{completedToday.length}</div>
+        </div>
+        <div style={{ background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 8, padding: 12 }}>
+          <div style={{ fontSize: 11, color: "#1e40af", fontWeight: 700, letterSpacing: 0.5 }}>STAT / URGENT WAITING</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#1d4ed8", marginTop: 2 }}>
+            {pending.filter((o) => ["STAT","Urgent","URGENT"].includes(o.orderDetails?.urgency)).length}
+          </div>
+        </div>
+      </div>
+
+      {loading && <div style={{ padding: 24, textAlign: "center", color: "#64748b" }}>Loading…</div>}
+      {error && (
+        <div style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", padding: 12, borderRadius: 6, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+
+      {!loading && pending.length === 0 && !error && (
+        <div style={{
+          padding: 40, textAlign: "center", background: "#f8fafc",
+          border: "1px dashed #cbd5e1", borderRadius: 8, color: "#64748b",
+        }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>✓</div>
+          <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>No pending reports</div>
+          <div style={{ fontSize: 13 }}>
+            All investigation samples have either not been sent yet, or all reports have been collected.
+          </div>
+        </div>
+      )}
+
+      {pending.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {pending.map((o) => {
+            const u = urgencyColor(o.orderDetails?.urgency);
+            const sentAt = o._sentRow?.doneAt;
+            return (
+              <div key={o._id} style={{
+                background: "#fff",
+                border: "1px solid #e2e8f0",
+                borderLeft: "4px solid #f59e0b",
+                borderRadius: 8,
+                padding: 14,
+                display: "grid",
+                gridTemplateColumns: "1fr auto",
+                gap: 14,
+                alignItems: "center",
+              }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                    <span style={{
+                      background: u.bg, color: u.fg, border: `1px solid ${u.bd}`,
+                      borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 800, letterSpacing: 0.4,
+                    }}>
+                      {(o.orderDetails?.urgency || "Routine").toUpperCase()}
+                    </span>
+                    <span style={{
+                      background: "#eff6ff", color: "#1d4ed8", border: "1px solid #93c5fd",
+                      borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700,
+                    }}>
+                      Investigation
+                    </span>
+                    {o.orderDetails?.category && (
+                      <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>
+                        · {o.orderDetails.category}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", marginBottom: 4 }}>
+                    {o.orderDetails?.testName || o.orderDetails?.displayName || "Investigation"}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#475569", display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <span>
+                      <strong style={{ color: "#0f172a" }}>Sample sent:</strong>{" "}
+                      {sentAt
+                        ? `${new Date(sentAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true })} (${fmtAgo(sentAt)})`
+                        : "—"}
+                    </span>
+                    {o._sentRow?.doneBy && (
+                      <span>
+                        · <strong style={{ color: "#0f172a" }}>By:</strong> {o._sentRow.doneBy}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+                    Rx by: {o.orderedBy || "Doctor"}
+                    {o.orderedByEmployeeId && ` (${o.orderedByEmployeeId})`}
+                    {" · Ordered "}
+                    {o.createdAt
+                      ? new Date(o.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true })
+                      : "—"}
+                  </div>
+                </div>
+                {canMarkReportCollected && (
+                  <button
+                    onClick={() => markReportCollected(o._id)}
+                    disabled={busyId === o._id}
+                    style={{
+                      background: busyId === o._id ? "#94a3b8" : "#16a34a",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 6,
+                      padding: "10px 14px",
+                      fontWeight: 700,
+                      fontSize: 13,
+                      cursor: busyId === o._id ? "wait" : "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {busyId === o._id ? "Saving…" : "✅ Mark Report Collected"}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

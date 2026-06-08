@@ -243,9 +243,25 @@ function BodyFor({ note }) {
   // R7gw — Deleted the 14 legacy Body* React renderers + inline helpers
   // (nonEmpty/txt/pick/Grid/Kv/AllergyCallout) that they were the only
   // consumers of. See the comment block above for the removed names.
+  //
+  // R7hr-105 / R26 — When this card represents a doctor's Initial
+  // Assessment, always suppress the "NURSING INTAKE — CROSS-DISCIPLINARY"
+  // block. Per R26, nurse data lives exclusively in NurseNote records and
+  // must not surface inside a doctor card. Pre-R26 records may still have
+  // a legacy noteDetails.nursingNabh blob persisted with imaginary form
+  // defaults (Calm / Hindi / Adequate / Barthel 100 / Continent etc) —
+  // those used to render here and confuse the user into thinking nursing
+  // had already filled the IA. The DoctorNotesPage timeline doesn't carry
+  // a nurseInitial array, so we always opt out for doctor IA noteTypes
+  // (PatientPanelTabs already passes the same flag via NoteCardEmbed when
+  // no nurse IA exists). All other doctor note types pass `{}` so the
+  // builder behaviour stays exactly as it was — no impact on Daily
+  // Progress / ICU / Procedure / Discharge / etc.
+  const isDoctorIA =
+    note?.noteType === "initial" || note?.noteType === "initialAssessment";
   const html = NURSING_TYPES.has(note.noteType)
     ? buildNurseNoteCardHtml(note)
-    : buildDoctorNoteCardHtml(note);
+    : buildDoctorNoteCardHtml(note, isDoctorIA ? { hideNursingExtras: true } : {});
   return (
     <div
       className="tnc-body-embed"

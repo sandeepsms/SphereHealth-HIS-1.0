@@ -127,7 +127,16 @@ async function fanOutMedReconToDoctorOrders(note) {
   const out = { created: 0, skipped: 0, reasons: {} };
   if (!note || note.noteType !== "initial") return out;
 
-  const rows = note?.noteDetails?.nabh?.medicationReconciliation;
+  // R7hr-111 — Path-drift fix. After R26 (Doctor IA + Nurse IA separate
+  // records, doctor block wrapped under noteDetails.doctor), the canonical
+  // location for medRecon is noteDetails.doctor.nabh.medicationReconciliation.
+  // The legacy noteDetails.nabh.medicationReconciliation path is kept as a
+  // backward-compat fallback for pre-R26 records. Without this fix the
+  // fan-out was silently reading [] and skipping every Continue row, so
+  // home medications marked Continue never landed in MAR.
+  const rows =
+    note?.noteDetails?.doctor?.nabh?.medicationReconciliation ||
+    note?.noteDetails?.nabh?.medicationReconciliation;
   if (!Array.isArray(rows) || rows.length === 0) return out;
 
   // We need the admission for visitId / admissionNumber / patientId so
@@ -178,7 +187,12 @@ async function fanOutMedReconToDoctorOrders(note) {
         orderedBy: note.signedByName || note.doctorName,
         orderedByRole: "Doctor",
         orderedAt: note.signedAt || new Date(),
-        status: "Active",
+        // R7hr-112 — Created as "Pending" so the nurse must explicitly
+        // Acknowledge before the order shows as administered. NABH ISMP +
+        // 7-rights of medication require nurse-side verification BEFORE
+        // any dose hits the MAR as active/given. Pre-R7hr-112 we wrote
+        // "Active" which the Live MAR rendered as already-running.
+        status: "Pending",
         sourceRef,        // ← idempotency key
         // HAM and concentratedElectrolyte are auto-derived by the
         // DoctorOrder pre-save hook from medicineName — no need to
@@ -242,6 +256,19 @@ async function fanOutMedsToDoctorOrders(note) {
       const courseDays = days;                         // null = open-ended
       const endDate    = days ? dateAtMidnightOffset(admDate, days) : null;
 
+      // R7hr-128 — Pull dilution metadata from the IA prescription row
+      // so it survives into the DoctorOrder. Without these three fields
+      // the MAR auto-feed (intakeOutputService.recordIntakeFromMAR)
+      // silently no-ops on every Given dose for parenteral meds and the
+      // I/O ledger under-reports intake. Coerce to Number where the
+      // schema requires it; preserve empty/blank as null so we don't
+      // pre-pollute existing orders' empty fields with 0.
+      const _dilVol  = m.dilutionVolume == null || m.dilutionVolume === "" ? null : Number(m.dilutionVolume);
+      const _dilOver = m.infuseOverMinutes == null || m.infuseOverMinutes === "" ? null : Number(m.infuseOverMinutes);
+      const dilutionVolume    = Number.isFinite(_dilVol) && _dilVol  > 0 ? _dilVol  : null;
+      const infuseOverMinutes = Number.isFinite(_dilOver) && _dilOver > 0 ? _dilOver : null;
+      const dilutionFluid     = (m.dilutionFluid || "").toString().trim();
+
       await DoctorOrder.create({
         UHID: admission.UHID || note.patientUHID,
         patientId: admission.patientId || note.patient,
@@ -260,6 +287,11 @@ async function fanOutMedsToDoctorOrders(note) {
           route: (m.route || deriveRoute(name)) || "Oral",
           mealStatus: ["BeforeFood","WithFood","AfterFood","EmptyStomach"].includes(m.mealStatus) ? m.mealStatus : "NotApplicable",
           duration: m.duration || "",
+          // R7hr-128 — flowed through from PrescriptionPanel's dilution
+          // strip so MAR can emit an Intake row per administered dose.
+          dilutionVolume,
+          dilutionFluid,
+          infuseOverMinutes,
           notes: `Ordered at Initial Assessment${m.duration ? ` — ${m.duration}` : " — no fixed duration"}`,
         },
         courseDays,
@@ -267,7 +299,9 @@ async function fanOutMedsToDoctorOrders(note) {
         orderedBy: note.signedByName || note.doctorName,
         orderedByRole: "Doctor",
         orderedAt: note.signedAt || new Date(),
-        status: "Active",
+        // R7hr-112 — see fanOutMedReconToDoctorOrders rationale: Pending
+        // until nurse Acknowledges. ISMP-compliant handoff.
+        status: "Pending",
         sourceRef,
       });
       out.created++;
@@ -342,11 +376,21 @@ async function fanOutInfusionsToDoctorOrders(note) {
           route: inf.route || "IV",
           notes: `Ordered at Initial Assessment${inf.duration ? ` — ${inf.duration}` : ""}`,
         },
-        currentRate: ratePretty,
+        // R7hr-112 — Do NOT pre-stamp currentRate. The Live MAR Infusion
+        // tab treats a populated currentRate (combined with status:Active)
+        // as "Running / drip going in", which would let nurses skip the
+        // physical setup ceremony (spike bag, prime line, verify rate at
+        // pump, attach to patient). The PRESCRIBED rate already lives in
+        // orderDetails.rate so the nurse sees what to set; currentRate
+        // gets stamped only when she physically starts the bag via the
+        // /:id PATCH route. Until then the order stays Pending in her queue.
+        // currentRate intentionally omitted — set on nurse Start.
         orderedBy: note.signedByName || note.doctorName,
         orderedByRole: "Doctor",
         orderedAt: note.signedAt || new Date(),
-        status: "Active",
+        // R7hr-112 — Pending until nurse acknowledges. See rationale on
+        // currentRate above + on fanOutMedReconToDoctorOrders.
+        status: "Pending",
         sourceRef,
       });
       out.created++;
@@ -360,8 +404,151 @@ async function fanOutInfusionsToDoctorOrders(note) {
   return out;
 }
 
+/**
+ * R7hr-110 — Fan out IPD IA `invests[]` (InvestigationsPanel rows) into
+ * DoctorOrder Investigation entries so they immediately appear in the
+ * nurse's "Doctor Orders → Investigation" queue. Without this, the
+ * doctor's lab orders from the IA stayed locked inside `noteDetails`
+ * and the nurse had no actionable task → samples never got drawn.
+ *
+ * Invest row shape: { name, urgency?, instructions? }
+ * DoctorOrder schema requires `testName` for orderType=Investigation —
+ * we map `name` → `testName`.
+ *
+ * Idempotency: sourceRef = iainvests:<noteId>:<rowIdx>
+ *
+ * R25 — additive only; existing 3 fan-outs untouched.
+ */
+async function fanOutInvestsToDoctorOrders(note) {
+  const out = { created: 0, skipped: 0, reasons: {} };
+  if (!note || note.noteType !== "initial") return out;
+  const rows = note?.noteDetails?.doctor?.invests;
+  if (!Array.isArray(rows) || rows.length === 0) return out;
+
+  const admission = await resolveAdmission(note);
+  if (!admission) {
+    out.reasons.noAdmission = rows.length;
+    out.skipped += rows.length;
+    return out;
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const inv = rows[i] || {};
+    const sourceRef = `iainvests:${note._id}:${i}`;
+    try {
+      const testName = (inv.name || "").trim();
+      if (!testName) { out.skipped++; out.reasons.blankTest = (out.reasons.blankTest || 0) + 1; continue; }
+      const exists = await DoctorOrder.findOne({ sourceRef }).select("_id").lean();
+      if (exists) { out.skipped++; out.reasons.alreadyExists = (out.reasons.alreadyExists || 0) + 1; continue; }
+
+      const urgency = (inv.urgency || "").trim();
+      // Normalize urgency to DoctorOrder.priority enum (Routine / Urgent / STAT)
+      const priority =
+        /^stat/i.test(urgency) ? "STAT" :
+        /^urgent/i.test(urgency) ? "Urgent" :
+        "Routine";
+
+      await DoctorOrder.create({
+        UHID: admission.UHID || note.patientUHID,
+        patientId: admission.patientId || note.patient,
+        patientName: admission.patientName || note.patientName,
+        admissionId: admission._id,
+        ipdNo: admission.admissionNumber || admission.ipdNo,
+        admissionNumber: admission.admissionNumber || admission.ipdNo,
+        visitType: "IPD",
+        orderType: "Investigation",
+        priority,
+        orderDetails: {
+          testName,
+          displayName: testName,
+          urgency: urgency || "ROUTINE",
+          instructions: inv.instructions || "",
+          notes: `Ordered at Initial Assessment${urgency ? ` — ${urgency}` : ""}`,
+        },
+        orderedBy: note.signedByName || note.doctorName,
+        orderedByRole: "Doctor",
+        orderedAt: note.signedAt || new Date(),
+        // R7hr-112 — Pending until nurse acknowledges. Lab samples should
+        // not be marked Active before the nurse has seen the order and
+        // initiated sample collection.
+        status: "Pending",
+        sourceRef,
+      });
+      out.created++;
+    } catch (err) {
+      out.skipped++;
+      out.reasons.error = (out.reasons.error || 0) + 1;
+      const { logErr } = require("../../utils/logErr");
+      logErr("iaInvestsFanOut", `row ${i} test=${inv.name} sourceRef=${sourceRef}`)(err);
+    }
+  }
+  return out;
+}
+
+/**
+ * R7hr-109 — Backfill admission.reasonForAdmission + admission.provisionalDiagnosis
+ * from the signed Doctor Initial Assessment. The receptionist registration
+ * form does NOT enforce these fields (often the doctor only firms up the
+ * diagnosis after first assessment), so the Admission Summary card stayed
+ * "—" forever even after a complete IA. Now the doctor's IA sign mirrors
+ * his chief complaint + provisional diagnosis to the admission record so
+ * every downstream surface (Patient Panel Admission Summary, banner,
+ * discharge summary header, print) lights up automatically.
+ *
+ * Idempotency: only sets fields that are currently blank/null/"—" — never
+ * overwrites a value the receptionist or doctor explicitly typed.
+ */
+async function backfillAdmissionFromIA(note) {
+  const out = { updated: false, fields: [] };
+  if (!note || note.noteType !== "initial") return out;
+  const admission = await resolveAdmission(note);
+  if (!admission) return out;
+
+  const isBlank = (v) => v == null || String(v).trim() === "" || String(v).trim() === "—";
+
+  // Pull candidate values from the signed note. Top-level fields are mirrored
+  // by IPDInitialAssessmentPage.buildPayload (R7fj-HIGH-1) so we prefer those.
+  const chiefComplaint =
+    (note.chiefComplaint && String(note.chiefComplaint).trim()) ||
+    (note.noteDetails?.nabh?.chiefComplaint && String(note.noteDetails.nabh.chiefComplaint).trim()) ||
+    // R7hr-109 — last-resort HOPI fallback. DoctorNotes schema doesn't define
+    // top-level chiefComplaint so strict-mode drops it silently; doctor.hopi
+    // is the only narrative field reliably saved for the chief complaint
+    // story. Surfacing it here is better than leaving admission.reasonForAdmission blank.
+    (note.noteDetails?.doctor?.hopi && String(note.noteDetails.doctor.hopi).trim()) ||
+    (note.historyOfPresentIllness && String(note.historyOfPresentIllness).trim()) ||
+    "";
+  const provDx =
+    (note.provisionalDiagnosis && String(note.provisionalDiagnosis).trim()) ||
+    (note.noteDetails?.doctor?.provDx && String(note.noteDetails.doctor.provDx).trim()) ||
+    "";
+
+  const $set = {};
+  if (chiefComplaint && isBlank(admission.reasonForAdmission)) {
+    $set.reasonForAdmission = chiefComplaint;
+    out.fields.push("reasonForAdmission");
+  }
+  if (provDx && isBlank(admission.provisionalDiagnosis)) {
+    $set.provisionalDiagnosis = provDx;
+    out.fields.push("provisionalDiagnosis");
+  }
+
+  if (Object.keys($set).length === 0) return out;
+
+  try {
+    await Admission.updateOne({ _id: admission._id }, { $set });
+    out.updated = true;
+  } catch (err) {
+    const { logErr } = require("../../utils/logErr");
+    logErr("backfillAdmissionFromIA", `admission ${admission._id}`)(err);
+  }
+  return out;
+}
+
 module.exports = {
   fanOutMedReconToDoctorOrders,
   fanOutMedsToDoctorOrders,
   fanOutInfusionsToDoctorOrders,
+  fanOutInvestsToDoctorOrders,
+  backfillAdmissionFromIA,
 };

@@ -132,27 +132,42 @@ const createDoctorNote = async (data, doctorUserId) => {
   // for IPD admissions the frontend passes the admissionNumber as visitId.
   const finalIpdNo = resolvedIpdNo || resolvedAdmissionNumber || data.visitId || "N/A";
 
-  // R7hr-88 — ONE Initial Assessment per admission. The schema-level
-  // partial-unique indexes are the authoritative gate, but checking
-  // here first lets us return a friendly 409 with the existing IA's
-  // identity so the frontend can route the user straight to Amend
-  // rather than surfacing a raw duplicate-key error from Mongo.
+  // R7hr-88 + R7hr-116 — ONE Initial Assessment per ROLE per admission.
+  // After R26 split, Doctor IA and Nurse IA are SEPARATE records both
+  // with noteType: "initial". The dedupe filter MUST include section so
+  // a signed Doctor IA doesn't block the Nurse from saving hers (and
+  // vice versa). Legacy pre-R26 notes have no section field — we
+  // infer it from noteDetails.doctor.* / noteDetails.nursing.* below.
   if (noteType === "initial") {
+    const incomingSection = data.section || (
+      (data.noteDetails?.doctor || data.noteDetails?.nabh) ? "doctor" :
+      (data.noteDetails?.nursing || data.noteDetails?.nursingNabh) ? "nursing" :
+      null
+    );
     const dupOr = [];
     if (resolvedAdmissionId) dupOr.push({ admissionId: resolvedAdmissionId });
     if (finalIpdNo && finalIpdNo !== "N/A") dupOr.push({ ipdNo: finalIpdNo });
     if (dupOr.length) {
-      const existing = await DoctorNotes.findOne({
+      const candidates = await DoctorNotes.find({
         noteType: "initial",
         $or: dupOr,
-      }).select("_id status signedByName signedAt").lean();
-      if (existing) {
+      }).select("_id status signedByName signedAt section noteDetails").lean();
+      // Pick the candidate that matches the SAME role
+      const sameSection = candidates.find(c => {
+        const cSection = c.section || (
+          (c.noteDetails?.doctor || c.noteDetails?.nabh) ? "doctor" :
+          (c.noteDetails?.nursing || c.noteDetails?.nursingNabh) ? "nursing" :
+          null
+        );
+        return cSection && incomingSection && cSection === incomingSection;
+      });
+      if (sameSection) {
         const e = new Error(
-          "Initial Assessment already exists for this admission — use Amend instead.",
+          `${incomingSection === "nursing" ? "Nursing" : "Doctor"} Initial Assessment already exists for this admission — use Amend instead.`,
         );
         e.code = "DUPLICATE_INITIAL_ASSESSMENT";
         e.statusCode = 409;
-        e.existing = existing;
+        e.existing = sameSection;
         throw e;
       }
     }
@@ -185,6 +200,15 @@ const createDoctorNote = async (data, doctorUserId) => {
     isCritical: isCritical || false,
     tags: tags || [],
     noteDetails: noteDetails || {},
+    // R7hr-118 — persist section so the partial-unique indexes
+    // (uniq_initial_per_admission_section / uniq_initial_per_ipdNo_section)
+    // can actually enforce per-role uniqueness in the DB. If the caller
+    // didn't pass one, fall back to the same inference the dedupe uses.
+    section: data.section || (
+      (noteDetails?.doctor || noteDetails?.nabh) ? "doctor" :
+      (noteDetails?.nursing || noteDetails?.nursingNabh) ? "nursing" :
+      null
+    ),
     signature,
     signedByName,
     signedByReg,
@@ -498,6 +522,40 @@ const signDoctorNote = async (noteId, doctorUserId, signaturePayload = {}, req =
       try { summary.medRecon  = await fanOuts.fanOutMedReconToDoctorOrders(note); } catch (e) { logErr("medReconFanOut", `note ${note._id}`)(e); }
       try { summary.meds      = await fanOuts.fanOutMedsToDoctorOrders(note);     } catch (e) { logErr("iaMedsFanOut",  `note ${note._id}`)(e); }
       try { summary.infusions = await fanOuts.fanOutInfusionsToDoctorOrders(note);} catch (e) { logErr("iaInfusionFanOut", `note ${note._id}`)(e); }
+      // R7hr-110 — Investigation fan-out so the nurse sees lab orders on her queue.
+      try { summary.invests   = await fanOuts.fanOutInvestsToDoctorOrders(note);  } catch (e) { logErr("iaInvestsFanOut", `note ${note._id}`)(e); }
+      // R7hr-109 — Backfill Admission.reasonForAdmission + provisionalDiagnosis
+      // from the signed Doctor IA so the Admission Summary card / banner /
+      // discharge summary header all stop showing "—". Idempotent + only fills
+      // blanks (never overwrites a value the receptionist already typed).
+      try { summary.admBackfill = await fanOuts.backfillAdmissionFromIA(note);    } catch (e) { logErr("backfillAdmissionFromIA", `note ${note._id}`)(e); }
+      // R7hr-119 — Flip admission.initialAssessment.{role}Completed when the IA
+      // is signed. The Patient Panel / DoctorNotes / NursingNotes pages read
+      // these gate flags to unlock the day-2 tiles (R7hr-95 / R7hr-100). The
+      // sign flow previously only wrote noteDetails + signedAt fields and left
+      // the admission flag at its admission-time default (false), so the
+      // panel hid the Nurse IA section even after a signed nurse note existed.
+      try {
+        if (note.admissionId && note.section) {
+          const Admission = require("../../models/Patient/admissionModel");
+          const setFields = {};
+          if (note.section === "doctor") {
+            setFields["initialAssessment.doctorCompleted"]   = true;
+            setFields["initialAssessment.doctorCompletedAt"] = note.signedAt || new Date();
+            setFields["initialAssessment.doctorName"]        = note.signedByName || note.doctorName || "";
+          } else if (note.section === "nursing") {
+            setFields["initialAssessment.nurseCompleted"]    = true;
+            setFields["initialAssessment.nurseCompletedAt"]  = note.signedAt || new Date();
+            setFields["initialAssessment.nurseName"]         = note.signedByName || note.doctorName || "";
+          }
+          if (Object.keys(setFields).length) {
+            summary.gateFlag = await Admission.updateOne(
+              { _id: note.admissionId },
+              { $set: setFields },
+            );
+          }
+        }
+      } catch (e) { logErr("iaGateFlag", `note ${note._id}`)(e); }
       try { logErr("iaFanOut", `note ${note._id} ${JSON.stringify(summary)}`)(null); } catch (_) {}
     } catch (err) {
       const { logErr } = require("../../utils/logErr");

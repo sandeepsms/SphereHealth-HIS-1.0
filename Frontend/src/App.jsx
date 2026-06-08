@@ -50,6 +50,11 @@ const BedVisualLayout = lazy(() => import("./Components/bed/BedVisualLayout"));
 const BedDashboard = lazy(() => import("./pages/bed/BedDashboard"));
 const PrintRouterPage = lazy(() => import("./pages/print/PrintRouterPage"));
 const PrintGalleryPage = lazy(() => import("./pages/print/PrintGalleryPage"));
+// R7hr-152 — Day-wise Treatment Chart digest print (Vitals + Meds + Infusions
+// + I/O + Other Obs). Custom letterhead + patient strip + reuses the
+// existing TreatmentChartDayStack so the printed sheet matches the
+// patient panel 1:1 (single source of truth).
+const TreatmentChartMarPrint = lazy(() => import("./pages/print/TreatmentChartMarPrint"));
 const BedTransfersListPage = lazy(() => import("./pages/bed/BedTransfersListPage"));
 const BedMonthlyReportPage = lazy(() => import("./pages/bed/BedMonthlyReportPage"));
 
@@ -93,6 +98,10 @@ const DoctorChargesPage = lazy(() => import("./pages/admin/DoctorChargesPage"));
 // doctor visit, RMO, monitoring, dietetics, housekeeping, linen).
 // Source of truth for the daily auto-billing cron. Admin + Accountant only.
 const RoomChargesPage = lazy(() => import("./pages/admin/RoomChargesPage"));
+// R7hr-164 — Nursing Equipment Master (per-use charges). Admin CRUD
+// for the "Equipment Used This Shift" catalogue surfaced on NursingNotes.
+// Same auth gate as RoomChargesPage / DoctorChargesPage.
+const NursingEquipmentPage = lazy(() => import("./pages/admin/NursingEquipmentPage"));
 const ChargeableServices = lazy(() => import("./pages/services/ChargeableServices"));
 // BillingIntelligencePage removed — receptionist Billing Counter is now
 // the single billing surface; AI suggestions are no longer auto-applied.
@@ -109,7 +118,9 @@ const PharmacyLedgerPage = lazy(() => import("./pages/pharmacy/PharmacyLedgerPag
 // Vitals
 const UpdateVitalSheet = lazy(() => import("./Components/vital/UpdateVitalSheet"));
 const VitalSheet = lazy(() => import("./Components/vital/VitalSheet"));
-const VitalsView = lazy(() => import("./Components/vital/VitalsView"));
+// R7hr-158 — /vitalsView retired. Trend now opens as an inline modal
+// (VitalsTrendModal) from the Nursing Notes tile. The standalone page
+// rendered an empty placeholder and is gone along with its file.
 
 // Nursing (heavy form pages)
 const NursingNotes = lazy(() => import("./pages/nursing/NursingNotes"));
@@ -278,7 +289,9 @@ const CapriniDVTAssessmentPage = lazy(() => import("./pages/nursing/CapriniDVTAs
 // surface; surveyor-facing read view stays at /compliance/nabh/restraint-register.
 const RestraintEntryPage = lazy(() => import("./pages/nursing/RestraintEntryPage"));
 const CredentialingPage = lazy(() => import("./pages/hr/CredentialingPage"));
-const MARPage = lazy(() => import("./pages/clinical/MARPage"));
+// R7hr-140 — MARPage retired. The standalone /mar surface is unused;
+// Treatment Chart Live MAR inside Nurse/Doctor Patient Panel and
+// /nursing-notes is the canonical entry. The /mar route now redirects.
 const DiabeticChartPage = lazy(() => import("./pages/clinical/DiabeticChartPage"));
 // R7eg — ICU Bundles of Care (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP)
 const ICUBundlesPage = lazy(() => import("./pages/clinical/ICUBundlesPage"));
@@ -287,6 +300,8 @@ const EquipmentDashboardPage   = lazy(() => import("./pages/maintenance/Equipmen
 const PharmacyHomePage         = lazy(() => import("./pages/pharmacy/PharmacyHomePage"));
 const DischargeSummaryPage = lazy(() => import("./pages/clinical/DischargeSummaryPage"));
 const ConsentFormPage = lazy(() => import("./pages/clinical/ConsentFormPage"));
+// R7hr-113 — Paperless PROM/PREM survey (gates discharge finalize)
+const PROMPREMSurveyPage = lazy(() => import("./pages/clinical/PROMPREMSurveyPage"));
 const IPDInitialAssessmentPage = lazy(() => import("./pages/clinical/IPDInitialAssessmentPage"));
 const InvestigationOrders     = lazy(() => import("./Components/Investigation/InvestigationOrders"));
 const InvestigationMaster     = lazy(() => import("./Components/Investigation/InvestigationMaster"));
@@ -404,6 +419,9 @@ function AppLayout({ collapsed, setCollapsed }) {
     return (
       <Suspense fallback={<RouteLoader />}>
         <Routes>
+          {/* R7hr-152 — Day-wise MAR digest sheet. Literal path takes
+              precedence over the :slug catch-all below. */}
+          <Route path="/print/treatment-chart-mar" element={<TreatmentChartMarPrint />} />
           <Route path="/print/:slug" element={<PrintRouterPage />} />
         </Routes>
       </Suspense>
@@ -528,8 +546,8 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/updateVitalSheet/:uhid/:date" element={<UpdateVitalSheet />} />
             <Route path="/vitalSheet"        element={<VitalSheet />} />
             <Route path="/vitalSheet/:uhid"  element={<VitalSheet />} />
-            <Route path="/vitalsView"        element={<VitalsView />} />
-            <Route path="/vitalsView/:uhid"  element={<VitalsView />} />
+            {/* R7hr-158 — /vitalsView + /vitalsView/:uhid routes retired.
+                Trend opens inline from Nursing Notes via VitalsTrendModal. */}
 
             {/* ── Patients Module ───────────────────────────────── */}
             <Route path="/patients" element={<PatientList />} />
@@ -612,6 +630,14 @@ function AppLayout({ collapsed, setCollapsed }) {
                 cron sources every line item from this grid. */}
             <Route path="/room-charges" element={
               <RoleGuard allow={["Admin", "Accountant"]}><RoomChargesPage /></RoleGuard>
+            } />
+            {/* R7hr-164 — Nursing Equipment Master CRUD. Admin sets up the
+                "Equipment Used This Shift" catalogue (name + category +
+                unit price + charge-once-per-day) that NursingNotes reads
+                from /api/nursing-charges/items. Mirrors /room-charges
+                auth gate. */}
+            <Route path="/nursing-equipment" element={
+              <RoleGuard allow={["Admin", "Accountant"]}><NursingEquipmentPage /></RoleGuard>
             } />
 
             {/* /billing-intelligence routes removed — receptionist Billing
@@ -937,7 +963,9 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/medical-records/discharges" element={
               <RoleGuard action="mrd.list"><MRDRecentDischargesPage /></RoleGuard>
             } />
-            <Route path="/mar" element={<MARPage />} />
+            {/* R7hr-140 — /mar retired: redirect to /nursing-notes where the
+                Treatment Chart Live MAR tile lives inside the patient panel. */}
+            <Route path="/mar" element={<Navigate to="/nursing-notes" replace />} />
             <Route path="/diabetic-chart" element={<DiabeticChartPage />} />
             {/* R7eg — ICU Bundles of Care. R7ei: gate promoted to the new
                 `icu-bundle.write` action so intensivists (Doctor role) can
@@ -961,6 +989,11 @@ function AppLayout({ collapsed, setCollapsed }) {
                 on every save. */}
             <Route path="/consent-forms" element={
               <RoleGuard action="consent.write"><ConsentFormPage /></RoleGuard>
+            } />
+            {/* R7hr-113 — Paperless PROM/PREM survey. Gates discharge finalize:
+                one signed PROM + one signed PREM must exist per admission. */}
+            <Route path="/clinical/prom-prem-survey" element={
+              <RoleGuard action="nursing.write"><PROMPREMSurveyPage /></RoleGuard>
             } />
             {/* R7bb-E/D5-HIGH-2 — Nursing assessment writes gated by mar.write
                 (Admin/Nurse). Doctor still has POST gates server-side via the

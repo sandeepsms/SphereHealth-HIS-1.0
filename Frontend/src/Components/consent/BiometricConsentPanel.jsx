@@ -69,6 +69,13 @@ export default function BiometricConsentPanel({
   initialBiometric,
   initialStaffSignature,
   initialBypass,
+  // R7hr-162 — pre-fill block from the "Consent Given By" section of the
+  // parent form (relation, name, contact). When this is present and
+  // initialConsentingParty is empty (i.e. nothing saved server-side yet),
+  // we seed Step-1 inputs from it AND collapse the name/contact/relation
+  // rows so the staff only fills ID Proof Type + ID Proof Number here —
+  // the rest is already on file in "Consent Given By".
+  parentParty,
   onUpdated,       // fires after every successful sub-step
   onAllComplete,   // fires when all three blocks are green
   disabled,
@@ -80,18 +87,43 @@ export default function BiometricConsentPanel({
   }, []);
 
   /* ── Local state mirrors server progress ────────────────────── */
+  // R7hr-162 — Map parent "Consent Given By" enum (SELF/GUARDIAN/SPOUSE/
+  // RELATIVE/LEGAL_REP) onto the biometric panel's RELATION_OPTIONS
+  // (which historically used different keys). Done inline so legacy
+  // server values continue to work even when parentParty is absent.
+  const _mapParentRelation = (r) => {
+    const x = String(r || "").toUpperCase();
+    if (!x) return "SELF";
+    if (x === "GUARDIAN" || x === "PARENT") return "GUARDIAN";
+    return x; // SELF / SPOUSE / RELATIVE / LEGAL_REP all flow through
+  };
+  // True only when the parent form has filled the Consent-Given-By data
+  // AND no server-side consenting party has been saved yet. In that case
+  // we pre-fill + collapse the duplicate name/contact/relation inputs.
+  const partyPrefilledFromParent = !!(parentParty && parentParty.name && !initialConsentingParty?.name);
+
   const [party, setParty]               = useState(() => ({
-    relation:      initialConsentingParty?.relation       || "SELF",
-    relationOther: initialConsentingParty?.relationOther  || "",
-    name:          initialConsentingParty?.name           || "",
+    relation:      initialConsentingParty?.relation
+                   || (partyPrefilledFromParent ? _mapParentRelation(parentParty?.relation) : "SELF"),
+    relationOther: initialConsentingParty?.relationOther  || parentParty?.relationOther || "",
+    name:          initialConsentingParty?.name           || (partyPrefilledFromParent ? parentParty?.name : "") || "",
     idProofType:   initialConsentingParty?.idProofType    || "",
     idProofNumber: initialConsentingParty?.idProofNumber  || "",
-    contactNumber: initialConsentingParty?.contactNumber  || "",
+    contactNumber: initialConsentingParty?.contactNumber  || (partyPrefilledFromParent ? parentParty?.contactNumber : "") || "",
   }));
   const [partySaved, setPartySaved]     = useState(() => !!(initialConsentingParty?.name && initialConsentingParty?.relation));
   const [savingParty, setSavingParty]   = useState(false);
 
+  // R7hr-162 — Don't trust prior-session biometric on render. The capture
+  // success UI must only appear after the staff actually invokes WebAuthn
+  // in THIS session (touches the Capture Fingerprint button and the
+  // hardware scanner). If a draft was loaded with a server-side capture,
+  // we still keep the data in state for audit but suppress the green
+  // "Captured" card until justCaptured flips true. Prevents the bug where
+  // the receptionist opened the page and saw "Captured" without ever
+  // clicking the scanner.
   const [biometric, setBiometric]       = useState(initialBiometric || {});
+  const [justCaptured, setJustCaptured] = useState(false);
   const [capturing, setCapturing]       = useState(false);
   const [biometricError, setBiometricError] = useState("");
 
@@ -107,7 +139,11 @@ export default function BiometricConsentPanel({
   /* ── Derived ── */
   const isAdmin = String(user?.role || "").toLowerCase() === "admin";
   const isBypassed = !!(bypass?.authorisedAt && bypass?.reason);
-  const hasBiometric = !!(biometric?.captured && biometric?.capturedAt);
+  // R7hr-162 — `hasBiometric` now also requires `justCaptured` so the
+  // success UI never shows up unless the staff invoked the scanner in
+  // this session. Server-stored captures from prior sessions/drafts are
+  // ignored for the visual confirmation; the staff must re-capture.
+  const hasBiometric = justCaptured && !!(biometric?.captured && biometric?.capturedAt);
   const hasStaffSig  = !!(staffSig?.signatureImage || staffSig?.signedAt);
   const allComplete = (isBypassed || hasBiometric) && hasStaffSig && partySaved;
 
@@ -165,6 +201,9 @@ export default function BiometricConsentPanel({
         isHardwareBacked:    !!verify.data?.data?.isHardwareBacked,
         authenticatorVendor: verify.data?.data?.authenticatorVendor || "",
       });
+      // R7hr-162 — gate the visual confirmation behind this flag so the
+      // green "Captured" card only shows for a SESSION-initiated capture.
+      setJustCaptured(true);
       const vendor = verify.data?.data?.authenticatorVendor;
       toast.success(vendor ? `Biometric captured ✓ ${vendor}` : "Biometric captured ✓");
       onUpdated?.();
@@ -274,15 +313,49 @@ export default function BiometricConsentPanel({
       {/* ── Step 1 — Consenting party ─────────────────────────────── */}
       <Section
         n={1} title="Consenting Party" done={partySaved}
-        subtitle="Who will place the fingerprint? (patient or LAR)"
+        subtitle={partyPrefilledFromParent
+          ? "Pre-filled from \"Consent Given By\" — confirm ID proof below"
+          : "Who will place the fingerprint? (patient or LAR)"}
       >
+        {/* R7hr-162 — Compact summary band shown when name/relation/contact
+            came from the parent "Consent Given By" section. Avoids the
+            previous duplicate data-entry where the staff had to retype
+            the same name + relation + contact a second time. The ID Proof
+            Type + Number remain editable below because they're NOT
+            collected upstream in "Consent Given By". */}
+        {partyPrefilledFromParent && (
+          <div style={{
+            background: "#f5f3ff", border: "1px solid #ddd6fe", borderRadius: 8,
+            padding: "10px 12px", marginTop: 6, marginBottom: 10, fontSize: 12,
+            display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center",
+          }}>
+            <span style={{ color: C.muted, fontWeight: 600 }}>
+              <i className="pi pi-info-circle" style={{ marginRight: 5 }} />
+              From "Consent Given By":
+            </span>
+            <span><strong style={{ color: C.text }}>{party.name || "—"}</strong></span>
+            <span style={{ color: C.muted }}>·</span>
+            <span><span style={{ color: C.muted }}>Relation:</span> <strong style={{ color: C.text }}>{(RELATION_OPTIONS.find(o => o.value === party.relation)?.label) || party.relation}</strong></span>
+            {party.contactNumber && (<>
+              <span style={{ color: C.muted }}>·</span>
+              <span style={{ color: C.muted }}>📞 {party.contactNumber}</span>
+            </>)}
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 6 }}>
-          <FieldSelect label="Relation *" value={party.relation} onChange={setPartyField("relation")} disabled={partySaved || disabled} options={RELATION_OPTIONS} />
-          {party.relation === "OTHER" && (
-            <Field label="Specify relation" value={party.relationOther} onChange={setPartyField("relationOther")} disabled={partySaved || disabled} />
+          {/* When pre-filled from parent, hide the duplicate Relation /
+              Name / Contact inputs and only collect ID Proof Type + Number.
+              Otherwise (legacy flow) show all six fields as before. */}
+          {!partyPrefilledFromParent && (
+            <>
+              <FieldSelect label="Relation *" value={party.relation} onChange={setPartyField("relation")} disabled={partySaved || disabled} options={RELATION_OPTIONS} />
+              {party.relation === "OTHER" && (
+                <Field label="Specify relation" value={party.relationOther} onChange={setPartyField("relationOther")} disabled={partySaved || disabled} />
+              )}
+              <Field label="Name *" value={party.name} onChange={setPartyField("name")} disabled={partySaved || disabled} placeholder="Full name of the consenting party" />
+              <Field label="Contact number" value={party.contactNumber} onChange={setPartyField("contactNumber")} disabled={partySaved || disabled} placeholder="+91 ..." />
+            </>
           )}
-          <Field label="Name *" value={party.name} onChange={setPartyField("name")} disabled={partySaved || disabled} placeholder="Full name of the consenting party" />
-          <Field label="Contact number" value={party.contactNumber} onChange={setPartyField("contactNumber")} disabled={partySaved || disabled} placeholder="+91 ..." />
           <FieldSelect label="ID Proof type" value={party.idProofType} onChange={setPartyField("idProofType")} disabled={partySaved || disabled} options={ID_PROOF_OPTIONS} />
           <Field label="ID Proof number" value={party.idProofNumber} onChange={setPartyField("idProofNumber")} disabled={partySaved || disabled} placeholder="Number (last 4 digits visible on receipt)" />
         </div>

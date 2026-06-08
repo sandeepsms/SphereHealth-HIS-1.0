@@ -1206,7 +1206,7 @@ class AdmissionService {
     if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))
       query.bedId = new mongoose.Types.ObjectId(String(bedFilter));
 
-    return Admission.find(query)
+    const admissions = await Admission.find(query)
       .populate(
         "patientId",
         "fullName firstName lastName UHID age dateOfBirth gender bloodGroup contactNumber phone",
@@ -1220,6 +1220,143 @@ class AdmissionService {
       .populate("wardId", "wardName")
       .sort({ admissionDate: -1 })
       .lean();
+
+    // R7hr-104 — Defensive heal of initialAssessment.doctorCompleted /
+    // nurseCompleted gate flags.
+    //
+    // Background: IPDInitialAssessmentPage::handleSave POSTs the IA to
+    // /doctor-notes (or /nursing-notes) and then fires a separate PUT to
+    // /admissions/:id/initial-assessment to flip the gate flag. That second
+    // call can fail silently (auth quirk, network blip, race) — the
+    // DoctorNote ends up signed in the database but the admission gate
+    // flag stays `false`. The Doctor Notes page (and Nursing Notes page)
+    // gate every tile behind admission.initialAssessment.doctorCompleted,
+    // so the user sees the IA visibly signed in the Patient Panel timeline
+    // but every action tile on /doctor-notes is still locked with
+    // "INITIAL ASSESSMENT REQUIRED". User flagged this regression on UH02.
+    //
+    // Fix: on every admission read, for any admission whose flag is false,
+    // check if a signed initial note exists for that admission. If yes,
+    // auto-flip the flag in the response AND best-effort write it back to
+    // the DB so subsequent reads stay corrected. The actual canonical IA
+    // record (DoctorNote / NurseNote) is unchanged — we're just keeping the
+    // denormalised gate flag in sync with reality.
+    //
+    // R25-safe: read-only derivation when the source of truth says the IA
+    // is signed. Beds, billing, prints, fan-outs are untouched. Idempotent.
+    try {
+      const needHealDoctor = admissions.filter(
+        (a) => a?._id && a?.initialAssessment?.doctorCompleted !== true,
+      );
+      const needHealNurse = admissions.filter(
+        (a) => a?._id && a?.initialAssessment?.nurseCompleted !== true,
+      );
+      if (needHealDoctor.length > 0 || needHealNurse.length > 0) {
+        const DoctorNotes = mongoose.models.DoctorNotes;
+        const NurseNotes = mongoose.models.NurseNotes;
+        const uhids = [
+          ...new Set(admissions.map((a) => a.UHID || a.patientUHID).filter(Boolean)),
+        ];
+        const docSigned = DoctorNotes
+          ? await DoctorNotes.find({
+              patientUHID: { $in: uhids },
+              noteType: "initial",
+              status: "signed",
+            })
+              .select("patientUHID signedAt signedByName")
+              .lean()
+          : [];
+        const nurseSigned = NurseNotes
+          ? await NurseNotes.find({
+              patientUHID: { $in: uhids },
+              noteType: "initial",
+              $or: [{ status: "submitted" }, { status: "signed" }],
+            })
+              .select("patientUHID submittedAt signedAt signedByName nurseName")
+              .lean()
+          : [];
+        const docByUhid = new Map();
+        for (const d of docSigned) {
+          // pick the most recent signed IA per UHID
+          const prev = docByUhid.get(d.patientUHID);
+          if (!prev || new Date(d.signedAt || 0) > new Date(prev.signedAt || 0)) {
+            docByUhid.set(d.patientUHID, d);
+          }
+        }
+        const nurseByUhid = new Map();
+        for (const n of nurseSigned) {
+          const prev = nurseByUhid.get(n.patientUHID);
+          const aAt = n.submittedAt || n.signedAt || 0;
+          const pAt = prev ? prev.submittedAt || prev.signedAt || 0 : 0;
+          if (!prev || new Date(aAt) > new Date(pAt)) {
+            nurseByUhid.set(n.patientUHID, n);
+          }
+        }
+        const healWrites = [];
+        for (const a of admissions) {
+          const uhid = a.UHID || a.patientUHID;
+          if (!uhid) continue;
+          const ia = a.initialAssessment || {};
+          const docHit = docByUhid.get(uhid);
+          const nurseHit = nurseByUhid.get(uhid);
+          let patch = null;
+          if (docHit && ia.doctorCompleted !== true) {
+            patch = patch || {};
+            patch["initialAssessment.doctorCompleted"] = true;
+            patch["initialAssessment.doctorCompletedAt"] =
+              docHit.signedAt || new Date();
+            if (docHit.signedByName) {
+              patch["initialAssessment.doctorName"] = docHit.signedByName;
+            }
+            // Mutate the in-memory copy so the response we return is
+            // already healed (no second round-trip required).
+            ia.doctorCompleted = true;
+            if (!ia.doctorCompletedAt)
+              ia.doctorCompletedAt = docHit.signedAt || new Date();
+            if (!ia.doctorName && docHit.signedByName)
+              ia.doctorName = docHit.signedByName;
+            a.initialAssessment = ia;
+          }
+          if (nurseHit && ia.nurseCompleted !== true) {
+            patch = patch || {};
+            patch["initialAssessment.nurseCompleted"] = true;
+            patch["initialAssessment.nurseCompletedAt"] =
+              nurseHit.submittedAt || nurseHit.signedAt || new Date();
+            const nName =
+              nurseHit.signedByName || nurseHit.nurseName || "";
+            if (nName) patch["initialAssessment.nurseName"] = nName;
+            ia.nurseCompleted = true;
+            if (!ia.nurseCompletedAt)
+              ia.nurseCompletedAt =
+                nurseHit.submittedAt || nurseHit.signedAt || new Date();
+            if (!ia.nurseName && nName) ia.nurseName = nName;
+            a.initialAssessment = ia;
+          }
+          if (patch) healWrites.push({ _id: a._id, patch });
+        }
+        if (healWrites.length > 0) {
+          // Fire-and-forget. Failure is non-fatal — next read heals again.
+          Promise.all(
+            healWrites.map((h) =>
+              Admission.updateOne({ _id: h._id }, { $set: h.patch }).catch(
+                () => null,
+              ),
+            ),
+          )
+            .then(() => {
+              console.log(
+                `[admissionService] auto-healed IA gate flag on ${healWrites.length} admission(s)`,
+              );
+            })
+            .catch(() => null);
+        }
+      }
+    } catch (e) {
+      // Heal step is best-effort. Original admissions array is fine.
+      console.error("[admissionService] IA-gate heal failed:", e.message);
+    }
+
+    return admissions;
   }
 
   /* ✅ Get all admissions for a patient — never throws, searches by _id AND UHID */

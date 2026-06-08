@@ -14,8 +14,10 @@ const { validateObjectIdParam } = require("../../utils/queryGuards");
 router.get("/today/:ipdNo",                 requireAction("nurse-notes.read"), ctrl.getTodayNotes);
 router.get("/patient/:patientId",           requireAction("nurse-notes.read"), ctrl.getNotesByPatient);
 router.get("/ipd/:ipdNo",                   requireAction("nurse-notes.read"), ctrl.getNotesByIPD);
-// Full patient nursing report (all notes + full module data, for print/PDF/insurance)
-router.get("/report/:ipdNo",                requireAction("nurse-notes.read"), ctrl.getPatientReport);
+// R7hr-156 — GET /report/:ipdNo removed. The Patient File / Complete File
+// print endpoint serves the same insurance / NABH audit need from a single
+// source of truth; the parallel "Print / PDF Report" surface in Nursing
+// Notes (and its controller method getPatientReport) were retired.
 router.post("/",                            requireAction("mar.write"),        ctrl.createNote);
 // Query-param fallback: GET /nurse-notes?ipdNo=XXX (used by NursingNotesPage)
 router.get("/",                             requireAction("nurse-notes.read"), ctrl.getNotesByQuery);

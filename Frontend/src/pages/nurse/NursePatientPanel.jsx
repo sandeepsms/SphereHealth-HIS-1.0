@@ -14,7 +14,14 @@ import PatientFileExport from "../../Components/clinical/PatientFileExport";
 // Treatment Chart MAR view. Shared TreatmentChart component handles
 // medication + infusion administration; nurseMode=true gives full
 // write access (Given / Hold / Not-Available / Partial / Refused).
+// R7hr-124 — the embedded panel view stacks one chart per day (today
+// live + history) instead of showing a single-day pager. The
+// standalone /treatment-chart page still uses <TreatmentChart>
+// directly with its Prev/Today/Next nav (untouched by this change).
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
+import TreatmentChartDayStack from "../../Components/clinical/TreatmentChartDayStack";
+// R7hr-157 — inline ICU bundle compliance display (was a launcher card)
+import ICUBundlesTab from "../../Components/clinical/ICUBundlesTab";
 // Phase 2 shell — pf-* design system shared with DoctorPatientPanel.
 import PatientPanelShell from "../../Components/clinical/PatientPanelShell";
 // Phase 3 — log every nurse-side UI event into the patient activity feed.
@@ -23,11 +30,16 @@ import {
   InitialAssessmentTab,
   MLCOrDoctorNotesTab,
   NursingNotesExpandedTab,
-  VitalChartTab,
-  IntakeOutputChartTab,
+  // R7hr-159 — VitalChartTab + IntakeOutputChartTab pills retired from
+  // the Nursing Patient Panel because the day-wise Treatment Chart
+  // digest already renders both surfaces (vitals strip + I/O strip per
+  // day card). The shared components stay exported from
+  // PatientPanelTabs.jsx in case any other panel still consumes them.
   BloodTransfusionRecordsTab,
   RBSMonitoringTab,
   HandoverNotesTab,
+  // R7hr-143 — Pending Investigation Reports shared tab
+  PendingInvestigationReportsTab,
 } from "../../Components/clinical/PatientPanelTabs";
 
 import { API_BASE_URL as BASE } from "../../config/api";
@@ -65,10 +77,18 @@ const TABS = [
   { id:"consent",     label:"📜 Consent Forms"        },
   { id:"mlc",         label:"⚖ MLC / Doctor Notes"   },
   { id:"nursing",     label:"📝 Nursing Notes"        },
-  { id:"vitals",      label:"📈 Vital Chart"          },
-  { id:"io",          label:"💧 Intake / Output"      },
+  // R7hr-159 — "📈 Vital Chart" + "💧 Intake / Output" pills retired.
+  // The day-wise Treatment Chart digest already surfaces both:
+  //   • Per-day vitals strip (BP/HR/RR/SpO₂/Temp/Pain/GCS/BSL/MEWS)
+  //   • Per-day Intake / Output strip (auto-fed from MAR + cron)
+  // Keeping two extra tabs that point at the same data led to drift
+  // every time a charting field was added. Single source of truth wins.
   { id:"blood",       label:"🩸 Blood Transfusion"    },
   { id:"rbs",         label:"🩸 RBS Monitoring"       },
+  // R7hr-143 — Pending Investigation Reports tile, same id as Doctor
+  // panel for parity. After "Sample Sent" the order surfaces here so
+  // the nurse can mark the report collected when results arrive.
+  { id:"pendingreports", label:"🧪 Pending Investigation Reports" },
   { id:"handover",    label:"🔄 Handover Notes"       },
   { id:"icubundles",  label:"🛡 ICU Bundles"         },
   // R7gx-UI — Treatment Chart pill (mirrors Doctor panel position).
@@ -217,12 +237,18 @@ function OverviewTab({patient,admission,nursingNotes=[],billing,doctorNotes=[]})
         </div>
       )}
 
-      {/* Quick stats */}
+      {/* Quick stats
+          R7hr-129 — Doctor Notes + Nursing Notes KPIs must NOT include
+          the Initial Assessment rows that R26 stores inside the same
+          collections. Initial Assessment surfaces have their own tab
+          pill above ("Initial Assessment N"). Counting raw .length
+          surfaced "2" on a panel where no daily doctor note was filled
+          (just the IA). Same fix as the tab-pill counts. */}
       <div className="pf-stats-grid">
         {[
-          {label:"Nursing Notes",  val: nursingNotes.length,                        icon:"📝", tint:"primary"},
+          {label:"Nursing Notes",  val: nursingNotes.filter(n=>n.noteType!=="initial"&&n.noteType!=="initialAssessment").length, icon:"📝", tint:"primary"},
           {label:"Pending Orders", val: todayOrders.length,                         icon:"⏳", tint: todayOrders.length > 0 ? "warn" : "neutral"},
-          {label:"Doctor Notes",   val: doctorNotes.length,                         icon:"🩺", tint:"info"},
+          {label:"Doctor Notes",   val: doctorNotes.filter(n=>n.noteType!=="initial"&&n.noteType!=="initialAssessment").length, icon:"🩺", tint:"info"},
           {label:"Balance Due",    val: billing ? fmtCur(billing.balanceAmount) : "—", icon:"💰", tint: billing?.balanceAmount > 0 ? "warn" : "ok"},
         ].map(s => (
           <div key={s.label} className={`pf-stat-card pf-stat-card--${s.tint}`}>
@@ -1643,9 +1669,252 @@ function DoctorNotesTab({doctorNotes=[]}) {
   );
 }
 
-/* ══════════════════════════════════════════════════ TAB: DOCTOR ORDERS */
-function DoctorOrdersTab({doctorNotes=[]}) {
-  // Extract all orders from all doctor notes
+/* ══════════════════════════════════════════════════ TAB: DOCTOR ORDERS
+   R7hr-145 — Day-wise audit-ready history of EVERY DoctorOrder.
+   Reads the real DoctorOrder collection (fetched into doctorOrders
+   state via /api/doctor-orders?UHID=…), not the embedded note.orders
+   array — that array stays empty for IA fan-out + standalone orders,
+   which was the cause of "No doctor orders found" on the panel.
+
+   Layout: orders bucketed by Day 1 (admission day), Day 2 …, newest
+   day on top. Within each day-card: NEW → IN PROGRESS → COMPLETED →
+   CANCELLED groups (mirrors NurseOrdersPanel section headers).
+*/
+function DoctorOrdersTab({doctorOrders=[], admission}) {
+  const orders = Array.isArray(doctorOrders) ? doctorOrders : [];
+  if (!orders.length) return <Empty icon="🩺" msg="No doctor orders found"/>;
+
+  // Day key = YYYY-MM-DD of orderedAt || createdAt
+  const dayKey = (d) => {
+    if (!d) return "—";
+    try { return new Date(d).toISOString().slice(0, 10); } catch { return "—"; }
+  };
+  const admissionDayKey = admission?.admissionDate || admission?.admittedAt
+    ? dayKey(admission?.admissionDate || admission?.admittedAt)
+    : null;
+
+  // Group by day
+  const byDay = new Map();
+  orders.forEach((o) => {
+    const k = dayKey(o.orderedAt || o.createdAt);
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(o);
+  });
+  // Newest day on top
+  const dayList = Array.from(byDay.keys()).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+
+  // Day number (1-based) relative to admission day
+  const dayNumber = (k) => {
+    if (!admissionDayKey || k === "—") return null;
+    const a = new Date(admissionDayKey + "T00:00:00");
+    const e = new Date(k + "T00:00:00");
+    const diff = Math.floor((e - a) / 86_400_000);
+    return diff >= 0 ? diff + 1 : null;
+  };
+
+  // Per-day section grouping (mirrors NurseOrdersPanel buckets)
+  const bucketOf = (o) => {
+    if (o.status === "Cancelled") return "Cancelled";
+    if (o.status === "Completed") return "Completed";
+    if ((o.auditLog?.length || 0) > 0 || o.status === "InProgress") return "InProgress";
+    return "New";
+  };
+
+  const typeColor = (t) => ({
+    "Medication":   { bg:"#fce7f3", fg:"#be185d", border:"#f9a8d4" },
+    "IV_Fluid":     { bg:"#dbeafe", fg:"#1d4ed8", border:"#93c5fd" },
+    "Investigation":{ bg:"#eff6ff", fg:"#1d4ed8", border:"#93c5fd" },
+    "Procedure":    { bg:"#fef3c7", fg:"#92400e", border:"#fde68a" },
+    "Diet":         { bg:"#dcfce7", fg:"#166534", border:"#86efac" },
+    "Activity":     { bg:"#fef3c7", fg:"#d97706", border:"#fde68a" },
+    "Nursing":      { bg:"#ccfbf1", fg:"#0f766e", border:"#5eead4" },
+  }[t] || { bg:"#f1f5f9", fg:"#475569", border:"#cbd5e1" });
+  const statusBg = (s) => ({
+    Pending:      { bg:"#fef3c7", fg:"#d97706" },
+    Acknowledged: { bg:"#dbeafe", fg:"#1d4ed8" },
+    Active:       { bg:"#dbeafe", fg:"#1d4ed8" },
+    InProgress:   { bg:"#e0e7ff", fg:"#4f46e5" },
+    Completed:    { bg:"#d1fae5", fg:"#059669" },
+    Cancelled:    { bg:"#fee2e2", fg:"#dc2626" },
+    OnHold:       { bg:"#fffbeb", fg:"#b45309" },
+  }[s] || { bg:"#f1f5f9", fg:"#475569" });
+
+  const fmtDay = (k) => {
+    if (k === "—") return "Date unknown";
+    try {
+      return new Date(k + "T00:00:00").toLocaleDateString("en-IN", {
+        weekday: "short", day: "2-digit", month: "short", year: "numeric",
+      });
+    } catch { return k; }
+  };
+  const fmtTime = (d) => {
+    if (!d) return "—";
+    try {
+      return new Date(d).toLocaleTimeString("en-IN", {
+        hour: "2-digit", minute: "2-digit", hour12: true,
+      });
+    } catch { return "—"; }
+  };
+
+  // Roll-up tally for the strip
+  const totalOrders   = orders.length;
+  const pendingTally  = orders.filter((o) => o.status === "Pending" || ((o.auditLog?.length||0)===0 && o.status !== "Completed" && o.status !== "Cancelled")).length;
+  const inProgTally   = orders.filter((o) => o.status === "InProgress" || ((o.auditLog?.length||0) > 0 && o.status !== "Completed" && o.status !== "Cancelled")).length;
+  const completedTally= orders.filter((o) => o.status === "Completed").length;
+  const cancelledTally= orders.filter((o) => o.status === "Cancelled").length;
+
+  const SectionInDay = ({ title, list, tone }) => {
+    if (!list.length) return null;
+    return (
+      <div style={{ marginTop: 12 }}>
+        <div style={{
+          display:"flex", alignItems:"center", gap:8, marginBottom:8,
+          fontSize:11, fontWeight:800, color:tone, letterSpacing:".5px", textTransform:"uppercase",
+        }}>
+          <div style={{ width:3, height:14, background:tone, borderRadius:2 }}/>
+          {title}
+          <span style={{ background:`${tone}1f`, color:tone, borderRadius:10, padding:"1px 8px", fontSize:11 }}>{list.length}</span>
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          {list.map((o) => {
+            const tc = typeColor(o.orderType);
+            const sb = statusBg(o.status);
+            const det = o.orderDetails || {};
+            const auditTrail = ["New", ...(o.auditLog || []).map((l) => l.step)].join(" → ");
+            const displayName = det.testName || det.medicineName || det.displayName
+              || det.fluidName || det.procedureName || det.dietName || o.orderType;
+            return (
+              <div key={o._id} style={{
+                background:"#fff", border:"1px solid #e2e8f0", borderLeft:`4px solid ${tc.fg}`,
+                borderRadius:8, padding:"10px 14px",
+              }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 }}>
+                  <span style={{
+                    background:tc.bg, color:tc.fg, border:`1px solid ${tc.border}`,
+                    borderRadius:4, padding:"2px 7px", fontSize:10, fontWeight:800, letterSpacing:".3px",
+                  }}>{o.orderType}</span>
+                  <span style={{
+                    background:sb.bg, color:sb.fg, borderRadius:20, padding:"1px 8px",
+                    fontSize:10, fontWeight:700,
+                  }}>{o.status}</span>
+                  {o.priority && o.priority !== "Routine" && (
+                    <span style={{
+                      background:o.priority === "STAT" ? "#fef2f2" : "#fffbeb",
+                      color:o.priority === "STAT" ? "#dc2626" : "#d97706",
+                      border:`1px solid ${o.priority === "STAT" ? "#fecaca" : "#fde68a"}`,
+                      borderRadius:4, padding:"1px 7px", fontSize:10, fontWeight:800,
+                    }}>{o.priority}</span>
+                  )}
+                  {o.isVerbal && (
+                    <span style={{
+                      background:"#fffbeb", color:"#b45309", border:"1px solid #fde68a",
+                      borderRadius:4, padding:"1px 7px", fontSize:10, fontWeight:800,
+                    }}>📞 Verbal{o.coSignedBy ? " · ✓ cosigned" : " · pending cosign"}</span>
+                  )}
+                  <span style={{ marginLeft:"auto", fontSize:10, fontFamily:"monospace", color:"#64748b" }}>
+                    {fmtTime(o.orderedAt || o.createdAt)}
+                  </span>
+                </div>
+                <div style={{ fontSize:13, fontWeight:700, color:"#0f172a", marginBottom:2 }}>{displayName}</div>
+                <div style={{ fontSize:11, color:"#475569", display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {det.dose && <span><strong>Dose:</strong> {det.dose}</span>}
+                  {det.frequency && <span>· {det.frequency}</span>}
+                  {det.route && <span>· {det.route}</span>}
+                  {det.duration && <span>· {det.duration}</span>}
+                  {det.urgency && o.orderType === "Investigation" && <span>· {det.urgency}</span>}
+                  {det.fluidName && o.orderType === "IV_Fluid" && <span>{det.fluidName}</span>}
+                  {det.totalVolume && <span>· {det.totalVolume} ml</span>}
+                  {det.rate && <span>· {det.rate} ml/hr</span>}
+                </div>
+                <div style={{ fontSize:11, color:"#475569", marginTop:6, fontStyle:"italic" }}>
+                  {auditTrail}
+                </div>
+                <div style={{ fontSize:10, color:"#94a3b8", marginTop:4 }}>
+                  Rx by: {o.orderedBy || "Doctor"}
+                  {o.orderedByEmployeeId && ` (${o.orderedByEmployeeId})`}
+                  {o.isVerbal && o.verbalFromDoctor && ` · via ${o.verbalEnteredByName || "Nurse"} on behalf of Dr. ${o.verbalFromDoctor}`}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      {/* Tally strip */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:8 }}>
+        <div style={{ background:"#f8fafc", border:"1px solid #e2e8f0", borderRadius:8, padding:"8px 10px" }}>
+          <div style={{ fontSize:10, color:"#64748b", fontWeight:700, letterSpacing:".3px" }}>TOTAL</div>
+          <div style={{ fontSize:18, fontWeight:800, color:"#0f172a" }}>{totalOrders}</div>
+        </div>
+        <div style={{ background:"#fffbeb", border:"1px solid #fde68a", borderRadius:8, padding:"8px 10px" }}>
+          <div style={{ fontSize:10, color:"#92400e", fontWeight:700, letterSpacing:".3px" }}>NEW</div>
+          <div style={{ fontSize:18, fontWeight:800, color:"#b45309" }}>{pendingTally}</div>
+        </div>
+        <div style={{ background:"#eff6ff", border:"1px solid #93c5fd", borderRadius:8, padding:"8px 10px" }}>
+          <div style={{ fontSize:10, color:"#1e40af", fontWeight:700, letterSpacing:".3px" }}>IN PROGRESS</div>
+          <div style={{ fontSize:18, fontWeight:800, color:"#1d4ed8" }}>{inProgTally}</div>
+        </div>
+        <div style={{ background:"#ecfdf5", border:"1px solid #86efac", borderRadius:8, padding:"8px 10px" }}>
+          <div style={{ fontSize:10, color:"#166534", fontWeight:700, letterSpacing:".3px" }}>COMPLETED</div>
+          <div style={{ fontSize:18, fontWeight:800, color:"#15803d" }}>{completedTally}</div>
+        </div>
+        <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:8, padding:"8px 10px" }}>
+          <div style={{ fontSize:10, color:"#991b1b", fontWeight:700, letterSpacing:".3px" }}>CANCELLED</div>
+          <div style={{ fontSize:18, fontWeight:800, color:"#dc2626" }}>{cancelledTally}</div>
+        </div>
+      </div>
+
+      {/* Day-wise cards */}
+      {dayList.map((k) => {
+        const dayOrders = byDay.get(k) || [];
+        const newList   = dayOrders.filter((o) => bucketOf(o) === "New");
+        const inProg    = dayOrders.filter((o) => bucketOf(o) === "InProgress");
+        const completed = dayOrders.filter((o) => bucketOf(o) === "Completed");
+        const cancelled = dayOrders.filter((o) => bucketOf(o) === "Cancelled");
+        const dn = dayNumber(k);
+        return (
+          <div key={k} style={{
+            background:"#fff", border:"1.5px solid #e2e8f0", borderRadius:12,
+            overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,.04)",
+          }}>
+            <div style={{
+              background:"linear-gradient(to right, #f0f9ff, #f8fafc)",
+              borderBottom:"1px solid #e2e8f0", padding:"10px 16px",
+              display:"flex", alignItems:"center", gap:10, justifyContent:"space-between", flexWrap:"wrap",
+            }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                {dn && (
+                  <span style={{
+                    background:"#1d4ed8", color:"#fff", fontSize:11, fontWeight:800,
+                    padding:"3px 10px", borderRadius:20, letterSpacing:".3px",
+                  }}>DAY {dn}</span>
+                )}
+                <div style={{ fontWeight:800, fontSize:14, color:"#0f172a" }}>{fmtDay(k)}</div>
+              </div>
+              <div style={{ fontSize:11, color:"#64748b", fontWeight:600 }}>
+                {dayOrders.length} order{dayOrders.length !== 1 ? "s" : ""} placed
+              </div>
+            </div>
+            <div style={{ padding:"10px 16px" }}>
+              <SectionInDay title="🔔 New"        list={newList}   tone="#d97706" />
+              <SectionInDay title="⏳ In Progress" list={inProg}    tone="#1d4ed8" />
+              <SectionInDay title="✅ Completed"  list={completed} tone="#15803d" />
+              <SectionInDay title="🚫 Cancelled"  list={cancelled} tone="#dc2626" />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── Legacy DoctorOrdersTab body retained below as dead code to ease
+   bisecting if a regression surfaces (R25). New body returned above. */
+function _legacyDoctorOrdersTab_unused({doctorNotes=[]}) {
   const allOrders = [];
   doctorNotes.forEach(note=>{
     (note.orders||[]).forEach(o=>{
@@ -2386,14 +2655,23 @@ function NursePatientPanelContent({ selectedAdmission }) {
       case "initial":    return <InitialAssessmentTab doctorNotes={doctorNotes} nursingNotes={nursingNotes} admission={admission}/>;
       case "mlc":        return <MLCOrDoctorNotesTab patient={patient} doctorNotes={doctorNotes} admission={admission}/>;
       case "nursing":    return <NursingNotesExpandedTab nursingNotes={nursingNotes} admission={admission}/>;
-      case "vitals":     return <VitalChartTab nursingNotes={nursingNotes} vitalSheet={vitalSheet}/>;
-      case "io":         return <IntakeOutputChartTab nursingNotes={nursingNotes}/>;
+      // R7hr-159 — "vitals" + "io" cases retired (see TABS list above).
+      // Vitals + I/O now consumed only via the Treatment Chart digest.
       case "blood":      return <BloodTransfusionRecordsTab nursingNotes={nursingNotes}/>;
       case "rbs":        return <RBSMonitoringTab nursingNotes={nursingNotes} doctorOrders={doctorOrders}/>;
+      // R7hr-143 — Pending Investigation Reports (nurse view — the
+      // canonical "Mark Report Collected" actor per NABH AAC.4 sample
+      // chain-of-custody. Doctor view also gets it but is mainly used
+      // for review).
+      case "pendingreports": return <PendingInvestigationReportsTab admission={admission} patient={patient} canMarkReportCollected={true} actorName="Nurse"/>;
       case "handover":   return <HandoverNotesTab patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>;
       // R7gx-UI — Treatment Chart (MAR) via shared component, nurse-mode on.
-      case "treatment":  return <TreatmentChart UHID={patient?.UHID} admissionId={admission?._id} patientName={patient?.fullName || patient?.name} nurseMode={true} />;
-      case "orders":     return <DoctorOrdersTab doctorNotes={doctorNotes}/>;
+      case "treatment":  return <TreatmentChartDayStack UHID={patient?.UHID} admissionId={admission?._id} admissionDate={admission?.admissionDate || admission?.admittedAt} patientName={patient?.fullName || patient?.name} nurseMode={true} />;
+      // R7hr-145 — Doctor Orders tab now reads the REAL DoctorOrder
+      // collection (not the embedded `note.orders` array) so the IA
+      // fan-out + every standalone order (Lab/Rx/Infusion/Procedure)
+      // shows up here grouped day-wise.
+      case "orders":     return <DoctorOrdersTab doctorOrders={doctorOrders} admission={admission}/>;
       // R7gx-UI — "meds" tab removed.
       case "medrecon":   return <MedReconciliationTab admission={admission} patient={patient}/>;
       case "billing":    return <BillingTab billing={billing}/>;
@@ -2405,15 +2683,12 @@ function NursePatientPanelContent({ selectedAdmission }) {
       // R7hr-75 — Real saved-consent list (mirrors doctor panel) so a nurse
       // who just witnessed a consent immediately sees it here.
       case "consent":    return <ConsentFormsTab consents={consents} uhid={patient?.UHID || activeUhid} patient={patient} admission={admission}/>;
-      case "icubundles": return renderLauncher({
-        id: "icubundles", icon: "🛡", color: "#0ea5e9",
-        title: "Bundles of Care — ICU",
-        description: "Daily VAP / CLABSI / CAUTI / DVT prophylaxis bundle compliance checklist with auto-emit to Infection Control (HIC.5) register.",
-        nabh: "NABH HIC.5 · ICU Care Bundles",
-        url: ({ uhid }) => `/icu-bundles?uhid=${encodeURIComponent(uhid)}`,
-        cta: "Open ICU Bundles ↗",
-        note: "Nurse can chart daily compliance; doctor signs off.",
-      });
+      // R7hr-157 — Replaced the launcher card with an inline component
+      // that reads the real ICU bundle sheets (VAP / CAUTI / CLABSI /
+      // DVT / Sepsis / SUP, NABH HIC.5) and renders the latest sheet
+      // hero + per-bundle compliance + recent-sheets history. The full
+      // editor at /icu-bundles is still reachable from the header CTA.
+      case "icubundles": return <ICUBundlesTab uhid={patient?.UHID || activeUhid} role="Nurse" />;
       case "discharge":  return renderLauncher({
         id: "discharge", icon: "🚪", color: "#dc2626",
         title: "Discharge Summary",
@@ -2453,18 +2728,43 @@ function NursePatientPanelContent({ selectedAdmission }) {
                       + nursingNotes.filter((n) => n.noteType === "initial" || n.noteType === "initialAssessment").length;
   const _handoverCount = doctorNotes.filter((n) => n.noteType === "handover").length
                        + nursingNotes.filter((n) => ["handover","discharge","sbar"].includes(n.noteType)).length;
+  // R7hr-145 — Count BOTH the legacy embedded note.orders array AND the
+  // real DoctorOrder collection so the Doctor Orders tab pill reflects
+  // every order (IA fan-out + standalone Lab/Rx/Infusion). The
+  // DoctorOrdersTab body itself reads doctorOrders directly; this stat
+  // only drives the tab pill / "dimmed-when-empty" gate.
   const _allOrders = doctorNotes.flatMap((n) => n.orders || []);
-  const _pendingOrderCount = _allOrders.filter((o) => !o.nurseStatus || o.nurseStatus === "pending").length;
+  const _ordersTabCount = (Array.isArray(doctorOrders) ? doctorOrders.length : 0) + _allOrders.length;
+  // Legacy "pending only" count retained as a fallback; the tab pill
+  // below uses _ordersTabCount so the badge shows the full day-wise total.
+  const _pendingOrderCount = _ordersTabCount;
   const _treatmentCount = (doctorOrders || []).filter((o) =>
     ["Medication","IV_Fluid","Infusion","Procedure","Diet"].includes(o.orderType)
   ).length;
   const _billingCount = billing?.items?.length || (Number(billing?.totalAmount) > 0 ? 1 : 0);
 
+  // R7hr-129 — Mirror R7hr-101 fix already applied to DoctorPatientPanel.
+  // After R26 made Doctor IA + Nurse IA both save into the DoctorNote
+  // collection (with `section`), the raw `doctorNotes.length` /
+  // `nursingNotes.length` counts here double-counted IA rows that the
+  // MLC + Nursing tab bodies correctly filter out. User-reported:
+  // "MLC / Doctor Notes 2" pill while the timeline correctly read
+  // "0 NOTE(S)". Subtract IA so the badge matches the body. The
+  // Initial Assessment tab pill (`_initialCount` above) already
+  // surfaces those records — no information is lost.
+  // R25-safe: count derivation only, no shape change to readers.
+  const _mlcCount = doctorNotes.filter(
+    (n) => n.noteType !== "initial" && n.noteType !== "initialAssessment",
+  ).length;
+  const _nursingCount = nursingNotes.filter(
+    (n) => n.noteType !== "initial" && n.noteType !== "initialAssessment",
+  ).length;
+
   const tabCounts = {
     initial:   _initialCount,
     consent:   consents.length, // R7hr-75
-    mlc:       doctorNotes.length,
-    nursing:   nursingNotes.length,
+    mlc:       _mlcCount,
+    nursing:   _nursingCount,
     vitals:    vitalSheet.length,
     handover:  _handoverCount,
     treatment: _treatmentCount,
@@ -2477,7 +2777,8 @@ function NursePatientPanelContent({ selectedAdmission }) {
   const quickActions = admission ? [
     { label: "❤️ Record Vitals", onClick: () => navigate("/nursing-notes") },
     { label: "📝 Nursing Notes", onClick: () => navigate("/nursing-notes") },
-    { label: "💊 MAR",           onClick: () => navigate("/mar") },
+    // R7hr-140 — /mar retired; nursing-notes panel hosts the Treatment Chart Live MAR tile.
+    { label: "💊 MAR",           onClick: () => navigate("/nursing-notes") },
   ] : [];
 
   // Gate banners: handover-pending (if any) + initial assessment gate

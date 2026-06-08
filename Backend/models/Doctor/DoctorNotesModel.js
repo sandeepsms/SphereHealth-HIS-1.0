@@ -179,6 +179,18 @@ const DoctorNotesSchema = new mongoose.Schema(
     tags:         [{ type: String }],
     noteDetails:  { type: mongoose.Schema.Types.Mixed },        // ICU/procedure/consultation specifics
     patientStatus:{ type: String },
+    // R7hr-116 — Section flag for R26 split. Doctor IA and Nurse IA are
+    // SEPARATE records (R26 user rule, 2026-06-06), both with noteType:
+    // "initial". The section field lets the dedupe gate enforce
+    // "one per role per admission" instead of "one per admission" —
+    // without it, a signed Doctor IA blocked the Nurse from saving hers.
+    // Legacy notes have no section; the dedupe falls back to inferring
+    // from noteDetails (doctor.* present → "doctor", nursing.* → "nursing").
+    section: {
+      type: String,
+      enum: ["nursing", "doctor", "both", null],
+      default: null,
+    },
 
     // Digital signature
     // R7az-D2-MED-7: cap signature payload at ~150KB (200KB base64) so a
@@ -271,25 +283,32 @@ DoctorNotesSchema.index({ admissionId: 1, visitDate: -1 });
 // noteType === "initial", so general / progress / daily / etc. notes are
 // unaffected. Two indexes give us belt-and-braces because the legacy
 // path stamps ipdNo only, while the canonical path stamps admissionId.
+// R7hr-116 — uniqueness is per (admission, role), not per admission.
+// R26 split mandates Doctor IA and Nurse IA as SEPARATE records both
+// with noteType:"initial". The original indexes blocked the second
+// role from saving once the first signed. Now the section field
+// participates in the key so doctor + nurse can each have their own.
 DoctorNotesSchema.index(
-  { admissionId: 1, noteType: 1 },
+  { admissionId: 1, noteType: 1, section: 1 },
   {
-    name: "uniq_initial_per_admission",
+    name: "uniq_initial_per_admission_section",
     unique: true,
     partialFilterExpression: {
       noteType: "initial",
       admissionId: { $type: "objectId" },
+      section: { $in: ["nursing", "doctor"] },
     },
   },
 );
 DoctorNotesSchema.index(
-  { ipdNo: 1, noteType: 1 },
+  { ipdNo: 1, noteType: 1, section: 1 },
   {
-    name: "uniq_initial_per_ipdNo",
+    name: "uniq_initial_per_ipdNo_section",
     unique: true,
     partialFilterExpression: {
       noteType: "initial",
       ipdNo: { $type: "string" },
+      section: { $in: ["nursing", "doctor"] },
     },
   },
 );
@@ -299,6 +318,11 @@ DoctorNotesSchema.index(
 // pre("save") query catch surfaces a clean error code BEFORE Mongo
 // throws E11000, so the service / controller can route the user to the
 // existing IA rather than spitting a raw duplicate-key error.
+// R7hr-118 — uniqueness is per (admission, role). After R26 split, the
+// Nurse IA and Doctor IA are SEPARATE records both with noteType:"initial".
+// The original section-blind guard blocked the second role from saving once
+// the first signed — now the section field participates: we only collide
+// when an existing IA shares the SAME admission AND the SAME section.
 DoctorNotesSchema.pre("save", async function (next) {
   try {
     if (!this.isNew) return next();
@@ -309,19 +333,41 @@ DoctorNotesSchema.pre("save", async function (next) {
     if (this.ipdNo)       ors.push({ ipdNo: this.ipdNo });
     if (!ors.length)      return next();
 
-    const existing = await this.constructor.findOne({
+    // Derive the incoming section: explicit field wins, else infer from
+    // wrappers on noteDetails (legacy pre-R26 path).
+    const incomingSection = this.section || (
+      (this.noteDetails?.doctor || this.noteDetails?.nabh) ? "doctor" :
+      (this.noteDetails?.nursing || this.noteDetails?.nursingNabh) ? "nursing" :
+      null
+    );
+
+    const candidates = await this.constructor.find({
       _id: { $ne: this._id },
       noteType: "initial",
       $or: ors,
-    }).select("_id").lean();
+    }).select("_id section noteDetails").lean();
 
-    if (existing) {
+    // Only block when a candidate shares the SAME section. Legacy notes
+    // without a section field have it inferred from their noteDetails
+    // wrappers exactly as on the incoming side, so a Nurse re-save will
+    // not collide with a pre-R26 Doctor IA that has only doctor.* wrappers.
+    const collision = candidates.find(c => {
+      const cSection = c.section || (
+        (c.noteDetails?.doctor || c.noteDetails?.nabh) ? "doctor" :
+        (c.noteDetails?.nursing || c.noteDetails?.nursingNabh) ? "nursing" :
+        null
+      );
+      return cSection && incomingSection && cSection === incomingSection;
+    });
+
+    if (collision) {
+      const roleLabel = incomingSection === "nursing" ? "Nursing" : "Doctor";
       const err = new Error(
-        "An Initial Assessment already exists for this admission. Open the existing one and use Amend instead of creating a new one.",
+        `${roleLabel} Initial Assessment already exists for this admission. Open the existing one and use Amend instead of creating a new one.`,
       );
       err.code = "DUPLICATE_INITIAL_ASSESSMENT";
       err.statusCode = 409;
-      err.existing = existing;
+      err.existing = { _id: collision._id };
       return next(err);
     }
     return next();

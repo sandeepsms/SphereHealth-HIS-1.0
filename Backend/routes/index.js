@@ -54,6 +54,8 @@ const bedTransferRoutes = require("./Patient/bedTransferRoutes");
 // ── Phase 1: NABH Paperless Modules ──────────────────────────
 const dischargeSummaryRoutes = require("./Clinical/dischargeSummaryRoutes");
 const consentFormRoutes = require("./Clinical/consentFormRoutes");
+// R7hr-113 — Paperless PROM/PREM survey routes (gates discharge finalize)
+const promPremSurveyRoutes = require("./Clinical/promPremSurveyRoutes");
 const nursingCarePlanRoutes = require("./Nurse/nursingCarePlanRoutes");
 const nursingAssessmentsRoutes = require("./Nurse/nursingAssessmentsRoutes");
 const assessmentComplianceRoutes = require("./Compliance/assessmentComplianceRoutes");
@@ -203,6 +205,10 @@ router.use("/investigation-orders", investigationOrderRoutes);
 // Phase 1: NABH Paperless Modules
 router.use("/discharge-summary", dischargeSummaryRoutes);
 router.use("/consent-forms", consentFormRoutes);
+// R7hr-113 — Paperless PROM/PREM surveys. Discharge finalize gate consults
+// /api/prom-prem-surveys?admissionId=X to confirm one signed PROM + one
+// signed PREM exist before allowing the discharge to lock.
+router.use("/prom-prem-surveys", promPremSurveyRoutes);
 // R7fu — Medical Certificate surface (12 cert types: fitness, sick-leave,
 // discharge-fitness, disability, vaccination, pre-employment, insurance-claim,
 // sterilization, bedridden, medico-legal, cause-of-death, birth-notification).

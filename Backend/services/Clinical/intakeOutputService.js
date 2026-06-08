@@ -130,8 +130,29 @@ async function recordHourlyInfusionIntake({ order, hourBucket, ratePerHour, admi
   });
   if (!admissionId) return null;
 
-  const fluid = order.orderDetails?.medicineName || order.orderDetails?.fluidType || "IV Fluid";
+  // R7hr-137 — IV infusion orderDetails actually carry `fluidName` +
+  // `displayName` (set by InfusionPanel + R7hr-97 IA fan-out). Pre-fix
+  // we only read medicineName/fluidType — neither of which the producer
+  // writes — so every auto-hourly row collapsed to "IV Fluid" in the
+  // patient panel I/O ledger. NABH MOM.4 expects the I/O label to
+  // identify the actual fluid (so a surveyor can reconcile intake
+  // against the bag administered). Read the producer fields first;
+  // legacy fallback kept for older rows.
+  const fluid = order.orderDetails?.fluidName
+              || order.orderDetails?.displayName
+              || order.orderDetails?.medicineName
+              || order.orderDetails?.fluidType
+              || "IV Fluid";
   const additives = order.orderDetails?.additives || "";
+  const route     = order.orderDetails?.route || "";
+  // R7hr-137 — Notes line now carries the rate + route context so the
+  // I/O row is self-describing without having to cross-reference the
+  // infusion card. Pre-fix the Notes column was always empty.
+  const noteParts = [];
+  if (route)     noteParts.push(`Route: ${route}`);
+  if (additives) noteParts.push(`Additives: ${additives}`);
+  noteParts.push(`Rate: ${ml} ml/hr`);
+  const notes = noteParts.join(" · ");
   const label =
     `${fluid}${additives ? " + " + additives : ""} — ${ml} ml/hr (auto-hourly)`;
 
@@ -155,12 +176,18 @@ async function recordHourlyInfusionIntake({ order, hourBucket, ratePerHour, admi
           sourceRefType: "DoctorOrder",
           sourceRefId: order._id,
           label,
-          recordedBy: { name: "SYSTEM", role: "System" },
+          notes,
+          // R7hr-137 — "SYSTEM" was technically true but unhelpful at
+          // bedside. A nurse reading the row needs to know WHY it's
+          // there without cross-referencing the audit log. "Treatment
+          // Chart (auto-hourly)" makes the source self-explanatory.
+          recordedBy: { name: "Treatment Chart (auto-hourly)", role: "System" },
           meta: {
             orderId: order._id,
             hourBucket,
             ratePerHour: ml,
             additives,
+            route,
           },
         },
       },
