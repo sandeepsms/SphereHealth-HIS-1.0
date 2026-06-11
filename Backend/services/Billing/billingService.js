@@ -2212,7 +2212,9 @@ class BillingService {
 
   // ── 14. Daycare → IPD conversion ──────────────────────────────
   async checkAndHandleDaycareConversion(admissionId) {
-    const admission = await Admission.findById(admissionId).populate("patient");
+    // Admission's patient ref field is `patientId` (not `patient`) — the old
+    // populate("patient") threw strictPopulate and 500'd every call.
+    const admission = await Admission.findById(admissionId);
     // Admission.admissionType enum is mixed-case — "Daycare" or "Day Care".
     // The legacy "DAYCARE" string never matched, so this endpoint always
     // short-circuited to null and the auto-conversion to IPD never fired.
@@ -2249,9 +2251,9 @@ class BillingService {
         { $set: { isActive: false } },
       );
 
-      if (admission.patient) {
+      if (admission.patientId) {
         const Patient = require("../../models/Patient/patientModel");
-        const patient = await Patient.findById(admission.patient).populate(
+        const patient = await Patient.findById(admission.patientId).populate(
           "tpa",
         );
         if (patient)

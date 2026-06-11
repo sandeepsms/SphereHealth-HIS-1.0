@@ -5,13 +5,15 @@
       "name": "Backend (Express)",
       "runtimeExecutable": "npm.cmd",
       "runtimeArgs": ["run", "start", "--prefix", "Backend"],
-      "port": 5050
+      "port": 5050,
+      "autoPort": false
     },
     {
       "name": "Frontend (Vite)",
       "runtimeExecutable": "npm.cmd",
       "runtimeArgs": ["run", "dev", "--prefix", "Frontend"],
-      "port": 5173
+      "port": 5173,
+      "autoPort": false
     }
   ]
 }

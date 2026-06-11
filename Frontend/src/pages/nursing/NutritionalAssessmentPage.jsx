@@ -27,6 +27,93 @@ const C = {
   slate: "#1e293b", pink: "#be185d",
 };
 
+function Section({ title, icon, color=C.primary, badge, children, defaultOpen=true }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:14, marginBottom:16, overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
+      <div onClick={()=>setOpen(o=>!o)} style={{ padding:"12px 20px", background:"#f8fafc", borderBottom:open?`1px solid ${C.border}`:"none", display:"flex", alignItems:"center", justifyContent:"space-between", cursor:"pointer", userSelect:"none" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <span style={{ width:30, height:30, borderRadius:8, background:color+"18", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <i className={`pi ${icon}`} style={{ fontSize:13, color }} />
+          </span>
+          <span style={{ fontWeight:700, fontSize:13, color:C.text }}>{title}</span>
+          {badge && <span style={{ background:color+"20", color, fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:8 }}>{badge}</span>}
+        </div>
+        <i className={`pi ${open?"pi-chevron-up":"pi-chevron-down"}`} style={{ fontSize:11, color:C.muted }} />
+      </div>
+      {open && <div style={{ padding:"18px 20px" }}>{children}</div>}
+    </div>
+  );
+}
+
+function Field({ label, children, style }) {
+  return (
+    <div style={style}>
+      {label && <label className="his-label">{label}</label>}
+      {children}
+    </div>
+  );
+}
+
+function PageHeader({ icon, title, subtitle, gradient, right }) {
+  return (
+    <div style={{ background:gradient, borderRadius:14, padding:"18px 24px", marginBottom:20, display:"flex", justifyContent:"space-between", alignItems:"center", boxShadow:"0 4px 16px rgba(0,0,0,.08)" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+        <div style={{ width:46, height:46, borderRadius:12, background:"rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <i className={`pi ${icon}`} style={{ fontSize:20, color:"#fff" }} />
+        </div>
+        <div>
+          <div style={{ color:"#fff", fontWeight:800, fontSize:18, letterSpacing:"-.3px" }}>{title}</div>
+          <div style={{ color:"rgba(255,255,255,.7)", fontSize:12, marginTop:2 }}>{subtitle}</div>
+        </div>
+      </div>
+      {right && <div>{right}</div>}
+    </div>
+  );
+}
+
+function ScoreBadge({ score, max, label, bg, color }) {
+  return (
+    <div style={{ background:bg, border:`2px solid ${color}`, borderRadius:12, padding:"12px 20px", textAlign:"center", minWidth:100 }}>
+      <div style={{ fontSize:28, fontWeight:900, color, lineHeight:1 }}>{score}</div>
+      <div style={{ fontSize:10, fontWeight:700, color, marginTop:2 }}>/ {max}</div>
+      <div style={{ fontSize:11, color, fontWeight:600, marginTop:4 }}>{label}</div>
+    </div>
+  );
+}
+
+const PRESCREENING = [
+  { key:"bmi_low",    label:"BMI < 20.5?" },
+  { key:"wt_loss",    label:"Weight loss in the past 3 months?" },
+  { key:"intake_low", label:"Reduced dietary intake in the past week?" },
+  { key:"severely_ill", label:"Patient is severely ill (e.g. ICU)?" },
+];
+
+const NUTRI_STATUS = [
+  { value:0, label:"Absent", desc:"Normal nutritional status" },
+  { value:1, label:"Mild",   desc:"Wt loss >5% in 3 months OR food intake <75% of normal in past week" },
+  { value:2, label:"Moderate", desc:"Wt loss >5% in 2 months OR BMI 18.5–20.5 + poor general condition" },
+  { value:3, label:"Severe", desc:"BMI <18.5 + poor general condition OR wt loss >5% in 1 month (>15% in 3m) OR food intake 0–25%" },
+];
+
+const DISEASE_SEVERITY = [
+  { value:0, label:"Absent", desc:"Normal nutritional requirements" },
+  { value:1, label:"Mild",   desc:"Hip fracture, chronic disease (cirrhosis, COPD, HD, diabetes, cancer)" },
+  { value:2, label:"Moderate", desc:"Major abdominal surgery, stroke, severe pneumonia, haematologic malignancy" },
+  { value:3, label:"Severe", desc:"Head injury, bone marrow transplant, ICU patients (APACHE >10)" },
+];
+
+const DIET_TYPES = ["Normal","Soft","Liquid","NPO","Tube Feeding","TPN","Diabetic","Low Sodium","Low Fat","High Protein"];
+
+const defaultForm = {
+  prescreen: { bmi_low:"", wt_loss:"", intake_low:"", severely_ill:"" },
+  nutriStatus: null, diseaseSeverity: null, ageOver70: false,
+  height:"", weight:"", usualWeight:"",
+  dietType:[], appetite:"", swallowing:"",
+  dietitianReferral: false, referralDate:"",
+  nutritionPlan:"",
+};
+
 function calcBMI(h, w) {
   const hm = parseFloat(h)/100;
   const wk = parseFloat(w);
@@ -237,15 +324,15 @@ function NutritionalContent({ patient }) {
           <Field label="Weight (kg)"><input type="number" className="his-field" value={form.weight} onChange={e=>setF("weight",e.target.value)} placeholder="e.g. 70" /></Field>
           <Field label="Usual Weight (kg)"><input type="number" className="his-field" value={form.usualWeight} onChange={e=>setF("usualWeight",e.target.value)} placeholder="e.g. 75" /></Field>
           <Field label="BMI (auto)">
-            <div style={{ ...fld, background:"#f8fafc", color: bmi ? (parseFloat(bmi)<18.5||parseFloat(bmi)>30 ? C.red : C.green) : C.muted, fontWeight:700 }}>
+            <div className="his-field" style={{ background:"#f8fafc", color: bmi ? (parseFloat(bmi)<18.5||parseFloat(bmi)>30 ? C.red : C.green) : C.muted, fontWeight:700 }}>
               {bmi ? `${bmi} kg/m²` : "—"}
             </div>
           </Field>
           <Field label="Ideal Body Wt (kg)">
-            <div style={{ ...fld, background:"#f8fafc", color:C.muted }}>{ibw ? `${ibw} kg` : "—"}</div>
+            <div className="his-field" style={{ background:"#f8fafc", color:C.muted }}>{ibw ? `${ibw} kg` : "—"}</div>
           </Field>
           <Field label="% Usual Body Wt">
-            <div style={{ ...fld, background:"#f8fafc", color: pubw ? (parseFloat(pubw)<85?C.red:C.green) : C.muted, fontWeight:700 }}>
+            <div className="his-field" style={{ background:"#f8fafc", color: pubw ? (parseFloat(pubw)<85?C.red:C.green) : C.muted, fontWeight:700 }}>
               {pubw ? `${pubw}%` : "—"}
             </div>
           </Field>

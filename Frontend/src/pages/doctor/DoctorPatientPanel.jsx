@@ -3011,7 +3011,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
         (o) => (o.orderType || "").toLowerCase().includes("procedure")
             && !["Completed","Cancelled","Stopped"].includes(o.status)
       )}
-      gateBanners={gateBannersWithDevices}
+      gateBanners={gateBanners}
       tabs={TABS}
       activeTab={activeTab}
       onTabChange={setActiveTab}
