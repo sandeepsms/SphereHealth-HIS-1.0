@@ -293,6 +293,11 @@ router.use("/diabetic-chart",   require("./Clinical/diabeticChartRoutes"));
 // Infection-Control register via ClinicalAudit emit on finalize.
 router.use("/icu-bundles",      require("./Clinical/icuBundleRoutes"));
 
+// R7hr-184 — Invasive-device registry (intubation / catheter / cannula /
+// lines). Doctor+Nurse place/change/remove with timestamps; drives ICU
+// bundle applicability (no ET tube → VAP N/A, no Foley → CAUTI N/A).
+router.use("/patient-devices",  require("./Clinical/patientDeviceRoutes"));
+
 // Equipment inventory + homecare loan tracker + service history
 router.use("/equipment",        require("./Equipment/equipmentRoutes"));
 

@@ -32,6 +32,7 @@
 import React from "react";
 import { QRCodeSVG } from "qrcode.react";
 import useHospitalSettings from "../print/useHospitalSettings";
+import PatientDevicesStrip from "./PatientDevicesStrip"; // R7hr-184
 import "./PatientHeaderCard.css";
 
 const fmtDate = (d) =>
@@ -315,6 +316,11 @@ export default function PatientHeaderCard({
                   ))}
                 </div>
               )}
+              {/* R7hr-184 — Invasive-device registry strip (Intubated /
+                  Foley / Cannula / Lines). IPD-only; renders nothing
+                  when the admission has no IPD number or the role
+                  can't read MAR-scope data. */}
+              {ipdNumVal !== "—" && <PatientDevicesStrip ipdNo={ipdNumVal} />}
             </div>
           </div>
 
