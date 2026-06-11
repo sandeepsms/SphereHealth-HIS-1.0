@@ -1419,11 +1419,15 @@ class BillingService {
         }
       }
 
-      if (bill.billStatus === "DRAFT") {
-        throw new Error(
-          "Bill abhi DRAFT hai — pehle generateFinalBill() karo, tab payment lo",
-        );
-      }
+      // R7hr-188 (USER): DRAFT bills now ACCEPT payments. The IPD Live
+      // Ledger collects interim payments mid-stay while the bill is
+      // still accruing daily charges — pre-R7hr-188 the cashier's only
+      // option was routing the money into the UHID advance pool, which
+      // showed Outstanding unchanged ("payment collect kr raha hu to
+      // advance me jma ho jaati hai"). The bill REMAINS DRAFT after the
+      // payment (see the status assignment below) so the auto-biller
+      // keeps appending to the same bill; generateFinalBill carries the
+      // accumulated payments[] into settlement untouched.
       // R7aw-FIX-8/D7: GENERATING is the CAS-claimed intermediate state used
       // by generateFinalBill to serialise concurrent generate calls. Brief
       // (typically <100ms) — payment must wait for the flip to GENERATED.
@@ -1486,7 +1490,14 @@ class BillingService {
       const balance = Math.max(0, toNum(bill.patientPayableAmount) - totalPaid);
       bill.advancePaid   = totalPaid;
       bill.balanceAmount = balance;
-      bill.billStatus    = balance === 0 ? "PAID" : "PARTIAL";
+      // R7hr-188: a DRAFT (live IPD) bill stays DRAFT after a payment —
+      // flipping to PARTIAL/PAID would break the one-DRAFT-per-admission
+      // invariant the auto-biller keys on (it would open a SECOND draft
+      // tomorrow and split the stay across bills). PAID/PARTIAL remain
+      // the post-generateFinalBill states.
+      bill.billStatus    = _priorBillStatus === "DRAFT"
+        ? "DRAFT"
+        : (balance === 0 ? "PAID" : "PARTIAL");
       if (bill.billStatus === "PAID") bill.paidAt = new Date();
 
       try {
@@ -1615,7 +1626,11 @@ class BillingService {
       const totalPaid = b.payments.reduce((s, p) => s + toNum(p.amount), 0);
       b.advancePaid   = totalPaid;
       b.balanceAmount = Math.max(0, toNum(b.patientPayableAmount) - totalPaid);
-      b.billStatus    = b.balanceAmount <= 0.005 && totalPaid > 0 ? "PAID"
+      // R7hr-188: voiding a payment on a live DRAFT bill must keep it
+      // DRAFT (never GENERATED — that would fake a billNumber-less
+      // generated bill and detach the auto-biller).
+      b.billStatus    = b.billStatus === "DRAFT" ? "DRAFT"
+                        : b.balanceAmount <= 0.005 && totalPaid > 0 ? "PAID"
                         : totalPaid > 0 ? "PARTIAL" : "GENERATED";
       await b.save();
       return b;
@@ -1796,8 +1811,13 @@ class BillingService {
 
       // Fully refunded → REFUNDED, partial refund of PAID → PARTIAL.
       // Pre-save hook recomputes advancePaid + balanceAmount.
+      // R7hr-188: a live DRAFT bill stays DRAFT even on full refund —
+      // REFUNDED is terminal and would orphan the running admission's
+      // auto-billing. The refund rows still land in payments[].
       const newPaid = paid - amt;
-      if (newPaid <= 0.5) {
+      if (bill.billStatus === "DRAFT") {
+        /* stay DRAFT */
+      } else if (newPaid <= 0.5) {
         bill.billStatus = "REFUNDED";
       } else if (bill.billStatus === "PAID") {
         bill.billStatus = "PARTIAL";
