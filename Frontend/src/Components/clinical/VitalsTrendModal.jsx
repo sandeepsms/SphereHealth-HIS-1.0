@@ -76,19 +76,28 @@ function extractVitals(note) {
   //   top = the top-level vitals sub-doc + painScore (NurseVitalsSchema)
   const nd  = note.noteDetails || note.moduleData || {};
   const nda = note.noteData || {};
+  // R7hr-182: some save paths nested the module payload ONE level deeper —
+  // noteData.noteDetails.{dailyAssessment|mewsScore} (body shipped its own
+  // noteDetails wrapper and the BASE_FIELDS sweep kept it verbatim). Without
+  // unwrapping, those rows rendered all-dash even though HR/BP/Temp were
+  // saved correctly. Treat it as a fourth landing spot.
+  const ndd = (nda.noteDetails && typeof nda.noteDetails === "object") ? nda.noteDetails : {};
   const top = note.vitals || {};
 
   // Resolve the "vitals source" object — try the most specific shape
   // FIRST per noteType (short-form name per saveNote L1070), then fall
   // back to anything that walks like a vitals object.
   const v = (t === "vitals"  ? top                                          : null)
-         || (t === "daily"   ? nda?.dailyAssessment                         : null)
-         || (t === "mews"    ? nda?.mewsScore                               : null)
+         || (t === "daily"   ? (nda?.dailyAssessment || ndd?.dailyAssessment) : null)
+         || (t === "mews"    ? (nda?.mewsScore || ndd?.mewsScore)           : null)
          || (t === "initial" ? (nda?.initialAssessment?.nursing?.vitals
                               || nda?.nursing?.vitals
+                              || ndd?.initialAssessment?.nursing?.vitals
                               || nda?.initialAssessment)                    : null)
          || nda?.dailyAssessment
          || nda?.mewsScore
+         || ndd?.dailyAssessment
+         || ndd?.mewsScore
          || nda?.initialAssessment?.nursing?.vitals
          || nd.vitals
          || nd.nursing?.vitals
@@ -99,9 +108,13 @@ function extractVitals(note) {
 
   // BP can be flat keys (bp_sys/bp_dia for dailyAssessment + IA-vitals)
   // OR nested {bp: {systolic, diastolic}} for the top-level vitals sub-doc.
-  const bpSys = v.bp_sys ?? v.bpSys ?? v.systolic ?? v?.bp?.systolic ?? v?.systolicBP ?? "";
-  const bpDia = v.bp_dia ?? v.bpDia ?? v.diastolic ?? v?.bp?.diastolic ?? v?.diastolicBP ?? "";
+  // R7hr-182: MEWS charts systolic-only BP — scored form saves `sysBP`,
+  // live UI form saves `sbp`. Append both spellings (+ their diastolic
+  // twins for safety) and render "NNN (sys)" when no diastolic exists.
+  const bpSys = v.bp_sys ?? v.bpSys ?? v.systolic ?? v?.bp?.systolic ?? v?.systolicBP ?? v?.sysBP ?? v?.sbp ?? "";
+  const bpDia = v.bp_dia ?? v.bpDia ?? v.diastolic ?? v?.bp?.diastolic ?? v?.diastolicBP ?? v?.diaBP ?? v?.dbp ?? "";
   const bp = (bpSys && bpDia) ? `${bpSys}/${bpDia}`
+           : bpSys ? `${bpSys} (sys)`
            : (v.bp && typeof v.bp === "string" ? v.bp : "")
            || v.bloodPressure || "";
 
@@ -116,10 +129,14 @@ function extractVitals(note) {
     temp:    v.temp ?? v.temperature ?? "",
     // painScore lives at the top level on Vital Signs notes (model L123)
     // but inside the vitals/daily blob for other note types.
-    pain:    v.painScore ?? v.pain ?? note.painScore ?? nd.painScore ?? nda?.dailyAssessment?.painScore ?? "",
-    gcs:     v.gcs ?? v.GCS ?? nd.nursing?.gcs ?? nda?.dailyAssessment?.gcs ?? "",
+    // R7hr-182: note.painScore is a SCHEMA DEFAULT (0) stamped on every
+    // nurse note — only the Vital Signs form actually writes it. Trusting
+    // it for other types painted a phantom "0/10" on every Daily/MEWS row
+    // and kept vital-less narrative rows alive past the empty-row filter.
+    pain:    v.painScore ?? v.pain ?? (t === "vitals" ? note.painScore : null) ?? nd.painScore ?? nda?.dailyAssessment?.painScore ?? ndd?.dailyAssessment?.painScore ?? "",
+    gcs:     v.gcs ?? v.GCS ?? nd.nursing?.gcs ?? nda?.dailyAssessment?.gcs ?? ndd?.dailyAssessment?.gcs ?? "",
     bsl:     v.bsl ?? v.rbs ?? v.bloodSugar ?? "",
-    mews:    nda?.mewsScore?.total ?? nd.mewsScore ?? nd.totalScore ?? v.mews ?? "",
+    mews:    nda?.mewsScore?.total ?? ndd?.mewsScore?.total ?? nd.mewsScore ?? nd.totalScore ?? v.total ?? v.mews ?? "",
     by:      note.signedByName || note.recordedBy || note.createdByName || note.createdBy || "—",
   };
 }
@@ -140,7 +157,12 @@ function tone(field, val) {
     case "pulse":  return (n < 50  || n > 110) ? "bad" : (n < 60 || n > 100) ? "warn" : null;
     case "rr":     return (n < 8   || n > 28)  ? "bad" : (n < 12 || n > 20)  ? "warn" : null;
     case "spo2":   return (n < 90)  ? "bad" : (n < 94)  ? "warn" : null;
-    case "temp":   return (n < 35  || n > 39.0) ? "bad" : (n < 36 || n > 38) ? "warn" : null;
+    // R7hr-182: temps are charted in BOTH scales (MEWS scored form saves 37 °C,
+    // live form saves "98.6" °F). >45 can only be Fahrenheit — use °F bands
+    // there so a normal 98.6° stops flashing red as a false escalation.
+    case "temp":   return n > 45
+                     ? ((n < 95 || n > 102.2) ? "bad" : (n < 96.8 || n > 100.4) ? "warn" : null)
+                     : ((n < 35 || n > 39.0)  ? "bad" : (n < 36   || n > 38)    ? "warn" : null);
     case "bsl":    return (n < 60  || n > 250) ? "bad" : (n < 80 || n > 180) ? "warn" : null;
     case "pain":   return (n >= 7) ? "bad" : (n >= 4) ? "warn" : null;
     case "gcs":    return (n <= 8)  ? "bad" : (n < 13) ? "warn" : null;
@@ -178,8 +200,10 @@ export default function VitalsTrendModal({ uhid, ipdNo, patientName, onClose }) 
       // Skip notes that don't actually carry any vital values — saves
       // visual clutter when a Daily Assessment row was filed without
       // vitals (eg. behavioural-only update).
+      // R7hr-182: compare mews/pain against "" — a charted MEWS total of 0
+      // is falsy but IS data, while "" means the field was never captured.
       const mapped = filtered.map(extractVitals).filter(r =>
-        r.bp || r.pulse || r.rr || r.spo2 || r.temp || r.pain !== "" || r.gcs || r.bsl || r.mews
+        r.bp || r.pulse || r.rr || r.spo2 || r.temp || r.pain !== "" || r.gcs || r.bsl || (r.mews !== "" && r.mews != null)
       );
       // newest-first chronological
       mapped.sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0));
