@@ -1055,8 +1055,21 @@ async function onNurseNoteSaved(noteDoc) {
  * same admission on the same day each generate their own line (NABH
  * multi-disciplinary care reporting).
  */
+// R7hr-190 (USER): "hum doctor ke liye room matrix se hi kaam karenge."
+// Doctor attendance is billed ONLY via the per-room daily DOC-VISIT-*
+// line that DailyRoomAccrual raises from the RoomCategoryCharges
+// matrix. The per-note charges this hook used to raise (DOC-MORN/EVE/
+// NIGHT-ROUND, DOC-ICU-VISIT, DOC-CONSULT, DOC-EMERGENCY-VISIT,
+// DOC-ADMISSION, DOC-DISCHARGE) double-billed the same attendance on
+// note-writing days. Flip to true to restore per-note doctor billing —
+// the R7gl/R7hr-163 cap machinery below stays retained untouched.
+const DOCTOR_NOTE_BILLING_ENABLED = false;
+
 async function onDoctorNoteSaved(noteDoc) {
   if (!noteDoc) return;
+  if (!DOCTOR_NOTE_BILLING_ENABLED) {
+    return; // R7hr-190 — doctor attendance bills via the room matrix only
+  }
   const noteType = noteDoc.noteType || "progress";
 
   const admissionId = noteDoc.admissionId || await resolveAdmissionId(noteDoc);
@@ -2206,11 +2219,21 @@ async function findMatchingPackage(diagnosisText, opts = {}) {
 
   let best = null;
   let bestScore = 0;
+  // R7hr-173 (USER, 2026-06-09): dedupe tokens before scoring. The haystack
+  // concatenates `provisionalDiagnosis | reasonForAdmission`, and the
+  // receptionist usually types the same key term ("Fever" / "Fever under
+  // evaluation") in BOTH fields. With the old code "fever" appearing twice
+  // in tokens scored as 2 separate matches against MMP-5's "fever" tag,
+  // satisfying minScore=2 and auto-attaching the ₹7,500 Dengue/Chikungunya
+  // /Septicaemia package to every fever admission. Counting UNIQUE shared
+  // tokens reflects what the scoring rule actually intends — "how many
+  // distinct diagnosis concepts did we share with this package".
+  const uniqueTokens = new Set(tokens);
   for (const pkg of candidates) {
     const tags = pkg.diagnosisTags || [];
     const tagSet = new Set(tags.map((t) => String(t).toLowerCase()));
     let score = 0;
-    for (const tk of tokens) if (tagSet.has(tk)) score++;
+    for (const tk of uniqueTokens) if (tagSet.has(tk)) score++;
     const need = tags.length === 1 ? 1 : minScore;
     if (score < need) continue;
     const isMMP = pkg.serviceCode?.startsWith("PKG-MED-MMP");
