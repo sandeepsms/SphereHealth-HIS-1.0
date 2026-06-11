@@ -326,7 +326,7 @@ export default function IPDBillingLedger() {
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("category");   // "category" | "daily" | "audit"
+  const [tab, setTab] = useState("category");   // "category" | "daily" | "audit" | "payments"
   const [collapsed, setCollapsed] = useState({});  // section open/closed state
 
   // Modal state for undo / override / cancel
@@ -1960,6 +1960,8 @@ export default function IPDBillingLedger() {
           { id: "category", label: "Category",         icon: "pi-th-large" },
           { id: "daily",    label: "Daily Breakdown",  icon: "pi-calendar" },
           { id: "audit",    label: "Audit Trail",      icon: "pi-history" },
+          // R7hr-187 (USER) — "kab kab payment ki hai patient ne"
+          { id: "payments", label: "Payment Summary",  icon: "pi-wallet" },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             padding: "10px 18px", background: tab === t.id ? C.card : "transparent",
@@ -1987,6 +1989,9 @@ export default function IPDBillingLedger() {
           undoWindowMs={undoWindowMs} />
       )}
       {tab === "audit" && <AuditView triggers={triggers} />}
+      {tab === "payments" && (
+        <PaymentsView uhid={admission.UHID} bill={bill} refreshKey={data} />
+      )}
 
       {/* ── Undo modal ─────────────────────────────────────── */}
       <ReasonModal
@@ -2490,6 +2495,191 @@ function DailyView({ byDay, collapsed, setCollapsed, onUndo, onOverride, onCance
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ── R7hr-187 — Payment Summary tab ──────────────────────────────────
+   User: "ek 'Payment Summary' tab bhi banana chahiye taki hum dekh
+   sake kab kab payment ki hai patient ne."
+   One read-only chronological money trail for this patient (UHID):
+     • Advance deposits        — PatientAdvance rows (admission advance
+                                 + R7hr-186 interim ledger collections)
+     • Adjusted to bill        — each deposit's appliedTo[] entries
+     • Bill payments           — bill.payments[] post final bill
+                                 (ADVANCE_ADJUSTMENT rows skipped: that
+                                 money already shows as "Adjusted to
+                                 Bill" via appliedTo — listing both
+                                 would double-count the trail)
+     • Refunds                 — refundedAt/refundedAmount on deposits
+   Nothing here mutates billing state. */
+function PaymentsView({ uhid, bill, refreshKey }) {
+  const [advs, setAdvs] = useState(null);   // null = loading
+  const [err,  setErr]  = useState("");
+
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      try {
+        setErr("");
+        const r = await axios.get(`${API_ENDPOINTS.BILLING}/advance/uhid/${encodeURIComponent(uhid)}`);
+        // Endpoint shape: { success, data: <summary>, advances: [rows] }
+        const rows = Array.isArray(r.data?.advances) ? r.data.advances
+                   : Array.isArray(r.data?.data) ? r.data.data : [];
+        if (!dead) setAdvs(rows);
+      } catch (e) {
+        if (!dead) {
+          setAdvs([]);
+          setErr(e?.response?.data?.message || e.message || "Failed to load advance ledger");
+        }
+      }
+    })();
+    return () => { dead = true; };
+  }, [uhid, refreshKey]);
+
+  const num = (v) => {
+    if (v == null) return 0;
+    if (typeof v === "object") v = v.$numberDecimal ?? (typeof v.toString === "function" ? v.toString() : NaN);
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const money = (n) => `₹${num(n).toLocaleString("en-IN")}`;
+  const dt = (d) => d
+    ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+    : "—";
+
+  if (advs === null) return (
+    <div style={{ padding: 40, textAlign: "center", color: C.muted, fontStyle: "italic" }}>
+      Loading payment history…
+    </div>
+  );
+
+  // ── Unified trail rows ─────────────────────────────────────────
+  const rows = [];
+  for (const a of advs) {
+    rows.push({
+      kind: "DEPOSIT", at: a.paidAt || a.createdAt, receipt: a.receiptNumber,
+      mode: a.paymentMode, ref: a.transactionId, amount: num(a.amount),
+      by: a.receivedBy, note: a.remarks || "", status: a.status,
+    });
+    for (const ap of (a.appliedTo || [])) {
+      rows.push({
+        kind: "ADJUSTED", at: ap.appliedAt, receipt: a.receiptNumber,
+        mode: "ADVANCE", amount: num(ap.amount), by: ap.appliedBy,
+        note: ap.billNumber ? `Adjusted into bill ${ap.billNumber}` : "Adjusted into bill",
+      });
+    }
+    if (a.refundedAt && num(a.refundedAmount) > 0) {
+      rows.push({
+        kind: "REFUND", at: a.refundedAt, receipt: a.receiptNumber,
+        mode: "CASH", amount: num(a.refundedAmount), by: a.refundedBy,
+        note: a.refundReason || "Advance refunded",
+      });
+    }
+  }
+  for (const p of (bill?.payments || [])) {
+    if (p.paymentMode === "ADVANCE_ADJUSTMENT") continue; // shown via appliedTo rows
+    if (num(p.amount) <= 0) continue; // void-reversal negative rows — original row carries the VOIDED chip
+    rows.push({
+      kind: "PAYMENT", at: p.paidAt, receipt: bill?.billNumber,
+      mode: p.paymentMode, ref: p.transactionId, amount: num(p.amount),
+      by: p.receivedBy, note: p.remarks || "",
+      voided: !!p.voidedAt, voidedBy: p.voidedBy,
+    });
+  }
+  rows.sort((x, y) => new Date(y.at || 0) - new Date(x.at || 0));
+
+  // ── Tab KPIs (CANCELLED deposits excluded from money totals) ───
+  const liveAdvs   = advs.filter(a => a.status !== "CANCELLED");
+  const totDeposit = liveAdvs.reduce((s, a) => s + num(a.amount), 0);
+  const totApplied = liveAdvs.reduce((s, a) => s + num(a.appliedAmount), 0);
+  const totRefund  = liveAdvs.reduce((s, a) => s + num(a.refundedAmount), 0);
+  const totPool    = liveAdvs.reduce((s, a) =>
+    s + num(a.remainingAmount ?? (num(a.amount) - num(a.appliedAmount) - num(a.refundedAmount))), 0);
+  const totBillPay = (bill?.payments || [])
+    .filter(p => p.paymentMode !== "ADVANCE_ADJUSTMENT" && !p.voidedAt && num(p.amount) > 0)
+    .reduce((s, p) => s + num(p.amount), 0);
+
+  const KIND = {
+    DEPOSIT:  { label: "Advance Deposit",  bg: "#ecfdf5", fg: "#059669" },
+    ADJUSTED: { label: "Adjusted to Bill", bg: "#f5f3ff", fg: "#7c3aed" },
+    PAYMENT:  { label: "Bill Payment",     bg: "#f0f9ff", fg: "#0284c7" },
+    REFUND:   { label: "Refund",           bg: "#fef2f2", fg: "#dc2626" },
+  };
+  const chip = (k) => (
+    <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, background: KIND[k].bg, color: KIND[k].fg, fontSize: 10, fontWeight: 800, letterSpacing: ".3px", whiteSpace: "nowrap" }}>
+      {KIND[k].label}
+    </span>
+  );
+  const kpi = (label, value, fg) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <span style={{ fontSize: 9.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</span>
+      <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: fg }}>{money(value)}</span>
+    </div>
+  );
+
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ display: "flex", gap: 26, flexWrap: "wrap", padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc" }}>
+        {kpi("Advance deposited", totDeposit, "#059669")}
+        {kpi("Adjusted to bills", totApplied, "#7c3aed")}
+        {kpi("Bill payments", totBillPay, "#0284c7")}
+        {kpi("Refunded", totRefund, "#dc2626")}
+        {kpi("Pool available", totPool, C.dark)}
+      </div>
+      {err && (
+        <div style={{ padding: "8px 16px", fontSize: 11.5, color: "#dc2626", borderBottom: `1px solid ${C.border}` }}>{err}</div>
+      )}
+      {!rows.length ? (
+        <div style={{ padding: 40, textAlign: "center", color: C.muted, fontStyle: "italic" }}>
+          No payments yet — use Collect Payment or Take Advance to record the first collection.
+        </div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ background: "#f8fafc", fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px" }}>
+              <th style={th(140)}>When</th>
+              <th style={th(130)}>Type</th>
+              <th style={th(140)}>Receipt / Bill No</th>
+              <th style={th(90)}>Mode</th>
+              <th style={{ ...th(110), textAlign: "right" }}>Amount</th>
+              <th style={th(150)}>By</th>
+              <th style={th()}>Remarks</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} style={{ borderTop: `1px solid ${C.border}`, opacity: r.voided ? .55 : 1 }}>
+                <td style={{ padding: "8px 10px", fontSize: 11.5, whiteSpace: "nowrap", color: C.dark }}>{dt(r.at)}</td>
+                <td style={{ padding: "8px 10px" }}>
+                  {chip(r.kind)}
+                  {r.kind === "DEPOSIT" && r.status && r.status !== "ACTIVE" && (
+                    <div style={{ fontSize: 9, fontWeight: 700, color: C.muted, marginTop: 3 }}>{r.status.replace(/_/g, " ")}</div>
+                  )}
+                  {r.voided && (
+                    <div style={{ fontSize: 9, fontWeight: 800, color: "#dc2626", marginTop: 3 }}>VOIDED{r.voidedBy ? ` by ${r.voidedBy}` : ""}</div>
+                  )}
+                </td>
+                <td style={{ padding: "8px 10px", fontSize: 11.5, fontFamily: "'DM Mono', monospace", color: C.dark }}>{r.receipt || "—"}</td>
+                <td style={{ padding: "8px 10px", fontSize: 11.5, fontWeight: 700, color: C.dark }}>
+                  {r.mode || "—"}
+                  {r.ref ? <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 500 }}>{r.ref}</div> : null}
+                </td>
+                <td style={{
+                  padding: "8px 10px", textAlign: "right", whiteSpace: "nowrap", fontWeight: 800,
+                  fontSize: 12.5, fontFamily: "'DM Mono', monospace",
+                  color: r.kind === "REFUND" ? "#dc2626" : r.kind === "ADJUSTED" ? "#7c3aed" : C.dark,
+                  textDecoration: r.voided ? "line-through" : "none",
+                }}>
+                  {r.kind === "REFUND" ? `− ${money(r.amount)}` : money(r.amount)}
+                </td>
+                <td style={{ padding: "8px 10px", fontSize: 11.5, color: C.dark }}>{r.by || "—"}</td>
+                <td style={{ padding: "8px 10px", fontSize: 11, color: C.muted }}>{r.note || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
