@@ -366,8 +366,12 @@ function resolveDoctorVisitCode(noteType, shift, opts = {}) {
   const nt = String(noteType || "").toLowerCase();
   const sh = String(shift || "").toLowerCase();
   if (nt === "consultation") return { code: "DOC-CONSULT",      name: "Inter-department Consultation", dailyDedup: false, dedupByDoctor: true };
-  if (nt === "admission")    return { code: "DOC-ADMISSION",    name: "Admission Assessment",          dailyDedup: false, dedupByDoctor: true };
-  if (nt === "discharge")    return { code: "DOC-DISCHARGE",    name: "Discharge Summary Visit",       dailyDedup: false, dedupByDoctor: true };
+  // R7hr-191 (USER): "DOC-ADMISSION aur DOC-DISCHARGE ye charges
+  // applicable nahi honge according to our system." Admission and
+  // discharge notes are documentation milestones, not billable doctor
+  // visits — retired at the mapping itself so they stay dead even if
+  // DOCTOR_NOTE_BILLING_ENABLED (R7hr-190) is ever flipped back on.
+  if (nt === "admission" || nt === "discharge") return null;
   if (nt === "icu")          return { code: "DOC-ICU-VISIT",    name: "ICU Doctor Visit",              dailyDedup: true,  dedupByDoctor: true };
   if (nt === "procedure" || nt === "operative" || nt === "preop" || nt === "postop") {
     // Procedure billing happens via its own ServiceMaster lookup elsewhere
@@ -1166,37 +1170,17 @@ async function onDoctorNoteSaved(noteDoc) {
       }
       const activeVisitsToday = await BillingTrigger.countDocuments(capQuery);
       if (activeVisitsToday >= capLimit) {
-        // Cap hit — do NOT createTrigger. Drop a paper-trail trigger
-        // tagged `status: "skipped"` so the audit tab shows that an
-        // auto-bill attempt happened and was blocked. Operator can
-        // then add the extra visit manually from the ledger.
-        await _emitTrigger({
-          admissionId,
-          patientId:   noteDoc.patientId,
-          UHID:        noteDoc.UHID || noteDoc.patientUHID,
-          patientType: "IPD",
-          serviceCode: visit.code,
-          serviceName: visit.name,
-          quantity:    1,
-          unitPrice:   0,
-          totalAmount: 0,
-          sourceType:  "DoctorNote",
-          sourceDocumentId:    noteDoc._id,
-          sourceDocumentModel: "DoctorNote",
-          orderedBy:   doctorName,
-          orderedById: doctorId,
-          orderedByRole: "Doctor",
-          completedBy: doctorName,
-          completedById: doctorId,
-          completedByRole: "Doctor",
-          status: "skipped",
-          autoCharged: true,
-          isDailyCharge: false,
-          dateKey: dateKeyToday,
-          shift: noteDoc.shift,
-          completionNotes: `Auto-bill skipped — IPD doctor visit cap (2/day) already reached. ` +
-                           `Add manually from IPD Live Ledger if this 3rd+ visit is billable.`,
-        }, { name: doctorName, role: "Doctor" });
+        // R7hr-191 (USER): cap hit par ab koi `status:"skipped"` paper-
+        // trail trigger NAHI banta — "ye sirf bad data ko badha rahe
+        // hai jo system ko load karega". Pre-R7hr-191 every capped note
+        // dropped a ₹0 skipped row into BillingTrigger, flooding the
+        // Audit Trail (dozens per restart/backfill). Log-only now; a
+        // genuine 3rd+ visit can still be added manually from the IPD
+        // Live Ledger's Add Charge button.
+        console.info(
+          `[AutoBilling] doctor-visit cap reached — ${visit.code} not billed ` +
+          `for note ${noteDoc._id} (no skipped row per R7hr-191)`,
+        );
         return;
       }
     } catch (e) {
