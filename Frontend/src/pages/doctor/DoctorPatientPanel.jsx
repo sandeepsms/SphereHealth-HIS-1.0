@@ -93,6 +93,8 @@ const TABS = [
   { id:"pendingreports", label:"🧪 Pending Investigation Reports" },
   { id:"handover",    label:"🔄 Handover Notes"       },
   { id:"icubundles",  label:"🛡 ICU Bundles"         },
+  // R7hr-185b (USER) — invasive-device registry tab (mirrors Nurse panel).
+  { id:"devices",     label:"🔌 Devices / Lines"      },
   { id:"treatment",   label:"💉 Treatment Chart"      },
   { id:"orders",      label:"📋 Orders"               },
   // R7gx-UI — Medications pill removed per user request. Treatment Chart is
@@ -2756,6 +2758,13 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       // for the latest shift + compliance % per bundle + recent
       // history. Full editor at /icu-bundles is one click away.
       case "icubundles": return <ICUBundlesTab uhid={patient?.UHID || activeUhid} role="Doctor" />;
+      // R7hr-185b — invasive-device registry tab (full placed/changed/
+      // removed history inline; mirrors Nurse panel).
+      case "devices": return (
+        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+          <PatientDevicesStrip ipdNo={admission?.admissionNumber} inline />
+        </div>
+      );
       case "discharge":  return renderLauncher({
         id: "discharge", icon: "🚪", color: "#dc2626",
         title: "Discharge Summary",
@@ -2866,20 +2875,8 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
     )
   ) : null;
 
-  // R7hr-185 — Invasive devices & lines (placed / changed / removed
-  // history) on the doctor's patient panel too; same registry that
-  // drives ICU bundle applicability. Rendered with the gate banners
-  // so it sits directly under the patient hero.
-  const gateBannersWithDevices = (
-    <>
-      {gateBanners}
-      {admission?.admissionNumber && (
-        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "8px 14px 10px", margin: "10px 0" }}>
-          <PatientDevicesStrip ipdNo={admission.admissionNumber} />
-        </div>
-      )}
-    </>
-  );
+  // R7hr-185b — devices registry moved from a gate-banner card to its
+  // own "🔌 Devices / Lines" tab pill (user request; mirrors Nurse panel).
 
   // ── Shift Bed modal (kept as a child of the shell so it overlays everything)
   const shiftBedModal = showShiftModal && (

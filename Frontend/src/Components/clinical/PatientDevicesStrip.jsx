@@ -53,7 +53,11 @@ const fmtDT = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", m
 const fld = { width: "100%", padding: "7px 9px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12, outline: "none", boxSizing: "border-box" };
 const lbl = { fontSize: 9.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 3 };
 
-export default function PatientDevicesStrip({ ipdNo }) {
+// R7hr-185b — `inline` renders the FULL manage view (place form + complete
+// placed/changed/removed history) directly in the page flow — used by the
+// patient panels' "🔌 Devices / Lines" tab. Default (chips + modal) stays
+// for the Doctor/Nursing Notes banner strip.
+export default function PatientDevicesStrip({ ipdNo, inline = false }) {
   const [rows, setRows] = useState([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -129,7 +133,9 @@ export default function PatientDevicesStrip({ ipdNo }) {
 
   return (
     <>
-      {/* ── Chip strip (lives inside the banner, under the clinical strip) ── */}
+      {/* ── Chip strip (lives inside the banner, under the clinical strip;
+            hidden in `inline` tab mode where the full view is always open) ── */}
+      {!inline && (
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 8 }}>
         <button
           onClick={() => setOpen(true)}
@@ -174,12 +180,18 @@ export default function PatientDevicesStrip({ ipdNo }) {
           );
         })}
       </div>
+      )}
 
-      {/* ── Manage modal ── */}
-      {open && (
-        <div onClick={(e) => { if (e.target === e.currentTarget) setOpen(false); }}
-          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,.55)", backdropFilter: "blur(2px)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", overflowY: "auto" }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: "min(860px, 100%)", background: "#fff", borderRadius: 14, overflow: "hidden", boxShadow: "0 20px 50px rgba(0,0,0,.25)", fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      {/* ── Manage view — modal overlay by default; rendered directly in
+            the page flow when `inline` (patient-panel Devices tab). ── */}
+      {(open || inline) && (
+        <div onClick={(e) => { if (!inline && e.target === e.currentTarget) setOpen(false); }}
+          style={inline
+            ? {}
+            : { position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,.55)", backdropFilter: "blur(2px)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "5vh 16px", overflowY: "auto" }}>
+          <div onClick={e => e.stopPropagation()} style={inline
+            ? { width: "100%", background: "#fff", borderRadius: 14, overflow: "hidden", border: `1px solid ${C.border}`, fontFamily: "'DM Sans', system-ui, sans-serif" }
+            : { width: "min(860px, 100%)", background: "#fff", borderRadius: 14, overflow: "hidden", boxShadow: "0 20px 50px rgba(0,0,0,.25)", fontFamily: "'DM Sans', system-ui, sans-serif" }}>
             {/* Header */}
             <div style={{ background: `linear-gradient(135deg, ${C.teal}, #0f766e)`, padding: "14px 18px", color: "#fff", display: "flex", alignItems: "center", gap: 12 }}>
               <span style={{ fontSize: 18 }}>🩺</span>
@@ -187,7 +199,9 @@ export default function PatientDevicesStrip({ ipdNo }) {
                 <div style={{ fontSize: 15, fontWeight: 900 }}>Invasive Devices & Lines — {ipdNo}</div>
                 <div style={{ fontSize: 11, opacity: .92 }}>Placed / Changed / Removed — full timestamped trail · drives ICU bundle applicability (no ET tube → VAP N/A · no Foley → CAUTI N/A · no central line → CLABSI N/A)</div>
               </div>
-              <button onClick={() => setOpen(false)} style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(255,255,255,.18)", border: "1px solid rgba(255,255,255,.35)", color: "#fff", cursor: "pointer", fontSize: 15, fontWeight: 800 }}>×</button>
+              {!inline && (
+                <button onClick={() => setOpen(false)} style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(255,255,255,.18)", border: "1px solid rgba(255,255,255,.35)", color: "#fff", cursor: "pointer", fontSize: 15, fontWeight: 800 }}>×</button>
+              )}
             </div>
 
             <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12 }}>

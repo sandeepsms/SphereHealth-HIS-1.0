@@ -92,6 +92,9 @@ const TABS = [
   { id:"pendingreports", label:"🧪 Pending Investigation Reports" },
   { id:"handover",    label:"🔄 Handover Notes"       },
   { id:"icubundles",  label:"🛡 ICU Bundles"         },
+  // R7hr-185b (USER) — invasive-device registry gets its own tab pill
+  // (was a card under the gate banners). Same id on the Doctor panel.
+  { id:"devices",     label:"🔌 Devices / Lines"      },
   // R7gx-UI — Treatment Chart pill (mirrors Doctor panel position).
   // Single source of truth for medication administration; nurses chart
   // every dose here. Pill position kept identical to Doctor panel so
@@ -2862,6 +2865,13 @@ function NursePatientPanelContent({ selectedAdmission }) {
       // hero + per-bundle compliance + recent-sheets history. The full
       // editor at /icu-bundles is still reachable from the header CTA.
       case "icubundles": return <ICUBundlesTab uhid={patient?.UHID || activeUhid} role="Nurse" />;
+      // R7hr-185b — invasive-device registry tab (full placed/changed/
+      // removed history inline; same registry drives ICU bundles).
+      case "devices": return (
+        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+          <PatientDevicesStrip ipdNo={admission?.admissionNumber} inline />
+        </div>
+      );
       case "discharge":  return renderLauncher({
         id: "discharge", icon: "🚪", color: "#dc2626",
         title: "Discharge Summary",
@@ -3019,14 +3029,8 @@ function NursePatientPanelContent({ selectedAdmission }) {
           </div>
         </div>
       ) : null}
-      {/* R7hr-185 — Invasive devices & lines (placed / changed / removed
-          history) right on the patient panel; same registry as the
-          Doctor/Nursing Notes header strip + ICU bundle applicability. */}
-      {admission?.admissionNumber && (
-        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "8px 14px 10px", margin: "10px 0" }}>
-          <PatientDevicesStrip ipdNo={admission.admissionNumber} />
-        </div>
-      )}
+      {/* R7hr-185b — devices registry moved from a gate-banner card to
+          its own "🔌 Devices / Lines" tab pill (user request). */}
     </>
   );
 
