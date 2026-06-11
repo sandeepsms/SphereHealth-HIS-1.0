@@ -205,7 +205,11 @@ export default function PatientDevicesStrip({ ipdNo, inline = false }) {
             </div>
 
             <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
-              {/* Add device */}
+              {/* Add device — hidden in `inline` (patient-panel tab) mode:
+                  the panel is a review/history surface (USER, R7hr-185c);
+                  placing devices stays on the Doctor/Nursing Notes banner
+                  strip's manage modal. */}
+              {!inline && (
               <div style={{ background: "#f0fdfa", border: `1px solid ${C.tealB}`, borderRadius: 10, padding: "10px 12px" }}>
                 <div style={{ fontSize: 10, fontWeight: 800, color: C.teal, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>＋ Place a new device</div>
                 <div style={{ display: "grid", gridTemplateColumns: "2fr 1.4fr 1fr auto", gap: 8, alignItems: "end" }}>
@@ -238,6 +242,7 @@ export default function PatientDevicesStrip({ ipdNo, inline = false }) {
                   </div>
                 )}
               </div>
+              )}
 
               {/* Device list */}
               {rows.length === 0 && (
