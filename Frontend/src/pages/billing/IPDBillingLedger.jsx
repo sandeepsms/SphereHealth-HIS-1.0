@@ -483,12 +483,55 @@ export default function IPDBillingLedger() {
         }
         toast.success(`₹${applied.toLocaleString("en-IN")} adjusted from advance pool`);
       } else {
-        await axios.post(`${API_ENDPOINTS.BASE}/billing/${billId}/payment`, {
+        const res = await axios.post(`${API_ENDPOINTS.BASE}/billing/${billId}/payment`, {
           amount: amt,
           paymentMode: payMode,
           paymentReference: payRef.trim() || undefined,
         });
         toast.success(`₹${amt.toLocaleString("en-IN")} collected (${payMode}) — receipt created`);
+        // R7hr-192 (G2) — print the payment receipt, mirroring the
+        // Billing Counter's printPaymentReceipt contract (R7ar-F3).
+        // The live IPD bill has no billNumber yet, so the receipt
+        // number anchors on the admission number instead. Amount
+        // fields go through toMoney() because recordPayment returns
+        // the raw bill doc with Decimal128 ({$numberDecimal}) values.
+        try {
+          const freshBill = res.data?.data || res.data || {};
+          const pays = freshBill.payments || [];
+          const pay  = pays[pays.length - 1] || {};
+          const p    = data.admission.patientId || {};
+          const anchor = freshBill.billNumber || data.admission.admissionNumber || "IPD-LIVE";
+          const receiptNo = `${anchor}-P${pays.length || 1}`;
+          const balanceAfter = toMoney(freshBill.balanceAmount);
+          openPrint("payment-receipt", {
+            receiptNo,
+            patientName:  p.fullName || data.admission.patientName,
+            uhid:         p.UHID || data.admission.UHID,
+            visitType:    freshBill.visitType || "IPD",
+            visitNo:      data.admission.admissionNumber,
+            age:          p.age,
+            gender:       p.gender,
+            amount:       toMoney(pay.amount) || amt,
+            method:       pay.paymentMode || payMode,
+            refNo:        pay.transactionId || payRef.trim() || "",
+            receivedBy:   pay.receivedBy || "Reception",
+            paidAt:       pay.paidAt || new Date().toISOString(),
+            purpose:      balanceAfter <= 0.5
+              ? `Full settlement towards ${anchor}`
+              : `Part-payment towards ${anchor} (interim)`,
+            billTotal:    toMoney(freshBill.netAmount),
+            totalPaid:    toMoney(freshBill.advancePaid),
+            runningBalance: balanceAfter,
+            remarks:      pay.remarks || "",
+            printAudit: {
+              entityType:   "Receipt",
+              entityId:     freshBill._id,
+              entityNumber: receiptNo,
+              UHID:         p.UHID || data.admission.UHID,
+              patientName:  p.fullName || data.admission.patientName,
+            },
+          });
+        } catch (_) { /* print best-effort — payment is already recorded */ }
       }
       setPayOpen(false); setPayAmt(""); setPayRef("");
       await load();
@@ -1930,7 +1973,7 @@ export default function IPDBillingLedger() {
       )}
       {tab === "audit" && <AuditView triggers={triggers} />}
       {tab === "payments" && (
-        <PaymentsView uhid={admission.UHID} bill={bill} refreshKey={data} />
+        <PaymentsView uhid={admission.UHID} bill={bill} refreshKey={data} onChanged={load} />
       )}
 
       {/* ── Undo modal ─────────────────────────────────────── */}
@@ -2446,9 +2489,46 @@ function DailyView({ byDay, collapsed, setCollapsed, onUndo, onOverride, onCance
                                  would double-count the trail)
      • Refunds                 — refundedAt/refundedAmount on deposits
    Nothing here mutates billing state. */
-function PaymentsView({ uhid, bill, refreshKey }) {
+function PaymentsView({ uhid, bill, refreshKey, onChanged }) {
   const [advs, setAdvs] = useState(null);   // null = loading
   const [err,  setErr]  = useState("");
+  // R7hr-192 (G3) — Void/Refund actions on bill-payment rows. The
+  // Billing Counter no longer shows IPD bills (R7hr-189), so this tab
+  // is the only place a cashier can reverse a typo'd live-ledger
+  // collection. Backend gates: void = billing.undo (own payment,
+  // 15-min window; Accountant/Admin any), refund = billing.refund.
+  const { can } = useAuth();
+  const [actBusy, setActBusy] = useState(false);
+  const voidPay = async (r) => {
+    const reason = window.prompt(`Void ₹${r.amount.toLocaleString("en-IN")} ${r.mode} payment? Reason:`);
+    if (!reason || !reason.trim()) return;
+    setActBusy(true);
+    try {
+      await axios.post(`${API_ENDPOINTS.BASE}/billing/${bill._id}/payment/${r.pid}/void`, { reason: reason.trim() });
+      toast.success("Payment voided — reversal row added");
+      onChanged?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || e.message || "Void failed");
+    } finally { setActBusy(false); }
+  };
+  const refundPay = async (r) => {
+    const amtStr = window.prompt(`Refund amount (max ₹${r.amount.toLocaleString("en-IN")}):`, String(r.amount));
+    if (amtStr == null) return;
+    const ramt = Math.round(Number(amtStr) * 100) / 100;
+    if (!ramt || ramt <= 0) { toast.error("Enter a valid refund amount"); return; }
+    const reason = window.prompt("Refund reason:");
+    if (!reason || !reason.trim()) return;
+    setActBusy(true);
+    try {
+      await axios.post(`${API_ENDPOINTS.BASE}/billing/${bill._id}/refund`, {
+        amount: ramt, reason: reason.trim(), mode: r.mode || "CASH",
+      });
+      toast.success(`₹${ramt.toLocaleString("en-IN")} refund recorded`);
+      onChanged?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || e.message || "Refund failed");
+    } finally { setActBusy(false); }
+  };
 
   useEffect(() => {
     let dead = false;
@@ -2520,6 +2600,7 @@ function PaymentsView({ uhid, bill, refreshKey }) {
       mode: p.paymentMode, ref: p.transactionId, amount: num(p.amount),
       by: p.receivedBy, note: p.remarks || "",
       voided: !!p.voidedAt, voidedBy: p.voidedBy,
+      pid: p._id, // R7hr-192 (G3) — anchor for void/refund actions
     });
   }
   rows.sort((x, y) => new Date(y.at || 0) - new Date(x.at || 0));
@@ -2580,6 +2661,7 @@ function PaymentsView({ uhid, bill, refreshKey }) {
               <th style={{ ...th(110), textAlign: "right" }}>Amount</th>
               <th style={th(150)}>By</th>
               <th style={th()}>Remarks</th>
+              <th style={th(120)}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -2610,6 +2692,26 @@ function PaymentsView({ uhid, bill, refreshKey }) {
                 </td>
                 <td style={{ padding: "8px 10px", fontSize: 11.5, color: C.dark }}>{r.by || "—"}</td>
                 <td style={{ padding: "8px 10px", fontSize: 11, color: C.muted }}>{r.note || "—"}</td>
+                <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
+                  {r.kind === "PAYMENT" && !r.voided && r.pid && (
+                    <>
+                      {can("billing.undo") && (
+                        <button disabled={actBusy} onClick={() => voidPay(r)}
+                          title="Void this payment (15-min cashier window; Accountant/Admin anytime)"
+                          style={{ padding: "3px 9px", marginRight: 5, borderRadius: 6, border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                          Void
+                        </button>
+                      )}
+                      {can("billing.refund") && (
+                        <button disabled={actBusy} onClick={() => refundPay(r)}
+                          title="Record a refund against this bill"
+                          style={{ padding: "3px 9px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#f8fafc", color: C.muted, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                          Refund
+                        </button>
+                      )}
+                    </>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
