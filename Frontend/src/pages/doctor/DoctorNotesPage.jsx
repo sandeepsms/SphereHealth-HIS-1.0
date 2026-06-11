@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API_ENDPOINTS } from "../../config/api";
@@ -270,6 +270,17 @@ function DoctorNotesContent({ selectedPatient }) {
   const [filterType,   setFilterType]   = useState("All");
   const [filterShift,  setFilterShift]  = useState("");
   const [shift,        setShift]        = useState(getShift());
+  // R7hr-185 — shift auto-follows the wall clock (Morning 7–14 →
+  // Evening 14–21 → Night). Manual pill click pins it (late entries).
+  const shiftManualRef = useRef(false);
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (!shiftManualRef.current) {
+        setShift(prev => { const want = getShift(); return prev === want ? prev : want; });
+      }
+    }, 60000);
+    return () => clearInterval(t);
+  }, []);
   const [selectedTags, setSelectedTags] = useState([]);
   const [isCritical,   setIsCritical]   = useState(false);
   const [ordersRefresh, setOrdersRefresh] = useState(0);
@@ -2331,8 +2342,11 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
             {/* Shift selector + Daily Progress quick action */}
             <div className="dnp-shift-row">
               <span className="dnp-shift-row__label">Shift:</span>
-              {[{id:"morning",label:"Morning",icon:"pi-sun"},{id:"afternoon",label:"Afternoon",icon:"pi-cloud"},{id:"evening",label:"Evening",icon:"pi-moon"},{id:"night",label:"Night",icon:"pi-star"}].map(s => (
-                <button key={s.id} onClick={() => setShift(s.id)}
+              {/* R7hr-185 — exactly 3 hospital shifts for everyone
+                  (Afternoon retired); auto-follows the wall clock unless
+                  manually pinned. */}
+              {[{id:"morning",label:"Morning",icon:"pi-sun"},{id:"evening",label:"Evening",icon:"pi-moon"},{id:"night",label:"Night",icon:"pi-star"}].map(s => (
+                <button key={s.id} onClick={() => { shiftManualRef.current = true; setShift(s.id); }}
                   className={`dnp-shift-pill ${shift === s.id ? "dnp-shift-pill--active" : ""}`}>
                   <i className={`pi ${s.icon}`} style={{ fontSize: 10 }} />{s.label}
                 </button>

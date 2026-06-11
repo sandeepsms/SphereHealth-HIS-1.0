@@ -322,11 +322,15 @@ const bradenBand = (score) => {
   return { label:"No Risk", color:C.green, bg:C.greenL };
 };
 
+// R7hr-185 (USER): the WHOLE hospital runs exactly 3 shifts —
+// Morning (7–14) → Evening (14–21) → Night (21–7) — for doctor AND
+// nurse alike. "afternoon" is gone (the NurseNote enum never had it;
+// R7hr-177-B used to coerce it on save). Same hour-bands as the ICU
+// Bundles page + DoctorNotesPage so every surface agrees on the shift.
 function getShift() {
   const h = new Date().getHours();
-  if (h >= 7  && h < 12) return "morning";
-  if (h >= 12 && h < 17) return "afternoon";
-  if (h >= 17 && h < 21) return "evening";
+  if (h >= 7  && h < 14) return "morning";
+  if (h >= 14 && h < 21) return "evening";
   return "night";
 }
 
@@ -551,6 +555,18 @@ function NursingNotesContent({ selectedPatient }) {
   // available for future date-pill UI.
   const [filterDateRange, setFilterDateRange] = useState("all");
   const [shift,      setShift]      = useState(getShift());
+  // R7hr-185 — shift auto-follows the wall clock (checked every minute)
+  // so Morning rolls to Evening at 2 pm and to Night at 9 pm on its own.
+  // A manual pill click pins the choice for this session (late entries).
+  const shiftManualRef = useRef(false);
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (!shiftManualRef.current) {
+        setShift(prev => { const want = getShift(); return prev === want ? prev : want; });
+      }
+    }, 60000);
+    return () => clearInterval(t);
+  }, []);
   const [selectedTags, setSelectedTags] = useState([]);
   const [noteText,   setNoteText]   = useState("");
   const [isCritical, setIsCritical] = useState(false);
@@ -1923,13 +1939,15 @@ function NursingNotesContent({ selectedPatient }) {
           <div className="dnp-addnote-panel pf-tint--nurse">
             <div className="dnp-shift-row">
               <span className="dnp-shift-row__label">Current Shift:</span>
+              {/* R7hr-185 — exactly 3 hospital shifts (Afternoon retired);
+                  the active pill auto-follows the wall clock unless the
+                  user explicitly picks one (late entries). */}
               {[
                 { id: "morning",   label: "Morning",   icon: "pi-sun" },
-                { id: "afternoon", label: "Afternoon", icon: "pi-cloud" },
                 { id: "evening",   label: "Evening",   icon: "pi-moon" },
                 { id: "night",     label: "Night",     icon: "pi-star" },
               ].map(s => (
-                <button key={s.id} onClick={() => setShift(s.id)}
+                <button key={s.id} onClick={() => { shiftManualRef.current = true; setShift(s.id); }}
                   className={`dnp-shift-pill ${shift === s.id ? "dnp-shift-pill--active" : ""}`}>
                   <i className={`pi ${s.icon}`} style={{ fontSize: 10 }} />
                   {s.label}

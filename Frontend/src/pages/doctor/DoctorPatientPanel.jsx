@@ -12,6 +12,7 @@ import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import PatientFileExport from "../../Components/clinical/PatientFileExport";
 // R7hr-157 — inline ICU bundle compliance display (parity with NursePatientPanel)
 import ICUBundlesTab from "../../Components/clinical/ICUBundlesTab";
+import PatientDevicesStrip from "../../Components/clinical/PatientDevicesStrip"; // R7hr-185
 // Phase 2 shell — the pf-* design system, shared with NursePatientPanel.
 // Replaces ~225 lines of inline-styled chrome with a declarative invocation.
 import PatientPanelShell from "../../Components/clinical/PatientPanelShell";
@@ -77,8 +78,13 @@ const TABS = [
   { id:"consent",     label:"📜 Consent Forms"        },
   { id:"mlc",         label:"⚖ MLC / Doctor Notes"   },
   { id:"nursing",     label:"📝 Nursing Notes"        },
-  { id:"vitals",      label:"📈 Vital Chart"          },
-  { id:"io",          label:"💧 Intake / Output"      },
+  // R7hr-167 — Mirror Nurse panel: "📈 Vital Chart" + "💧 Intake / Output"
+  // pills removed. The day-wise Treatment Chart digest already surfaces both:
+  //   • Per-day vitals strip (BP/HR/RR/SpO₂/Temp/Pain/GCS/BSL/MEWS)
+  //   • Per-day Intake / Output strip (auto-fed from MAR + cron)
+  // R7hr-159 retired these on the Nurse side as duplicate-of-Treatment-Chart;
+  // Doctor panel now follows the same single-source-of-truth rule so both
+  // panels show identical pills (parity per user directive).
   { id:"blood",       label:"🩸 Blood Transfusion"    },
   { id:"rbs",         label:"🩸 RBS Monitoring"       },
   // R7hr-143 — Pending Investigation Reports tile. Visible in BOTH Doctor
@@ -2250,6 +2256,98 @@ function ConsentFormsTab({ consents = [], uhid, patient, admission }) {
   );
 }
 
+/* ══════════════════════════════════════════════════
+   R7hr-169 — Medical Certificates inline list.
+   Mirrors the ConsentFormsTab pattern so every cert
+   already issued for this patient (MC-2026-NNNN)
+   shows in the panel right where the doctor expects.
+══════════════════════════════════════════════════ */
+function MedCertsTab({ certs = [], uhid, patient }) {
+  const STATUS_STYLE = {
+    issued:    { bg: C.greenL,  color: C.green,  label: "✓ ISSUED"   },
+    draft:     { bg: C.amberL,  color: C.amber,  label: "✎ DRAFT"    },
+    revoked:   { bg: "#f1f5f9", color: C.muted,  label: "↶ REVOKED"  },
+    cancelled: { bg: C.redL,    color: C.red,    label: "✕ CANCELLED"},
+  };
+  const openCerts = () => {
+    const u = uhid ? `?uhid=${encodeURIComponent(uhid)}` : "";
+    window.open(`/medical-certificates${u}`, "_blank", "noopener");
+  };
+  if (!certs.length) {
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        <Empty icon="📑" msg="No medical certificates issued for this patient yet"/>
+        <div style={{display:"flex",justifyContent:"center"}}>
+          <button onClick={openCerts}
+            style={{background:C.primary,color:"#fff",border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:13,cursor:"pointer",boxShadow:"0 2px 6px rgba(124,58,237,0.25)"}}
+          >📑 Issue New Certificate ↗</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:15,color:C.dark}}>📑 Medical Certificates</div>
+          <div style={{fontSize:11,color:C.muted}}>NABH PRE.5 · {certs.length} record{certs.length===1?"":"s"}</div>
+        </div>
+        <button onClick={openCerts}
+          style={{background:C.primary,color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontWeight:700,fontSize:12,cursor:"pointer"}}
+        >+ New Certificate</button>
+      </div>
+      {certs.map((c, i) => {
+        const st = STATUS_STYLE[(c.status || "issued").toLowerCase()] || STATUS_STYLE.issued;
+        const ts = c.issuedAt || c.createdAt;
+        const certTitle = c.typeLabel
+          || (c.certType ? c.certType.replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase()) : "Medical Certificate");
+        return (
+          <div key={c._id || i}
+            style={{background:"#fff",border:`1px solid ${C.border}`,borderLeft:`4px solid ${st.color}`,borderRadius:10,padding:"16px 18px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,paddingBottom:12,borderBottom:`1px dashed ${C.border}`}}>
+              <span style={{fontSize:22}}>📑</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:800,fontSize:15,color:C.dark}}>{certTitle}</div>
+                <div style={{fontSize:11,color:C.muted}}>
+                  Cert No. <span style={{fontFamily:"monospace",fontWeight:700,color:C.text}}>{c.certNumber || "—"}</span>
+                  {" · "}{ts ? fmtDT(ts) : "—"}
+                </div>
+              </div>
+              <span style={{padding:"4px 11px",borderRadius:999,background:st.bg,color:st.color,fontWeight:800,fontSize:11}}>{st.label}</span>
+              <button onClick={openCerts}
+                title="Open cert in standalone module to print or revoke"
+                style={{background:"#fff",border:`1px solid ${C.border}`,color:C.dark,borderRadius:6,padding:"5px 11px",fontWeight:700,fontSize:11,cursor:"pointer"}}>🖨 Print ↗</button>
+            </div>
+            <div style={{border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",background:C.bg,display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px 18px"}}>
+              {[
+                ["Patient",          c.patientName || patient?.fullName],
+                ["UHID",             c.patientUHID || patient?.UHID],
+                ["Visit Type",       c.visitType || (c.admissionNumber ? "IPD" : "—")],
+                ["IPD / Adm. No.",   c.admissionNumber || "—"],
+                ["Issuing Doctor",   c.doctorName],
+                ["MCI Reg. No.",     c.doctorReg],
+                ["Diagnosis",        c.diagnosis],
+                ["Issued On",        ts ? fmtDate(ts) : "—"],
+              ].map(([label, value], idx) => (
+                <div key={idx}>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:".3px"}}>{label}</div>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text,marginTop:2}}>{value || "—"}</div>
+                </div>
+              ))}
+            </div>
+            {c.notes && (
+              <div style={{marginTop:12,padding:"10px 12px",background:"#fffbeb",border:`1px solid ${C.amberB}`,borderRadius:8}}>
+                <div style={{fontSize:11,fontWeight:800,color:C.amber,marginBottom:4}}>📝 Doctor Notes</div>
+                <div style={{fontSize:12,color:C.text,whiteSpace:"pre-line"}}>{c.notes}</div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════ MAIN COMPONENT */
 function DoctorPatientPanelContent({ selectedAdmission }) {
   const [searchParams] = useSearchParams();
@@ -2275,6 +2373,11 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
   // Consent tab instead of the bare launcher card. Backend exposes
   // GET /consent-forms/uhid/:uhid and /admission/:admissionId.
   const [consents,      setConsents]      = useState([]);
+  // R7hr-169 — Saved Medical Certificates rendered inline on the
+  // Medical Certificates tab (mirrors the Nurse panel). The bare
+  // launcher card was hiding every cert already issued for the
+  // patient; this list surfaces them right where the doctor expects.
+  const [medCerts,      setMedCerts]      = useState([]);
   const [loading,       setLoading]       = useState(false);
   const [error,         setError]         = useState("");
   const [loaded,        setLoaded]        = useState(false);
@@ -2323,6 +2426,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
     setPatient(null); setAdmission(null); setDoctorNotes([]); setNursingNotes([]);
     setBilling(null); setOpdVisits([]); setVitalSheet([]); setEmergency([]); setDoctorOrders([]);
     setConsents([]);
+    setMedCerts([]);
     setActiveTab("overview");
     try {
       // Core patient + admission
@@ -2408,6 +2512,14 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
           setConsents(l.sort((a,b)=>
             new Date(b.signedAt || b.createdAt || 0) - new Date(a.signedAt || a.createdAt || 0)
           ));
+        }).catch(()=>{}),
+
+        // R7hr-169 — Medical certificates for this patient (newest first;
+        // the /uhid/:UHID endpoint already sorts by issuedAt desc).
+        axios.get(`${BASE}/medical-certificates/uhid/${u}`, { signal: ctrl.signal }).then(r=>{
+          if (ctrl.signal.aborted) return;
+          const l = Array.isArray(r.data?.data)?r.data.data:Array.isArray(r.data)?r.data:[];
+          setMedCerts(l);
         }).catch(()=>{}),
       ]);
 
@@ -2652,14 +2764,17 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
         url: ({ uhid }) => `/discharge-summary?uhid=${encodeURIComponent(uhid)}`,
         cta: "Open Discharge Summary ↗",
       });
-      case "medcerts":   return renderLauncher({
-        id: "medcerts", icon: "📑", color: "#7c3aed",
-        title: "Medical Certificates",
-        description: "Fitness, sickness, MTP, disability, death — generate and print on letterhead with MCI registration number.",
-        nabh: "NABH PRE.5 / Legal documentation",
-        url: ({ uhid }) => `/medical-certificates?uhid=${encodeURIComponent(uhid)}`,
-        cta: "Open Certificates ↗",
-      });
+      // R7hr-169 — Inline list of every cert already issued for this
+      // patient (mirrors the consent tab from R7hr-75). The
+      // "+ New Certificate" button still routes to /medical-certificates
+      // for the issuing form.
+      case "medcerts":   return (
+        <MedCertsTab
+          certs={medCerts}
+          uhid={patient?.UHID || activeUhid}
+          patient={patient}
+        />
+      );
       case "patientfile":return renderLauncher({
         id: "patientfile", icon: "📁", color: C.primaryD,
         title: "Complete Patient File",
@@ -2750,6 +2865,21 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       </div>
     )
   ) : null;
+
+  // R7hr-185 — Invasive devices & lines (placed / changed / removed
+  // history) on the doctor's patient panel too; same registry that
+  // drives ICU bundle applicability. Rendered with the gate banners
+  // so it sits directly under the patient hero.
+  const gateBannersWithDevices = (
+    <>
+      {gateBanners}
+      {admission?.admissionNumber && (
+        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "8px 14px 10px", margin: "10px 0" }}>
+          <PatientDevicesStrip ipdNo={admission.admissionNumber} />
+        </div>
+      )}
+    </>
+  );
 
   // ── Shift Bed modal (kept as a child of the shell so it overlays everything)
   const shiftBedModal = showShiftModal && (
@@ -2884,7 +3014,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
         (o) => (o.orderType || "").toLowerCase().includes("procedure")
             && !["Completed","Cancelled","Stopped"].includes(o.status)
       )}
-      gateBanners={gateBanners}
+      gateBanners={gateBannersWithDevices}
       tabs={TABS}
       activeTab={activeTab}
       onTabChange={setActiveTab}
