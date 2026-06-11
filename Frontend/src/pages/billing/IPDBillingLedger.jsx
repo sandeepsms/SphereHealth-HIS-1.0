@@ -455,7 +455,13 @@ export default function IPDBillingLedger() {
   const collectPayment = async () => {
     const amt = Math.round(Number(payAmt) * 100) / 100;
     if (!amt || amt <= 0) { toast.error("Enter a valid amount"); return; }
-    const due = Math.max(0, Number(data?.billSummary?.balanceAmount || 0));
+    // R7hr-193 (G8): cap against the CURRENT bill's balance, not the
+    // aggregated billSummary — older GENERATED bills carry their own
+    // dues and the backend OVERPAY cap is per-bill, so the aggregate
+    // could let through an amount the server then rejects.
+    const aggDue  = Math.max(0, Number(data?.billSummary?.balanceAmount || 0));
+    const billDue = Math.max(0, Number(data?.bill?.balanceAmount || 0));
+    const due = billDue > 0 ? billDue : aggDue;
     if (due > 0 && amt > due + 0.01) { toast.error(`Amount exceeds outstanding (₹${due.toLocaleString("en-IN")})`); return; }
     const billId = data?.bill?._id;
     if (!billId) { toast.error("No bill on this admission yet — add a charge first"); return; }
@@ -536,7 +542,15 @@ export default function IPDBillingLedger() {
       setPayOpen(false); setPayAmt(""); setPayRef("");
       await load();
     } catch (e) {
-      toast.error(e?.response?.data?.message || e.message || "Payment failed");
+      // R7hr-193 (G8): friendly OVERPAY message — the server cap is on
+      // the bill's CURRENT balance, which may have moved (new charges /
+      // another cashier) since this page last loaded.
+      if (e?.response?.data?.code === "OVERPAY") {
+        toast.error("Amount is more than the bill's current balance — page Refresh karke dobara try karein.");
+        await load();
+      } else {
+        toast.error(e?.response?.data?.message || e.message || "Payment failed");
+      }
     } finally { setPayBusy(false); }
   };
 

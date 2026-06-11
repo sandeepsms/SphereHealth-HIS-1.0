@@ -4750,7 +4750,12 @@ async function getIPDLedger(admissionId, user = {}) {
   const byCategory = {};
   for (const t of decorated) {
     if (t.status === "voided" || t.status === "cancelled" || t.status === "skipped") continue;
-    const cat = t.serviceCode?.split("-")[0] || "OTHER";
+    let cat = t.serviceCode?.split("-")[0] || "OTHER";
+    // R7hr-193 (G5): NRS-* (nurse procedure charges) and NURSING-* (room
+    // matrix daily nursing care) both display as "Nursing" on the ledger
+    // Category tab — two identical headers confused the desk. Merge the
+    // prefixes into one NURSING bucket.
+    if (cat === "NRS") cat = "NURSING";
     if (!byCategory[cat]) byCategory[cat] = { category: cat, count: 0, total: 0, items: [], truncated: false, truncatedAt: 0 };
     byCategory[cat].count += 1;
     byCategory[cat].total += Number(t.totalAmount || 0);

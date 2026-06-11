@@ -261,27 +261,18 @@ async function test_DoctorNote_IPD() {
     return fail("onDoctorNoteSaved", e?.message);
   }
 
-  const trig = await BillingTrigger.findOne({
-    admissionId: adm._id, serviceCode: "DOC-MORN-ROUND",
-  }).lean();
-  if (!trig) {
-    // Diagnostic — show what DID fire so a follow-up is easy
-    const all = await BillingTrigger.find({ admissionId: adm._id }).lean();
-    fail("DOC-MORN-ROUND trigger fired", `triggers on admission: [${all.map((t) => t.serviceCode).join(", ") || "none"}]`);
-    return;
-  }
-  pass("DOC-MORN-ROUND trigger fired", `unitPrice=₹${trig.unitPrice}, status=${trig.status}, dailyDedup=${trig.isDailyCharge}`);
-
-  // Also verify the per-shift / per-doctor dedup keeps a second identical
-  // note from double-charging the same morning round.
-  await autoBilling.onDoctorNoteSaved(noteDoc).catch(() => {});
-  const dupCount = await BillingTrigger.countDocuments({
-    admissionId: adm._id, serviceCode: "DOC-MORN-ROUND",
+  // R7hr-190/193 (G6): per-note doctor charges are RETIRED — doctor
+  // attendance bills ONLY via the room-matrix daily DOC-VISIT-* line
+  // (DOCTOR_NOTE_BILLING_ENABLED=false). A doctor note must therefore
+  // create NO trigger at all. The old assertion (DOC-MORN-ROUND fires)
+  // now describes a policy violation, not a pass.
+  const docNoteTrigs = await BillingTrigger.countDocuments({
+    admissionId: adm._id, sourceType: "DoctorNote",
   });
-  if (dupCount === 1) {
-    pass("DOC-MORN-ROUND dedup", "second identical note did NOT create a duplicate trigger (same-day, same-doctor)");
+  if (docNoteTrigs === 0) {
+    pass("Doctor note → NO per-note charge", "R7hr-190 policy holds — attendance bills via room matrix only");
   } else {
-    fail("DOC-MORN-ROUND dedup", `expected 1 trigger after 2 fires, got ${dupCount}`);
+    fail("Doctor note → NO per-note charge", `expected 0 DoctorNote triggers, got ${docNoteTrigs} — R7hr-190 gate regressed?`);
   }
 }
 
