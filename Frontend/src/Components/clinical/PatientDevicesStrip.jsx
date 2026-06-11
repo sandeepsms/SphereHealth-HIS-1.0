@@ -31,17 +31,20 @@ const C = {
 };
 
 // Mirror of backend DEVICE_TYPES (labels + ICU-bundle linkage).
+// R7hr-185d (USER) — `defaultSite` auto-fills the Site field on device
+// selection with the standard anatomical site for that device; the
+// field stays editable for laterality / re-site variations.
 const DEVICE_TYPES = {
-  ET_TUBE:          { label: "Endotracheal Tube (Intubated)", icon: "🫁", bundle: "VAP" },
-  TRACHEOSTOMY:     { label: "Tracheostomy",                  icon: "🗣️", bundle: "VAP" },
-  CENTRAL_LINE:     { label: "Central Line (CVC)",            icon: "🩸", bundle: "CLABSI" },
-  PICC_LINE:        { label: "PICC Line",                     icon: "🩸", bundle: "CLABSI" },
-  URINARY_CATHETER: { label: "Urinary Catheter (Foley)",      icon: "🚿", bundle: "CAUTI" },
-  IV_CANNULA:       { label: "Peripheral IV Cannula",         icon: "💉", bundle: null },
-  ARTERIAL_LINE:    { label: "Arterial Line",                 icon: "🩺", bundle: null },
-  NG_TUBE:          { label: "NG / Ryle's Tube",              icon: "👃", bundle: null },
-  CHEST_TUBE:       { label: "Chest Tube / ICD",              icon: "📤", bundle: null },
-  OTHER:            { label: "Other Device",                  icon: "🔧", bundle: null },
+  ET_TUBE:          { label: "Endotracheal Tube (Intubated)", icon: "🫁", bundle: "VAP",    defaultSite: "Oral (orotracheal)" },
+  TRACHEOSTOMY:     { label: "Tracheostomy",                  icon: "🗣️", bundle: "VAP",    defaultSite: "Tracheostomy stoma — anterior neck" },
+  CENTRAL_LINE:     { label: "Central Line (CVC)",            icon: "🩸", bundle: "CLABSI", defaultSite: "Right internal jugular vein (IJV)" },
+  PICC_LINE:        { label: "PICC Line",                     icon: "🩸", bundle: "CLABSI", defaultSite: "Right basilic vein" },
+  URINARY_CATHETER: { label: "Urinary Catheter (Foley)",      icon: "🚿", bundle: "CAUTI",  defaultSite: "Urethral" },
+  IV_CANNULA:       { label: "Peripheral IV Cannula",         icon: "💉", bundle: null,     defaultSite: "Right forearm" },
+  ARTERIAL_LINE:    { label: "Arterial Line",                 icon: "🩺", bundle: null,     defaultSite: "Left radial artery" },
+  NG_TUBE:          { label: "NG / Ryle's Tube",              icon: "👃", bundle: null,     defaultSite: "Right nostril (nasogastric)" },
+  CHEST_TUBE:       { label: "Chest Tube / ICD",              icon: "📤", bundle: null,     defaultSite: "5th ICS, mid-axillary line (safe triangle)" },
+  OTHER:            { label: "Other Device",                  icon: "🔧", bundle: null,     defaultSite: "" },
 };
 
 const CHANGE_REASONS = [
@@ -215,7 +218,13 @@ export default function PatientDevicesStrip({ ipdNo, inline = false }) {
                 <div style={{ display: "grid", gridTemplateColumns: "2fr 1.4fr 1fr auto", gap: 8, alignItems: "end" }}>
                   <div>
                     <div style={lbl}>Device *</div>
-                    <select style={fld} value={nType} onChange={e => setNType(e.target.value)}>
+                    <select style={fld} value={nType} onChange={e => {
+                      const v = e.target.value;
+                      setNType(v);
+                      // R7hr-185d — auto-fill the standard site for the
+                      // picked device (still editable for laterality etc.).
+                      setNSite(DEVICE_TYPES[v]?.defaultSite || "");
+                    }}>
                       <option value="">— Select device —</option>
                       {Object.entries(DEVICE_TYPES).map(([k, v]) => (
                         <option key={k} value={k}>{v.icon} {v.label}{v.bundle ? ` → ${v.bundle}` : ""}</option>
