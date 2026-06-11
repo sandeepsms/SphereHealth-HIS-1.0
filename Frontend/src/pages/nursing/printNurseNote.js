@@ -380,12 +380,22 @@ const buildBuilder = (note) => {
     // ─── MEWS SCORE ──────────────────────────────────────────────────
     mews: () => {
       const m = get("mewsScore");
+      // R7hr-183: the live MEWS form saves SHORT keys (rr / spo2 / temp /
+      // sbp / dbp / hr / avpu) while seeded notes carry the scored shape
+      // (respRate / heartRate / systolicBP / …). Read both additively —
+      // scored-shape notes have no short keys so their output is unchanged.
+      // dbp is documented but NOT scored (MEWS scores systolic only).
+      const _sys = m.systolicBP ?? m.sysBP ?? m.sbp;
+      const _bp  = (_sys !== undefined && _sys !== null && _sys !== "")
+        ? (m.dbp ? `${_sys}/${m.dbp}` : _sys)
+        : undefined;
       const rows = [
-        ["Respiratory Rate", m.respRate],
-        ["Heart Rate", m.heartRate],
-        ["Systolic BP", m.systolicBP],
-        ["Temperature", m.temperature],
-        ["Consciousness", m.consciousness],
+        ["Respiratory Rate", m.respRate ?? m.rr],
+        ["Heart Rate", m.heartRate ?? m.hr],
+        ...(m.spo2 !== undefined && m.spo2 !== null && m.spo2 !== "" ? [["SpO₂", m.spo2]] : []),
+        [m.dbp ? "Blood Pressure" : "Systolic BP", _bp],
+        ["Temperature", m.temperature ?? m.temp],
+        ["Consciousness", m.consciousness ?? m.avpu],
         ["Urine Output", m.urineOutput],
       ];
       const tbl = `<table class="nfx-tbl"><tr><th>MEWS Parameter</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${fmtVal(r[1]) || "—"}</td></tr>`).join("")}<tr style="background:#fffbeb"><td><strong>Total</strong></td><td><strong>${m.total ?? "—"}</strong></td></tr></table>`;
