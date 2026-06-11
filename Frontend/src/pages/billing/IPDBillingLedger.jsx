@@ -554,6 +554,29 @@ export default function IPDBillingLedger() {
     } finally { setPayBusy(false); }
   };
 
+  // R7hr-194 (USER) — confirm a PENDING (requiresConfirmation) charge
+  // right on the ledger. e.g. NRS-BLD blood transfusion lands as
+  // PENDING; the receptionist verbally confirms with staff/doctor and
+  // clicks "Confirm & Bill" on the row — no more detour to
+  // /billing-audit-trail just to flip the status. Same backend endpoint
+  // the audit page uses (billing.write).
+  const confirmPending = async (t) => {
+    const ok = window.confirm(
+      `${t.serviceName} (₹${Number(t.totalAmount || 0).toLocaleString("en-IN")}) — staff/doctor se confirm ho gaya?\n\nConfirm & Bill?`,
+    );
+    if (!ok) return;
+    try {
+      await axios.post(`${API_ENDPOINTS.BASE}/billing/audit/${t._id}/confirm-bill`, {
+        confirmedBy: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || user?.name,
+        confirmedByRole: user?.role || "Receptionist",
+      });
+      toast.success(`${t.serviceName} — confirmed & billed`);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || e.message || "Confirm failed");
+    }
+  };
+
   /* ─── Admission picker (when route is /billing/ipd without an id) ───
      Sidebar tile lands here without an admissionId. We render a
      lightweight picker: live list of active IPD/DC/ER admissions + a
@@ -1978,12 +2001,12 @@ export default function IPDBillingLedger() {
       {tab === "category" && (
         <CategoryView byCategory={byCategory} collapsed={collapsed} setCollapsed={setCollapsed}
           onUndo={openUndo} onOverride={openOverride} onCancel={openCancel}
-          undoWindowMs={undoWindowMs} />
+          onConfirm={confirmPending} undoWindowMs={undoWindowMs} />
       )}
       {tab === "daily" && (
         <DailyView byDay={byDay} collapsed={collapsed} setCollapsed={setCollapsed}
           onUndo={openUndo} onOverride={openOverride} onCancel={openCancel}
-          undoWindowMs={undoWindowMs} />
+          onConfirm={confirmPending} undoWindowMs={undoWindowMs} />
       )}
       {tab === "audit" && <AuditView triggers={triggers} />}
       {tab === "payments" && (
@@ -2260,7 +2283,8 @@ export default function IPDBillingLedger() {
 // Trigger row + action buttons (shared by category + daily views)
 // ═══════════════════════════════════════════════════════════════════
 
-function TriggerRow({ t, onUndo, onOverride, onCancel, undoWindowMs }) {
+function TriggerRow({ t, onUndo, onOverride, onCancel, onConfirm, undoWindowMs }) {
+  const { can } = useAuth();
   // Live countdown for the 15-min undo window so the receptionist can
   // see how much time is left. Tick once a second only when the row is
   // currently within the window (and not already voided).
@@ -2317,6 +2341,21 @@ function TriggerRow({ t, onUndo, onOverride, onCancel, undoWindowMs }) {
       </td>
       <td style={{ padding: "8px 10px", verticalAlign: "top", textAlign: "center", whiteSpace: "nowrap" }}>
         <StatusPill status={t.status} />
+        {t.status === "pending" && onConfirm && can("billing.write") && (
+          <button
+            onClick={() => onConfirm(t)}
+            title="Staff/doctor se confirm karke charge ko bill par chadhayein"
+            style={{
+              display: "block", margin: "4px auto 0", padding: "3px 8px",
+              border: "1px solid #f59e0b", borderRadius: 6, background: "#fffbeb",
+              color: "#a16207", fontSize: 10, fontWeight: 800, cursor: "pointer",
+              fontFamily: "inherit", whiteSpace: "nowrap",
+            }}
+          >
+            <i className="pi pi-check-circle" style={{ marginRight: 3, fontSize: 9 }} />
+            Confirm &amp; Bill
+          </button>
+        )}
         <div style={{ fontSize: 9, color: C.muted, marginTop: 3 }}>{fmtDateTime(t.createdAt)}</div>
         {remainStr && t.canUndo && (
           <div style={{ fontSize: 9, fontWeight: 700, color: C.warn, marginTop: 2 }}>
@@ -2356,7 +2395,7 @@ const actionBtnStyle = (color) => ({
 // Tab views
 // ═══════════════════════════════════════════════════════════════════
 
-function CategoryView({ byCategory, collapsed, setCollapsed, onUndo, onOverride, onCancel, undoWindowMs }) {
+function CategoryView({ byCategory, collapsed, setCollapsed, onUndo, onOverride, onCancel, onConfirm, undoWindowMs }) {
   if (!byCategory.length) return (
     <div style={{ padding: 40, textAlign: "center", color: C.muted, fontStyle: "italic" }}>
       No charges have been billed yet.
@@ -2405,7 +2444,7 @@ function CategoryView({ byCategory, collapsed, setCollapsed, onUndo, onOverride,
                   {group.items.map(t => (
                     <TriggerRow key={t._id} t={t}
                       onUndo={onUndo} onOverride={onOverride} onCancel={onCancel}
-                      undoWindowMs={undoWindowMs} />
+                      onConfirm={onConfirm} undoWindowMs={undoWindowMs} />
                   ))}
                 </tbody>
               </table>
@@ -2417,7 +2456,7 @@ function CategoryView({ byCategory, collapsed, setCollapsed, onUndo, onOverride,
   );
 }
 
-function DailyView({ byDay, collapsed, setCollapsed, onUndo, onOverride, onCancel, undoWindowMs }) {
+function DailyView({ byDay, collapsed, setCollapsed, onUndo, onOverride, onCancel, onConfirm, undoWindowMs }) {
   if (!byDay.length) return (
     <div style={{ padding: 40, textAlign: "center", color: C.muted, fontStyle: "italic" }}>
       No charges yet.
@@ -2477,7 +2516,7 @@ function DailyView({ byDay, collapsed, setCollapsed, onUndo, onOverride, onCance
                   {group.items.map(t => (
                     <TriggerRow key={t._id} t={t}
                       onUndo={onUndo} onOverride={onOverride} onCancel={onCancel}
-                      undoWindowMs={undoWindowMs} />
+                      onConfirm={onConfirm} undoWindowMs={undoWindowMs} />
                   ))}
                 </tbody>
               </table>
