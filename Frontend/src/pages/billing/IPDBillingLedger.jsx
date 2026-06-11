@@ -347,6 +347,18 @@ export default function IPDBillingLedger() {
   const [addRemarks, setAddRemarks] = useState("");
   const [addBusy, setAddBusy] = useState(false);
 
+  // R7hr-186 (USER) — Collect Payment right from the ledger (no detour
+  // to the Billing Counter). Posts to the SAME endpoints the Counter
+  // uses: POST /billing/:billId/payment for cash modes, and
+  // POST /billing/advance/:advanceId/apply for Adjust-from-Advance.
+  // R7al invariant mirrored: cash modes stay locked while the UHID
+  // advance pool has unspent balance.
+  const [payOpen, setPayOpen] = useState(false);
+  const [payAmt,  setPayAmt]  = useState("");
+  const [payMode, setPayMode] = useState("CASH");
+  const [payRef,  setPayRef]  = useState("");
+  const [payBusy, setPayBusy] = useState(false);
+
   // B4-T09 — Stuck triggers widget (Admin / Accountant only).
   // Surfaces BillingTrigger rows that landed in status="pending-review"
   // so the desk can spot revenue-leak risks and retry them in one click.
@@ -430,6 +442,114 @@ export default function IPDBillingLedger() {
   }, [admissionId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // R7hr-186 — Collect a pending payment from the ledger itself.
+  // While the bill is DRAFT (the whole live stay) the backend rejects
+  // BOTH recordPayment and advance-apply by invariant (R7ab/R7aw) —
+  // money collected mid-stay books as an ADVANCE deposit instead
+  // (receipt + Day Book Cash In per R7ar-F12) and auto-adjusts at
+  // Generate Final Bill (R7c/F37). Once the final bill exists
+  // (GENERATED/PARTIAL), ADVANCE mode walks the UHID's open advances
+  // FIFO via /advance/:id/apply and cash modes hit POST
+  // /billing/:billId/payment (receipt created server-side per
+  // R7ar-F3) with the R7al advance-first lock mirrored.
+  const collectPayment = async () => {
+    const amt = Math.round(Number(payAmt) * 100) / 100;
+    if (!amt || amt <= 0) { toast.error("Enter a valid amount"); return; }
+    const due = Math.max(0, Number(data?.billSummary?.balanceAmount || 0));
+    if (due > 0 && amt > due + 0.01) { toast.error(`Amount exceeds outstanding (₹${due.toLocaleString("en-IN")})`); return; }
+    const billId = data?.bill?._id;
+    const isDraftBill = !billId || String(data?.bill?.billStatus || "DRAFT").toUpperCase() === "DRAFT";
+    setPayBusy(true);
+    try {
+      if (isDraftBill) {
+        const res = await axios.post(`${API_ENDPOINTS.BILLING}/advance`, {
+          UHID: data.admission.UHID,
+          admission: data.admission._id,
+          amount: amt,
+          paymentMode: payMode,
+          transactionId: payRef.trim() || null,
+          remarks: `Interim collection against ${data.admission.admissionNumber || "IPD stay"} (live ledger)`,
+        });
+        const adv = res.data?.data || res.data || {};
+        toast.success(`₹${amt.toLocaleString("en-IN")} collected (${payMode}) — advance receipt ${adv.receiptNumber || "created"}; adjusts on final bill`);
+        // Print the deposit receipt — same payload contract as the
+        // Billing Counter's printAdvanceReceipt (R7b-HIGH-3a).
+        // Admission fields come from the ledger's own populated
+        // admission since the fresh advance returns unpopulated refs.
+        try {
+          const p = data.admission.patientId || {};
+          const a = data.admission;
+          openPrint("advance-receipt", {
+            receiptNo:       adv.receiptNumber,
+            patientName:     [p.title, p.fullName].filter(Boolean).join(" "),
+            uhid:            p.UHID || a.UHID,
+            gender:          p.gender || "",
+            age:             p.age || "",
+            contactNumber:   p.contactNumber || p.mobile || "",
+            completeAddress: p.completeAddress
+                              || [p.address?.line1, p.address?.city, p.address?.state].filter(Boolean).join(", ")
+                              || "",
+            payer:           p.tpa?.name || "Self",
+            ipdNo:           a.admissionNumber || null,
+            admissionDate:   a.admissionDate || null,
+            bedNumber:       a.bedNumber || null,
+            wardName:        a.wardName || null,
+            department:      a.department || null,
+            doctor:          a.attendingDoctor || null,
+            date:            adv.paidAt || adv.createdAt || new Date().toISOString(),
+            amount:          toMoney(adv.amount ?? amt),
+            method:          adv.paymentMode || payMode,
+            refNo:           adv.transactionId,
+            depositPurpose:  adv.remarks || "hospitalization advance",
+            printAudit: adv._id ? {
+              entityType:   "AdvanceReceipt",
+              entityId:     adv._id,
+              entityNumber: adv.receiptNumber,
+              UHID:         p.UHID || a.UHID,
+              patientName:  [p.title, p.fullName].filter(Boolean).join(" "),
+            } : undefined,
+          });
+        } catch (_) { /* best-effort — reprintable from Billing Counter → Advance Deposits */ }
+        setPayOpen(false); setPayAmt(""); setPayRef("");
+        await load();
+        return;
+      }
+      if (payMode === "ADVANCE") {
+        // Pull the live advance ledger and consume open balances FIFO.
+        const r = await axios.get(`${API_ENDPOINTS.BILLING}/advance/uhid/${encodeURIComponent(data.admission.UHID)}`);
+        // Endpoint shape: { success, data: <summary>, advances: [rows] } —
+        // the rows live under `advances`; `data` is the totals object.
+        const rows = Array.isArray(r.data?.advances) ? r.data.advances
+                   : Array.isArray(r.data?.data) ? r.data.data : [];
+        const advances = rows
+          .filter(a => a.status !== "REFUNDED" && Number(a.remainingAmount ?? a.balanceAmount ?? 0) > 0)
+          .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+        if (!advances.length) { toast.error("No unspent advance found for this UHID"); setPayBusy(false); return; }
+        let left = amt, applied = 0;
+        for (const adv of advances) {
+          if (left <= 0) break;
+          const chunk = Math.min(left, Number(adv.remainingAmount ?? adv.balanceAmount ?? 0));
+          if (chunk <= 0) continue;
+          const res = await axios.post(`${API_ENDPOINTS.BASE}/billing/advance/${adv._id}/apply`, { billId, amount: chunk });
+          const got = Number(res.data?.appliedAmount || chunk);
+          applied += got; left -= got;
+        }
+        toast.success(`₹${applied.toLocaleString("en-IN")} adjusted from advance pool`);
+      } else {
+        await axios.post(`${API_ENDPOINTS.BASE}/billing/${billId}/payment`, {
+          amount: amt,
+          paymentMode: payMode,
+          paymentReference: payRef.trim() || undefined,
+        });
+        toast.success(`₹${amt.toLocaleString("en-IN")} collected (${payMode}) — receipt created`);
+      }
+      setPayOpen(false); setPayAmt(""); setPayRef("");
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || e.message || "Payment failed");
+    } finally { setPayBusy(false); }
+  };
 
   /* ─── Admission picker (when route is /billing/ipd without an id) ───
      Sidebar tile lands here without an admissionId. We render a
@@ -1501,6 +1621,12 @@ export default function IPDBillingLedger() {
   const netAmount     = Number(s.netAmount     || 0) || grossAmount;
   const paid          = Number(s.advancePaid   || 0);
   const balance       = Math.max(0, Number(s.balanceAmount || 0) || (netAmount - paid));
+  // R7hr-186 — the bill stays DRAFT for the whole live stay, and the
+  // backend (by invariant) accepts payments / advance-apply only on a
+  // generated bill. So collection on a live ledger books as an interim
+  // ADVANCE deposit (cash/card/UPI welcome); the Adjust-from-Advance +
+  // R7al cash-lock path only applies once the final bill exists.
+  const liveDraft = !bill?._id || String(bill?.billStatus || "DRAFT").toUpperCase() === "DRAFT";
 
   // Stay in days
   const dischargedAt = admission.actualDischargeDate;
@@ -1635,6 +1761,24 @@ export default function IPDBillingLedger() {
           }}>
             <i className="pi pi-plus" style={{ marginRight: 6 }} />
             Take Advance
+          </button>
+        )}
+        {/* R7hr-186 (USER) — collect the pending payment right here on
+            the ledger. Default amount = full outstanding; Adjust-from-
+            Advance is forced first while the pool has unspent balance
+            (R7al invariant, mirrored from the Billing Counter). */}
+        {can("billing.write") && balance > 0 && (
+          <button onClick={() => {
+            setPayAmt(String(!liveDraft && advanceBalance > 0 ? Math.min(balance, advanceBalance) : balance));
+            setPayMode(!liveDraft && advanceBalance > 0 ? "ADVANCE" : "CASH");
+            setPayRef("");
+            setPayOpen(true);
+          }} style={{
+            padding: "7px 14px", background: "#0284c7", color: "#fff", border: "none",
+            borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
+          }}>
+            <i className="pi pi-money-bill" style={{ marginRight: 6 }} />
+            Collect Payment
           </button>
         )}
         {/* Add Charge — every clinician + desk role above can push a
@@ -1906,6 +2050,100 @@ export default function IPDBillingLedger() {
            from ServiceMaster, sets qty (+ price for Accountant/Admin),
            writes a remark, and the line lands on the running DRAFT
            bill via the auto-billing pipeline. */}
+      {/* R7hr-186 — Collect Payment modal (user: "yaha se bhi to pending
+          payment collect kr sakte hai"). On a live (DRAFT) bill the
+          collection books as an ADVANCE deposit with receipt — backend
+          accepts payments only post-Generate Final Bill. On a generated
+          bill, cash modes stay locked while the advance pool has
+          unspent balance (R7al mirror). */}
+      {payOpen && (
+        <div onClick={(e) => { if (e.target === e.currentTarget && !payBusy) setPayOpen(false); }}
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ width: "min(480px, 100%)", background: "#fff", borderRadius: 14, overflow: "hidden", boxShadow: "0 20px 50px rgba(0,0,0,.25)", fontFamily: "inherit" }}>
+            <div style={{ background: "#0284c7", color: "#fff", padding: "13px 18px", display: "flex", alignItems: "center", gap: 10 }}>
+              <i className="pi pi-money-bill" />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 900, fontSize: 14 }}>Collect Payment — {data?.admission?.admissionNumber}</div>
+                <div style={{ fontSize: 11, opacity: .9 }}>
+                  Outstanding {inr(balance)} · Advance pool {inr(advanceBalance)}
+                  {liveDraft ? " · live bill — books as advance deposit" : ""}
+                </div>
+              </div>
+              <button disabled={payBusy} onClick={() => setPayOpen(false)} style={{ width: 28, height: 28, borderRadius: 7, background: "rgba(255,255,255,.2)", border: "none", color: "#fff", cursor: "pointer", fontWeight: 800 }}>×</button>
+            </div>
+            <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 5 }}>Amount (₹)</div>
+                <input type="number" min="1" value={payAmt} onChange={e => setPayAmt(e.target.value)}
+                  style={{ width: "100%", padding: "9px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 15, fontWeight: 700, fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }} />
+                <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                  {payMode === "ADVANCE" ? (
+                    <button onClick={() => setPayAmt(String(Math.min(balance, advanceBalance)))} style={{ padding: "3px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#f8fafc", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      Max from advance ({inr(Math.min(balance, advanceBalance))})
+                    </button>
+                  ) : (
+                    <button onClick={() => setPayAmt(String(balance))} style={{ padding: "3px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#f8fafc", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      Full outstanding ({inr(balance)})
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 5 }}>Payment Mode</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {!liveDraft && advanceBalance > 0 && (
+                    <button onClick={() => { setPayMode("ADVANCE"); setPayAmt(String(Math.min(balance, advanceBalance))); }}
+                      style={{ padding: "7px 13px", borderRadius: 8, border: `1.5px solid ${payMode === "ADVANCE" ? "#7c3aed" : C.border}`, background: payMode === "ADVANCE" ? "#f5f3ff" : "#fff", color: payMode === "ADVANCE" ? "#7c3aed" : C.muted, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                      Adjust from Advance
+                    </button>
+                  )}
+                  {["CASH", "CARD", "UPI"].map(m => {
+                    // R7al — exhaust advance first; only meaningful once a
+                    // final bill exists (advance can't apply to a DRAFT).
+                    const locked = !liveDraft && advanceBalance > 0;
+                    return (
+                      <button key={m} disabled={locked} onClick={() => setPayMode(m)}
+                        title={locked ? `₹${advanceBalance.toLocaleString("en-IN")} advance pool must be adjusted first (R7al)` : ""}
+                        style={{ padding: "7px 13px", borderRadius: 8, border: `1.5px solid ${payMode === m ? "#0284c7" : C.border}`, background: payMode === m ? "#f0f9ff" : "#fff", color: locked ? "#cbd5e1" : payMode === m ? "#0284c7" : C.muted, fontWeight: 800, fontSize: 12, cursor: locked ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                        {m}
+                      </button>
+                    );
+                  })}
+                </div>
+                {liveDraft ? (
+                  <div style={{ fontSize: 10.5, color: "#0369a1", marginTop: 5 }}>
+                    Live bill (DRAFT) — collection lands in the Advance Pool with a deposit receipt and auto-adjusts at Generate Final Bill.
+                  </div>
+                ) : advanceBalance > 0 && (
+                  <div style={{ fontSize: 10.5, color: "#7c3aed", marginTop: 5 }}>
+                    ₹{advanceBalance.toLocaleString("en-IN")} unspent advance — cash modes unlock once the pool is exhausted (R7al).
+                  </div>
+                )}
+              </div>
+              {(payMode === "CARD" || payMode === "UPI") && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 5 }}>
+                    {payMode === "CARD" ? "Card last 4 / approval ref" : "UPI transaction ID"}
+                  </div>
+                  <input value={payRef} onChange={e => setPayRef(e.target.value)} placeholder={payMode === "CARD" ? "e.g. **6411 / APPR123" : "e.g. 4198xxxxxx"}
+                    style={{ width: "100%", padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 12.5, boxSizing: "border-box", fontFamily: "inherit" }} />
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 2 }}>
+                <button disabled={payBusy} onClick={() => setPayOpen(false)}
+                  style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>
+                  Cancel
+                </button>
+                <button disabled={payBusy} onClick={collectPayment}
+                  style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: payMode === "ADVANCE" ? "#7c3aed" : "#0284c7", color: "#fff", fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>
+                  {payBusy ? "Processing…" : payMode === "ADVANCE" ? "Adjust from Advance" : `Collect ${payMode}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {addOpen && (
         <div onClick={closeAdd} style={{
           position: "fixed", inset: 0, zIndex: 1000,
