@@ -216,7 +216,13 @@ function DailyNursingContent({ patient }) {
     const entry = { ...form, gcsTotal: gcsTotal(), savedAt: new Date().toISOString() };
     try {
       await axios.post(`${API}/nursing-assessments/daily`, {
-        patientId: patient._id, ...entry,
+        patientId: patient._id,
+        // B3-T09: backend requires both UHID + admissionId in the body or
+        // it 400s NURSING_ASSESSMENT_MISSING_PATIENT_CONTEXT.
+        UHID: patient.UHID,
+        admissionId: patient.currentAdmissionId || patient.admissionId,
+        patientName: patient.patientName || patient.fullName || patient.name,
+        ...entry,
         nurseName: entry.signOff?.nurseName || user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
         nurseEmployeeId: user?.employeeId || "",
         nurseSignature: signature || undefined,

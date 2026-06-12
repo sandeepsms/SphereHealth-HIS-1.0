@@ -196,7 +196,12 @@ function NutritionalContent({ patient }) {
     const entry = { date: new Date().toISOString(), ...form, totalScore, atRisk, bmi };
     try {
       await axios.post(`${API}/nursing-assessments/nutrition`, {
-        patientId: patient._id, ...entry,
+        patientId: patient._id,
+        // B3-T09: backend requires both UHID + admissionId or it 400s.
+        UHID: patient.UHID,
+        admissionId: patient.currentAdmissionId || patient.admissionId,
+        patientName: patient.patientName || patient.fullName || patient.name,
+        ...entry,
         nurseName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
         nurseEmployeeId: user?.employeeId || "",
         nurseSignature: signature || undefined,

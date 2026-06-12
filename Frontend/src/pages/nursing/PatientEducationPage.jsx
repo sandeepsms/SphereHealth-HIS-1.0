@@ -283,6 +283,10 @@ function PatientEducationContent({ patient }) {
     try {
       await axios.post(`${API}/nursing-assessments/education`, {
         patientId: patient._id,
+        // B3-T09: backend requires both UHID + admissionId or it 400s.
+        UHID: patient.UHID,
+        admissionId: patient.currentAdmissionId || patient.admissionId,
+        patientName: patient.patientName || patient.fullName || patient.name,
         sessions: newSessions.slice(0, sessions.length),
         nurseName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
         nurseEmployeeId: user?.employeeId || "",

@@ -304,7 +304,7 @@ const NursingHandoverNotes = () => {
               {selectedAdm && (
                 <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {[
-                    { label: "Type", value: selectedAdm.admissionType || activeType },
+                    { label: "Type", value: selectedAdm.admissionType || "—" },
                     { label: "Status", value: selectedAdm.status || "Active" },
                     { label: "Doctor", value: selectedAdm.attendingDoctor || "—" },
                     { label: "Dept", value: selectedAdm.department || "—" },

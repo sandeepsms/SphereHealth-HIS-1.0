@@ -222,6 +222,10 @@ function NursingCarePlanContent({ selectedPatient }) {
     setLoading(true);
     const payload = {
       ...form,
+      // NursingCarePlanModel requires the `patient` ObjectId (ref Patient);
+      // without it create() fails Mongoose validation. Sourced from the
+      // sidebar-selected patient.
+      patient: selectedPatient?._id || form.patient,
       nurseName: form.nurseName || user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
       nurseEmployeeId: user?.employeeId || "",
       nurseSignature: signature || undefined,
@@ -451,7 +455,8 @@ function NursingCarePlanContent({ selectedPatient }) {
                       </F>
                       <F label="Priority">
                         <select className="his-select" style={{ fontWeight: 700, color: pc.color }} value={pr.priority} onChange={e => changeProblem(pi, "priority", e.target.value)}>
-                          {["HIGH", "MEDIUM", "LOW", "CRITICAL"].map(v => <option key={v}>{v}</option>)}
+                          {/* Model enum is [HIGH,MEDIUM,LOW]; CRITICAL would fail subdoc validation on save. */}
+                          {["HIGH", "MEDIUM", "LOW"].map(v => <option key={v}>{v}</option>)}
                         </select>
                       </F>
                       <F label="Status">
