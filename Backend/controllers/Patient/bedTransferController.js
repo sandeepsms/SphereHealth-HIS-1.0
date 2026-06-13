@@ -30,6 +30,21 @@ exports.createTransfer = async (req, res) => {
       });
     }
 
+    // Audit R7hr-196: only an Active admission can be transferred. Without
+    // this gate a transfer could be raised (or later completed) against a
+    // Discharged/Cancelled file, re-occupying a bed for a closed admission.
+    const admForTransfer = await Admission.findById(admissionId).select("status").lean();
+    if (!admForTransfer) {
+      return res.status(404).json({ success: false, message: "Admission not found" });
+    }
+    if (admForTransfer.status !== "Active") {
+      return res.status(409).json({
+        success: false,
+        code: "ADMISSION_NOT_ACTIVE",
+        message: `Cannot transfer — admission is ${String(admForTransfer.status || "").toLowerCase() || "not active"}, not Active.`,
+      });
+    }
+
     // Block if a transfer is already pending for this admission
     const existing = await BedTransfer.findOne({ admissionId, status: "PendingHandover" });
     if (existing) {
@@ -154,6 +169,18 @@ exports.completeHandover = async (req, res) => {
       });
     }
 
+    // Audit R7hr-196: the admission may have been discharged/cancelled
+    // AFTER this transfer was initiated. Completing it would re-occupy a
+    // bed for a closed file — refuse unless still Active.
+    const admForHandover = await Admission.findById(transfer.admissionId).select("status").lean();
+    if (admForHandover && admForHandover.status !== "Active") {
+      return res.status(409).json({
+        success: false,
+        code: "ADMISSION_NOT_ACTIVE",
+        message: `Cannot complete handover — admission is ${String(admForHandover.status).toLowerCase()}, not Active.`,
+      });
+    }
+
     // R7bb-FIX-E-20: SoD — the nurse completing the handover MUST be a
     // different user than the doctor who initiated the transfer. Pre-R7bb
     // a single user with both gates (doctor.write + nursing.handover) could
@@ -240,9 +267,15 @@ exports.completeHandover = async (req, res) => {
     // a consistent-but-stale state (admission already points at the
     // new bed; old bed will be reaped by the next nurse-action).
     if (transfer.fromBedId) {
-      await Bed.findByIdAndUpdate(transfer.fromBedId, {
-        $set: { status: "Available", currentAdmission: null, patient: null },
-      }).catch((e) => console.error(
+      // Audit R7hr-196: only free the old bed if it is STILL owned by this
+      // admission. fromBedId was captured at initiation; if the bed was
+      // reassigned to another patient in the interim, an unconditional free
+      // would double-allocate it. The currentAdmission predicate makes the
+      // release a no-op when the bed has moved on.
+      await Bed.findOneAndUpdate(
+        { _id: transfer.fromBedId, currentAdmission: transfer.admissionId },
+        { $set: { status: "Available", currentAdmission: null, patient: null } },
+      ).catch((e) => console.error(
         `[BedTransfer] failed to release fromBed ${transfer.fromBedId}:`, e.message,
       ));
     }
