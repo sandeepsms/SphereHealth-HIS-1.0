@@ -863,11 +863,69 @@ class AdmissionController {
       });
     }
 
+    // R7hr-197 — REAL primary-bill balance gate. The pharmacy gate above
+    // only covers pharmacy credit; the main IPD bill (room/nursing/
+    // procedure) was never checked, so a patient could be cleared owing the
+    // bulk of the bill. Resolve the primary IPD bill and require the entered
+    // settlement to cover its outstanding balance:
+    //   • Normal/Routine → balance after the entered amount must be ~0.
+    //   • LAMA/DAMA/Death/Absconded/Referral → may clear with a balance, but
+    //     only with a recorded waiverReason (NABH-auditable).
+    const { toNum } = require("../../utils/money");
+    const BillingTrigger = require("../../models/Billing/BillingTrigger");
+    const admGate = await Admission.findById(req.params.id).select("dischargeWorkflow UHID admissionNumber").lean();
+    const dispoType    = admGate?.dischargeWorkflow?.dischargeType || "Routine";
+    const waiverReason = String(req.body.waiverReason || "").trim();
+
+    // Block on un-billed PENDING "Confirm & Bill" triggers (R7hr-194) — those
+    // charges aren't on the ledger yet, so the balance would understate the dues.
+    const pendingConfirm = await BillingTrigger.countDocuments({
+      admissionId: req.params.id, requiresConfirmation: true, status: "pending",
+    });
+    if (pendingConfirm > 0) {
+      return res.status(409).json({
+        success: false, code: "PENDING_CONFIRM_CHARGES",
+        message: `${pendingConfirm} charge(s) await 'Confirm & Bill' on the IPD ledger. Confirm or void them before clearing the final bill.`,
+        pendingConfirm,
+      });
+    }
+
+    const openBillCond = { billStatus: { $nin: ["PAID", "CANCELLED", "REFUNDED"] } };
+    let gateBill = await PatientBill.findOne({ admission: req.params.id, ...openBillCond });
+    if (!gateBill && admGate?.admissionNumber)
+      gateBill = await PatientBill.findOne({ admissionNumber: admGate.admissionNumber, ...openBillCond });
+    if (!gateBill && admGate?.UHID)
+      gateBill = await PatientBill.findOne({ UHID: admGate.UHID, visitType: { $in: ["IPD", "DAYCARE"] }, ...openBillCond });
+
+    const balanceNow     = gateBill ? toNum(gateBill.balanceAmount) : 0;
+    const enteredAmt     = Number(req.body.finalBillAmount) || 0;
+    const remainingAfter = balanceNow - enteredAmt;
+    const isNormalDispo  = !["LAMA", "DAMA", "Death", "Absconded", "Referral"].includes(dispoType);
+
+    if (remainingAfter > 0.5) {
+      if (isNormalDispo) {
+        return res.status(409).json({
+          success: false, code: "BILL_NOT_SETTLED",
+          message: `IPD bill not fully settled — ₹${remainingAfter.toFixed(2)} would remain after the entered amount. Collect the balance, then clear.`,
+          balance: balanceNow, entered: enteredAmt, outstanding: remainingAfter,
+        });
+      }
+      if (!waiverReason) {
+        return res.status(400).json({
+          success: false, code: "WAIVER_REQUIRED",
+          message: `${dispoType} discharge with ₹${remainingAfter.toFixed(2)} outstanding — a waiver reason is required to clear with a balance.`,
+          balance: balanceNow, outstanding: remainingAfter, dischargeType: dispoType,
+        });
+      }
+    }
+
     const set = {
       "dischargeWorkflow.stage":         "BillCleared",
       "dischargeWorkflow.billClearedAt": new Date(),
-      "dischargeWorkflow.billClearedBy": req.body.clearedBy || "Receptionist",
+      // JWT actor (R7hr-197) — the audit name is the logged-in cashier, not a body field.
+      "dischargeWorkflow.billClearedBy": req.user?.fullName || req.body.clearedBy || "Receptionist",
     };
+    if (waiverReason) set["dischargeWorkflow.billWaiverReason"] = waiverReason;
     if (req.body.finalBillNumber) set["dischargeWorkflow.finalBillNumber"] = req.body.finalBillNumber;
     if (req.body.finalBillAmount !== undefined) {
       set["dischargeWorkflow.finalBillAmount"] = Number(req.body.finalBillAmount) || 0;
@@ -1004,7 +1062,23 @@ class AdmissionController {
           await bill.save();
         }
       }
-    } catch (e) { /* don't block discharge clearance on bill update */ }
+    } catch (e) {
+      // R7hr-197 — a failed bill update must NOT leave stage=BillCleared with
+      // a live balance (that was the silent "discharge clears even if payment
+      // never lands" gap). Revert the stage so the cashier retries.
+      await Admission.findOneAndUpdate(
+        { _id: req.params.id, "dischargeWorkflow.stage": "BillCleared" },
+        { $set: {
+          "dischargeWorkflow.stage":         "DoctorApproved",
+          "dischargeWorkflow.billClearedAt": null,
+          "dischargeWorkflow.billClearedBy": null,
+        } },
+      ).catch(() => {});
+      return res.status(500).json({
+        success: false, code: "BILL_UPDATE_FAILED",
+        message: `Final-bill payment could not be recorded: ${e.message}. Stage reverted — please retry.`,
+      });
+    }
 
     return res.json({ success: true, data: adm.dischargeWorkflow });
   });
@@ -1034,7 +1108,9 @@ class AdmissionController {
         "dischargeWorkflow.stage":            "Completed",
         "dischargeWorkflow.gatePassNumber":   passNumber,
         "dischargeWorkflow.gatePassIssuedAt": now,
-        "dischargeWorkflow.gatePassIssuedBy": req.body.issuedBy || "Receptionist",
+        // JWT actor (R7hr-197) — the discharging cashier, not a body field.
+        "dischargeWorkflow.gatePassIssuedBy": req.user?.fullName || req.body.issuedBy || "Receptionist",
+        "dischargeWorkflow.dischargedBy":     req.user?.fullName || req.body.issuedBy || "Receptionist",
         status:                                "Discharged",
         actualDischargeDate:                   now,
       } },

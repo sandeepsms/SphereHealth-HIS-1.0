@@ -268,6 +268,16 @@ const AdmissionSchema = new mongoose.Schema(
       gatePassNumber:      String,
       gatePassIssuedAt:    Date,
       gatePassIssuedBy:    String,
+      // R7hr-197 discharge rebuild — disposition is the doctor's clinical
+      // choice on the discharge summary; the receptionist's bed-clear step
+      // executes it. dischargeType drives which NABH register fires (LAMA vs
+      // Mortality) and how the bed-clear bill gate behaves (Normal = balance
+      // must be 0; LAMA/Death = waiver allowed with a recorded reason).
+      dischargeType:       { type: String, enum: ["Routine", "LAMA", "DAMA", "Absconded", "Referral", "Death"], default: "Routine" },
+      summaryId:           { type: mongoose.Schema.Types.ObjectId, ref: "DischargeSummary", default: null },
+      summaryFinalizedAt:  Date,
+      billWaiverReason:    String,   // mandatory reason when LAMA/Death clears with a balance
+      dischargedBy:        String,   // JWT actor who issued the final bed-clear/gate-pass
       // R7i: Same-day discharge undo (Admin override). Populated by
       // POST /admissions/:id/reactivate when an admin re-activates a
       // patient within 24h of discharge. The audit trail travels with

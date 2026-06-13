@@ -1248,19 +1248,21 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
       toast.warn("Save the summary as a draft first, then click Finalize");
       return;
     }
-    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    // R7hr-197: finalize now ONLY locks the summary + sends the patient to
+    // the reception discharge queue. The doctor does NOT free the bed —
+    // reception clears the bill, then clears the bed (actual release).
     if (!(await confirm({
       title: "Finalize discharge summary?",
-      body: "This will mark the admission as Discharged, release the bed back to Available, and lock the summary against further edits.",
+      body: "This locks the summary against edits and sends the patient to the Reception discharge queue (bill clearance → bed release). The bed is NOT freed yet — reception does that after the bill is settled.",
       danger: true,
-      confirmLabel: "Finalize discharge",
+      confirmLabel: "Finalize & send to billing",
     }))) return;
 
     setFinalizing(true);
     try {
       const finalizedByName = user?.fullName || form.doctorName || "Doctor";
       await axios.patch(`${API}/${lastSavedId}/finalize`, { finalizedByName }, { headers });
-      toast.success("Discharge finalized — patient discharged, bed released");
+      toast.success("Discharge summary finalized — patient sent to Reception discharge queue");
       // Stay on the page in read-only "finalized" mode; the user can still print
     } catch (err) {
       toast.error(err.response?.data?.message || "Finalize failed");
@@ -1482,8 +1484,8 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
                 disabled={!form.UHID}
                 onClick={() => { window.location.href = `/discharge-queue?uhid=${encodeURIComponent(form.UHID)}`; }} />
               <Pill n={4} role="finalize"
-                label="Finalize & free bed"
-                sub={done1 ? "Discharge + release" : "Save first"}
+                label="Finalize & send to billing"
+                sub={done1 ? "Locks summary → reception queue" : "Save first"}
                 isActive={done1}
                 disabled={!lastSavedId || finalizing || saving}
                 onClick={handleFinalize} />
@@ -1587,7 +1589,15 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
               <F label="Reg. No."><input className="his-field" value={form.doctorRegNo} onChange={upd("doctorRegNo")} /></F>
               <F label="Condition on Discharge">
                 <select className="his-select" value={form.conditionOnDischarge} onChange={upd("conditionOnDischarge")}>
-                  {["Stable","Improved","Critical","LAMA","Expired","Transferred"].map(c => <option key={c}>{c}</option>)}
+                  {["Stable","Improved","Unchanged","Deteriorated","Critical","LAMA","Expired"].map(c => <option key={c}>{c}</option>)}
+                </select>
+              </F>
+              {/* R7hr-197 — disposition / discharge mode. This is the doctor's
+                  clinical choice; the receptionist's bed-clear step executes it
+                  and the matching NABH register (LAMA / Mortality) auto-fires. */}
+              <F label="Discharge Type" required>
+                <select className="his-select" value={form.dischargeType || "Routine"} onChange={upd("dischargeType")}>
+                  {["Routine","LAMA","DAMA","Absconded","Referral","Death"].map(c => <option key={c}>{c}</option>)}
                 </select>
               </F>
             </G4>

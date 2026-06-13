@@ -344,6 +344,32 @@ class DischargeSummaryController {
       }
     }
 
+    // R7hr-197 — Auto-populate the NABH AAC.4 LAMA register on a finalized
+    // LAMA/DAMA discharge. Pre-fix emitLAMA was dead-wired to the discharge
+    // flow (only the manual register route called it), so a LAMA never
+    // reached the register unless Compliance remembered to file it by hand.
+    // Idempotent by sourceRef "discharge:<summaryId>"; non-blocking.
+    if (summary.dischargeType === "LAMA" || summary.dischargeType === "DAMA" || summary.conditionOnDischarge === "LAMA") {
+      try {
+        const { emitLAMA } = require("../../services/Compliance/nabhRegisterEmitter");
+        const Patient = require("../../models/Patient/patientModel");
+        const lamaPatient = summary.patientId
+          ? await Patient.findById(summary.patientId).select("_id UHID fullName name age gender sex").lean()
+          : { _id: summary.patientId, UHID: summary.UHID, fullName: summary.patientName, age: summary.age, sex: summary.gender };
+        const lamaAdmission = summary.admissionId
+          ? await Admission.findById(summary.admissionId).select("_id admissionNumber admissionDate attendingDoctor attendingDoctorId").lean()
+          : null;
+        emitLAMA({
+          dischargeSummary: summary,
+          patient: lamaPatient || {},
+          admission: lamaAdmission,
+          actor: req.user || {},
+        }).catch((e) => console.error("[discharge-summary] emitLAMA error:", e?.message));
+      } catch (e) {
+        console.error("[discharge-summary] LAMA emit wiring failed:", e?.message);
+      }
+    }
+
     // R7az-D8-CRIT-1..5: Discharge fast-path now flows through the SAME
     // service the receptionist workflow uses. Pre-R7az this controller
     // did inline `findByIdAndUpdate` on the admission + bed — bypassing
@@ -447,64 +473,44 @@ class DischargeSummaryController {
 
       const now = new Date();
       const finalizedBy = finalizedByName || req.user?.fullName || "Doctor";
-      const stage = admission.dischargeWorkflow?.stage || "NotRequested";
-      const billAlreadyCleared = ["BillCleared", "GatePassIssued", "Completed"].includes(stage);
 
-      if (billAlreadyCleared) {
-        // Bill already cleared — fully discharge via the canonical service
-        // path so the bed is released, daily-charges flushed, CleaningTask
-        // created, overage refunded, and BillingAudit emitted.
-        try {
-          await admissionService.dischargePatient(summary.admissionId, {
-            actualDischargeDate:   summary.dischargeDate || now,
-            conditionOnDischarge:  summary.conditionOnDischarge,
-            dischargeSummary:      summary._id.toString(),
-            followUpInstructions:  summary.followUpInstructions,
-            dischargeNotes:        summary.dischargeNotes || "",
-            actor: { role: req.user?.role, id: req.user?.id || req.user?._id },
-          });
-        } catch (e) {
-          // dischargePatient surfaces typed errors — log + re-throw so
-          // handle() returns the right status. Discharge summary is
-          // already marked finalized; rolling that back risks creating
-          // an inconsistent state where the bed is released but the
-          // summary isn't signed. Let the operator/admin investigate.
-          console.error("[Discharge fast-path] dischargePatient failed after summary finalized:", e.message);
-          throw e;
-        }
-      } else {
-        // Bill NOT cleared yet — advance workflow stage to DoctorApproved
-        // ONLY. Status stays "Active"; bed stays Occupied. Cashier owns
-        // the final BedReleased / Completed flip. billClearedBy stays
-        // null — only the cashier's explicit clearFinalBill stamps it.
-        //
-        // CAS — only flip if the stage is currently NotRequested. If a
-        // cashier has already advanced it past DoctorApproved (e.g.
-        // BillCleared) between our pre-check and now, we noop and let
-        // the next finalize attempt route through the cleared-path branch.
-        await Admission.findOneAndUpdate(
-          {
-            _id: summary.admissionId,
-            status: "Active",
-            $or: [
-              { "dischargeWorkflow.stage": { $in: ["NotRequested", "DoctorApproved"] } },
-              { "dischargeWorkflow.stage": { $exists: false } },
-              { dischargeWorkflow: { $exists: false } },
-            ],
+      // R7hr-197 discharge rebuild — a finalized discharge summary is the
+      // SINGLE trigger that enqueues the patient into the receptionist
+      // discharge queue. The doctor NEVER frees the bed here; the
+      // receptionist's clear-bill → clear-bed steps own the bill gate and
+      // the actual bed release. We copy the doctor's disposition
+      // (dischargeType) + condition onto the admission so the queue and the
+      // bed-clear step can read it without a summary join.
+      //
+      // CAS — advance to DoctorApproved (= "Pending Bill") only while the
+      // patient is Active and the cashier hasn't already moved the stage
+      // further (BillCleared/Completed). If they have, we leave it (no
+      // downgrade) and let the existing stage stand.
+      await Admission.findOneAndUpdate(
+        {
+          _id: summary.admissionId,
+          status: "Active",
+          $or: [
+            { "dischargeWorkflow.stage": { $in: ["NotRequested", "DoctorApproved"] } },
+            { "dischargeWorkflow.stage": { $exists: false } },
+            { dischargeWorkflow: { $exists: false } },
+          ],
+        },
+        {
+          $set: {
+            "dischargeWorkflow.stage":              "DoctorApproved",
+            "dischargeWorkflow.doctorApprovedAt":   now,
+            "dischargeWorkflow.doctorApprovedBy":   finalizedBy,
+            "dischargeWorkflow.dischargeType":      summary.dischargeType || "Routine",
+            "dischargeWorkflow.summaryId":          summary._id,
+            "dischargeWorkflow.summaryFinalizedAt": now,
+            dischargeSummary:                       summary._id.toString(),
+            ...(summary.conditionOnDischarge && { conditionOnDischarge: summary.conditionOnDischarge }),
+            ...(summary.followUpInstructions  && { followUpInstructions:  summary.followUpInstructions  }),
           },
-          {
-            $set: {
-              "dischargeWorkflow.stage":            "DoctorApproved",
-              "dischargeWorkflow.doctorApprovedAt": now,
-              "dischargeWorkflow.doctorApprovedBy": finalizedBy,
-              dischargeSummary:                     summary._id.toString(),
-              ...(summary.conditionOnDischarge && { conditionOnDischarge: summary.conditionOnDischarge }),
-              ...(summary.followUpInstructions  && { followUpInstructions:  summary.followUpInstructions  }),
-            },
-          },
-          { runValidators: true },
-        );
-      }
+        },
+        { runValidators: true },
+      );
     }
 
     return res.json({
