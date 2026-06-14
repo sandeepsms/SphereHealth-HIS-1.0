@@ -689,6 +689,10 @@ function PrintModal({ data, dept, onClose }) {
               : data.investigationsSummary)
         || data.keyInvestigations || "",
       conditionOnDischarge: data.conditionOnDischarge,
+      // R7hr-202 — auto-filled clinical event fields.
+      vitalsOnDischarge:    data.vitalsOnDischarge,
+      bloodTransfusions:    data.bloodTransfusionsText,
+      mlcNumber:            data.mlcNumber,
       dischargeMeds:       data.dischargeMeds || data.medications || [],
       advice:              [data.specialInstructions, data.activityAdvice].filter(Boolean).flatMap(s => String(s).split("\n").filter(Boolean)),
       bloodGroup:          data.bloodGroup || data.patient?.bloodGroup,
@@ -812,6 +816,22 @@ function PrintModal({ data, dept, onClose }) {
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>HOSPITAL COURSE</div>
                 <div style={{ lineHeight: 1.7, fontSize: 13, whiteSpace: "pre-line" }}>{data.courseInHospital}</div>
+              </div>
+            )}
+
+            {/* R7hr-202 — vitals at discharge */}
+            {data.vitalsOnDischarge && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>VITALS AT DISCHARGE</div>
+                <div style={{ lineHeight: 1.7, fontSize: 13, whiteSpace: "pre-line" }}>{data.vitalsOnDischarge}</div>
+              </div>
+            )}
+
+            {/* R7hr-202 — blood transfusions given this admission */}
+            {data.bloodTransfusionsText && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>BLOOD TRANSFUSIONS</div>
+                <div style={{ lineHeight: 1.7, fontSize: 13, whiteSpace: "pre-line" }}>{data.bloodTransfusionsText}</div>
               </div>
             )}
 
@@ -944,6 +964,8 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
     // patient's manual lab trends + imaging/path reports so the doctor
     // doesn't retype them (and the page can be saved as a narrative).
     keyInvestigationsText: "",
+    // R7hr-202 — auto-filled discharge event fields (vitals / transfusions / MLC).
+    vitalsOnDischarge: "", bloodTransfusionsText: "", mlcNumber: "",
     significantFindings: "", conditionOnDischarge: "Stable",
     dietAdvice: "", activityAdvice: "", woundCare: "", specialInstructions: "",
     followUpRequired: true, followUpDate: "", followUpDoctor: "", followUpDepartment: "", followUpInstructions: "",
@@ -1306,6 +1328,74 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
             setMedications(prev => (prev && prev.length && prev[0] && prev[0].drug && !prev[0]._fromTemplate) ? prev : autoMeds);
           }
         } catch (_) { /* no order access / none — silently skip */ }
+
+        // R7hr-202 — MLC number when this is a medico-legal admission.
+        if (found.isMLC && found.mlcNumber) {
+          setForm(p => ({ ...p, mlcNumber: p.mlcNumber || found.mlcNumber }));
+        }
+
+        // R7hr-202 — blood transfusions given this admission (NABH register) → narrative.
+        // Schema: rows carry bagsIssued[]{productType,volumeMl,bagNumber}, dates
+        // on startedAt/endedAt, and reaction is an object {occurred,type,severity}.
+        // Skip Draft/Cancelled rows so only actually-given transfusions surface.
+        try {
+          const bt = await axios.get(`${API_ENDPOINTS.BASE}/nabh-registers/blood-transfusion`, { params: { UHID: found.UHID }, headers });
+          const rows = Array.isArray(bt?.data?.data) ? bt.data.data : (Array.isArray(bt?.data) ? bt.data : []);
+          const mine = rows.filter(r =>
+            (r.UHID || r.uhid) === found.UHID &&
+            r.status !== "Cancelled" && r.status !== "Draft" &&
+            (r.startedAt || (Array.isArray(r.bagsIssued) && r.bagsIssued.length))
+          );
+          if (mine.length) {
+            const _bt = mine.map(r => {
+              const dt = r.startedAt || r.endedAt || r.requestedAt || r.createdAt;
+              const when = dt ? new Date(dt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "";
+              const bags = Array.isArray(r.bagsIssued) ? r.bagsIssued : [];
+              const bagTxt = bags.length
+                ? bags.map(b => `${b.productType || "Product"}${b.volumeMl ? ` ${b.volumeMl} mL` : ""}${b.bagNumber ? ` (bag ${b.bagNumber})` : ""}`).join("; ")
+                : (r.bloodGroup && r.bloodGroup !== "Unknown" ? `${r.unitsRequested || 1} unit(s) ${r.bloodGroup}` : "Blood product");
+              const rxn = (r.reaction && r.reaction.occurred)
+                ? ` — reaction: ${r.reaction.type || "noted"}${r.reaction.severity ? ` (${r.reaction.severity})` : ""}`
+                : "";
+              return `${bagTxt}${when ? ` on ${when}` : ""}${rxn}.`;
+            });
+            setForm(p => ({ ...p, bloodTransfusionsText: (p.bloodTransfusionsText && p.bloodTransfusionsText.trim()) ? p.bloodTransfusionsText : _bt.join("\n") }));
+          }
+        } catch (_) { /* no transfusion access / none */ }
+
+        // R7hr-202 — latest charted vitals (from nurse notes) → "vitals at discharge".
+        try {
+          const nn = await axios.get(`${API_ENDPOINTS.BASE}/nurse-notes/ipd/${encodeURIComponent(found.admissionNumber)}`, { headers });
+          const nnotes = Array.isArray(nn?.data?.data) ? nn.data.data : (Array.isArray(nn?.data) ? nn.data : []);
+          const _readVitals = (note) => {
+            const nd = note.noteData || note.noteDetails || {};
+            // The structured numeric vitals are charted on the MEWS note as
+            // noteData.mewsScore.{sbp,dbp,hr,temp(°C),spo2,rr}. Fall back to the
+            // older flat shapes for legacy notes.
+            const m = nd.mewsScore || {};
+            const v = note.vitals || nd.vitals || nd.dailyAssessment || nd.initialAssessment?.nursing?.vitals || {};
+            const bpSys = m.sbp || v.bp?.systolic || v.bp_sys || v.systolicBP || v.bpSystolic;
+            const bpDia = m.dbp || v.bp?.diastolic || v.bp_dia || v.bpDiastolic;
+            const bp = (bpSys && bpDia) ? `${bpSys}/${bpDia}` : (typeof v.bp === "string" ? v.bp : "");
+            const pulse = m.hr || v.pulse || v.heartRate;
+            const tempC = m.temp;                       // MEWS temperature is °C
+            const tempF = v.temp || v.temperature;       // legacy flat shape (°F)
+            const spo2  = m.spo2 || v.spo2 || v.spO2;
+            const rr    = m.rr || v.rr || v.respRate || v.respiratoryRate;
+            const parts = [];
+            if (bp) parts.push(`BP ${bp} mmHg`);
+            if (pulse) parts.push(`Pulse ${pulse}/min`);
+            if (tempC) parts.push(`Temp ${tempC}°C`);
+            else if (tempF) parts.push(`Temp ${tempF}°F`);
+            if (spo2) parts.push(`SpO₂ ${spo2}%`);
+            if (rr) parts.push(`RR ${rr}/min`);
+            return parts.join(", ");
+          };
+          const sorted = nnotes.slice().sort((a, b) => new Date(b.createdAt || b.noteDate || 0) - new Date(a.createdAt || a.noteDate || 0));
+          let vstr = "";
+          for (const note of sorted) { vstr = _readVitals(note); if (vstr) break; }
+          if (vstr) setForm(p => ({ ...p, vitalsOnDischarge: (p.vitalsOnDischarge && p.vitalsOnDischarge.trim()) ? p.vitalsOnDischarge : vstr }));
+        } catch (_) { /* no vitals / none */ }
 
         // Restore auto-save draft if available
         const dKey = `sphere_draft_discharge_${found._id}`;
@@ -1765,6 +1855,12 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
                   {["Routine","LAMA","DAMA","Absconded","Referral","Death"].map(c => <option key={c}>{c}</option>)}
                 </select>
               </F>
+              {/* R7hr-202 — MLC number auto-fills when the admission is flagged
+                  medico-legal; editable so MRD can correct the register stamp. */}
+              <F label="MLC / MLR Number">
+                <input className="his-field" value={form.mlcNumber} onChange={upd("mlcNumber")}
+                  placeholder="Auto-fills for medico-legal cases" />
+              </F>
             </G4>
             <div style={{ marginTop: 12 }}>
               <F label="Co-consultants">
@@ -1808,9 +1904,26 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
             <div style={{ marginTop: 12 }}>
               <F label="Significant Clinical Findings">
                 <textarea className="his-textarea" value={form.significantFindings} onChange={upd("significantFindings")}
-                  placeholder="Vitals at discharge, notable examination findings…" />
+                  placeholder="Notable examination findings…" />
               </F>
             </div>
+            {/* R7hr-202 — auto-filled clinical event fields. Vitals pull the
+                latest charted nurse-note observation; blood transfusions pull
+                the NABH transfusion register. Both editable. */}
+            <G2 gap={12}>
+              <div style={{ marginTop: 12 }}>
+                <F label="Vitals at Discharge (auto-filled from latest nursing observation — editable)">
+                  <textarea className="his-textarea" value={form.vitalsOnDischarge} onChange={upd("vitalsOnDischarge")}
+                    placeholder="Auto-fills from the most recent charted vitals. e.g. BP 120/80 mmHg, Pulse 78/min, Temp 98.6°F, SpO₂ 98%" />
+                </F>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <F label="Blood Transfusions Given (auto-filled from transfusion register — editable)">
+                  <textarea className="his-textarea" value={form.bloodTransfusionsText} onChange={upd("bloodTransfusionsText")}
+                    placeholder="Auto-fills if any blood products were transfused this admission. Leave blank if none." />
+                </F>
+              </div>
+            </G2>
           </Section>
 
           {/* Department-specific sections */}
