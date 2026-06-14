@@ -979,8 +979,13 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/pharmacy"       element={
               <RoleGuard allow={["Admin", "Pharmacist", "Doctor", "Accountant"]}><PharmacyHomePage /></RoleGuard>
             } />
+            {/* R7hr-197 — guard on discharge-summary.read (Admin/Doctor/Nurse/MRD)
+                so the Nurse panel's "Discharge Summary — read & print" launcher
+                isn't bounced. WRITE (create/finalize) stays backend-enforced via
+                discharge-summary.write (Admin/Doctor), so non-writers view only.
+                Also retires the divergent ipd.discharge-summary token. */}
             <Route path="/discharge-summary" element={
-              <RoleGuard action="ipd.discharge-summary"><DischargeSummaryPage /></RoleGuard>
+              <RoleGuard action="discharge-summary.read"><DischargeSummaryPage /></RoleGuard>
             } />
             {/* R7q: Consent capture is gated to Admin/Doctor/Nurse on
                 the backend (consent.write). Add route-level guard so
