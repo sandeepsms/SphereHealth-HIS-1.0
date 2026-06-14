@@ -2619,11 +2619,33 @@ export default function NABHSignageGenerator() {
     <div className="nabh-signage-root min-h-screen bg-slate-50 text-slate-900" style={{ fontFamily: '-apple-system, system-ui, "Noto Sans Devanagari", sans-serif' }}>
       <style>{`
         @media print {
+          /* R7hr-198 — force exact colour reproduction in the saved PDF.
+             Without print-color-adjust:exact, Chrome/Edge + "Microsoft Print
+             to PDF" strip background colours / lighten fills (and the user
+             would otherwise have to tick "Background graphics" by hand), so
+             the printed signage looked washed-out vs the on-screen preview.
+             Applied to EVERY element so it holds whichever view is printed. */
+          *, *::before, *::after, html, body {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            color-adjust: exact !important;
+          }
           body * { visibility: hidden; }
-          .print-area, .print-area * { visibility: visible; }
+          .print-area, .print-area * {
+            visibility: visible;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            color-adjust: exact !important;
+          }
           .print-area { position: absolute; left: 0; top: 0; width: 100%; }
           .no-print { display: none !important; }
           @page { margin: 10mm; }
+        }
+        /* Belt-and-braces: also hint exact colours on-screen for the print
+           surface so the preview and the PDF agree. */
+        .print-area {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
         }
         .signage-card-hover:hover { transform: translateY(-3px); box-shadow: 0 12px 28px -10px rgba(30,90,156,0.25); }
         .signage-card-hover { transition: all 0.25s ease; }
