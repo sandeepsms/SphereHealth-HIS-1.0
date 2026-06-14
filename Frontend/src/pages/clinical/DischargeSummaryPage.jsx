@@ -1395,6 +1395,26 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
           let vstr = "";
           for (const note of sorted) { vstr = _readVitals(note); if (vstr) break; }
           if (vstr) setForm(p => ({ ...p, vitalsOnDischarge: (p.vitalsOnDischarge && p.vitalsOnDischarge.trim()) ? p.vitalsOnDischarge : vstr }));
+
+          // R7hr-202 — condition on discharge: map the latest nurse-charted
+          // general condition onto the model enum. Only upgrades the default
+          // "Stable"; never overrides a condition the doctor explicitly picked.
+          const _condFrom = (txt) => {
+            const t = String(txt || "").toLowerCase();
+            if (/improv/.test(t))      return "Improved";
+            if (/critical/.test(t))    return "Critical";
+            if (/deteriorat/.test(t))  return "Deteriorated";
+            if (/unchanged/.test(t))   return "Unchanged";
+            if (/stable/.test(t))      return "Stable";
+            return "";
+          };
+          let cond = "";
+          for (const note of sorted) {
+            const nd = note.noteData || note.noteDetails || {};
+            cond = _condFrom(nd.observation?.generalCondition || nd.dailyAssessment?.generalCondition);
+            if (cond) break;
+          }
+          if (cond) setForm(p => ({ ...p, conditionOnDischarge: (p.conditionOnDischarge && p.conditionOnDischarge !== "Stable") ? p.conditionOnDischarge : cond }));
         } catch (_) { /* no vitals / none */ }
 
         // Restore auto-save draft if available
