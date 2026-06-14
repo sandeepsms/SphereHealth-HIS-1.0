@@ -4,6 +4,41 @@ const Admission = require("../../models/Patient/admissionModel");
 const admissionService = require("../../services/Patient/admissionService");
 const User = require("../../models/User/userModel");
 
+// R7hr-197 — the DischargeSummaryPage posts the discharge meds /
+// investigations / procedures with FE-shaped keys (drug/instructions,
+// name/unit/status, name/surgeon/findings) under medications/
+// investigations/procedures. The model fields are medicationsOnDischarge /
+// investigationsSummary / proceduresDone with different sub-keys, so
+// Mongoose strict mode SILENTLY DROPPED everything the doctor typed.
+// Normalise the FE shape onto the schema fields so discharge meds persist
+// (and print). Idempotent: if the canonical key is already present, skip.
+function _normaliseDischargeArrays(data) {
+  if (!data || typeof data !== "object") return;
+  if (Array.isArray(data.medications) && data.medicationsOnDischarge === undefined) {
+    data.medicationsOnDischarge = data.medications.map((m) => ({
+      medicineName: m.medicineName || m.drug || m.name || "",
+      dose: m.dose || "", route: m.route || "", frequency: m.frequency || "",
+      duration: m.duration || "", remarks: m.remarks || m.instructions || "",
+    })).filter((m) => m.medicineName);
+  }
+  if (Array.isArray(data.investigations) && data.investigationsSummary === undefined) {
+    data.investigationsSummary = data.investigations.map((i) => ({
+      testName: i.testName || i.name || "",
+      result: i.result || "",
+      remarks: i.remarks || [i.unit, i.status].filter(Boolean).join(" ").trim(),
+    })).filter((i) => i.testName);
+  }
+  if (Array.isArray(data.procedures) && data.proceduresDone === undefined) {
+    data.proceduresDone = data.procedures.map((p) => ({
+      procedureName: p.procedureName || p.name || "",
+      date: p.date || undefined, performedBy: p.performedBy || p.surgeon || "",
+      notes: p.notes || [p.findings, p.complications && `Complications: ${p.complications}`].filter(Boolean).join(". "),
+    })).filter((p) => p.procedureName);
+  }
+  // Strip the FE-only keys so they don't linger as ignored fields.
+  delete data.medications; delete data.investigations; delete data.procedures;
+}
+
 const handle = (fn) => async (req, res) => {
   try {
     return await fn(req, res);
@@ -34,6 +69,7 @@ class DischargeSummaryController {
   // counts as 0 days, not 1 — billing-day inflation eliminated.
   create = handle(async (req, res) => {
     const data = req.body;
+    _normaliseDischargeArrays(data);
 
     if (data.admissionDate && data.dischargeDate) {
       const diff = new Date(data.dischargeDate) - new Date(data.admissionDate);
@@ -115,9 +151,11 @@ class DischargeSummaryController {
   // PUT /api/discharge-summary/:id
   update = handle(async (req, res) => {
     const data = req.body;
+    _normaliseDischargeArrays(data);
     if (data.admissionDate && data.dischargeDate) {
       const diff = new Date(data.dischargeDate) - new Date(data.admissionDate);
-      data.totalDaysAdmitted = Math.ceil(diff / (1000 * 60 * 60 * 24));
+      // floor() to match create() — partial days don't add an LOS day (was ceil, inflated by 1).
+      data.totalDaysAdmitted = Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
     }
     // R7az-D8/D2-CRIT-2: friendly early-out when the summary is already
     // finalized. The model-level pre-save guard (Agent B) is the source
@@ -198,6 +236,23 @@ class DischargeSummaryController {
     // reason, both of which land on the discharge summary's audit
     // trail (nursingHandoverOverride*).
     const draftSummary = await DischargeSummary.findById(req.params.id).lean();
+
+    // R7hr-197 — MCCD gate. A death discharge (dischargeType "Death" or
+    // condition "Expired") MUST carry a cause of death before it can be
+    // finalized + pushed to the NABH Mortality register. Pre-fix the
+    // emitter defaulted the cause to "Not Specified", so a death could be
+    // registered with no real cause (MCCD bypass). Not override-able —
+    // a death certificate without a cause is not a valid record.
+    if (draftSummary && (draftSummary.dischargeType === "Death" || draftSummary.conditionOnDischarge === "Expired")) {
+      const cause = String(draftSummary.causeOfDeath || draftSummary.immediateCauseOfDeath || "").trim();
+      if (!cause) {
+        return res.status(400).json({
+          success: false,
+          code: "CAUSE_OF_DEATH_REQUIRED",
+          message: "Cause of death is required to finalize a death discharge (NABH COP.18 / MCCD). Enter the immediate cause of death on the summary first.",
+        });
+      }
+    }
 
     // R7hr-113 — PROM + PREM mandatory at discharge (NABH PSQ + COP.6.b)
     // Patient voice MUST be recorded before discharge locks. Refuse
