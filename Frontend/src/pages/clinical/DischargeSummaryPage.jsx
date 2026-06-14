@@ -976,7 +976,12 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
     setSelectedDept(dept);
     const tpl = dept.template;
     setInvestigations(tpl.investigations.map(i => ({ ...i })));
-    setMedications(tpl.medications.map(m => ({ ...m })));
+    // R7hr-202 — template meds are placeholders: tag them _fromTemplate and
+    // only apply when the list is empty / still template-only, so they never
+    // clobber the patient's real auto-fetched meds or the doctor's typed list.
+    setMedications(prev => (prev && prev.length && prev[0] && prev[0].drug && !prev[0]._fromTemplate)
+      ? prev
+      : tpl.medications.map(m => ({ ...m, _fromTemplate: true })));
     setProcedures(tpl.procedures.map(p => ({ ...p })));
     setForm(prev => ({
       ...prev,
@@ -1127,6 +1132,27 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
               }));
             }
 
+            // R7hr-202 — build the HOSPITAL COURSE from the dated progress
+            // notes (oldest → newest) so the doctor doesn't retype the stay
+            // narrative. Pulls whatever progress text each note carries.
+            const _courseChrono = list
+              .filter(n => ["progress", "daily", "ward-round"].includes((n.noteType || "").toLowerCase()))
+              .slice()
+              .sort((a, b) => new Date(a.createdAt || a.noteDate || 0) - new Date(b.createdAt || b.noteDate || 0));
+            const _courseLines = _courseChrono.map(n => {
+              const dr = n.noteDetails?.doctor || {};
+              const txt = (dr.progressNote || dr.assessment || dr.plan || dr.course || dr.notes
+                || n.remarks || n.summary || "").toString().trim();
+              if (!txt) return null;
+              const dt = (n.createdAt || n.noteDate)
+                ? new Date(n.createdAt || n.noteDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
+                : "";
+              return `${dt ? dt + ": " : ""}${txt}`;
+            }).filter(Boolean);
+            if (_courseLines.length) {
+              setForm(p => ({ ...p, courseInHospital: (p.courseInHospital && p.courseInHospital.trim()) ? p.courseInHospital : _courseLines.join("\n") }));
+            }
+
             const ia = list.find(n =>
               n.visitType === "IPD_INITIAL" ||
               (n.noteType || "").toLowerCase() === "initial"
@@ -1243,6 +1269,43 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
             setProcedures(prev => (prev && prev.length) ? prev : autoProc);
           }
         } catch (_) { /* no procedure access / none — silently skip */ }
+
+        /* ══ R7hr-202 · Auto-fetch DISCHARGE MEDICATIONS from the patient's
+           ACTUAL medication orders (not a dept-template placeholder), so the
+           printed discharge carries the real drugs. Pulls active/given
+           Medication orders, de-dupes by drug, maps to the discharge med row.
+           Only fills when the list is empty / template-only. */
+        try {
+          const mo = await axios.get(`${API_ENDPOINTS.BASE}/doctor-orders`, { params: { UHID: found.UHID }, headers });
+          const orders = Array.isArray(mo?.data?.data) ? mo.data.data : (Array.isArray(mo?.data) ? mo.data : []);
+          const medOrders = orders.filter(o =>
+            /medic/i.test(o.orderType || "") &&
+            !["Cancelled", "Stopped", "Discontinued"].includes(o.status));
+          const seen = new Set();
+          const autoMeds = [];
+          medOrders.forEach(o => {
+            const od = o.orderDetails || {};
+            const drug = od.medicineName || o.drugName || od.drugName || "";
+            if (!drug) return;
+            const key = drug.toLowerCase().trim();
+            if (seen.has(key)) return;
+            seen.add(key);
+            autoMeds.push({
+              drug,
+              dose:         od.dose || o.dose || "",
+              route:        od.route || o.route || "Oral",
+              frequency:    od.frequency || o.frequency || "",
+              duration:     od.duration || o.duration || "",
+              instructions: od.notes || od.instructions || o.instructions || "",
+            });
+          });
+          if (autoMeds.length) {
+            // Override dept-template placeholder meds, but never the doctor's
+            // own typed list (a populated list whose first row already has a
+            // drug name is treated as doctor-authored and preserved).
+            setMedications(prev => (prev && prev.length && prev[0] && prev[0].drug && !prev[0]._fromTemplate) ? prev : autoMeds);
+          }
+        } catch (_) { /* no order access / none — silently skip */ }
 
         // Restore auto-save draft if available
         const dKey = `sphere_draft_discharge_${found._id}`;
