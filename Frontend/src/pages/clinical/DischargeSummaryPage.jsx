@@ -1099,6 +1099,34 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
               { headers },
             );
             const list = Array.isArray(r?.data?.data) ? r.data.data : (Array.isArray(r?.data) ? r.data : []);
+
+            // R7hr-201 — pull the LATEST diagnosis the doctor entered/updated
+            // across ALL notes (top-level provisional/working/final), so the
+            // discharge Diagnosis section reflects the current diagnosis as-is
+            // — not just the admission's provisional. Latest non-empty wins.
+            const _byDate = list.slice().sort((a, b) =>
+              new Date(b.createdAt || b.noteDate || 0) - new Date(a.createdAt || a.noteDate || 0));
+            const _latestDx = (...keys) => {
+              for (const n of _byDate) {
+                for (const k of keys) { if (n && n[k] && String(n[k]).trim()) return String(n[k]).trim(); }
+              }
+              return "";
+            };
+            const _prov    = _latestDx("provisionalDiagnosis", "admittingDiagnosis");
+            const _working = _latestDx("workingDiagnosis");
+            const _final   = _latestDx("finalDiagnosis");
+            const _icd     = _latestDx("icd10Code", "icdCode", "icd10");
+            if (_prov || _working || _final || _icd) {
+              setForm(p => ({
+                ...p,
+                // never clobber what the doctor already typed on the discharge form
+                admittingDiagnosis: p.admittingDiagnosis || _prov || found.provisionalDiagnosis || "",
+                // final = doctor's final dx; fall back to the working dx if final isn't set yet
+                finalDiagnosis:     p.finalDiagnosis     || _final || _working || "",
+                icdCode:            p.icdCode            || _icd || "",
+              }));
+            }
+
             const ia = list.find(n =>
               n.visitType === "IPD_INITIAL" ||
               (n.noteType || "").toLowerCase() === "initial"
