@@ -22,6 +22,7 @@ import { buildPrintShellHtml } from "@/templates/PrintShell";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 import DrugAutocomplete, { parseStrength, drugDisplayName } from "../../Components/clinical/DrugAutocomplete";
 import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
+import InfusionPanel from "../../Components/clinical/InfusionPanel";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 // R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
 import { toMoney } from "../../utils/money";
@@ -349,10 +350,10 @@ export default function OPDAssessmentPage() {
   // route TreatmentChart's Infusion tab consumes when the nurse starts
   // running it. Rate is captured in ml/hr; totalVolume optional for
   // bolus orders. Mirrors the IPD infusion entry pattern.
+  // R7hr-203 — `newInfusion` draft + `addInfusion`/`removeInfusion` handlers
+  // retired; the shared <InfusionPanel> now owns its own draft + add/remove.
+  // `infusions` stays here as the controlled value (autosave, restore, save-map).
   const [infusions,  setInfusions]  = useState([]);
-  const [newInfusion, setNewInfusion] = useState({
-    name: "", totalVolume: "", rate: "", duration: "", route: "IV Infusion", additives: "", instructions: "",
-  });
 
   const [procedures,   setProcedures]   = useState([]);
   const [newProc,      setNewProc]      = useState({ procedureName: "", procedureType: "Minor", consentRequired: true, estimatedDuration: "", notes: "" });
@@ -381,7 +382,7 @@ export default function OPDAssessmentPage() {
   // pushed duplicate rows into the local arrays and fired duplicate POSTs.
   const [isAddingMed,   setIsAddingMed]   = useState(false);
   const [isAddingInv,   setIsAddingInv]   = useState(false);
-  const [isAddingInfusion, setIsAddingInfusion] = useState(false);
+  // R7hr-203 — isAddingInfusion latch retired; <InfusionPanel> owns its own.
 
   // R7az-D4-CRIT-2 — Abort controllers for loadVisit + loadAudit so a
   // navigation away from the page (or visitNumber change) doesn't leave
@@ -818,37 +819,11 @@ export default function OPDAssessmentPage() {
     toast.success("Investigation removed");
   };
 
-  // R7v: Infusion add/remove. Unlike medications + investigations the OPD
-  // visit endpoints don't have dedicated /infusion sub-routes, so we only
-  // mutate local state — the bulk POST /doctor-orders at save-time wires
-  // it into the nurse's Infusion tab. Doctor still gets immediate visual
-  // confirmation in the row table below.
-  const addInfusion = () => {
-    if (isAddingInfusion) return;                  // R7az-D4-HIGH-2: double-tap guard
-    if (!newInfusion.name.trim()) return toast.warn("Fluid / infusion name required");
-    if (!newInfusion.rate.trim())  return toast.warn("Rate (ml/hr) required");
-    setIsAddingInfusion(true);
-    try {
-      setInfusions(p => [...p, { ...newInfusion }]);
-      setNewInfusion({ name: "", totalVolume: "", rate: "", duration: "", route: "IV Infusion", additives: "", instructions: "" });
-      toast.success("Infusion added");
-    } finally {
-      setIsAddingInfusion(false);
-    }
-  };
-  const removeInfusion = async (idx) => {
-    const f = infusions[idx];
-    if (!f) return;
-    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
-    if (!(await confirm({
-      title: "Remove infusion?",
-      body: `${f.name || "This infusion"} will be removed from the order list and won't appear in the nurse's infusion tab.`,
-      danger: true,
-      confirmLabel: "Remove",
-    }))) return;
-    setInfusions(p => p.filter((_, x) => x !== idx));
-    toast.success("Infusion removed");
-  };
+  // R7v / R7hr-203: Infusion add/remove now live inside the shared
+  // <InfusionPanel> (controlled component). The OPD visit endpoints have no
+  // dedicated /infusion sub-route, so infusions stay local until the bulk
+  // POST /doctor-orders at save-time wires them (orderType:"IV_Fluid") into
+  // the nurse's Infusion tab — that save mapping is unchanged.
 
   // ── Unified Services & Orders → DRAFT bill flow ────────────────
   // When the doctor adds ANY chargeable line (lab test, imaging,
@@ -1387,9 +1362,15 @@ export default function OPDAssessmentPage() {
         painScore:    vit.painScore ?? "",
         gcsScore:     vit.gcsScore || "",
         enteredBy:    vit.enteredBy || v.vitalsEnteredBy || "",
+        // PD-03 — Read from the schema-canonical top-level fields. The
+        // pre-fix only checked nested `vit.enteredByEmployeeId` etc.
+        // (which Mongoose strict-mode silently drops) and the legacy
+        // `v.vitalsRecordedAt` key that doesn't exist. The canonical
+        // top-level fields are `vitalsEnteredByEmployeeId` +
+        // `vitalsEnteredBySignature` + `vitalsEnteredAt`.
         enteredByEmployeeId: vit.enteredByEmployeeId || vit.nurseEmployeeId || v.vitalsEnteredByEmployeeId || "",
-        enteredBySignature:  vit.enteredBySignature  || vit.nurseSignatureImage  || "",
-        recordedAt:   vit.recordedAt || v.vitalsRecordedAt || "",
+        enteredBySignature:  vit.enteredBySignature  || vit.nurseSignatureImage  || v.vitalsEnteredBySignature || "",
+        recordedAt:   vit.recordedAt || v.vitalsRecordedAt || v.vitalsEnteredAt || "",
       },
       // R7hn-2: nurse's chief complaint capture (separate from the
       // doctor's subjective note — see the registration-time
@@ -2816,124 +2797,14 @@ export default function OPDAssessmentPage() {
               titration / monitoring requirements). Mirrors the IPD
               infusion form fields. */}
           <Card title="Infusions / IV Fluids" icon="pi-tint" color="#0d9488">
-            <p style={{ color: C.muted, fontSize: 11, marginTop: 0, marginBottom: 10 }}>
-              For day-care / hydration / corrections. Routes to the nurse's
-              <strong> Infusion Orders & Monitoring </strong> tab on save.
-              Routine fluids are non-HAM; insulin / KCl / heparin drips auto-tag
-              as <strong>HAM</strong> requiring 2-nurse verification.
-            </p>
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2fr) 110px 100px 110px minmax(0,1.5fr) auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
-              <input
-                value={newInfusion.name}
-                onChange={e => setNewInfusion(p => ({ ...p, name: e.target.value }))}
-                placeholder="Fluid / drug — e.g. NS 0.9%, RL, Insulin drip"
-                list="rx-infusion-options"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
-              />
-              <datalist id="rx-infusion-options">
-                <option value="Normal Saline 0.9% (NS)" />
-                <option value="Ringer Lactate (RL)" />
-                <option value="Dextrose Normal Saline (DNS)" />
-                <option value="5% Dextrose (D5W)" />
-                <option value="25% Dextrose" />
-                <option value="50% Dextrose" />
-                <option value="Mannitol 20%" />
-                <option value="20% Human Albumin" />
-                <option value="5% Albumin" />
-                <option value="3% Hypertonic Saline" />
-                <option value="Insulin drip" />
-                <option value="Heparin drip" />
-                <option value="Noradrenaline drip" />
-                <option value="KCl correction" />
-                <option value="Magnesium Sulphate" />
-                <option value="Calcium Gluconate" />
-              </datalist>
-              <input
-                value={newInfusion.totalVolume}
-                onChange={e => setNewInfusion(p => ({ ...p, totalVolume: e.target.value }))}
-                placeholder="Vol (ml)"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
-              />
-              <input
-                value={newInfusion.rate}
-                onChange={e => setNewInfusion(p => ({ ...p, rate: e.target.value }))}
-                placeholder="Rate ml/hr *"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
-              />
-              <input
-                list="rx-infusion-duration-options"
-                value={newInfusion.duration}
-                onChange={e => setNewInfusion(p => ({ ...p, duration: e.target.value }))}
-                placeholder="Duration"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
-              />
-              <datalist id="rx-infusion-duration-options">
-                <option value="STAT — 1 dose" />
-                <option value="Over 1 hour" />
-                <option value="Over 2 hours" />
-                <option value="Over 4 hours" />
-                <option value="Over 6 hours" />
-                <option value="Over 8 hours" />
-                <option value="Over 12 hours" />
-                <option value="Over 24 hours" />
-                <option value="Continuous — titrate" />
-              </datalist>
-              <input
-                value={newInfusion.additives}
-                onChange={e => setNewInfusion(p => ({ ...p, additives: e.target.value }))}
-                placeholder="Additives / instructions (e.g. + KCl 20 mEq)"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
-              />
-              {/* R7az-D4-HIGH-2: disable while in-flight to block dup rows. */}
-              <button
-                onClick={addInfusion}
-                disabled={isAddingInfusion}
-                style={{ background: "#0d9488", color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", cursor: isAddingInfusion ? "wait" : "pointer", fontWeight: 600, fontSize: 12, opacity: isAddingInfusion ? 0.6 : 1 }}
-              >
-                {isAddingInfusion ? "Adding…" : "+ Add"}
-              </button>
-            </div>
-            {infusions.length === 0 ? (
-              <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>No infusions ordered.</p>
-            ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr style={{ background: C.bg }}>
-                  {["Fluid / Drug", "Volume", "Rate", "Duration", "Additives"].map(h => (
-                    <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 600, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
-                  ))}
-                  <th style={{ width: 36, borderBottom: `1px solid ${C.border}` }} aria-label="Remove" />
-                </tr></thead>
-                <tbody>{infusions.map((f, i) => (
-                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-                    <td style={{ padding: "7px 10px", color: C.dark, fontWeight: 600 }}>{f.name || "—"}</td>
-                    <td style={{ padding: "7px 10px", color: C.dark }}>{f.totalVolume ? `${f.totalVolume} ml` : "—"}</td>
-                    <td style={{ padding: "7px 10px", color: C.dark, fontFamily: "'DM Mono', monospace" }}>{f.rate ? `${f.rate} ml/hr` : "—"}</td>
-                    <td style={{ padding: "7px 10px", color: C.dark }}>{f.duration || "—"}</td>
-                    <td style={{ padding: "7px 10px", color: C.muted, fontSize: 11 }}>{f.additives || "—"}</td>
-                    <td style={{ padding: "4px 6px", textAlign: "right" }}>
-                      <button
-                        type="button"
-                        onClick={() => removeInfusion(i)}
-                        title={`Remove ${f.name || "this infusion"}`}
-                        aria-label="Remove infusion"
-                        style={{
-                          width: 24, height: 24, border: "1px solid #fca5a5",
-                          background: "#fef2f2", color: "#b91c1c",
-                          borderRadius: 6, cursor: "pointer",
-                          display: "inline-flex", alignItems: "center", justifyContent: "center",
-                          fontFamily: "inherit", fontWeight: 700, fontSize: 13, lineHeight: 1,
-                          padding: 0,
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.background = "#fee2e2"; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = "#fef2f2"; }}
-                      >
-                        ×
-                      </button>
-                    </td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            )}
+            {/* R7hr-203 — adopt the shared, dynamic InfusionPanel (same one the
+                IPD Initial Assessment + Emergency doctor flows use) instead of
+                the page's old inline datalist copy. Controlled (value/onChange,
+                no self-save) so the existing OPD save still maps `infusions`
+                → orderType:"IV_Fluid" DoctorOrders untouched. Gains R7hr-68
+                fluid-preset auto-fill + vasopressor/insulin/heparin strength
+                chips. The panel renders its own helper text + add/remove table. */}
+            <InfusionPanel value={infusions} onChange={setInfusions} theme={C} />
           </Card>
 
           {/* ─── Unified Services & Orders → DRAFT bill ──────────────
