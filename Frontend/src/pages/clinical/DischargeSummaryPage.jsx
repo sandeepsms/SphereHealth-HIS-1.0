@@ -1000,32 +1000,23 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uhidFromLocation]);
 
-  // Auto-fill when patient selected from AdmittedPatientPanel
+  // Auto-fill when patient selected from AdmittedPatientPanel.
+  // Route this through the SAME full searchPatient flow used by the search
+  // button (and the /bed-visual launch) so age / gender / admission-date /
+  // doctor reg-no + the IPD-Initial-Assessment / lab / imaging / procedure
+  // prefills all run. The earlier inline mapping only set a partial subset
+  // (and wrote admissionDate as a locale "dd/mm/yyyy" string the date input
+  // could not render), which is why those fields stayed blank.
   useEffect(() => {
     if (!selectedPatient) return;
-    const found = selectedPatient;
-    setUhid(found.UHID || "");
-    setPatInfo(found);
-    const admDate = found.admissionDate ? new Date(found.admissionDate) : null;
-    const stayDays = admDate ? Math.ceil((new Date() - admDate) / 86400000) : "";
-    setForm(p => ({
-      ...p,
-      // ObjectId refs the backend requires. admissionId is the admission
-      // we're discharging; patient is the Patient master row. Without
-      // these, POST returns 400 validation error and the doctor sees a
-      // bare "Save failed" toast.
-      patient:        (typeof found.patientId === "object" ? found.patientId?._id : found.patientId) || p.patient,
-      admissionId:    found._id || p.admissionId,
-      UHID: found.UHID || "",
-      patientName: found.patientName || found.patientId?.fullName || "",
-      ipdNo: found.admissionNumber || "",
-      admissionDate: admDate ? admDate.toLocaleDateString("en-IN") : "",
-      stayDays,
-      department: found.department || p.department,
-      doctorName: found.attendingDoctor || p.doctorName,
-      contactNumber: found.contactNumber || "",
-    }));
-    toast.success(`Patient loaded: ${found.patientName || found.UHID}`);
+    const u = (selectedPatient.UHID || "").trim();
+    if (!u) return;
+    setUhid(u);
+    setPatInfo(selectedPatient);
+    setTimeout(() => {
+      const trigger = document.getElementById("ds-load-btn");
+      if (trigger) trigger.click();
+    }, 60);
   }, [selectedPatient?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const searchPatient = async () => {
@@ -1073,7 +1064,12 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
           stayDays,
           department:     found.department || p.department,
           doctorName:     found.attendingDoctor || found.attendingDoctorId?.fullName || p.doctorName,
-          doctorRegNo:    found.attendingDoctorId?.doctorDetails?.registrationNumber
+          // R7hr-199 — attendingDoctorId refs the Doctor model, whose reg-no
+          // lives at professional.registrationNumber (NOT doctorDetails.* —
+          // that's the User model path the old read used, so it was always
+          // blank). Keep the legacy paths as fallbacks.
+          doctorRegNo:    found.attendingDoctorId?.professional?.registrationNumber
+                          || found.attendingDoctorId?.doctorDetails?.registrationNumber
                           || found.attendingDoctorRegNo
                           || p.doctorRegNo,
           admittingDiagnosis: found.provisionalDiagnosis || p.admittingDiagnosis,
@@ -1141,6 +1137,52 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
             }
           }
         } catch (_) { /* assessment not found / endpoint missing — silently skip */ }
+
+        /* ══ Auto-fetch INVESTIGATIONS — lab trend sheets + imaging/path
+           reports for this patient, so the doctor doesn't retype them in
+           the discharge "Investigations" section. Only fills when the list
+           is still empty (never clobbers manual entries / a restored draft).
+           Non-fatal: discharge still loads if lab access / endpoint missing. */
+        try {
+          const autoInv = [];
+          // Lab trend sheets → latest reading per test
+          try {
+            const tr = await axios.get(`${API_ENDPOINTS.BASE}/lab-records/trends`, { params: { UHID: found.UHID }, headers });
+            const trends = Array.isArray(tr?.data?.data) ? tr.data.data : (Array.isArray(tr?.data) ? tr.data : []);
+            trends.forEach(panel => (panel.tests || []).forEach(t => {
+              const readings = (t.readings || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+              const latest = readings.find(r => r && r.value != null && String(r.value).trim() !== "");
+              if (latest) autoInv.push({ name: t.name || "", result: String(latest.value), unit: t.unit || "", status: latest.status || "" });
+            }));
+          } catch (_) { /* no lab access / none */ }
+          // Imaging / microbiology / histopath reports → impression
+          try {
+            const rp = await axios.get(`${API_ENDPOINTS.BASE}/lab-records/reports`, { params: { UHID: found.UHID }, headers });
+            const reports = Array.isArray(rp?.data?.data) ? rp.data.data : (Array.isArray(rp?.data) ? rp.data : []);
+            reports.forEach(r => {
+              const res = r.impression || r.findings || r.organism || "";
+              autoInv.push({ name: r.testName || r.reportType || "Report", result: res, unit: "", status: "" });
+            });
+          } catch (_) { /* no report access / none */ }
+          if (autoInv.length) setInvestigations(prev => (prev && prev.length) ? prev : autoInv);
+        } catch (_) { /* silently skip */ }
+
+        /* ══ Auto-fetch PROCEDURE notes for this admission → discharge
+           "Procedures" section. Same guard: only when the list is empty. */
+        try {
+          const pr = await axios.get(`${API_ENDPOINTS.BASE}/procedure-notes`, { params: { admissionId: found._id, UHID: found.UHID }, headers });
+          const pnotes = Array.isArray(pr?.data?.data) ? pr.data.data : (Array.isArray(pr?.data) ? pr.data : []);
+          if (pnotes.length) {
+            const autoProc = pnotes.map(pn => ({
+              name:          pn.surgeryName || (pn.actualProcedure ? String(pn.actualProcedure).slice(0, 90) : "Procedure"),
+              date:          pn.startTime ? new Date(pn.startTime).toISOString().slice(0, 10) : "",
+              surgeon:       pn.surgeon || pn.surgeonName || "",
+              findings:      pn.actualProcedure || "",
+              complications: pn.complications || "",
+            }));
+            setProcedures(prev => (prev && prev.length) ? prev : autoProc);
+          }
+        } catch (_) { /* no procedure access / none — silently skip */ }
 
         // Restore auto-save draft if available
         const dKey = `sphere_draft_discharge_${found._id}`;

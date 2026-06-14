@@ -1218,6 +1218,16 @@ class AdmissionService {
       // reads patient.wardName first and falls back to
       // patient.wardId?.wardName.
       .populate("wardId", "wardName")
+      // Populate the attending doctor so consumers (Discharge Summary,
+      // Consent) can auto-fetch the doctor's name + registration number
+      // without a second round-trip. Matches getMyIPDPatients. Additive:
+      // existing callers either read patientId/bedId/wardId or already
+      // handle attendingDoctorId in both populated + raw-id forms.
+      // R7hr-199 — attendingDoctorId stores a Doctor._id but the schema ref
+      // is "User", so a plain populate resolved to null (wrong collection)
+      // and the discharge summary / panels never got the consultant's reg-no.
+      // Force model:"Doctor" and select the Doctor-shaped name + reg-no paths.
+      .populate({ path: "attendingDoctorId", model: "Doctor", select: "personalInfo.fullName personalInfo.firstName personalInfo.lastName professional.registrationNumber" })
       .sort({ admissionDate: -1 })
       .lean();
 
@@ -1562,7 +1572,11 @@ class AdmissionService {
       .populate("patientId", "fullName title UHID contactNumber gender dateOfBirth bloodGroup knownAllergies")
       .populate("bedId", "bedNumber")
       .populate("wardId", "wardName")
-      .populate("attendingDoctorId", "fullName firstName lastName doctorDetails.registrationNumber")
+      // R7hr-199 — attendingDoctorId stores a Doctor._id but the schema ref
+      // is "User", so a plain populate resolved to null (wrong collection)
+      // and the discharge summary / panels never got the consultant's reg-no.
+      // Force model:"Doctor" and select the Doctor-shaped name + reg-no paths.
+      .populate({ path: "attendingDoctorId", model: "Doctor", select: "personalInfo.fullName personalInfo.firstName personalInfo.lastName professional.registrationNumber" })
       .sort({ admissionDate: -1 });
   }
 
