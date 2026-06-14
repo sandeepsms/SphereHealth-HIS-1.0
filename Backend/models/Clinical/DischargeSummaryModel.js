@@ -75,6 +75,10 @@ const DischargeSummarySchema = new mongoose.Schema(
 
     // ── Investigations ───────────────────────────────────────
     investigationsSummary: [InvestigationSummarySchema],
+    // R7hr-200 — free-text investigations paragraph, auto-filled on the
+    // discharge page from the patient's recorded lab trends + imaging/path
+    // reports (so the doctor doesn't retype). Editable; prints in the summary.
+    keyInvestigationsText: { type: String, default: "" },
 
     // ── Procedures / Surgeries ───────────────────────────────
     proceduresDone: [ProcedureSchema],

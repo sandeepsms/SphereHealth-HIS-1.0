@@ -680,7 +680,14 @@ function PrintModal({ data, dept, onClose }) {
       chiefComplaints:     data.chiefComplaints,
       courseOfStay:        data.courseInHospital || data.courseOfStay || data.hospitalCourse || "",
       proceduresDone:      data.procedures || data.proceduresDone,
-      investigationsSummary: data.investigationsSummary || data.keyInvestigations,
+      // R7hr-200 — the printable renders investigationsSummary as a pre-wrap
+      // paragraph, so prefer the auto-filled narrative; fall back to any
+      // legacy array/string. (Array fallback is flattened to lines.)
+      investigationsSummary: data.keyInvestigationsText
+        || (Array.isArray(data.investigationsSummary)
+              ? data.investigationsSummary.map(i => `${i.testName || i.name || ""}: ${i.result || ""}`.trim()).filter(Boolean).join("\n")
+              : data.investigationsSummary)
+        || data.keyInvestigations || "",
       conditionOnDischarge: data.conditionOnDischarge,
       dischargeMeds:       data.dischargeMeds || data.medications || [],
       advice:              [data.specialInstructions, data.activityAdvice].filter(Boolean).flatMap(s => String(s).split("\n").filter(Boolean)),
@@ -933,6 +940,10 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
     stayDays: "", doctorName: "", doctorRegNo: "", department: "",
     consultants: "", admittingDiagnosis: "", finalDiagnosis: "", icdCode: "",
     comorbidities: "", historyOfPresentIllness: "", courseInHospital: "",
+    // R7hr-200 — free-text investigations paragraph, auto-filled from the
+    // patient's manual lab trends + imaging/path reports so the doctor
+    // doesn't retype them (and the page can be saved as a narrative).
+    keyInvestigationsText: "",
     significantFindings: "", conditionOnDischarge: "Stable",
     dietAdvice: "", activityAdvice: "", woundCare: "", specialInstructions: "",
     followUpRequired: true, followUpDate: "", followUpDoctor: "", followUpDepartment: "", followUpInstructions: "",
@@ -1145,26 +1156,47 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
            Non-fatal: discharge still loads if lab access / endpoint missing. */
         try {
           const autoInv = [];
-          // Lab trend sheets → latest reading per test
+          const narrLines = [];   // R7hr-200 — paragraph view of the same data
+          const _dt = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "";
+          // Lab trend sheets → latest reading per test (rows + one narrative line per panel)
           try {
             const tr = await axios.get(`${API_ENDPOINTS.BASE}/lab-records/trends`, { params: { UHID: found.UHID }, headers });
             const trends = Array.isArray(tr?.data?.data) ? tr.data.data : (Array.isArray(tr?.data) ? tr.data : []);
-            trends.forEach(panel => (panel.tests || []).forEach(t => {
-              const readings = (t.readings || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
-              const latest = readings.find(r => r && r.value != null && String(r.value).trim() !== "");
-              if (latest) autoInv.push({ name: t.name || "", result: String(latest.value), unit: t.unit || "", status: latest.status || "" });
-            }));
+            trends.forEach(panel => {
+              const panelParts = [];
+              let panelDate = "";
+              (panel.tests || []).forEach(t => {
+                const readings = (t.readings || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+                const latest = readings.find(r => r && r.value != null && String(r.value).trim() !== "");
+                if (latest) {
+                  autoInv.push({ name: t.name || "", result: String(latest.value), unit: t.unit || "", status: latest.status || "" });
+                  panelParts.push(`${t.name} ${latest.value}${t.unit ? " " + t.unit : ""}${latest.status ? " (" + latest.status + ")" : ""}`);
+                  if (!panelDate && latest.date) panelDate = _dt(latest.date);
+                }
+              });
+              if (panelParts.length) {
+                narrLines.push(`${panel.panelName || panel.panelType || "Lab"}${panelDate ? " [" + panelDate + "]" : ""}: ${panelParts.join(", ")}.`);
+              }
+            });
           } catch (_) { /* no lab access / none */ }
-          // Imaging / microbiology / histopath reports → impression
+          // Imaging / microbiology / histopath reports → impression (rows + narrative)
           try {
             const rp = await axios.get(`${API_ENDPOINTS.BASE}/lab-records/reports`, { params: { UHID: found.UHID }, headers });
             const reports = Array.isArray(rp?.data?.data) ? rp.data.data : (Array.isArray(rp?.data) ? rp.data : []);
             reports.forEach(r => {
               const res = r.impression || r.findings || r.organism || "";
-              autoInv.push({ name: r.testName || r.reportType || "Report", result: res, unit: "", status: "" });
+              const nm = r.testName || r.reportType || "Report";
+              autoInv.push({ name: nm, result: res, unit: "", status: "" });
+              if (res || nm) narrLines.push(`${nm}${r.reportDate ? " [" + _dt(r.reportDate) + "]" : ""}: ${res || "—"}.`);
             });
           } catch (_) { /* no report access / none */ }
           if (autoInv.length) setInvestigations(prev => (prev && prev.length) ? prev : autoInv);
+          // Fill the narrative paragraph only when the doctor hasn't typed one
+          // / a draft hasn't restored it — never clobber existing text.
+          if (narrLines.length) {
+            const narrative = narrLines.join("\n");
+            setForm(p => ({ ...p, keyInvestigationsText: (p.keyInvestigationsText && p.keyInvestigationsText.trim()) ? p.keyInvestigationsText : narrative }));
+          }
         } catch (_) { /* silently skip */ }
 
         /* ══ Auto-fetch PROCEDURE notes for this admission → discharge
@@ -1792,8 +1824,20 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
           <Section title="Key Investigations" icon="pi-list" color={color} nabh
             sub={`${investigations.length} investigation${investigations.length === 1 ? "" : "s"} recorded`}
             badge={investigations.length ? `${investigations.length}` : null}>
+            {/* R7hr-200 — paragraph summary auto-filled from the patient's
+                manual lab trends + imaging/path reports, so the doctor doesn't
+                retype and the page saves as a narrative. Editable; the
+                structured rows below stay available for fine-tuning. */}
+            <div style={{ marginBottom: 12 }}>
+              <label className="his-label" style={{ display: "block", marginBottom: 4 }}>
+                Investigations Summary (auto-filled from recorded lab &amp; imaging reports — editable)
+              </label>
+              <textarea className="his-textarea" rows={5} value={form.keyInvestigationsText}
+                onChange={upd("keyInvestigationsText")}
+                placeholder="Auto-fills from this patient's recorded lab trends and imaging/pathology reports. Edit as needed." />
+            </div>
             <TableShell cols={INV_COLS} color={color}
-              empty={investigations.length === 0 ? "No investigations recorded — click Add to start." : null}>
+              empty={investigations.length === 0 ? "No structured rows — the summary above covers recorded reports; click Add for extra rows." : null}>
               {investigations.map((inv, idx) => (
                 <InvRow key={idx} inv={inv} idx={idx} color={color} onChange={updateInv} onRemove={removeInv} />
               ))}
