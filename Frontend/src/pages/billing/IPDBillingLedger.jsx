@@ -492,7 +492,11 @@ export default function IPDBillingLedger() {
         const res = await axios.post(`${API_ENDPOINTS.BASE}/billing/${billId}/payment`, {
           amount: amt,
           paymentMode: payMode,
-          paymentReference: payRef.trim() || undefined,
+          // R7hr-211 — backend recordPayment reads `transactionId` (and its
+          // duplicate-UTR guard keys on it); the old `paymentReference` key
+          // was silently dropped, losing the card/UPI ref and defeating the
+          // double-payment guard for IPD collections.
+          transactionId: payRef.trim() || undefined,
         });
         toast.success(`₹${amt.toLocaleString("en-IN")} collected (${payMode}) — receipt created`);
         // R7hr-192 (G2) — print the payment receipt, mirroring the

@@ -896,7 +896,19 @@ class BillingService {
       throw new Error("No outstanding bills found for this UHID");
     }
 
-    const totalDue = bills.reduce((s, b) => s + toNum(b.balanceAmount), 0);
+    // R7hr-211 — effective outstanding per bill. The stored balanceAmount can
+    // be a stale 0 (R7aa) while billItems still hold real money; mirror the
+    // FE's _effectiveBalance so the bulk cap doesn't reject a legitimate
+    // collection with "exceeds total outstanding ₹0.00".
+    const effectiveBalance = (b) => {
+      const stored = toNum(b.balanceAmount);
+      if (stored > 0) return stored;
+      const itemsNet = (b.billItems || []).reduce((s, i) => s + toNum(i.netAmount), 0);
+      const paidPos  = (b.payments  || []).reduce((s, p) => s + Math.max(0, toNum(p.amount)), 0);
+      const refNet   = Math.max(toNum(b.patientPayableAmount), toNum(b.netAmount), itemsNet);
+      return Math.max(0, refNet - paidPos);
+    };
+    const totalDue = bills.reduce((s, b) => s + effectiveBalance(b), 0);
     if (amt > totalDue + 0.5) {
       throw new Error(
         `Amount ₹${amt} exceeds total outstanding ₹${totalDue.toFixed(2)} — use per-bill flow or advance deposit for over-payments`,
@@ -931,7 +943,7 @@ class BillingService {
           if (!fresh) return null;
           // Re-check state: a concurrent cancel/refund could have moved it.
           if (!["GENERATED", "PARTIAL"].includes(fresh.billStatus)) return null;
-          const bal = toNum(fresh.balanceAmount);
+          const bal = effectiveBalance(fresh);   // R7hr-211 — stale balanceAmount fallback
           if (bal <= 0) return null;
           const leg = Math.min(remaining, bal);
 
@@ -951,7 +963,14 @@ class BillingService {
 
           // Recompute via pre-save (also flips DRAFT/GENERATED → PARTIAL / PAID).
           const newPaid = fresh.payments.reduce((s, p) => s + toNum(p.amount), 0);
-          const newBal  = Math.max(0, toNum(fresh.patientPayableAmount) - newPaid);
+          // R7hr-211 — use the effective reference (max of payable/net/items)
+          // so a stale patientPayableAmount=0 doesn't wrongly flip the bill to
+          // PAID after a partial bulk leg.
+          const refNet  = Math.max(
+            toNum(fresh.patientPayableAmount), toNum(fresh.netAmount),
+            (fresh.billItems || []).reduce((s, i) => s + toNum(i.netAmount), 0),
+          );
+          const newBal  = Math.max(0, refNet - newPaid);
           fresh.billStatus = newBal <= 0.005 ? "PAID" : "PARTIAL";
           if (newBal <= 0.005) fresh.paidAt = new Date();
 
@@ -1780,9 +1799,21 @@ class BillingService {
       // Cap refund at net collected (sum of all rows; prior refunds are
       // already negative so the cap shrinks correctly).
       const paid = (bill.payments || []).reduce((s, p) => s + toNum(p.amount), 0);
-      if (amt > paid + 0.5) {
+      // R7hr-211 — advance-applied credit (ADVANCE_ADJUSTMENT rows) was never
+      // collected as cash, so it must NOT be refundable out of the cash drawer.
+      // The cash-refundable cap = net collected − advance-applied. Money that
+      // came from the advance pool is returned via the advance pool, not the
+      // till; capping at `paid` (which includes advance) let a cashier hand out
+      // real cash for an advance-only bill.
+      const advanceApplied = (bill.payments || []).reduce((s, p) => {
+        const v = toNum(p.amount);
+        return s + (v > 0 && p.paymentMode === "ADVANCE_ADJUSTMENT" ? v : 0);
+      }, 0);
+      const refundableCash = paid - advanceApplied;
+      if (amt > refundableCash + 0.5) {
         const err = new Error(
-          `Cannot refund ₹${amt} — only ₹${paid.toFixed(2)} has been collected on this bill`,
+          `Cannot refund ₹${amt} — only ₹${refundableCash.toFixed(2)} was collected as cash/card/UPI on this bill ` +
+          `(advance-applied credit is returned to the advance pool, not the cash drawer)`,
         );
         err.code = "OVER_REFUND"; err.status = 400; throw err;
       }
