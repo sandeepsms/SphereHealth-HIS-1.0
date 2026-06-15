@@ -135,7 +135,7 @@ export default function Header() {
   //   • Print-mode / receipt windows handle their own chrome
   const userHome = user ? homePathForRole(user.role) : null;
   const isHome = NO_BACK_PATHS.has(pathname) || pathname === userHome;
-  const showBack = !!user && !isHome && !pathname.startsWith("/bill-print") && !pathname.startsWith("/print");
+  const showBack = !!user && !isHome && !pathname.startsWith("/print");
 
   // Native browser back when there IS history; otherwise fall back to
   // the user's home page so the button never strands the user on a
