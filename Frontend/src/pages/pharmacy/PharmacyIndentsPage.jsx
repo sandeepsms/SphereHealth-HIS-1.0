@@ -490,7 +490,10 @@ export default function PharmacyIndentsPage({
                       navigation. */}
                   <button onClick={() => {
                     const seed = {
-                      UHID:            indent.patientUHID || "",
+                      // R7hr-211 — indents carry `UHID`, not `patientUHID`; the
+                      // old key left the ledger header blank until the admission
+                      // fetch resolved.
+                      UHID:            indent.UHID || indent.patientUHID || "",
                       patientName:     indent.patientName || "",
                       admissionNumber: indent.admissionNumber || "",
                       bed:             indent.bedNumber ? `${indent.bedNumber}${indent.wardName ? ` · ${indent.wardName}` : ""}` : "",

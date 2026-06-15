@@ -58,8 +58,13 @@ class BedService {
     for (const b of beds) {
       const nonAvailable = ["Occupied", "Cleaning"].includes(b.status);
       if (!nonAvailable) continue;
+      // R7hr-211 — an 'Occupied' bed must always have a live admission, so
+      // force it into the dead-ref evaluation below even when the populated
+      // currentAdmission is null (the ref pointed at a DELETED admission —
+      // exactly the orphan case this heal targets). 'Cleaning' beds with no
+      // ref are legitimate (just-vacated) and stay untouched.
       const hadRef =
-        b.currentAdmission != null || b.patient != null;
+        b.currentAdmission != null || b.patient != null || b.status === "Occupied";
       if (!hadRef) continue;
       // currentAdmission was populated above; if the populated value is
       // null/undefined, the ref pointed at a deleted document.
@@ -290,11 +295,15 @@ class BedService {
   }
 
   async estimateCharges(bedId) {
-    const bed = await Bed.findById(bedId).lean();
+    const bed = await Bed.findById(bedId).populate("currentAdmission", "admissionDate").lean();
     if (!bed) throw new Error("Bed not found");
-    const days = bed.currentBooking?.admittedDate
+    // R7hr-211 — admission-flow patients never set currentBooking.admittedDate,
+    // so the estimate was always 0 days / ₹0. Fall back to the linked
+    // admission's admissionDate.
+    const startDate = bed.currentBooking?.admittedDate || bed.currentAdmission?.admissionDate;
+    const days = startDate
       ? Math.ceil(
-          (new Date() - new Date(bed.currentBooking.admittedDate)) /
+          (new Date() - new Date(startDate)) /
             (1000 * 60 * 60 * 24),
         )
       : 0;
