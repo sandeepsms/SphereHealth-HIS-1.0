@@ -1445,7 +1445,7 @@ exports.dispense = async (req, res) => {
       try {
         let patientDoc = {};
         if (sale.patientUHID) {
-          const Patient = require("../../models/Patient/PatientModel");
+          const Patient = require("../../models/Patient/patientModel");
           patientDoc = await Patient.findOne({ UHID: sale.patientUHID })
             .select("UHID fullName age gender _id")
             .lean() || { UHID: sale.patientUHID, fullName: sale.patientName, age: sale.age, gender: sale.gender };

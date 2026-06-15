@@ -116,8 +116,8 @@ const BedDashboard = () => {
     // ALOS from admissions discharged in the last 30 days
     const now = Date.now();
     const THIRTY = 30 * 24 * 60 * 60 * 1000;
-    const recent = admissions.filter(a => a.dischargeDate && (now - new Date(a.dischargeDate).getTime()) < THIRTY);
-    const totalDays = recent.reduce((sum, a) => sum + (dayDiff(a.admissionDate, a.dischargeDate) || 0), 0);
+    const recent = admissions.filter(a => a.actualDischargeDate && (now - new Date(a.actualDischargeDate).getTime()) < THIRTY);
+    const totalDays = recent.reduce((sum, a) => sum + (dayDiff(a.admissionDate, a.actualDischargeDate) || 0), 0);
     const alos = recent.length > 0 ? (totalDays / recent.length).toFixed(1) : "—";
 
     // Today's expected discharges

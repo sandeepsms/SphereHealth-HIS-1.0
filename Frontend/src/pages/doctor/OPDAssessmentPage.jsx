@@ -695,7 +695,7 @@ export default function OPDAssessmentPage() {
       const infOrders = infusions.filter(f => f.name && !f._orderId).map(f => ({
         ...baseOrder, orderType: "IV_Fluid",
         orderDetails: {
-          medicineName: f.name, displayName: f.name,
+          fluidName: f.name, medicineName: f.name, displayName: f.name,
           route: f.route || "IV Infusion",
           frequency: "Continuous",
           totalVolume: f.totalVolume,
