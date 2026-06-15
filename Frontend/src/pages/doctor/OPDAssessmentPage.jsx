@@ -22,6 +22,7 @@ import { buildPrintShellHtml } from "@/templates/PrintShell";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 import DrugAutocomplete, { parseStrength, drugDisplayName } from "../../Components/clinical/DrugAutocomplete";
 import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
+import InfusionPanel from "../../Components/clinical/InfusionPanel";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 // R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
 import { toMoney } from "../../utils/money";
@@ -349,10 +350,10 @@ export default function OPDAssessmentPage() {
   // route TreatmentChart's Infusion tab consumes when the nurse starts
   // running it. Rate is captured in ml/hr; totalVolume optional for
   // bolus orders. Mirrors the IPD infusion entry pattern.
+  // R7hr-203 — `newInfusion` draft + `addInfusion`/`removeInfusion` handlers
+  // retired; the shared <InfusionPanel> now owns its own draft + add/remove.
+  // `infusions` stays here as the controlled value (autosave, restore, save-map).
   const [infusions,  setInfusions]  = useState([]);
-  const [newInfusion, setNewInfusion] = useState({
-    name: "", totalVolume: "", rate: "", duration: "", route: "IV Infusion", additives: "", instructions: "",
-  });
 
   const [procedures,   setProcedures]   = useState([]);
   const [newProc,      setNewProc]      = useState({ procedureName: "", procedureType: "Minor", consentRequired: true, estimatedDuration: "", notes: "" });
@@ -360,11 +361,16 @@ export default function OPDAssessmentPage() {
 
   // ── Unified "Services & Orders" line (LAB / RADIOLOGY / PROCEDURE /
   // CONSUMABLE / etc.). Doctor picks from ServiceMaster, an OPD DRAFT
-  // bill auto-spins-up if there isn't one yet, and the service goes
+  // bill auto-spins-up if there isn't one yet, and the services go
   // straight onto the bill so the receptionist sees it the moment the
-  // patient reaches the counter. `service` holds the picked ServiceMaster
-  // doc; `qty`/`urgency`/`instructions` are the row-level extras.
-  const [newOrder, setNewOrder] = useState({ service: null, name: "", qty: 1, urgency: "Routine", instructions: "" });
+  // patient reaches the counter.
+  // R7hr-204 — MULTI-SELECT: instead of one-pick-one-add, the doctor
+  // searches + picks several tests / imaging into a staging tray
+  // (`pendingOrders`), tunes qty/urgency/instructions per row, then
+  // commits them all in a single "Add N to Bill" click. `orderQuery`
+  // holds the autocomplete's typed text.
+  const [orderQuery,    setOrderQuery]    = useState("");
+  const [pendingOrders, setPendingOrders] = useState([]);   // [{ service, qty, urgency, instructions }]
   // Line items the doctor has added in THIS session. Mirrors the bill's
   // billItems for the same DRAFT — refreshed after every add/remove.
   const [orderItems,    setOrderItems]    = useState([]);
@@ -381,7 +387,7 @@ export default function OPDAssessmentPage() {
   // pushed duplicate rows into the local arrays and fired duplicate POSTs.
   const [isAddingMed,   setIsAddingMed]   = useState(false);
   const [isAddingInv,   setIsAddingInv]   = useState(false);
-  const [isAddingInfusion, setIsAddingInfusion] = useState(false);
+  // R7hr-203 — isAddingInfusion latch retired; <InfusionPanel> owns its own.
 
   // R7az-D4-CRIT-2 — Abort controllers for loadVisit + loadAudit so a
   // navigation away from the page (or visitNumber change) doesn't leave
@@ -818,37 +824,11 @@ export default function OPDAssessmentPage() {
     toast.success("Investigation removed");
   };
 
-  // R7v: Infusion add/remove. Unlike medications + investigations the OPD
-  // visit endpoints don't have dedicated /infusion sub-routes, so we only
-  // mutate local state — the bulk POST /doctor-orders at save-time wires
-  // it into the nurse's Infusion tab. Doctor still gets immediate visual
-  // confirmation in the row table below.
-  const addInfusion = () => {
-    if (isAddingInfusion) return;                  // R7az-D4-HIGH-2: double-tap guard
-    if (!newInfusion.name.trim()) return toast.warn("Fluid / infusion name required");
-    if (!newInfusion.rate.trim())  return toast.warn("Rate (ml/hr) required");
-    setIsAddingInfusion(true);
-    try {
-      setInfusions(p => [...p, { ...newInfusion }]);
-      setNewInfusion({ name: "", totalVolume: "", rate: "", duration: "", route: "IV Infusion", additives: "", instructions: "" });
-      toast.success("Infusion added");
-    } finally {
-      setIsAddingInfusion(false);
-    }
-  };
-  const removeInfusion = async (idx) => {
-    const f = infusions[idx];
-    if (!f) return;
-    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
-    if (!(await confirm({
-      title: "Remove infusion?",
-      body: `${f.name || "This infusion"} will be removed from the order list and won't appear in the nurse's infusion tab.`,
-      danger: true,
-      confirmLabel: "Remove",
-    }))) return;
-    setInfusions(p => p.filter((_, x) => x !== idx));
-    toast.success("Infusion removed");
-  };
+  // R7v / R7hr-203: Infusion add/remove now live inside the shared
+  // <InfusionPanel> (controlled component). The OPD visit endpoints have no
+  // dedicated /infusion sub-route, so infusions stay local until the bulk
+  // POST /doctor-orders at save-time wires them (orderType:"IV_Fluid") into
+  // the nurse's Infusion tab — that save mapping is unchanged.
 
   // ── Unified Services & Orders → DRAFT bill flow ────────────────
   // When the doctor adds ANY chargeable line (lab test, imaging,
@@ -879,7 +859,7 @@ export default function OPDAssessmentPage() {
   };
 
   // R7bp-OPD-DUP — Pull the draft-bill lookup out of the useEffect so it
-  // can be re-fired from addOrderToBill's E11000 recovery path (and any
+  // can be re-fired from addAllToBill's E11000 recovery path (and any
   // future "refresh bill" action). Returns silently when there's no draft
   // yet — that's the cold-start case.
   const refreshOrderDraftBill = useCallback(async (signal) => {
@@ -902,65 +882,117 @@ export default function OPDAssessmentPage() {
     }
   }, [visit?.UHID, uhid]);
 
-  const addOrderToBill = async () => {
-    // R7bp-OPD-DUP — Synchronous re-entrancy guard. The button is also
-    // `disabled` while orderSaving is true, but React batches the state
-    // update so a hardware double-click (or an axios retry) can still fire
-    // two onClicks before the disabled paint lands. The ref flips
-    // immediately so the second call short-circuits before its POST.
-    if (orderSavingRef.current) return;
-    orderSavingRef.current = true;
-    const svc = newOrder.service;
-    if (!svc?._id) {
-      orderSavingRef.current = false;
-      return toast.warn("Pick a service from the list first");
+  // R7hr-204 — staging-tray helpers. Picking a service stages it (with
+  // sensible defaults) rather than billing immediately, so the doctor can
+  // pick several tests / imaging before committing. Duplicate picks (same
+  // ServiceMaster _id) are rejected with a hint. All three mutators bail
+  // while a commit is in flight (orderSavingRef) so the tray can't change
+  // shape between the snapshot and the post-commit cleanup.
+  const addToPending = (svc) => {
+    if (orderSavingRef.current) return;          // frozen during commit
+    if (!svc?._id) return;
+    // Dedupe BEFORE the state update — calling toast() inside a setState
+    // updater is a render-phase side effect (StrictMode flags it as
+    // "setState while rendering"). Read the current list from the closure.
+    if (pendingOrders.some(p => p.service?._id === svc._id)) {
+      toast.info(`${svc.serviceName} is already in the list`);
+      return;
     }
-    const qty = Math.max(1, Number(newOrder.qty) || 1);
+    setPendingOrders(prev => [...prev, { service: svc, qty: 1, urgency: "Routine", instructions: "" }]);
+    // Soft heads-up if it is ALREADY on the draft bill. Repeat orders are
+    // clinically valid (serial labs / repeat imaging) so we still allow it,
+    // but the doctor should know they are creating a second line.
+    if ((orderItems || []).some(it => it.serviceCode && it.serviceCode === svc.serviceCode && it.orderStatus !== "Cancelled")) {
+      toast.info(`${svc.serviceName} is already ordered below — adding another.`);
+    }
+    setOrderQuery("");   // clear the search box, ready for the next pick
+  };
+  const updatePending = (idx, field, val) => {
+    if (orderSavingRef.current) return;          // frozen during commit
+    setPendingOrders(prev => prev.map((p, i) => (i === idx ? { ...p, [field]: val } : p)));
+  };
+  const removePending = (idx) => {
+    if (orderSavingRef.current) return;          // frozen during commit
+    setPendingOrders(prev => prev.filter((_, i) => i !== idx));
+  };
 
+  // R7hr-204 — commit every staged service to the DRAFT bill in one click.
+  // The DRAFT is created ONCE (ensureDraftBill), then each row is appended
+  // via the existing single add-service endpoint sequentially (there is no
+  // batch endpoint, and sequential avoids the bill-number E11000 race). On
+  // partial failure the successful rows stay billed and only the failed
+  // ones remain in the tray for retry.
+  const addAllToBill = async () => {
+    if (orderSavingRef.current) return;          // R7bp-OPD-DUP re-entrancy guard
+    if (!pendingOrders.length) {
+      return toast.warn("Pick at least one service from the list first");
+    }
+    orderSavingRef.current = true;
     setOrderSaving(true);
+    const rows = pendingOrders.slice();
     try {
       const billId = await ensureDraftBill();
-      const { data } = await axios.post(
-        `${API_ENDPOINTS.BASE}/billing/${billId}/add-service`,
-        {
-          serviceId: svc._id,
-          quantity: qty,
-          remarks: [newOrder.urgency, newOrder.instructions].filter(Boolean).join(" · ") || undefined,
-          addedBySource: "Doctor",
-          addedBy:       visit?.consultantName || "Doctor",
-          addedByRole:   "Doctor",
-          // No explicit orderStatus — backend infers "Ordered" from
-          // addedBySource === "Doctor". The line sits in Active Orders
-          // until the lab / radiologist / proceduralist confirms
-          // completion, at which point it becomes billable.
-        },
+      let lastBill = null;
+      const failedIds = [];
+      for (const po of rows) {
+        const svc = po.service;
+        if (!svc?._id) continue;
+        const qty = Math.max(1, Number(po.qty) || 1);
+        try {
+          const { data } = await axios.post(
+            `${API_ENDPOINTS.BASE}/billing/${billId}/add-service`,
+            {
+              serviceId: svc._id,
+              quantity: qty,
+              remarks: [po.urgency, po.instructions].filter(Boolean).join(" · ") || undefined,
+              addedBySource: "Doctor",
+              addedBy:       visit?.consultantName || "Doctor",
+              addedByRole:   "Doctor",
+              // No explicit orderStatus — backend infers "Ordered" from
+              // addedBySource === "Doctor". The line sits in Active Orders
+              // until the executing team confirms completion.
+            },
+          );
+          lastBill = data?.data || data;
+        } catch (rowErr) {
+          failedIds.push(svc._id);
+          console.warn("[OPDAssessment] add-service failed for", svc.serviceName, rowErr?.response?.data?.message || rowErr?.message);
+        }
+      }
+      if (lastBill) {
+        setOrderItems(Array.isArray(lastBill.billItems) ? lastBill.billItems : []);
+        setOrderBillNum(lastBill.billNumber || orderBillNum || "(DRAFT)");
+      } else {
+        // Every row failed and we never got a bill snapshot — pull from server.
+        await refreshOrderDraftBill().catch(() => {});
+      }
+      const okCount = rows.length - failedIds.length;
+      if (okCount > 0) {
+        toast.success(`${okCount} service${okCount === 1 ? "" : "s"} ordered — will bill once completed`);
+      }
+      // Drop only the rows that actually billed (matched against the snapshot),
+      // so any rows that FAILED — or that the doctor staged WHILE the save was
+      // in flight — stay in the tray rather than being silently cleared.
+      const failSet = new Set(failedIds);
+      const billedIds = new Set(
+        rows.map(r => r.service?._id).filter(id => id && !failSet.has(id))
       );
-      const bill = data?.data || data;
-      setOrderItems(Array.isArray(bill?.billItems) ? bill.billItems : []);
-      setOrderBillNum(bill?.billNumber || orderBillNum || "(DRAFT)");
-      setNewOrder({ service: null, name: "", qty: 1, urgency: "Routine", instructions: "" });
-      toast.success(`${svc.serviceName} ordered — will bill once completed`);
+      setPendingOrders(prev => prev.filter(p => !billedIds.has(p.service?._id)));
+      if (failedIds.length) {
+        toast.error(`${failedIds.length} could not be added — left in the list to retry.`);
+      }
     } catch (e) {
-      // R7bp-OPD-DUP — Surface the real backend error so the user isn't
-      // staring at a silent UI. Special-case E11000 (Mongo duplicate-key)
-      // because the bill-number generator briefly trips it when two writes
-      // race; the row almost always lands on the next render, so we
-      // auto-refresh after 1s and tell the user to retry.
-      const status = e?.response?.status;
+      // ensureDraftBill failed (or the very first write tripped E11000 on
+      // the bill-number generator). Keep the tray intact so nothing is lost.
       const serverMsg =
-        e?.response?.data?.message ||
-        e?.response?.data?.error ||
-        e?.message ||
-        "Could not add to bill";
+        e?.response?.data?.message || e?.response?.data?.error || e?.message || "Could not add to bill";
       const isDupKey =
-        /E11000/i.test(serverMsg) ||
-        /duplicate key/i.test(serverMsg) ||
-        e?.response?.data?.code === 11000;
+        /E11000/i.test(serverMsg) || /duplicate key/i.test(serverMsg) || e?.response?.data?.code === 11000;
       if (isDupKey) {
         toast.error("Looks like the bill is still being created — please retry in a second.");
         setTimeout(() => { refreshOrderDraftBill().catch(() => {}); }, 1000);
       } else {
-        toast.error(`Failed to add service: ${serverMsg}${status ? ` (${status})` : ""}`);
+        toast.error(`Failed to add services: ${serverMsg}`);
       }
     } finally {
       setOrderSaving(false);
@@ -1387,9 +1419,15 @@ export default function OPDAssessmentPage() {
         painScore:    vit.painScore ?? "",
         gcsScore:     vit.gcsScore || "",
         enteredBy:    vit.enteredBy || v.vitalsEnteredBy || "",
+        // PD-03 — Read from the schema-canonical top-level fields. The
+        // pre-fix only checked nested `vit.enteredByEmployeeId` etc.
+        // (which Mongoose strict-mode silently drops) and the legacy
+        // `v.vitalsRecordedAt` key that doesn't exist. The canonical
+        // top-level fields are `vitalsEnteredByEmployeeId` +
+        // `vitalsEnteredBySignature` + `vitalsEnteredAt`.
         enteredByEmployeeId: vit.enteredByEmployeeId || vit.nurseEmployeeId || v.vitalsEnteredByEmployeeId || "",
-        enteredBySignature:  vit.enteredBySignature  || vit.nurseSignatureImage  || "",
-        recordedAt:   vit.recordedAt || v.vitalsRecordedAt || "",
+        enteredBySignature:  vit.enteredBySignature  || vit.nurseSignatureImage  || v.vitalsEnteredBySignature || "",
+        recordedAt:   vit.recordedAt || v.vitalsRecordedAt || v.vitalsEnteredAt || "",
       },
       // R7hn-2: nurse's chief complaint capture (separate from the
       // doctor's subjective note — see the registration-time
@@ -2816,124 +2854,14 @@ export default function OPDAssessmentPage() {
               titration / monitoring requirements). Mirrors the IPD
               infusion form fields. */}
           <Card title="Infusions / IV Fluids" icon="pi-tint" color="#0d9488">
-            <p style={{ color: C.muted, fontSize: 11, marginTop: 0, marginBottom: 10 }}>
-              For day-care / hydration / corrections. Routes to the nurse's
-              <strong> Infusion Orders & Monitoring </strong> tab on save.
-              Routine fluids are non-HAM; insulin / KCl / heparin drips auto-tag
-              as <strong>HAM</strong> requiring 2-nurse verification.
-            </p>
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2fr) 110px 100px 110px minmax(0,1.5fr) auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
-              <input
-                value={newInfusion.name}
-                onChange={e => setNewInfusion(p => ({ ...p, name: e.target.value }))}
-                placeholder="Fluid / drug — e.g. NS 0.9%, RL, Insulin drip"
-                list="rx-infusion-options"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
-              />
-              <datalist id="rx-infusion-options">
-                <option value="Normal Saline 0.9% (NS)" />
-                <option value="Ringer Lactate (RL)" />
-                <option value="Dextrose Normal Saline (DNS)" />
-                <option value="5% Dextrose (D5W)" />
-                <option value="25% Dextrose" />
-                <option value="50% Dextrose" />
-                <option value="Mannitol 20%" />
-                <option value="20% Human Albumin" />
-                <option value="5% Albumin" />
-                <option value="3% Hypertonic Saline" />
-                <option value="Insulin drip" />
-                <option value="Heparin drip" />
-                <option value="Noradrenaline drip" />
-                <option value="KCl correction" />
-                <option value="Magnesium Sulphate" />
-                <option value="Calcium Gluconate" />
-              </datalist>
-              <input
-                value={newInfusion.totalVolume}
-                onChange={e => setNewInfusion(p => ({ ...p, totalVolume: e.target.value }))}
-                placeholder="Vol (ml)"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
-              />
-              <input
-                value={newInfusion.rate}
-                onChange={e => setNewInfusion(p => ({ ...p, rate: e.target.value }))}
-                placeholder="Rate ml/hr *"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
-              />
-              <input
-                list="rx-infusion-duration-options"
-                value={newInfusion.duration}
-                onChange={e => setNewInfusion(p => ({ ...p, duration: e.target.value }))}
-                placeholder="Duration"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
-              />
-              <datalist id="rx-infusion-duration-options">
-                <option value="STAT — 1 dose" />
-                <option value="Over 1 hour" />
-                <option value="Over 2 hours" />
-                <option value="Over 4 hours" />
-                <option value="Over 6 hours" />
-                <option value="Over 8 hours" />
-                <option value="Over 12 hours" />
-                <option value="Over 24 hours" />
-                <option value="Continuous — titrate" />
-              </datalist>
-              <input
-                value={newInfusion.additives}
-                onChange={e => setNewInfusion(p => ({ ...p, additives: e.target.value }))}
-                placeholder="Additives / instructions (e.g. + KCl 20 mEq)"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
-              />
-              {/* R7az-D4-HIGH-2: disable while in-flight to block dup rows. */}
-              <button
-                onClick={addInfusion}
-                disabled={isAddingInfusion}
-                style={{ background: "#0d9488", color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px", cursor: isAddingInfusion ? "wait" : "pointer", fontWeight: 600, fontSize: 12, opacity: isAddingInfusion ? 0.6 : 1 }}
-              >
-                {isAddingInfusion ? "Adding…" : "+ Add"}
-              </button>
-            </div>
-            {infusions.length === 0 ? (
-              <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>No infusions ordered.</p>
-            ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr style={{ background: C.bg }}>
-                  {["Fluid / Drug", "Volume", "Rate", "Duration", "Additives"].map(h => (
-                    <th key={h} style={{ textAlign: "left", padding: "6px 10px", fontWeight: 600, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
-                  ))}
-                  <th style={{ width: 36, borderBottom: `1px solid ${C.border}` }} aria-label="Remove" />
-                </tr></thead>
-                <tbody>{infusions.map((f, i) => (
-                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-                    <td style={{ padding: "7px 10px", color: C.dark, fontWeight: 600 }}>{f.name || "—"}</td>
-                    <td style={{ padding: "7px 10px", color: C.dark }}>{f.totalVolume ? `${f.totalVolume} ml` : "—"}</td>
-                    <td style={{ padding: "7px 10px", color: C.dark, fontFamily: "'DM Mono', monospace" }}>{f.rate ? `${f.rate} ml/hr` : "—"}</td>
-                    <td style={{ padding: "7px 10px", color: C.dark }}>{f.duration || "—"}</td>
-                    <td style={{ padding: "7px 10px", color: C.muted, fontSize: 11 }}>{f.additives || "—"}</td>
-                    <td style={{ padding: "4px 6px", textAlign: "right" }}>
-                      <button
-                        type="button"
-                        onClick={() => removeInfusion(i)}
-                        title={`Remove ${f.name || "this infusion"}`}
-                        aria-label="Remove infusion"
-                        style={{
-                          width: 24, height: 24, border: "1px solid #fca5a5",
-                          background: "#fef2f2", color: "#b91c1c",
-                          borderRadius: 6, cursor: "pointer",
-                          display: "inline-flex", alignItems: "center", justifyContent: "center",
-                          fontFamily: "inherit", fontWeight: 700, fontSize: 13, lineHeight: 1,
-                          padding: 0,
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.background = "#fee2e2"; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = "#fef2f2"; }}
-                      >
-                        ×
-                      </button>
-                    </td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            )}
+            {/* R7hr-203 — adopt the shared, dynamic InfusionPanel (same one the
+                IPD Initial Assessment + Emergency doctor flows use) instead of
+                the page's old inline datalist copy. Controlled (value/onChange,
+                no self-save) so the existing OPD save still maps `infusions`
+                → orderType:"IV_Fluid" DoctorOrders untouched. Gains R7hr-68
+                fluid-preset auto-fill + vasopressor/insulin/heparin strength
+                chips. The panel renders its own helper text + add/remove table. */}
+            <InfusionPanel value={infusions} onChange={setInfusions} theme={C} />
           </Card>
 
           {/* ─── Unified Services & Orders → DRAFT bill ──────────────
@@ -2965,60 +2893,108 @@ export default function OPDAssessmentPage() {
               </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2.2fr) minmax(0,0.6fr) minmax(0,0.9fr) minmax(0,1.4fr) auto", gap: 8, marginBottom: 12, alignItems: "center" }}>
-              <ServiceAutocomplete
-                value={newOrder.name}
-                applicableTo="OPD"
-                onChange={(v) => setNewOrder(p => ({ ...p, name: v, service: null }))}
-                onPick={(s) => setNewOrder(p => ({
-                  ...p,
-                  service: s,
-                  name: `${s.serviceCode ? s.serviceCode + " · " : ""}${s.serviceName}`,
-                }))}
-                placeholder="Service / Investigation / Procedure — start typing"
-                inputStyle={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, width: "100%" }}
-                inputClassName=""
-                showLabel={false}
-              />
-              <input
-                type="number" min="1" step="1"
-                value={newOrder.qty}
-                onChange={e => setNewOrder(p => ({ ...p, qty: e.target.value === "" ? 1 : Number(e.target.value) }))}
-                placeholder="Qty"
-                title="Quantity / Units"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
-              />
-              <select
-                value={newOrder.urgency}
-                onChange={e => setNewOrder(p => ({ ...p, urgency: e.target.value }))}
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, background: "#fff" }}
-              >
-                <option value="Routine">Routine</option>
-                <option value="Urgent">Urgent</option>
-                <option value="STAT">STAT</option>
-              </select>
-              <input
-                value={newOrder.instructions}
-                onChange={e => setNewOrder(p => ({ ...p, instructions: e.target.value }))}
-                placeholder="Special instructions (optional)"
-                style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
-              />
-              <button
-                onClick={addOrderToBill}
-                disabled={orderSaving || !newOrder.service}
-                title={newOrder.service ? "" : "Pick a service from the dropdown first"}
-                style={{
-                  background: !newOrder.service ? "#cbd5e1" : (orderSaving ? "#7dd3fc" : "#0284c7"),
-                  color: "#fff", border: "none", borderRadius: 7, padding: "8px 14px",
-                  cursor: orderSaving || !newOrder.service ? "not-allowed" : "pointer",
-                  fontWeight: 600, fontSize: 12,
-                  display: "inline-flex", alignItems: "center", gap: 6,
-                }}
-              >
-                <i className={`pi ${orderSaving ? "pi-spin pi-spinner" : "pi-plus"}`} />
-                {orderSaving ? "Adding…" : "Add to Bill"}
-              </button>
+            {/* R7hr-204 — MULTI-SELECT picker. Search + click adds each test /
+                imaging / procedure to the staging tray below; the doctor can
+                stack as many as they need, tune qty/urgency/instructions per
+                row, then commit them all with one "Add N to Bill" click. */}
+            <div style={{ marginBottom: pendingOrders.length ? 8 : 12 }}>
+              {/* Freeze the picker while a commit is in flight so a mid-save
+                  pick can't be staged-then-silently-dropped by the cleanup. */}
+              <div style={{ pointerEvents: orderSaving ? "none" : "auto", opacity: orderSaving ? 0.6 : 1 }}>
+                <ServiceAutocomplete
+                  value={orderQuery}
+                  applicableTo="OPD"
+                  onChange={setOrderQuery}
+                  onPick={addToPending}
+                  placeholder="Search & pick tests / imaging / procedures — add as many as you need"
+                  inputStyle={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "8px 10px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, width: "100%" }}
+                  inputClassName=""
+                  showLabel={false}
+                />
+              </div>
+              {pendingOrders.length === 0 && (
+                <p style={{ color: C.muted, fontSize: 11, margin: "6px 2px 0" }}>
+                  Tip: keep searching and clicking to select multiple tests / imaging — they stack here before you bill them together.
+                </p>
+              )}
             </div>
+
+            {pendingOrders.length > 0 && (
+              <div style={{ border: "1px dashed #7dd3fc", borderRadius: 8, padding: "10px 12px", marginBottom: 12, background: "#f7fdff" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#0369a1", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                  {pendingOrders.length} selected — not yet billed
+                </div>
+                {pendingOrders.map((po, idx) => (
+                  <div key={po.service?._id || idx} style={{ display: "grid", gridTemplateColumns: "minmax(0,2.2fr) 64px minmax(0,0.9fr) minmax(0,1.4fr) auto", gap: 8, marginBottom: 6, alignItems: "center" }}>
+                    <div style={{ fontSize: 12, color: C.dark, fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                      title={po.service?.serviceName}>
+                      {po.service?.serviceCode && (
+                        <span style={{ fontFamily: "'DM Mono', monospace", color: C.muted, marginRight: 6 }}>{po.service.serviceCode}</span>
+                      )}
+                      {po.service?.serviceName}
+                      {po.service?.category && <span style={{ fontSize: 10, color: C.muted, marginLeft: 6 }}>· {po.service.category}</span>}
+                    </div>
+                    <input
+                      type="number" min="1" step="1"
+                      value={po.qty}
+                      disabled={orderSaving}
+                      onChange={e => updatePending(idx, "qty", Math.max(1, Math.floor(Number(e.target.value)) || 1))}
+                      title="Quantity / Units"
+                      style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "6px 8px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
+                    />
+                    <select
+                      value={po.urgency}
+                      disabled={orderSaving}
+                      onChange={e => updatePending(idx, "urgency", e.target.value)}
+                      style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "6px 8px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark, background: "#fff" }}
+                    >
+                      <option value="Routine">Routine</option>
+                      <option value="Urgent">Urgent</option>
+                      <option value="STAT">STAT</option>
+                    </select>
+                    <input
+                      value={po.instructions}
+                      disabled={orderSaving}
+                      onChange={e => updatePending(idx, "instructions", e.target.value)}
+                      placeholder="Special instructions (optional)"
+                      style={{ border: `1px solid ${C.border}`, borderRadius: 7, padding: "6px 8px", fontSize: 12, outline: "none", fontFamily: "inherit", color: C.dark }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removePending(idx)}
+                      disabled={orderSaving}
+                      title={`Remove ${po.service?.serviceName || "this service"} from selection`}
+                      aria-label={`Remove ${po.service?.serviceName || "this service"} from selection`}
+                      style={{
+                        width: 24, height: 24, border: "1px solid #fca5a5",
+                        background: "#fef2f2", color: "#b91c1c",
+                        borderRadius: 6, cursor: orderSaving ? "not-allowed" : "pointer",
+                        opacity: orderSaving ? 0.5 : 1,
+                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        fontFamily: "inherit", fontWeight: 700, fontSize: 13, lineHeight: 1, padding: 0,
+                      }}
+                      onMouseEnter={e => { if (!orderSaving) e.currentTarget.style.background = "#fee2e2"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "#fef2f2"; }}
+                    >×</button>
+                  </div>
+                ))}
+                <button
+                  onClick={addAllToBill}
+                  disabled={orderSaving}
+                  style={{
+                    marginTop: 6,
+                    background: orderSaving ? "#7dd3fc" : "#0284c7",
+                    color: "#fff", border: "none", borderRadius: 7, padding: "9px 18px",
+                    cursor: orderSaving ? "wait" : "pointer",
+                    fontWeight: 700, fontSize: 12,
+                    display: "inline-flex", alignItems: "center", gap: 7,
+                  }}
+                >
+                  <i className={`pi ${orderSaving ? "pi-spin pi-spinner" : "pi-plus"}`} />
+                  {orderSaving ? "Adding…" : `Add ${pendingOrders.length} to Bill`}
+                </button>
+              </div>
+            )}
 
             {orderItems.length === 0 ? (
               <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>

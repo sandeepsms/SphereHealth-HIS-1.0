@@ -176,6 +176,12 @@ const ClinicalAuditSchema = new mongoose.Schema(
         "ICU_BUNDLE_SEPSIS_NON_COMPLIANT",
         "ICU_BUNDLE_SUP_NON_COMPLIANT",
 
+        // R7hr-184 — Invasive-device registry (ET tube / Foley / lines).
+        // Device-days trail feeds HIC.5 + drives bundle applicability.
+        "PATIENT_DEVICE_PLACED",
+        "PATIENT_DEVICE_CHANGED",
+        "PATIENT_DEVICE_REMOVED",
+
         // B1-T03 — Medical Certificate forgery guard. Admins may issue
         // a certificate on behalf of a doctor with a written justification;
         // every such issuance is permanently logged on the long-retention

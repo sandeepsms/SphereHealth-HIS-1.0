@@ -1,4 +1,5 @@
 const Building = require("../../models/bedMgmt/buildingModel");
+const Floor = require("../../models/bedMgmt/floorModel");
 
 class BuildingService {
   async createBuilding(data) {

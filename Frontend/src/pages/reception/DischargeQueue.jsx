@@ -107,7 +107,7 @@ export default function DischargeQueue() {
           <i className="pi pi-wallet" /> Pending Final Bill <span className="rx-tab-count">{counts.DoctorApproved}</span>
         </button>
         <button className={`rx-tab ${tab === "BillCleared" ? "rx-tab--active" : ""}`} onClick={() => setTab("BillCleared")}>
-          <i className="pi pi-check" /> Bill Cleared — Ready <span className="rx-tab-count">{counts.BillCleared}</span>
+          <i className="pi pi-check" /> Pending Bed Release <span className="rx-tab-count">{counts.BillCleared}</span>
         </button>
         <button className={`rx-tab ${tab === "Completed" ? "rx-tab--active" : ""}`} onClick={() => setTab("Completed")}>
           <i className="pi pi-flag" /> Discharged Today <span className="rx-tab-count">{counts.Completed}</span>
@@ -199,7 +199,7 @@ export default function DischargeQueue() {
               )}
               {w.stage === "BillCleared" && (
                 <button className="rx-action-btn rx-action-btn--success" onClick={() => setGateRow(adm)}>
-                  <i className="pi pi-id-card" /> Issue Gate Pass
+                  <i className="pi pi-id-card" /> Clear Bed &amp; Release{w.dischargeType && w.dischargeType !== "Routine" ? ` (${w.dischargeType})` : ""}
                 </button>
               )}
               {(w.stage === "BillCleared" || w.stage === "Completed") && (
@@ -266,10 +266,16 @@ const FINAL_PAY_MODES = ["CASH", "UPI", "CARD", "CHEQUE", "ONLINE", "TPA_CLAIM"]
 
 function ClearBillModal({ admission, onClose, onCleared, userName }) {
   const w = admission.dischargeWorkflow || {};
+  // R7hr-197 — disposition the doctor set on the summary. Normal discharge
+  // must be fully settled; LAMA/DAMA/Death/Absconded/Referral may clear with
+  // a balance but only with a recorded waiver reason (backend enforces this).
+  const dispoType = w.dischargeType || "Routine";
+  const needsWaiverOption = ["LAMA", "DAMA", "Death", "Absconded", "Referral"].includes(dispoType);
   const [amount, setAmount] = useState(w.finalBillAmount || 0);
   const [billNumber, setBillNumber] = useState(w.finalBillNumber || "");
   const [paymentMode, setPaymentMode] = useState("CASH");
   const [transactionId, setTransactionId] = useState("");
+  const [waiverReason, setWaiverReason] = useState("");
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
@@ -293,6 +299,7 @@ function ClearBillModal({ admission, onClose, onCleared, userName }) {
         clearedBy: userName,
         paymentMode,                              // forwarded to linked PatientBill.payments
         transactionId: transactionId || undefined,
+        waiverReason: needsWaiverOption ? (waiverReason.trim() || undefined) : undefined,
       });
       toast.success("Final bill cleared — patient ready for gate pass");
 
@@ -426,8 +433,17 @@ function ClearBillModal({ admission, onClose, onCleared, userName }) {
                      placeholder={paymentMode === "UPI" ? "e.g. 412345678901" : "Reference / auth code"} />
             </div>
           )}
+          {needsWaiverOption && (
+            <div className="his-field-group">
+              <label className="his-label">Waiver Reason — {dispoType} discharge (required if balance &gt; 0)</label>
+              <input className="his-field" value={waiverReason} onChange={e => setWaiverReason(e.target.value)}
+                     placeholder="e.g. LAMA — patient left against advice, balance waived per duty manager" />
+            </div>
+          )}
           <div className="rx-banner rx-banner--warning">
-            <strong>NABH check:</strong> Confirm payment received via the selected mode before proceeding. The payment is logged on the patient's bill ledger for audit.
+            {needsWaiverOption
+              ? <><strong>{dispoType} discharge:</strong> the IPD bill may be cleared with an outstanding balance, but a waiver reason is required and recorded for audit. Normal settlement is still preferred.</>
+              : <><strong>NABH check:</strong> the IPD bill must be fully settled to clear — any outstanding balance will block. Confirm payment received via the selected mode; it is logged on the patient's bill ledger for audit.</>}
           </div>
         </div>
         <div className="rx-modal-foot">
@@ -499,23 +515,24 @@ function printDischargeSummary(adm) {
   // from the discharge queue.
   const ds = w.dischargeSummary || {};
   openPrint("discharge-summary", {
-    summaryNo:      w.summaryNumber || `DS-${(adm.ipdNo || "").replace(/[^A-Z0-9]/gi, "")}`,
+    summaryNo:      w.summaryNumber || `DS-${(adm.admissionNumber || "").replace(/[^A-Z0-9]/gi, "")}`,
     patientName:    adm.patientName,
     uhid:           adm.UHID,
-    ipdNo:          adm.ipdNo,
+    ipdNo:          adm.admissionNumber,
     age:            p.age,
     gender:         p.gender,
     bloodGroup:     ds.bloodGroup     || adm.bloodGroup     || p.bloodGroup     || "",
     allergies:      ds.allergies      || adm.allergies      || p.allergies      || "",
     admissionDate:  adm.admissionDate,
-    dischargeDate:  w.dischargedAt || new Date().toISOString(),
+    dischargeDate:  adm.actualDischargeDate || w.gatePassIssuedAt || new Date().toISOString(),
     totalDays:      adm.totalDays,
     consultantName: ds.consultantName || adm.attendingDoctor || w.doctorApprovedBy,
     consultantReg:  ds.consultantReg  || ds.doctorRegNo    || adm.consultantReg  || adm.attendingDoctorReg || "",
     consultantDmc:  ds.consultantDmc  || adm.consultantDmc  || "",
     bedNumber:      adm.bedNumber,
     wardName:       adm.wardName,
-    dischargeType:  w.dischargeType || "Normal",
+    dischargeType:  w.dischargeType || "Routine",
+    totalDaysAdmitted: ds.totalDaysAdmitted,
     finalDiagnosis: ds.finalDiagnosis || adm.finalDiagnosis || adm.diagnosis,
     icd10:          ds.icd10          || adm.icd10          || "",
     icd10Desc:      ds.icd10Desc      || adm.icd10Description || adm.icd10Desc || "",
@@ -544,7 +561,7 @@ function printDischargeSummary(adm) {
     printAudit: {
       entityType:   "DischargeSummary",
       entityId:     w.dischargeSummaryId || adm._id,
-      entityNumber: w.summaryNumber || `DS-${(adm.ipdNo || "").replace(/[^A-Z0-9]/gi, "")}`,
+      entityNumber: w.summaryNumber || `DS-${(adm.admissionNumber || "").replace(/[^A-Z0-9]/gi, "")}`,
       UHID:         adm.UHID,
       patientName:  adm.patientName,
     },
@@ -565,7 +582,7 @@ function printFinalBill(adm) {
     billNo:         w.finalBillNumber,
     patientName:    adm.patientName,
     uhid:           adm.UHID,
-    ipdNo:          adm.ipdNo,
+    ipdNo:          adm.admissionNumber,
     age:            p.age,
     gender:         p.gender,
     visitType:      adm.admissionType,
@@ -573,7 +590,7 @@ function printFinalBill(adm) {
     placeOfSupply:  adm.placeOfSupply,
     customerLegalName: adm.customerLegalName,
     admissionDate:  adm.admissionDate,
-    dischargeDate:  w.dischargedAt || new Date().toISOString(),
+    dischargeDate:  adm.actualDischargeDate || w.gatePassIssuedAt || new Date().toISOString(),
     totalDays:      adm.totalDays,
     consultantName: adm.attendingDoctor,
     bedNumber:      adm.bedNumber,

@@ -680,8 +680,19 @@ function PrintModal({ data, dept, onClose }) {
       chiefComplaints:     data.chiefComplaints,
       courseOfStay:        data.courseInHospital || data.courseOfStay || data.hospitalCourse || "",
       proceduresDone:      data.procedures || data.proceduresDone,
-      investigationsSummary: data.investigationsSummary || data.keyInvestigations,
+      // R7hr-200 — the printable renders investigationsSummary as a pre-wrap
+      // paragraph, so prefer the auto-filled narrative; fall back to any
+      // legacy array/string. (Array fallback is flattened to lines.)
+      investigationsSummary: data.keyInvestigationsText
+        || (Array.isArray(data.investigationsSummary)
+              ? data.investigationsSummary.map(i => `${i.testName || i.name || ""}: ${i.result || ""}`.trim()).filter(Boolean).join("\n")
+              : data.investigationsSummary)
+        || data.keyInvestigations || "",
       conditionOnDischarge: data.conditionOnDischarge,
+      // R7hr-202 — auto-filled clinical event fields.
+      vitalsOnDischarge:    data.vitalsOnDischarge,
+      bloodTransfusions:    data.bloodTransfusionsText,
+      mlcNumber:            data.mlcNumber,
       dischargeMeds:       data.dischargeMeds || data.medications || [],
       advice:              [data.specialInstructions, data.activityAdvice].filter(Boolean).flatMap(s => String(s).split("\n").filter(Boolean)),
       bloodGroup:          data.bloodGroup || data.patient?.bloodGroup,
@@ -805,6 +816,22 @@ function PrintModal({ data, dept, onClose }) {
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>HOSPITAL COURSE</div>
                 <div style={{ lineHeight: 1.7, fontSize: 13, whiteSpace: "pre-line" }}>{data.courseInHospital}</div>
+              </div>
+            )}
+
+            {/* R7hr-202 — vitals at discharge */}
+            {data.vitalsOnDischarge && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>VITALS AT DISCHARGE</div>
+                <div style={{ lineHeight: 1.7, fontSize: 13, whiteSpace: "pre-line" }}>{data.vitalsOnDischarge}</div>
+              </div>
+            )}
+
+            {/* R7hr-202 — blood transfusions given this admission */}
+            {data.bloodTransfusionsText && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, background: dept?.color + "15", padding: "4px 10px", borderLeft: `3px solid ${dept?.color}`, marginBottom: 6 }}>BLOOD TRANSFUSIONS</div>
+                <div style={{ lineHeight: 1.7, fontSize: 13, whiteSpace: "pre-line" }}>{data.bloodTransfusionsText}</div>
               </div>
             )}
 
@@ -933,6 +960,12 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
     stayDays: "", doctorName: "", doctorRegNo: "", department: "",
     consultants: "", admittingDiagnosis: "", finalDiagnosis: "", icdCode: "",
     comorbidities: "", historyOfPresentIllness: "", courseInHospital: "",
+    // R7hr-200 — free-text investigations paragraph, auto-filled from the
+    // patient's manual lab trends + imaging/path reports so the doctor
+    // doesn't retype them (and the page can be saved as a narrative).
+    keyInvestigationsText: "",
+    // R7hr-202 — auto-filled discharge event fields (vitals / transfusions / MLC).
+    vitalsOnDischarge: "", bloodTransfusionsText: "", mlcNumber: "",
     significantFindings: "", conditionOnDischarge: "Stable",
     dietAdvice: "", activityAdvice: "", woundCare: "", specialInstructions: "",
     followUpRequired: true, followUpDate: "", followUpDoctor: "", followUpDepartment: "", followUpInstructions: "",
@@ -965,7 +998,12 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
     setSelectedDept(dept);
     const tpl = dept.template;
     setInvestigations(tpl.investigations.map(i => ({ ...i })));
-    setMedications(tpl.medications.map(m => ({ ...m })));
+    // R7hr-202 — template meds are placeholders: tag them _fromTemplate and
+    // only apply when the list is empty / still template-only, so they never
+    // clobber the patient's real auto-fetched meds or the doctor's typed list.
+    setMedications(prev => (prev && prev.length && prev[0] && prev[0].drug && !prev[0]._fromTemplate)
+      ? prev
+      : tpl.medications.map(m => ({ ...m, _fromTemplate: true })));
     setProcedures(tpl.procedures.map(p => ({ ...p })));
     setForm(prev => ({
       ...prev,
@@ -1000,32 +1038,23 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uhidFromLocation]);
 
-  // Auto-fill when patient selected from AdmittedPatientPanel
+  // Auto-fill when patient selected from AdmittedPatientPanel.
+  // Route this through the SAME full searchPatient flow used by the search
+  // button (and the /bed-visual launch) so age / gender / admission-date /
+  // doctor reg-no + the IPD-Initial-Assessment / lab / imaging / procedure
+  // prefills all run. The earlier inline mapping only set a partial subset
+  // (and wrote admissionDate as a locale "dd/mm/yyyy" string the date input
+  // could not render), which is why those fields stayed blank.
   useEffect(() => {
     if (!selectedPatient) return;
-    const found = selectedPatient;
-    setUhid(found.UHID || "");
-    setPatInfo(found);
-    const admDate = found.admissionDate ? new Date(found.admissionDate) : null;
-    const stayDays = admDate ? Math.ceil((new Date() - admDate) / 86400000) : "";
-    setForm(p => ({
-      ...p,
-      // ObjectId refs the backend requires. admissionId is the admission
-      // we're discharging; patient is the Patient master row. Without
-      // these, POST returns 400 validation error and the doctor sees a
-      // bare "Save failed" toast.
-      patient:        (typeof found.patientId === "object" ? found.patientId?._id : found.patientId) || p.patient,
-      admissionId:    found._id || p.admissionId,
-      UHID: found.UHID || "",
-      patientName: found.patientName || found.patientId?.fullName || "",
-      ipdNo: found.admissionNumber || "",
-      admissionDate: admDate ? admDate.toLocaleDateString("en-IN") : "",
-      stayDays,
-      department: found.department || p.department,
-      doctorName: found.attendingDoctor || p.doctorName,
-      contactNumber: found.contactNumber || "",
-    }));
-    toast.success(`Patient loaded: ${found.patientName || found.UHID}`);
+    const u = (selectedPatient.UHID || "").trim();
+    if (!u) return;
+    setUhid(u);
+    setPatInfo(selectedPatient);
+    setTimeout(() => {
+      const trigger = document.getElementById("ds-load-btn");
+      if (trigger) trigger.click();
+    }, 60);
   }, [selectedPatient?._id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const searchPatient = async () => {
@@ -1073,7 +1102,12 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
           stayDays,
           department:     found.department || p.department,
           doctorName:     found.attendingDoctor || found.attendingDoctorId?.fullName || p.doctorName,
-          doctorRegNo:    found.attendingDoctorId?.doctorDetails?.registrationNumber
+          // R7hr-199 — attendingDoctorId refs the Doctor model, whose reg-no
+          // lives at professional.registrationNumber (NOT doctorDetails.* —
+          // that's the User model path the old read used, so it was always
+          // blank). Keep the legacy paths as fallbacks.
+          doctorRegNo:    found.attendingDoctorId?.professional?.registrationNumber
+                          || found.attendingDoctorId?.doctorDetails?.registrationNumber
                           || found.attendingDoctorRegNo
                           || p.doctorRegNo,
           admittingDiagnosis: found.provisionalDiagnosis || p.admittingDiagnosis,
@@ -1092,6 +1126,55 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
               { headers },
             );
             const list = Array.isArray(r?.data?.data) ? r.data.data : (Array.isArray(r?.data) ? r.data : []);
+
+            // R7hr-201 — pull the LATEST diagnosis the doctor entered/updated
+            // across ALL notes (top-level provisional/working/final), so the
+            // discharge Diagnosis section reflects the current diagnosis as-is
+            // — not just the admission's provisional. Latest non-empty wins.
+            const _byDate = list.slice().sort((a, b) =>
+              new Date(b.createdAt || b.noteDate || 0) - new Date(a.createdAt || a.noteDate || 0));
+            const _latestDx = (...keys) => {
+              for (const n of _byDate) {
+                for (const k of keys) { if (n && n[k] && String(n[k]).trim()) return String(n[k]).trim(); }
+              }
+              return "";
+            };
+            const _prov    = _latestDx("provisionalDiagnosis", "admittingDiagnosis");
+            const _working = _latestDx("workingDiagnosis");
+            const _final   = _latestDx("finalDiagnosis");
+            const _icd     = _latestDx("icd10Code", "icdCode", "icd10");
+            if (_prov || _working || _final || _icd) {
+              setForm(p => ({
+                ...p,
+                // never clobber what the doctor already typed on the discharge form
+                admittingDiagnosis: p.admittingDiagnosis || _prov || found.provisionalDiagnosis || "",
+                // final = doctor's final dx; fall back to the working dx if final isn't set yet
+                finalDiagnosis:     p.finalDiagnosis     || _final || _working || "",
+                icdCode:            p.icdCode            || _icd || "",
+              }));
+            }
+
+            // R7hr-202 — build the HOSPITAL COURSE from the dated progress
+            // notes (oldest → newest) so the doctor doesn't retype the stay
+            // narrative. Pulls whatever progress text each note carries.
+            const _courseChrono = list
+              .filter(n => ["progress", "daily", "ward-round"].includes((n.noteType || "").toLowerCase()))
+              .slice()
+              .sort((a, b) => new Date(a.createdAt || a.noteDate || 0) - new Date(b.createdAt || b.noteDate || 0));
+            const _courseLines = _courseChrono.map(n => {
+              const dr = n.noteDetails?.doctor || {};
+              const txt = (dr.progressNote || dr.assessment || dr.plan || dr.course || dr.notes
+                || n.remarks || n.summary || "").toString().trim();
+              if (!txt) return null;
+              const dt = (n.createdAt || n.noteDate)
+                ? new Date(n.createdAt || n.noteDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
+                : "";
+              return `${dt ? dt + ": " : ""}${txt}`;
+            }).filter(Boolean);
+            if (_courseLines.length) {
+              setForm(p => ({ ...p, courseInHospital: (p.courseInHospital && p.courseInHospital.trim()) ? p.courseInHospital : _courseLines.join("\n") }));
+            }
+
             const ia = list.find(n =>
               n.visitType === "IPD_INITIAL" ||
               (n.noteType || "").toLowerCase() === "initial"
@@ -1141,6 +1224,198 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
             }
           }
         } catch (_) { /* assessment not found / endpoint missing — silently skip */ }
+
+        /* ══ Auto-fetch INVESTIGATIONS — lab trend sheets + imaging/path
+           reports for this patient, so the doctor doesn't retype them in
+           the discharge "Investigations" section. Only fills when the list
+           is still empty (never clobbers manual entries / a restored draft).
+           Non-fatal: discharge still loads if lab access / endpoint missing. */
+        try {
+          const autoInv = [];
+          const narrLines = [];   // R7hr-200 — paragraph view of the same data
+          const _dt = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "";
+          // Lab trend sheets → latest reading per test (rows + one narrative line per panel)
+          try {
+            const tr = await axios.get(`${API_ENDPOINTS.BASE}/lab-records/trends`, { params: { UHID: found.UHID }, headers });
+            const trends = Array.isArray(tr?.data?.data) ? tr.data.data : (Array.isArray(tr?.data) ? tr.data : []);
+            trends.forEach(panel => {
+              const panelParts = [];
+              let panelDate = "";
+              (panel.tests || []).forEach(t => {
+                const readings = (t.readings || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+                const latest = readings.find(r => r && r.value != null && String(r.value).trim() !== "");
+                if (latest) {
+                  autoInv.push({ name: t.name || "", result: String(latest.value), unit: t.unit || "", status: latest.status || "" });
+                  panelParts.push(`${t.name} ${latest.value}${t.unit ? " " + t.unit : ""}${latest.status ? " (" + latest.status + ")" : ""}`);
+                  if (!panelDate && latest.date) panelDate = _dt(latest.date);
+                }
+              });
+              if (panelParts.length) {
+                narrLines.push(`${panel.panelName || panel.panelType || "Lab"}${panelDate ? " [" + panelDate + "]" : ""}: ${panelParts.join(", ")}.`);
+              }
+            });
+          } catch (_) { /* no lab access / none */ }
+          // Imaging / microbiology / histopath reports → impression (rows + narrative)
+          try {
+            const rp = await axios.get(`${API_ENDPOINTS.BASE}/lab-records/reports`, { params: { UHID: found.UHID }, headers });
+            const reports = Array.isArray(rp?.data?.data) ? rp.data.data : (Array.isArray(rp?.data) ? rp.data : []);
+            reports.forEach(r => {
+              const res = r.impression || r.findings || r.organism || "";
+              const nm = r.testName || r.reportType || "Report";
+              autoInv.push({ name: nm, result: res, unit: "", status: "" });
+              if (res || nm) narrLines.push(`${nm}${r.reportDate ? " [" + _dt(r.reportDate) + "]" : ""}: ${res || "—"}.`);
+            });
+          } catch (_) { /* no report access / none */ }
+          if (autoInv.length) setInvestigations(prev => (prev && prev.length) ? prev : autoInv);
+          // Fill the narrative paragraph only when the doctor hasn't typed one
+          // / a draft hasn't restored it — never clobber existing text.
+          if (narrLines.length) {
+            const narrative = narrLines.join("\n");
+            setForm(p => ({ ...p, keyInvestigationsText: (p.keyInvestigationsText && p.keyInvestigationsText.trim()) ? p.keyInvestigationsText : narrative }));
+          }
+        } catch (_) { /* silently skip */ }
+
+        /* ══ Auto-fetch PROCEDURE notes for this admission → discharge
+           "Procedures" section. Same guard: only when the list is empty. */
+        try {
+          const pr = await axios.get(`${API_ENDPOINTS.BASE}/procedure-notes`, { params: { admissionId: found._id, UHID: found.UHID }, headers });
+          const pnotes = Array.isArray(pr?.data?.data) ? pr.data.data : (Array.isArray(pr?.data) ? pr.data : []);
+          if (pnotes.length) {
+            const autoProc = pnotes.map(pn => ({
+              name:          pn.surgeryName || (pn.actualProcedure ? String(pn.actualProcedure).slice(0, 90) : "Procedure"),
+              date:          pn.startTime ? new Date(pn.startTime).toISOString().slice(0, 10) : "",
+              surgeon:       pn.surgeon || pn.surgeonName || "",
+              findings:      pn.actualProcedure || "",
+              complications: pn.complications || "",
+            }));
+            setProcedures(prev => (prev && prev.length) ? prev : autoProc);
+          }
+        } catch (_) { /* no procedure access / none — silently skip */ }
+
+        /* ══ R7hr-202 · Auto-fetch DISCHARGE MEDICATIONS from the patient's
+           ACTUAL medication orders (not a dept-template placeholder), so the
+           printed discharge carries the real drugs. Pulls active/given
+           Medication orders, de-dupes by drug, maps to the discharge med row.
+           Only fills when the list is empty / template-only. */
+        try {
+          const mo = await axios.get(`${API_ENDPOINTS.BASE}/doctor-orders`, { params: { UHID: found.UHID }, headers });
+          const orders = Array.isArray(mo?.data?.data) ? mo.data.data : (Array.isArray(mo?.data) ? mo.data : []);
+          const medOrders = orders.filter(o =>
+            /medic/i.test(o.orderType || "") &&
+            !["Cancelled", "Stopped", "Discontinued"].includes(o.status));
+          const seen = new Set();
+          const autoMeds = [];
+          medOrders.forEach(o => {
+            const od = o.orderDetails || {};
+            const drug = od.medicineName || o.drugName || od.drugName || "";
+            if (!drug) return;
+            const key = drug.toLowerCase().trim();
+            if (seen.has(key)) return;
+            seen.add(key);
+            autoMeds.push({
+              drug,
+              dose:         od.dose || o.dose || "",
+              route:        od.route || o.route || "Oral",
+              frequency:    od.frequency || o.frequency || "",
+              duration:     od.duration || o.duration || "",
+              instructions: od.notes || od.instructions || o.instructions || "",
+            });
+          });
+          if (autoMeds.length) {
+            // Override dept-template placeholder meds, but never the doctor's
+            // own typed list (a populated list whose first row already has a
+            // drug name is treated as doctor-authored and preserved).
+            setMedications(prev => (prev && prev.length && prev[0] && prev[0].drug && !prev[0]._fromTemplate) ? prev : autoMeds);
+          }
+        } catch (_) { /* no order access / none — silently skip */ }
+
+        // R7hr-202 — MLC number when this is a medico-legal admission.
+        if (found.isMLC && found.mlcNumber) {
+          setForm(p => ({ ...p, mlcNumber: p.mlcNumber || found.mlcNumber }));
+        }
+
+        // R7hr-202 — blood transfusions given this admission (NABH register) → narrative.
+        // Schema: rows carry bagsIssued[]{productType,volumeMl,bagNumber}, dates
+        // on startedAt/endedAt, and reaction is an object {occurred,type,severity}.
+        // Skip Draft/Cancelled rows so only actually-given transfusions surface.
+        try {
+          const bt = await axios.get(`${API_ENDPOINTS.BASE}/nabh-registers/blood-transfusion`, { params: { UHID: found.UHID }, headers });
+          const rows = Array.isArray(bt?.data?.data) ? bt.data.data : (Array.isArray(bt?.data) ? bt.data : []);
+          const mine = rows.filter(r =>
+            (r.UHID || r.uhid) === found.UHID &&
+            r.status !== "Cancelled" && r.status !== "Draft" &&
+            (r.startedAt || (Array.isArray(r.bagsIssued) && r.bagsIssued.length))
+          );
+          if (mine.length) {
+            const _bt = mine.map(r => {
+              const dt = r.startedAt || r.endedAt || r.requestedAt || r.createdAt;
+              const when = dt ? new Date(dt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "";
+              const bags = Array.isArray(r.bagsIssued) ? r.bagsIssued : [];
+              const bagTxt = bags.length
+                ? bags.map(b => `${b.productType || "Product"}${b.volumeMl ? ` ${b.volumeMl} mL` : ""}${b.bagNumber ? ` (bag ${b.bagNumber})` : ""}`).join("; ")
+                : (r.bloodGroup && r.bloodGroup !== "Unknown" ? `${r.unitsRequested || 1} unit(s) ${r.bloodGroup}` : "Blood product");
+              const rxn = (r.reaction && r.reaction.occurred)
+                ? ` — reaction: ${r.reaction.type || "noted"}${r.reaction.severity ? ` (${r.reaction.severity})` : ""}`
+                : "";
+              return `${bagTxt}${when ? ` on ${when}` : ""}${rxn}.`;
+            });
+            setForm(p => ({ ...p, bloodTransfusionsText: (p.bloodTransfusionsText && p.bloodTransfusionsText.trim()) ? p.bloodTransfusionsText : _bt.join("\n") }));
+          }
+        } catch (_) { /* no transfusion access / none */ }
+
+        // R7hr-202 — latest charted vitals (from nurse notes) → "vitals at discharge".
+        try {
+          const nn = await axios.get(`${API_ENDPOINTS.BASE}/nurse-notes/ipd/${encodeURIComponent(found.admissionNumber)}`, { headers });
+          const nnotes = Array.isArray(nn?.data?.data) ? nn.data.data : (Array.isArray(nn?.data) ? nn.data : []);
+          const _readVitals = (note) => {
+            const nd = note.noteData || note.noteDetails || {};
+            // The structured numeric vitals are charted on the MEWS note as
+            // noteData.mewsScore.{sbp,dbp,hr,temp(°C),spo2,rr}. Fall back to the
+            // older flat shapes for legacy notes.
+            const m = nd.mewsScore || {};
+            const v = note.vitals || nd.vitals || nd.dailyAssessment || nd.initialAssessment?.nursing?.vitals || {};
+            const bpSys = m.sbp || v.bp?.systolic || v.bp_sys || v.systolicBP || v.bpSystolic;
+            const bpDia = m.dbp || v.bp?.diastolic || v.bp_dia || v.bpDiastolic;
+            const bp = (bpSys && bpDia) ? `${bpSys}/${bpDia}` : (typeof v.bp === "string" ? v.bp : "");
+            const pulse = m.hr || v.pulse || v.heartRate;
+            const tempC = m.temp;                       // MEWS temperature is °C
+            const tempF = v.temp || v.temperature;       // legacy flat shape (°F)
+            const spo2  = m.spo2 || v.spo2 || v.spO2;
+            const rr    = m.rr || v.rr || v.respRate || v.respiratoryRate;
+            const parts = [];
+            if (bp) parts.push(`BP ${bp} mmHg`);
+            if (pulse) parts.push(`Pulse ${pulse}/min`);
+            if (tempC) parts.push(`Temp ${tempC}°C`);
+            else if (tempF) parts.push(`Temp ${tempF}°F`);
+            if (spo2) parts.push(`SpO₂ ${spo2}%`);
+            if (rr) parts.push(`RR ${rr}/min`);
+            return parts.join(", ");
+          };
+          const sorted = nnotes.slice().sort((a, b) => new Date(b.createdAt || b.noteDate || 0) - new Date(a.createdAt || a.noteDate || 0));
+          let vstr = "";
+          for (const note of sorted) { vstr = _readVitals(note); if (vstr) break; }
+          if (vstr) setForm(p => ({ ...p, vitalsOnDischarge: (p.vitalsOnDischarge && p.vitalsOnDischarge.trim()) ? p.vitalsOnDischarge : vstr }));
+
+          // R7hr-202 — condition on discharge: map the latest nurse-charted
+          // general condition onto the model enum. Only upgrades the default
+          // "Stable"; never overrides a condition the doctor explicitly picked.
+          const _condFrom = (txt) => {
+            const t = String(txt || "").toLowerCase();
+            if (/improv/.test(t))      return "Improved";
+            if (/critical/.test(t))    return "Critical";
+            if (/deteriorat/.test(t))  return "Deteriorated";
+            if (/unchanged/.test(t))   return "Unchanged";
+            if (/stable/.test(t))      return "Stable";
+            return "";
+          };
+          let cond = "";
+          for (const note of sorted) {
+            const nd = note.noteData || note.noteDetails || {};
+            cond = _condFrom(nd.observation?.generalCondition || nd.dailyAssessment?.generalCondition);
+            if (cond) break;
+          }
+          if (cond) setForm(p => ({ ...p, conditionOnDischarge: (p.conditionOnDischarge && p.conditionOnDischarge !== "Stable") ? p.conditionOnDischarge : cond }));
+        } catch (_) { /* no vitals / none */ }
 
         // Restore auto-save draft if available
         const dKey = `sphere_draft_discharge_${found._id}`;
@@ -1248,19 +1523,21 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
       toast.warn("Save the summary as a draft first, then click Finalize");
       return;
     }
-    // R7ax-FIX-CONFIRM: replaced window.confirm with themed ConfirmDialog
+    // R7hr-197: finalize now ONLY locks the summary + sends the patient to
+    // the reception discharge queue. The doctor does NOT free the bed —
+    // reception clears the bill, then clears the bed (actual release).
     if (!(await confirm({
       title: "Finalize discharge summary?",
-      body: "This will mark the admission as Discharged, release the bed back to Available, and lock the summary against further edits.",
+      body: "This locks the summary against edits and sends the patient to the Reception discharge queue (bill clearance → bed release). The bed is NOT freed yet — reception does that after the bill is settled.",
       danger: true,
-      confirmLabel: "Finalize discharge",
+      confirmLabel: "Finalize & send to billing",
     }))) return;
 
     setFinalizing(true);
     try {
       const finalizedByName = user?.fullName || form.doctorName || "Doctor";
       await axios.patch(`${API}/${lastSavedId}/finalize`, { finalizedByName }, { headers });
-      toast.success("Discharge finalized — patient discharged, bed released");
+      toast.success("Discharge summary finalized — patient sent to Reception discharge queue");
       // Stay on the page in read-only "finalized" mode; the user can still print
     } catch (err) {
       toast.error(err.response?.data?.message || "Finalize failed");
@@ -1482,8 +1759,8 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
                 disabled={!form.UHID}
                 onClick={() => { window.location.href = `/discharge-queue?uhid=${encodeURIComponent(form.UHID)}`; }} />
               <Pill n={4} role="finalize"
-                label="Finalize & free bed"
-                sub={done1 ? "Discharge + release" : "Save first"}
+                label="Finalize & send to billing"
+                sub={done1 ? "Locks summary → reception queue" : "Save first"}
                 isActive={done1}
                 disabled={!lastSavedId || finalizing || saving}
                 onClick={handleFinalize} />
@@ -1587,8 +1864,22 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
               <F label="Reg. No."><input className="his-field" value={form.doctorRegNo} onChange={upd("doctorRegNo")} /></F>
               <F label="Condition on Discharge">
                 <select className="his-select" value={form.conditionOnDischarge} onChange={upd("conditionOnDischarge")}>
-                  {["Stable","Improved","Critical","LAMA","Expired","Transferred"].map(c => <option key={c}>{c}</option>)}
+                  {["Stable","Improved","Unchanged","Deteriorated","Critical","LAMA","Expired"].map(c => <option key={c}>{c}</option>)}
                 </select>
+              </F>
+              {/* R7hr-197 — disposition / discharge mode. This is the doctor's
+                  clinical choice; the receptionist's bed-clear step executes it
+                  and the matching NABH register (LAMA / Mortality) auto-fires. */}
+              <F label="Discharge Type" required>
+                <select className="his-select" value={form.dischargeType || "Routine"} onChange={upd("dischargeType")}>
+                  {["Routine","LAMA","DAMA","Absconded","Referral","Death"].map(c => <option key={c}>{c}</option>)}
+                </select>
+              </F>
+              {/* R7hr-202 — MLC number auto-fills when the admission is flagged
+                  medico-legal; editable so MRD can correct the register stamp. */}
+              <F label="MLC / MLR Number">
+                <input className="his-field" value={form.mlcNumber} onChange={upd("mlcNumber")}
+                  placeholder="Auto-fills for medico-legal cases" />
               </F>
             </G4>
             <div style={{ marginTop: 12 }}>
@@ -1633,9 +1924,26 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
             <div style={{ marginTop: 12 }}>
               <F label="Significant Clinical Findings">
                 <textarea className="his-textarea" value={form.significantFindings} onChange={upd("significantFindings")}
-                  placeholder="Vitals at discharge, notable examination findings…" />
+                  placeholder="Notable examination findings…" />
               </F>
             </div>
+            {/* R7hr-202 — auto-filled clinical event fields. Vitals pull the
+                latest charted nurse-note observation; blood transfusions pull
+                the NABH transfusion register. Both editable. */}
+            <G2 gap={12}>
+              <div style={{ marginTop: 12 }}>
+                <F label="Vitals at Discharge (auto-filled from latest nursing observation — editable)">
+                  <textarea className="his-textarea" value={form.vitalsOnDischarge} onChange={upd("vitalsOnDischarge")}
+                    placeholder="Auto-fills from the most recent charted vitals. e.g. BP 120/80 mmHg, Pulse 78/min, Temp 98.6°F, SpO₂ 98%" />
+                </F>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <F label="Blood Transfusions Given (auto-filled from transfusion register — editable)">
+                  <textarea className="his-textarea" value={form.bloodTransfusionsText} onChange={upd("bloodTransfusionsText")}
+                    placeholder="Auto-fills if any blood products were transfused this admission. Leave blank if none." />
+                </F>
+              </div>
+            </G2>
           </Section>
 
           {/* Department-specific sections */}
@@ -1740,8 +2048,20 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
           <Section title="Key Investigations" icon="pi-list" color={color} nabh
             sub={`${investigations.length} investigation${investigations.length === 1 ? "" : "s"} recorded`}
             badge={investigations.length ? `${investigations.length}` : null}>
+            {/* R7hr-200 — paragraph summary auto-filled from the patient's
+                manual lab trends + imaging/path reports, so the doctor doesn't
+                retype and the page saves as a narrative. Editable; the
+                structured rows below stay available for fine-tuning. */}
+            <div style={{ marginBottom: 12 }}>
+              <label className="his-label" style={{ display: "block", marginBottom: 4 }}>
+                Investigations Summary (auto-filled from recorded lab &amp; imaging reports — editable)
+              </label>
+              <textarea className="his-textarea" rows={5} value={form.keyInvestigationsText}
+                onChange={upd("keyInvestigationsText")}
+                placeholder="Auto-fills from this patient's recorded lab trends and imaging/pathology reports. Edit as needed." />
+            </div>
             <TableShell cols={INV_COLS} color={color}
-              empty={investigations.length === 0 ? "No investigations recorded — click Add to start." : null}>
+              empty={investigations.length === 0 ? "No structured rows — the summary above covers recorded reports; click Add for extra rows." : null}>
               {investigations.map((inv, idx) => (
                 <InvRow key={idx} inv={inv} idx={idx} color={color} onChange={updateInv} onRemove={removeInv} />
               ))}

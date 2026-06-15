@@ -43,13 +43,25 @@ exports.book = handle(async (req, res) => {
   if (conflict)
     return res.status(409).json({ success: false, message: `Slot already booked for ${slotTime} (${conflict.patientName})` });
 
-  const apt = await Appointment.create({
-    patientId, UHID, patientName, patientPhone,
-    doctorId, doctorName, departmentId,
-    appointmentDate: dayStart, // IST midnight; pairs with istDay* lookups
-    slotTime, durationMinutes,
-    chiefComplaint, notes, bookedBy,
-  });
+  let apt;
+  try {
+    apt = await Appointment.create({
+      patientId, UHID, patientName, patientPhone,
+      doctorId, doctorName, departmentId,
+      appointmentDate: dayStart, // IST midnight; pairs with istDay* lookups
+      slotTime, durationMinutes,
+      chiefComplaint, notes, bookedBy,
+    });
+  } catch (e) {
+    // Audit R7hr-196: the pre-check findOne above only catches the
+    // non-concurrent case. Two simultaneous bookings for the same slot
+    // race past it and the partial-unique index throws E11000 — surface
+    // that as a clean 409 (slot taken), not a confusing generic 500.
+    if (e && e.code === 11000) {
+      return res.status(409).json({ success: false, message: `Slot already booked for ${slotTime}` });
+    }
+    throw e;
+  }
   return res.status(201).json({ success: true, data: apt });
 });
 

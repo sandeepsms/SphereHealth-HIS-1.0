@@ -192,6 +192,12 @@ const DischargeSummary = ({ settings = {}, receipt = {} }) => {
             {r.dischargeType.toUpperCase()}
           </span>
         )}
+        {/* R7hr-202 — MLC/MLR stamp for medico-legal cases */}
+        {r.mlcNumber && (
+          <span style={{ padding: "3px 9px", borderRadius: 6, background: "#fef2f2", color: "#991b1b", fontWeight: 800, letterSpacing: ".3px" }}>
+            MLC No: {r.mlcNumber}
+          </span>
+        )}
       </div>
 
       <Section title="Final Diagnosis">
@@ -261,6 +267,20 @@ const DischargeSummary = ({ settings = {}, receipt = {} }) => {
       {r.investigationsSummary && (
         <Section title="Pending Reports / Key Investigations">
           <div style={{ whiteSpace: "pre-wrap" }}>{r.investigationsSummary}</div>
+        </Section>
+      )}
+
+      {/* R7hr-202 — blood transfusions given this admission (NABH transfusion register) */}
+      {r.bloodTransfusions && (
+        <Section title="Blood / Blood Product Transfusions">
+          <div style={{ whiteSpace: "pre-wrap" }}>{r.bloodTransfusions}</div>
+        </Section>
+      )}
+
+      {/* R7hr-202 — latest charted vitals at the time of discharge */}
+      {r.vitalsOnDischarge && (
+        <Section title="Vitals at Discharge">
+          <div style={{ whiteSpace: "pre-wrap" }}>{r.vitalsOnDischarge}</div>
         </Section>
       )}
 

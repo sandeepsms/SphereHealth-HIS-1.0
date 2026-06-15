@@ -401,7 +401,17 @@ class BedService {
   }
 
   async getAvailableBeds(filters = {}) {
+    // R7hr-197 — exclude beds still pending/in cleaning from the picker.
+    // A just-vacated bed flips to status:"Available" + housekeeping.state:
+    // "CleaningPending" on discharge; before this filter such a bed (incl.
+    // an isolation/terminal-clean bed) was suggested for the next admission
+    // while still dirty (NABH IPC.6 turnover gap). Only Idle/Inspected/
+    // CleaningDone (or no housekeeping flag at all — legacy beds) are
+    // offered. `unsafeIncludeUncleaned:true` bypasses for admin tooling.
     const query = { status: "Available", isActive: true };
+    if (!filters.unsafeIncludeUncleaned) {
+      query["housekeeping.state"] = { $nin: ["CleaningPending", "CleaningInProgress"] };
+    }
     if (filters.floor) query.floor = filters.floor;
     if (filters.ward) query.ward = filters.ward;
     if (filters.room) query.room = filters.room;

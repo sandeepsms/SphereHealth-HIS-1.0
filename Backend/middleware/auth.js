@@ -637,6 +637,57 @@ const uhidPathResolver = async (req) => {
   }
 };
 
+// R7hr-197 Phase 4 — resolvers for the previously-unsealed clinical-write
+// surfaces. req.params is empty at this global mount, so each extracts ids
+// from req.path / req.body and resolves the admission _id.
+const medReconPathResolver = (req) => {
+  // /med-reconciliation/admission/<24-hex>/...  — admissionId is in the path.
+  const m = req.path.match(/\/admission\/([a-f0-9]{24})/i);
+  return m ? m[1] : null;
+};
+const patientDeviceByIdResolver = async (req) => {
+  const m = req.path.match(/\/patient-devices\/([a-f0-9]{24})/i);
+  if (!m) return null;
+  try {
+    const PatientDevice = require("../models/Clinical/PatientDeviceModel");
+    const doc = await PatientDevice.findById(m[1]).select("admissionId ipdNo").lean();
+    if (doc?.admissionId) return doc.admissionId;
+    if (doc?.ipdNo) {
+      const Admission = require("../models/Patient/admissionModel");
+      const adm = await Admission.findOne({ admissionNumber: doc.ipdNo }).select("_id").lean();
+      return adm?._id || null;
+    }
+    return null;
+  } catch (e) { console.warn("[discharge-gate] patientDeviceByIdResolver failed:", e.message); return null; }
+};
+const procedureNoteOrderResolver = async (req) => {
+  // procedure-note create carries body.doctorOrderId → order.admissionId.
+  const oid = req.body?.doctorOrderId;
+  if (!oid || !/^[a-f0-9]{24}$/i.test(String(oid))) return req.body?.admissionId || null;
+  try {
+    const DoctorOrder = require("../models/Doctor/DoctorOrderModel");
+    const o = await DoctorOrder.findById(oid).select("admissionId").lean();
+    return o?.admissionId || req.body?.admissionId || null;
+  } catch (e) { console.warn("[discharge-gate] procedureNoteOrderResolver failed:", e.message); return req.body?.admissionId || null; }
+};
+const _noteDeleteResolver = (modelPath, pathRe) => async (req) => {
+  const m = req.path.match(pathRe);
+  if (!m) return null;
+  try {
+    const Model = require(modelPath);
+    const doc = await Model.findById(m[1]).select("admissionId ipdNo").lean();
+    if (doc?.admissionId) return doc.admissionId;
+    if (doc?.ipdNo) {
+      const Admission = require("../models/Patient/admissionModel");
+      const adm = await Admission.findOne({ admissionNumber: doc.ipdNo }).select("_id").lean();
+      return adm?._id || null;
+    }
+    return null;
+  } catch (e) { console.warn("[discharge-gate] note-delete resolver failed:", e.message); return null; }
+};
+const doctorNoteDeleteResolver = _noteDeleteResolver("../models/Doctor/DoctorNotesModel", /^\/doctor-notes\/([a-f0-9]{24})(\/|$)/i);
+const nurseNoteDeleteResolver  = _noteDeleteResolver("../models/Nurse/NurseNotesModel",  /^\/nurse-notes\/([a-f0-9]{24})(\/|$)/i);
+
 const ENFORCE_DISCHARGE_WRITE_RULES = [
   // ── R7az-A original surfaces ────────────────────────────────────────
   // Doctor-note POST /:id/amend is matched ahead of the bare-POST create
@@ -730,6 +781,25 @@ const ENFORCE_DISCHARGE_WRITE_RULES = [
   // (these are pure clinical-time-stamped writes; a discharged admission
   // must never receive an "administered" record).
   { method: "PATCH",  regex: /\/mar\/[^/]+\/medication\/[^/]+\/(administer|discontinue)(\/|$|\?)/, resolveAdmissionId: marUrlResolver, enforceStrict: true },
+
+  // ── R7hr-197 Phase 4 — previously-unsealed clinical-write surfaces ──
+  // patient-devices: POST body carries ipdNo (runner's ipdNo fallback
+  // resolves it); change/remove carry only the device id in the URL.
+  { method: "POST",   regex: /\/patient-devices(\/|$|\?)/,                       resolveAdmissionId: defaultResolver },
+  { method: "PATCH",  regex: /\/patient-devices\/[^/]+\/(change|remove)(\/|$|\?)/, resolveAdmissionId: patientDeviceByIdResolver },
+  // procedure-notes: POST body carries doctorOrderId → order.admissionId.
+  { method: "POST",   regex: /\/procedure-notes(\/|$|\?)/,                       resolveAdmissionId: procedureNoteOrderResolver },
+  // med-reconciliation: admissionId is in the URL path (/admission/:id/...).
+  { method: "POST",   regex: /\/med-reconciliation\/admission\/[^/]+\/(seed|review\/(admit|discharge))(\/|$|\?)/, resolveAdmissionId: medReconPathResolver },
+  { method: "PUT",    regex: /\/med-reconciliation\/admission\/[^/]+(\/|$|\?)/,  resolveAdmissionId: medReconPathResolver },
+  { method: "PATCH",  regex: /\/med-reconciliation\/admission\/[^/]+\/row\/[^/]+(\/|$|\?)/, resolveAdmissionId: medReconPathResolver },
+
+  // ── R7hr-197 Phase 4 — DELETE backstop. WRITE_METHODS includes DELETE but
+  // no rule had method:"DELETE", so deleting a clinical record on a sealed
+  // (Discharged) admission slipped through. Cover the destroyable clinical
+  // notes; resolve the admission off the doc being deleted.
+  { method: "DELETE", regex: /\/doctor-notes\/[^/]+(\/|$|\?)/,                   resolveAdmissionId: doctorNoteDeleteResolver },
+  { method: "DELETE", regex: /\/nurse-notes\/[^/]+(\/|$|\?)/,                    resolveAdmissionId: nurseNoteDeleteResolver },
 ];
 const enforceActivePatientForClinicalWrites = async (req, res, next) => {
   try {
@@ -750,11 +820,11 @@ const enforceActivePatientForClinicalWrites = async (req, res, next) => {
         return next();
       }
     }
-    // Late-entry escape hatch — controller must still record the addendum
-    // explicitly. Per spec, an "ADDENDUM" action with X-Late-Entry: true.
-    if (String(req.headers["x-late-entry"] || "").toLowerCase() === "true") {
-      return next();
-    }
+    // R7hr-197 Phase 4 — the X-Late-Entry escape hatch used to short-circuit
+    // here BEFORE resolving the admission, i.e. ANY authenticated write with
+    // the header bypassed the seal entirely (and active-admission writes
+    // never needed it). The bypass is now evaluated ONLY inside the
+    // Discharged branch below, gated on a reason and logged for audit.
 
     const Admission = require("../models/Patient/admissionModel");
 
@@ -817,6 +887,27 @@ const enforceActivePatientForClinicalWrites = async (req, res, next) => {
     }
 
     if (admission.status === "Discharged") {
+      // R7hr-197 Phase 4 — late-entry addendum. The X-Late-Entry header now
+      // applies ONLY here (a genuinely-sealed admission), requires a reason,
+      // and is logged so the bypass is auditable rather than blind header-trust.
+      const lateEntry  = String(req.headers["x-late-entry"] || "").toLowerCase() === "true";
+      const lateReason = String(req.headers["x-late-entry-reason"] || req.body?.lateEntryReason || "").trim();
+      if (lateEntry && lateReason) {
+        console.warn(
+          `[discharge-gate] LATE-ENTRY addendum on Discharged admission ${admission._id} — ` +
+          `${req.method} ${url} — actor=${req.user?.id || req.user?._id || "?"} — reason="${lateReason}"`,
+        );
+        return next();
+      }
+      if (lateEntry && !lateReason) {
+        return res.status(400).json({
+          success: false,
+          code: "LATE_ENTRY_REASON_REQUIRED",
+          message:
+            "A late-entry addendum on a discharged admission requires a reason " +
+            "(X-Late-Entry-Reason header or lateEntryReason in the body).",
+        });
+      }
       return res.status(423).json({
         success: false,
         // R7gw-B2: code is ADMISSION_DISCHARGED_NO_WRITE for the new
@@ -827,7 +918,7 @@ const enforceActivePatientForClinicalWrites = async (req, res, next) => {
         code: "ADMISSION_DISCHARGED_NO_WRITE",
         message:
           "This admission is Discharged — clinical writes are sealed. " +
-          "Use an ADDENDUM with header X-Late-Entry: true if a correction is required.",
+          "Use an ADDENDUM with header X-Late-Entry: true (and X-Late-Entry-Reason) if a correction is required.",
       });
     }
     return next();

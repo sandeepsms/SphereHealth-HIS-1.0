@@ -190,8 +190,15 @@ class PatientAdvanceService {
           if (String(adv.UHID).toUpperCase() !== String(bill.UHID).toUpperCase()) {
             throw new Error(`Advance UHID ${adv.UHID} does not match bill UHID ${bill.UHID}`);
           }
-          if (bill.billStatus === "DRAFT") {
-            throw new Error("Bill abhi DRAFT hai — pehle generateFinalBill() karo, tab advance apply ho");
+          // R7hr-188 (USER): DRAFT bills now accept advance application —
+          // the IPD Live Ledger adjusts the UHID pool against the running
+          // bill mid-stay (R7al advance-first), reducing Outstanding live
+          // instead of waiting for generateFinalBill. The bill REMAINS
+          // DRAFT after the apply (see status assignment below) so daily
+          // auto-billing keeps appending to the same bill.
+          if (bill.billStatus === "GENERATING") {
+            const e = new Error("Bill is currently being finalized — retry in a moment");
+            e.code = "GENERATE_IN_FLIGHT"; e.status = 409; throw e;
           }
           if (bill.billStatus === "PAID")
             throw new Error("Bill already fully paid");
@@ -276,7 +283,12 @@ class PatientAdvanceService {
           const balance   = Math.max(0, toNum(bill.patientPayableAmount) - totalPaid);
           bill.advancePaid   = totalPaid;
           bill.balanceAmount = balance;
-          bill.billStatus    = balance === 0 ? "PAID" : "PARTIAL";
+          // R7hr-188: live DRAFT bill stays DRAFT after the apply so the
+          // one-DRAFT-per-admission auto-billing invariant holds;
+          // PAID/PARTIAL remain post-generateFinalBill states.
+          bill.billStatus    = bill.billStatus === "DRAFT"
+            ? "DRAFT"
+            : (balance === 0 ? "PAID" : "PARTIAL");
           if (bill.billStatus === "PAID") bill.paidAt = new Date();
 
           // 2. Update the advance row: bump appliedAmount, push an

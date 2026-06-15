@@ -157,6 +157,59 @@ export default function ICUBundlesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patient?.UHID]);
 
+  /* ── R7hr-184 — Invasive-device registry drives bundle applicability ──
+     VAP ← ET tube / Tracheostomy · CAUTI ← Urinary catheter (Foley) ·
+     CLABSI ← Central line / PICC. Devices are recorded by doctor/nurse
+     on the patient banner (Doctor Notes / Nursing Notes header). */
+  const [devices, setDevices] = useState(null); // null = not loaded yet
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      if (!patient?._id) { setDevices(null); return; }
+      try {
+        const res = await axios.get(
+          `${API_ENDPOINTS.BASE}/patient-devices/admission/${patient._id}?status=Active`,
+          { headers },
+        );
+        if (!dead) setDevices(Array.isArray(res.data?.data) ? res.data.data : []);
+      } catch (_) {
+        // Soft fail — bundles stay manually toggleable if the registry
+        // can't be read (older backend / role without mar.read).
+        if (!dead) setDevices(null);
+      }
+    })();
+    return () => { dead = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient?._id]);
+
+  // Which active device satisfies each device-driven bundle (if any).
+  const deviceFor = useMemo(() => {
+    if (!Array.isArray(devices)) return null; // registry unavailable
+    const find = (...types) => devices.find(d => types.includes(d.deviceType)) || null;
+    return {
+      vap:    find("ET_TUBE", "TRACHEOSTOMY"),
+      cauti:  find("URINARY_CATHETER"),
+      clabsi: find("CENTRAL_LINE", "PICC_LINE"),
+    };
+  }, [devices]);
+
+  // Auto-seed applicable flags from the registry — once per loaded
+  // sheet+devices combination so a manual save isn't fought mid-edit.
+  // Finalized sheets are never touched.
+  const deviceSeedRef = useRef("");
+  useEffect(() => {
+    if (!sheet || sheet.status === "finalized" || !deviceFor) return;
+    const sig = `${sheet._id || "new"}|${sheet.date}|${sheet.shift}|${(devices || []).map(d => d._id).join(",")}`;
+    if (deviceSeedRef.current === sig) return;
+    deviceSeedRef.current = sig;
+    for (const key of ["vap", "cauti", "clabsi"]) {
+      const want = !!deviceFor[key];
+      const has  = sheet?.[key]?.applicable !== false;
+      if (has !== want) setApplicable(key, want);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheet?._id, sheet?.date, sheet?.shift, deviceFor]);
+
   /* ── R7ei — beforeunload guard while unsaved edits exist ── */
   useEffect(() => {
     const snap = savedSnapshotRef.current;
@@ -751,6 +804,29 @@ export default function ICUBundlesPage() {
         {/* R7ei — Anchor for "scroll into view" after history-row click. */}
         <div ref={editorTopRef} />
 
+        {/* R7hr-184 — Device registry banner: which invasive devices are
+            active and therefore which bundles will / won't be charted. */}
+        {patient && sheet && deviceFor && (
+          <div style={{
+            background: "#f0fdfa", border: `1.5px solid ${C.teal}40`, borderRadius: 12,
+            padding: "10px 16px", marginBottom: 12, fontSize: 12, color: "#115e59",
+            display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8,
+          }}>
+            <span style={{ fontWeight: 800 }}>🩺 Devices / Lines:</span>
+            {(devices || []).length === 0 && (
+              <span style={{ color: C.muted }}>None recorded — VAP, CAUTI & CLABSI auto-marked N/A.</span>
+            )}
+            {(devices || []).map(d => (
+              <span key={d._id} style={{ background: "#fff", border: `1px solid ${C.teal}50`, borderRadius: 999, padding: "2px 10px", fontWeight: 700, fontSize: 11 }}>
+                {d.deviceLabel || d.deviceType}{d.size ? ` · ${d.size}` : ""} <span style={{ color: C.muted, fontWeight: 600 }}>since {new Date(d.placedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</span>
+              </span>
+            ))}
+            <span style={{ marginLeft: "auto", fontSize: 10.5, color: C.muted }}>
+              VAP / CAUTI / CLABSI applicability auto-set from registry · manage devices on the Doctor / Nursing Notes patient header
+            </span>
+          </div>
+        )}
+
         {/* ── Bundle cards ── */}
         {patient && sheet && BUNDLE_DEFS.map(def => {
           const applicable = sheet?.[def.key]?.applicable !== false;
@@ -802,10 +878,27 @@ export default function ICUBundlesPage() {
               {/* Card body */}
               {isOpen && (
                 <div style={{ padding: "12px 18px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
                     <label style={{ fontSize: 11.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>
                       Applicable to this patient?
                     </label>
+                    {/* R7hr-184 — VAP/CAUTI/CLABSI applicability is driven
+                        by the invasive-device registry: when the registry
+                        is readable, show the device verdict instead of
+                        the manual Yes/No toggle. DVT/Sepsis/SUP (and any
+                        patient without registry access) keep the manual
+                        toggle below. */}
+                    {deviceFor && ["vap", "cauti", "clabsi"].includes(def.key) ? (
+                      deviceFor[def.key] ? (
+                        <span style={{ padding: "5px 12px", borderRadius: 6, background: C.emeraldL, color: C.emerald, border: `1.5px solid ${C.emerald}`, fontWeight: 700, fontSize: 11 }}>
+                          🔌 Auto — {deviceFor[def.key].deviceLabel || deviceFor[def.key].deviceType} active since {new Date(deviceFor[def.key].placedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} → Applicable
+                        </span>
+                      ) : (
+                        <span style={{ padding: "5px 12px", borderRadius: 6, background: C.slateL, color: C.slate, border: `1.5px solid ${C.slate}50`, fontWeight: 700, fontSize: 11 }}>
+                          🔌 Auto — no {def.key === "vap" ? "ET tube / tracheostomy" : def.key === "cauti" ? "urinary catheter" : "central line / PICC"} registered → N/A
+                        </span>
+                      )
+                    ) : (
                     <div style={{ display: "flex", gap: 4 }}>
                       <button
                         disabled={locked}
@@ -830,6 +923,7 @@ export default function ICUBundlesPage() {
                           opacity: locked ? 0.6 : 1,
                         }}>No (N/A)</button>
                     </div>
+                    )}
                   </div>
 
                   {applicable ? (

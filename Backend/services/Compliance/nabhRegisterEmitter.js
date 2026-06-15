@@ -1407,18 +1407,21 @@ async function emitReadmission(args = {}) {
 
     const currentAdmissionDate = admission.admissionDate || admission.createdAt || new Date();
 
-    // Find the most-recent prior admission for this UHID that has a discharge date
+    // Find the most-recent prior admission for this UHID that has a discharge
+    // date. R7hr-197 — the Admission discharge field is `actualDischargeDate`;
+    // the old query keyed on a non-existent `dischargeDate`, so `previous` was
+    // ALWAYS null and the NABH Readmission register never populated.
     const previous = await Admission.findOne({
       UHID: patient.UHID,
       _id: { $ne: admission._id },
-      dischargeDate: { $ne: null, $exists: true },
+      actualDischargeDate: { $ne: null, $exists: true },
     })
-      .sort({ dischargeDate: -1 })
-      .select("_id admissionNumber admissionDate dischargeDate primaryDiagnosis department dischargeType")
+      .sort({ actualDischargeDate: -1 })
+      .select("_id admissionNumber admissionDate actualDischargeDate primaryDiagnosis department dischargeWorkflow")
       .lean();
 
-    if (!previous?.dischargeDate) return null;
-    const days = Math.floor((new Date(currentAdmissionDate) - new Date(previous.dischargeDate)) / 86400000);
+    if (!previous?.actualDischargeDate) return null;
+    const days = Math.floor((new Date(currentAdmissionDate) - new Date(previous.actualDischargeDate)) / 86400000);
     if (days < 0 || days > _READMISSION_WINDOW_DAYS) return null;
 
     // Idempotency: one row per (current, previous) pair (also enforced by unique index)
@@ -1447,10 +1450,10 @@ async function emitReadmission(args = {}) {
       currentAttendingDoctor: admission.attendingDoctor || admission.consultantIncharge || "",
       previousAdmissionId: previous._id,
       previousAdmissionNumber: previous.admissionNumber || "",
-      previousDischargeDate: previous.dischargeDate,
+      previousDischargeDate: previous.actualDischargeDate,
       previousDiagnosis: previous.primaryDiagnosis || "",
       previousDepartment: previous.department || "",
-      previousDischargeType: previous.dischargeType || "",
+      previousDischargeType: previous.dischargeWorkflow?.dischargeType || "",
       daysSinceDischarge: days,
       withinWindowDays: _READMISSION_WINDOW_DAYS,
       readmissionType: admission.isElective ? "Elective"

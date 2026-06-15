@@ -322,11 +322,15 @@ const bradenBand = (score) => {
   return { label:"No Risk", color:C.green, bg:C.greenL };
 };
 
+// R7hr-185 (USER): the WHOLE hospital runs exactly 3 shifts —
+// Morning (7–14) → Evening (14–21) → Night (21–7) — for doctor AND
+// nurse alike. "afternoon" is gone (the NurseNote enum never had it;
+// R7hr-177-B used to coerce it on save). Same hour-bands as the ICU
+// Bundles page + DoctorNotesPage so every surface agrees on the shift.
 function getShift() {
   const h = new Date().getHours();
-  if (h >= 7  && h < 12) return "morning";
-  if (h >= 12 && h < 17) return "afternoon";
-  if (h >= 17 && h < 21) return "evening";
+  if (h >= 7  && h < 14) return "morning";
+  if (h >= 14 && h < 21) return "evening";
   return "night";
 }
 
@@ -468,6 +472,45 @@ function NursingNotesContent({ selectedPatient }) {
     return () => window.removeEventListener("focus", onFocus);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patient?._id]);
+
+  /* R7hr-177 (USER 2026-06-09) — Rescue hydration for the URL-driven
+     auto-load above. The mount-only useEffect at line 409 fires once at
+     first paint. If the JWT happens to arrive AFTER that mount — re-login
+     race, tab restore from sessionStorage, password-change redirect — the
+     axios.get to /admissions/active returns 401 and the catch silently
+     swallows it, leaving `patient` null even when ?uhid=… is in the URL.
+     The nurse then fills a full Pain / Wound / Vital / Neuro note, clicks
+     Sign & Submit, and saveNote bails on the `!patient` guard (line 1046)
+     with the toast.warn eaten by the modal overlay → silent data loss.
+     This sibling effect re-runs whenever `searchUHID` is set but `patient`
+     is still null, and re-fires the same fetch as the mount loader. A ref
+     guard prevents the request from looping. Once it succeeds, the rest
+     of the page (banner / notes / tile gate) hydrates exactly as if the
+     mount-only loader had won the race. Confined to the rescue path —
+     does NOT change the happy-path auto-load, the saveNote payload shape,
+     or any R28-locked save/sign/dedupe surface. Pure additive guard. */
+  const _rescueInFlight = useRef(false);
+  useEffect(() => {
+    if (patient || !searchUHID || _rescueInFlight.current) return;
+    _rescueInFlight.current = true;
+    (async () => {
+      try {
+        const { data } = await axios.get(
+          `${API_ENDPOINTS.ADMISSIONS}/active?UHID=${encodeURIComponent(searchUHID.trim())}`,
+        );
+        const arr = Array.isArray(data) ? data : data.data || [];
+        if (arr[0]) {
+          setPatient(arr[0]);
+          const ipd = arr[0].ipdNo || arr[0].admissionNumber || arr[0]._id;
+          setIpdNoForDraft(ipd);
+          await fetchNotes(ipd, arr[0]);
+        }
+      } catch (_) { /* silent — original guard still catches downstream */ }
+      finally { _rescueInFlight.current = false; }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchUHID, patient]);
+
   const [notes,      setNotes]      = useState([]);
   const [loading,    setLoading]    = useState(false);
   const [activeModal,setActiveModal]= useState(null);
@@ -512,6 +555,18 @@ function NursingNotesContent({ selectedPatient }) {
   // available for future date-pill UI.
   const [filterDateRange, setFilterDateRange] = useState("all");
   const [shift,      setShift]      = useState(getShift());
+  // R7hr-185 — shift auto-follows the wall clock (checked every minute)
+  // so Morning rolls to Evening at 2 pm and to Night at 9 pm on its own.
+  // A manual pill click pins the choice for this session (late entries).
+  const shiftManualRef = useRef(false);
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (!shiftManualRef.current) {
+        setShift(prev => { const want = getShift(); return prev === want ? prev : want; });
+      }
+    }, 60000);
+    return () => clearInterval(t);
+  }, []);
   const [selectedTags, setSelectedTags] = useState([]);
   const [noteText,   setNoteText]   = useState("");
   const [isCritical, setIsCritical] = useState(false);
@@ -586,7 +641,9 @@ function NursingNotesContent({ selectedPatient }) {
   const [dvtSaving, setDvtSaving] = useState(false);
   const [procedure, setProcedure] = useState({ procedureName: "", indication: "", site: "", laterality: "N/A", time: "", consentObtained: true, performedBy: "", designation: "Staff Nurse", assistant: "", sterile: true, position: "Supine", outcome: "Tolerated Well", complications: "None", specimenSent: false, specimenType: "", postProcVitals: "", followUp: "" });
   const [discharge, setDischarge] = useState({ type: "Shift Handover", situation: "", background: "", assessment: "", recommendation: "", incomingNurse: "", patientStatus: "Stable", educationGiven: false, educationTopics: "", followUpDate: "", valuablesHandedOver: false });
-  const [mews,      setMews]      = useState({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
+  // R7hr-183: dbp is capture-only (MEWS scores systolic only) — documented
+  // alongside so BP reads as a full pair on trend/print surfaces.
+  const [mews,      setMews]      = useState({ rr: "", spo2: "", temp: "", sbp: "", dbp: "", hr: "", avpu: "A" });
 
   /* ── Fetch IV dilution orders when I/O tab opens ── */
   useEffect(() => {
@@ -900,7 +957,7 @@ function NursingNotesContent({ selectedPatient }) {
 
         if (!draftRestored) {
           setVitals({ bp_sys: "", bp_dia: "", pulse: "", temp: "", spo2: "", rr: "", gcs: "", bsl: "", painScore: "", o2Flow: "", o2Device: "None", weight: "", position: "Supine" });
-          setMews({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
+          setMews({ rr: "", spo2: "", temp: "", sbp: "", dbp: "", hr: "", avpu: "A" });
         }
         setIvMedOrders([]); setIncludedMedIds(new Set());
         await fetchNotes(ipd, active);   // pass active so retroactive flag can run
@@ -1030,9 +1087,10 @@ function NursingNotesContent({ selectedPatient }) {
     // When opening MEWS tab, seed from current vitals; otherwise reset
     if (id === "mews") {
       const sbp = vitals.bp_sys || "";
-      setMews(p => ({ ...p, rr: vitals.rr || p.rr, spo2: vitals.spo2 || p.spo2, temp: vitals.temp || p.temp, sbp: sbp || p.sbp, hr: vitals.pulse || p.hr }));
+      const dbp = vitals.bp_dia || "";
+      setMews(p => ({ ...p, rr: vitals.rr || p.rr, spo2: vitals.spo2 || p.spo2, temp: vitals.temp || p.temp, sbp: sbp || p.sbp, dbp: dbp || p.dbp, hr: vitals.pulse || p.hr }));
     } else {
-      setMews({ rr: "", spo2: "", temp: "", sbp: "", hr: "", avpu: "A" });
+      setMews({ rr: "", spo2: "", temp: "", sbp: "", dbp: "", hr: "", avpu: "A" });
     }
     setDailyAssess({ bp_sys:"", bp_dia:"", pulse:"", temp:"", spo2:"", rr:"", bsl:"", gcs:"", neuroStatus:"Alert & Oriented", respiratoryStatus:"Clear bilaterally", cardiovascularStatus:"Regular rate & rhythm", giStatus:"Active bowel sounds", guStatus:"Urine output adequate", musculoskeletalStatus:"Moves all extremities", skinStatus:"Intact", intReposition:false, intOralCare:false, intPressureRelief:false, intRangeOfMotion:false, intFallPrecautions:false, intCallBell:false, intMedAdministered:false, intWoundCare:false, intIVCheck:false, intNGTCheck:false, intFoleyCheck:false, intOxygenCheck:false, intPatientEducation:false, intFamilyUpdate:false, intDoctorNotified:false, intDocumented:false });
     setCarePlan({ problems: [{ id: Date.now(), statement:"", relatedTo:"", evidencedBy:"", priority:"High", goals:"", targetDate:"", interventions:"", evaluation:"", status:"Active" }] });
@@ -1067,7 +1125,19 @@ function NursingNotesContent({ selectedPatient }) {
       patientName: patient.patientName || patient.patientId?.fullName || patient.patient?.name || "",
       UHID: patient.patientUHID || patient.UHID || searchUHID,
       admissionNumber: ipdNo,
-      ipdNo, shift, noteType: activeModal, isCriticalEvent: isCritical,
+      ipdNo,
+      // R7hr-177-B (USER 2026-06-09) — NurseNote shift enum is
+      // ["morning","evening","night","general"]. getShift() can return
+      // "afternoon" (12pm-5pm IST), which the backend 400s on with
+      // `NurseNotes validation failed: shift: afternoon is not a valid
+      // enum value`. The 400 toast.error fires under the modal overlay and
+      // looks like a silent fail to the nurse → full form discarded.
+      // Coerce afternoon→evening (closest nursing-shift mapping; evening
+      // shift in most Indian hospitals starts at 2pm) so the save lands.
+      // This is purely a frontend payload coercion — the schema enum and
+      // the rest of the page stay untouched (R28-respect).
+      shift: shift === "afternoon" ? "evening" : shift,
+      noteType: activeModal, isCriticalEvent: isCritical,
       remarks: noteText, tags: selectedTags, status: desiredStatus,
       nurseName: user?.fullName || user?.name || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
       nurseEmployeeId: user?.employeeId || "",
@@ -1869,13 +1939,15 @@ function NursingNotesContent({ selectedPatient }) {
           <div className="dnp-addnote-panel pf-tint--nurse">
             <div className="dnp-shift-row">
               <span className="dnp-shift-row__label">Current Shift:</span>
+              {/* R7hr-185 — exactly 3 hospital shifts (Afternoon retired);
+                  the active pill auto-follows the wall clock unless the
+                  user explicitly picks one (late entries). */}
               {[
                 { id: "morning",   label: "Morning",   icon: "pi-sun" },
-                { id: "afternoon", label: "Afternoon", icon: "pi-cloud" },
                 { id: "evening",   label: "Evening",   icon: "pi-moon" },
                 { id: "night",     label: "Night",     icon: "pi-star" },
               ].map(s => (
-                <button key={s.id} onClick={() => setShift(s.id)}
+                <button key={s.id} onClick={() => { shiftManualRef.current = true; setShift(s.id); }}
                   className={`dnp-shift-pill ${shift === s.id ? "dnp-shift-pill--active" : ""}`}>
                   <i className={`pi ${s.icon}`} style={{ fontSize: 10 }} />
                   {s.label}
@@ -2715,7 +2787,8 @@ function NursingNotesContent({ selectedPatient }) {
                   onVitalsChange={v => {
                     setVitals(v);
                     const sbp = v.bp_sys || "";
-                    setMews(p => ({ ...p, rr: v.rr || p.rr, spo2: v.spo2 || p.spo2, temp: v.temp || p.temp, sbp: sbp || p.sbp, hr: v.pulse || p.hr }));
+                    const dbp = v.bp_dia || "";
+                    setMews(p => ({ ...p, rr: v.rr || p.rr, spo2: v.spo2 || p.spo2, temp: v.temp || p.temp, sbp: sbp || p.sbp, dbp: dbp || p.dbp, hr: v.pulse || p.hr }));
                   }}
                 />
               )}
@@ -3647,6 +3720,9 @@ function NursingNotesContent({ selectedPatient }) {
                   { k:"spo2", label:"SpO₂ (%)",                 placeholder:"98", scoreLabel: mewsParamScore("spo2", mews.spo2) },
                   { k:"temp", label:"Temperature (°C)",         placeholder:"37", scoreLabel: mewsParamScore("temp", mews.temp) },
                   { k:"sbp",  label:"Systolic BP (mmHg)",       placeholder:"120",scoreLabel: mewsParamScore("sbp",  mews.sbp)  },
+                  // R7hr-183: diastolic is documented but NOT scored — MEWS
+                  // scores systolic only. scoreLabel:null hides the score chip.
+                  { k:"dbp",  label:"Diastolic BP (mmHg) — not scored", placeholder:"80", scoreLabel: null },
                   { k:"hr",   label:"Heart Rate (/min)",        placeholder:"80", scoreLabel: mewsParamScore("hr",   mews.hr)   },
                 ];
                 return (

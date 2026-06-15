@@ -222,6 +222,10 @@ function NursingCarePlanContent({ selectedPatient }) {
     setLoading(true);
     const payload = {
       ...form,
+      // NursingCarePlanModel requires the `patient` ObjectId (ref Patient);
+      // without it create() fails Mongoose validation. Sourced from the
+      // sidebar-selected patient.
+      patient: selectedPatient?._id || form.patient,
       nurseName: form.nurseName || user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
       nurseEmployeeId: user?.employeeId || "",
       nurseSignature: signature || undefined,
@@ -451,7 +455,8 @@ function NursingCarePlanContent({ selectedPatient }) {
                       </F>
                       <F label="Priority">
                         <select className="his-select" style={{ fontWeight: 700, color: pc.color }} value={pr.priority} onChange={e => changeProblem(pi, "priority", e.target.value)}>
-                          {["HIGH", "MEDIUM", "LOW", "CRITICAL"].map(v => <option key={v}>{v}</option>)}
+                          {/* Model enum is [HIGH,MEDIUM,LOW]; CRITICAL would fail subdoc validation on save. */}
+                          {["HIGH", "MEDIUM", "LOW"].map(v => <option key={v}>{v}</option>)}
                         </select>
                       </F>
                       <F label="Status">
@@ -495,9 +500,9 @@ function NursingCarePlanContent({ selectedPatient }) {
                         </div>
                         {pr.interventions.map((iv, ii) => (
                           <div key={ii} style={{ display: "grid", gridTemplateColumns: "3fr 1.5fr 1.5fr 40px", gap: 8, padding: "8px 10px", borderBottom: ii < pr.interventions.length - 1 ? `1px solid ${C.border}` : "none", background: ii % 2 === 0 ? "white" : "#fafbfc" }}>
-                            <input style={{ ...fld, padding: "7px 10px" }} placeholder="Describe intervention..." value={iv.intervention} onChange={e => changeIntervention(pi, ii, "intervention", e.target.value)} />
-                            <input style={{ ...fld, padding: "7px 10px" }} placeholder="Each shift..." value={iv.frequency} onChange={e => changeIntervention(pi, ii, "frequency", e.target.value)} />
-                            <input style={{ ...fld, padding: "7px 10px" }} placeholder="Nurse / Doctor" value={iv.responsible} onChange={e => changeIntervention(pi, ii, "responsible", e.target.value)} />
+                            <input className="his-field" style={{ padding: "7px 10px" }} placeholder="Describe intervention..." value={iv.intervention} onChange={e => changeIntervention(pi, ii, "intervention", e.target.value)} />
+                            <input className="his-field" style={{ padding: "7px 10px" }} placeholder="Each shift..." value={iv.frequency} onChange={e => changeIntervention(pi, ii, "frequency", e.target.value)} />
+                            <input className="his-field" style={{ padding: "7px 10px" }} placeholder="Nurse / Doctor" value={iv.responsible} onChange={e => changeIntervention(pi, ii, "responsible", e.target.value)} />
                             <button onClick={() => removeIntervention(pi, ii)} style={{ width: 32, height: 32, borderRadius: 6, background: C.redL, border: `1px solid ${C.redB}`, color: C.red, cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>
                               <i className="pi pi-times" style={{ fontSize: 10 }} />
                             </button>
@@ -507,7 +512,7 @@ function NursingCarePlanContent({ selectedPatient }) {
                     </div>
 
                     <F label="Evaluation / Outcome">
-                      <textarea style={{ ...ta, minHeight: 64 }} value={pr.evaluation} onChange={e => changeProblem(pi, "evaluation", e.target.value)} placeholder="Document evaluation of outcomes and patient response..." />
+                      <textarea className="his-textarea" style={{ minHeight: 64 }} value={pr.evaluation} onChange={e => changeProblem(pi, "evaluation", e.target.value)} placeholder="Document evaluation of outcomes and patient response..." />
                     </F>
                   </div>
                 </div>

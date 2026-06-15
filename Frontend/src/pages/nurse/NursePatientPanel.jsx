@@ -19,6 +19,7 @@ import PatientFileExport from "../../Components/clinical/PatientFileExport";
 // standalone /treatment-chart page still uses <TreatmentChart>
 // directly with its Prev/Today/Next nav (untouched by this change).
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
+import PatientDevicesStrip from "../../Components/clinical/PatientDevicesStrip"; // R7hr-185
 import TreatmentChartDayStack from "../../Components/clinical/TreatmentChartDayStack";
 // R7hr-157 — inline ICU bundle compliance display (was a launcher card)
 import ICUBundlesTab from "../../Components/clinical/ICUBundlesTab";
@@ -91,6 +92,9 @@ const TABS = [
   { id:"pendingreports", label:"🧪 Pending Investigation Reports" },
   { id:"handover",    label:"🔄 Handover Notes"       },
   { id:"icubundles",  label:"🛡 ICU Bundles"         },
+  // R7hr-185b (USER) — invasive-device registry gets its own tab pill
+  // (was a card under the gate banners). Same id on the Doctor panel.
+  { id:"devices",     label:"🔌 Devices / Lines"      },
   // R7gx-UI — Treatment Chart pill (mirrors Doctor panel position).
   // Single source of truth for medication administration; nurses chart
   // every dose here. Pill position kept identical to Doctor panel so
@@ -1780,9 +1784,18 @@ function DoctorOrdersTab({doctorOrders=[], admission}) {
             const tc = typeColor(o.orderType);
             const sb = statusBg(o.status);
             const det = o.orderDetails || {};
-            const auditTrail = ["New", ...(o.auditLog || []).map((l) => l.step)].join(" → ");
             const displayName = det.testName || det.medicineName || det.displayName
               || det.fluidName || det.procedureName || det.dietName || o.orderType;
+            // R7hr-178 — surface what the DB already carries but the card hid:
+            // dilution (R7hr-128 data), infusion lifecycle, HAM / high-risk /
+            // two-nurse safety flags, verbal read-back + reason, clinical
+            // notes/additives, and the audit trail's doneAt/doneBy timestamps.
+            const dilutionTxt = (det.dilutionVolume || det.dilutionFluid)
+              ? `${det.dilutionVolume ? `${det.dilutionVolume} ml ` : ""}${det.dilutionFluid || ""}${det.infuseOverMinutes ? ` · over ${det.infuseOverMinutes} min` : ""}`.trim()
+              : (det.infuseOverMinutes ? `over ${det.infuseOverMinutes} min` : "");
+            const clinicalNote = [det.additives, det.notes].filter(Boolean).join(" · ");
+            const hasLifecycle = o.infusionStarted || o.infusionStopped || o.completedAt;
+            const trail = [{ step:"New", doneAt:o.orderedAt || o.createdAt, doneBy:null }, ...(o.auditLog || [])];
             return (
               <div key={o._id} style={{
                 background:"#fff", border:"1px solid #e2e8f0", borderLeft:`4px solid ${tc.fg}`,
@@ -1805,11 +1818,23 @@ function DoctorOrdersTab({doctorOrders=[], admission}) {
                       borderRadius:4, padding:"1px 7px", fontSize:10, fontWeight:800,
                     }}>{o.priority}</span>
                   )}
+                  {o.hamFlag && (
+                    <span style={{
+                      background:"#fef2f2", color:"#dc2626", border:"1px solid #fecaca",
+                      borderRadius:4, padding:"1px 7px", fontSize:10, fontWeight:800,
+                    }}>⚠ HIGH-ALERT MED</span>
+                  )}
+                  {o.twoNurseRequired && (
+                    <span style={{
+                      background:"#fdf4ff", color:"#a21caf", border:"1px solid #f5d0fe",
+                      borderRadius:4, padding:"1px 7px", fontSize:10, fontWeight:800,
+                    }}>👥 2-NURSE VERIFY</span>
+                  )}
                   {o.isVerbal && (
                     <span style={{
                       background:"#fffbeb", color:"#b45309", border:"1px solid #fde68a",
                       borderRadius:4, padding:"1px 7px", fontSize:10, fontWeight:800,
-                    }}>📞 Verbal{o.coSignedBy ? " · ✓ cosigned" : " · pending cosign"}</span>
+                    }}>📞 Verbal{(o.coSignedBy || o.coSignedByName) ? " · ✓ cosigned" : " · pending cosign"}</span>
                   )}
                   <span style={{ marginLeft:"auto", fontSize:10, fontFamily:"monospace", color:"#64748b" }}>
                     {fmtTime(o.orderedAt || o.createdAt)}
@@ -1821,18 +1846,60 @@ function DoctorOrdersTab({doctorOrders=[], admission}) {
                   {det.frequency && <span>· {det.frequency}</span>}
                   {det.route && <span>· {det.route}</span>}
                   {det.duration && <span>· {det.duration}</span>}
+                  {det.mealStatus && det.mealStatus !== "NotApplicable" && <span>· {det.mealStatus}</span>}
                   {det.urgency && o.orderType === "Investigation" && <span>· {det.urgency}</span>}
                   {det.fluidName && o.orderType === "IV_Fluid" && <span>{det.fluidName}</span>}
                   {det.totalVolume && <span>· {det.totalVolume} ml</span>}
                   {det.rate && <span>· {det.rate} ml/hr</span>}
+                  {dilutionTxt && <span>· <strong>Dilution:</strong> {dilutionTxt}</span>}
+                  {o.endDate && <span>· till {fmtDay(dayKey(o.endDate))}</span>}
                 </div>
-                <div style={{ fontSize:11, color:"#475569", marginTop:6, fontStyle:"italic" }}>
-                  {auditTrail}
+                {clinicalNote && (
+                  <div style={{
+                    marginTop:6, padding:"5px 10px", background:"#fffbeb",
+                    borderLeft:"3px solid #f59e0b", borderRadius:4,
+                    fontSize:11, color:"#92400e",
+                  }}>
+                    <strong>℞ Instructions:</strong> {clinicalNote}
+                  </div>
+                )}
+                {hasLifecycle && (
+                  <div style={{
+                    marginTop:6, padding:"5px 10px", background:"#eff6ff",
+                    borderLeft:"3px solid #3b82f6", borderRadius:4,
+                    fontSize:11, color:"#1e40af", display:"flex", gap:12, flexWrap:"wrap",
+                  }}>
+                    {o.infusionStarted && <span>▶ Started <strong>{fmtTime(o.infusionStarted)}</strong></span>}
+                    {(o.currentRate || det.rate) && <span>Rate <strong>{o.currentRate || det.rate} ml/hr</strong></span>}
+                    {(o.infusionStopped || o.completedAt) && <span>⏹ Stopped <strong>{fmtTime(o.infusionStopped || o.completedAt)}</strong></span>}
+                    {o.stopReason && <span style={{ color:"#475569" }}>· {o.stopReason}</span>}
+                    {(o.pauses?.length > 0) && <span>· {o.pauses.length} pause{o.pauses.length > 1 ? "s" : ""}</span>}
+                    {(o.boluses?.length > 0) && <span>· {o.boluses.length} bolus{o.boluses.length > 1 ? "es" : ""}</span>}
+                  </div>
+                )}
+                <div style={{ display:"flex", alignItems:"center", gap:4, flexWrap:"wrap", marginTop:7 }}>
+                  {trail.map((l, i) => (
+                    <React.Fragment key={i}>
+                      {i > 0 && <span style={{ color:"#cbd5e1", fontSize:10 }}>→</span>}
+                      <span style={{
+                        background: i === trail.length - 1 ? sb.bg : "#f8fafc",
+                        color: i === trail.length - 1 ? sb.fg : "#475569",
+                        border:"1px solid #e2e8f0", borderRadius:12, padding:"1px 8px",
+                        fontSize:10, fontWeight:600, whiteSpace:"nowrap",
+                      }} title={l.notes || ""}>
+                        {l.step}
+                        {l.doneAt && <span style={{ fontWeight:400, color:"#94a3b8", marginLeft:4, fontFamily:"monospace" }}>{fmtTime(l.doneAt)}</span>}
+                        {l.doneBy && l.doneBy !== "SYSTEM" && <span style={{ fontWeight:400, color:"#94a3b8", marginLeft:3 }}>· {l.doneBy}</span>}
+                      </span>
+                    </React.Fragment>
+                  ))}
                 </div>
-                <div style={{ fontSize:10, color:"#94a3b8", marginTop:4 }}>
+                <div style={{ fontSize:10, color:"#94a3b8", marginTop:6 }}>
                   Rx by: {o.orderedBy || "Doctor"}
                   {o.orderedByEmployeeId && ` (${o.orderedByEmployeeId})`}
                   {o.isVerbal && o.verbalFromDoctor && ` · via ${o.verbalEnteredByName || "Nurse"} on behalf of Dr. ${o.verbalFromDoctor}`}
+                  {o.isVerbal && o.verbalReason && ` · Reason: ${o.verbalReason}`}
+                  {o.isVerbal && o.readBackConfirmed && " · Read-back ✓"}
                 </div>
               </div>
             );
@@ -2429,6 +2496,101 @@ function ConsentFormsTab({ consents = [], uhid, patient, admission }) {
   );
 }
 
+/* ══════════════════════════════════════════════════
+   R7hr-169 — Medical Certificates inline list.
+   Mirrors the ConsentFormsTab pattern: render a
+   per-cert summary card so the nurse/doctor sees
+   every cert already issued for this patient. The
+   "Open Certificates" button (top-right) still routes
+   to the standalone /medical-certificates page for
+   capturing a new cert.
+══════════════════════════════════════════════════ */
+function MedCertsTab({ certs = [], uhid, patient }) {
+  const STATUS_STYLE = {
+    issued:    { bg: C.greenL,  color: C.green,  label: "✓ ISSUED"   },
+    draft:     { bg: C.amberL,  color: C.amber,  label: "✎ DRAFT"    },
+    revoked:   { bg: "#f1f5f9", color: C.muted,  label: "↶ REVOKED"  },
+    cancelled: { bg: C.redL,    color: C.red,    label: "✕ CANCELLED"},
+  };
+  const openCerts = () => {
+    const u = uhid ? `?uhid=${encodeURIComponent(uhid)}` : "";
+    window.open(`/medical-certificates${u}`, "_blank", "noopener");
+  };
+  if (!certs.length) {
+    return (
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        <Empty icon="📑" msg="No medical certificates issued for this patient yet"/>
+        <div style={{display:"flex",justifyContent:"center"}}>
+          <button onClick={openCerts}
+            style={{background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"10px 18px",fontWeight:700,fontSize:13,cursor:"pointer",boxShadow:"0 2px 6px rgba(124,58,237,0.25)"}}
+          >📑 Issue New Certificate ↗</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:15,color:C.dark}}>📑 Medical Certificates</div>
+          <div style={{fontSize:11,color:C.muted}}>NABH PRE.5 · {certs.length} record{certs.length===1?"":"s"}</div>
+        </div>
+        <button onClick={openCerts}
+          style={{background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",fontWeight:700,fontSize:12,cursor:"pointer"}}
+        >+ New Certificate</button>
+      </div>
+      {certs.map((c, i) => {
+        const st = STATUS_STYLE[(c.status || "issued").toLowerCase()] || STATUS_STYLE.issued;
+        const ts = c.issuedAt || c.createdAt;
+        const certTitle = c.typeLabel
+          || (c.certType ? c.certType.replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase()) : "Medical Certificate");
+        return (
+          <div key={c._id || i}
+            style={{background:"#fff",border:`1px solid ${C.border}`,borderLeft:`4px solid ${st.color}`,borderRadius:10,padding:"16px 18px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,paddingBottom:12,borderBottom:`1px dashed ${C.border}`}}>
+              <span style={{fontSize:22}}>📑</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:800,fontSize:15,color:C.dark}}>{certTitle}</div>
+                <div style={{fontSize:11,color:C.muted}}>
+                  Cert No. <span style={{fontFamily:"monospace",fontWeight:700,color:C.text}}>{c.certNumber || "—"}</span>
+                  {" · "}{ts ? fmtDT(ts) : "—"}
+                </div>
+              </div>
+              <span style={{padding:"4px 11px",borderRadius:999,background:st.bg,color:st.color,fontWeight:800,fontSize:11}}>{st.label}</span>
+              <button onClick={openCerts}
+                title="Open cert in standalone module to print or revoke"
+                style={{background:"#fff",border:`1px solid ${C.border}`,color:C.dark,borderRadius:6,padding:"5px 11px",fontWeight:700,fontSize:11,cursor:"pointer"}}>🖨 Print ↗</button>
+            </div>
+            <div style={{border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",background:"#f8fafc",display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"10px 18px"}}>
+              {[
+                ["Patient",          c.patientName || patient?.fullName],
+                ["UHID",             c.patientUHID || patient?.UHID],
+                ["Visit Type",       c.visitType || (c.admissionNumber ? "IPD" : "—")],
+                ["IPD / Adm. No.",   c.admissionNumber || "—"],
+                ["Issuing Doctor",   c.doctorName],
+                ["MCI Reg. No.",     c.doctorReg],
+                ["Diagnosis",        c.diagnosis],
+                ["Issued On",        ts ? fmtDate(ts) : "—"],
+              ].map(([label, value], idx) => (
+                <div key={idx}>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:".3px"}}>{label}</div>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text,marginTop:2}}>{value || "—"}</div>
+                </div>
+              ))}
+            </div>
+            {c.notes && (
+              <div style={{marginTop:12,padding:"10px 12px",background:"#fffbeb",border:`1px solid ${C.amberB || "#fde68a"}`,borderRadius:8}}>
+                <div style={{fontSize:11,fontWeight:800,color:C.amber,marginBottom:4}}>📝 Doctor Notes</div>
+                <div style={{fontSize:12,color:C.text,whiteSpace:"pre-line"}}>{c.notes}</div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════════ MAIN */
 function NursePatientPanelContent({ selectedAdmission }) {
   const navigate = useNavigate();
@@ -2452,6 +2614,11 @@ function NursePatientPanelContent({ selectedAdmission }) {
   // DoctorPatientPanel). Replaces the bare launcher card so a nurse who
   // just witnessed a consent immediately sees it here.
   const [consents,     setConsents]     = useState([]);
+  // R7hr-169 — Real Medical Certificates list (mirrors the consent pattern).
+  // Replaces the bare launcher card on the Medical Certificates tab so a
+  // nurse/doctor can see every cert already issued for this patient
+  // without leaving the panel.
+  const [medCerts,     setMedCerts]     = useState([]);
   const [emergency,    setEmergency]    = useState([]);
   const [doctorOrders, setDoctorOrders] = useState([]);
 
@@ -2484,6 +2651,7 @@ function NursePatientPanelContent({ selectedAdmission }) {
     setPatient(null); setAdmission(null); setNursingNotes([]); setDoctorNotes([]);
     setBilling(null); setVitalSheet([]); setEmergency([]); setDoctorOrders([]);
     setConsents([]);
+    setMedCerts([]);
     setPendingTransfer(null);
     setActiveTab("overview");
     try {
@@ -2554,6 +2722,14 @@ function NursePatientPanelContent({ selectedAdmission }) {
           setConsents(l.sort((a,b)=>
             new Date(b.signedAt || b.createdAt || 0) - new Date(a.signedAt || a.createdAt || 0)
           ));
+        }).catch(()=>{}),
+
+        // R7hr-169 — Medical certificates for this patient. The /uhid/:UHID
+        // backend route returns up to 200 rows sorted by issuedAt desc, so
+        // newest cert sits at the top of the inline list.
+        axios.get(`${BASE}/medical-certificates/uhid/${u}`).then(r=>{
+          const l=Array.isArray(r.data?.data)?r.data.data:Array.isArray(r.data)?r.data:[];
+          setMedCerts(l);
         }).catch(()=>{}),
       ]);
 
@@ -2689,6 +2865,13 @@ function NursePatientPanelContent({ selectedAdmission }) {
       // hero + per-bundle compliance + recent-sheets history. The full
       // editor at /icu-bundles is still reachable from the header CTA.
       case "icubundles": return <ICUBundlesTab uhid={patient?.UHID || activeUhid} role="Nurse" />;
+      // R7hr-185b — invasive-device registry tab (full placed/changed/
+      // removed history inline; same registry drives ICU bundles).
+      case "devices": return (
+        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "14px 16px" }}>
+          <PatientDevicesStrip ipdNo={admission?.admissionNumber} inline />
+        </div>
+      );
       case "discharge":  return renderLauncher({
         id: "discharge", icon: "🚪", color: "#dc2626",
         title: "Discharge Summary",
@@ -2697,14 +2880,17 @@ function NursePatientPanelContent({ selectedAdmission }) {
         url: ({ uhid }) => `/discharge-summary?uhid=${encodeURIComponent(uhid)}`,
         cta: "Open Discharge Summary ↗",
       });
-      case "medcerts":   return renderLauncher({
-        id: "medcerts", icon: "📑", color: "#7c3aed",
-        title: "Medical Certificates",
-        description: "Fitness, sickness, MTP, disability, death certificates. Nurse can view; doctor issues + signs.",
-        nabh: "NABH PRE.5 / Legal documentation",
-        url: ({ uhid }) => `/medical-certificates?uhid=${encodeURIComponent(uhid)}`,
-        cta: "Open Certificates ↗",
-      });
+      // R7hr-169 — Inline list of every cert already issued for this
+      // patient (mirrors the consent tab pattern from R7hr-75). The
+      // "+ New Certificate" button still routes to /medical-certificates
+      // where the issuing action is gated by the doctor role.
+      case "medcerts":   return (
+        <MedCertsTab
+          certs={medCerts}
+          uhid={patient?.UHID || patient?.uhid || admission?.UHID || uhidInput || ""}
+          patient={patient}
+        />
+      );
       case "patientfile":return renderLauncher({
         id: "patientfile", icon: "📁", color: "#0f172a",
         title: "Complete Patient File",
@@ -2843,6 +3029,8 @@ function NursePatientPanelContent({ selectedAdmission }) {
           </div>
         </div>
       ) : null}
+      {/* R7hr-185b — devices registry moved from a gate-banner card to
+          its own "🔌 Devices / Lines" tab pill (user request). */}
     </>
   );
 

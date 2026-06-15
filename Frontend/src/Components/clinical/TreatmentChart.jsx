@@ -18,6 +18,12 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
+// R7hr-176 (USER, 2026-06-09): Verbal-order modal now uses the SAME
+// PrescriptionPanel + InfusionPanel components the Doctor IPD Initial
+// Assessment uses — drug autocomplete, dilution fields, vasopressor
+// strength selector, fluid presets — all consistent across IA + verbal.
+import PrescriptionPanel from "./PrescriptionPanel";
+import InfusionPanel     from "./InfusionPanel";
 
 /* ────────────────────────────────────────────────────
    NABH High Alert Medications (HAM) detection
@@ -419,28 +425,50 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
     verbalReason: "",              // Phone consult / Off-floor / Emergency / Other
     verbalReasonCustom: "",
     readBackConfirmed: false,      // IPSG.2 mandatory
-    // Medication fields
+    // Medication fields (legacy single-order shape — retained as fallback
+    // for restart-bag pre-fill; the multi-row array below is the primary
+    // entry point now)
     medicineName: "", dose: "", route: "PO", frequency: "BD", duration: "",
     indication: "", notes: "",
     dilutionVolume: "", dilutionFluid: "", infuseOverMinutes: "",
     // Infusion fields
     fluidName: "", totalVolume: "", rate: "", infDuration: "", additives: "",
   });
+  // R7hr-176 (USER, 2026-06-09): same shared multi-row Rx/Infusion panels
+  // the IPD Initial Assessment uses. Doctor can dictate 1-N meds or fluids
+  // in a single phone call; we loop on submit and POST one verbal order
+  // per row (same verbalFromDoctor / reason / read-back applied to all).
+  const [verbalMeds, setVerbalMeds] = useState([]);   // PrescriptionPanel value
+  const [verbalInfs, setVerbalInfs] = useState([]);   // InfusionPanel value
 
   /* ── Fetch ── */
+  // R7hr-175 (USER, 2026-06-09, INVESTOR-DAY): scope MAR fetch by
+  // admissionId when in IPD context. Pre-fix the fallback path was
+  // `?UHID=` which returned EVERY DoctorOrder for the patient across
+  // EVERY visit — so an OPD prescription from yesterday's visit (Tab
+  // Cefixime / Pantoprazole / Paracetamol 500mg) showed up in today's
+  // IPD MAR alongside the Dr-IA injectables. Investor caught it. Now:
+  //   • IPD context (admissionId prop set) → ?admissionId=<_id>
+  //     fetches ONLY the orders attached to this admission (IA-fanned
+  //     + manual + verbal). OPD orders have admissionId=undefined so
+  //     they're filtered out by definition.
+  //   • OPD context (visitId set, no admissionId) → unchanged.
+  //   • Fallback (neither set) → unchanged.
   const fetchOrders = useCallback(async (silent = false) => {
     if (!UHID) return;
     silent ? setRefreshing(true) : setLoading(true);
     try {
-      const url = visitId
-        ? `${API_ENDPOINTS.DOCTOR_ORDERS}?UHID=${UHID}&visitId=${visitId}`
-        : `${API_ENDPOINTS.DOCTOR_ORDERS}?UHID=${UHID}`;
+      const url = admissionId
+        ? `${API_ENDPOINTS.DOCTOR_ORDERS}?admissionId=${admissionId}`
+        : visitId
+          ? `${API_ENDPOINTS.DOCTOR_ORDERS}?UHID=${UHID}&visitId=${visitId}`
+          : `${API_ENDPOINTS.DOCTOR_ORDERS}?UHID=${UHID}`;
       const { data } = await axios.get(url);
       const arr = Array.isArray(data) ? data : (data.data || []);
       setOrders(arr.filter(o => !["Cancelled"].includes(o.status)));
     } catch { /* silent */ }
     finally { silent ? setRefreshing(false) : setLoading(false); setLastRefreshed(new Date()); }
-  }, [UHID, visitId]);
+  }, [UHID, visitId, admissionId]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders, refreshTrigger]);
 
@@ -793,58 +821,122 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
       return;
     }
 
-    // Build the order body matching what the doctor-side POST expects.
-    let orderDetails = {};
-    if (f.orderType === "Medication") {
-      if (!f.medicineName.trim()) { toast.error("Medicine name is required"); return; }
-      orderDetails = {
-        medicineName: f.medicineName.trim(),
-        displayName: f.medicineName.trim(),
-        dose: f.dose,
-        route: f.route,
-        frequency: f.frequency,
-        duration: f.duration,
-        indication: f.indication,
-        notes: f.notes,
-        dilutionVolume: f.dilutionVolume,
-        dilutionFluid: f.dilutionFluid,
-        infuseOverMinutes: f.infuseOverMinutes,
-      };
+    // R7hr-176: build the list of order bodies from the shared panels'
+    // arrays. Restart-bag flow falls back to the legacy single-field
+    // shape (verbalForm.fluidName etc.) so the existing prefill keeps
+    // working. New verbal-order flow uses the multi-row panels — same
+    // UX as the Doctor IPD Initial Assessment.
+    const isMed = f.orderType === "Medication";
+    let orderBodies = [];
+
+    if (verbalModal.parentOrder) {
+      // Restart-bag — single row from the legacy fields
+      if (!f.fluidName.trim()) {
+        toast.error("Fluid name is required");
+        return;
+      }
+      orderBodies.push({
+        orderType: "IV_Fluid",
+        orderDetails: {
+          fluidName: f.fluidName.trim(),
+          displayName: f.fluidName.trim(),
+          totalVolume: f.totalVolume,
+          rate: f.rate,
+          route: "IV Infusion",
+          duration: f.infDuration,
+          additives: f.additives,
+          notes: f.notes,
+        },
+      });
+    } else if (isMed) {
+      const rows = (verbalMeds || []).filter(m => (m.name || "").trim());
+      if (rows.length === 0) {
+        toast.error("Add at least one medicine to the verbal order");
+        return;
+      }
+      orderBodies = rows.map(m => ({
+        orderType: "Medication",
+        orderDetails: {
+          medicineName: m.name.trim(),
+          displayName: m.name.trim(),
+          genericName: m.genericName || "",
+          form: m.form || "",
+          dose: m.dose || "",
+          route: m.route || "Oral",
+          frequency: m.frequency || "",
+          mealStatus: m.mealStatus || "",
+          duration: m.duration || "",
+          indication: m.instructions || "",
+          notes: m.instructions || "",
+          dilutionVolume: m.dilutionVolume || "",
+          dilutionFluid: m.dilutionFluid || "",
+          infuseOverMinutes: m.infuseOverMinutes || "",
+        },
+      }));
     } else {
-      if (!f.fluidName.trim()) { toast.error("Fluid name is required"); return; }
-      orderDetails = {
-        fluidName: f.fluidName.trim(),
-        displayName: f.fluidName.trim(),
-        totalVolume: f.totalVolume,
-        rate: f.rate,
-        route: "IV Infusion",
-        duration: f.infDuration,
-        additives: f.additives,
-        notes: f.notes,
-      };
+      const rows = (verbalInfs || []).filter(i => (i.name || "").trim());
+      if (rows.length === 0) {
+        toast.error("Add at least one IV fluid / infusion to the verbal order");
+        return;
+      }
+      orderBodies = rows.map(i => ({
+        orderType: "IV_Fluid",
+        orderDetails: {
+          fluidName: i.name.trim(),
+          displayName: i.name.trim(),
+          totalVolume: i.totalVolume || "",
+          rate: i.rate || "",
+          route: i.route || "IV Infusion",
+          duration: i.duration || "",
+          additives: i.additives || "",
+          strength: i.strength || "",
+          notes: i.instructions || "",
+        },
+      }));
     }
 
     setVerbalSaving(true);
+    let ok = 0, fail = 0;
     try {
-      await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/verbal`, {
-        UHID,
-        admissionId,
-        visitId,
-        orderType: f.orderType,
-        orderDetails,
-        status: "Pending",
-        verbalFromDoctor: f.verbalFromDoctor.trim(),
-        verbalReason: finalReason,
-        readBackConfirmed: true,
-        parentOrderId: verbalModal.parentOrder?._id || undefined,
-      });
-      toast.success(verbalModal.parentOrder
-        ? `Fresh bag started via verbal order from Dr. ${f.verbalFromDoctor}`
-        : `Verbal order documented — Dr. ${f.verbalFromDoctor} must cosign within 24h`);
+      // POST each row sequentially — same verbal metadata applied to all.
+      // Sequential (not parallel) so the backend's dedupe + order-number
+      // sequencing doesn't race; this loop is small (typically 1-3 rows).
+      for (const body of orderBodies) {
+        try {
+          await axios.post(`${API_ENDPOINTS.DOCTOR_ORDERS}/verbal`, {
+            UHID,
+            admissionId,
+            visitId,
+            orderType: body.orderType,
+            orderDetails: body.orderDetails,
+            status: "Pending",
+            verbalFromDoctor: f.verbalFromDoctor.trim(),
+            verbalReason: finalReason,
+            readBackConfirmed: true,
+            parentOrderId: verbalModal.parentOrder?._id || undefined,
+          });
+          ok++;
+        } catch (e) {
+          fail++;
+          console.error("[verbal-order] row failed:", e?.response?.data?.message || e?.message);
+        }
+      }
+      if (ok > 0 && fail === 0) {
+        toast.success(verbalModal.parentOrder
+          ? `Fresh bag started via verbal order from Dr. ${f.verbalFromDoctor}`
+          : `${ok} verbal order${ok > 1 ? "s" : ""} documented — Dr. ${f.verbalFromDoctor} must cosign within 24h`);
+      } else if (ok > 0 && fail > 0) {
+        toast.warning(`${ok} order${ok > 1 ? "s" : ""} saved, ${fail} failed — check and retry the failed rows`);
+      } else {
+        toast.error("Verbal order failed — none of the rows saved");
+        return; // keep modal open so nurse can retry
+      }
       setVerbalModal({ open: false, parentOrder: null });
+      // R7hr-176: reset the panels so the next "Take Verbal Order" click
+      // starts with an empty form (otherwise the previous batch sticks).
+      setVerbalMeds([]);
+      setVerbalInfs([]);
       await fetchOrders(true);
-    } catch (err) {
-      toast.error(err?.response?.data?.message || "Verbal order failed");
     } finally { setVerbalSaving(false); }
   };
 
@@ -2781,7 +2873,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
         const isMed = f.orderType === "Medication";
         const titleTx = verbalModal.parentOrder ? "Restart Bag — Verbal Order" : "Take Verbal / Telephonic Order";
         return (
-          <ModalOverlay onClose={() => setVerbalModal({ open: false, parentOrder: null })}>
+          <ModalOverlay width={920} onClose={() => setVerbalModal({ open: false, parentOrder: null })}>
             <ModalHeader
               title={titleTx}
               sub="NABH MOM.7c — Doctor must cosign within 24h"
@@ -2838,44 +2930,31 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                 </label>
               </div>
 
-              {/* Order body — medication */}
+              {/* R7hr-176: same shared panels used by the Doctor IPD Initial
+                  Assessment. Doctor dictates 1-N meds or fluids; submit
+                  loops and POSTs one verbal order per row. */}
               {isMed && (
-                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8 }}>
-                  <FL label="Medicine *"><input style={fld} value={f.medicineName} placeholder="Inj Amikacin" onChange={(e) => setF({ medicineName: e.target.value })} /></FL>
-                  <FL label="Dose"><input style={fld} value={f.dose} placeholder="500mg" onChange={(e) => setF({ dose: e.target.value })} /></FL>
-                  <FL label="Route">
-                    <select style={fld} value={f.route} onChange={(e) => setF({ route: e.target.value })}>
-                      {["PO","IV","IM","SC","SL","PR","Topical","Inhalation","NG","Other"].map(r => <option key={r}>{r}</option>)}
-                    </select>
-                  </FL>
-                  <FL label="Frequency">
-                    <select style={fld} value={f.frequency} onChange={(e) => setF({ frequency: e.target.value })}>
-                      {["OD","BD","TDS","QID","HS","SOS","STAT","Q4H","Q6H","Q8H"].map(r => <option key={r}>{r}</option>)}
-                    </select>
-                  </FL>
-                  <FL label="Duration"><input style={fld} value={f.duration} placeholder="5 days" onChange={(e) => setF({ duration: e.target.value })} /></FL>
-                </div>
-              )}
-
-              {/* Order body — infusion */}
-              {!isMed && (
-                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 8 }}>
-                  <FL label="Fluid *"><input style={fld} value={f.fluidName} placeholder="20% Human Albumin" onChange={(e) => setF({ fluidName: e.target.value })} /></FL>
-                  <FL label="Total Volume"><input style={fld} value={f.totalVolume} placeholder="100 ml" onChange={(e) => setF({ totalVolume: e.target.value })} /></FL>
-                  <FL label="Rate"><input style={fld} value={f.rate} placeholder="25 ml/hr" onChange={(e) => setF({ rate: e.target.value })} /></FL>
-                  <FL label="Duration"><input style={fld} value={f.infDuration} placeholder="Over 4 hours" onChange={(e) => setF({ infDuration: e.target.value })} /></FL>
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: "#92400e", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 6 }}>
+                    💊 Medication Orders ({verbalMeds.length})
+                  </div>
+                  <PrescriptionPanel value={verbalMeds} onChange={setVerbalMeds} />
+                  <div style={{ fontSize: 10.5, color: "#92400e", marginTop: 6, fontStyle: "italic" }}>
+                    Add one or more medicines. All will be saved under the same verbal-order metadata above.
+                  </div>
                 </div>
               )}
 
               {!isMed && (
-                <FL label="Additives / Notes">
-                  <input style={fld} value={f.additives} placeholder="Hypoalbuminemia — slow infusion" onChange={(e) => setF({ additives: e.target.value })} />
-                </FL>
-              )}
-              {isMed && (
-                <FL label="Indication / Notes">
-                  <input style={fld} value={f.indication} placeholder="Fever spike / culture pending" onChange={(e) => setF({ indication: e.target.value })} />
-                </FL>
+                <div style={{ background: "#ecfeff", border: "1px solid #67e8f9", borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: "#0e7490", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 6 }}>
+                    💧 IV Fluid / Infusion Orders ({verbalInfs.length})
+                  </div>
+                  <InfusionPanel value={verbalInfs} onChange={setVerbalInfs} />
+                  <div style={{ fontSize: 10.5, color: "#0e7490", marginTop: 6, fontStyle: "italic" }}>
+                    Add one or more infusions. Vasopressor / insulin / heparin drips will auto-tag as HAM on save.
+                  </div>
+                </div>
               )}
             </div>
             <ModalFooter
@@ -2983,10 +3062,15 @@ const ACTBTN = { padding: "5px 12px", borderRadius: 7, fontFamily: "'DM Sans',sa
 const DOCBTN = { padding: "4px 9px", borderRadius: 6, fontFamily: "'DM Sans',sans-serif", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, transition: "all .15s", whiteSpace: "nowrap" };
 
 /* ── Modal helpers ── */
-function ModalOverlay({ children, onClose }) {
+// R7hr-181 (USER UI-only, 2026-06-11) — optional `width` prop. Default 640
+// keeps every existing modal byte-identical; the verbal-order modal passes
+// a wider value so the multi-row PrescriptionPanel / InfusionPanel rows
+// (7 cells + dilution strip) breathe like they do on the IA page instead
+// of truncating their selects ("Frequen…", "Meal st…").
+function ModalOverlay({ children, onClose, width = 640 }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.65)", backdropFilter: "blur(4px)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
-      <div style={{ background: "white", borderRadius: 16, width: 640, maxWidth: "96vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,.3)" }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: "white", borderRadius: 16, width, maxWidth: "96vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,.3)" }} onClick={e => e.stopPropagation()}>
         {children}
       </div>
     </div>

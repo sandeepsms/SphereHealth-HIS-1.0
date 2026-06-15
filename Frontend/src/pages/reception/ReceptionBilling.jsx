@@ -154,6 +154,21 @@ function printAdvanceReceipt(advance, patient) {
     receiptNo:    advance.receiptNumber,
     patientName:  [patient.title, patient.fullName].filter(Boolean).join(" "),
     uhid:         patient.UHID,
+    // PD-01 — Extend the patient demographic strip so the left column
+    // of the printable (Gender/Age · Contact · Address) populates from
+    // the patient registry. Pre-PD-01 the AdvanceReceipt printable read
+    // these keys but the caller never forwarded them, so every receipt
+    // showed "—" in those slots even when the patient had complete
+    // demographics. Pure payload extension — additive.
+    gender:           patient.gender || "",
+    age:              patient.age || "",
+    contactNumber:    patient.contactNumber || patient.mobile || "",
+    completeAddress:  patient.completeAddress
+                       || [patient.address?.line1, patient.address?.city, patient.address?.state]
+                          .filter(Boolean).join(", ")
+                       || patient.address
+                       || "",
+    payer:            advance.payer || advance.tpa?.name || patient.tpa?.name || "Self",
     ipdNo:        advance.admission?.admissionNumber || null,
     admissionDate: advance.admission?.admissionDate || null,
     bedNumber:    advance.admission?.bedNumber || null,
@@ -237,6 +252,9 @@ export default function ReceptionBilling() {
   const [uhid, setUhid] = useState(paramUhid || "");
   const [patient, setPatient] = useState(null);
   const [bills, setBills] = useState([]);
+  // R7hr-189 — how many IPD/Day Care bills were hidden from this page
+  // (they live on the IPD Live Ledger); drives the amber pointer banner.
+  const [ipdHiddenCount, setIpdHiddenCount] = useState(0);
   // R7en-CURRENT-CTX: toggle to show historical (non-current-visit) bills
   // + advances. Default hidden so the page only shows the CURRENT visit's
   // billing context (IPD admission OR today's OPD walk-in). Receptionists
@@ -439,14 +457,28 @@ export default function ReceptionBilling() {
     if (!uhidArg) return;
     setLoading(true);
     setPatient(null); setBills([]); setActiveBill(null);
-    setAdvances([]); setUnspentAdv(0);
+    setAdvances([]); setUnspentAdv(0); setIpdHiddenCount(0);
     try {
       const { data } = await axios.get(`${API_ENDPOINTS.BILLING}/uhid/${uhidArg}`);
       const p = data?.patient || data?.data?.patient;
-      const list = data?.bills || data?.data?.bills || [];
+      const all = data?.bills || data?.data?.bills || [];
+      // R7hr-189 (USER) — "Billing counter me IPD & day care ka data
+      // show nhi hoga; usme sirf OPD, ER & services ka he rhega."
+      // IPD + Day Care bills live exclusively on the IPD Live Ledger.
+      // Dropping them at this single entry point means Current Visit,
+      // History, every KPI tile, context detection, bulk-settle and
+      // all prints on this page only ever see OPD / ER / Services
+      // bills. A banner below the hero points the cashier at the
+      // ledger when bills were hidden.
+      const isIpdDc = (b) => {
+        const t = String(b?.visitType || "").toUpperCase();
+        return t === "IPD" || t === "DAYCARE" || t === "DAY CARE";
+      };
+      const list = all.filter((b) => !isIpdDc(b));
       if (!p) { toast.warning("No patient found for that UHID"); setLoading(false); return; }
       setPatient(p);
       setBills(list);
+      setIpdHiddenCount(all.length - list.length);
 
       // R7eq-FIX-2 — billingService.getBillsByUHID deliberately drops
       // populate("admission") for perf (see Backend billingService.js
@@ -463,7 +495,10 @@ export default function ReceptionBilling() {
       // no `currentVisit` field. So we ALSO probe /opd/patient/:pid for
       // the most recent OPD visit and stash it on patient.currentVisit
       // so the hero card's "Doctor" + "Department" slots populate.
-      const hasIpdBill = list.some(
+      // R7hr-189 — probe against the UNFILTERED set: IPD/DC bills are
+      // hidden from view, but we still resolve patient.currentAdmission
+      // so the "Open IPD Ledger" banner can deep-link the admission.
+      const hasIpdBill = all.some(
         (b) => b.visitType === "IPD" || b.visitType === "Daycare"
             || b.visitType === "Day Care" || b.visitType === "Emergency",
       );
@@ -727,6 +762,7 @@ export default function ReceptionBilling() {
     setActiveBill(null);
     setAdvances([]);
     setUnspentAdv(0);
+    setIpdHiddenCount(0);
     setSearchQ("");
     setSearchResults([]);
     setSearchOpen(false);
@@ -2183,6 +2219,23 @@ export default function ReceptionBilling() {
                 );
               })}
               </div>
+            </div>
+          )}
+
+          {/* R7hr-189 — IPD / Day Care bills are deliberately NOT shown
+              on the Billing Counter (they live on the IPD Live Ledger).
+              When the loaded patient has hidden bills, point the
+              cashier at the right page instead of leaving a silent gap. */}
+          {ipdHiddenCount > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "9px 14px", marginBottom: 12 }}>
+              <i className="pi pi-info-circle" style={{ color: "#b45309", fontSize: 14 }} />
+              <div style={{ flex: 1, fontSize: 12, color: "#92400e" }}>
+                This patient has <strong>{ipdHiddenCount} IPD / Day Care bill{ipdHiddenCount === 1 ? "" : "s"}</strong> — those are managed on the IPD Live Ledger and are not shown on the Billing Counter (OPD / ER / Services only).
+              </div>
+              <button onClick={() => navigate(patient?.currentAdmission?._id ? `/billing/ipd/${patient.currentAdmission._id}` : "/billing/ipd")}
+                style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#b45309", color: "#fff", fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                Open IPD Ledger →
+              </button>
             </div>
           )}
 

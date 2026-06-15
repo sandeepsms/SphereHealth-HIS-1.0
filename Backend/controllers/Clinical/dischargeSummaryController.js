@@ -4,6 +4,41 @@ const Admission = require("../../models/Patient/admissionModel");
 const admissionService = require("../../services/Patient/admissionService");
 const User = require("../../models/User/userModel");
 
+// R7hr-197 — the DischargeSummaryPage posts the discharge meds /
+// investigations / procedures with FE-shaped keys (drug/instructions,
+// name/unit/status, name/surgeon/findings) under medications/
+// investigations/procedures. The model fields are medicationsOnDischarge /
+// investigationsSummary / proceduresDone with different sub-keys, so
+// Mongoose strict mode SILENTLY DROPPED everything the doctor typed.
+// Normalise the FE shape onto the schema fields so discharge meds persist
+// (and print). Idempotent: if the canonical key is already present, skip.
+function _normaliseDischargeArrays(data) {
+  if (!data || typeof data !== "object") return;
+  if (Array.isArray(data.medications) && data.medicationsOnDischarge === undefined) {
+    data.medicationsOnDischarge = data.medications.map((m) => ({
+      medicineName: m.medicineName || m.drug || m.name || "",
+      dose: m.dose || "", route: m.route || "", frequency: m.frequency || "",
+      duration: m.duration || "", remarks: m.remarks || m.instructions || "",
+    })).filter((m) => m.medicineName);
+  }
+  if (Array.isArray(data.investigations) && data.investigationsSummary === undefined) {
+    data.investigationsSummary = data.investigations.map((i) => ({
+      testName: i.testName || i.name || "",
+      result: i.result || "",
+      remarks: i.remarks || [i.unit, i.status].filter(Boolean).join(" ").trim(),
+    })).filter((i) => i.testName);
+  }
+  if (Array.isArray(data.procedures) && data.proceduresDone === undefined) {
+    data.proceduresDone = data.procedures.map((p) => ({
+      procedureName: p.procedureName || p.name || "",
+      date: p.date || undefined, performedBy: p.performedBy || p.surgeon || "",
+      notes: p.notes || [p.findings, p.complications && `Complications: ${p.complications}`].filter(Boolean).join(". "),
+    })).filter((p) => p.procedureName);
+  }
+  // Strip the FE-only keys so they don't linger as ignored fields.
+  delete data.medications; delete data.investigations; delete data.procedures;
+}
+
 const handle = (fn) => async (req, res) => {
   try {
     return await fn(req, res);
@@ -34,6 +69,7 @@ class DischargeSummaryController {
   // counts as 0 days, not 1 — billing-day inflation eliminated.
   create = handle(async (req, res) => {
     const data = req.body;
+    _normaliseDischargeArrays(data);
 
     if (data.admissionDate && data.dischargeDate) {
       const diff = new Date(data.dischargeDate) - new Date(data.admissionDate);
@@ -115,9 +151,11 @@ class DischargeSummaryController {
   // PUT /api/discharge-summary/:id
   update = handle(async (req, res) => {
     const data = req.body;
+    _normaliseDischargeArrays(data);
     if (data.admissionDate && data.dischargeDate) {
       const diff = new Date(data.dischargeDate) - new Date(data.admissionDate);
-      data.totalDaysAdmitted = Math.ceil(diff / (1000 * 60 * 60 * 24));
+      // floor() to match create() — partial days don't add an LOS day (was ceil, inflated by 1).
+      data.totalDaysAdmitted = Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
     }
     // R7az-D8/D2-CRIT-2: friendly early-out when the summary is already
     // finalized. The model-level pre-save guard (Agent B) is the source
@@ -198,6 +236,23 @@ class DischargeSummaryController {
     // reason, both of which land on the discharge summary's audit
     // trail (nursingHandoverOverride*).
     const draftSummary = await DischargeSummary.findById(req.params.id).lean();
+
+    // R7hr-197 — MCCD gate. A death discharge (dischargeType "Death" or
+    // condition "Expired") MUST carry a cause of death before it can be
+    // finalized + pushed to the NABH Mortality register. Pre-fix the
+    // emitter defaulted the cause to "Not Specified", so a death could be
+    // registered with no real cause (MCCD bypass). Not override-able —
+    // a death certificate without a cause is not a valid record.
+    if (draftSummary && (draftSummary.dischargeType === "Death" || draftSummary.conditionOnDischarge === "Expired")) {
+      const cause = String(draftSummary.causeOfDeath || draftSummary.immediateCauseOfDeath || "").trim();
+      if (!cause) {
+        return res.status(400).json({
+          success: false,
+          code: "CAUSE_OF_DEATH_REQUIRED",
+          message: "Cause of death is required to finalize a death discharge (NABH COP.18 / MCCD). Enter the immediate cause of death on the summary first.",
+        });
+      }
+    }
 
     // R7hr-113 — PROM + PREM mandatory at discharge (NABH PSQ + COP.6.b)
     // Patient voice MUST be recorded before discharge locks. Refuse
@@ -344,6 +399,32 @@ class DischargeSummaryController {
       }
     }
 
+    // R7hr-197 — Auto-populate the NABH AAC.4 LAMA register on a finalized
+    // LAMA/DAMA discharge. Pre-fix emitLAMA was dead-wired to the discharge
+    // flow (only the manual register route called it), so a LAMA never
+    // reached the register unless Compliance remembered to file it by hand.
+    // Idempotent by sourceRef "discharge:<summaryId>"; non-blocking.
+    if (summary.dischargeType === "LAMA" || summary.dischargeType === "DAMA" || summary.conditionOnDischarge === "LAMA") {
+      try {
+        const { emitLAMA } = require("../../services/Compliance/nabhRegisterEmitter");
+        const Patient = require("../../models/Patient/patientModel");
+        const lamaPatient = summary.patientId
+          ? await Patient.findById(summary.patientId).select("_id UHID fullName name age gender sex").lean()
+          : { _id: summary.patientId, UHID: summary.UHID, fullName: summary.patientName, age: summary.age, sex: summary.gender };
+        const lamaAdmission = summary.admissionId
+          ? await Admission.findById(summary.admissionId).select("_id admissionNumber admissionDate attendingDoctor attendingDoctorId").lean()
+          : null;
+        emitLAMA({
+          dischargeSummary: summary,
+          patient: lamaPatient || {},
+          admission: lamaAdmission,
+          actor: req.user || {},
+        }).catch((e) => console.error("[discharge-summary] emitLAMA error:", e?.message));
+      } catch (e) {
+        console.error("[discharge-summary] LAMA emit wiring failed:", e?.message);
+      }
+    }
+
     // R7az-D8-CRIT-1..5: Discharge fast-path now flows through the SAME
     // service the receptionist workflow uses. Pre-R7az this controller
     // did inline `findByIdAndUpdate` on the admission + bed — bypassing
@@ -447,64 +528,44 @@ class DischargeSummaryController {
 
       const now = new Date();
       const finalizedBy = finalizedByName || req.user?.fullName || "Doctor";
-      const stage = admission.dischargeWorkflow?.stage || "NotRequested";
-      const billAlreadyCleared = ["BillCleared", "GatePassIssued", "Completed"].includes(stage);
 
-      if (billAlreadyCleared) {
-        // Bill already cleared — fully discharge via the canonical service
-        // path so the bed is released, daily-charges flushed, CleaningTask
-        // created, overage refunded, and BillingAudit emitted.
-        try {
-          await admissionService.dischargePatient(summary.admissionId, {
-            actualDischargeDate:   summary.dischargeDate || now,
-            conditionOnDischarge:  summary.conditionOnDischarge,
-            dischargeSummary:      summary._id.toString(),
-            followUpInstructions:  summary.followUpInstructions,
-            dischargeNotes:        summary.dischargeNotes || "",
-            actor: { role: req.user?.role, id: req.user?.id || req.user?._id },
-          });
-        } catch (e) {
-          // dischargePatient surfaces typed errors — log + re-throw so
-          // handle() returns the right status. Discharge summary is
-          // already marked finalized; rolling that back risks creating
-          // an inconsistent state where the bed is released but the
-          // summary isn't signed. Let the operator/admin investigate.
-          console.error("[Discharge fast-path] dischargePatient failed after summary finalized:", e.message);
-          throw e;
-        }
-      } else {
-        // Bill NOT cleared yet — advance workflow stage to DoctorApproved
-        // ONLY. Status stays "Active"; bed stays Occupied. Cashier owns
-        // the final BedReleased / Completed flip. billClearedBy stays
-        // null — only the cashier's explicit clearFinalBill stamps it.
-        //
-        // CAS — only flip if the stage is currently NotRequested. If a
-        // cashier has already advanced it past DoctorApproved (e.g.
-        // BillCleared) between our pre-check and now, we noop and let
-        // the next finalize attempt route through the cleared-path branch.
-        await Admission.findOneAndUpdate(
-          {
-            _id: summary.admissionId,
-            status: "Active",
-            $or: [
-              { "dischargeWorkflow.stage": { $in: ["NotRequested", "DoctorApproved"] } },
-              { "dischargeWorkflow.stage": { $exists: false } },
-              { dischargeWorkflow: { $exists: false } },
-            ],
+      // R7hr-197 discharge rebuild — a finalized discharge summary is the
+      // SINGLE trigger that enqueues the patient into the receptionist
+      // discharge queue. The doctor NEVER frees the bed here; the
+      // receptionist's clear-bill → clear-bed steps own the bill gate and
+      // the actual bed release. We copy the doctor's disposition
+      // (dischargeType) + condition onto the admission so the queue and the
+      // bed-clear step can read it without a summary join.
+      //
+      // CAS — advance to DoctorApproved (= "Pending Bill") only while the
+      // patient is Active and the cashier hasn't already moved the stage
+      // further (BillCleared/Completed). If they have, we leave it (no
+      // downgrade) and let the existing stage stand.
+      await Admission.findOneAndUpdate(
+        {
+          _id: summary.admissionId,
+          status: "Active",
+          $or: [
+            { "dischargeWorkflow.stage": { $in: ["NotRequested", "DoctorApproved"] } },
+            { "dischargeWorkflow.stage": { $exists: false } },
+            { dischargeWorkflow: { $exists: false } },
+          ],
+        },
+        {
+          $set: {
+            "dischargeWorkflow.stage":              "DoctorApproved",
+            "dischargeWorkflow.doctorApprovedAt":   now,
+            "dischargeWorkflow.doctorApprovedBy":   finalizedBy,
+            "dischargeWorkflow.dischargeType":      summary.dischargeType || "Routine",
+            "dischargeWorkflow.summaryId":          summary._id,
+            "dischargeWorkflow.summaryFinalizedAt": now,
+            dischargeSummary:                       summary._id.toString(),
+            ...(summary.conditionOnDischarge && { conditionOnDischarge: summary.conditionOnDischarge }),
+            ...(summary.followUpInstructions  && { followUpInstructions:  summary.followUpInstructions  }),
           },
-          {
-            $set: {
-              "dischargeWorkflow.stage":            "DoctorApproved",
-              "dischargeWorkflow.doctorApprovedAt": now,
-              "dischargeWorkflow.doctorApprovedBy": finalizedBy,
-              dischargeSummary:                     summary._id.toString(),
-              ...(summary.conditionOnDischarge && { conditionOnDischarge: summary.conditionOnDischarge }),
-              ...(summary.followUpInstructions  && { followUpInstructions:  summary.followUpInstructions  }),
-            },
-          },
-          { runValidators: true },
-        );
-      }
+        },
+        { runValidators: true },
+      );
     }
 
     return res.json({

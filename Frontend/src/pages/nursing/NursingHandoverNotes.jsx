@@ -304,7 +304,7 @@ const NursingHandoverNotes = () => {
               {selectedAdm && (
                 <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {[
-                    { label: "Type", value: selectedAdm.admissionType || activeType },
+                    { label: "Type", value: selectedAdm.admissionType || "—" },
                     { label: "Status", value: selectedAdm.status || "Active" },
                     { label: "Doctor", value: selectedAdm.attendingDoctor || "—" },
                     { label: "Dept", value: selectedAdm.department || "—" },
@@ -367,7 +367,7 @@ const NursingHandoverNotes = () => {
                   />
                 </div>
                 <div>
-                  <label style={{ ...lbl, marginBottom: 10 }}>Level of Consciousness</label>
+                  <label className="his-label" style={{ marginBottom: 10 }}>Level of Consciousness</label>
                   <PillGroup
                     options={["Conscious", "Drowsy", "Unconscious"]}
                     value={formik.values.consciousness}
@@ -407,7 +407,7 @@ const NursingHandoverNotes = () => {
                         { name: "vitalTime", placeholder: "HH:MM" },
                       ].map(({ name, placeholder }) => (
                         <td key={name} style={{ padding: "10px 6px" }}>
-                          <input name={name} value={formik.values[name]} onChange={formik.handleChange} placeholder={placeholder} style={{ ...fld, minWidth: 80 }} />
+                          <input name={name} value={formik.values[name]} onChange={formik.handleChange} placeholder={placeholder} className="his-field" style={{ minWidth: 80 }} />
                         </td>
                       ))}
                     </tr>
@@ -439,7 +439,7 @@ const NursingHandoverNotes = () => {
             {/* 6. Pending Tasks */}
             <SectionCard icon="pi-list-check" title="Pending Tasks" color={C.amber}>
               <div>
-                <label style={{ ...lbl, marginBottom: 10 }}>Task Type</label>
+                <label className="his-label" style={{ marginBottom: 10 }}>Task Type</label>
                 <PillGroup
                   options={["No Task", "Dressing", "Medication", "Doctor Review"]}
                   value={formik.values.pending}

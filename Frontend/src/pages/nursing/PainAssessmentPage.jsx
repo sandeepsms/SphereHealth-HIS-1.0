@@ -28,6 +28,70 @@ const C = {
   orange: "#ea580c", orangeL: "#fff7ed",
 };
 
+function Section({ title, icon, color=C.primary, badge, children, defaultOpen=true }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:14, marginBottom:16, overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
+      <div onClick={()=>setOpen(o=>!o)} style={{ padding:"12px 20px", background:"#f8fafc", borderBottom:open?`1px solid ${C.border}`:"none", display:"flex", alignItems:"center", justifyContent:"space-between", cursor:"pointer", userSelect:"none" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <span style={{ width:30, height:30, borderRadius:8, background:color+"18", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <i className={`pi ${icon}`} style={{ fontSize:13, color }} />
+          </span>
+          <span style={{ fontWeight:700, fontSize:13, color:C.text }}>{title}</span>
+          {badge && <span style={{ background:color+"20", color, fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:8 }}>{badge}</span>}
+        </div>
+        <i className={`pi ${open?"pi-chevron-up":"pi-chevron-down"}`} style={{ fontSize:11, color:C.muted }} />
+      </div>
+      {open && <div style={{ padding:"18px 20px" }}>{children}</div>}
+    </div>
+  );
+}
+
+function Field({ label, children, style }) {
+  return (
+    <div style={style}>
+      {label && <label className="his-label">{label}</label>}
+      {children}
+    </div>
+  );
+}
+
+function PageHeader({ icon, title, subtitle, gradient, right }) {
+  return (
+    <div style={{ background:gradient, borderRadius:14, padding:"18px 24px", marginBottom:20, display:"flex", justifyContent:"space-between", alignItems:"center", boxShadow:"0 4px 16px rgba(0,0,0,.08)" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+        <div style={{ width:46, height:46, borderRadius:12, background:"rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <i className={`pi ${icon}`} style={{ fontSize:20, color:"#fff" }} />
+        </div>
+        <div>
+          <div style={{ color:"#fff", fontWeight:800, fontSize:18, letterSpacing:"-.3px" }}>{title}</div>
+          <div style={{ color:"rgba(255,255,255,.7)", fontSize:12, marginTop:2 }}>{subtitle}</div>
+        </div>
+      </div>
+      {right && <div>{right}</div>}
+    </div>
+  );
+}
+
+const PAIN_COLORS = ["#16a34a","#22c55e","#84cc16","#a3e635","#facc15","#fbbf24","#f97316","#ef4444","#dc2626","#b91c1c","#991b1b"];
+
+const LOCATIONS = ["Head","Neck","Chest","Abdomen","Back","Upper Limb (R)","Upper Limb (L)","Lower Limb (R)","Lower Limb (L)","Generalized"];
+const CHARACTERS = ["Aching","Burning","Stabbing","Throbbing","Shooting","Cramping","Pressure","Tingling","Dull","Sharp"];
+const IMPACTS = ["Sleep","Appetite","Mobility","Daily Activities"];
+const IMPACT_OPTIONS = ["None","Mild","Moderate","Severe"];
+
+const emptyReassessRow = () => ({
+  id: Date.now(), time: new Date().toTimeString().slice(0,5),
+  score:"", intervention:"", reassessScore:"", nurse:"",
+});
+
+const defaultForm = {
+  nrsScore: 5, location:[], character:[], duration:"", onset:"", frequency:"",
+  aggravating:"", relieving:"",
+  impactSleep:"None", impactAppetite:"None", impactMobility:"None", impactDaily:"None",
+  analgesicDrug:"", analgesicDose:"", analgesicRoute:"", analgesicLastGiven:"",
+};
+
 function NRSSelector({ value, onChange }) {
   return (
     <div>

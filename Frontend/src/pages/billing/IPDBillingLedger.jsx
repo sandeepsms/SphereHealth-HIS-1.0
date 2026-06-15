@@ -326,7 +326,7 @@ export default function IPDBillingLedger() {
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("category");   // "category" | "daily" | "audit"
+  const [tab, setTab] = useState("category");   // "category" | "daily" | "audit" | "payments"
   const [collapsed, setCollapsed] = useState({});  // section open/closed state
 
   // Modal state for undo / override / cancel
@@ -346,6 +346,18 @@ export default function IPDBillingLedger() {
   const [addPrice, setAddPrice] = useState("");          // empty = use tariff default
   const [addRemarks, setAddRemarks] = useState("");
   const [addBusy, setAddBusy] = useState(false);
+
+  // R7hr-186 (USER) — Collect Payment right from the ledger (no detour
+  // to the Billing Counter). Posts to the SAME endpoints the Counter
+  // uses: POST /billing/:billId/payment for cash modes, and
+  // POST /billing/advance/:advanceId/apply for Adjust-from-Advance.
+  // R7al invariant mirrored: cash modes stay locked while the UHID
+  // advance pool has unspent balance.
+  const [payOpen, setPayOpen] = useState(false);
+  const [payAmt,  setPayAmt]  = useState("");
+  const [payMode, setPayMode] = useState("CASH");
+  const [payRef,  setPayRef]  = useState("");
+  const [payBusy, setPayBusy] = useState(false);
 
   // B4-T09 — Stuck triggers widget (Admin / Accountant only).
   // Surfaces BillingTrigger rows that landed in status="pending-review"
@@ -430,6 +442,140 @@ export default function IPDBillingLedger() {
   }, [admissionId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // R7hr-186 + R7hr-188 — Collect a pending payment from the ledger
+  // itself. R7hr-188 relaxed the backend DRAFT guards (user: "payment
+  // collect kr raha hu to advance me jma ho jaati hai... fix kro"), so
+  // collections now post DIRECTLY against the running bill — Outstanding
+  // drops and PAID rises live, even mid-stay while the bill is DRAFT
+  // (the bill stays DRAFT server-side so daily auto-billing continues).
+  // ADVANCE mode walks the UHID's open advances FIFO via
+  // /advance/:id/apply; cash modes hit POST /billing/:billId/payment.
+  // R7al lock: cash stays disabled while the advance pool has balance.
+  const collectPayment = async () => {
+    const amt = Math.round(Number(payAmt) * 100) / 100;
+    if (!amt || amt <= 0) { toast.error("Enter a valid amount"); return; }
+    // R7hr-193 (G8): cap against the CURRENT bill's balance, not the
+    // aggregated billSummary — older GENERATED bills carry their own
+    // dues and the backend OVERPAY cap is per-bill, so the aggregate
+    // could let through an amount the server then rejects.
+    const aggDue  = Math.max(0, Number(data?.billSummary?.balanceAmount || 0));
+    const billDue = Math.max(0, Number(data?.bill?.balanceAmount || 0));
+    const due = billDue > 0 ? billDue : aggDue;
+    if (due > 0 && amt > due + 0.01) { toast.error(`Amount exceeds outstanding (₹${due.toLocaleString("en-IN")})`); return; }
+    const billId = data?.bill?._id;
+    if (!billId) { toast.error("No bill on this admission yet — add a charge first"); return; }
+    setPayBusy(true);
+    try {
+      if (payMode === "ADVANCE") {
+        // Pull the live advance ledger and consume open balances FIFO.
+        const r = await axios.get(`${API_ENDPOINTS.BILLING}/advance/uhid/${encodeURIComponent(data.admission.UHID)}`);
+        // Endpoint shape: { success, data: <summary>, advances: [rows] } —
+        // the rows live under `advances`; `data` is the totals object.
+        const rows = Array.isArray(r.data?.advances) ? r.data.advances
+                   : Array.isArray(r.data?.data) ? r.data.data : [];
+        const advances = rows
+          .filter(a => a.status !== "REFUNDED" && Number(a.remainingAmount ?? a.balanceAmount ?? 0) > 0)
+          .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+        if (!advances.length) { toast.error("No unspent advance found for this UHID"); setPayBusy(false); return; }
+        let left = amt, applied = 0;
+        for (const adv of advances) {
+          if (left <= 0) break;
+          const chunk = Math.min(left, Number(adv.remainingAmount ?? adv.balanceAmount ?? 0));
+          if (chunk <= 0) continue;
+          const res = await axios.post(`${API_ENDPOINTS.BASE}/billing/advance/${adv._id}/apply`, { billId, amount: chunk });
+          const got = Number(res.data?.appliedAmount || chunk);
+          applied += got; left -= got;
+        }
+        toast.success(`₹${applied.toLocaleString("en-IN")} adjusted from advance pool`);
+      } else {
+        const res = await axios.post(`${API_ENDPOINTS.BASE}/billing/${billId}/payment`, {
+          amount: amt,
+          paymentMode: payMode,
+          paymentReference: payRef.trim() || undefined,
+        });
+        toast.success(`₹${amt.toLocaleString("en-IN")} collected (${payMode}) — receipt created`);
+        // R7hr-192 (G2) — print the payment receipt, mirroring the
+        // Billing Counter's printPaymentReceipt contract (R7ar-F3).
+        // The live IPD bill has no billNumber yet, so the receipt
+        // number anchors on the admission number instead. Amount
+        // fields go through toMoney() because recordPayment returns
+        // the raw bill doc with Decimal128 ({$numberDecimal}) values.
+        try {
+          const freshBill = res.data?.data || res.data || {};
+          const pays = freshBill.payments || [];
+          const pay  = pays[pays.length - 1] || {};
+          const p    = data.admission.patientId || {};
+          const anchor = freshBill.billNumber || data.admission.admissionNumber || "IPD-LIVE";
+          const receiptNo = `${anchor}-P${pays.length || 1}`;
+          const balanceAfter = toMoney(freshBill.balanceAmount);
+          openPrint("payment-receipt", {
+            receiptNo,
+            patientName:  p.fullName || data.admission.patientName,
+            uhid:         p.UHID || data.admission.UHID,
+            visitType:    freshBill.visitType || "IPD",
+            visitNo:      data.admission.admissionNumber,
+            age:          p.age,
+            gender:       p.gender,
+            amount:       toMoney(pay.amount) || amt,
+            method:       pay.paymentMode || payMode,
+            refNo:        pay.transactionId || payRef.trim() || "",
+            receivedBy:   pay.receivedBy || "Reception",
+            paidAt:       pay.paidAt || new Date().toISOString(),
+            purpose:      balanceAfter <= 0.5
+              ? `Full settlement towards ${anchor}`
+              : `Part-payment towards ${anchor} (interim)`,
+            billTotal:    toMoney(freshBill.netAmount),
+            totalPaid:    toMoney(freshBill.advancePaid),
+            runningBalance: balanceAfter,
+            remarks:      pay.remarks || "",
+            printAudit: {
+              entityType:   "Receipt",
+              entityId:     freshBill._id,
+              entityNumber: receiptNo,
+              UHID:         p.UHID || data.admission.UHID,
+              patientName:  p.fullName || data.admission.patientName,
+            },
+          });
+        } catch (_) { /* print best-effort — payment is already recorded */ }
+      }
+      setPayOpen(false); setPayAmt(""); setPayRef("");
+      await load();
+    } catch (e) {
+      // R7hr-193 (G8): friendly OVERPAY message — the server cap is on
+      // the bill's CURRENT balance, which may have moved (new charges /
+      // another cashier) since this page last loaded.
+      if (e?.response?.data?.code === "OVERPAY") {
+        toast.error("Amount is more than the bill's current balance — page Refresh karke dobara try karein.");
+        await load();
+      } else {
+        toast.error(e?.response?.data?.message || e.message || "Payment failed");
+      }
+    } finally { setPayBusy(false); }
+  };
+
+  // R7hr-194 (USER) — confirm a PENDING (requiresConfirmation) charge
+  // right on the ledger. e.g. NRS-BLD blood transfusion lands as
+  // PENDING; the receptionist verbally confirms with staff/doctor and
+  // clicks "Confirm & Bill" on the row — no more detour to
+  // /billing-audit-trail just to flip the status. Same backend endpoint
+  // the audit page uses (billing.write).
+  const confirmPending = async (t) => {
+    const ok = window.confirm(
+      `${t.serviceName} (₹${Number(t.totalAmount || 0).toLocaleString("en-IN")}) — staff/doctor se confirm ho gaya?\n\nConfirm & Bill?`,
+    );
+    if (!ok) return;
+    try {
+      await axios.post(`${API_ENDPOINTS.BASE}/billing/audit/${t._id}/confirm-bill`, {
+        confirmedBy: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || user?.name,
+        confirmedByRole: user?.role || "Receptionist",
+      });
+      toast.success(`${t.serviceName} — confirmed & billed`);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || e.message || "Confirm failed");
+    }
+  };
 
   /* ─── Admission picker (when route is /billing/ipd without an id) ───
      Sidebar tile lands here without an admissionId. We render a
@@ -1637,6 +1783,24 @@ export default function IPDBillingLedger() {
             Take Advance
           </button>
         )}
+        {/* R7hr-186 (USER) — collect the pending payment right here on
+            the ledger. Default amount = full outstanding; Adjust-from-
+            Advance is forced first while the pool has unspent balance
+            (R7al invariant, mirrored from the Billing Counter). */}
+        {can("billing.write") && balance > 0 && (
+          <button onClick={() => {
+            setPayAmt(String(advanceBalance > 0 ? Math.min(balance, advanceBalance) : balance));
+            setPayMode(advanceBalance > 0 ? "ADVANCE" : "CASH");
+            setPayRef("");
+            setPayOpen(true);
+          }} style={{
+            padding: "7px 14px", background: "#0284c7", color: "#fff", border: "none",
+            borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
+          }}>
+            <i className="pi pi-money-bill" style={{ marginRight: 6 }} />
+            Collect Payment
+          </button>
+        )}
         {/* Add Charge — every clinician + desk role above can push a
             line into the ledger. Pricing override is locked to
             Accountant/Admin (backend strips it for lower roles). */}
@@ -1816,6 +1980,8 @@ export default function IPDBillingLedger() {
           { id: "category", label: "Category",         icon: "pi-th-large" },
           { id: "daily",    label: "Daily Breakdown",  icon: "pi-calendar" },
           { id: "audit",    label: "Audit Trail",      icon: "pi-history" },
+          // R7hr-187 (USER) — "kab kab payment ki hai patient ne"
+          { id: "payments", label: "Payment Summary",  icon: "pi-wallet" },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             padding: "10px 18px", background: tab === t.id ? C.card : "transparent",
@@ -1835,14 +2001,17 @@ export default function IPDBillingLedger() {
       {tab === "category" && (
         <CategoryView byCategory={byCategory} collapsed={collapsed} setCollapsed={setCollapsed}
           onUndo={openUndo} onOverride={openOverride} onCancel={openCancel}
-          undoWindowMs={undoWindowMs} />
+          onConfirm={confirmPending} undoWindowMs={undoWindowMs} />
       )}
       {tab === "daily" && (
         <DailyView byDay={byDay} collapsed={collapsed} setCollapsed={setCollapsed}
           onUndo={openUndo} onOverride={openOverride} onCancel={openCancel}
-          undoWindowMs={undoWindowMs} />
+          onConfirm={confirmPending} undoWindowMs={undoWindowMs} />
       )}
       {tab === "audit" && <AuditView triggers={triggers} />}
+      {tab === "payments" && (
+        <PaymentsView uhid={admission.UHID} bill={bill} refreshKey={data} onChanged={load} />
+      )}
 
       {/* ── Undo modal ─────────────────────────────────────── */}
       <ReasonModal
@@ -1906,6 +2075,93 @@ export default function IPDBillingLedger() {
            from ServiceMaster, sets qty (+ price for Accountant/Admin),
            writes a remark, and the line lands on the running DRAFT
            bill via the auto-billing pipeline. */}
+      {/* R7hr-186/188 — Collect Payment modal (user: "yaha se bhi to
+          pending payment collect kr sakte hai"). Posts a REAL payment
+          against the running bill (DRAFT included — R7hr-188 relaxed
+          the backend guard; bill stays DRAFT server-side so daily
+          auto-billing continues). Cash modes stay locked while the
+          advance pool has unspent balance (R7al mirror). */}
+      {payOpen && (
+        <div onClick={(e) => { if (e.target === e.currentTarget && !payBusy) setPayOpen(false); }}
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(15,23,42,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ width: "min(480px, 100%)", background: "#fff", borderRadius: 14, overflow: "hidden", boxShadow: "0 20px 50px rgba(0,0,0,.25)", fontFamily: "inherit" }}>
+            <div style={{ background: "#0284c7", color: "#fff", padding: "13px 18px", display: "flex", alignItems: "center", gap: 10 }}>
+              <i className="pi pi-money-bill" />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 900, fontSize: 14 }}>Collect Payment — {data?.admission?.admissionNumber}</div>
+                <div style={{ fontSize: 11, opacity: .9 }}>
+                  Outstanding {inr(balance)} · Advance pool {inr(advanceBalance)}
+                </div>
+              </div>
+              <button disabled={payBusy} onClick={() => setPayOpen(false)} style={{ width: 28, height: 28, borderRadius: 7, background: "rgba(255,255,255,.2)", border: "none", color: "#fff", cursor: "pointer", fontWeight: 800 }}>×</button>
+            </div>
+            <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 5 }}>Amount (₹)</div>
+                <input type="number" min="1" value={payAmt} onChange={e => setPayAmt(e.target.value)}
+                  style={{ width: "100%", padding: "9px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 15, fontWeight: 700, fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }} />
+                <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                  {payMode === "ADVANCE" ? (
+                    <button onClick={() => setPayAmt(String(Math.min(balance, advanceBalance)))} style={{ padding: "3px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#f8fafc", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      Max from advance ({inr(Math.min(balance, advanceBalance))})
+                    </button>
+                  ) : (
+                    <button onClick={() => setPayAmt(String(balance))} style={{ padding: "3px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#f8fafc", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      Full outstanding ({inr(balance)})
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 5 }}>Payment Mode</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {advanceBalance > 0 && (
+                    <button onClick={() => { setPayMode("ADVANCE"); setPayAmt(String(Math.min(balance, advanceBalance))); }}
+                      style={{ padding: "7px 13px", borderRadius: 8, border: `1.5px solid ${payMode === "ADVANCE" ? "#7c3aed" : C.border}`, background: payMode === "ADVANCE" ? "#f5f3ff" : "#fff", color: payMode === "ADVANCE" ? "#7c3aed" : C.muted, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                      Adjust from Advance
+                    </button>
+                  )}
+                  {["CASH", "CARD", "UPI"].map(m => {
+                    const locked = advanceBalance > 0; // R7al — exhaust advance first
+                    return (
+                      <button key={m} disabled={locked} onClick={() => setPayMode(m)}
+                        title={locked ? `₹${advanceBalance.toLocaleString("en-IN")} advance pool must be adjusted first (R7al)` : ""}
+                        style={{ padding: "7px 13px", borderRadius: 8, border: `1.5px solid ${payMode === m ? "#0284c7" : C.border}`, background: payMode === m ? "#f0f9ff" : "#fff", color: locked ? "#cbd5e1" : payMode === m ? "#0284c7" : C.muted, fontWeight: 800, fontSize: 12, cursor: locked ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                        {m}
+                      </button>
+                    );
+                  })}
+                </div>
+                {advanceBalance > 0 && (
+                  <div style={{ fontSize: 10.5, color: "#7c3aed", marginTop: 5 }}>
+                    ₹{advanceBalance.toLocaleString("en-IN")} unspent advance — cash modes unlock once the pool is exhausted (R7al).
+                  </div>
+                )}
+              </div>
+              {(payMode === "CARD" || payMode === "UPI") && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 5 }}>
+                    {payMode === "CARD" ? "Card last 4 / approval ref" : "UPI transaction ID"}
+                  </div>
+                  <input value={payRef} onChange={e => setPayRef(e.target.value)} placeholder={payMode === "CARD" ? "e.g. **6411 / APPR123" : "e.g. 4198xxxxxx"}
+                    style={{ width: "100%", padding: "8px 11px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 12.5, boxSizing: "border-box", fontFamily: "inherit" }} />
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 2 }}>
+                <button disabled={payBusy} onClick={() => setPayOpen(false)}
+                  style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>
+                  Cancel
+                </button>
+                <button disabled={payBusy} onClick={collectPayment}
+                  style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: payMode === "ADVANCE" ? "#7c3aed" : "#0284c7", color: "#fff", fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>
+                  {payBusy ? "Processing…" : payMode === "ADVANCE" ? "Adjust from Advance" : `Collect ${payMode}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {addOpen && (
         <div onClick={closeAdd} style={{
           position: "fixed", inset: 0, zIndex: 1000,
@@ -2027,7 +2283,8 @@ export default function IPDBillingLedger() {
 // Trigger row + action buttons (shared by category + daily views)
 // ═══════════════════════════════════════════════════════════════════
 
-function TriggerRow({ t, onUndo, onOverride, onCancel, undoWindowMs }) {
+function TriggerRow({ t, onUndo, onOverride, onCancel, onConfirm, undoWindowMs }) {
+  const { can } = useAuth();
   // Live countdown for the 15-min undo window so the receptionist can
   // see how much time is left. Tick once a second only when the row is
   // currently within the window (and not already voided).
@@ -2084,6 +2341,21 @@ function TriggerRow({ t, onUndo, onOverride, onCancel, undoWindowMs }) {
       </td>
       <td style={{ padding: "8px 10px", verticalAlign: "top", textAlign: "center", whiteSpace: "nowrap" }}>
         <StatusPill status={t.status} />
+        {t.status === "pending" && onConfirm && can("billing.write") && (
+          <button
+            onClick={() => onConfirm(t)}
+            title="Staff/doctor se confirm karke charge ko bill par chadhayein"
+            style={{
+              display: "block", margin: "4px auto 0", padding: "3px 8px",
+              border: "1px solid #f59e0b", borderRadius: 6, background: "#fffbeb",
+              color: "#a16207", fontSize: 10, fontWeight: 800, cursor: "pointer",
+              fontFamily: "inherit", whiteSpace: "nowrap",
+            }}
+          >
+            <i className="pi pi-check-circle" style={{ marginRight: 3, fontSize: 9 }} />
+            Confirm &amp; Bill
+          </button>
+        )}
         <div style={{ fontSize: 9, color: C.muted, marginTop: 3 }}>{fmtDateTime(t.createdAt)}</div>
         {remainStr && t.canUndo && (
           <div style={{ fontSize: 9, fontWeight: 700, color: C.warn, marginTop: 2 }}>
@@ -2123,7 +2395,7 @@ const actionBtnStyle = (color) => ({
 // Tab views
 // ═══════════════════════════════════════════════════════════════════
 
-function CategoryView({ byCategory, collapsed, setCollapsed, onUndo, onOverride, onCancel, undoWindowMs }) {
+function CategoryView({ byCategory, collapsed, setCollapsed, onUndo, onOverride, onCancel, onConfirm, undoWindowMs }) {
   if (!byCategory.length) return (
     <div style={{ padding: 40, textAlign: "center", color: C.muted, fontStyle: "italic" }}>
       No charges have been billed yet.
@@ -2172,7 +2444,7 @@ function CategoryView({ byCategory, collapsed, setCollapsed, onUndo, onOverride,
                   {group.items.map(t => (
                     <TriggerRow key={t._id} t={t}
                       onUndo={onUndo} onOverride={onOverride} onCancel={onCancel}
-                      undoWindowMs={undoWindowMs} />
+                      onConfirm={onConfirm} undoWindowMs={undoWindowMs} />
                   ))}
                 </tbody>
               </table>
@@ -2184,7 +2456,7 @@ function CategoryView({ byCategory, collapsed, setCollapsed, onUndo, onOverride,
   );
 }
 
-function DailyView({ byDay, collapsed, setCollapsed, onUndo, onOverride, onCancel, undoWindowMs }) {
+function DailyView({ byDay, collapsed, setCollapsed, onUndo, onOverride, onCancel, onConfirm, undoWindowMs }) {
   if (!byDay.length) return (
     <div style={{ padding: 40, textAlign: "center", color: C.muted, fontStyle: "italic" }}>
       No charges yet.
@@ -2244,7 +2516,7 @@ function DailyView({ byDay, collapsed, setCollapsed, onUndo, onOverride, onCance
                   {group.items.map(t => (
                     <TriggerRow key={t._id} t={t}
                       onUndo={onUndo} onOverride={onOverride} onCancel={onCancel}
-                      undoWindowMs={undoWindowMs} />
+                      onConfirm={onConfirm} undoWindowMs={undoWindowMs} />
                   ))}
                 </tbody>
               </table>
@@ -2252,6 +2524,252 @@ function DailyView({ byDay, collapsed, setCollapsed, onUndo, onOverride, onCance
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ── R7hr-187 — Payment Summary tab ──────────────────────────────────
+   User: "ek 'Payment Summary' tab bhi banana chahiye taki hum dekh
+   sake kab kab payment ki hai patient ne."
+   One read-only chronological money trail for this patient (UHID):
+     • Advance deposits        — PatientAdvance rows (admission advance
+                                 + R7hr-186 interim ledger collections)
+     • Adjusted to bill        — each deposit's appliedTo[] entries
+     • Bill payments           — bill.payments[] post final bill
+                                 (ADVANCE_ADJUSTMENT rows skipped: that
+                                 money already shows as "Adjusted to
+                                 Bill" via appliedTo — listing both
+                                 would double-count the trail)
+     • Refunds                 — refundedAt/refundedAmount on deposits
+   Nothing here mutates billing state. */
+function PaymentsView({ uhid, bill, refreshKey, onChanged }) {
+  const [advs, setAdvs] = useState(null);   // null = loading
+  const [err,  setErr]  = useState("");
+  // R7hr-192 (G3) — Void/Refund actions on bill-payment rows. The
+  // Billing Counter no longer shows IPD bills (R7hr-189), so this tab
+  // is the only place a cashier can reverse a typo'd live-ledger
+  // collection. Backend gates: void = billing.undo (own payment,
+  // 15-min window; Accountant/Admin any), refund = billing.refund.
+  const { can } = useAuth();
+  const [actBusy, setActBusy] = useState(false);
+  const voidPay = async (r) => {
+    const reason = window.prompt(`Void ₹${r.amount.toLocaleString("en-IN")} ${r.mode} payment? Reason:`);
+    if (!reason || !reason.trim()) return;
+    setActBusy(true);
+    try {
+      await axios.post(`${API_ENDPOINTS.BASE}/billing/${bill._id}/payment/${r.pid}/void`, { reason: reason.trim() });
+      toast.success("Payment voided — reversal row added");
+      onChanged?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || e.message || "Void failed");
+    } finally { setActBusy(false); }
+  };
+  const refundPay = async (r) => {
+    const amtStr = window.prompt(`Refund amount (max ₹${r.amount.toLocaleString("en-IN")}):`, String(r.amount));
+    if (amtStr == null) return;
+    const ramt = Math.round(Number(amtStr) * 100) / 100;
+    if (!ramt || ramt <= 0) { toast.error("Enter a valid refund amount"); return; }
+    const reason = window.prompt("Refund reason:");
+    if (!reason || !reason.trim()) return;
+    setActBusy(true);
+    try {
+      await axios.post(`${API_ENDPOINTS.BASE}/billing/${bill._id}/refund`, {
+        amount: ramt, reason: reason.trim(), mode: r.mode || "CASH",
+      });
+      toast.success(`₹${ramt.toLocaleString("en-IN")} refund recorded`);
+      onChanged?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.message || e.message || "Refund failed");
+    } finally { setActBusy(false); }
+  };
+
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      try {
+        setErr("");
+        const r = await axios.get(`${API_ENDPOINTS.BILLING}/advance/uhid/${encodeURIComponent(uhid)}`);
+        // Endpoint shape: { success, data: <summary>, advances: [rows] }
+        const rows = Array.isArray(r.data?.advances) ? r.data.advances
+                   : Array.isArray(r.data?.data) ? r.data.data : [];
+        if (!dead) setAdvs(rows);
+      } catch (e) {
+        if (!dead) {
+          setAdvs([]);
+          setErr(e?.response?.data?.message || e.message || "Failed to load advance ledger");
+        }
+      }
+    })();
+    return () => { dead = true; };
+  }, [uhid, refreshKey]);
+
+  const num = (v) => {
+    if (v == null) return 0;
+    if (typeof v === "object") v = v.$numberDecimal ?? (typeof v.toString === "function" ? v.toString() : NaN);
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const money = (n) => `₹${num(n).toLocaleString("en-IN")}`;
+  const dt = (d) => d
+    ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+    : "—";
+
+  if (advs === null) return (
+    <div style={{ padding: 40, textAlign: "center", color: C.muted, fontStyle: "italic" }}>
+      Loading payment history…
+    </div>
+  );
+
+  // ── Unified trail rows ─────────────────────────────────────────
+  const rows = [];
+  for (const a of advs) {
+    rows.push({
+      kind: "DEPOSIT", at: a.paidAt || a.createdAt, receipt: a.receiptNumber,
+      mode: a.paymentMode, ref: a.transactionId, amount: num(a.amount),
+      by: a.receivedBy, note: a.remarks || "", status: a.status,
+    });
+    for (const ap of (a.appliedTo || [])) {
+      rows.push({
+        kind: "ADJUSTED", at: ap.appliedAt, receipt: a.receiptNumber,
+        mode: "ADVANCE", amount: num(ap.amount), by: ap.appliedBy,
+        note: ap.billNumber ? `Adjusted into bill ${ap.billNumber}` : "Adjusted into bill",
+      });
+    }
+    if (a.refundedAt && num(a.refundedAmount) > 0) {
+      rows.push({
+        kind: "REFUND", at: a.refundedAt, receipt: a.receiptNumber,
+        mode: "CASH", amount: num(a.refundedAmount), by: a.refundedBy,
+        note: a.refundReason || "Advance refunded",
+      });
+    }
+  }
+  for (const p of (bill?.payments || [])) {
+    if (p.paymentMode === "ADVANCE_ADJUSTMENT") continue; // shown via appliedTo rows
+    if (num(p.amount) <= 0) continue; // void-reversal negative rows — original row carries the VOIDED chip
+    rows.push({
+      // R7hr-188 — interim payments land on the still-DRAFT live bill,
+      // which has no billNumber yet; label the source instead of "—".
+      kind: "PAYMENT", at: p.paidAt, receipt: bill?.billNumber || "DRAFT (live)",
+      mode: p.paymentMode, ref: p.transactionId, amount: num(p.amount),
+      by: p.receivedBy, note: p.remarks || "",
+      voided: !!p.voidedAt, voidedBy: p.voidedBy,
+      pid: p._id, // R7hr-192 (G3) — anchor for void/refund actions
+    });
+  }
+  rows.sort((x, y) => new Date(y.at || 0) - new Date(x.at || 0));
+
+  // ── Tab KPIs (CANCELLED deposits excluded from money totals) ───
+  const liveAdvs   = advs.filter(a => a.status !== "CANCELLED");
+  const totDeposit = liveAdvs.reduce((s, a) => s + num(a.amount), 0);
+  const totApplied = liveAdvs.reduce((s, a) => s + num(a.appliedAmount), 0);
+  const totRefund  = liveAdvs.reduce((s, a) => s + num(a.refundedAmount), 0);
+  const totPool    = liveAdvs.reduce((s, a) =>
+    s + num(a.remainingAmount ?? (num(a.amount) - num(a.appliedAmount) - num(a.refundedAmount))), 0);
+  const totBillPay = (bill?.payments || [])
+    .filter(p => p.paymentMode !== "ADVANCE_ADJUSTMENT" && !p.voidedAt && num(p.amount) > 0)
+    .reduce((s, p) => s + num(p.amount), 0);
+
+  const KIND = {
+    DEPOSIT:  { label: "Advance Deposit",  bg: "#ecfdf5", fg: "#059669" },
+    ADJUSTED: { label: "Adjusted to Bill", bg: "#f5f3ff", fg: "#7c3aed" },
+    PAYMENT:  { label: "Bill Payment",     bg: "#f0f9ff", fg: "#0284c7" },
+    REFUND:   { label: "Refund",           bg: "#fef2f2", fg: "#dc2626" },
+  };
+  const chip = (k) => (
+    <span style={{ display: "inline-block", padding: "2px 9px", borderRadius: 999, background: KIND[k].bg, color: KIND[k].fg, fontSize: 10, fontWeight: 800, letterSpacing: ".3px", whiteSpace: "nowrap" }}>
+      {KIND[k].label}
+    </span>
+  );
+  const kpi = (label, value, fg) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <span style={{ fontSize: 9.5, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</span>
+      <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: fg }}>{money(value)}</span>
+    </div>
+  );
+
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ display: "flex", gap: 26, flexWrap: "wrap", padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: "#f8fafc" }}>
+        {kpi("Advance deposited", totDeposit, "#059669")}
+        {kpi("Adjusted to bills", totApplied, "#7c3aed")}
+        {kpi("Bill payments", totBillPay, "#0284c7")}
+        {kpi("Refunded", totRefund, "#dc2626")}
+        {kpi("Pool available", totPool, C.dark)}
+      </div>
+      {err && (
+        <div style={{ padding: "8px 16px", fontSize: 11.5, color: "#dc2626", borderBottom: `1px solid ${C.border}` }}>{err}</div>
+      )}
+      {!rows.length ? (
+        <div style={{ padding: 40, textAlign: "center", color: C.muted, fontStyle: "italic" }}>
+          No payments yet — use Collect Payment or Take Advance to record the first collection.
+        </div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ background: "#f8fafc", fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px" }}>
+              <th style={th(140)}>When</th>
+              <th style={th(130)}>Type</th>
+              <th style={th(140)}>Receipt / Bill No</th>
+              <th style={th(90)}>Mode</th>
+              <th style={{ ...th(110), textAlign: "right" }}>Amount</th>
+              <th style={th(150)}>By</th>
+              <th style={th()}>Remarks</th>
+              <th style={th(120)}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} style={{ borderTop: `1px solid ${C.border}`, opacity: r.voided ? .55 : 1 }}>
+                <td style={{ padding: "8px 10px", fontSize: 11.5, whiteSpace: "nowrap", color: C.dark }}>{dt(r.at)}</td>
+                <td style={{ padding: "8px 10px" }}>
+                  {chip(r.kind)}
+                  {r.kind === "DEPOSIT" && r.status && r.status !== "ACTIVE" && (
+                    <div style={{ fontSize: 9, fontWeight: 700, color: C.muted, marginTop: 3 }}>{r.status.replace(/_/g, " ")}</div>
+                  )}
+                  {r.voided && (
+                    <div style={{ fontSize: 9, fontWeight: 800, color: "#dc2626", marginTop: 3 }}>VOIDED{r.voidedBy ? ` by ${r.voidedBy}` : ""}</div>
+                  )}
+                </td>
+                <td style={{ padding: "8px 10px", fontSize: 11.5, fontFamily: "'DM Mono', monospace", color: C.dark }}>{r.receipt || "—"}</td>
+                <td style={{ padding: "8px 10px", fontSize: 11.5, fontWeight: 700, color: C.dark }}>
+                  {r.mode || "—"}
+                  {r.ref ? <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 500 }}>{r.ref}</div> : null}
+                </td>
+                <td style={{
+                  padding: "8px 10px", textAlign: "right", whiteSpace: "nowrap", fontWeight: 800,
+                  fontSize: 12.5, fontFamily: "'DM Mono', monospace",
+                  color: r.kind === "REFUND" ? "#dc2626" : r.kind === "ADJUSTED" ? "#7c3aed" : C.dark,
+                  textDecoration: r.voided ? "line-through" : "none",
+                }}>
+                  {r.kind === "REFUND" ? `− ${money(r.amount)}` : money(r.amount)}
+                </td>
+                <td style={{ padding: "8px 10px", fontSize: 11.5, color: C.dark }}>{r.by || "—"}</td>
+                <td style={{ padding: "8px 10px", fontSize: 11, color: C.muted }}>{r.note || "—"}</td>
+                <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
+                  {r.kind === "PAYMENT" && !r.voided && r.pid && (
+                    <>
+                      {can("billing.undo") && (
+                        <button disabled={actBusy} onClick={() => voidPay(r)}
+                          title="Void this payment (15-min cashier window; Accountant/Admin anytime)"
+                          style={{ padding: "3px 9px", marginRight: 5, borderRadius: 6, border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                          Void
+                        </button>
+                      )}
+                      {can("billing.refund") && (
+                        <button disabled={actBusy} onClick={() => refundPay(r)}
+                          title="Record a refund against this bill"
+                          style={{ padding: "3px 9px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#f8fafc", color: C.muted, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                          Refund
+                        </button>
+                      )}
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

@@ -143,6 +143,8 @@ const VISITOR_PASS_MUTABLE = new Set([
   "status", "returnedAt", "returnedById", "revokedAt", "revokedReason",
   "notes", "validUntil", "photoUrl", "validAreas", "printCount",
   "legalHold", "retainUntil", "bedNumber", "wardName", "updatedAt",
+  // R7bj-F9 cron stamps this when sweeping Active→Expired; set-once system field.
+  "autoExpiredAt",
 ]);
 const VISITOR_PASS_TERMINAL = new Set(["Returned", "Expired", "Revoked", "Lost"]);
 

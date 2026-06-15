@@ -577,7 +577,11 @@ exports.getRevenueBreakdown = async (req, res, next) => {
     const agg = await PatientBill.aggregate([
       { $match: {
           createdAt: { $gte: from, $lte: to },
-          billStatus: { $nin: ["DRAFT", "CANCELLED"] },   // R7ap-D5-12
+          // R7hr-192 (G4): DRAFT included — live IPD bills accrue real
+          // charges and (since R7hr-188) carry real collections mid-stay;
+          // excluding them deferred a whole admission's revenue to the
+          // discharge date. CANCELLED stays out (R7ap-D5-12).
+          billStatus: { $nin: ["CANCELLED"] },
       } },
       // Pre-compute per-bill paid + gross as doubles so downstream $sum
       // operates on plain doubles instead of Decimal128 objects. This is
@@ -2230,10 +2234,17 @@ async function computeCollectionSummary(dateStr) {
     // ─────────────────────────────────────────────────────────────
     const billsAggP = PatientBill.aggregate([
       { $match: {
-          billStatus: { $nin: ["DRAFT"] },
+          // R7hr-192 (G1): DRAFT bills now carry REAL mid-stay payments
+          // (R7hr-188 — IPD Live Ledger collections), so the payments
+          // leg must INCLUDE them; otherwise a cashier's live-ledger
+          // CASH/CARD/UPI collections vanish from this shift summary
+          // while the Day Book (status-agnostic) still counts them —
+          // a guaranteed shift-close reconciliation mismatch. The
+          // bills-raised leg keeps excluding DRAFT so the auto-opened
+          // IPD draft shells don't inflate the day's bill counts.
           $or: [
             { "payments.paidAt": { $gte: dayStart, $lte: dayEnd } },
-            { createdAt: { $gte: dayStart, $lte: dayEnd } },
+            { createdAt: { $gte: dayStart, $lte: dayEnd }, billStatus: { $nin: ["DRAFT"] } },
           ],
       } },
       // Pre-compute per-bill numbers that don't depend on payment unwind.

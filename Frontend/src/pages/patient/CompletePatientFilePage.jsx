@@ -2744,8 +2744,20 @@ function TimelineSection({ data }) {
     if (data.currentAdmission?.actualDischargeDate) {
       push("discharge", `Discharge`, data.currentAdmission.actualDischargeDate, null, data.currentAdmission.dischargedBy, data.currentAdmission);
     }
-    if (data.dischargeSummary?.signedAt || data.dischargeSummary?.createdAt) {
-      push("discharge-summary", "Discharge summary signed", data.dischargeSummary.signedAt || data.dischargeSummary.createdAt, null, data.dischargeSummary.signedByName, data.dischargeSummary);
+    // R7hr-197 — the backend returns dischargeSummary as an ARRAY, and the
+    // model finalizes with finalizedAt/finalizedByName/status:"finalized"
+    // (not signedAt/signedByName). The old object-property read was always
+    // undefined, so this timeline event never fired. Pick the finalized
+    // summary (else the latest) and read the real fields.
+    {
+      const _dsList = Array.isArray(data.dischargeSummary)
+        ? data.dischargeSummary
+        : (data.dischargeSummary ? [data.dischargeSummary] : []);
+      const _ds = _dsList.find(s => s?.status === "finalized") || _dsList[0];
+      if (_ds && (_ds.finalizedAt || _ds.createdAt)) {
+        push("discharge-summary", _ds.status === "finalized" ? "Discharge summary finalized" : "Discharge summary drafted",
+             _ds.finalizedAt || _ds.createdAt, null, _ds.finalizedByName || _ds.signedByName, _ds);
+      }
     }
 
     const grouped = {};
