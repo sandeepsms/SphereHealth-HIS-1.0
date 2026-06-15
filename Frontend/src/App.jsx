@@ -23,7 +23,9 @@ import "primeflex/primeflex.css";
 
 // ── Critical paths (eager) — login + dashboard ──────────────────
 import LoginPage from "./pages/auth/LoginPage";
-import Dashboard1 from "./pages/patient/Dashboard";
+// patient/Dashboard.jsx removed (R7hr-205) — legacy initial-build component
+// imported here as Dashboard1 but never rendered. Role dashboards live in
+// RoleDashboardPage (/dashboard).
 
 // ── Lazy-loaded pages (downloaded on-demand) ────────────────────
 // PatientsTable deleted 2026-05-17 — superseded by PatientLookupPage's
@@ -58,10 +60,10 @@ const TreatmentChartMarPrint = lazy(() => import("./pages/print/TreatmentChartMa
 const BedTransfersListPage = lazy(() => import("./pages/bed/BedTransfersListPage"));
 const BedMonthlyReportPage = lazy(() => import("./pages/bed/BedMonthlyReportPage"));
 
-// Patients
-const PatientList = lazy(() => import("./pages/patient/PatientList"));
-const PatientForm = lazy(() => import("./pages/patient/PatientForm"));
-const PatientDetails = lazy(() => import("./pages/patient/PatientDetails"));
+// Patients — legacy CRUD trio (PatientList / PatientForm / PatientDetails)
+// removed (R7hr-205): initial-build pages with NO live entry point (no Sidebar
+// entry, no inbound links), superseded by the unified PatientLookupPage
+// (/patient-search). The /patients* routes below redirect there.
 
 // OPD
 const OPList = lazy(() => import("./pages/OPD/OPDList"));
@@ -549,11 +551,14 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* R7hr-158 — /vitalsView + /vitalsView/:uhid routes retired.
                 Trend opens inline from Nursing Notes via VitalsTrendModal. */}
 
-            {/* ── Patients Module ───────────────────────────────── */}
-            <Route path="/patients" element={<PatientList />} />
-            <Route path="/patients/new" element={<PatientForm />} />
-            <Route path="/patients/edit/:id" element={<PatientForm />} />
-            <Route path="/patients/:id" element={<PatientDetails />} />
+            {/* ── Patients Module (R7hr-205) ─────────────────────────
+                Legacy /patients CRUD pages removed; superseded by the unified
+                PatientLookupPage. Routes redirect so old bookmarks don't 404 —
+                new-patient registration goes to the Reception Console. */}
+            <Route path="/patients"          element={<Navigate to="/patient-search" replace />} />
+            <Route path="/patients/new"      element={<Navigate to="/reception" replace />} />
+            <Route path="/patients/edit/:id" element={<Navigate to="/patient-search" replace />} />
+            <Route path="/patients/:id"      element={<Navigate to="/patient-search" replace />} />
 
             {/* ── Services & TPA ────────────────────────────────── */}
             <Route path="/addservice" element={
