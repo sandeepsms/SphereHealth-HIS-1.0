@@ -506,86 +506,107 @@ function IssueGatePassModal({ admission, onClose, onIssued, userName }) {
 
 /* ─────────── Print Gate Pass ─────────── */
 /* Wired to the unified print system — discharge summary + final bill. */
-function printDischargeSummary(adm) {
+async function printDischargeSummary(adm) {
   const p = adm.patientId || {};
   const w = adm.dischargeWorkflow || {};
-  // R7eo-B — Pattern B caller payload gap fix: extend fallback chain
-  // (w.dischargeSummary → adm → p → "") for all NABH COP.7 fields so
-  // the DischargeSummary template renders complete data when launched
-  // from the discharge queue.
-  const ds = w.dischargeSummary || {};
+  // R7hr-210 — the discharge-queue payload does NOT embed the finalized
+  // DischargeSummary (getDischargeQueue only populates patient/doctor/dept),
+  // so the old `w.dischargeSummary` read was always undefined and every
+  // clinical section printed blank. Fetch the real summary by admission and
+  // map its model fields to the printable's expected keys.
+  let ds = {};
+  try {
+    const r = await axios.get(`${API_ENDPOINTS.BASE}/discharge-summary/admission/${adm._id}`);
+    ds = r?.data?.data || r?.data || {};
+    if (Array.isArray(ds)) ds = ds[0] || {};
+  } catch (_) { /* fall back to whatever the admission row carries */ }
+
+  const meds = Array.isArray(ds.medicationsOnDischarge) ? ds.medicationsOnDischarge.map(m => ({
+    name: m.medicineName, dose: m.dose, route: m.route, frequency: m.frequency, duration: m.duration, instructions: m.remarks,
+  })) : [];
+  const procs = Array.isArray(ds.proceduresDone) ? ds.proceduresDone.map(pr => ({
+    name: pr.procedureName, date: pr.date, surgeon: pr.performedBy, findings: pr.notes,
+  })) : [];
+  const invText = ds.keyInvestigationsText
+    || (Array.isArray(ds.investigationsSummary)
+          ? ds.investigationsSummary.map(i => `${i.testName || ""}: ${i.result || ""}`.trim()).filter(Boolean).join("\n")
+          : ds.investigationsSummary) || "";
+
   openPrint("discharge-summary", {
-    summaryNo:      w.summaryNumber || `DS-${(adm.admissionNumber || "").replace(/[^A-Z0-9]/gi, "")}`,
-    patientName:    adm.patientName,
-    uhid:           adm.UHID,
-    ipdNo:          adm.admissionNumber,
-    age:            p.age,
-    gender:         p.gender,
-    bloodGroup:     ds.bloodGroup     || adm.bloodGroup     || p.bloodGroup     || "",
-    allergies:      ds.allergies      || adm.allergies      || p.allergies      || "",
-    admissionDate:  adm.admissionDate,
-    dischargeDate:  adm.actualDischargeDate || w.gatePassIssuedAt || new Date().toISOString(),
-    totalDays:      adm.totalDays,
-    consultantName: ds.consultantName || adm.attendingDoctor || w.doctorApprovedBy,
-    consultantReg:  ds.consultantReg  || ds.doctorRegNo    || adm.consultantReg  || adm.attendingDoctorReg || "",
-    consultantDmc:  ds.consultantDmc  || adm.consultantDmc  || "",
+    summaryNo:      ds.summaryNumber || w.summaryNumber || `DS-${(adm.admissionNumber || "").replace(/[^A-Z0-9]/gi, "")}`,
+    patientName:    adm.patientName || ds.patientName,
+    uhid:           adm.UHID || ds.UHID,
+    ipdNo:          adm.admissionNumber || ds.ipdNo,
+    age:            p.age ?? ds.age,
+    gender:         p.gender || ds.gender,
+    bloodGroup:     adm.bloodGroup || p.bloodGroup || "",
+    allergies:      adm.allergies  || p.allergies  || "",
+    admissionDate:  adm.admissionDate || ds.admissionDate,
+    dischargeDate:  adm.actualDischargeDate || ds.dischargeDate || w.gatePassIssuedAt || new Date().toISOString(),
+    totalDays:      adm.totalDays || ds.totalDaysAdmitted,
+    consultantName: ds.doctorName || adm.attendingDoctor || w.doctorApprovedBy,
+    consultantReg:  ds.doctorRegNo || adm.attendingDoctorReg || "",
     bedNumber:      adm.bedNumber,
     wardName:       adm.wardName,
-    dischargeType:  w.dischargeType || "Routine",
-    totalDaysAdmitted: ds.totalDaysAdmitted,
+    dischargeType:  ds.dischargeType || w.dischargeType || "Routine",
     finalDiagnosis: ds.finalDiagnosis || adm.finalDiagnosis || adm.diagnosis,
-    icd10:          ds.icd10          || adm.icd10          || "",
-    icd10Desc:      ds.icd10Desc      || adm.icd10Description || adm.icd10Desc || "",
-    secondaryDiagnoses: ds.secondaryDiagnoses || adm.secondaryDiagnoses || [],
-    chiefComplaints: ds.chiefComplaints || adm.chiefComplaints,
-    courseInHospital: ds.courseInHospital || ds.courseOfStay || adm.courseInHospital || "",
-    proceduresDone:  ds.proceduresDone   || ds.procedures   || adm.proceduresDone || [],
-    investigationsSummary: ds.investigationsSummary || ds.keyInvestigations || adm.investigationsSummary || "",
-    conditionOnDischarge: w.conditionOnDischarge || ds.conditionOnDischarge,
-    dischargeMeds:  ds.dischargeMeds || ds.medications || adm.dischargeMeds || [],
-    advice:         (ds.dischargeAdvice || adm.dischargeAdvice) ? String(ds.dischargeAdvice || adm.dischargeAdvice).split("\n").filter(Boolean) : [],
-    dietAdvice:           ds.dietAdvice           || adm.dietAdvice           || "",
-    warningSigns:         ds.warningSigns         || adm.warningSigns         || "",
-    activityAdvice:       ds.activityAdvice       || adm.activityAdvice       || "",
-    emergencyWarnings:    ds.emergencyWarnings    || adm.emergencyWarnings    || "",
-    specialInstructions:  ds.specialInstructions  || adm.specialInstructions  || "",
-    woundCare:            ds.woundCare            || adm.woundCare            || "",
-    followUpInstructions: ds.followUpInstructions || adm.followUpInstructions || "",
-    followUpDepartment:   ds.followUpDepartment   || adm.followUpDepartment   || adm.department || "",
-    followUpDate:   ds.followUpDate   || adm.followUpDate,
+    admittingDiagnosis: ds.admittingDiagnosis || "",
+    icd10:          ds.icdCode || "",
+    secondaryDiagnoses: ds.comorbidities || [],
+    courseInHospital: ds.courseInHospital || "",
+    historyOfPresentIllness: ds.historyOfPresentIllness || "",
+    proceduresDone:  procs,
+    investigationsSummary: invText,
+    conditionOnDischarge: ds.conditionOnDischarge || w.conditionOnDischarge,
+    vitalsOnDischarge: ds.vitalsOnDischarge || "",
+    bloodTransfusions: ds.bloodTransfusionsText || "",
+    mlcNumber:      ds.mlcNumber || ds.mlrNumberSnapshot || "",
+    dischargeMeds:  meds,
+    advice:         [ds.specialInstructions, ds.activityAdvice].filter(Boolean).flatMap(s => String(s).split("\n").filter(Boolean)),
+    dietAdvice:           ds.dietAdvice            || "",
+    warningSigns:         ds.emergencyWarnings     || "",
+    activityAdvice:       ds.activityAdvice        || "",
+    emergencyWarnings:    ds.emergencyWarnings     || "",
+    specialInstructions:  ds.specialInstructions   || "",
+    woundCare:            ds.woundCareInstructions || "",
+    followUpInstructions: ds.followUpInstructions  || "",
+    followUpDepartment:   ds.followUpDepartment    || adm.department || "",
+    followUpDate:   ds.followUpDate,
     followUpDoctor: ds.followUpDoctor || adm.attendingDoctor,
-    // R7bh-F1 / META-1: PrintAudit anchor — DischargeSummary maps to
-    // the DischargeSummary model when one exists; fallback to the
-    // admission so $inc still has somewhere to land. NABH IMS.5
-    // requires the reprint trail on discharge documents.
     printAudit: {
       entityType:   "DischargeSummary",
-      entityId:     w.dischargeSummaryId || adm._id,
-      entityNumber: w.summaryNumber || `DS-${(adm.admissionNumber || "").replace(/[^A-Z0-9]/gi, "")}`,
+      entityId:     ds._id || w.dischargeSummaryId || adm._id,
+      entityNumber: ds.summaryNumber || w.summaryNumber || `DS-${(adm.admissionNumber || "").replace(/[^A-Z0-9]/gi, "")}`,
       UHID:         adm.UHID,
       patientName:  adm.patientName,
     },
   });
 }
 
-function printFinalBill(adm) {
+async function printFinalBill(adm) {
   const p = adm.patientId || {};
   const w = adm.dischargeWorkflow || {};
-  // R7eo-B — Pattern B caller payload gap fix: pass visitType +
-  // GST B2B fields so FinalBill template (Pattern A2) can adapt
-  // the title and render B2B GSTIN / legal name block when set.
+  // R7hr-210 — the queue payload carries no bill line items (`w.billItems`
+  // never existed), so the printed final bill had an empty charge table.
+  // Fetch the patient's IPD/DAYCARE PatientBill and map its real billItems.
+  let bill = {};
+  try {
+    const r = await axios.get(`${API_ENDPOINTS.BASE}/billing/uhid/${encodeURIComponent(adm.UHID)}`);
+    const raw = r?.data?.bills || r?.data?.data?.bills || r?.data?.data || r?.data || [];
+    const bills = Array.isArray(raw) ? raw : [];
+    bill = bills.find(b => String(b.admission) === String(adm._id))
+        || bills.find(b => /IPD|DAY/i.test(b.visitType || ""))
+        || bills[0] || {};
+  } catch (_) { /* fall back to whatever the admission row carries */ }
+
   openPrint("final-bill", {
-    // dischargeWorkflow stores the bill number under `finalBillNumber`
-    // (see backend admissionController.clearFinalBill). The previous
-    // `w.billNumber` read was always undefined — the printed bill had
-    // a blank bill-number field for every discharge.
-    billNo:         w.finalBillNumber,
+    billNo:         bill.billNumber || w.finalBillNumber,
     patientName:    adm.patientName,
     uhid:           adm.UHID,
     ipdNo:          adm.admissionNumber,
     age:            p.age,
     gender:         p.gender,
-    visitType:      adm.admissionType,
+    visitType:      bill.visitType || adm.admissionType,
     customerGstin:  adm.customerGstin,
     placeOfSupply:  adm.placeOfSupply,
     customerLegalName: adm.customerLegalName,
@@ -597,18 +618,16 @@ function printFinalBill(adm) {
     wardName:       adm.wardName,
     finalDiagnosis: adm.finalDiagnosis || adm.diagnosis,
     tpaName:        adm.tpaName || (adm.scheme === "Cashless" ? "TPA" : "Self-paying"),
-    items:          w.billItems || adm.billItems || [],
-    discount:       w.discount,
-    tax:            w.tax,
-    advanceReceived:w.advanceReceived,
-    payments:       w.payments || [],
-    // R7bh-F1 / META-1: PrintAudit anchor — final bill prints map
-    // to PatientBill so the bill's printCount increments and the
-    // DUPLICATE watermark appears on reprints.
+    items:          bill.billItems || w.billItems || [],
+    discount:       bill.discount ?? w.discount,
+    tax:            bill.taxAmount ?? w.tax,
+    advanceReceived: bill.advancePaid ?? bill.advanceReceived ?? w.advanceReceived,
+    payments:       bill.payments || w.payments || [],
+    totalAmount:    bill.netAmount ?? bill.totalAmount,
     printAudit: {
       entityType:   "Bill",
-      entityId:     w.finalBillId || adm._id,
-      entityNumber: w.finalBillNumber,
+      entityId:     bill._id || w.finalBillId || adm._id,
+      entityNumber: bill.billNumber || w.finalBillNumber,
       UHID:         adm.UHID,
       patientName:  adm.patientName,
     },
