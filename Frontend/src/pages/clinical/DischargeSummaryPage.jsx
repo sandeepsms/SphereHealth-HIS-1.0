@@ -967,6 +967,9 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
     // R7hr-202 — auto-filled discharge event fields (vitals / transfusions / MLC).
     vitalsOnDischarge: "", bloodTransfusionsText: "", mlcNumber: "",
     significantFindings: "", conditionOnDischarge: "Stable",
+    // R7hr-210 — death-discharge fields (NABH COP.18 / MCCD). The finalize gate
+    // refuses a Death/Expired discharge without an immediate cause of death.
+    immediateCauseOfDeath: "", antecedentCauseOfDeath: "", deathDate: "", deathTime: "",
     dietAdvice: "", activityAdvice: "", woundCare: "", specialInstructions: "",
     followUpRequired: true, followUpDate: "", followUpDoctor: "", followUpDepartment: "", followUpInstructions: "",
     emergencyWarnings: "",
@@ -1882,6 +1885,32 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
                   placeholder="Auto-fills for medico-legal cases" />
               </F>
             </G4>
+            {/* R7hr-210 — Cause of Death (NABH COP.18 / MCCD). Shown for a
+                Death / Expired disposition; the finalize gate refuses a death
+                discharge without an immediate cause of death, so capture it here. */}
+            {(form.dischargeType === "Death" || form.conditionOnDischarge === "Expired") && (
+              <div style={{ marginTop: 12, padding: "12px 14px", border: "1px solid #fca5a5", borderRadius: 8, background: "#fef2f2" }}>
+                <div style={{ fontWeight: 800, fontSize: 12, color: "#991b1b", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                  Cause of Death — required to finalize (NABH COP.18 / MCCD)
+                </div>
+                <F label="Immediate Cause of Death" required>
+                  <input className="his-field" value={form.immediateCauseOfDeath} onChange={upd("immediateCauseOfDeath")}
+                    placeholder="e.g. Cardiopulmonary arrest secondary to septic shock" />
+                </F>
+                <G3>
+                  <F label="Antecedent / Underlying Cause">
+                    <input className="his-field" value={form.antecedentCauseOfDeath} onChange={upd("antecedentCauseOfDeath")}
+                      placeholder="e.g. Community-acquired pneumonia" />
+                  </F>
+                  <F label="Date of Death">
+                    <input className="his-field" type="date" value={form.deathDate} onChange={upd("deathDate")} />
+                  </F>
+                  <F label="Time of Death">
+                    <input className="his-field" value={form.deathTime} onChange={upd("deathTime")} placeholder="HH:MM (24h)" />
+                  </F>
+                </G3>
+              </div>
+            )}
             <div style={{ marginTop: 12 }}>
               <F label="Co-consultants">
                 <input className="his-field" value={form.consultants} onChange={upd("consultants")} placeholder="e.g. Dr. Sharma (Cardiology), Dr. Gupta (Nephrology)" />

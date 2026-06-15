@@ -193,6 +193,9 @@ const createNurseNote = async (data, nurseUserId) => {
     noteDate: noteDate || new Date(),
     shift: shift || "general",
     nurse: nurse?._id || undefined,
+    // R7hr-213 — stamp the stable User-based author so the note can always be
+    // edited/deleted by its own author (NurseStaff._id !== User._id).
+    nurseUserId: (nurseUserId && mongoose.isValidObjectId(String(nurseUserId))) ? nurseUserId : undefined,
     nurseName: data.nurseName || nurse?.personalInfo?.fullName || nurse?.nurseName || actorUserName || "",
     nurseStaffId: nurse?.staffId || "",
     // R7go — Prefer User.employeeId (canonical hospital ID) over the
@@ -429,12 +432,17 @@ const updateNurseNote = async (id, data, nurseUserId) => {
   }
   // R7az-D2-HIGH-5: legacy nurse-null notes shouldn't be editable by
   // arbitrary nurses — refuse rather than fall through to a free-for-all.
-  if (!note.nurse) {
-    const e = new Error("Cannot edit legacy note with no nurse owner — create an addendum via a new note instead");
+  // R7hr-213 — ownership keys off the stable User id (nurseUserId) when set,
+  // falling back to the legacy NurseStaff-based `nurse` ref. The author always
+  // matches via nurseUserId, so they can edit their own note.
+  if (!note.nurse && !note.nurseUserId) {
+    const e = new Error("Cannot edit legacy note with no recorded owner — create an addendum via a new note instead");
     e.statusCode = 403;
     throw e;
   }
-  if (note.nurse && nurseUserId && note.nurse.toString() !== nurseUserId.toString()) {
+  const _ownsByUser  = note.nurseUserId && nurseUserId && note.nurseUserId.toString() === nurseUserId.toString();
+  const _ownsByStaff = note.nurse       && nurseUserId && note.nurse.toString()       === nurseUserId.toString();
+  if (!_ownsByUser && !_ownsByStaff) {
     const e = new Error("Not authorised");
     e.statusCode = 403;
     throw e;
@@ -550,12 +558,11 @@ const confirmSingleOrder = async (data, nurseUserId) => {
     throw e;
   }
 
-  const nurse = await NurseStaff.findById(nurseUserId);
-  if (!nurse) {
-    const e = new Error("Nurse not found");
-    e.statusCode = 404;
-    throw e;
-  }
+  // R7hr-213 — don't hard-404 when the acting nurse has no NurseStaff row
+  // (NurseStaff and Users are separate; many nurse Users have no NurseStaff
+  // doc). Resolve gracefully and fall back to the User id as the confirmer.
+  const nurse = await NurseStaff.findById(nurseUserId).catch(() => null);
+  const confirmedById = nurse?._id || nurseUserId;
 
   const result = await DoctorNotes.updateOne(
     {
@@ -565,7 +572,7 @@ const confirmSingleOrder = async (data, nurseUserId) => {
     {
       $set: {
         "orders.$.nurseStatus": status || "done",
-        "orders.$.nurseConfirmedBy": nurse._id,
+        "orders.$.nurseConfirmedBy": confirmedById,
         "orders.$.nurseConfirmedAt": new Date(),
         "orders.$.nurseRemarks": remarks || "",
       },
@@ -588,7 +595,7 @@ const confirmSingleOrder = async (data, nurseUserId) => {
         executedAt: new Date(),
         shift: shift || "morning",
       },
-      { _id: nurse._id, name: nurse.personalInfo?.fullName },
+      { _id: confirmedById, name: nurse?.personalInfo?.fullName || data.nurseName || "" },
     );
 
     // R7az-D2-MED-8: push the confirmation history onto the most recent
@@ -604,8 +611,8 @@ const confirmSingleOrder = async (data, nurseUserId) => {
       if (targetNote) {
         targetNote.nurseConfirmations = targetNote.nurseConfirmations || [];
         targetNote.nurseConfirmations.push({
-          nurseId:      nurse._id,
-          nurseName:    nurse.personalInfo?.fullName || nurse.nurseName || "",
+          nurseId:      confirmedById,
+          nurseName:    nurse?.personalInfo?.fullName || nurse?.nurseName || data.nurseName || "",
           orderId:      new mongoose.Types.ObjectId(orderId),
           doctorNoteId: new mongoose.Types.ObjectId(doctorNoteId),
           ts:           new Date(),
@@ -620,7 +627,7 @@ const confirmSingleOrder = async (data, nurseUserId) => {
   }
 
   return {
-    confirmedBy: nurse.personalInfo?.fullName,
+    confirmedBy: nurse?.personalInfo?.fullName || data.nurseName || "",
     status: status || "done",
   };
 };
@@ -642,12 +649,17 @@ const deleteNurseNote = async (id, nurseUserId) => {
   }
   // R7az-D2-HIGH-5: legacy null-nurse notes refuse delete too — only the
   // recorded nurse owner can drop a draft.
-  if (!note.nurse) {
-    const e = new Error("Cannot delete legacy note with no nurse owner");
+  // R7hr-213 — ownership keys off the stable User id (nurseUserId) when set,
+  // falling back to the legacy NurseStaff `nurse` ref so the author can drop
+  // their own draft.
+  if (!note.nurse && !note.nurseUserId) {
+    const e = new Error("Cannot delete legacy note with no recorded owner");
     e.statusCode = 403;
     throw e;
   }
-  if (note.nurse && nurseUserId && note.nurse.toString() !== nurseUserId.toString()) {
+  const _ownsByUser  = note.nurseUserId && nurseUserId && note.nurseUserId.toString() === nurseUserId.toString();
+  const _ownsByStaff = note.nurse       && nurseUserId && note.nurse.toString()       === nurseUserId.toString();
+  if (!_ownsByUser && !_ownsByStaff) {
     const e = new Error("Not authorised");
     e.statusCode = 403;
     throw e;
@@ -828,7 +840,12 @@ const amendNurseNote = async (id, data, actor, expectedVersion) => {
   // notes. Admin role bypasses the author-only rule.
   const actorId = actor?.id || actor?._id;
   const isAdmin = String(actor?.role || "").toLowerCase() === "admin";
-  if (!isAdmin && note.nurse && actorId && note.nurse.toString() !== actorId.toString()) {
+  // R7hr-213 — match the author via the stable User id first (nurseUserId),
+  // falling back to the legacy NurseStaff `nurse` ref. Without this an author
+  // could never amend their own note (NurseStaff._id !== User._id).
+  const _ownsByUser  = note.nurseUserId && actorId && note.nurseUserId.toString() === actorId.toString();
+  const _ownsByStaff = note.nurse       && actorId && note.nurse.toString()       === actorId.toString();
+  if (!isAdmin && (note.nurse || note.nurseUserId) && !_ownsByUser && !_ownsByStaff) {
     const e = new Error("Not authorised to amend another nurse's note");
     e.statusCode = 403;
     throw e;

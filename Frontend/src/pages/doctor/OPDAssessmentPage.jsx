@@ -678,7 +678,17 @@ export default function OPDAssessmentPage() {
         patientName: visit?.patientName || "",
         orderedBy: user.fullName || "Doctor", orderedByRole: "Doctor",
       };
-      const medOrders = meds.filter(m => m.name && !m._orderId).map(m => ({
+      // R7hr-213 — a Medication DoctorOrder needs dose + frequency; a name-only
+      // Rx row would 400 the WHOLE bulk POST, so every order (meds + labs +
+      // infusions) silently failed to reach pharmacy/lab. Only send complete
+      // rows; warn the doctor about any incomplete ones rather than dropping
+      // the whole batch.
+      const _newMeds = meds.filter(m => m.name && !m._orderId);
+      const _incompleteMeds = _newMeds.filter(m => !(m.dose && m.frequency));
+      if (_incompleteMeds.length) {
+        toast.warn(`${_incompleteMeds.length} medication(s) missing dose/frequency were NOT sent to pharmacy: ${_incompleteMeds.map(m => m.name).join(", ")}`);
+      }
+      const medOrders = _newMeds.filter(m => m.dose && m.frequency).map(m => ({
         ...baseOrder, orderType: "Medication",
         orderDetails: { medicineName: m.name, dose: m.dose, frequency: m.frequency, duration: m.duration, route: m.route || "Oral", displayName: m.name },
         consentStatus: "NotRequired",
@@ -695,7 +705,7 @@ export default function OPDAssessmentPage() {
       const infOrders = infusions.filter(f => f.name && !f._orderId).map(f => ({
         ...baseOrder, orderType: "IV_Fluid",
         orderDetails: {
-          medicineName: f.name, displayName: f.name,
+          fluidName: f.name, medicineName: f.name, displayName: f.name,
           route: f.route || "IV Infusion",
           frequency: "Continuous",
           totalVolume: f.totalVolume,

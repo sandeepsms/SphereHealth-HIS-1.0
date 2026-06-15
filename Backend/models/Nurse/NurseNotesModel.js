@@ -102,6 +102,15 @@ const NurseNotesSchema = new mongoose.Schema(
       ref: "NurseStaff",
       required: false, // NurseStaff and Users are separate — not always linked
     },
+    // R7hr-213 — stable User-based author id. Because NurseStaff._id !== User._id
+    // (and many nurse Users have no NurseStaff row at all), keying edit/delete/
+    // amend ownership off `nurse` alone 403'd authors out of their OWN notes.
+    // This records the canonical actor so ownership checks always resolve.
+    nurseUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: false,
+    },
     nurseName: { type: String },
     nurseStaffId: { type: String },
     nurseEmployeeId: { type: String },

@@ -116,16 +116,19 @@ const BedDashboard = () => {
     // ALOS from admissions discharged in the last 30 days
     const now = Date.now();
     const THIRTY = 30 * 24 * 60 * 60 * 1000;
-    const recent = admissions.filter(a => a.dischargeDate && (now - new Date(a.dischargeDate).getTime()) < THIRTY);
-    const totalDays = recent.reduce((sum, a) => sum + (dayDiff(a.admissionDate, a.dischargeDate) || 0), 0);
+    const recent = admissions.filter(a => a.actualDischargeDate && (now - new Date(a.actualDischargeDate).getTime()) < THIRTY);
+    const totalDays = recent.reduce((sum, a) => sum + (dayDiff(a.admissionDate, a.actualDischargeDate) || 0), 0);
     const alos = recent.length > 0 ? (totalDays / recent.length).toFixed(1) : "—";
 
-    // Today's expected discharges
+    // Today's expected discharges — R7hr-211: currentBooking is never populated
+    // on beds, so join the admissions array (by bedNumber) for the expected
+    // discharge date + admit date (the `_adm` join is reused in the panel render).
     const today = new Date();
-    const expectedToday = beds.filter(b => {
-      const eta = b.currentBooking?.expectedDischargeDate;
-      return b.status === "Occupied" && eta && isSameDay(eta, today);
-    });
+    const admByBed = {};
+    admissions.forEach(a => { if (a.status === "Active" && a.bedNumber) admByBed[a.bedNumber] = a; });
+    const expectedToday = beds
+      .map(b => ({ ...b, _adm: admByBed[b.bedNumber] }))
+      .filter(b => b.status === "Occupied" && b._adm?.expectedDischargeDate && isSameDay(b._adm.expectedDischargeDate, today));
 
     // Isolation occupancy
     const isolationCount = beds.filter(b => Array.isArray(b.isolationFlags) && b.isolationFlags.length > 0).length;
@@ -374,8 +377,8 @@ const BedDashboard = () => {
                       Bed {b.bedNumber} · {b.wardName || "—"}
                     </div>
                     <div style={{ fontSize: 10, color: C.muted }}>
-                      Admitted: {b.currentBooking?.admittedDate
-                        ? new Date(b.currentBooking.admittedDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
+                      Admitted: {(b._adm?.admissionDate || b.currentBooking?.admittedDate)
+                        ? new Date(b._adm?.admissionDate || b.currentBooking.admittedDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
                         : "—"}
                     </div>
                   </div>

@@ -18,8 +18,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
-import { API_ENDPOINTS } from "../../utils/api";
-import { useAuth } from "../../Components/AuthContext";
+import { API_ENDPOINTS } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
 
 // ──────────────────────────────────────────────────────────────
 // Instrument question banks

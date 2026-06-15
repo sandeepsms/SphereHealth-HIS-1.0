@@ -23,7 +23,9 @@ import "primeflex/primeflex.css";
 
 // ── Critical paths (eager) — login + dashboard ──────────────────
 import LoginPage from "./pages/auth/LoginPage";
-import Dashboard1 from "./pages/patient/Dashboard";
+// patient/Dashboard.jsx removed (R7hr-205) — legacy initial-build component
+// imported here as Dashboard1 but never rendered. Role dashboards live in
+// RoleDashboardPage (/dashboard).
 
 // ── Lazy-loaded pages (downloaded on-demand) ────────────────────
 // PatientsTable deleted 2026-05-17 — superseded by PatientLookupPage's
@@ -58,10 +60,10 @@ const TreatmentChartMarPrint = lazy(() => import("./pages/print/TreatmentChartMa
 const BedTransfersListPage = lazy(() => import("./pages/bed/BedTransfersListPage"));
 const BedMonthlyReportPage = lazy(() => import("./pages/bed/BedMonthlyReportPage"));
 
-// Patients
-const PatientList = lazy(() => import("./pages/patient/PatientList"));
-const PatientForm = lazy(() => import("./pages/patient/PatientForm"));
-const PatientDetails = lazy(() => import("./pages/patient/PatientDetails"));
+// Patients — legacy CRUD trio (PatientList / PatientForm / PatientDetails)
+// removed (R7hr-205): initial-build pages with NO live entry point (no Sidebar
+// entry, no inbound links), superseded by the unified PatientLookupPage
+// (/patient-search). The /patients* routes below redirect there.
 
 // OPD
 const OPList = lazy(() => import("./pages/OPD/OPDList"));
@@ -150,7 +152,8 @@ const Appointments          = lazy(() => import("./pages/reception/Appointments"
 // /visit-history now mount the unified component.
 const ReceptionOPDQueue       = lazy(() => import("./pages/reception/ReceptionOPDQueue"));
 const ReceptionEmergencyCases = lazy(() => import("./pages/reception/ReceptionEmergencyCases"));
-const ReceptionBedView        = lazy(() => import("./pages/reception/ReceptionBedView"));
+// ReceptionBedView removed (R7hr-207) — orphaned receptionist bed view,
+// superseded by the unified /beds + /bed-dashboard module. Route redirects.
 const ReceptionBilling        = lazy(() => import("./pages/reception/ReceptionBilling"));
 const AccountsConsole         = lazy(() => import("./pages/accounts/AccountsConsole"));
 const DieticianConsole        = lazy(() => import("./pages/dietitian/DieticianConsole"));
@@ -283,8 +286,9 @@ const AntimicrobialUseRegisterPage  = lazy(() => import("./pages/nabh/Antimicrob
 // compliance (VAP / CAUTI / CLABSI / DVT / Sepsis / SUP) over time so the
 // IC officer can answer surveyor questions like "VAP trend last 3 months".
 const HIC5InfectionControlPage      = lazy(() => import("./pages/compliance/HIC5InfectionControlPage"));
-// R7bq — DVT/VTE Caprini assessment (auto-pops DVT register).
-const CapriniDVTAssessmentPage = lazy(() => import("./pages/nursing/CapriniDVTAssessmentPage"));
+// CapriniDVTAssessmentPage removed (R7hr-207) — orphaned standalone duplicate;
+// the DVT/Caprini assessment + NABH register run inline in NursingNotes (the
+// "DVT (Caprini)" chip). Route redirects to /nursing-notes.
 // R7du — Restraint Register entry page (NABH COP.17). Nurse-side write
 // surface; surveyor-facing read view stays at /compliance/nabh/restraint-register.
 const RestraintEntryPage = lazy(() => import("./pages/nursing/RestraintEntryPage"));
@@ -313,7 +317,9 @@ const DoctorNotesPage = lazy(() => import("./pages/doctor/DoctorNotesPage"));
 const MedicalCertificatePage = lazy(() => import("./pages/clinical/MedicalCertificatePage"));
 const MLCPage = lazy(() => import("./pages/mlc/MLCPage"));
 
-const BillPrintPage = lazy(() => import("./pages/billing/BillPrintPage"));
+// BillPrintPage removed (R7hr-207) — orphaned legacy bill-print route,
+// superseded by the unified openPrint pipeline (FinalBill "final-bill" /
+// "interim-bill" printables). /bill-print/:billId redirects to billing.
 // R7cc — HospitalSettingsPage (the ad-hoc form) removed. HospitalConfigWizard
 // is the SOLE admin entry-point for hospital config. Both pages used to share
 // /api/hospital-settings; the wizard's tabs cover everything the legacy page
@@ -384,7 +390,6 @@ function AppLayout({ collapsed, setCollapsed }) {
   if (loading) return <AppLoader />;
 
   const isLogin    = location.pathname === "/login";
-  const isBillPrint = location.pathname.startsWith("/bill-print/");
   const isPrintable = location.pathname.startsWith("/print/");
 
   /* Complete-patient-file in print mode — strip sidebar / header so the
@@ -399,17 +404,6 @@ function AppLayout({ collapsed, setCollapsed }) {
   /* Redirect unauthenticated users to login */
   if (!user && !isLogin) {
     return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-
-  /* Bill print page — standalone, no chrome */
-  if (isBillPrint && user) {
-    return (
-      <Suspense fallback={<RouteLoader />}>
-        <Routes>
-          <Route path="/bill-print/:billId" element={<BillPrintPage />} />
-        </Routes>
-      </Suspense>
-    );
   }
 
   /* Unified /print/<slug> printables — opens in a popup window with
@@ -428,10 +422,9 @@ function AppLayout({ collapsed, setCollapsed }) {
     );
   }
 
-  /* Patient file print mode — standalone, no chrome. Same idea as
-   * /bill-print but it's the same component (CompletePatientFilePage)
-   * just rendered without sidebar/header so the popup window prints
-   * a clean clinical document. */
+  /* Patient file print mode — standalone, no chrome. The page is
+   * CompletePatientFilePage rendered without sidebar/header so the popup
+   * window prints a clean clinical document. */
   if (isPatientFilePrint && user) {
     return (
       <Suspense fallback={<RouteLoader />}>
@@ -549,11 +542,14 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* R7hr-158 — /vitalsView + /vitalsView/:uhid routes retired.
                 Trend opens inline from Nursing Notes via VitalsTrendModal. */}
 
-            {/* ── Patients Module ───────────────────────────────── */}
-            <Route path="/patients" element={<PatientList />} />
-            <Route path="/patients/new" element={<PatientForm />} />
-            <Route path="/patients/edit/:id" element={<PatientForm />} />
-            <Route path="/patients/:id" element={<PatientDetails />} />
+            {/* ── Patients Module (R7hr-205) ─────────────────────────
+                Legacy /patients CRUD pages removed; superseded by the unified
+                PatientLookupPage. Routes redirect so old bookmarks don't 404 —
+                new-patient registration goes to the Reception Console. */}
+            <Route path="/patients"          element={<Navigate to="/patient-search" replace />} />
+            <Route path="/patients/new"      element={<Navigate to="/reception" replace />} />
+            <Route path="/patients/edit/:id" element={<Navigate to="/patient-search" replace />} />
+            <Route path="/patients/:id"      element={<Navigate to="/patient-search" replace />} />
 
             {/* ── Services & TPA ────────────────────────────────── */}
             <Route path="/addservice" element={
@@ -888,11 +884,10 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/compliance/hic5-infection-control" element={
               <RoleGuard action="compliance.read"><HIC5InfectionControlPage /></RoleGuard>
             } />
-            {/* R7bq — Caprini DVT assessment. POST to /api/nursing-assessments/dvt
-                auto-populates the NABH DVT register (MOM.7 + AAC.4). */}
-            <Route path="/nursing/caprini-dvt" element={
-              <RoleGuard action="vitals.write"><CapriniDVTAssessmentPage /></RoleGuard>
-            } />
+            {/* R7hr-207 — standalone Caprini DVT page retired; the assessment +
+                NABH DVT register run inline in NursingNotes (the "DVT (Caprini)"
+                chip). Redirect legacy bookmarks to the nursing workspace. */}
+            <Route path="/nursing/caprini-dvt" element={<Navigate to="/nursing-notes" replace />} />
             {/* R7du — Restraint Register entry (NABH COP.17). Nurse-side
                 write surface. POST to /api/restraints calls emitRestraint
                 inside the backend, populating the surveyor-facing register
@@ -928,9 +923,12 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/visit-history/:uhid" element={<PatientLookupPage initialView="timeline" />} />
             <Route path="/reception-opd-queue" element={<ReceptionOPDQueue />} />
             <Route path="/reception-emergency" element={<ReceptionEmergencyCases />} />
-            <Route path="/reception-beds" element={<ReceptionBedView />} />
+            <Route path="/reception-beds" element={<Navigate to="/beds" replace />} />
             <Route path="/reception-billing" element={<ReceptionBilling />} />
             <Route path="/reception-billing/:uhid" element={<ReceptionBilling />} />
+            {/* R7hr-207 — legacy /bill-print/:billId retired (bill printing now
+                via the openPrint FinalBill pipeline); redirect old bookmarks. */}
+            <Route path="/bill-print/:billId" element={<Navigate to="/reception-billing" replace />} />
             {/* Legacy routes redirect to the new console */}
             <Route path="/ipd-admission" element={<Navigate to="/reception" replace />} />
             <Route path="/opd-register" element={<Navigate to="/reception" replace />} />

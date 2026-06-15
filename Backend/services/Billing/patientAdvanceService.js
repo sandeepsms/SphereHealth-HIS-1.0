@@ -231,7 +231,13 @@ class PatientAdvanceService {
           // real money. Without this fallback, /apply would always say
           // "Nothing to apply" for those bills and the cashier sees a
           // success toast with zero effect.
-          const itemsNet      = (bill.billItems || []).reduce((s, i) => s + toNum(i.netAmount), 0);
+          // R7hr-211 — only BILLABLE lines count toward what the patient owes.
+          // 'Ordered'/'InProgress' clinical orders (and 'Cancelled') do NOT —
+          // recalcTotals excludes them — so advance must not be applied to
+          // their value (it would over-consume the deposit on services not yet
+          // completed, and over-credit the bill if the order is later cancelled).
+          const itemsNet      = (bill.billItems || []).reduce((s, i) =>
+            s + ((!i.orderStatus || i.orderStatus === "Completed") ? toNum(i.netAmount) : 0), 0);
           const paidPositive  = bill.payments.reduce((s, p) => {
             const v = toNum(p.amount);
             return s + (v > 0 ? v : 0);
