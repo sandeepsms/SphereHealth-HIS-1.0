@@ -10,10 +10,16 @@ const { requireAction } = require("../../middleware/auth");
 // any UHID. DPDP §5 purpose-limitation + NABH AAC.7 violation.
 
 // Complete file aggregator — used by CompletePatientFilePage.jsx
-router.get("/:uhid/complete",     requireAction("patient.read"), ctrl.getCompleteFile);
+// R7hr-214 (RBAC audit): the consolidated clinical file (notes, MAR, vitals,
+// consents, MLC PHI, discharge, billing) is a clinical-only surface. Gating it
+// on the broad `patient.read` let Receptionist / Lab / Pharmacist / Dietician /
+// TPA / Accountant pull the whole chart via direct API even though the UI hides
+// it (DPDP §5 purpose-limitation). Tightened to `patient-file.read`
+// [Admin, Doctor, Nurse, MRD] — the token already defined for exactly this.
+router.get("/:uhid/complete",     requireAction("patient-file.read"), ctrl.getCompleteFile);
 
-// Paginated activity feed (audit trail)
-router.get("/:uhid/activity",     requireAction("patient.read"), ctrl.getActivityFeed);
+// Paginated activity feed (audit trail) — same clinical-only audience as /complete.
+router.get("/:uhid/activity",     requireAction("patient-file.read"), ctrl.getActivityFeed);
 
 // Frontend-driven event logger (clicks, dropdown selects, navigation)
 // Write is auto-allow-listed for MRD in blockReadOnlyRoleWrites so MRD's
@@ -31,7 +37,7 @@ router.get("/:uhid/fhir-bundle",  requireAction("patient.export"), ctrl.getFhirB
 // Audit chain verifier (NABH AAC.7 / ISO 27001) — admin/auditor surface.
 router.get("/:uhid/audit-verify", requireAction("reports.audit"), ctrl.verifyAuditChain);
 
-// PAdES signature configuration probe (Roadmap F22)
-router.get("/:uhid/sign-status",  requireAction("patient.read"), ctrl.signStatus);
+// PAdES signature configuration probe (Roadmap F22) — clinical-file surface.
+router.get("/:uhid/sign-status",  requireAction("patient-file.read"), ctrl.signStatus);
 
 module.exports = router;

@@ -950,7 +950,10 @@ function AppLayout({ collapsed, setCollapsed }) {
                 unified component. */}
             <Route path="/patient-history" element={<PatientLookupPage initialView="timeline" />} />
             {/* Complete patient file — one page with every clinical record + UI audit feed. */}
-            <Route path="/patient-file/:uhid" element={<CompletePatientFilePage />} />
+            {/* R7hr-214 (RBAC audit) — defense-in-depth: this page was reachable by
+                direct URL for any role; guard it to the clinical-file audience to
+                match the now-tightened backend gate (patient-file.read endpoint). */}
+            <Route path="/patient-file/:uhid" element={<RoleGuard action="patient-file.read"><CompletePatientFilePage /></RoleGuard>} />
             {/* New focused two-tab view — OPD History per UHID +
                 chronological IPD File per admission. Accessible without
                 a UHID for the in-page search box. */}
