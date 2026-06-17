@@ -9,8 +9,13 @@ const opdService = require("../../services/Patient/OPDService");
 // bypass. Returns a 403 body to send, or null to allow.
 async function denyIfNotOwnOPDVisit(req) {
   if (req.user?.role !== "Doctor" || !req.doctorProfile?._id) return null;
-  let visit;
-  try { visit = await opdService.getOPDVisitById(req.params.visitNumber); } catch { return null; }
+  // R7hr-221 (RBAC review #7): do NOT swallow a lookup error into "allow".
+  // Pre-fix a transient DB error here returned null, and the callers treat
+  // null as "ownership OK" — so the cross-doctor write would proceed unchecked
+  // exactly when the system is degraded. Let the error propagate so the
+  // caller's try/catch turns it into a 4xx/5xx and the write never lands
+  // (fail closed), matching the read-side getOPDVisitById which does not swallow.
+  const visit = await opdService.getOPDVisitById(req.params.visitNumber);
   if (!visit) return null; // missing visit → let the handler issue its own 404
   const callerDoctorId = String(req.doctorProfile._id);
   const visitDoctorId  = String(visit.doctorId?._id || visit.doctorId || "");
@@ -200,6 +205,12 @@ class OPDController {
 
   async deleteOPDVisit(req, res) {
     try {
+      // R7hr-221 (RBAC review #5): same cross-doctor guard as the write
+      // handlers. opd.delete = [Admin, Doctor]; without this a Doctor could
+      // permanently delete ANOTHER doctor's signed OPD visit (audit-trail
+      // break) — more destructive than the writes R7hr-216 already guarded.
+      const _deny = await denyIfNotOwnOPDVisit(req);
+      if (_deny) return res.status(403).json(_deny);
       const visit = await opdService.deleteOPDVisit(req.params.visitNumber);
       if (!visit) return res.status(404).json({ success: false, message: "Visit not found" });
       res.status(200).json({ success: true, message: "Visit deleted successfully" });
@@ -210,6 +221,12 @@ class OPDController {
 
   async addInvestigation(req, res) {
     try {
+      // R7hr-221 (RBAC review #6): lab.order = [Admin, Doctor, Receptionist];
+      // without this a Doctor could push lab/imaging orders onto ANOTHER
+      // doctor's visit (clinical-order falsification). Helper no-ops for
+      // non-Doctor, so Receptionist/Admin front-desk ordering is unaffected.
+      const _deny = await denyIfNotOwnOPDVisit(req);
+      if (_deny) return res.status(403).json(_deny);
       const visit = await opdService.addInvestigation(req.params.visitNumber, req.body);
       res.status(200).json({ success: true, message: "Investigation added", data: visit });
     } catch (error) {
