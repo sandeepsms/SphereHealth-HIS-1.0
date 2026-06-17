@@ -568,9 +568,13 @@
    inline (style block at the top of the returned string); we only need a
    thin wrapper for vertical rhythm + an accent border to keep the
    doctor/nurse visual distinction the panel had before R7gn. */
-.ppt-embed-card { margin-bottom: 8px; }
-.ppt-embed-card--nurse  > div { border-left: 3px solid #db2777 !important; }
-.ppt-embed-card--doctor > div { border-left: 3px solid #7c3aed !important; }
+.ppt-embed-card { margin-bottom: 12px; }
+/* R7hr-222 — the note-card builders now self-code their left accent per
+   note type (doctor=blue, nurse=pink, critical=red), so the old forced
+   doctor=purple / nurse=pink override is dropped (it would clobber the
+   per-type/critical accent on screen). A subtle screen-only shadow lifts
+   each card off the panel; it is suppressed under @media print below. */
+.ppt-embed-card > div { box-shadow: 0 1px 3px rgba(16, 24, 40, 0.07); }
 
 /* ─── Print rules ─────────────────────────────────────────────── */
 @media print {
