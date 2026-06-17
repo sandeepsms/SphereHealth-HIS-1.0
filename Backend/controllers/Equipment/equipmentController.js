@@ -145,10 +145,27 @@ exports.getOne = async (req, res) => {
   }
 };
 
+// R7hr-217 (RBAC audit) — asset-master COMMERCIAL fields are Admin-only.
+// equipment.write is granted to Nurse + Ward Boy so they can assign / return /
+// log-service equipment, but they must NOT set or rewrite the procurement cost
+// / vendor / serial / rental tariff on the master record. Strip those from the
+// payload for any non-Admin caller (both create and update).
+// Real EquipmentModel master fields (verified against the schema): costPrice
+// is the procurement cost, serialNo the asset serial, purchaseDate / warrantyEnd
+// the procurement dates. (vendor/cost live in the serviceHistory sub-doc set
+// via /service, not this master write.)
+const COMMERCIAL_FIELDS = ["costPrice", "serialNo", "purchaseDate", "warrantyEnd"];
+function stripCommercialForNonAdmin(body, req) {
+  if (req.user?.role !== "Admin") {
+    COMMERCIAL_FIELDS.forEach((k) => delete body[k]);
+  }
+  return body;
+}
+
 /* ── Create ────────────────────────────────────────────────────── */
 exports.create = async (req, res) => {
   try {
-    const body = { ...req.body };
+    const body = stripCommercialForNonAdmin({ ...req.body }, req);
     body.createdBy = req.user?.fullName || req.user?.name || "System";
     // Seed the initial assignment as WAREHOUSE so the audit trail is complete.
     body.assignments = [{
@@ -170,7 +187,7 @@ exports.create = async (req, res) => {
 /* ── Update meta ───────────────────────────────────────────────── */
 exports.update = async (req, res) => {
   try {
-    const body = { ...req.body, updatedBy: req.user?.fullName || req.user?.name || "System" };
+    const body = stripCommercialForNonAdmin({ ...req.body, updatedBy: req.user?.fullName || req.user?.name || "System" }, req);
     // Do not allow mutating currentLocation or status directly here; use /assign or /service.
     delete body.currentLocation;
     delete body.status;

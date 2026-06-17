@@ -13,8 +13,15 @@ const router = express.Router();
 const ctrl = require("../../controllers/Presence/presenceController");
 const { adminOnly, requireAction } = require("../../middleware/auth");
 
+// R7hr-217 (RBAC audit) — split the surface. ANY logged-in staff that runs a
+// presence hook (Receptionist + Pharmacist both POST /heartbeat) needs to
+// write their own heartbeat, so heartbeat stays on the broadly-held
+// presence.read. But the active-user ROSTER (/active — who's online across
+// departments, "Mission Control" telemetry) is Admin-only per the header note
+// above; it was leaking to Pharmacist/Receptionist via the shared gate. Narrow
+// it to adminOnly so non-Admin can heartbeat but cannot read the roster.
 router.post("/heartbeat", requireAction("presence.read"), ctrl.heartbeat);
-router.get ("/active",    requireAction("presence.read"), ctrl.getActive);
+router.get ("/active",    adminOnly, ctrl.getActive);
 router.post("/clear",     adminOnly, ctrl.clear);
 
 module.exports = router;
