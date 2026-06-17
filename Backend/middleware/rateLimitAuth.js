@@ -92,7 +92,38 @@ const clientErrorRateLimit = rateLimit({
   },
 });
 
+// ── /api/auth/users-by-role/:role ──────────────────────────────────
+// R7hr-218 (RBAC audit #5): the login-screen role-pill roster returns
+// {employeeId, firstName, lastName} pre-auth so a name-click can autofill
+// the login id (R7hr-38 UX). loginRateLimit does NOT protect it because
+// `skipSuccessfulRequests:true` ignores the endpoint's 200s — so an
+// attacker could enumerate the whole employee directory (and then
+// credential-spray the harvested ids) unthrottled. This dedicated limiter
+// COUNTS every fetch (no skip) and is tight enough to stop bulk scraping
+// loops while staying generous for a legit (cached, per-role) pill click
+// even on a shared reception terminal: 30 / 15 min / IP.
+const rosterRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req, res) => ipKeyGenerator(req.ip),
+  handler: (req, res /*, next, options */) => {
+    const resetMs = req.rateLimit?.resetTime
+      ? new Date(req.rateLimit.resetTime).getTime() - Date.now()
+      : 15 * 60 * 1000;
+    res.set("Retry-After", String(Math.max(1, Math.ceil(resetMs / 1000))));
+    res.status(429).json({
+      ok: false,
+      success: false,
+      code: "TOO_MANY_ROSTER_REQUESTS",
+      message: "Too many staff-roster lookups from this IP. Please try again shortly.",
+    });
+  },
+});
+
 module.exports = {
   loginRateLimit,
   clientErrorRateLimit,
+  rosterRateLimit,
 };

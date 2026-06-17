@@ -16,7 +16,7 @@ const { authenticate } = require("../../middleware/auth");
 // R7bz — IP-based brute-force throttle in front of POST /login. Defends
 // against username-rotation attacks that sidestep the per-user 5-strike
 // lockout below by hitting many usernames once each from the same IP.
-const { loginRateLimit } = require("../../middleware/rateLimitAuth");
+const { loginRateLimit, rosterRateLimit } = require("../../middleware/rateLimitAuth");
 
 // R7bb-FIX-A-16: JWT_SECRET rotation procedure needs a SECONDARY_JWT_SECRETS
 // env array for graceful rollover. Today every node verifies against a single
@@ -51,7 +51,7 @@ const INVALID_CREDENTIALS = "Invalid email or password";
  * email field, the existing $or lookup matches it, and login proceeds
  * normally — no schema or contract change beyond this read endpoint.
  */
-router.get("/users-by-role/:role", loginRateLimit, async (req, res) => {
+router.get("/users-by-role/:role", rosterRateLimit, async (req, res) => {
   try {
     const raw  = String(req.params.role || "").trim();
     if (!raw) return res.json({ users: [] });

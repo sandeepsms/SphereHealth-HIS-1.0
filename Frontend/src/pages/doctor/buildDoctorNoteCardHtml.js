@@ -68,7 +68,7 @@ const fmtVal = (v) => {
 // consistency. Values unchanged (already near-black at 11.5px).
 // R25-safe: pure CSS tweak, no markup change, no field gain/loss.
 const COMPACT_GRID_CSS = `<style>
-  .dfx-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:11.5px;margin:6px 0 10px}
+  .dfx-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 18px;font-size:11.5px;margin:6px 0 11px}
   /* R7hr-108 — 3-column variant for sections with many short key/value
      pairs (Examination Findings sub-blocks — General Exam chips +
      CVS / RS / CNS / P-A). Doctor's values here are mostly 1–2 word
@@ -78,15 +78,15 @@ const COMPACT_GRID_CSS = `<style>
      Investigations & Plan) stay 2-column because their values are
      longer free text. The .full class still spans the full row. */
   .dfx-grid--3col{grid-template-columns:1fr 1fr 1fr;gap:4px 14px}
-  .dfx-grid .lbl{font-weight:800;color:#1e293b;font-size:11px;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:2px}
+  .dfx-grid .lbl{font-weight:800;color:#334155;font-size:11px;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:2px}
   .dfx-grid .val{color:#0f172a;font-size:11.5px;white-space:pre-wrap}
   .dfx-grid .full{grid-column:1 / -1}
-  .dfx-h{margin:10px 0 4px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;padding:4px 9px;border-radius:4px}
-  .dfx-tbl{width:100%;border-collapse:collapse;font-size:11px;margin:4px 0 8px;page-break-inside:avoid;break-inside:avoid}
-  .dfx-tbl th{padding:4px 6px;border:1px solid #cbd5e1;background:#f1f5f9;font-size:10.5px;font-weight:800;text-align:left;color:#1e293b;text-transform:uppercase;letter-spacing:.3px}
-  .dfx-tbl td{padding:4px 6px;border:1px solid #e2e8f0;color:#0f172a}
-  .dfx-narr{margin:6px 0 10px;padding:8px 12px;background:#f8fafc;border-left:3px solid #94a3b8;font-size:11.5px;white-space:pre-wrap;line-height:1.45}
-  .dfx-banner{margin:6px 0 12px;padding:8px 14px;border-radius:6px;font-size:12px;font-weight:700}
+  .dfx-h{margin:13px 0 6px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;padding:5px 10px;border-radius:5px}
+  .dfx-tbl{width:100%;border-collapse:collapse;font-size:11px;margin:5px 0 10px;page-break-inside:avoid;break-inside:avoid}
+  .dfx-tbl th{padding:5px 8px;border:1px solid #e7edf3;background:#f6f8fb;font-size:10px;font-weight:800;text-align:left;color:#475569;text-transform:uppercase;letter-spacing:.3px}
+  .dfx-tbl td{padding:5px 8px;border:1px solid #eef2f6;color:#0f172a}
+  .dfx-narr{margin:6px 0 11px;padding:9px 13px;background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:0 6px 6px 0;font-size:11.5px;white-space:pre-wrap;line-height:1.45}
+  .dfx-banner{margin:6px 0 12px;padding:9px 14px;border-radius:7px;font-size:12px;font-weight:700}
 </style>`;
 
 const _kv = (label, value, isFull = false) => {
@@ -696,9 +696,11 @@ export function buildDoctorNoteCardHtml(note, opts = {}) {
   const typeLabel = TYPE_LABELS[note.noteType] || "Doctor Note";
 
   const isSigned = (note.status === "signed");
-  const statusBadge = `<div style="padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:${isSigned ? "#dcfce7" : "#fffbeb"};color:${isSigned ? "#16a34a" : "#d97706"}">${isSigned ? "✓ SIGNED" : "DRAFT"}</div>`;
+  const statusBadge = isSigned
+    ? '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:10.5px;font-weight:700;background:#dcfce7;color:#15803d;border:1px solid #bbf7d0">● Signed</span>'
+    : '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:10.5px;font-weight:700;background:#fef3c7;color:#b45309;border:1px solid #fde68a">● Draft</span>';
   const critical = note.isCritical
-    ? '<div style="padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:#fef2f2;color:#dc2626">⚠ CRITICAL EVENT</div>'
+    ? '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:10.5px;font-weight:700;background:#fee2e2;color:#b91c1c;border:1px solid #fecaca">⚠ Critical</span>'
     : "";
 
   const lateBanner = note.lateEntry
@@ -774,28 +776,60 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
                      && (sigSrc.startsWith("data:image/")
                          || sigSrc.startsWith("/uploads/")
                          || /^https?:\/\//.test(sigSrc)))
-    ? `<div style="margin-top:6px"><img src="${escapeHtml(sigSrc)}" alt="Signature" style="max-height:40px;max-width:200px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/></div>`
+    ? `<div style="margin-left:auto;text-align:center;flex:none"><img src="${escapeHtml(sigSrc)}" alt="Signature" style="max-height:38px;max-width:170px;border:1px solid #e2e8f0;background:#fff;padding:2px 8px;border-radius:5px"/><div style="font-size:8px;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase;margin-top:2px">e-signature</div></div>`
     : "";
+  // R7hr-222 — formal "authenticated" panel (presentation only; same fields:
+  // signer name, emp id, MCI reg, signed timestamp, signature image).
   const sigHtml = isSigned
-    ? `<div style="margin-top:14px;padding:8px 12px;border:1px solid #bbf7d0;border-radius:6px;background:#f0fdf4;font-size:11px;color:#166534">
-  <strong style="color:#15803d">✓ SIGNED & SUBMITTED</strong> · By: ${escapeHtml(note.doctorName || note.signedByName || "Doctor")}${empIdShown ? ` · Emp ID: ${escapeHtml(empIdShown)}` : ""}${note.doctorRegNo || note.signedByReg ? ` · Reg: ${escapeHtml(note.doctorRegNo || note.signedByReg)}` : ""}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}
+    ? `<div style="margin-top:14px;display:flex;align-items:center;gap:12px;padding:10px 13px;border:1px solid #bbf7d0;border-radius:9px;background:#f3fcf6">
+  <div style="width:30px;height:30px;border-radius:50%;background:#16a34a;color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;flex:none">✓</div>
+  <div style="min-width:0;line-height:1.45;flex:1">
+    <div style="font-size:10.5px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:#15803d">Digitally signed &amp; authenticated</div>
+    <div style="font-size:12px;color:#0f172a"><strong>${escapeHtml(note.doctorName || note.signedByName || "Doctor")}</strong><span style="color:#64748b">${empIdShown ? ` · Emp ${escapeHtml(empIdShown)}` : ""}${note.doctorRegNo || note.signedByReg ? ` · Reg ${escapeHtml(note.doctorRegNo || note.signedByReg)}` : ""}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}</span></div>
+  </div>
   ${sigImgHtml}
 </div>`
-    : `<div style="margin-top:14px;padding:6px 12px;border:1px solid #fde68a;border-radius:6px;background:#fffbeb;font-size:11px"><strong style="color:#d97706">DRAFT — Not yet signed</strong></div>`;
+    : `<div style="margin-top:14px;padding:8px 13px;border:1px dashed #fcd34d;border-radius:9px;background:#fffbeb;font-size:11px;color:#b45309;display:flex;align-items:center;gap:8px"><span style="font-size:14px">✎</span><strong>Draft — not yet signed</strong></div>`;
+
+  // R7hr-222 — NABH note-card visual polish (presentation only; no data,
+  // section, field, gate or page-break change). A per-type accent colour,
+  // NABH sub-label and glyph drive a document-style letterhead band + a
+  // left accent stripe. Critical events override the accent to red.
+  const _accent = note.isCritical ? "#dc2626"
+    : ({ death: "#475569", icu: "#dc2626", procedure: "#7c3aed", operative: "#7c3aed",
+         preop: "#7c3aed", postop: "#7c3aed", discharge: "#0d9488", consultation: "#0891b2",
+         amendment: "#b45309", initial: "#2563eb" }[note.noteType] || "#2563eb");
+  // Sub-label is a record CLASSIFICATION line under the type title — it must
+  // add information, not repeat the title. NABH chapter tags only where the
+  // codebase already asserts them; everything else → the generic discipline tag.
+  const _sub = ({ initial: "Initial Assessment · NABH COP.2",
+    icu: "Critical Care · NABH COP.5", procedure: "Procedure Record · NABH COP.13",
+    preop: "Pre-op Checklist · WHO / COP.13", death: "Death Summary · NABH COP.19",
+    amendment: "Document Amendment · NABH IMS.2" }[note.noteType] || "Physician Record");
+  const _icon = ({ initial: "🩺", admission: "🏥", progress: "📋", daily: "📋", general: "📝",
+    assessment: "📋", icu: "🫀", procedure: "🔧", operative: "🔧", preop: "✅", postop: "🩹",
+    consultation: "🤝", discharge: "📤", death: "🕊", amendment: "✍" }[note.noteType] || "🩺");
 
   return COMPACT_GRID_CSS + `
-<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin:8px 0;background:#fff">
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #e2e8f0">
-    <div style="padding:5px 14px;border-radius:6px;font-size:13px;font-weight:800;background:#eff6ff;color:#1e40af">${escapeHtml(typeLabel)}</div>
-    ${statusBadge}
-    ${critical}
-    <div style="margin-left:auto;font-size:12px;color:#64748b">Shift: <strong style="text-transform:capitalize">${escapeHtml(shift)}</strong> · ${noteDate}</div>
+<div class="dfx-card" style="border:1px solid #e2e8f0;border-left:4px solid ${_accent};border-radius:10px;margin:10px 0;background:#fff;overflow:hidden">
+  <div style="display:flex;align-items:center;gap:11px;padding:11px 16px;background:${_accent}0d;border-bottom:1px solid ${_accent}24">
+    <div style="width:34px;height:34px;border-radius:8px;background:${_accent}1f;color:${_accent};display:flex;align-items:center;justify-content:center;font-size:17px;flex:none">${_icon}</div>
+    <div style="min-width:0">
+      <div style="font-size:14px;font-weight:800;color:#0f172a;line-height:1.15">${escapeHtml(typeLabel)}</div>
+      <div style="font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#64748b">${escapeHtml(_sub)}</div>
+    </div>
+    <div style="margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:5px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${statusBadge}${critical}</div>
+      <div style="font-size:11px;color:#475569">Shift: <strong style="color:#1e293b;text-transform:capitalize">${escapeHtml(shift)}</strong> · ${noteDate}</div>
+    </div>
   </div>
-  ${lateBanner}
-  ${vitalsHtml}
-  ${typeBody}
-  ${soapHtml}
-  ${diagHtml}
-  ${sigHtml}
+  <div style="padding:12px 16px 14px">
+    ${lateBanner}
+    ${vitalsHtml}
+    ${typeBody}
+    ${soapHtml}
+    ${diagHtml}
+    ${sigHtml}
+  </div>
 </div>`;
 }

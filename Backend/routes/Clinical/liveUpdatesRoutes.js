@@ -23,9 +23,15 @@ bus.setMaxListeners(200); // 200 simultaneous viewers per node
 // R7az-A/D1-CRIT: SSE was completely ungated pre-R7az — any logged-in
 // role could subscribe to the live activity firehose for any UHID
 // (charts, MAR entries, lab results, payments, etc. = full PHI feed).
-// Gated on patient.read so the same roles that can view the patient
-// file can also subscribe to its live updates.
-router.get("/:uhid", requireAction("patient.read"), (req, res) => {
+// R7hr-219 (RBAC review #4): this firehose is the LIVE twin of the
+// static activity feed GET /api/patient-file/:uhid/activity, which
+// R7hr-214 already narrowed to patient-file.read [Admin/Doctor/Nurse/
+// MRD]. The SSE stream was left on the broad patient.read, so the same
+// non-clinical roles R7hr-214 denied (Lab Tech / Pharmacist / Dietician
+// / TPA / Accountant) could still subscribe to a patient's real-time
+// PHI activity. Align it with its static twin. The only consumer is the
+// clinical PatientPanelShell (Doctor/Nurse panel), so no UX regresses.
+router.get("/:uhid", requireAction("patient-file.read"), (req, res) => {
   const uhid = String(req.params.uhid || "").toUpperCase();
   if (!uhid) return res.status(400).end();
 

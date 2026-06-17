@@ -1,5 +1,30 @@
 const opdService = require("../../services/Patient/OPDService");
 
+// R7hr-216 (RBAC audit) — mirror the read-side doctor-ownership guard
+// (getOPDVisitById → NOT_YOUR_VISIT) on OPD *writes*. Pre-fix, any Doctor could
+// author/sign an assessment, prescription, addendum or completion onto ANOTHER
+// doctor's OPD visit (clinical-record falsification) even though the read side
+// already 403'd cross-doctor. A Doctor may now only write to a visit assigned
+// to them; Admin (and any non-Doctor role the route's action gate permits)
+// bypass. Returns a 403 body to send, or null to allow.
+async function denyIfNotOwnOPDVisit(req) {
+  if (req.user?.role !== "Doctor" || !req.doctorProfile?._id) return null;
+  // R7hr-221 (RBAC review #7): do NOT swallow a lookup error into "allow".
+  // Pre-fix a transient DB error here returned null, and the callers treat
+  // null as "ownership OK" — so the cross-doctor write would proceed unchecked
+  // exactly when the system is degraded. Let the error propagate so the
+  // caller's try/catch turns it into a 4xx/5xx and the write never lands
+  // (fail closed), matching the read-side getOPDVisitById which does not swallow.
+  const visit = await opdService.getOPDVisitById(req.params.visitNumber);
+  if (!visit) return null; // missing visit → let the handler issue its own 404
+  const callerDoctorId = String(req.doctorProfile._id);
+  const visitDoctorId  = String(visit.doctorId?._id || visit.doctorId || "");
+  if (!visitDoctorId || visitDoctorId !== callerDoctorId) {
+    return { success: false, code: "NOT_YOUR_VISIT", message: "Not your OPD visit — you can only write to visits assigned to you." };
+  }
+  return null;
+}
+
 class OPDController {
   async createOPDVisit(req, res) {
     try {
@@ -131,7 +156,18 @@ class OPDController {
   // PATCH /opd/:visitNumber/vitals  — Nurse enters vitals
   async updateVitals(req, res) {
     try {
-      const { nurseName, ...vitalsData } = req.body;
+      // PD-03 — Peel off the nurse audit trio (empId + signature image)
+      // from the top-level payload before spreading the rest into the
+      // vitals sub-doc. The print template reads `vitalsEnteredByEmployeeId`
+      // + `vitalsEnteredBySignature` on the OPD Rx Nurse Pre-Assessment
+      // footer; pre-fix these were silently dropped by Mongoose strict
+      // mode when nested under vitals.
+      const {
+        nurseName,
+        vitalsEnteredByEmployeeId,
+        vitalsEnteredBySignature,
+        ...vitalsData
+      } = req.body;
       // R7hf — pass JWT-verified actor so the auto-emitted NABH RBS
       // register row is attributed to the verified nurse identity, not
       // a client-supplied display name.
@@ -140,7 +176,14 @@ class OPDController {
         name: req.user.fullName || req.user.username || nurseName || "Nurse",
         role: req.user.role || "Nurse",
       } : null;
-      const visit = await opdService.updateVitals(req.params.visitNumber, vitalsData, nurseName, actor);
+      // PD-03 — Fall back to JWT actor for empId/signature when the
+      // client omitted them (defence in depth). req.user.signature is
+      // set by AuthContext from the persisted User.signature field.
+      const meta = {
+        vitalsEnteredByEmployeeId: vitalsEnteredByEmployeeId || req.user?.employeeId || "",
+        vitalsEnteredBySignature:  vitalsEnteredBySignature  || req.user?.signature  || "",
+      };
+      const visit = await opdService.updateVitals(req.params.visitNumber, vitalsData, nurseName, actor, meta);
       if (!visit) return res.status(404).json({ success: false, message: "Visit not found" });
       res.status(200).json({ success: true, message: "Vitals updated", data: visit });
     } catch (error) {
@@ -162,6 +205,12 @@ class OPDController {
 
   async deleteOPDVisit(req, res) {
     try {
+      // R7hr-221 (RBAC review #5): same cross-doctor guard as the write
+      // handlers. opd.delete = [Admin, Doctor]; without this a Doctor could
+      // permanently delete ANOTHER doctor's signed OPD visit (audit-trail
+      // break) — more destructive than the writes R7hr-216 already guarded.
+      const _deny = await denyIfNotOwnOPDVisit(req);
+      if (_deny) return res.status(403).json(_deny);
       const visit = await opdService.deleteOPDVisit(req.params.visitNumber);
       if (!visit) return res.status(404).json({ success: false, message: "Visit not found" });
       res.status(200).json({ success: true, message: "Visit deleted successfully" });
@@ -172,6 +221,12 @@ class OPDController {
 
   async addInvestigation(req, res) {
     try {
+      // R7hr-221 (RBAC review #6): lab.order = [Admin, Doctor, Receptionist];
+      // without this a Doctor could push lab/imaging orders onto ANOTHER
+      // doctor's visit (clinical-order falsification). Helper no-ops for
+      // non-Doctor, so Receptionist/Admin front-desk ordering is unaffected.
+      const _deny = await denyIfNotOwnOPDVisit(req);
+      if (_deny) return res.status(403).json(_deny);
       const visit = await opdService.addInvestigation(req.params.visitNumber, req.body);
       res.status(200).json({ success: true, message: "Investigation added", data: visit });
     } catch (error) {
@@ -191,6 +246,8 @@ class OPDController {
 
   async addPrescription(req, res) {
     try {
+      const _deny = await denyIfNotOwnOPDVisit(req);   // R7hr-216
+      if (_deny) return res.status(403).json(_deny);
       const visit = await opdService.addPrescription(req.params.visitNumber, req.body);
       res.status(200).json({ success: true, message: "Prescription added", data: visit });
     } catch (error) {
@@ -200,6 +257,8 @@ class OPDController {
 
   async completeVisit(req, res) {
     try {
+      const _deny = await denyIfNotOwnOPDVisit(req);   // R7hr-216
+      if (_deny) return res.status(403).json(_deny);
       const visit = await opdService.completeVisit(req.params.visitNumber, req.body);
       res.status(200).json({ success: true, message: "Visit completed", data: visit });
     } catch (error) {
@@ -284,6 +343,8 @@ class OPDController {
   // POST /opd/:visitNumber/assessment  — Doctor saves SOAP note + diagnosis + plan
   async saveAssessment(req, res) {
     try {
+      const _deny = await denyIfNotOwnOPDVisit(req);   // R7hr-216
+      if (_deny) return res.status(403).json(_deny);
       const { doctorName, ...assessmentData } = req.body;
       // R7bx item 8 — pass req.user.id so the service can run the MCI
       // registration-number guard when the doctor is signing (sending a
@@ -314,6 +375,8 @@ class OPDController {
   // the updated visit so the frontend can re-render the timeline.
   async addAdditionalNote(req, res) {
     try {
+      const _deny = await denyIfNotOwnOPDVisit(req);   // R7hr-216
+      if (_deny) return res.status(403).json(_deny);
       const text = String(req.body?.note || "").trim();
       if (!text) {
         return res.status(400).json({ success: false, code: "EMPTY_NOTE", message: "Note text is required." });
