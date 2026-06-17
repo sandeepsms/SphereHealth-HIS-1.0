@@ -154,7 +154,13 @@ exports.getOne = async (req, res) => {
 // is the procurement cost, serialNo the asset serial, purchaseDate / warrantyEnd
 // the procurement dates. (vendor/cost live in the serviceHistory sub-doc set
 // via /service, not this master write.)
-const COMMERCIAL_FIELDS = ["costPrice", "serialNo", "purchaseDate", "warrantyEnd"];
+// R7hr-219 (RBAC review #8): dailyRentalCharge — the master rental tariff that
+// feeds the homecareDailyRevenue KPI — was named as protected in this comment
+// but omitted from the list, so a Nurse/Ward Boy could PUT it on the master via
+// update(). Add it. NOTE the assign() handler sets eq.dailyRentalCharge from its
+// OWN destructured body (the homecare-loan path), NOT via this strip, so loaning
+// equipment out is unaffected; only the standalone master-record rewrite closes.
+const COMMERCIAL_FIELDS = ["costPrice", "serialNo", "purchaseDate", "warrantyEnd", "dailyRentalCharge"];
 function stripCommercialForNonAdmin(body, req) {
   if (req.user?.role !== "Admin") {
     COMMERCIAL_FIELDS.forEach((k) => delete body[k]);
