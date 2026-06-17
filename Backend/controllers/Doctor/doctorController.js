@@ -453,6 +453,19 @@ exports.setAvailability = async (req, res) => {
         code: "RECEPTIONIST_LIMITED_AVAILABILITY",
       });
     }
+    // R7hr-215 (RBAC audit) — a Doctor may only set their OWN availability.
+    // The route comment promised this ("Doctor can't flip someone else's
+    // availability") but the controller never enforced it, so Dr. A could mark
+    // Dr. B OnLeave and disrupt their live queue. Admin + Receptionist (already
+    // limited to Available/OnLeave above) keep their cross-doctor desk control.
+    if (req.user?.role === "Doctor") {
+      const meId = req.doctorProfile?._id
+        || (await Doctor.findOne({ loginUserId: req.user.id }).select("_id").lean())?._id;
+      if (!meId || String(meId) !== String(req.params.doctorId)) {
+        return res.status(403).json({ success: false, code: "NOT_OWN_DOCTOR_PROFILE",
+          message: "You can only change your own availability." });
+      }
+    }
     const doctor = await Doctor.findById(req.params.doctorId);
     if (!doctor) return res.status(404).json({ success: false, message: "Doctor not found" });
     if (!doctor.availability) doctor.availability = {};
@@ -470,6 +483,17 @@ exports.setAvailability = async (req, res) => {
 // Increment currentlyServing token (called when doctor clicks "Next patient")
 exports.serveNextToken = async (req, res) => {
   try {
+    // R7hr-215 (RBAC audit) — only the doctor themself (or Admin) may advance
+    // their own queue. Without this any Doctor could inflate another doctor's
+    // currentlyServing counter and desync their token board.
+    if (req.user?.role === "Doctor") {
+      const meId = req.doctorProfile?._id
+        || (await Doctor.findOne({ loginUserId: req.user.id }).select("_id").lean())?._id;
+      if (!meId || String(meId) !== String(req.params.doctorId)) {
+        return res.status(403).json({ success: false, code: "NOT_OWN_DOCTOR_PROFILE",
+          message: "You can only advance your own queue." });
+      }
+    }
     const doctor = await Doctor.findById(req.params.doctorId);
     if (!doctor) return res.status(404).json({ success: false, message: "Doctor not found" });
     if (!doctor.availability) doctor.availability = {};
