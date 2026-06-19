@@ -1,6 +1,26 @@
 const PrescriptionService = require("../../services/Doctor/PrescriptionService");
 const Prescription = require("../../models/Doctor/prescription");
 
+// R7hr-225 (security audit) — the prescription READ routes are gated on
+// rx.read, which includes Accountant ONLY so the pharmacy financial registers
+// (/pharmacy/registers, /pharmacy/stats) are reachable from the accounts
+// console. That same token must NOT expose the prescription CLINICAL narrative
+// (provisional diagnosis, HPI/exam/allergy history, vitals) to a financial
+// role. Strip those fields for Accountant while keeping demographics + the
+// billable medicines[] intact, so any legitimate accounts view still works.
+function scrubRxForRole(req, data) {
+  if (req.user?.role !== "Accountant" || data == null) return data;
+  const strip = (p) => {
+    if (!p || typeof p !== "object") return p;
+    const o = p.toObject ? p.toObject() : { ...p };
+    delete o.provisionalDiagnosis;
+    delete o.clinicalDetails;
+    delete o.vitals;
+    return o;
+  };
+  return Array.isArray(data) ? data.map(strip) : strip(data);
+}
+
 // ── CREATE / UPDATE (upsert by UHID) ─────────────────────────
 exports.createPrescription = async (req, res) => {
   try {
@@ -113,7 +133,7 @@ exports.checkCreateOrUpdate = async (req, res) => {
     if (existing)
       return res
         .status(200)
-        .json({ success: true, mode: "UPDATE", data: existing });
+        .json({ success: true, mode: "UPDATE", data: scrubRxForRole(req, existing) });
     return res.status(200).json({ success: true, mode: "CREATE", data: null });
   } catch (error) {
     console.error("checkCreateOrUpdate error:", error);
@@ -125,7 +145,7 @@ exports.checkCreateOrUpdate = async (req, res) => {
 exports.getAllPrescriptions = async (req, res) => {
   try {
     const data = await PrescriptionService.getAllPrescriptions(req.query);
-    res.status(200).json({ success: true, count: data.length, data });
+    res.status(200).json({ success: true, count: data.length, data: scrubRxForRole(req, data) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -135,7 +155,7 @@ exports.getAllPrescriptions = async (req, res) => {
 exports.getPrescriptionById = async (req, res) => {
   try {
     const data = await PrescriptionService.getPrescriptionById(req.params.id);
-    res.status(200).json({ success: true, data });
+    res.status(200).json({ success: true, data: scrubRxForRole(req, data) });
   } catch (error) {
     res
       .status(error.message === "Prescription not found" ? 404 : 500)
@@ -149,7 +169,7 @@ exports.getPrescriptionByUHID = async (req, res) => {
     const data = await PrescriptionService.getPrescriptionByUHID(
       req.params.uhid,
     );
-    res.status(200).json({ success: true, data });
+    res.status(200).json({ success: true, data: scrubRxForRole(req, data) });
   } catch (error) {
     res
       .status(error.message === "Prescription not found" ? 404 : 500)
@@ -163,7 +183,7 @@ exports.getPrescriptionsByPatient = async (req, res) => {
     const data = await PrescriptionService.getPrescriptionsByPatient(
       req.params.patientIdentifier,
     );
-    res.status(200).json({ success: true, count: data.length, data });
+    res.status(200).json({ success: true, count: data.length, data: scrubRxForRole(req, data) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -175,7 +195,7 @@ exports.getPrescriptionsByDoctor = async (req, res) => {
     const data = await PrescriptionService.getPrescriptionsByDoctor(
       req.params.doctorId,
     );
-    res.status(200).json({ success: true, count: data.length, data });
+    res.status(200).json({ success: true, count: data.length, data: scrubRxForRole(req, data) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

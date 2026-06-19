@@ -6,11 +6,14 @@
 // Backend/routes/index.js, so req.user is guaranteed populated.
 //
 // Permission gates use the existing action catalog:
-//   reads  → patient.read           (Admin/Receptionist/Doctor/Nurse/Lab/Pharm/Dietician/TPA/Accountant)
+//   reads  → patient-file.read      (Admin/Doctor/Nurse/MRD) — R7hr-225 security
+//            audit: a certificate carries clinical PHI (diagnosis, ICD-10,
+//            cause-of-death/WHO Form-4, disability %, sterilization), so the
+//            reads were tightened off the broad demographics-only patient.read
+//            (which admitted Pharmacist/Lab/Dietician/TPA/Accountant/Reception)
+//            onto the clinical-file token, matching discharge-summary.read.
+//            The only consumers are the Doctor/Nurse patient panels (clinical).
 //   writes → patient.write-clinical (Admin/Doctor/Nurse)
-// `clinical.read` / `clinical.write` actions do NOT exist in
-// Backend/config/permissions.js — spec hint #7 said to fall through to
-// the closest available action when that's the case.
 // ════════════════════════════════════════════════════════════════════
 
 const express = require("express");
@@ -22,17 +25,17 @@ const { validateObjectIdParam } = require("../../utils/queryGuards");
 
 // Create / list
 router.post("/",  requireAction("patient.write-clinical"), ctrl.create);
-router.get("/",   requireAction("patient.read"),           ctrl.list);
+router.get("/",   requireAction("patient-file.read"),           ctrl.list);
 
 // Patient lookups
 router.get("/by-uhid/:uhid",
-  requireAction("patient.read"),
+  requireAction("patient-file.read"),
   ctrl.getByUHID);
 
 // Single fetch + revoke (with ObjectId guard for clean 400s)
 router.get("/:id",
   validateObjectIdParam("id"),
-  requireAction("patient.read"),
+  requireAction("patient-file.read"),
   ctrl.getById);
 
 router.patch("/:id/revoke",
