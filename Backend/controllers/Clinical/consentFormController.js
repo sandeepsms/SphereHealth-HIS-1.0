@@ -27,9 +27,31 @@ const auditEntry = (req, action, reason = "") => ({
 
 class ConsentFormController {
   // POST /api/consent-forms
+  // R7hr-226 (security audit) — mass-assignment guard. create() must only ever
+  // produce a PENDING consent. The SIGNED / REFUSED / REVOKED states and their
+  // signing-ceremony evidence (biometric WebAuthn attestation, staff e-sign,
+  // admin bypass) may ONLY be reached through the gated PATCH /sign /refuse
+  // /revoke + biometric/staff-sign endpoints. Pre-fix, spreading req.body let a
+  // Doctor/Nurse POST an already-"SIGNED" consent with forged
+  // biometric.isHardwareBacked + staffSignature, defeating the whole R7ez/R7gh
+  // signing ceremony (NABH PRE.3/PRE.4 legal-record forgery). Strip those here,
+  // mirroring the field-strip update() already applies.
   create = handle(async (req, res) => {
+    const body = { ...(req.body || {}) };
+    delete body.auditTrail;
+    delete body.status; // forced to PENDING below — signing goes through /sign
+    delete body.signedAt;
+    delete body.signedByName;
+    delete body.signedByRole;
+    delete body.refusedAt;
+    delete body.revokedAt;
+    delete body.patientAcknowledged;
+    delete body.biometric;
+    delete body.staffSignature;
+    delete body.bypass;
     const form = await ConsentForm.create({
-      ...req.body,
+      ...body,
+      status: "PENDING",
       auditTrail: [auditEntry(req, "CREATED")],
     });
     return res.status(201).json({ success: true, data: form });

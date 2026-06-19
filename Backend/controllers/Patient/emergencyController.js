@@ -1,5 +1,22 @@
 const emergencyService = require("../../services/Patient/emergencyService");
 
+// R7hr-226 (security audit) — clinical fields that the GENERIC update route
+// (PUT /:emergencyNumber, gated reception.register = Admin + Receptionist) must
+// NOT let a non-Admin caller set by spreading req.body. Each of these has its
+// own dedicated gated endpoint (triage/disposition/MLC = Admin/Doctor;
+// vitals.write; rx.write meds/procedures; ipd.discharge disposition;
+// lab.order). Stripped for non-Admin so Reception edits only registration /
+// demographic / arrival fields.
+const ER_CLINICAL_FIELDS = [
+  "triageCategory", "triageTime", "isMLC", "mlcDetails", "consultantIncharge",
+  "vitals", "generalExamination", "respiratorySystem", "cardiovascularSystem",
+  "abdomen", "centralNervousSystem", "neurologicalDeficits", "provisionalDiagnosis",
+  "treatmentGiven", "restraintsUsed", "fallRisk", "disposition", "admission",
+  "admittedAt", "admittedBy", "admittedToBed", "admittedToWard", "admittedDepartment",
+  "attendingDoctorId", "referredTo", "damaDetails", "deathDetails",
+  "investigationsOrdered", "medications", "procedures",
+];
+
 /* ── Role-scope helpers ──────────────────────────────────────────────────
    ER records carry `attendingDoctorId` (ObjectId, populated on disposition
    → admission) and `consultantIncharge` (String, set on triage). A Doctor
@@ -169,9 +186,18 @@ class EmergencyController {
 
   async updateEmergencyVisit(req, res) {
     try {
+      // R7hr-226 — strip clinical fields for non-Admin callers (Receptionist),
+      // so the generic reception update cannot set triage/disposition/MLC/
+      // diagnosis/vitals/treatment/death which belong to the dedicated gated
+      // clinical endpoints.
+      let payload = req.body;
+      if (req.user?.role !== "Admin") {
+        payload = { ...req.body };
+        for (const k of ER_CLINICAL_FIELDS) delete payload[k];
+      }
       const visit = await emergencyService.updateEmergencyVisit(
         req.params.emergencyNumber,
-        req.body
+        payload
       );
       if (!visit) {
         return res.status(404).json({
