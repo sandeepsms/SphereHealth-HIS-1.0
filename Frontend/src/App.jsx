@@ -13,6 +13,10 @@ import "bootstrap/dist/css/bootstrap.css";
 import Sidebar from "./Components/Sidebar";
 import Header from "./Components/Header";
 import { AuthProvider, useAuth, RoleGuard } from "./context/AuthContext";
+// R7hr-223 — app-wide Windows-style keyboard shortcut layer (command palette,
+// quick-nav chords, cheat-sheet, smart action keys). Mounted once in the
+// authenticated shell below. Purely additive — no page logic touched.
+import ShortcutLayer from "./Components/shortcuts/ShortcutLayer";
 import { HospitalSettingsProvider } from "./context/HospitalSettingsContext";
 
 // PrimeReact CSS
@@ -449,6 +453,7 @@ function AppLayout({ collapsed, setCollapsed }) {
     <div>
       <Header />
       <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
+      <ShortcutLayer />
       <div
         className={`main-content ${collapsed ? "expanded" : ""}`}
         style={{

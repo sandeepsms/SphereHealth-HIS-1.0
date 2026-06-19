@@ -1,0 +1,94 @@
+/* shortcuts.css — R7hr-223 keyboard shortcut layer (command palette,
+   cheat-sheet, chord hint, action flash). Scoped under .sx-* so it cannot
+   collide with any existing page styles. High z-index to sit above the
+   header (52px bar) and sidebar. */
+
+.sx-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  background: rgba(15, 23, 42, 0.42);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 11vh;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* ── Command palette ─────────────────────────────────────────────── */
+.sx-palette {
+  width: min(620px, 92vw);
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.35); overflow: hidden;
+}
+.sx-palette-input {
+  width: 100%; box-sizing: border-box; border: none; outline: none;
+  padding: 16px 18px; font-size: 16px; color: #0f172a;
+  border-bottom: 1px solid #eef2f7;
+}
+.sx-palette-input::placeholder { color: #94a3b8; }
+.sx-palette-list { max-height: 46vh; overflow: auto; padding: 6px; }
+.sx-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 8px; cursor: pointer;
+  font-size: 13.5px; color: #0f172a;
+}
+.sx-row--sel { background: #eff6ff; }
+.sx-row-icon { width: 22px; text-align: center; font-size: 15px; flex: none; }
+.sx-row-label { font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sx-row-chord { display: flex; gap: 3px; flex: none; }
+.sx-row-path { color: #94a3b8; font-size: 11px; flex: none; font-family: ui-monospace, "Cascadia Code", monospace; }
+.sx-empty { padding: 22px; text-align: center; color: #94a3b8; font-size: 13px; }
+.sx-palette-foot, .sx-sheet-foot {
+  padding: 8px 14px; border-top: 1px solid #eef2f7;
+  color: #64748b; font-size: 11.5px; background: #f8fafc;
+}
+
+/* ── Cheat-sheet ─────────────────────────────────────────────────── */
+.sx-sheet {
+  width: min(720px, 94vw);
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.35); overflow: hidden;
+}
+.sx-sheet-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid #eef2f7; font-size: 15px; color: #0f172a;
+}
+.sx-role { color: #2563eb; font-weight: 600; }
+.sx-x {
+  border: none; background: #f1f5f9; width: 28px; height: 28px;
+  border-radius: 6px; cursor: pointer; color: #475569; font-size: 13px;
+}
+.sx-x:hover { background: #e2e8f0; }
+.sx-sheet-body { display: grid; grid-template-columns: 1fr 1fr; }
+.sx-sheet-col { padding: 14px 18px; }
+.sx-sheet-col + .sx-sheet-col { border-left: 1px solid #eef2f7; }
+.sx-sheet-h {
+  font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .5px;
+  color: #64748b; margin-bottom: 10px;
+}
+.sx-sheet-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: #0f172a; padding: 5px 0; }
+.sx-sheet-row > span:last-child { flex: 1; min-width: 0; }
+.sx-muted { color: #94a3b8; }
+
+/* ── <kbd> chips ─────────────────────────────────────────────────── */
+.sx-keys { display: inline-flex; gap: 3px; flex: none; min-width: 86px; }
+.sx-overlay kbd, .sx-chord-hint kbd {
+  display: inline-block; min-width: 16px; text-align: center;
+  padding: 2px 6px; font-size: 11px; font-weight: 700; line-height: 1.3;
+  color: #334155; background: #f1f5f9; border: 1px solid #cbd5e1;
+  border-bottom-width: 2px; border-radius: 5px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* ── Chord hint + action flash ───────────────────────────────────── */
+.sx-chord-hint, .sx-flash {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+  z-index: 10001; color: #fff; background: #0f172a;
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.4);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.sx-chord-hint { padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 700; letter-spacing: 1px; }
+.sx-flash { padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; transition: opacity .35s, transform .35s; }
+.sx-flash--out { opacity: 0; transform: translateX(-50%) translateY(8px); }
+
+@media (max-width: 640px) {
+  .sx-sheet-body { grid-template-columns: 1fr; }
+  .sx-sheet-col + .sx-sheet-col { border-left: none; border-top: 1px solid #eef2f7; }
+}
