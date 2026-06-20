@@ -220,6 +220,25 @@ class EmergencyController {
 
   async deleteEmergencyVisit(req, res) {
     try {
+      // R7hr-227 (security audit) — ER record deletion is destructive and
+      // er.delete admits any Doctor. Scope it like OPD deleteOPDVisit
+      // (R7hr-221): a Doctor may only delete a visit they attend
+      // (attendingDoctorId or consultantIncharge); Admin bypasses; an un-owned
+      // ER visit is Admin-only to delete. (Shared ER clinical WRITES — meds /
+      // procedures / vitals — are intentionally NOT owner-locked, since any
+      // on-shift clinician legitimately performs them.)
+      if (req.user?.role === "Doctor") {
+        const existing = await emergencyService.getEmergencyVisitById(req.params.emergencyNumber);
+        if (existing) {
+          const docId = String(req.doctorProfile?._id || "");
+          const docName = req.doctorProfile?.personalInfo?.fullName || "";
+          const owns = (docId && String(existing.attendingDoctorId || "") === docId)
+                    || (docName && existing.consultantIncharge === docName);
+          if (!owns) {
+            return res.status(403).json({ success: false, code: "NOT_YOUR_ER_VISIT", message: "You can only delete an emergency visit you attended." });
+          }
+        }
+      }
       const visit = await emergencyService.deleteEmergencyVisit(
         req.params.emergencyNumber
       );
