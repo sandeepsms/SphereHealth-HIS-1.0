@@ -1464,6 +1464,15 @@ class AdmissionService {
     delete safe.admissionNumber;
     delete safe.patientId;
     delete safe.bedId;
+    // R7hr-228 (security audit) — these belong to dedicated gated flows, not the
+    // generic admission patch: attendingDoctorId (assigned at admit / consult),
+    // treatmentTeam (consultation flow), dischargeWorkflow (the gated
+    // doctor-approve → clear-bill → gate-pass stages). Strip so the generic
+    // updateAdmission cannot reassign the attending doctor or jump discharge
+    // stages outside those endpoints.
+    delete safe.attendingDoctorId;
+    delete safe.treatmentTeam;
+    delete safe.dischargeWorkflow;
     const admission = await Admission.findByIdAndUpdate(
       id,
       { $set: safe },
