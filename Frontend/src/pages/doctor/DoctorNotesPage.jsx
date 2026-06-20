@@ -2377,7 +2377,15 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                   hasn't been signed, so this picker only renders when the
                   gate is OFF. Modules are always clickable here. */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
-                {MODULES.map(m => (
+                {/* R7hr-230 — hide "Initial Assessment" + "Discharge Summary"
+                    from the Add-a-Note picker: both already have their own
+                    dedicated tiles on the Doctor Notes overview (Initial Doctor
+                    Assessment → the IPD/Emergency Initial Assessment surface;
+                    Discharge Summary → the Discharge Summary tile), so a second
+                    entry point here was a duplicate. They STAY in MODULES so
+                    modDef() still resolves the correct print-header title for
+                    any existing note of those types. */}
+                {MODULES.filter(m => m.id !== "initial" && m.id !== "discharge").map(m => (
                     <button
                       key={m.id}
                       type="button"

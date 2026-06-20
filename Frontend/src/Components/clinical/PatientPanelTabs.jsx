@@ -104,6 +104,15 @@ function groupByDayChrono(notes, getAt) {
   return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
 }
 
+/* R7hr-230 — The patient panel shows SIGNED clinical notes only. An unsigned
+   DRAFT is private to its author (like an unsent WhatsApp message): it stays
+   editable on the Doctor / Nursing Notes compose page, where the author can
+   continue or clear it, and only appears here for the rest of the team once it
+   has been signed & submitted. Doctor notes sign to status "signed"; nurse
+   notes to "submitted" (or "signed"). Everything else is treated as a draft and
+   hidden from the panel timelines. */
+const isSignedNote = (n) => !!n && (n.status === "signed" || n.status === "submitted");
+
 /* ────────────────────────────────────────────────────────────────
    1. InitialAssessmentTab
    ────────────────────────────────────────────────────────────────
@@ -134,10 +143,12 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
     }
     return false;
   };
-  const docInitial         = _allInitialFromDocCol.filter((n) => !_isNurseSection(n));
+  // R7hr-230 — signed-only on the panel; a draft IA stays editable on the
+  // Initial Assessment compose page until signed.
+  const docInitial         = _allInitialFromDocCol.filter((n) => !_isNurseSection(n)).filter(isSignedNote);
   const _nurseInDocCol     = _allInitialFromDocCol.filter(_isNurseSection);
   const _nurseFromNurseCol = nursingNotes.filter((n) => n.noteType === "initial" || n.noteType === "initialAssessment");
-  const nurseInitial       = [..._nurseInDocCol, ..._nurseFromNurseCol];
+  const nurseInitial       = [..._nurseInDocCol, ..._nurseFromNurseCol].filter(isSignedNote);
 
   // R7hr-109 — Read-side fallback for empty Admission Summary fields.
   // Receptionist registration doesn't enforce Reason for Admission or
@@ -285,7 +296,7 @@ export function MLCOrDoctorNotesTab({ patient, doctorNotes = [], admission }) {
 
   const hasMLC = mlcList.length > 0;
   const nonInitialDocNotes = doctorNotes.filter(
-    (n) => n.noteType !== "initial" && n.noteType !== "initialAssessment",
+    (n) => n.noteType !== "initial" && n.noteType !== "initialAssessment" && isSignedNote(n), // R7hr-230 — signed-only
   );
 
   // R7gn — Day-wise group, same shape as Complete File Narrative theme.
@@ -354,7 +365,7 @@ export function NursingNotesExpandedTab({ nursingNotes = [], admission }) {
   // print. The previous "group by type" layout buried the timeline; the
   // user wants chronological journey parity with the printed file.
   const filtered = useMemo(
-    () => (nursingNotes || []).filter((n) => n.noteType !== "initial" && n.noteType !== "initialAssessment"),
+    () => (nursingNotes || []).filter((n) => n.noteType !== "initial" && n.noteType !== "initialAssessment" && isSignedNote(n)), // R7hr-230 — signed-only
     [nursingNotes],
   );
   const admissionDate = admission?.admissionDate || admission?.date;
