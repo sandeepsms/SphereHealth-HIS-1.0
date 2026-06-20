@@ -1898,6 +1898,106 @@ function Field({ label, value, mono, wide, danger }) {
    • Component is data-driven via its own fetch so the parent doesn't
      need to know about DoctorOrder shape.
 ───────────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────
+   R7hr-229 — Investigations (this admission). Read-only tab for BOTH the
+   Doctor and Nurse panels. Pulls the day-wise + trend aggregate from
+   GET /api/admission-investigations (InvestigationOrder results + LabTrend
+   daily readings + LabReport narrative reports, scoped to the admission's
+   date window). Shows the SAME paragraph that auto-fills the discharge
+   summary (keyInvestigationsText), plus a day-wise grouped view + trends.
+   ADDITIVE: a new export; touches no existing tab.
+───────────────────────────────────────────────────────────────────── */
+export function InvestigationsSummaryTab({ admission, patient }) {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState("");
+
+  const UHID = patient?.UHID || admission?.UHID || "";
+  const admissionId = admission?._id || "";
+
+  useEffect(() => {
+    if (!UHID && !admissionId) { setData(null); return; }
+    let cancelled = false;
+    setLoading(true); setError("");
+    const params = new URLSearchParams();
+    if (UHID) params.set("uhid", UHID);
+    if (admissionId) params.set("admissionId", String(admissionId));
+    axios.get(`${API_ENDPOINTS.BASE}/admission-investigations?${params.toString()}`)
+      .then((r) => { if (!cancelled) setData(r.data?.data || null); })
+      .catch((e) => { if (!cancelled) { setError(e?.response?.data?.message || e.message || "Failed to load"); setData(null); } })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [UHID, admissionId]);
+
+  if (loading) return <div className="ppt-empty" style={{ padding: 24, color: "#64748b" }}>Loading investigations…</div>;
+  if (error)   return <div className="ppt-empty" style={{ padding: 24, color: "#b91c1c" }}>⚠ {error}</div>;
+
+  const days   = data?.days   || [];
+  const trends = data?.trends || [];
+  const para   = (data?.paragraph || "").trim();
+  if (!para && days.length === 0) {
+    return <div className="ppt-empty" style={{ padding: 28, textAlign: "center", color: "#64748b" }}>
+      🧪 No investigations recorded for this admission yet.
+    </div>;
+  }
+
+  const card = { border: "1px solid #e2e8f0", borderRadius: 10, background: "#fff", overflow: "hidden" };
+  const head = (bg, color) => ({ padding: "8px 14px", background: bg, color, fontSize: 12, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase" });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "4px 2px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>🧪 Investigations — this admission</div>
+        <span style={{ fontSize: 11.5, color: "#475569", background: "#eff6ff", border: "1px solid #dbe3ec", borderRadius: 999, padding: "3px 10px" }}>
+          {data?.counts?.days || 0} day{(data?.counts?.days || 0) === 1 ? "" : "s"} · {data?.counts?.panels || 0} lab panel{(data?.counts?.panels || 0) === 1 ? "" : "s"} · {data?.counts?.reports || 0} report{(data?.counts?.reports || 0) === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      {/* The narrative paragraph (same text that flows to the discharge summary) */}
+      {para && (
+        <div style={{ ...card, borderLeft: "4px solid #2563eb" }}>
+          <div style={head("#eff6ff", "#1e40af")}>Summary (day-wise + trend)</div>
+          <p style={{ margin: 0, padding: "12px 16px", fontSize: 13, lineHeight: 1.6, color: "#0f172a", whiteSpace: "pre-wrap" }}>{para}</p>
+          <div style={{ padding: "0 16px 10px", fontSize: 10.5, color: "#94a3b8" }}>This is the same summary that auto-fills the discharge summary's Key Investigations.</div>
+        </div>
+      )}
+
+      {/* Day-wise grouped detail */}
+      {days.map((b) => (
+        <div key={b.dateKey} style={card}>
+          <div style={head("#f1f5f9", "#334155")}>Day {b.dayNo} · {b.dateLabel}</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <tbody>
+              {b.items.map((it, i) => (
+                <tr key={i} style={{ borderTop: i ? "1px solid #f1f5f9" : "none" }}>
+                  <td style={{ padding: "7px 14px", fontWeight: 700, color: "#0f172a", width: "34%", verticalAlign: "top" }}>
+                    {it.type === "report" ? "🖼 " : "🧫 "}{it.name}
+                  </td>
+                  <td style={{ padding: "7px 14px", color: "#334155", whiteSpace: "pre-wrap" }}>{it.value || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+
+      {/* Trends */}
+      {trends.length > 0 && (
+        <div style={{ ...card, borderLeft: "4px solid #0d9488" }}>
+          <div style={head("#f0fdfa", "#0f766e")}>Trends across the stay</div>
+          <div style={{ padding: "10px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
+            {trends.map((t, i) => (
+              <div key={i} style={{ fontSize: 12.5, color: "#0f172a" }}>
+                <b>{t.test}</b>: {t.first} <span style={{ color: "#0d9488" }}>→</span> {t.last}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PendingInvestigationReportsTab({ admission, patient, canMarkReportCollected = true, actorName = "" }) {
   const [orders, setOrders]   = useState([]);
   const [loading, setLoading] = useState(false);
