@@ -45,6 +45,8 @@ import { DischargeSummaryPageContent } from "../clinical/DischargeSummaryPage";
 import { ConsentFormPageContent } from "../clinical/ConsentFormPage";
 import { MLCPageContent } from "../mlc/MLCPage";
 import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
+// R7hr-231 — floating quick-tools (Nursing Plan editor + OPD/panel/cert/discharge shortcuts)
+import DoctorQuickTools from "../../Components/doctor/DoctorQuickTools";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import TreatmentTeamPanel from "../../Components/clinical/TreatmentTeamPanel";
 // R7hr-143 — Pending Investigation Reports shared tab
@@ -1863,6 +1865,15 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
     // the content (page looked congested on the right because content
     // was being squeezed 260px to the right of where it belonged).
     <div style={{ padding: "24px 28px", minHeight: "100vh", background: C.bg, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text }}>
+
+      {/* R7hr-231 — floating Nursing Plan editor + quick shortcuts (only with a patient loaded) */}
+      {patient && (
+        <DoctorQuickTools
+          uhid={patient?.UHID || patient?.uhid || searchUHID}
+          admissionId={patient?._id || ""}
+          ipdNo={patient?.ipdNo || patient?.admissionNumber || ""}
+        />
+      )}
 
       {/* ── Page Header ── */}
       <div style={{ background: `linear-gradient(135deg, ${C.primary} 0%, ${C.primaryMid} 100%)`, borderRadius: 16, padding: "20px 26px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: `0 8px 24px ${C.primary}30` }}>

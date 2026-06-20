@@ -16,6 +16,8 @@ import NurseOrdersPanel from "../../Components/clinical/NurseOrdersPanel";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 // R7hr-143 — Pending Investigation Reports tile re-uses the shared tab
 import { PendingInvestigationReportsTab } from "../../Components/clinical/PatientPanelTabs";
+// R7hr-231 — doctor-assigned required-assessments view (+ Extra Note dropdown)
+import NurseRequiredAssessments from "../../Components/nursing/NurseRequiredAssessments";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 import IntegratedVitalsPanel from "../../Components/clinical/IntegratedVitalsPanel";
 import { saveVitalSheet, getVitalSheet } from "../../Services/vital/vitalService";
@@ -515,6 +517,23 @@ function NursingNotesContent({ selectedPatient }) {
   const [loading,    setLoading]    = useState(false);
   const [activeModal,setActiveModal]= useState(null);
   const [editingNote,setEditingNote]= useState(null);
+  // R7hr-231 — the doctor-set nursing assessment plan + today's done-counts.
+  // Re-fetched when the patient changes or an assessment modal opens/closes
+  // (so the "done X / min Y today" progress refreshes right after a save).
+  const [nursePlan, setNursePlan] = useState({ items: [], todayCounts: {}, assignedByName: "" });
+  useEffect(() => {
+    const aid = patient?._id;
+    const u   = patient?.UHID || patient?.uhid;
+    if (!aid && !u) { setNursePlan({ items: [], todayCounts: {}, assignedByName: "" }); return; }
+    let cancelled = false;
+    const params = new URLSearchParams();
+    if (u)   params.set("uhid", u);
+    if (aid) params.set("admissionId", String(aid));
+    axios.get(`${API_ENDPOINTS.BASE}/nursing-assessment-plan?${params.toString()}`)
+      .then((r) => { if (!cancelled) setNursePlan(r.data?.data || { items: [], todayCounts: {}, assignedByName: "" }); })
+      .catch(() => { /* no plan / no access — fall back to the full picker */ });
+    return () => { cancelled = true; };
+  }, [patient?._id, activeModal]);
 
   /* ── Late-entry mode (NABH HIC.6 backdated entry) ──
      Enabled when the loaded admission is already DISCHARGED — typically
@@ -2019,6 +2038,18 @@ function NursingNotesContent({ selectedPatient }) {
                 stays visible so the nurse can see WHAT they'll get once
                 they sign the Initial Assessment). */}
             <div style={{ background: C.card, borderRadius: 12, padding: "18px", border: `1.5px solid ${C.border}`, marginTop: 14 }}>
+              {/* R7hr-231 — if the doctor has set a Nursing Plan, show ONLY the
+                  required assessments (today's done/min progress) + an "Extra
+                  Note" dropdown; otherwise fall back to the full picker. */}
+              {nursePlan.items.length > 0 ? (
+                <NurseRequiredAssessments
+                  modules={MODULES}
+                  items={nursePlan.items}
+                  todayCounts={nursePlan.todayCounts}
+                  assignedByName={nursePlan.assignedByName}
+                  onOpen={(m) => { if (m.href) { navigate(m.href); return; } openModal(m.id); }}
+                />
+              ) : (<>
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 3 }}>Select Note Type</div>
                 <div style={{ fontSize: 12, color: C.muted }}>
@@ -2077,6 +2108,7 @@ function NursingNotesContent({ selectedPatient }) {
                     </button>
                 ))}
               </div>
+              </>)}
             </div>
           </div>
           )}
