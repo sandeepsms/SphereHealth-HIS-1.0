@@ -195,10 +195,33 @@ exports.getAllCharges = async (admissionId) =>
 /**
  * voidEntry — nurse removes an entry (before billing is finalised).
  */
-exports.voidEntry = async (entryId, reason) => {
+exports.voidEntry = async (entryId, reason, actor = {}) => {
   const entry = await NursingChargeEntry.findById(entryId);
   if (!entry) throw new Error("Charge entry not found");
-  if (entry.billed) throw new Error("Cannot void a billed entry — contact billing");
+  if (entry.status === "voided") return entry; // idempotent
+
+  // R7hr-238 (audit: void ANY charge hospital-wide) — voidEntry had no actor
+  // scoping, so anyone holding billing.manual-charge could void any nursing
+  // charge for any patient. A nurse may now only void a charge they themselves
+  // entered; Admin/Accountant may void any.
+  const role = actor.role || "";
+  if (role !== "Admin" && role !== "Accountant") {
+    const owner  = String(entry.chargedById || "");
+    const caller = String(actor._id || actor.id || "");
+    if (!owner || !caller || owner !== caller) {
+      const e = new Error("You can only void a nursing charge you entered — ask Admin/Accountant to void others.");
+      e.status = 403; e.code = "NOT_YOUR_CHARGE"; throw e;
+    }
+  }
+
+  // R7hr-238 (audit: dead `billed` guard) — the boolean is never set true, so
+  // also check for a real BillingTrigger (onEquipmentCharged stamps
+  // sourceDocumentId = entry._id). Once the charge is on the bill, voiding it
+  // here would desync the ledger — route the reversal through billing instead.
+  const BillingTrigger = require("../../models/Billing/BillingTrigger");
+  const onBill = entry.billed || !!(await BillingTrigger.exists({ sourceDocumentId: entry._id, status: { $ne: "voided" } }));
+  if (onBill) throw new Error("Cannot void a billed entry — contact billing to reverse it.");
+
   entry.status = "voided";
   entry.voidReason = reason || "Removed by nurse";
   return entry.save();

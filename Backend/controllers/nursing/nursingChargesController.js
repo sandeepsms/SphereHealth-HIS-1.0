@@ -50,7 +50,9 @@ exports.getAllCharges = async (req, res) => {
 exports.voidEntry = async (req, res) => {
   try {
     const { reason } = req.body;
-    ok(res, await svc.voidEntry(req.params.entryId, reason));
+    // R7hr-238 (audit) — pass the JWT actor so the service can scope the void
+    // to the charge's owner (nurse) vs Admin/Accountant.
+    ok(res, await svc.voidEntry(req.params.entryId, reason, req.user));
   } catch (e) { err(res, e); }
 };
 
