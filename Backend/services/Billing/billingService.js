@@ -353,6 +353,16 @@ class BillingService {
       orderedByRole,
     } = opts;
 
+    // R7hr-233 (audit: negative-qty self-discount) — a negative/zero/NaN
+    // quantity produced a negative line total (a silent, unaudited discount on
+    // a DRAFT bill). Require a positive, finite quantity.
+    quantity = Number(quantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      const err = new Error("Quantity must be a positive number.");
+      err.status = 400;
+      throw err;
+    }
+
     // ServiceMaster lookup is bill-independent, run once outside the retry.
     const service = await ServiceMaster.findById(serviceId);
     if (!service) throw new Error("Service not found");

@@ -268,7 +268,14 @@ exports.reportCreate = async (req, res) => {
 
 exports.reportUpdate = async (req, res) => {
   try {
-    const row = await LabReport.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true }).lean();
+    // R7hr-233 (audit: lab self-verify escalation) — verification is the
+    // doctor-only transition and must go through reportVerify; never let a
+    // generic field update forge the verified status or its identity stamps.
+    const body = { ...(req.body || {}) };
+    if (body.status === "verified") delete body.status;
+    delete body.verifiedBy;
+    delete body.verifiedAt;
+    const row = await LabReport.findByIdAndUpdate(req.params.id, body, { new: true, runValidators: true }).lean();
     if (!row) return res.status(404).json({ success: false, message: "Not found" });
     res.json({ success: true, data: row });
   } catch (e) { res.status(400).json({ success: false, message: e.message }); }

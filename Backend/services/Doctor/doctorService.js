@@ -90,7 +90,9 @@ class DoctorService {
   }
 
   async searchDoctors(searchTerm) {
-    const regex = new RegExp(searchTerm, "i");
+    // R7hr-233 (audit: ReDoS) — escape + length-cap user input before matching.
+    const { safeRegex } = require("../../utils/queryGuards");
+    const regex = safeRegex(searchTerm);
     return await Doctor.find({
       isActive: true,
       $or: [

@@ -6,3 +6,12 @@ Backend/.env
 Frontend/.env
 .claude/scheduled_tasks.lock
 Backend/scripts/resetDoctorPw.js
+
+# R7hr-233 (audit: logging PHI hygiene) — never commit local log/err captures
+# or the admin rc; they hold request bodies, JWTs and PHI and bypass the
+# errorLogger PHI redactor.
+*.log
+*.err
+.adminrc.json
+.backend-log.txt
+Spherehealth.login_*.json
