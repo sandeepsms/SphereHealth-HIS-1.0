@@ -788,7 +788,10 @@ async function createTrigger(config) {
   const unitPrice   = unitPriceOverride != null
     ? toNum(unitPriceOverride)
     : toNum(resolvedService?.defaultPrice ?? 0);
-  const totalAmount = toNum(unitPrice) * (Number(quantity) || 1);
+  // R7hr-249 (audit: no qty floor) — a negative quantity produced a negative
+  // totalAmount (a silent bill credit). Treat non-positive / NaN as 1, matching
+  // the prior 0-handling.
+  const totalAmount = toNum(unitPrice) * (Number(quantity) > 0 ? Number(quantity) : 1);
 
   // If a code was requested but ServiceMaster doesn't have it yet (common
   // for newly-introduced codes like DOC-MORN-ROUND or BED-ICU), accept

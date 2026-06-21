@@ -403,9 +403,12 @@ exports.panelUpdate = async (req, res) => {
     if (PANELS[code]) {
       return res.status(409).json({ success: false, message: `'${code}' is built-in and immutable` });
     }
+    // R7hr-249 (audit: mass-assignment) — strip protected/identity fields from
+    // the raw spread so a client can't reassign code/createdBy/_id/__v.
+    const { code: _pc, createdBy: _pcb, _id: _pid, __v: _pv, ...editablePanel } = req.body || {};
     const row = await CustomPanel.findOneAndUpdate(
       { code },
-      { $set: { ...req.body, updatedBy: req.user?.fullName || "" } },
+      { $set: { ...editablePanel, updatedBy: req.user?.fullName || "" } },
       { new: true, runValidators: true },
     );
     if (!row) return res.status(404).json({ success: false, message: "Custom panel not found" });
