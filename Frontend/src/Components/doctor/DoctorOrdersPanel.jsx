@@ -12,6 +12,16 @@ import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import SharedDrugAutocomplete, { parseStrength, drugDisplayName } from "../clinical/DrugAutocomplete";
 import ServiceMasterAutocomplete from "../services/ServiceMasterAutocomplete";
+// R7hr-179 (USER, 2026-06-11): Medication + IV Fluid entry adopt the SAME
+// multi-row PrescriptionPanel / InfusionPanel the Doctor IPD Initial
+// Assessment uses (R7hr-128 dilution, R7hr-71 auto-route, R7hr-68 fluid
+// presets) — one batch of rows fans out to one DoctorOrder per row, same
+// adapter shape R7hr-176 proved for verbal orders. Lab / Imaging get the
+// IA-style catalog autocomplete + multi-pick chip flow (R7hr-69).
+// The legacy single-order <OrderForm> stays untouched for the amend path
+// (editingOrder) + every other order type.
+import PrescriptionPanel from "../clinical/PrescriptionPanel";
+import InfusionPanel from "../clinical/InfusionPanel";
 import { confirm } from "../common/ConfirmDialog";
 import { createProcedureNote } from "../../Services/procedureNoteService";
 
@@ -54,6 +64,179 @@ const ORDER_TYPES = [
 ];
 
 const TYPE_MAP = Object.fromEntries(ORDER_TYPES.map(t => [t.id, t]));
+
+/* ── R7hr-180 · ONE entry point for Lab + Imaging. The picker grid shows
+   a single "Investigations" tile instead of two; each picked test still
+   saves as its real orderType (Lab / Radiology) so the distinct nurse
+   STEPS workflows (sample-collection vs scan-scheduling), the filter
+   dropdown and every existing order card stay untouched.
+   "Investigations" is a UI-only pseudo-type — never sent to the API. */
+TYPE_MAP.Investigations = {
+  id: "Investigations", label: "Investigations — Lab / Imaging",
+  icon: "pi-search", color: C.teal, bg: C.tealL, border: C.tealB,
+};
+const TILE_TYPES = ORDER_TYPES.filter(t => t.id !== "Lab" && t.id !== "Radiology");
+TILE_TYPES.splice(2, 0, TYPE_MAP.Investigations); // sits where the Lab tile was
+
+/* ── R7hr-179 · Lab + Imaging catalogs for the IA-style multi-pick
+   chip flow. Mirrors the R7hr-69 LAB_TESTS list in
+   IPDInitialAssessmentPage.jsx, split by order type so the Lab tile
+   doesn't suggest CT scans and vice-versa. Free-text entries still
+   chip via Enter / "+ Add as custom" — catalog is a convenience,
+   not a constraint. ─────────────────────────────────────────────── */
+const ORDER_LAB_CATALOG = [
+  "CBC (Complete Blood Count)", "ESR", "PT / INR", "aPTT", "D-Dimer",
+  "Peripheral Smear", "Reticulocyte Count",
+  "LFT (Liver Function Tests)", "RFT (Renal Function Tests)",
+  "Electrolytes (Na / K / Cl)", "Serum Calcium", "Serum Magnesium",
+  "Serum Phosphorus", "Lipid Profile", "Random Blood Sugar (RBS)",
+  "Fasting Blood Sugar (FBS)", "Post-Prandial Blood Sugar (PPBS)",
+  "HbA1c", "Uric Acid", "Amylase", "Lipase", "CPK", "CPK-MB",
+  "Troponin I", "NT-proBNP", "Procalcitonin", "CRP", "Ferritin",
+  "Serum Iron / TIBC", "Vitamin D (25-OH)", "Vitamin B12", "Folate",
+  "TSH", "Free T3", "Free T4", "Cortisol (8 AM)", "PTH", "HCG (Beta)",
+  "ABG (Arterial Blood Gas)", "VBG (Venous Blood Gas)", "Lactate",
+  "Blood Culture & Sensitivity", "Urine Culture & Sensitivity",
+  "Sputum Culture & Sensitivity", "Stool Culture", "Wound Swab Culture",
+  "CSF Analysis", "Pleural Fluid Analysis", "Ascitic Fluid Analysis",
+  "HIV ELISA", "HBsAg", "Anti-HCV", "VDRL", "Dengue NS1 + IgM / IgG",
+  "Malaria Antigen (MP-MRDT)", "Typhi-Dot IgM", "Widal Test",
+  "COVID-19 RT-PCR", "Leptospira IgM", "Scrub Typhus IgM",
+  "Urine Routine & Microscopy", "Urine Albumin-Creatinine Ratio",
+  "24-hr Urine Protein", "Stool Routine & Microscopy", "Stool Occult Blood",
+];
+const ORDER_IMAGING_CATALOG = [
+  "Chest X-Ray PA", "Chest X-Ray AP", "X-Ray KUB", "X-Ray Abdomen Erect",
+  "X-Ray (specify region)",
+  "USG Abdomen", "USG KUB", "USG Pelvis", "USG Whole Abdomen",
+  "USG Doppler — Lower Limb Venous", "USG Doppler — Carotid",
+  "CECT Head", "NCCT Head", "CECT Chest", "CECT Abdomen + Pelvis",
+  "HRCT Chest", "MRI Brain (Plain + Contrast)", "MRI Spine",
+  "ECG (12-Lead)", "2D Echo", "Stress Test (TMT)", "Holter Monitoring",
+  "PFT (Pulmonary Function Test)", "EEG", "EMG",
+  "Nerve Conduction Study (NCS)",
+];
+
+/* ── R7hr-180 · Classifier for the merged Investigations picker —
+   catalog membership first, keyword fallback for free-text customs.
+   Drives the LAB / IMAGING tag on suggestions + chips AND the
+   orderType split (Lab vs Radiology) at save time. */
+const isImagingTest = (t) => ORDER_IMAGING_CATALOG.includes(t)
+  || /x-?ray|usg|sonograph|doppler|\bct\b|cect|ncct|hrct|mri|2d echo|\becho\b|ecg|ekg|tmt|holter|eeg|emg|\bncs\b|nerve conduction|pft|spirometry|endoscop|colonoscop|bronchoscop|ercp|fnac|biopsy|scan/i.test(String(t || ""));
+
+/* ── R7hr-179 · MultiTestPicker — IA-style autocomplete + multi-pick
+   chips for Lab / Imaging batch ordering. Same UX contract as the
+   R7hr-69 Investigations picker on the IPD Initial Assessment: type
+   2-3 letters → suggestions → click/Enter chips it → "Add N Tests"
+   commits the batch. Controlled: parent owns `value` (string[]).
+   R7hr-180 — optional `kindOf(name)` prop renders a small kind tag
+   (LAB / IMAGING) on each suggestion + chip for the merged picker. */
+function MultiTestPicker({ catalog, value = [], onChange, color = C.teal, placeholder, kindOf }) {
+  const [query, setQuery] = useState("");
+  const [showSuggest, setShowSuggest] = useState(false);
+  const [suggestIdx, setSuggestIdx] = useState(-1);
+
+  const addPick = (pick) => {
+    const p = String(pick || "").trim();
+    if (!p) return;
+    if (!value.includes(p)) onChange([...value, p]);
+    setQuery(""); setSuggestIdx(-1); setShowSuggest(false);
+  };
+  const q = query.trim().toLowerCase();
+  const matches = q ? catalog.filter(t => t.toLowerCase().includes(q)).slice(0, 8) : [];
+
+  return (
+    <div>
+      <div style={{ position: "relative" }}>
+        <input
+          value={query}
+          onChange={e => { setQuery(e.target.value); setShowSuggest(true); setSuggestIdx(-1); }}
+          onFocus={() => setShowSuggest(true)}
+          onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") { e.preventDefault(); setSuggestIdx(i => Math.min(matches.length - 1, i + 1)); }
+            else if (e.key === "ArrowUp") { e.preventDefault(); setSuggestIdx(i => Math.max(0, i - 1)); }
+            else if (e.key === "Enter") {
+              e.preventDefault();
+              addPick(suggestIdx >= 0 && matches[suggestIdx] ? matches[suggestIdx] : query);
+            } else if (e.key === "Escape") { setShowSuggest(false); setSuggestIdx(-1); }
+          }}
+          placeholder={placeholder || "Type to search — pick multiple…"}
+          className="his-field"
+        />
+        {showSuggest && q && (
+          <div style={{
+            position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4,
+            background: "white", border: `1px solid ${C.border}`, borderRadius: 8,
+            boxShadow: "0 8px 24px rgba(15,23,42,.12)",
+            maxHeight: 280, overflowY: "auto", zIndex: 50,
+          }}>
+            {matches.length === 0 && (
+              <div
+                onMouseDown={(e) => { e.preventDefault(); addPick(query); }}
+                style={{ padding: "10px 14px", fontSize: 12, color: C.muted, cursor: "pointer" }}>
+                <span style={{ color, fontWeight: 700 }}>+ Add "{query.trim()}"</span> as custom entry
+              </div>
+            )}
+            {matches.map((m, i) => (
+              <div
+                key={m}
+                onMouseDown={(e) => { e.preventDefault(); addPick(m); }}
+                onMouseEnter={() => setSuggestIdx(i)}
+                style={{
+                  padding: "9px 14px", fontSize: 12, cursor: "pointer",
+                  background: suggestIdx === i ? `${color}12` : "white",
+                  color: C.text, fontWeight: suggestIdx === i ? 700 : 500,
+                  borderBottom: i < matches.length - 1 ? `1px solid ${C.border}40` : "none",
+                  display: "flex", alignItems: "center", gap: 8,
+                }}>
+                <i className="pi pi-plus-circle" style={{ color, fontSize: 11 }} />
+                {m}
+                {kindOf && (
+                  <span style={{
+                    marginLeft: "auto", fontSize: 9, fontWeight: 800, letterSpacing: ".4px",
+                    padding: "1px 6px", borderRadius: 4,
+                    background: kindOf(m) === "IMAGING" ? "#eef2ff" : "#f0fdfa",
+                    color: kindOf(m) === "IMAGING" ? C.indigo : C.teal,
+                  }}>{kindOf(m)}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {value.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+          {value.map(t => (
+            <span key={t} style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              background: `${color}14`, color, border: `1px solid ${color}40`,
+              borderRadius: 16, padding: "3px 6px 3px 11px", fontSize: 11.5, fontWeight: 700,
+            }}>
+              {t}
+              {kindOf && (
+                <span style={{
+                  fontSize: 9, fontWeight: 800, letterSpacing: ".4px",
+                  padding: "1px 5px", borderRadius: 4,
+                  background: kindOf(t) === "IMAGING" ? "#eef2ff" : "#ffffffaa",
+                  color: kindOf(t) === "IMAGING" ? C.indigo : C.teal,
+                }}>{kindOf(t)}</span>
+              )}
+              <button
+                type="button"
+                onClick={() => onChange(value.filter(x => x !== t))}
+                style={{
+                  border: "none", background: `${color}22`, color, cursor: "pointer",
+                  borderRadius: "50%", width: 16, height: 16, fontSize: 10, lineHeight: 1,
+                  display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
+                }}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ── Step definitions per order type (mirrors NurseOrdersPanel) ── */
 const STEPS = {
@@ -1265,6 +1448,17 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
   // action=modify + amendReason (NABH MOM.3).
   const [editingOrder, setEditingOrder] = useState(null);
 
+  // R7hr-179 — IA-panel batch entry state. Each array row fans out to one
+  // DoctorOrder on save (R7hr-176 adapter pattern). Only used when placing
+  // NEW orders of these 4 types; amend (editingOrder) keeps legacy OrderForm.
+  const [batchMeds,  setBatchMeds]  = useState([]); // PrescriptionPanel rows
+  const [batchInfs,  setBatchInfs]  = useState([]); // InfusionPanel rows
+  // R7hr-180 — one combined list for Lab + Imaging; isImagingTest() splits
+  // each name into its real orderType (Lab / Radiology) at save time.
+  const [batchInvs,  setBatchInvs]  = useState([]); // investigation names (string[])
+  const BATCH_TYPES = ["Medication", "IV_Fluid", "Investigations"];
+  const isBatchMode = !editingOrder && BATCH_TYPES.includes(selType);
+
   /* fetch orders — R7az-D4-HIGH-6/D4-HIGH-7: abort on UHID change and on
      unmount so the 30s polling timer doesn't keep firing requests after
      the doctor navigates away from the panel. Also avoids late responses
@@ -1303,7 +1497,11 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
 
   /* helpers */
   const setField = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const resetForm = () => { setSelType(null); setForm({}); setShowForm(false); setEditingOrder(null); };
+  const resetForm = () => {
+    setSelType(null); setForm({}); setShowForm(false); setEditingOrder(null);
+    // R7hr-179 — clear the batch panels so the next entry starts empty
+    setBatchMeds([]); setBatchInfs([]); setBatchInvs([]);
+  };
 
   // P1-5: Edit click handler — prefill OrderForm from existing order data so
   // the doctor can amend it (NABH MOM.3 modify-with-reason).
@@ -1448,6 +1646,147 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
       || form.activityLevel || form.deliveryDevice || form.speciality || selType;
 
     return base;
+  };
+
+  // R7hr-179 — batch save: one DoctorOrder POST per panel row, sequential
+  // like the R7hr-176 verbal-order loop (keeps backend dedupe + order-number
+  // sequencing race-free). HAM auto-detect runs per medication row with the
+  // same keyword list buildPayload uses, so 3% Hypertonic Saline typed into
+  // an InfusionPanel row still lands with hamFlag + twoNurseRequired set.
+  const BATCH_HAM_KW = ["insulin","heparin","enoxaparin","warfarin","digoxin","amiodarone","kcl","potassium","magnesium sulphate","mgso4","morphine","fentanyl","pethidine","tramadol iv","noradrenaline","norepinephrine","adrenaline","epinephrine","dopamine","dobutamine","vasopressin","suxamethonium","succinylcholine","vecuronium","rocuronium","streptokinase","alteplase","methotrexate","cyclophosphamide","cisplatin","vincristine","oxytocin","nitroprusside","ketamine","propofol","midazolam iv","vancomycin iv","gentamicin iv","amikacin iv","dextrose 25%","dextrose 50%","concentrated sodium","hypertonic saline","fondaparinux","acenocoumarol","lidocaine","lignocaine"];
+  const saveBatchOrders = async () => {
+    if (saving) return;
+    const baseOf = () => ({
+      UHID, visitId: visitId || ipdNo, visitType: "IPD",
+      patientName: patientName || "",
+      priority: form.priority || "Routine",
+      orderedBy: doctorName, orderedByRole: "Doctor", doctor: doctorId,
+      status: "Pending",
+      notes: form.notes || "",
+    });
+
+    let bodies = [];
+    // R7hr-266 — keep the source rows + their setter aligned with `bodies` so a
+    // partial failure can retain ONLY the failed rows (see the loop below).
+    let srcRows = [];
+    let keepFailed = null;
+    if (selType === "Medication") {
+      const rows = batchMeds.filter(m => (m.name || "").trim());
+      if (!rows.length) return toast.error("Add at least one medicine");
+      // Backend DoctorOrderModel requires orderDetails.frequency on
+      // Medication orders — catch it here so the doctor sees WHICH row
+      // is incomplete instead of a silent per-row POST failure.
+      const noFreq = rows.find(m => !(m.frequency || "").trim());
+      if (noFreq) return toast.error(`"${noFreq.name}" needs a Frequency — set it on the row and re-add`);
+      // R7hr-266 — DoctorOrderModel also REQUIRES orderDetails.dose on Medication
+      // orders; catch a dose-less row here so the doctor sees WHICH row is
+      // incomplete instead of it failing silently into the "N failed" count.
+      const noDose = rows.find(m => !(m.dose || "").trim());
+      if (noDose) return toast.error(`"${noDose.name}" needs a Dose — set it on the row and re-add`);
+      srcRows = rows; keepFailed = setBatchMeds;
+      bodies = rows.map(m => {
+        const isHAM = BATCH_HAM_KW.some(k => m.name.toLowerCase().includes(k));
+        return {
+          ...baseOf(),
+          orderType: "Medication",
+          orderDetails: {
+            medicineName: m.name.trim(), displayName: m.name.trim(),
+            genericName: m.genericName || "", form: m.form || "",
+            dose: m.dose || "", route: m.route || "Oral",
+            frequency: m.frequency || "",
+            mealStatus: m.mealStatus || "NotApplicable",
+            duration: m.duration || "",
+            dilutionVolume: m.dilutionVolume || "",
+            dilutionFluid: m.dilutionFluid || "",
+            infuseOverMinutes: m.infuseOverMinutes || "",
+            notes: form.notes || "",
+          },
+          medicineName: m.name.trim(), dose: m.dose || "",
+          route: m.route || "Oral", frequency: m.frequency || "",
+          duration: m.duration || "", displayName: m.name.trim(),
+          hamFlag: isHAM, twoNurseRequired: isHAM,
+        };
+      });
+    } else if (selType === "IV_Fluid") {
+      const rows = batchInfs.filter(i => (i.name || "").trim());
+      if (!rows.length) return toast.error("Add at least one IV fluid / infusion");
+      srcRows = rows; keepFailed = setBatchInfs;
+      bodies = rows.map(i => {
+        const isHAM = BATCH_HAM_KW.some(k => i.name.toLowerCase().includes(k));
+        return {
+          ...baseOf(),
+          orderType: "IV_Fluid",
+          orderDetails: {
+            fluidName: i.name.trim(), displayName: i.name.trim(),
+            totalVolume: Number(i.totalVolume) || 0, rate: i.rate || "",
+            route: i.route || "IV Infusion", duration: i.duration || "",
+            additives: i.additives || "", strength: i.strength || "",
+            notes: i.instructions || form.notes || "",
+          },
+          medicineName: i.name.trim(), route: i.route || "IV Infusion",
+          duration: i.duration || "", displayName: i.name.trim(),
+          hamFlag: isHAM, twoNurseRequired: isHAM,
+        };
+      });
+    } else if (selType === "Investigations") {
+      // R7hr-180 — one picker, two real order types. Each name classifies
+      // to Lab or Radiology; lab-only batch fields (sample/fasting) land
+      // only on Lab bodies, imaging-only fields (region/contrast) only on
+      // Radiology bodies.
+      if (!batchInvs.length) return toast.error("Pick at least one investigation");
+      srcRows = batchInvs; keepFailed = setBatchInvs;
+      bodies = batchInvs.map(t => {
+        const imaging = isImagingTest(t);
+        return {
+          ...baseOf(),
+          orderType: imaging ? "Radiology" : "Lab",
+          orderDetails: {
+            testName: t, displayName: t,
+            sampleType: !imaging ? (form.sampleType || "") : undefined,
+            fasting:    !imaging ? (form.fasting || "") : undefined,
+            region:     imaging ? (form.region || "") : undefined,
+            contrast:   imaging ? (form.contrast || "") : undefined,
+            notes: form.notes || "",
+          },
+          testName: t, urgency: form.priority || "Routine", displayName: t,
+        };
+      });
+    } else return;
+
+    setSaving(true);
+    let ok = 0, fail = 0;
+    const failedRows = [];
+    let firstErr = "";
+    try {
+      for (let idx = 0; idx < bodies.length; idx++) {
+        try {
+          await axios.post(API_ENDPOINTS.DOCTOR_ORDERS, bodies[idx]);
+          ok++;
+        } catch (e) {
+          if (e.response?.status === 409 && e.response?.data?.code === "DUPLICATE_ORDER") { ok++; }
+          else {
+            fail++;
+            failedRows.push(srcRows[idx]);
+            if (!firstErr) firstErr = e?.response?.data?.message || e?.message || "";
+            console.error("[batch-order] row failed:", e?.response?.data?.message || e?.message);
+          }
+        }
+      }
+      if (ok > 0 && fail === 0) {
+        toast.success(`${ok} ${TYPE_MAP[selType]?.label} order${ok > 1 ? "s" : ""} placed`);
+        resetForm(); fetchOrders();
+      } else if (ok > 0) {
+        // R7hr-266 — keep ONLY the failed rows in the batch so a retry doesn't
+        // re-POST the rows that already saved. Lab/Radiology have no 30s server
+        // dedupe, so a blind "save again" would create DUPLICATE orders. Also
+        // surface the first server error instead of a generic "retry" message.
+        if (keepFailed) keepFailed(failedRows.filter(Boolean));
+        toast.warning(`${ok} placed, ${fail} failed${firstErr ? ` — ${firstErr}` : ""}. Failed row${fail > 1 ? "s" : ""} kept for retry.`);
+        fetchOrders();
+      } else {
+        toast.error(`Order placement failed — none saved${firstErr ? `: ${firstErr}` : ""}`);
+      }
+    } finally { setSaving(false); }
   };
 
   const saveOrder = async () => {
@@ -1715,8 +2054,11 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
           {!selType ? (
             <>
               <div style={{ fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Select Order Type</div>
+              {/* R7hr-180 — TILE_TYPES merges Lab + Imaging into one
+                  "Investigations" tile; the filter dropdown below keeps
+                  the separate Lab / Radiology options for existing orders. */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8 }}>
-                {ORDER_TYPES.map(t => (
+                {TILE_TYPES.map(t => (
                   <button
                     key={t.id}
                     onClick={() => setSelType(t.id)}
@@ -1772,9 +2114,69 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
                 </div>
               )}
 
-              {/* Dynamic form */}
+              {/* Dynamic form.
+                  R7hr-179 — NEW orders for Medication / IV Fluid / Lab /
+                  Imaging use the same multi-row panels as the Doctor IPD
+                  Initial Assessment (PrescriptionPanel with R7hr-128
+                  dilution, InfusionPanel with R7hr-68 presets, R7hr-69
+                  multi-pick chips). Amend path (editingOrder) + every other
+                  order type keep the legacy single-order <OrderForm>. */}
               <div style={{ background: "white", borderRadius: 10, border: `1px solid ${C.border}`, padding: 14 }}>
-                <OrderForm typeId={selType} form={form} set={setField}/>
+                {!isBatchMode && <OrderForm typeId={selType} form={form} set={setField}/>}
+                {isBatchMode && selType === "Medication" && (
+                  <>
+                    <PrescriptionPanel value={batchMeds} onChange={setBatchMeds} />
+                    <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 10, marginTop: 12 }}>
+                      <Field form={form} set={setField} label="Priority (all rows)" name="priority" options={["Routine","Urgent","STAT"]}/>
+                      <Field form={form} set={setField} label="Special Instructions (all rows)" name="notes" placeholder="Monitoring, interactions, pre/post food…"/>
+                    </div>
+                  </>
+                )}
+                {isBatchMode && selType === "IV_Fluid" && (
+                  <>
+                    <InfusionPanel value={batchInfs} onChange={setBatchInfs} />
+                    <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 10, marginTop: 12 }}>
+                      <Field form={form} set={setField} label="Priority (all rows)" name="priority" options={["Routine","Urgent","STAT"]}/>
+                      <Field form={form} set={setField} label="Instructions (all rows)" name="notes" placeholder="Drip rate, monitoring, pump settings…"/>
+                    </div>
+                  </>
+                )}
+                {isBatchMode && selType === "Investigations" && (() => {
+                  // R7hr-180 — single entry point for Lab + Imaging. Live
+                  // split counter shows how the batch will fan out.
+                  const labCount = batchInvs.filter(t => !isImagingTest(t)).length;
+                  const imgCount = batchInvs.length - labCount;
+                  return (
+                    <>
+                      <div style={{ fontSize: 11, color: C.muted, fontWeight: 500, marginBottom: 10 }}>
+                        Type to search labs + imaging together — pick multiple, each becomes its own order
+                        {batchInvs.length > 0 && (
+                          <span style={{ marginLeft: 8, fontWeight: 800 }}>
+                            <span style={{ color: C.teal }}>{labCount} Lab</span>
+                            <span style={{ color: C.muted }}> · </span>
+                            <span style={{ color: C.indigo }}>{imgCount} Imaging</span>
+                          </span>
+                        )}
+                      </div>
+                      <MultiTestPicker
+                        catalog={[...ORDER_LAB_CATALOG, ...ORDER_IMAGING_CATALOG]}
+                        value={batchInvs} onChange={setBatchInvs}
+                        color={C.teal}
+                        kindOf={(t) => (isImagingTest(t) ? "IMAGING" : "LAB")}
+                        placeholder="CBC, LFT, Blood Culture, CECT Chest, USG Abdomen, MRI Brain…"/>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 12 }}>
+                        <Field form={form} set={setField} label="Priority (all)" name="priority" options={["Routine","Urgent","STAT"]}/>
+                        <Field form={form} set={setField} label="Sample Type (lab tests)" name="sampleType" options={["Venous Blood","Arterial Blood","Urine (Spot)","Urine (24hr)","Stool","Sputum","Swab","CSF","Pleural Fluid","Ascitic Fluid","Tissue Biopsy"]}/>
+                        <Field form={form} set={setField} label="Fasting (lab tests)" name="fasting" options={["No","Yes — 8 hrs","Yes — 12 hrs"]}/>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <Field form={form} set={setField} label="Region / Body Part (imaging)" name="region" placeholder="e.g. Chest, Abdomen-Pelvis"/>
+                        <Field form={form} set={setField} label="Contrast (imaging)" name="contrast" options={["Plain (No Contrast)","With IV Contrast","With Oral Contrast","Both"]}/>
+                      </div>
+                      <Field form={form} set={setField} label="Clinical Details / Indication" name="notes" placeholder="Pre-antibiotic, timing, allergy to contrast, prior imaging…" type="textarea"/>
+                    </>
+                  );
+                })()}
               </div>
 
               {/* Actions */}
@@ -1783,13 +2185,16 @@ export default function DoctorOrdersPanel({ UHID, visitId, ipdNo, patientName, r
                   Cancel
                 </button>
                 <button
-                  onClick={saveOrder}
+                  onClick={isBatchMode ? saveBatchOrders : saveOrder}
                   disabled={saving}
                   style={{ padding: "8px 22px", border: "none", borderRadius: 8, background: `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", fontSize: 12, fontWeight: 800, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? .7 : 1, display: "flex", alignItems: "center", gap: 6 }}
                 >
                   {saving
                     ? <><i className="pi pi-spin pi-spinner" style={{ fontSize: 12 }}/> {editingOrder ? "Amending…" : "Placing…"}</>
-                    : <><i className="pi pi-check" style={{ fontSize: 11 }}/> {editingOrder ? "Amend Order" : "Place Order"}</>}
+                    : <><i className="pi pi-check" style={{ fontSize: 11 }}/> {editingOrder ? "Amend Order"
+                        : isBatchMode
+                          ? `Place ${(selType === "Medication" ? batchMeds : selType === "IV_Fluid" ? batchInfs : batchInvs).length || ""} Order${((selType === "Medication" ? batchMeds : selType === "IV_Fluid" ? batchInfs : batchInvs).length) > 1 ? "s" : ""}`.replace("  ", " ")
+                          : "Place Order"}</>}
                 </button>
               </div>
             </>

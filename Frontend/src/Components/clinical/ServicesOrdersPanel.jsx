@@ -151,7 +151,22 @@ export default function ServicesOrdersPanel({ uhid, visitType = "OPD", addedBy =
       const bill = data?.data || data;
       setOrderItems(Array.isArray(bill?.billItems) ? bill.billItems : []);
       setOrderBillNum(bill?.billNumber || orderBillNum || "(DRAFT)");
-      setNewOrder({ service: null, name: "", qty: 1, urgency: "Routine", instructions: "" });
+      // PD-02 — Sticky urgency + instructions across rapid multi-add.
+      // Pre-PD-02 every successful add reset urgency to "Routine" and
+      // wiped instructions, so a doctor ordering 6 STAT-Fasting labs had
+      // to re-pick the urgency and re-type the instructions 6 times.
+      // Now we reset only the per-row fields (service / name / qty) and
+      // KEEP the shared row metadata so the doctor types it once and
+      // adds 6 tests with 6 quick autocomplete picks. The IPD IA pattern
+      // (R7hr-69 chip-flow) would be the richer fix; this is the smallest
+      // additive nudge that materially solves the click-fatigue UX.
+      setNewOrder(prev => ({
+        service: null,
+        name: "",
+        qty: 1,
+        urgency:      prev.urgency      || "Routine",
+        instructions: prev.instructions || "",
+      }));
       toast.success(`${svc.serviceName} ordered — will bill once completed`);
     } catch (e) {
       // R7bp-OPD-DUP — Surface the real backend error so the user isn't
