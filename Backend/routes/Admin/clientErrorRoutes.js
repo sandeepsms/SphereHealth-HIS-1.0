@@ -56,8 +56,11 @@ function clamp(s, n) {
 // extra safety is the whole point of running this here.
 function sanitiseString(s) {
   try {
-    const out = redactPHI(s, 0);
-    return typeof out === "string" ? out : String(out ?? "");
+    const raw = redactPHI(s, 0);
+    const out = typeof raw === "string" ? raw : String(raw ?? "");
+    // R7hr-252 (audit: redactPHI only truncates strings) — also mask embedded
+    // emails + long digit runs (phone / Aadhaar / UHID-shaped) before persist.
+    return out.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]").replace(/\b\d{6,}\b/g, "[num]");
   } catch (_) {
     return clamp(s, 2000);
   }
