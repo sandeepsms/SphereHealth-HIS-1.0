@@ -27,7 +27,8 @@ const escapeHtml = (s) =>
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;"); // R7hr-251 (audit) — single-quoted attribute contexts
 
 const ISO_RX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
