@@ -176,18 +176,32 @@ export default function PharmacyIndentsPage({
         // row in "manual entry" mode (red "Out of stock" hint) but the
         // batch + price inputs stay editable so the pharmacist can type
         // them in by hand and release.
-        if (!it.drugId) return { ...it, _availableQty: 0 };
+        // R7hr-255 — fetch by drugId when the line has one, else by the
+        // free-text drugName (the backend resolves it to a PharmacyDrug via the
+        // fuzzy matcher). Capture the resolved drug id/name so Release can send
+        // it and the FEFO decrement works.
+        if (!it.drugId && !String(it.drugName || "").trim()) return { ...it, _availableQty: 0 };
         try {
-          const { data } = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/batches?drugId=${encodeURIComponent(it.drugId)}`);
+          const qs = it.drugId
+            ? `drugId=${encodeURIComponent(it.drugId)}`
+            : `drugName=${encodeURIComponent(it.drugName)}`;
+          const { data } = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/batches?${qs}`);
           const list = Array.isArray(data?.data) ? data.data : [];
+          const resolvedId =
+            it.drugId ||
+            data?.resolved?._id ||
+            (list[0] && list[0].drugId && (list[0].drugId._id || list[0].drugId)) || "";
+          const resolvedName = data?.resolved?.name || "";
           // FEFO — earliest expiryDate first, with remaining > 0. Backend
           // already sorts by expiryDate asc, but we filter out empty
           // batches here so the pharmacist sees the next dispensable lot.
           const usable = list.filter(b => Number(b.remaining) > 0);
           const head   = usable[0];
-          if (!head) return { ...it, _availableQty: 0, _batches: list };
+          if (!head) return { ...it, _availableQty: 0, _batches: list, _resolvedDrugId: resolvedId, _resolvedName: resolvedName };
           return {
             ...it,
+            _resolvedDrugId: resolvedId,
+            _resolvedName:   resolvedName,
             _batch:        it._batch || head.batchNo || "",
             _unitPrice:    Number(it._unitPrice) || Number(head.salePrice) || 0,
             _availableQty: usable.reduce((s, b) => s + Number(b.remaining || 0), 0),
@@ -213,6 +227,34 @@ export default function PharmacyIndentsPage({
     } catch (_) { /* non-fatal */ }
   };
   const closeRelease = () => { if (!busy) setRelease({ open: false, indent: null }); };
+
+  /* ── R7hr-255 — per-item drug-picker (manual override of the auto-match) ── */
+  const setFormItem = (idx, patch) => setRelease((r) => {
+    if (!r.indent) return r;
+    return { ...r, indent: { ...r.indent, _formItems: r.indent._formItems.map((x, i) => (i === idx ? { ...x, ...patch } : x)) } };
+  });
+  const searchDrugForItem = async (idx, q) => {
+    setFormItem(idx, { _pickerQuery: q });
+    if (!q || q.trim().length < 2) { setFormItem(idx, { _pickerResults: [] }); return; }
+    try {
+      const { data } = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/drugs/search?q=${encodeURIComponent(q)}`);
+      const list = (Array.isArray(data?.data) ? data.data : []).slice(0, 8);
+      setFormItem(idx, { _pickerResults: list });
+    } catch (_) { setFormItem(idx, { _pickerResults: [] }); }
+  };
+  // Pharmacist explicitly maps this indent line to a master drug → refetch its FEFO batches.
+  const applyPickedDrug = async (idx, drug) => {
+    setFormItem(idx, { _resolvedDrugId: drug._id, _resolvedName: drug.name, _pickerOpen: false, _pickerResults: [], _pickerQuery: "", _availableQty: null, _fetchFailed: false });
+    try {
+      const { data } = await axios.get(`${API_ENDPOINTS.BASE}/pharmacy/batches?drugId=${encodeURIComponent(drug._id)}`);
+      const usable = (Array.isArray(data?.data) ? data.data : []).filter((b) => Number(b.remaining) > 0);
+      const head = usable[0];
+      setFormItem(idx, head ? {
+        _batch: head.batchNo || "", _unitPrice: Number(head.salePrice) || 0,
+        _availableQty: usable.reduce((s, b) => s + Number(b.remaining || 0), 0), _expiryDate: head.expiryDate || null, _batches: usable,
+      } : { _availableQty: 0, _batches: [] });
+    } catch (_) { setFormItem(idx, { _availableQty: 0, _fetchFailed: true }); }
+  };
 
   const submitRelease = async () => {
     if (!release.indent) return;
@@ -260,6 +302,9 @@ export default function PharmacyIndentsPage({
         issuedQty:   Number(it._issuedNow),
         batchNumber: it._batch || "",
         unitPrice:   Number(it._unitPrice) || 0,
+        // R7hr-255 — send the resolved/picked PharmacyDrug id so the backend
+        // FEFO decrement runs even when the indent line had no drugId.
+        drugId:      it._resolvedDrugId || it.drugId || undefined,
       }));
     if (!itemsPayload.length) return toast.warn("Set qty > 0 on at least one item");
     setBusy(true);
@@ -577,6 +622,36 @@ export default function PharmacyIndentsPage({
                     <td style={{ padding: "6px 8px" }}>
                       <div style={{ fontWeight: 700, color: C.dark }}>{it.drugName}</div>
                       <div style={{ fontSize: 10, color: C.muted }}>{it.form} {it.dose}</div>
+                      {/* R7hr-255 — show what the line auto-matched to + let the
+                          pharmacist override with an explicit master-drug picker. */}
+                      {it._resolvedName && it._resolvedName.toLowerCase() !== String(it.drugName || "").toLowerCase() && (
+                        <div style={{ fontSize: 9.5, color: C.success, marginTop: 1 }}>→ matched: {it._resolvedName}</div>
+                      )}
+                      <div style={{ marginTop: 2 }}>
+                        <button type="button" onClick={() => setFormItem(idx, { _pickerOpen: !it._pickerOpen })}
+                          style={{ fontSize: 9, color: C.muted, background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}>
+                          {it._pickerOpen ? "✕ close" : "✎ change drug"}
+                        </button>
+                        {it._pickerOpen && (
+                          <div style={{ marginTop: 3, position: "relative" }}>
+                            <input type="text" autoFocus value={it._pickerQuery || ""} placeholder="search pharmacy drug…"
+                              onChange={(e) => searchDrugForItem(idx, e.target.value)}
+                              style={{ width: "100%", padding: 4, border: `1px solid ${C.border}`, borderRadius: 5, fontSize: 11, boxSizing: "border-box" }} />
+                            {(it._pickerResults || []).length > 0 && (
+                              <div style={{ position: "absolute", zIndex: 5, top: "100%", left: 0, right: 0, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 6, maxHeight: 160, overflow: "auto", boxShadow: "0 6px 18px rgba(0,0,0,.12)" }}>
+                                {(it._pickerResults || []).map((d) => (
+                                  <div key={d._id} onClick={() => applyPickedDrug(idx, d)}
+                                    style={{ padding: "5px 8px", fontSize: 11, cursor: "pointer", borderBottom: `1px solid ${C.border}` }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.background = "#f8fafc"; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.background = "#fff"; }}>
+                                    {d.name}{d.brandName ? ` · ${d.brandName}` : ""}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                       {/* Live FEFO stock hint — auto-fetched from /batches?drugId=…
                           on modal open. Lets the pharmacist spot a stock-out BEFORE
                           clicking Release (would otherwise fail server-side). */}

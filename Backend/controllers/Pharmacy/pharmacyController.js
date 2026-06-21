@@ -609,7 +609,7 @@ exports.recordGRN = async (req, res) => {
 
 exports.listBatches = async (req, res) => {
   try {
-    const { drugId, expiringIn, lowStock, location } = req.query;
+    const { drugId, drugName, expiringIn, lowStock, location } = req.query;
     // R7hr-12-S3 (D6-09): validate drugId as ObjectId at the door rather than
     // relying on sendErr to map a downstream CastError → 400. Matches the
     // explicit-validation convention used by every :id-bearing endpoint in
@@ -618,7 +618,18 @@ exports.listBatches = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid drugId", code: "VALIDATION" });
     }
     const where = { isActive: true };
+    let resolved = null;
     if (drugId)  where.drugId = drugId;
+    else if (drugName && String(drugName).trim()) {
+      // R7hr-255 — resolve a free-text indent drug name ("Inj Ondansetron 4mg")
+      // to a PharmacyDrug (reuses the GRN fuzzy matcher) so the pharmacist's
+      // release modal can fetch FEFO batches even when the indent line has no
+      // drugId / a name that doesn't match the master verbatim.
+      const { findDrug } = require("../../services/Pharmacy/drugMatcher");
+      const m = await findDrug(String(drugName), { minConfidence: 0.45 });
+      if (m && m.drug) { where.drugId = m.drug._id; resolved = { _id: m.drug._id, name: m.drug.name, confidence: m.confidence }; }
+      else return res.json({ success: true, data: [], resolved: null });
+    }
     if (location) where.location = location;
     if (expiringIn) {
       // IST-aware horizon (re-audit F-04-1) — the "expiring within N days"
@@ -659,7 +670,7 @@ exports.listBatches = async (req, res) => {
       where.drugId = { $in: allowedDrugIds };
     }
     const batches = await DrugBatch.find(where).sort({ expiryDate: 1 }).populate("drugId", "name reorderLevel").lean();
-    res.json({ success: true, data: batches });
+    res.json({ success: true, data: batches, resolved });
   } catch (e) { sendErr(res, e); }
 };
 
