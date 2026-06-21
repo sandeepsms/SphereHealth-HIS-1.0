@@ -747,6 +747,17 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
     error.statusCode = 404;
     throw error;
   }
+  // R7hr-250 (audit: null-author ownership bypass) — when note.doctor is null
+  // (legacy pre-author-tracking notes) the ownership check below was skipped,
+  // letting any clinical-write user mutate/addendum it. A note with no recorded
+  // owner is locked here (read-only); legitimate corrections go via an explicit
+  // admin path.
+  if (!note.doctor) {
+    const error = new Error("This legacy note has no recorded author and cannot be amended here.");
+    error.statusCode = 403;
+    error.code = "NOTE_NO_OWNER";
+    throw error;
+  }
   if (note.doctor && doctorUserId && note.doctor.toString() !== doctorUserId.toString()) {
     const error = new Error("Not authorised");
     error.statusCode = 403;
