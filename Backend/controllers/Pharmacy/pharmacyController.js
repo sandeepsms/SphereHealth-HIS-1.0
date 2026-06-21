@@ -1200,7 +1200,7 @@ exports.dispense = async (req, res) => {
         // could POST { unitPrice: 0.01 } and walk out with discounted stock.
         const unit  = Number(u.batch.salePrice || 0);
         const gstR  = Number(it.gstRate ?? 12);
-        const discR = Number(it.discountPercent ?? discountPercent ?? 0);
+        const discR = Math.max(0, Math.min(100, Number(it.discountPercent ?? discountPercent ?? 0) || 0)); // R7hr-241 (audit: unbounded line discount) — clamp 0–100%
         const gross = qty * unit;
         const discAmt = gross * discR / 100;
         const taxable = gross - discAmt;
@@ -3477,7 +3477,7 @@ exports.addItems = async (req, res) => {
         // trust a client-supplied unitPrice on supplementary invoices either.
         const unit  = Number(u.batch.salePrice || 0);
         const gstR  = Number(it.gstRate ?? 12);
-        const discR = Number(it.discountPercent ?? discountPercent ?? 0);
+        const discR = Math.max(0, Math.min(100, Number(it.discountPercent ?? discountPercent ?? 0) || 0)); // R7hr-241 (audit: unbounded line discount) — clamp 0–100%
         const gross = qty * unit;
         const discAmt = gross * discR / 100;
         const taxable = gross - discAmt;

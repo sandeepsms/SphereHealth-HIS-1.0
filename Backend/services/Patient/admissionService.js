@@ -139,7 +139,11 @@ class AdmissionService {
       let bedData = {};
       if (data.bedId) {
         const bed = await Bed.findOneAndUpdate(
-          { _id: data.bedId, status: "Available" },
+          // R7hr-241 (audit: dirty-bed re-occupancy / IPC.6) — a just-discharged
+          // bed sits Available but housekeeping.state=CleaningPending until it's
+          // cleaned; don't let it be re-assigned (mirrors getAvailableBeds).
+          // Beds with no housekeeping.state (legacy) are unaffected ($nin).
+          { _id: data.bedId, status: "Available", "housekeeping.state": { $nin: ["CleaningPending", "CleaningInProgress"] } },
           { $set: { status: "Occupied" } },
           { new: true, session: s || undefined },
         ).populate("room ward floor building");

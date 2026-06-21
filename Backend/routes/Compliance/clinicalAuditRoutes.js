@@ -49,6 +49,14 @@ router.get("/icu-bundles/events", requireAction("compliance.read"), ctrl.events)
 // ════════════════════════════════════════════════════════════════════
 router.get("/", requireAction("compliance.read"), async (req, res) => {
   try {
+    // R7hr-241 (audit: over-broad cross-patient audit feed) — compliance.read is
+    // held by clinical roles too; this cross-patient feed is a compliance/
+    // surveyor surface (the FE only exposes it to Admin/MRD/Compliance), so block
+    // the over-broad clinical roles at the API as well.
+    const role = String(req.user?.role || "");
+    if (!["Admin", "MRD"].includes(role) && !/compliance/i.test(role)) {
+      return res.status(403).json({ success: false, code: "AUDIT_FEED_RESTRICTED", message: "The cross-patient audit feed is restricted to Admin / MRD / Compliance." });
+    }
     const kindParam = String(req.query.kind || "").trim();
     if (!kindParam) {
       return res.status(400).json({
