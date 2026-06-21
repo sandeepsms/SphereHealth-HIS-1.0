@@ -11,7 +11,13 @@ class DoctorService {
 
   async getAllDoctors(page = 1, limit = 10, filters = {}) {
     const skip = (page - 1) * limit;
-    const query = { isActive: true, ...filters };
+    // R7hr-240 (audit: operator injection) — the controller spreads raw
+    // req.query into `filters`; copy only scalar values so a crafted
+    // {$gt:""} / {$ne:null} can't widen or subvert the query.
+    const query = { isActive: true };
+    for (const [k, v] of Object.entries(filters || {})) {
+      if (v != null && typeof v !== "object") query[k] = v;
+    }
 
     const doctors = await Doctor.find(query)
       .populate("department")

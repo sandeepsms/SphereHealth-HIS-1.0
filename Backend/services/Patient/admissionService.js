@@ -1076,25 +1076,23 @@ class AdmissionService {
   }
 
   async getAllAdmissions(filters = {}) {
+    const { safeRegex } = require("../../utils/queryGuards"); // R7hr-240 (audit: regex injection)
     const query = {};
     if (filters.status) query.status = filters.status;
     if (filters.admissionType) query.admissionType = filters.admissionType;
     if (filters.department)
-      query.department = { $regex: filters.department, $options: "i" };
+      query.department = safeRegex(filters.department);
     if (filters.attendingDoctor)
-      query.attendingDoctor = {
-        $regex: filters.attendingDoctor,
-        $options: "i",
-      };
+      query.attendingDoctor = safeRegex(filters.attendingDoctor);
     // ObjectId-based doctor filter (used by role=Doctor auto-scope to
     // restrict the IPD/Daycare/ER list to that doctor's own admissions).
     if (filters.attendingDoctorId && mongoose.isValidObjectId(String(filters.attendingDoctorId)))
       query.attendingDoctorId = new mongoose.Types.ObjectId(String(filters.attendingDoctorId));
     // Accept both ?UHID= and ?uhid= query params
     const uhidFilter = filters.UHID || filters.uhid;
-    if (uhidFilter) query.UHID = { $regex: uhidFilter, $options: "i" };
+    if (uhidFilter) query.UHID = safeRegex(uhidFilter);
     if (filters.patientName)
-      query.patientName = { $regex: filters.patientName, $options: "i" };
+      query.patientName = safeRegex(filters.patientName);
 
     const bedFilter = filters.bedId || filters.bed;
     if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))
@@ -1184,18 +1182,16 @@ class AdmissionService {
   }
 
   async getActiveAdmissions(filters = {}) {
+    const { safeRegex } = require("../../utils/queryGuards"); // R7hr-240 (audit: regex injection)
     const query = { status: "Active" };
     // Support UHID filtering (accept both ?UHID= and ?uhid=)
     const uhidFilter = filters.UHID || filters.uhid;
-    if (uhidFilter) query.UHID = { $regex: uhidFilter, $options: "i" };
+    if (uhidFilter) query.UHID = safeRegex(uhidFilter);
     if (filters.department)
-      query.department = { $regex: filters.department, $options: "i" };
+      query.department = safeRegex(filters.department);
     if (filters.admissionType) query.admissionType = filters.admissionType;
     if (filters.attendingDoctor)
-      query.attendingDoctor = {
-        $regex: filters.attendingDoctor,
-        $options: "i",
-      };
+      query.attendingDoctor = safeRegex(filters.attendingDoctor);
     if (filters.attendingDoctorId && mongoose.isValidObjectId(String(filters.attendingDoctorId)))
       query.attendingDoctorId = new mongoose.Types.ObjectId(String(filters.attendingDoctorId));
     if (filters.wardId) query.wardId = filters.wardId;

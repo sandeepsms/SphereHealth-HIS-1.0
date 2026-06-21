@@ -114,18 +114,19 @@ class UserService {
       sortOrder = "desc",
     } = query;
 
+    const { safeRegex } = require("../../utils/queryGuards"); // R7hr-240 (audit: operator/regex injection)
     const filter = { isActive: true };
 
-    if (role) filter.role = role;
-    if (department) filter.department = department;
-    if (status) filter.status = status;
+    if (role) filter.role = String(role);
+    if (department) filter.department = String(department);
+    if (status) filter.status = String(status);
 
     if (search) {
       filter.$or = [
-        { fullName: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { employeeId: { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
+        { fullName: safeRegex(search) },
+        { email: safeRegex(search) },
+        { employeeId: safeRegex(search) },
+        { phone: safeRegex(search) },
       ];
     }
 
