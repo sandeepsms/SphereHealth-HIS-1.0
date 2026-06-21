@@ -315,6 +315,12 @@ export default function PharmacyLedgerPage({
         // `doctorName` lookup was a comment red-herring — that field
         // only exists nested inside treatmentTeam[].doctorName.
         consultant:      admBody?.attendingDoctor || admBody?.doctorName || admBody?.consultantName || admBody?.consultingDoctor || (admBody?.treatmentTeam?.[0]?.doctorName) || p.consultant || "",
+        // PD-01 (sprint review fix): hydrate address + tpa from the patient
+        // master body so the AdvanceReceipt demographic strip has something to
+        // read — previously these were never captured, so the enrichment below
+        // was inert (address blank, payer always "Self").
+        address:         patBody?.address || admBody?.address || p.address || null,
+        tpa:             patBody?.tpa || admBody?.tpa || p.tpa || null,
         bed:             p.bed || [admBody?.bedNumber, admBody?.wardName].filter(Boolean).join(" · "),
       }));
     } catch (e) {
@@ -789,7 +795,16 @@ export default function PharmacyLedgerPage({
           wardName:      patient.wardName || patient.ward || null,
           gender:        patient.gender || "",
           age:           patient.age || "",
-          contactNumber: patient.contactNumber || "",
+          contactNumber: patient.contactNumber || patient.mobile || "",
+          // PD-01 (sprint review fix): compose from the real address sub-fields
+          // (now hydrated above) — never fall back to the raw object
+          // ([object Object]). patient.tpa may be a populated object (tpaName||
+          // name) or absent -> "Self".
+          completeAddress: patient.address?.completeAddress
+                             || [patient.address?.city, patient.address?.district, patient.address?.state]
+                                .filter(Boolean).join(", ")
+                             || "",
+          payer:         patient.tpa?.tpaName || patient.tpa?.name || patient.payer || "Self",
           doctor:        patient.consultant || "",
           date:          paidAt,
           amount:        amt,
