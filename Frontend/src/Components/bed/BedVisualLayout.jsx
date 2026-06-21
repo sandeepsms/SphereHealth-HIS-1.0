@@ -1108,6 +1108,10 @@ const BedVisualLayout = ({ onRefreshParent }) => {
       ? `₹ ${Number(form.totalCost).toLocaleString("en-IN")}`
       : "—";
 
+    // R7hr-233 (audit: stored XSS) — escape every interpolated patient/clinical
+    // free-text field before it enters the print markup.
+    const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
     const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -1173,44 +1177,44 @@ const BedVisualLayout = ({ onRefreshParent }) => {
 
   <!-- Status strip -->
   <div class="status-strip">
-    <div><div class="label">Patient Name</div><div class="value">${pName}</div></div>
-    <div><div class="label">UHID</div><div class="value">${uhid}</div></div>
-    <div><div class="label">Bed</div><div class="value">${bed?.bedNumber || "—"}</div></div>
-    <div><div class="label">Condition</div><div class="value">${form.conditionOnDischarge || "Stable"}</div></div>
+    <div><div class="label">Patient Name</div><div class="value">${esc(pName)}</div></div>
+    <div><div class="label">UHID</div><div class="value">${esc(uhid)}</div></div>
+    <div><div class="label">Bed</div><div class="value">${esc(bed?.bedNumber || "—")}</div></div>
+    <div><div class="label">Condition</div><div class="value">${esc(form.conditionOnDischarge || "Stable")}</div></div>
   </div>
 
   <!-- Patient & Admission Info -->
   <div class="section-title">Patient & Admission Details</div>
   <div class="info-grid">
-    <div class="info-item"><div class="lbl">Patient Name</div><div class="val">${pName}</div></div>
-    <div class="info-item"><div class="lbl">UHID / Patient ID</div><div class="val">${uhid}</div></div>
-    <div class="info-item"><div class="lbl">Admission Date</div><div class="val">${admDate}</div></div>
-    <div class="info-item"><div class="lbl">Discharge Date</div><div class="val">${disDate}</div></div>
+    <div class="info-item"><div class="lbl">Patient Name</div><div class="val">${esc(pName)}</div></div>
+    <div class="info-item"><div class="lbl">UHID / Patient ID</div><div class="val">${esc(uhid)}</div></div>
+    <div class="info-item"><div class="lbl">Admission Date</div><div class="val">${esc(admDate)}</div></div>
+    <div class="info-item"><div class="lbl">Discharge Date</div><div class="val">${esc(disDate)}</div></div>
     <div class="info-item"><div class="lbl">Total Stay</div><div class="val">${days} Day${days !== 1 ? "s" : ""}</div></div>
-    <div class="info-item"><div class="lbl">Bed Number</div><div class="val">${bed?.bedNumber || "—"}</div></div>
-    <div class="info-item"><div class="lbl">Department</div><div class="val">${dept}</div></div>
-    <div class="info-item"><div class="lbl">Admission Type</div><div class="val">${admission?.admissionType || "—"}</div></div>
-    <div class="info-item"><div class="lbl">Attending Doctor</div><div class="val">${doctor}</div></div>
-    <div class="info-item"><div class="lbl">Condition on Discharge</div><div class="val"><span class="condition ${form.conditionOnDischarge || "Stable"}">${form.conditionOnDischarge || "Stable"}</span></div></div>
+    <div class="info-item"><div class="lbl">Bed Number</div><div class="val">${esc(bed?.bedNumber || "—")}</div></div>
+    <div class="info-item"><div class="lbl">Department</div><div class="val">${esc(dept)}</div></div>
+    <div class="info-item"><div class="lbl">Admission Type</div><div class="val">${esc(admission?.admissionType || "—")}</div></div>
+    <div class="info-item"><div class="lbl">Attending Doctor</div><div class="val">${esc(doctor)}</div></div>
+    <div class="info-item"><div class="lbl">Condition on Discharge</div><div class="val"><span class="condition ${esc(form.conditionOnDischarge || "Stable")}">${esc(form.conditionOnDischarge || "Stable")}</span></div></div>
   </div>
 
   <!-- Clinical Notes -->
   <div class="section-title">Clinical Summary</div>
   <div style="margin-bottom:10px">
     <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">DIAGNOSIS / REASON FOR ADMISSION</div>
-    <div class="summary-box">${admission?.reasonForAdmission || '<span class="no-content">Not specified</span>'}</div>
+    <div class="summary-box">${esc(admission?.reasonForAdmission) || '<span class="no-content">Not specified</span>'}</div>
   </div>
   <div style="margin-bottom:10px">
     <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">DISCHARGE SUMMARY</div>
-    <div class="summary-box">${form.dischargeSummary || '<span class="no-content">Not provided</span>'}</div>
+    <div class="summary-box">${esc(form.dischargeSummary) || '<span class="no-content">Not provided</span>'}</div>
   </div>
   <div style="margin-bottom:10px">
     <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">DISCHARGE NOTES</div>
-    <div class="summary-box">${form.dischargeNotes || '<span class="no-content">Not provided</span>'}</div>
+    <div class="summary-box">${esc(form.dischargeNotes) || '<span class="no-content">Not provided</span>'}</div>
   </div>
   <div style="margin-bottom:18px">
     <div style="font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px">FOLLOW-UP INSTRUCTIONS</div>
-    <div class="summary-box">${form.followUpInstructions || '<span class="no-content">Not provided</span>'}</div>
+    <div class="summary-box">${esc(form.followUpInstructions) || '<span class="no-content">Not provided</span>'}</div>
   </div>
 
   <!-- Cost -->
@@ -1218,7 +1222,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
   <table class="cost-table">
     <thead><tr><th>Description</th><th>Details</th><th style="text-align:right">Amount</th></tr></thead>
     <tbody>
-      <tr><td>Bed Charges (${days} day${days !== 1 ? "s" : ""})</td><td>Bed ${bed?.bedNumber || "—"} · ${dept}</td><td style="text-align:right">${cost}</td></tr>
+      <tr><td>Bed Charges (${days} day${days !== 1 ? "s" : ""})</td><td>Bed ${esc(bed?.bedNumber || "—")} · ${esc(dept)}</td><td style="text-align:right">${cost}</td></tr>
       <tr class="total-row"><td colspan="2"><strong>Total Amount</strong></td><td style="text-align:right"><strong>${cost}</strong></td></tr>
     </tbody>
   </table>
