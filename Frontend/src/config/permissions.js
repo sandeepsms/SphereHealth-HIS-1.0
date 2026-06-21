@@ -225,7 +225,14 @@ export const ACTIONS = {
   // Mirrors Backend/config/permissions.js. Money-write paths stay blocked by
   // the blockNonClinicalForDoctorNurse middleware on the server.
   "billing.write":         ["Admin", "Accountant", "Receptionist", "Doctor", "Nurse"],
+  // R7hr-261 (sprint-review SoD fix): mirrors Backend. billing.refund is the
+  // SENSITIVE tier (bill refund/cancel, credit-note approve, bulk-settle,
+  // settlement-adjust, cashier clear-close) — Accountant/Admin only.
   "billing.refund":        ["Admin", "Accountant"],
+  // R7hr-170, re-scoped by R7hr-261: Receptionist may refund a patient ADVANCE
+  // DEPOSIT only. Narrow action so the Advance-Deposits-row Refund button shows
+  // for reception without granting the bill-level refund / credit-note tier.
+  "billing.advance-refund": ["Admin", "Accountant", "Receptionist"],
   "billing.discount":      ["Admin", "Accountant"],
   // IPD Live Ledger — mirror of backend permissions for the same actions.
   // Backend keeps the source of truth (controllers re-check); these are

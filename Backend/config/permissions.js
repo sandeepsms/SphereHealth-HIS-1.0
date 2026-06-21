@@ -244,7 +244,22 @@ const ACTIONS = {
   // (orderStatus="Ordered", not billable until lab/radiology completes
   // it), they CANNOT take payments or move money.
   "billing.write":         ["Admin", "Accountant", "Receptionist", "Doctor", "Nurse"],
+  // R7hr-261 (sprint-review SoD fix): billing.refund is the SENSITIVE tier —
+  // it gates bill-level refund + bill cancel, credit-note APPROVE (the
+  // second-approver gate), bulk-settle, settlement-adjust (discount path),
+  // package attach/detach, registration backfill and cashier clear-close.
+  // It MUST stay Accountant/Admin only. (R7hr-170 originally added
+  // Receptionist here, which silently handed reception ALL of the above —
+  // a separation-of-duties regression. Re-scoped to the narrow action below.)
   "billing.refund":        ["Admin", "Accountant"],
+  // R7hr-170 (USER, 2026-06-09), re-scoped by R7hr-261: a Receptionist may
+  // refund a patient ADVANCE DEPOSIT they (or the cashier on their counter)
+  // collected — the same desk returns the money before service is rendered.
+  // Carved into its own narrow action so it does NOT also grant the bill-level
+  // refund / credit-note-approve tier. ONLY POST /advance/:advanceId/refund is
+  // gated on this. Money still moves through the audited refundAdvance path
+  // (PatientAdvance.refundedAmount bumped, BillingAudit emit, receipt printed).
+  "billing.advance-refund": ["Admin", "Accountant", "Receptionist"],
   "billing.discount":      ["Admin", "Accountant"],
   // IPD Live Ledger — strict tiered actions per design memo
   //   undo     = receptionist's 15-min "oh no I shouldn't have triggered that"

@@ -2176,9 +2176,11 @@ export default function ReceptionBilling() {
                       )}
                       {/* R7ao: Refund the unspent portion of this advance.
                           Visible only when the row has remaining balance AND the
-                          user has billing.refund permission. ACTIVE and
-                          PARTIALLY_APPLIED rows are both refundable. */}
-                      {!isVoid && Number(a.remainingAmount || 0) > 0 && can("billing.refund") && (
+                          user has billing.advance-refund permission (R7hr-261 —
+                          narrow advance-only refund tier; Receptionist included
+                          without the broad bill-refund/credit-note power). ACTIVE
+                          and PARTIALLY_APPLIED rows are both refundable. */}
+                      {!isVoid && Number(a.remainingAmount || 0) > 0 && can("billing.advance-refund") && (
                         <button
                           type="button"
                           onClick={() => setAdvanceRefundTarget(a)}
