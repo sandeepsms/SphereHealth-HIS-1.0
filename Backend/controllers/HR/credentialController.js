@@ -122,8 +122,15 @@ exports.revoke = async (req, res, next) => {
 // GET /api/credentials/:id
 exports.getOne = async (req, res, next) => {
   try {
+    const u = actor(req);
     const doc = await Credential.findById(req.params.id).lean();
     if (!doc) return res.status(404).json({ success: false, message: "Credential not found" });
+    // R7hr-227 (security audit) — hr.credential.read admits Doctor only to
+    // audit their OWN credentials; a non-Admin may not read another staff
+    // member's credential (reg number, granted privileges, document URL).
+    if (u.role !== "Admin" && String(doc.userId || "") !== String(u._id || "")) {
+      return res.status(403).json({ success: false, code: "NOT_YOUR_CREDENTIAL", message: "You can only view your own credentials." });
+    }
     res.json({ success: true, data: doc });
   } catch (e) { next(e); }
 };
@@ -131,9 +138,19 @@ exports.getOne = async (req, res, next) => {
 // GET /api/credentials?userId=&doctorId=&status=&type=
 exports.list = async (req, res, next) => {
   try {
+    const u = actor(req);
     const q = {};
-    if (req.query?.userId)   q.userId = req.query.userId;
-    if (req.query?.doctorId) q.doctorId = req.query.doctorId;
+    // R7hr-227 (security audit) — owner scope. The route intent is that a
+    // Doctor audits their OWN credentials list, but list() applied no scope, so
+    // any Doctor could dump the entire staff register. Force non-Admin callers
+    // to their own userId (ignoring client userId/doctorId filters); Admin
+    // keeps the full register + filters.
+    if (u.role !== "Admin") {
+      q.userId = u._id;
+    } else {
+      if (req.query?.userId)   q.userId = req.query.userId;
+      if (req.query?.doctorId) q.doctorId = req.query.doctorId;
+    }
     if (req.query?.status)   q.status = req.query.status;
     if (req.query?.type)     q.credentialType = req.query.type;
     const data = await Credential.find(q)

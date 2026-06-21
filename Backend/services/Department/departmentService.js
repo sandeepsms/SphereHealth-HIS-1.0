@@ -1,4 +1,6 @@
 const Department = require("../../models/Department/department");
+// R7hr-228 (security audit) — escape user search input to avoid a regex-DoS.
+const { safeRegex } = require("../../utils/queryGuards");
 
 class DepartmentService {
   async createDepartment(departmentData) {
@@ -208,13 +210,13 @@ class DepartmentService {
   }
 
   async searchDepartments(searchTerm) {
-    const regex = new RegExp(searchTerm, "i");
+    const rx = safeRegex(searchTerm); // R7hr-228 — escaped + length-capped
     return await Department.find({
       isActive: true,
       $or: [
-        { departmentName: regex },
-        { departmentCode: regex },
-        { description: regex },
+        { departmentName: rx },
+        { departmentCode: rx },
+        { description: rx },
       ],
     })
       .populate("headOfDepartment", "personalInfo doctorId")

@@ -139,7 +139,11 @@ class AdmissionService {
       let bedData = {};
       if (data.bedId) {
         const bed = await Bed.findOneAndUpdate(
-          { _id: data.bedId, status: "Available" },
+          // R7hr-241 (audit: dirty-bed re-occupancy / IPC.6) — a just-discharged
+          // bed sits Available but housekeeping.state=CleaningPending until it's
+          // cleaned; don't let it be re-assigned (mirrors getAvailableBeds).
+          // Beds with no housekeeping.state (legacy) are unaffected ($nin).
+          { _id: data.bedId, status: "Available", "housekeeping.state": { $nin: ["CleaningPending", "CleaningInProgress"] } },
           { $set: { status: "Occupied" } },
           { new: true, session: s || undefined },
         ).populate("room ward floor building");
@@ -702,7 +706,16 @@ class AdmissionService {
         });
         cascadeSummary.bedReleased = !!released;
       } catch (e) {
+        // R7hr-236 (audit: ghost-occupied bed) — do NOT swallow this. Bed
+        // release is the FIRST cascade step, so if it errors we fail the whole
+        // cancel here (nothing else mutated yet) instead of falling through to
+        // flip the admission → Cancelled while the bed stays Occupied forever
+        // with no active admission. The caller can safely retry.
         console.warn("[cancelAdmission] bed release failed:", e.message);
+        const err = new Error(`Cannot cancel admission — bed release failed (${e.message}). Please retry.`);
+        err.status = 503;
+        err.code = "BED_RELEASE_FAILED";
+        throw err;
       }
     }
 
@@ -1067,25 +1080,23 @@ class AdmissionService {
   }
 
   async getAllAdmissions(filters = {}) {
+    const { safeRegex } = require("../../utils/queryGuards"); // R7hr-240 (audit: regex injection)
     const query = {};
     if (filters.status) query.status = filters.status;
     if (filters.admissionType) query.admissionType = filters.admissionType;
     if (filters.department)
-      query.department = { $regex: filters.department, $options: "i" };
+      query.department = safeRegex(filters.department);
     if (filters.attendingDoctor)
-      query.attendingDoctor = {
-        $regex: filters.attendingDoctor,
-        $options: "i",
-      };
+      query.attendingDoctor = safeRegex(filters.attendingDoctor);
     // ObjectId-based doctor filter (used by role=Doctor auto-scope to
     // restrict the IPD/Daycare/ER list to that doctor's own admissions).
     if (filters.attendingDoctorId && mongoose.isValidObjectId(String(filters.attendingDoctorId)))
       query.attendingDoctorId = new mongoose.Types.ObjectId(String(filters.attendingDoctorId));
     // Accept both ?UHID= and ?uhid= query params
     const uhidFilter = filters.UHID || filters.uhid;
-    if (uhidFilter) query.UHID = { $regex: uhidFilter, $options: "i" };
+    if (uhidFilter) query.UHID = safeRegex(uhidFilter);
     if (filters.patientName)
-      query.patientName = { $regex: filters.patientName, $options: "i" };
+      query.patientName = safeRegex(filters.patientName);
 
     const bedFilter = filters.bedId || filters.bed;
     if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))
@@ -1175,18 +1186,16 @@ class AdmissionService {
   }
 
   async getActiveAdmissions(filters = {}) {
+    const { safeRegex } = require("../../utils/queryGuards"); // R7hr-240 (audit: regex injection)
     const query = { status: "Active" };
     // Support UHID filtering (accept both ?UHID= and ?uhid=)
     const uhidFilter = filters.UHID || filters.uhid;
-    if (uhidFilter) query.UHID = { $regex: uhidFilter, $options: "i" };
+    if (uhidFilter) query.UHID = safeRegex(uhidFilter);
     if (filters.department)
-      query.department = { $regex: filters.department, $options: "i" };
+      query.department = safeRegex(filters.department);
     if (filters.admissionType) query.admissionType = filters.admissionType;
     if (filters.attendingDoctor)
-      query.attendingDoctor = {
-        $regex: filters.attendingDoctor,
-        $options: "i",
-      };
+      query.attendingDoctor = safeRegex(filters.attendingDoctor);
     if (filters.attendingDoctorId && mongoose.isValidObjectId(String(filters.attendingDoctorId)))
       query.attendingDoctorId = new mongoose.Types.ObjectId(String(filters.attendingDoctorId));
     if (filters.wardId) query.wardId = filters.wardId;
@@ -1464,6 +1473,15 @@ class AdmissionService {
     delete safe.admissionNumber;
     delete safe.patientId;
     delete safe.bedId;
+    // R7hr-228 (security audit) — these belong to dedicated gated flows, not the
+    // generic admission patch: attendingDoctorId (assigned at admit / consult),
+    // treatmentTeam (consultation flow), dischargeWorkflow (the gated
+    // doctor-approve → clear-bill → gate-pass stages). Strip so the generic
+    // updateAdmission cannot reassign the attending doctor or jump discharge
+    // stages outside those endpoints.
+    delete safe.attendingDoctorId;
+    delete safe.treatmentTeam;
+    delete safe.dischargeWorkflow;
     const admission = await Admission.findByIdAndUpdate(
       id,
       { $set: safe },

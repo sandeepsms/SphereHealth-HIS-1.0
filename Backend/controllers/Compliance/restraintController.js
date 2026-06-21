@@ -130,6 +130,30 @@ exports.create = async (req, res) => {
       } catch (_) { /* non-fatal */ }
     }
 
+    // R7hr-243 (audit: restraint not in central audit) — emitRestraint only
+    // writes the RestraintRegister; emit a ClinicalAudit row too so the COP.17
+    // restraint application is visible to cross-admission/surveyor audit
+    // queries (event reused; targetType disambiguates). Non-blocking.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      await emitClinicalAudit({
+        req,
+        event: "NURSING_ASSESSMENT_RECORDED",
+        UHID: patient.UHID,
+        admissionId: admission._id,
+        patientId: patient._id,
+        patientName: patient.fullName || `${patient.firstName || ""} ${patient.lastName || ""}`.trim(),
+        targetType: "RestraintRegister",
+        targetId: row._id,
+        after: {
+          restraintType: restraintPayload.type,
+          reason: restraintPayload.reason,
+          orderingDoctor: restraintPayload.orderingDoctor,
+          startTime: restraintPayload.startTime,
+        },
+      });
+    } catch (_) { /* audit emit is non-blocking */ }
+
     return res.status(201).json({ success: true, data: row });
   } catch (e) {
     return res.status(500).json({ success: false, message: e.message });

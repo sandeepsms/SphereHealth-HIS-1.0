@@ -41,7 +41,7 @@ const User       = require("../models/User/userModel");
 const Doctor     = require("../models/Doctor/doctorModel");
 const Department = require("../models/Department/department");
 
-const DEFAULT_PASSWORD = "Welcome@123"; // hashed by the User model's pre-save hook
+const DEFAULT_PASSWORD = process.env.SEED_PASSWORD || "Welcome@123"; // R7hr-247: prefer an env-supplied password; hashed by the User model's pre-save hook
 
 /* Other-role users (no Doctor link) */
 const STAFF_USERS = [
@@ -119,6 +119,14 @@ async function findOrCreateUser({ email, role, firstName, lastName, phone, gende
 }
 
 async function run() {
+  // R7hr-247 (audit: hardcoded default seed password) — never seed a known
+  // shared password into a production DB unattended. Require an explicit
+  // override + an env-supplied password before running in prod.
+  if (process.env.NODE_ENV === "production" &&
+      !(process.env.SEED_FORCE === "yes" && process.env.SEED_PASSWORD)) {
+    console.error("FATAL: refusing to seed in production with the default 'Welcome@123' password. Set SEED_FORCE=yes and SEED_PASSWORD=<strong> to override.");
+    process.exit(1);
+  }
   // Fail-fast pattern aligned with the other seed scripts (audit D-02 +
   // R11 re-audit follow-up). No localhost fallback, no URI echo.
   if (!process.env.MONGO_URI) {

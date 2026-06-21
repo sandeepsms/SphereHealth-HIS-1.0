@@ -71,6 +71,21 @@ class DischargeSummaryController {
     const data = req.body;
     _normaliseDischargeArrays(data);
 
+    // R7hr-226 (security audit) — mass-assignment guard. create() and its
+    // draft upsert must NEVER set the finalized state or its finalizer
+    // identity. Finalization happens ONLY through the gated PATCH /:id/finalize
+    // route, which enforces the MCI-reg / PROM-PREM / nursing-handover / MCCD /
+    // primary-attending-consultant checks. Pre-fix, spreading req.body let a
+    // non-attending Doctor POST status:"finalized" with a forged
+    // finalizedByName, minting an immutable (delete()/update() both refuse a
+    // finalized doc) forged legal record. Strip those fields here so a created
+    // record is always a draft.
+    delete data.status; // model default "draft"; /finalize is the only path to finalized
+    delete data.finalizedBy;
+    delete data.finalizedByName;
+    delete data.finalizedByReg;
+    delete data.finalizedAt;
+
     if (data.admissionDate && data.dischargeDate) {
       const diff = new Date(data.dischargeDate) - new Date(data.admissionDate);
       // floor(): partial days don't add a billing day. The first day is

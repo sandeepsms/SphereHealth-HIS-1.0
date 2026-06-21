@@ -41,6 +41,8 @@ import {
   HandoverNotesTab,
   // R7hr-143 — Pending Investigation Reports shared tab
   PendingInvestigationReportsTab,
+  // R7hr-229 — Investigations (this admission) day-wise + trend summary tab
+  InvestigationsSummaryTab,
 } from "../../Components/clinical/PatientPanelTabs";
 
 import { API_BASE_URL as BASE } from "../../config/api";
@@ -90,6 +92,7 @@ const TABS = [
   // panel for parity. After "Sample Sent" the order surfaces here so
   // the nurse can mark the report collected when results arrive.
   { id:"pendingreports", label:"🧪 Pending Investigation Reports" },
+  { id:"investigations", label:"🧪 Investigations (Summary)" },
   { id:"handover",    label:"🔄 Handover Notes"       },
   { id:"icubundles",  label:"🛡 ICU Bundles"         },
   // R7hr-185b (USER) — invasive-device registry gets its own tab pill
@@ -2840,6 +2843,7 @@ function NursePatientPanelContent({ selectedAdmission }) {
       // chain-of-custody. Doctor view also gets it but is mainly used
       // for review).
       case "pendingreports": return <PendingInvestigationReportsTab admission={admission} patient={patient} canMarkReportCollected={true} actorName="Nurse"/>;
+      case "investigations": return <InvestigationsSummaryTab admission={admission} patient={patient}/>;
       case "handover":   return <HandoverNotesTab patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>;
       // R7gx-UI — Treatment Chart (MAR) via shared component, nurse-mode on.
       case "treatment":  return <TreatmentChartDayStack UHID={patient?.UHID} admissionId={admission?._id} admissionDate={admission?.admissionDate || admission?.admittedAt} patientName={patient?.fullName || patient?.name} nurseMode={true} />;

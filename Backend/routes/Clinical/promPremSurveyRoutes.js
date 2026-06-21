@@ -11,9 +11,12 @@ const { validateObjectIdParam } = require("../../utils/queryGuards");
 // All endpoints require authentication
 router.use(authenticate);
 
-// LIST + GET — anyone with patient.read can view
-router.get("/", requireAction("patient.read"), ctrl.list);
-router.get("/:id", validateObjectIdParam("id"), requireAction("patient.read"), ctrl.getById);
+// LIST + GET — care-team only. R7hr-233 (audit: PHI leak) — PROM/PREM surveys
+// carry patient-reported clinical answers + signature images, so gate on
+// patient-file.read (Admin/Doctor/Nurse/MRD), matching the R7hr-225 sibling
+// routes — not the demographics-only patient.read.
+router.get("/", requireAction("patient-file.read"), ctrl.list);
+router.get("/:id", validateObjectIdParam("id"), requireAction("patient-file.read"), ctrl.getById);
 
 // CREATE / UPDATE / SIGN — gated on nursing.write (nurse / doctor / admin)
 router.post("/", requireAction("nurse.write"), ctrl.create);

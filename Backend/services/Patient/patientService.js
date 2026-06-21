@@ -6,6 +6,8 @@ const Patient = require("../../models/Patient/patientModel");
 const Department = require("../../models/Department/department");
 const Doctor = require("../../models/Doctor/doctorModel");
 const TPA = require("../../models/tpa/tpaModel");
+// R7hr-228 (security audit) — escape user search input to avoid a regex-DoS.
+const { safeRegex } = require("../../utils/queryGuards");
 
 /* ── Helper: which counter field for a registration type ── */
 const visitCounterField = (regType) => {
@@ -659,10 +661,11 @@ class PatientService {
       };
     }
     if (search) {
+      const rx = safeRegex(search); // R7hr-228 — escaped + length-capped
       query.$or = [
-        { fullName: { $regex: search, $options: "i" } },
-        { UHID: { $regex: search, $options: "i" } },
-        { contactNumber: { $regex: search, $options: "i" } },
+        { fullName: rx },
+        { UHID: rx },
+        { contactNumber: rx },
       ];
     }
     const skip = (parseInt(page) - 1) * parseInt(limit);

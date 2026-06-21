@@ -517,7 +517,7 @@ const DoctorOrderSchema = new mongoose.Schema({
   // Sparse-unique so the absence of a sourceRef doesn't collide with
   // ordinary doctor-entered orders. The fan-out service queries by
   // exact sourceRef before creating, so re-signs / amends are safe.
-  sourceRef: { type: String, default: null, index: true, sparse: true },
+  sourceRef: { type: String, default: null }, // R7hr-249: indexed via the partial-unique index below (was a redundant sparse index)
 
 }, { timestamps: true, collection: "doctor_orders" });
 
@@ -626,6 +626,11 @@ DoctorOrderSchema.pre("save", function (next) {
   next();
 });
 
+// R7hr-249 (audit: fan-out idempotency has no DB backstop) — partial-unique on
+// sourceRef (string type only, so null/absent orders are unaffected) so a
+// concurrent/duplicate IA sign can't double-create the same fanned-out order.
+// The fan-out service still findOne's by sourceRef first.
+DoctorOrderSchema.index({ sourceRef: 1 }, { unique: true, partialFilterExpression: { sourceRef: { $type: "string" } } });
 DoctorOrderSchema.index({ UHID: 1, status: 1 });
 DoctorOrderSchema.index({ visitId: 1, status: 1 });
 DoctorOrderSchema.index({ UHID: 1, orderType: 1 });

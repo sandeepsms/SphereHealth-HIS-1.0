@@ -31,6 +31,8 @@ import {
   HandoverNotesTab,
   // R7hr-143 — Pending Investigation Reports shared tab
   PendingInvestigationReportsTab,
+  // R7hr-229 — Investigations (this admission) day-wise + trend summary tab
+  InvestigationsSummaryTab,
 } from "../../Components/clinical/PatientPanelTabs";
 import { confirm } from "../../Components/common/ConfirmDialog";
 // R7az-D4-CRIT-1: toMoney() unwraps Decimal128/{$numberDecimal:"…"} wire
@@ -91,6 +93,7 @@ const TABS = [
   // + Nurse panels so either role can mark a report collected the moment
   // the result reaches the bedside.
   { id:"pendingreports", label:"🧪 Pending Investigation Reports" },
+  { id:"investigations", label:"🧪 Investigations (Summary)" },
   { id:"handover",    label:"🔄 Handover Notes"       },
   { id:"icubundles",  label:"🛡 ICU Bundles"         },
   // R7hr-185b (USER) — invasive-device registry tab (mirrors Nurse panel).
@@ -2737,6 +2740,7 @@ function DoctorPatientPanelContent({ selectedAdmission }) {
       // since doctors typically don't mark the result as collected; they
       // review the result once a nurse uploads/marks it).
       case "pendingreports": return <PendingInvestigationReportsTab admission={admission} patient={patient} canMarkReportCollected={true} actorName="Doctor"/>;
+      case "investigations": return <InvestigationsSummaryTab admission={admission} patient={patient}/>;
       case "handover":   return <HandoverNotesTab patient={patient} admission={admission} doctorNotes={doctorNotes} nursingNotes={nursingNotes}/>;
       // R7gx-UI — "meds" tab removed; Treatment Chart covers the surface.
       case "medrecon":   return <MedReconciliationTab admission={admission} patient={patient}/>;

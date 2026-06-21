@@ -35,6 +35,13 @@ async function main() {
   console.log(`[reset-pin] connecting → ${uri}`);
   await mongoose.connect(uri);
 
+  // R7hr-233 (audit: weak-PIN reset) — this utility deliberately defeats every
+  // password control. Never let it run against a production DB unattended.
+  if (process.env.NODE_ENV === "production" && process.env.CONFIRM_PROD_RESET !== "yes") {
+    console.error("[reset-pin] refusing to run with NODE_ENV=production — set CONFIRM_PROD_RESET=yes to override");
+    process.exit(1);
+  }
+
   // Bypass the User schema's pre-save bcrypt hook + minlength validator
   // by writing directly to the underlying collection. We hash here.
   const hash = await bcrypt.hash(PIN, 10);
@@ -51,7 +58,7 @@ async function main() {
         password: hash,
         failedLoginAttempts: 0,
         lockUntil: null,
-        mustChangePassword: false,
+        mustChangePassword: true,
         passwordChangedAt: now,
       },
       $inc: { tokenVersion: 1 },

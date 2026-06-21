@@ -441,6 +441,14 @@ router.patch("/signature", authenticate, async (req, res) => {
   try {
     const { signature } = req.body;
     if (!signature) return res.status(400).json({ success: false, message: "Signature data required" });
+    // R7hr-248 (audit: unvalidated signature) — must be a base64 PNG/JPG data
+    // URL (NOT svg+xml, which is scriptable) and size-capped.
+    if (!/^data:image\/(png|jpe?g);base64,/i.test(signature)) {
+      return res.status(400).json({ success: false, code: "INVALID_SIGNATURE", message: "signature must be a base64 PNG/JPG data URL" });
+    }
+    if (signature.length > 500000) {
+      return res.status(413).json({ success: false, code: "SIGNATURE_TOO_LARGE", message: "Signature image exceeds 500 KB" });
+    }
 
     const user = await User.findByIdAndUpdate(
       req.user.id,

@@ -174,7 +174,12 @@ function errorLoggerMiddleware(err, req, res, next) {
       userRole: req?.user?.role || null,
       employeeId: req?.user?.employeeId || null,
       errorName: err?.name || "Error",
-      errorMessage: typeof err?.message === "string" ? err.message.slice(0, 1000) : String(err).slice(0, 1000),
+      // R7hr-241 (audit: PHI in error logs) — Mongoose validation / dup-key
+      // errors embed field values; mask emails + long digit runs before persist.
+      errorMessage: (typeof err?.message === "string" ? err.message : String(err))
+        .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]")
+        .replace(/\b\d{6,}\b/g, "[num]")
+        .slice(0, 1000),
       errorStack: truncateStack(err?.stack),
       requestBody: redactPHI(req?.body, 0),
       requestQuery: redactPHI(req?.query, 0),

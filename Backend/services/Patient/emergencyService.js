@@ -313,6 +313,18 @@ class EmergencyService {
           if (!existing) seed = await Admission.countDocuments();
           const seq = await Counter.nextSequence(key, seed);
           const admissionNumber = `IPD-${yy}-${String(seq).padStart(2, "0")}`;
+          // R7hr-237 (audit: ER→IPD double-occupancy) — atomically claim the
+          // Bed doc by number (CAS: only when Available) so two ER patients
+          // can't be bridged onto the same bed. Mirrors the admissionService
+          // create-time claim. If the bed isn't a claimable Bed doc (free-text
+          // or already occupied) we fall back to the prior bedless stub rather
+          // than faking occupancy — no regression for unregistered beds.
+          const Bed = require("../../models/bedMgmt/bedsModel");
+          const claimedBed = await Bed.findOneAndUpdate(
+            { bedNumber: bed, status: "Available" },
+            { $set: { status: "Occupied", patient: visit.patientId } },
+            { new: true },
+          );
           const stub = await Admission.create({
             admissionNumber,
             patientId:           visit.patientId,
@@ -324,6 +336,7 @@ class EmergencyService {
             admissionType:       "Emergency",
             admissionDate:       now,
             bedNumber:           bed,
+            ...(claimedBed ? { bedId: claimedBed._id, hasBed: true } : {}),
             roomNumber:          dispositionData.admittedRoom || "",
             department:          dispositionData.admittedDepartment || visit.consultantIncharge || "",
             attendingDoctor:     dispositionData.attendingDoctor || visit.consultantIncharge || "",
@@ -337,6 +350,12 @@ class EmergencyService {
             status:              "Active",
           });
           visit.admission = stub._id;
+          // Link the claimed bed back to the new admission (occupancy ↔ admission).
+          if (claimedBed) {
+            await Bed.findByIdAndUpdate(claimedBed._id, { $set: { currentAdmission: stub._id } });
+          } else {
+            note(`[SYSTEM] Bed "${bed}" was not auto-claimed (already occupied or not a registered bed) — Reception must allocate/confirm the bed.`, "System");
+          }
         } catch (e) {
           // Don't lose the disposition update on a stub-create failure —
           // the receptionist can still complete the admission via the

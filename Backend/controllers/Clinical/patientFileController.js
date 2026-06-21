@@ -652,6 +652,20 @@ exports.logEvent = async (req, res) => {
     if (!mod || !action) {
       return res.status(400).json({ success: false, message: "module and action are required" });
     }
+    // R7hr-227 (security audit) — the /log endpoint is intentionally broad
+    // (every role logs its own activity, and the actor is server-pinned below),
+    // but pre-fix a caller could append forged rows to the hash-chained NABH
+    // audit trail for arbitrary / non-existent UHIDs. For the non-clinical roles
+    // that hold the broad demographics token (Reception / Lab / Pharmacist /
+    // Dietician / TPA / Accountant) bind the write to a REAL patient so the
+    // trail cannot be polluted with phantom-patient rows. Clinical roles
+    // (Admin/Doctor/Nurse/MRD) drive most patient-file activity and are skipped
+    // so their high-value audit events are never dropped on a hot path.
+    const _role = req.user?.role || "";
+    if (!["Admin", "Doctor", "Nurse", "MRD"].includes(_role)
+        && (!UHID || !(await Patient.exists({ UHID })))) {
+      return res.status(400).json({ success: false, code: "UNKNOWN_UHID", message: "Cannot log activity for an unknown patient UHID." });
+    }
     const activityLogger = require("../../services/Clinical/activityLogger");
     const user = req.user || {};
     const row = await activityLogger.log({

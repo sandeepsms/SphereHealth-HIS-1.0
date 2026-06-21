@@ -8,14 +8,18 @@ const { requireAction } = require("../../middleware/auth");
 // R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
 const { validateObjectIdParam } = require("../../utils/queryGuards");
 
-// R7bb-B/D4-CRIT-S1: consent reads now gated on `patient.read` (a signed
-// consent reveals the planned procedure + patient demographics + signer
-// identity — sensitive PHI). Pre-R7bb any authenticated role could pull
-// every consent record for any UHID.
-router.get("/uhid/:uhid",             requireAction("patient.read"), ctrl.getByUHID);
-router.get("/admission/:admissionId", requireAction("patient.read"), ctrl.getByAdmission);
+// R7bb-B/D4-CRIT-S1: consent reads gated off "any authenticated role".
+// R7hr-225 (security audit): tightened further from the broad patient.read
+// (which still admitted the demographics-only roles Lab/Pharm/Dietician/TPA/
+// Accountant) onto patient-file.read [Admin/Doctor/Nurse/MRD]. A consent
+// reveals its TYPE (HIV_TESTING / DNR / RESEARCH / LAMA), the procedure, and
+// the consenting party's govt-ID number + contact — special-category PHI that
+// must not reach billing/insurance-facing roles. consent.write is already
+// [Admin/Doctor/Nurse]; the only read consumers are the Dr/Nurse panels.
+router.get("/uhid/:uhid",             requireAction("patient-file.read"), ctrl.getByUHID);
+router.get("/admission/:admissionId", requireAction("patient-file.read"), ctrl.getByAdmission);
 router.post("/",               requireAction("consent.write"),  ctrl.create);
-router.get("/:id", validateObjectIdParam("id"), requireAction("patient.read"), ctrl.getById);
+router.get("/:id", validateObjectIdParam("id"), requireAction("patient-file.read"), ctrl.getById);
 router.put("/:id",             validateObjectIdParam("id"), requireAction("consent.write"),  ctrl.update);
 router.patch("/:id/sign",      validateObjectIdParam("id"), requireAction("consent.write"),  ctrl.sign);
 router.patch("/:id/refuse",    validateObjectIdParam("id"), requireAction("consent.write"),  ctrl.refuse);

@@ -52,6 +52,7 @@ exports.getdoctorPatientbyID = async (req, res) => {
     res.status(200).json({ success: true, data: patient });
   } catch (err) {
     console.error("Error fetching patient:", err);
-    res.status(500).json({ success: false, error: err.message });
+    // R7hr-252 (audit: raw error leaked in prod) — generic message in prod.
+    res.status(500).json({ success: false, error: process.env.NODE_ENV === "production" ? "Internal server error" : err.message });
   }
 };

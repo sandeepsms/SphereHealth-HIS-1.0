@@ -237,6 +237,14 @@ router.use("/patient-file",     require("./Clinical/patientFileRoutes"));
 // existing CompletePatientFilePage).
 router.use("/patient-history",  require("./Clinical/patientHistoryRoutes"));
 
+// ── R7hr-229: admission-wide investigations aggregator (day-wise + trend
+//    paragraph) for the discharge summary + Dr/Nurse "Investigations" tab.
+router.use("/admission-investigations", require("./Clinical/admissionInvestigationsRoutes"));
+
+// ── R7hr-231: doctor-set nursing assessment plan (which assessments + per-day
+//    minimums the nurse must do) + today's done-counts.
+router.use("/nursing-assessment-plan", require("./Nurse/nursingAssessmentPlanRoutes"));
+
 // ── Roadmap A1–A5 + D14: patient-safety gates ────────────────
 router.use("/safety",           require("./Clinical/safetyRoutes"));
 

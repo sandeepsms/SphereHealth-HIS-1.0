@@ -154,6 +154,12 @@ exports.requireTwoFactor = (purpose) => (req, res, next) => {
   if (purpose && row.purpose !== purpose) {
     return res.status(403).json({ success: false, message: `2FA was for ${row.purpose}, this action requires ${purpose}` });
   }
+  // R7hr-250 (audit: nonce not actor-bound) — the nonce must belong to the
+  // authenticated caller, else user B could replay a nonce user A just minted
+  // (same 60s window + purpose) and complete an action requiring A's 2FA.
+  if (row.userId && req.user && String(row.userId) !== String(req.user._id || req.user.id)) {
+    return res.status(403).json({ success: false, code: "NONCE_ACTOR_MISMATCH", message: "This 2FA nonce was issued to a different user." });
+  }
   row.used = true; // single-use
   req.twoFactor = { purpose: row.purpose, userId: row.userId };
   next();

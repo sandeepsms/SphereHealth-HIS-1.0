@@ -1,5 +1,19 @@
 const opdService = require("../../services/Patient/OPDService");
 
+// R7hr-226 (security audit) — the doctor's ASSESSMENT output fields. The
+// generic OPD update (PUT /:visitNumber) is gated reception.register (Admin +
+// Receptionist); these clinical fields each have their own gated writer
+// (saveAssessment / addPrescription / addInvestigation). Stripped for non-Admin
+// so a Receptionist cannot fabricate a clinical assessment via the generic body
+// spread. Reception's own fields (chief complaint, vitals, status, doctor
+// assignment) are intentionally NOT in this list.
+const OPD_CLINICAL_FIELDS = [
+  "generalExamination", "systemicExamination", "provisionalDiagnosis",
+  "workingDiagnosis", "finalDiagnosis", "icd10Code", "icd10Description",
+  "prescribedMedications", "advice", "investigationsOrdered", "soap",
+  "treatmentPlan", "infusions", "diagnosis",
+];
+
 // R7hr-216 (RBAC audit) — mirror the read-side doctor-ownership guard
 // (getOPDVisitById → NOT_YOUR_VISIT) on OPD *writes*. Pre-fix, any Doctor could
 // author/sign an assessment, prescription, addendum or completion onto ANOTHER
@@ -145,7 +159,15 @@ class OPDController {
 
   async updateOPDVisit(req, res) {
     try {
-      const visit = await opdService.updateOPDVisit(req.params.visitNumber, req.body);
+      // R7hr-226 — strip the doctor-assessment fields for non-Admin callers
+      // (Receptionist) so the generic reception update cannot fabricate exam/
+      // diagnosis/prescription/advice; those go through the gated doctor writers.
+      let payload = req.body;
+      if (req.user?.role !== "Admin") {
+        payload = { ...req.body };
+        for (const k of OPD_CLINICAL_FIELDS) delete payload[k];
+      }
+      const visit = await opdService.updateOPDVisit(req.params.visitNumber, payload);
       if (!visit) return res.status(404).json({ success: false, message: "Visit not found" });
       res.status(200).json({ success: true, message: "Visit updated successfully", data: visit });
     } catch (error) {

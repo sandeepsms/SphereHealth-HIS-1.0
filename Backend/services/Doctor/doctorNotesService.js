@@ -24,7 +24,7 @@ const VISIT_FIELD_MAP = {
 // ─────────────────────────────────────────────────────────────
 // Create SOAP note with orders
 // ─────────────────────────────────────────────────────────────
-const createDoctorNote = async (data, doctorUserId) => {
+const createDoctorNote = async (data, doctorUserId, actorRole) => {
   const {
     // patient ref — frontend may send 'patient' or 'patientId'
     patient: patientRef,
@@ -61,6 +61,23 @@ const createDoctorNote = async (data, doctorUserId) => {
 
   const patRef = patientRef || patientId;
   const noteStatus = status || "draft";
+
+  // R7hr-246 (audit: nurse authoring a signed doctor-section note) — this
+  // endpoint accepts both doctor- and nursing-section notes (R26/R7hr-120), but
+  // a Nurse must NOT be able to author a doctor-section note (diagnosis +
+  // physician orders that fan out to the MAR), signed or draft. Block only when
+  // the section is explicitly "doctor" so legit nursing-section saves pass.
+  const _effSection = data.section || (
+    (data.noteDetails?.doctor || data.noteDetails?.nabh) ? "doctor" :
+    (data.noteDetails?.nursing || data.noteDetails?.nursingNabh) ? "nursing" :
+    null
+  );
+  if (actorRole === "Nurse" && _effSection === "doctor") {
+    const e = new Error("Nurses may only author nursing-section notes — doctor-section notes (diagnosis / orders) must be authored by a doctor.");
+    e.code = "NURSE_CANNOT_AUTHOR_DOCTOR_NOTE";
+    e.status = 403;
+    throw e;
+  }
 
   // R7az-D2-CRIT-6: late-entry gate (NABH HIC.6). If the clinical
   // visitDate is more than 4 hours behind the wall clock, the caller
@@ -728,6 +745,17 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
   if (!note) {
     const error = new Error("Note not found");
     error.statusCode = 404;
+    throw error;
+  }
+  // R7hr-250 (audit: null-author ownership bypass) — when note.doctor is null
+  // (legacy pre-author-tracking notes) the ownership check below was skipped,
+  // letting any clinical-write user mutate/addendum it. A note with no recorded
+  // owner is locked here (read-only); legitimate corrections go via an explicit
+  // admin path.
+  if (!note.doctor) {
+    const error = new Error("This legacy note has no recorded author and cannot be amended here.");
+    error.statusCode = 403;
+    error.code = "NOTE_NO_OWNER";
     throw error;
   }
   if (note.doctor && doctorUserId && note.doctor.toString() !== doctorUserId.toString()) {

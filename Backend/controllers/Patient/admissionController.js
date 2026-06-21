@@ -793,10 +793,30 @@ class AdmissionController {
       }
     }
 
+    // R7hr-245 (audit: discharge-approve bypasses summary + NABH gates) —
+    // require a FINALIZED discharge summary before approving, and copy its
+    // legal dischargeType onto the workflow so a LAMA/Death isn't silently
+    // left as "Routine" (which would skip the LAMA/Mortality register at
+    // gate-pass). The FE never calls this endpoint directly, so this is pure
+    // direct-API hardening with no UI-flow regression.
+    const DischargeSummary = require("../../models/Clinical/DischargeSummaryModel");
+    const finalizedSummary = await DischargeSummary.findOne({
+      admissionId: req.params.id,
+      status: "finalized",
+    }).select("dischargeType").sort({ finalizedAt: -1 }).lean();
+    if (!finalizedSummary) {
+      return res.status(409).json({
+        success: false,
+        code: "DISCHARGE_SUMMARY_REQUIRED",
+        message: "A finalized discharge summary is required before approving discharge. Finalize the summary first.",
+      });
+    }
+
     const set = {
       "dischargeWorkflow.stage":              "DoctorApproved",
       "dischargeWorkflow.doctorApprovedAt":   new Date(),
       "dischargeWorkflow.doctorApprovedBy":   req.body.doctorName || "Doctor",
+      "dischargeWorkflow.dischargeType":      finalizedSummary.dischargeType || "Routine",
     };
     if (req.body.finalBillAmount !== undefined) {
       set["dischargeWorkflow.finalBillAmount"] = Number(req.body.finalBillAmount) || 0;

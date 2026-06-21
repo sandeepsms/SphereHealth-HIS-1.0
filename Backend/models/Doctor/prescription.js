@@ -67,7 +67,10 @@ const prescriptionSchema = new mongoose.Schema(
         // can't poison MAR / pharmacy downstream. Patient-safety audit A-07.
         route: {
           type: String,
-          enum: ["Oral", "IV", "IM", "SC", "SL", "PR", "PV", "Topical", "Inhalation", "Nebulisation", "Ophthalmic", "Otic", "Nasal", "Rectal", "Transdermal"],
+          // R7hr-252 (audit: route vocabulary mismatch) — widened to also accept
+          // the prescription picker's full-word routes so a valid selection can't
+          // fail validation / silently default to "Oral".
+          enum: ["Oral", "IV", "IM", "SC", "SL", "PR", "PV", "Topical", "Inhalation", "Nebulisation", "Ophthalmic", "Otic", "Nasal", "Rectal", "Transdermal", "Sublingual", "Buccal", "NG Tube", "PEG Tube", "Per Rectum", "Intradermal", "Intra-articular", "Eye Drops", "Ear Drops", "Intranasal", "Subcutaneous", "Intramuscular", "Intravenous"],
           default: "Oral",
         },
         days: { type: String, default: "1" },

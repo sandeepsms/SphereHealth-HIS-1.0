@@ -16,7 +16,7 @@ import {
 
 const escapeHtml = (s) =>
   String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); // R7hr-251 (audit) — single-quoted attribute contexts
 
 const ISO_RX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
@@ -773,9 +773,11 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
   const empIdShown = note.signedByEmpId || note.doctorEmpId || "";
   const sigSrc = note.signature || note.signatureImage || "";
   const sigImgHtml = (isSigned && sigSrc && typeof sigSrc === "string"
+                     // R7hr-251 (audit: external img fetch) — only data:image/
+                     // and local /uploads/ signatures; never an attacker-set
+                     // http(s) URL (tracking pixel / SSRF-lite / referer leak).
                      && (sigSrc.startsWith("data:image/")
-                         || sigSrc.startsWith("/uploads/")
-                         || /^https?:\/\//.test(sigSrc)))
+                         || sigSrc.startsWith("/uploads/")))
     ? `<div style="margin-left:auto;text-align:center;flex:none"><img src="${escapeHtml(sigSrc)}" alt="Signature" style="max-height:38px;max-width:170px;border:1px solid #e2e8f0;background:#fff;padding:2px 8px;border-radius:5px"/><div style="font-size:8px;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase;margin-top:2px">e-signature</div></div>`
     : "";
   // R7hr-222 — formal "authenticated" panel (presentation only; same fields:

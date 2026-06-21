@@ -80,7 +80,7 @@ const BloodTransfusionRegisterSchema = new Schema(
     ward: { type: String, default: "" },
 
     // ── Request (auto-populated from DoctorOrder) ──
-    doctorOrderId: { type: Schema.Types.ObjectId, ref: "DoctorOrder", default: null, index: true },
+    doctorOrderId: { type: Schema.Types.ObjectId, ref: "DoctorOrder", default: null }, // R7hr-242: indexed via the partial-unique index below (was a redundant non-unique index)
     requestedByUserId: { type: Schema.Types.ObjectId, ref: "User", default: null },
     requestedByName: { type: String, default: "" },
     requestedAt: { type: Date, default: Date.now },
@@ -204,6 +204,14 @@ BloodTransfusionRegisterSchema.index({ startedAt: -1 });
 BloodTransfusionRegisterSchema.index({ "bagsIssued.bagNumber": 1 });
 BloodTransfusionRegisterSchema.index({ "reaction.occurred": 1, startedAt: -1 });
 BloodTransfusionRegisterSchema.index({ status: 1, startedAt: -1 });
+// R7hr-242 (audit: register dedup not enforced) — doctorOrderId was index:true
+// but NOT unique, so the emitter's read-then-write findOne dedup could race into
+// duplicate register rows for the same order. Partial-unique (objectId only, so
+// the many default-null rows are skipped) enforces one row per blood-tx order.
+BloodTransfusionRegisterSchema.index(
+  { doctorOrderId: 1 },
+  { unique: true, partialFilterExpression: { doctorOrderId: { $type: "objectId" } } },
+);
 
 module.exports =
   mongoose.models.BloodTransfusionRegister ||

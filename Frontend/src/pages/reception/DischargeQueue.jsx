@@ -636,8 +636,11 @@ async function printFinalBill(adm) {
 
 function printGatePass(admission) {
   const w = admission.dischargeWorkflow || {};
+  // R7hr-233 (audit: stored XSS) — escape every interpolated patient/user field
+  // before it enters the print markup (e.g. a patientName like "<img onerror=…>").
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const html = `<!doctype html><html><head><meta charset="utf-8"/>
-    <title>Gate Pass ${w.gatePassNumber || ""}</title>
+    <title>Gate Pass ${esc(w.gatePassNumber || "")}</title>
     <style>
       *{box-sizing:border-box;font-family:'DM Sans',Arial,sans-serif}
       body{margin:0;padding:24px;color:#0f172a}
@@ -660,17 +663,17 @@ function printGatePass(admission) {
         <div class="hd-sub">${new Date().toLocaleString("en-IN", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
       </div>
       <div class="body">
-        <div class="pass-no">${w.gatePassNumber || "—"}</div>
+        <div class="pass-no">${esc(w.gatePassNumber || "—")}</div>
         <table>
-          <tr><td class="lbl">Patient Name</td><td class="val">${admission.patientName}</td></tr>
-          <tr><td class="lbl">UHID</td><td class="val" style="font-family:'DM Mono',monospace">${admission.UHID || "—"}</td></tr>
-          <tr><td class="lbl">Bed / Ward</td><td class="val">${admission.bedNumber || "—"} / ${admission.wardName || "—"}</td></tr>
+          <tr><td class="lbl">Patient Name</td><td class="val">${esc(admission.patientName)}</td></tr>
+          <tr><td class="lbl">UHID</td><td class="val" style="font-family:'DM Mono',monospace">${esc(admission.UHID || "—")}</td></tr>
+          <tr><td class="lbl">Bed / Ward</td><td class="val">${esc(admission.bedNumber || "—")} / ${esc(admission.wardName || "—")}</td></tr>
           <tr><td class="lbl">Admitted on</td><td class="val">${admission.admissionDate ? new Date(admission.admissionDate).toLocaleDateString("en-IN") : "—"}</td></tr>
           <tr><td class="lbl">Discharged on</td><td class="val">${new Date().toLocaleDateString("en-IN")}</td></tr>
           <tr><td class="lbl">Final Bill</td><td class="val">₹${(w.finalBillAmount || 0).toLocaleString("en-IN")}</td></tr>
-          <tr><td class="lbl">Approved by</td><td class="val">${w.doctorApprovedBy || "Doctor"}</td></tr>
-          <tr><td class="lbl">Bill Cleared by</td><td class="val">${w.billClearedBy || "Reception"}</td></tr>
-          <tr><td class="lbl">Pass Issued by</td><td class="val">${w.gatePassIssuedBy || "Reception"}</td></tr>
+          <tr><td class="lbl">Approved by</td><td class="val">${esc(w.doctorApprovedBy || "Doctor")}</td></tr>
+          <tr><td class="lbl">Bill Cleared by</td><td class="val">${esc(w.billClearedBy || "Reception")}</td></tr>
+          <tr><td class="lbl">Pass Issued by</td><td class="val">${esc(w.gatePassIssuedBy || "Reception")}</td></tr>
         </table>
         <div class="footer">
           ${buildPrintIssuerHtml()}

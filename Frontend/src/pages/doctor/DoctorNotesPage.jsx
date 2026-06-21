@@ -45,6 +45,8 @@ import { DischargeSummaryPageContent } from "../clinical/DischargeSummaryPage";
 import { ConsentFormPageContent } from "../clinical/ConsentFormPage";
 import { MLCPageContent } from "../mlc/MLCPage";
 import DoctorOrdersPanel from "../../Components/doctor/DoctorOrdersPanel";
+// R7hr-231 — floating quick-tools (Nursing Plan editor + OPD/panel/cert/discharge shortcuts)
+import DoctorQuickTools from "../../Components/doctor/DoctorQuickTools";
 import TreatmentChart from "../../Components/clinical/TreatmentChart";
 import TreatmentTeamPanel from "../../Components/clinical/TreatmentTeamPanel";
 // R7hr-143 — Pending Investigation Reports shared tab
@@ -1864,6 +1866,15 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
     // was being squeezed 260px to the right of where it belonged).
     <div style={{ padding: "24px 28px", minHeight: "100vh", background: C.bg, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text }}>
 
+      {/* R7hr-231 — floating Nursing Plan editor + quick shortcuts (only with a patient loaded) */}
+      {patient && (
+        <DoctorQuickTools
+          uhid={patient?.UHID || patient?.uhid || searchUHID}
+          admissionId={patient?._id || ""}
+          ipdNo={patient?.ipdNo || patient?.admissionNumber || ""}
+        />
+      )}
+
       {/* ── Page Header ── */}
       <div style={{ background: `linear-gradient(135deg, ${C.primary} 0%, ${C.primaryMid} 100%)`, borderRadius: 16, padding: "20px 26px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: `0 8px 24px ${C.primary}30` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -2377,7 +2388,15 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                   hasn't been signed, so this picker only renders when the
                   gate is OFF. Modules are always clickable here. */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
-                {MODULES.map(m => (
+                {/* R7hr-230 — hide "Initial Assessment" + "Discharge Summary"
+                    from the Add-a-Note picker: both already have their own
+                    dedicated tiles on the Doctor Notes overview (Initial Doctor
+                    Assessment → the IPD/Emergency Initial Assessment surface;
+                    Discharge Summary → the Discharge Summary tile), so a second
+                    entry point here was a duplicate. They STAY in MODULES so
+                    modDef() still resolves the correct print-header title for
+                    any existing note of those types. */}
+                {MODULES.filter(m => m.id !== "initial" && m.id !== "discharge").map(m => (
                     <button
                       key={m.id}
                       type="button"

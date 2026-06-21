@@ -1270,11 +1270,20 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
             });
           } catch (_) { /* no report access / none */ }
           if (autoInv.length) setInvestigations(prev => (prev && prev.length) ? prev : autoInv);
-          // Fill the narrative paragraph only when the doctor hasn't typed one
-          // / a draft hasn't restored it — never clobber existing text.
-          if (narrLines.length) {
-            const narrative = narrLines.join("\n");
-            setForm(p => ({ ...p, keyInvestigationsText: (p.keyInvestigationsText && p.keyInvestigationsText.trim()) ? p.keyInvestigationsText : narrative }));
+          // R7hr-229 — prefer the FULL-ADMISSION day-wise + trend paragraph from
+          // the new aggregator (spans the whole stay, all investigation types,
+          // every day, scoped by the admission date-window). Fall back to the
+          // latest-per-panel narrative built above if it is empty / unavailable.
+          let adminParagraph = "";
+          try {
+            const ai = await axios.get(`${API_ENDPOINTS.BASE}/admission-investigations`, { params: { uhid: found.UHID, admissionId: found._id }, headers });
+            adminParagraph = (ai?.data?.data?.paragraph || "").trim();
+          } catch (_) { /* fall back to narrLines */ }
+          const investNarrative = adminParagraph || (narrLines.length ? narrLines.join("\n") : "");
+          // Fill only when the doctor hasn't typed one / a draft hasn't restored
+          // it — never clobber existing text.
+          if (investNarrative) {
+            setForm(p => ({ ...p, keyInvestigationsText: (p.keyInvestigationsText && p.keyInvestigationsText.trim()) ? p.keyInvestigationsText : investNarrative }));
           }
         } catch (_) { /* silently skip */ }
 

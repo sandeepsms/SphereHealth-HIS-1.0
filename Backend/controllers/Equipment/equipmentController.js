@@ -105,7 +105,15 @@ exports.stats = async (req, res) => {
           dueSoon:       agg.dueSoonSvc[0]?.n   || 0,
           neverServiced: agg.neverServiced[0]?.n || 0,
         },
-        homecareDailyRevenue: agg.homecareRevenue[0]?.sum || 0,
+        // R7hr-227 (security audit) — homecare rental revenue is commercial
+        // data: dailyRentalCharge was made Admin-only on writes + stripped from
+        // the SSE feed in R7hr-219, but this read aggregate leaked it to the
+        // ward/floor roles on equipment.read (Doctor/Nurse/Receptionist/Ward
+        // Boy/Housekeeping). Expose the revenue sum to Admin only; everyone
+        // else still gets the operational counts.
+        ...(req.user?.role === "Admin"
+          ? { homecareDailyRevenue: agg.homecareRevenue[0]?.sum || 0 }
+          : {}),
       },
     });
   } catch (e) {

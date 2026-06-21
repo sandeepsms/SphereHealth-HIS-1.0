@@ -978,6 +978,37 @@ exports.dispense = async (req, res) => {
       }
     }
 
+    // R7hr-239 (audit: Schedule-X witness was best-effort) — the NDPS
+    // two-person witness is otherwise enforced only AFTER fifoConsume by
+    // scheduleXRegister.recordDispense, whose WITNESS_REQUIRED 400 is swallowed
+    // (logged to sale.remarks) → the controlled drug dispenses witness-less.
+    // Pre-gate the witness here, before any stock is consumed.
+    {
+      const needsWitness = items.some((it) => {
+        const m = drugMetaMap.get(String(it.drugId));
+        return m && String(m.schedule) === "X";
+      });
+      if (needsWitness) {
+        const wName = String(req.body?.witnessName || "").trim();
+        const wId   = req.body?.witnessId;
+        if (!wName || !wId) {
+          return res.status(400).json({
+            success: false,
+            code: "SCHEDULE_X_WITNESS_REQUIRED",
+            message: "Schedule-X (NDPS) dispense requires a second-person witness (witnessName + witnessId) before any stock is released.",
+            missing: [!wName ? "witnessName" : null, !wId ? "witnessId" : null].filter(Boolean),
+          });
+        }
+        if (String(wId) === String(req.user?._id || "")) {
+          return res.status(409).json({
+            success: false,
+            code: "WITNESS_SELF",
+            message: "The Schedule-X witness must be a different person from the dispenser (NDPS two-person rule).",
+          });
+        }
+      }
+    }
+
     // R7az-CRIT-1 (D7-CRIT-1): drug-allergy gate at the counter.
     // Walk-in sales are anonymous (no patient record); for every other
     // sale-type we look the patient up by UHID, hydrate the unified
@@ -1169,7 +1200,7 @@ exports.dispense = async (req, res) => {
         // could POST { unitPrice: 0.01 } and walk out with discounted stock.
         const unit  = Number(u.batch.salePrice || 0);
         const gstR  = Number(it.gstRate ?? 12);
-        const discR = Number(it.discountPercent ?? discountPercent ?? 0);
+        const discR = Math.max(0, Math.min(100, Number(it.discountPercent ?? discountPercent ?? 0) || 0)); // R7hr-241 (audit: unbounded line discount) — clamp 0–100%
         const gross = qty * unit;
         const discAmt = gross * discR / 100;
         const taxable = gross - discAmt;
@@ -3376,6 +3407,58 @@ exports.addItems = async (req, res) => {
       }
     }
 
+    // R7hr-239 (audit: supplementary add-items bypassed dispense's statutory
+    // gates) — replicate dispense()'s Schedule + allergy gates here so a
+    // Schedule H/H1/X or allergic drug can't be slipped onto the bill via a
+    // debit note. Additive: same checks as the counter, reading prescription /
+    // patient context from the existing sale when the item doesn't carry it.
+    const supMeta = new Map();
+    for (const it of items) {
+      const k = String(it.drugId);
+      if (supMeta.has(k)) continue;
+      const d = await Drug.findById(it.drugId).select("schedule name").lean();
+      if (d) supMeta.set(k, d);
+    }
+    for (const it of items) {
+      const meta = supMeta.get(String(it.drugId));
+      const sched = String(meta?.schedule || "");
+      if (sched === "X") {
+        return res.status(400).json({ success: false, code: "SCHEDULE_X_NOT_ON_SUPPLEMENT",
+          message: `Drug "${meta.name}" is Schedule X (NDPS) — it cannot be added via a supplementary invoice; dispense it through the main counter flow with the NDPS witness + register.` });
+      }
+      if (["H", "H1"].includes(sched)) {
+        const rx = String(it.prescriptionRef || sale.prescriptionRef || "").trim();
+        const prescriber = String(it.prescriberName || sale.prescriberName || sale.doctorName || "").trim();
+        if (!rx || !prescriber) {
+          return res.status(400).json({ success: false, code: "RX_REF_REQUIRED",
+            message: `Drug "${meta.name}" is Schedule ${sched} — prescriptionRef + prescriberName are required to add it`,
+            drugName: meta?.name, schedule: sched,
+            missing: [!rx ? "prescriptionRef" : null, !prescriber ? "prescriberName" : null].filter(Boolean) });
+        }
+      }
+    }
+    if (sale.saleType !== "Walk-in" && String(sale.patientUHID || "").trim()) {
+      try {
+        const pat = await Patient.findOne({ UHID: String(sale.patientUHID).trim() })
+          .select("knownAllergies allergyList").lean({ virtuals: true });
+        if (pat) {
+          const allergyPool = pat.allergies || pat.allergyList || pat.knownAllergies || [];
+          for (const it of items) {
+            assertDrugSafeOrOverride(
+              { drugName: it.drugName, genericName: it.genericName, brandName: it.brandName },
+              allergyPool,
+              { overrideReason: it._allergyOverrideReason, label: "supplementary-add" },
+            );
+          }
+        }
+      } catch (allergyErr) {
+        if (allergyErr.code === "ALLERGY_COLLISION") {
+          return res.status(409).json({ success: false, message: allergyErr.message, allergen: allergyErr.allergen, drugName: allergyErr.drugName });
+        }
+        throw allergyErr;
+      }
+    }
+
     // Pre-flight DELETED — same TOCTOU bug as dispense() (re-audit
     // round-7 follow-up). fifoConsume's atomic predicate is now the
     // single source of truth; cross-item rollback below unrolls
@@ -3394,7 +3477,7 @@ exports.addItems = async (req, res) => {
         // trust a client-supplied unitPrice on supplementary invoices either.
         const unit  = Number(u.batch.salePrice || 0);
         const gstR  = Number(it.gstRate ?? 12);
-        const discR = Number(it.discountPercent ?? discountPercent ?? 0);
+        const discR = Math.max(0, Math.min(100, Number(it.discountPercent ?? discountPercent ?? 0) || 0)); // R7hr-241 (audit: unbounded line discount) — clamp 0–100%
         const gross = qty * unit;
         const discAmt = gross * discR / 100;
         const taxable = gross - discAmt;

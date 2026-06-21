@@ -97,6 +97,11 @@ const prevShift = (shift, date) => {
   return { date, shift: "Evening" }; // Night ← Evening (same day)
 };
 
+// R7hr-232 — the three bundles whose applicability is driven by an invasive
+// device (VAP←ET/trach, CAUTI←Foley, CLABSI←central/PICC). The rest
+// (DVT/Sepsis/SUP) are not device-linked and park in "Extra Bundle ▾".
+const DEVICE_DRIVEN = new Set(["vap", "cauti", "clabsi"]);
+
 function complianceTone(pct) {
   if (pct >= 90) return { color: C.green,   bg: C.greenL,   label: "Excellent" };
   if (pct >= 70) return { color: C.amber,   bg: C.amberL,   label: "Needs review" };
@@ -118,6 +123,10 @@ export default function ICUBundlesPage() {
   const [finalizing, setFinalizing] = useState(false);
   // Which bundle cards are expanded — by default expand the first two.
   const [expanded, setExpanded] = useState(() => ({ vap: true, cauti: true }));
+  // R7hr-232 — extra (non-primary) bundles the nurse has pulled in from the
+  // "Extra Bundle ▾" picker this session, plus whether that menu is open.
+  const [revealed, setRevealed]   = useState(() => new Set());
+  const [extraOpen, setExtraOpen] = useState(false);
   // Per-card local drafts so toggles feel instant even when the PATCH
   // is in-flight. Resets when the sheet is refetched.
   const [localItems, setLocalItems] = useState({}); // { [bundleKey]: { [itemKey]: { checked, notes } } }
@@ -193,6 +202,40 @@ export default function ICUBundlesPage() {
     };
   }, [devices]);
 
+  /* ── R7hr-232 — device-driven bundle VISIBILITY ──────────────────
+     When the device registry is readable, only the bundles relevant to THIS
+     patient stay on screen as cards:
+       • a device-driven bundle (VAP/CAUTI/CLABSI) shows when its device is
+         attached; with no device it drops into "Extra Bundle ▾".
+       • the non-device bundles (DVT/Sepsis/SUP) start in "Extra Bundle ▾" and
+         the nurse pulls them in when clinically indicated.
+     A bundle already charted/signed is NEVER hidden. When the registry can't
+     be read we fall back to showing every bundle (pre-R7hr-232 behaviour). */
+  const registryReady = !!deviceFor;
+  const bundleCharted = useCallback((key) => {
+    const b = sheet?.[key];
+    if (!b) return false;
+    if (b.signedAt) return true;
+    return Array.isArray(b.items) && b.items.some(i => i.checked);
+  }, [sheet]);
+  const isPrimaryBundle = useCallback((key) => {
+    if (!registryReady) return true;             // registry unavailable → show all
+    if (revealed.has(key)) return true;          // nurse pulled it from Extra
+    if (bundleCharted(key)) return true;         // never hide existing work
+    if (DEVICE_DRIVEN.has(key)) return !!deviceFor[key];
+    return false;                                // DVT/Sepsis/SUP park in Extra
+  }, [registryReady, revealed, bundleCharted, deviceFor]);
+  const bundleSplit = useMemo(() => ({
+    primary: BUNDLE_DEFS.filter(d => isPrimaryBundle(d.key)),
+    extra:   BUNDLE_DEFS.filter(d => !isPrimaryBundle(d.key)),
+  }), [isPrimaryBundle]);
+  const revealBundle = (key) => {
+    setRevealed(prev => { const n = new Set(prev); n.add(key); return n; });
+    setApplicable(key, true);                    // make it active for charting + %
+    setExpanded(p => ({ ...p, [key]: true }));   // open the card
+    setExtraOpen(false);
+  };
+
   // Auto-seed applicable flags from the registry — once per loaded
   // sheet+devices combination so a manual save isn't fought mid-edit.
   // Finalized sheets are never touched.
@@ -206,6 +249,15 @@ export default function ICUBundlesPage() {
       const want = !!deviceFor[key];
       const has  = sheet?.[key]?.applicable !== false;
       if (has !== want) setApplicable(key, want);
+    }
+    // R7hr-232 — park the non-device bundles (DVT/Sepsis/SUP) as N/A so they
+    // sit in "Extra Bundle ▾" and don't drag the compliance %. Already-charted
+    // bundles are left applicable; the nurse reveals any of them on demand.
+    for (const key of ["dvt", "sepsis", "sup"]) {
+      const b = sheet?.[key] || {};
+      const charted = !!b.signedAt || (Array.isArray(b.items) && b.items.some(i => i.checked));
+      if (charted) continue;
+      if (b.applicable !== false) setApplicable(key, false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheet?._id, sheet?.date, sheet?.shift, deviceFor]);
@@ -263,6 +315,9 @@ export default function ICUBundlesPage() {
       setSheet(s);
       setLocalItems({});
       setNotes(s?.notes || "");
+      // R7hr-232 — each sheet starts from the device-driven defaults.
+      setRevealed(new Set());
+      setExtraOpen(false);
       // R7ei — freshly-loaded sheet IS the saved baseline.
       savedSnapshotRef.current = { localItems: {}, notes: s?.notes || "" };
     } catch (e) {
@@ -460,6 +515,15 @@ export default function ICUBundlesPage() {
           };
         }
         return updated;
+      });
+      // R7hr-232 — keep any carried-forward bundle visible even if it's a
+      // non-device one, so the nurse can review the copied checks before save.
+      setRevealed(prevSet => {
+        const n = new Set(prevSet);
+        for (const def of BUNDLE_DEFS) {
+          if (src[def.key]?.applicable !== false) n.add(def.key);
+        }
+        return n;
       });
       setLocalItems(next);
       toast.success(`Carried forward from ${prev.shift} (${prev.date}) — review and save`);
@@ -827,8 +891,65 @@ export default function ICUBundlesPage() {
           </div>
         )}
 
+        {/* ── R7hr-232 — active-bundles header + "Extra Bundle ▾" picker ──
+            Only the device-relevant (+ charted) bundles render as cards; the
+            rest move into this dropdown so the nurse charts only what applies. */}
+        {patient && sheet && registryReady && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "2px 2px 10px", flexWrap: "wrap" }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>🛡 Bundles for this patient</div>
+            <span style={{ fontSize: 11.5, color: C.muted }}>
+              {bundleSplit.primary.length} active · device-linked &amp; charted
+            </span>
+            <div style={{ marginLeft: "auto", position: "relative" }}>
+              <button type="button" onClick={() => setExtraOpen(o => !o)}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: C.slate }}>
+                ➕ Extra Bundle <span style={{ fontSize: 10 }}>▾</span>
+                {bundleSplit.extra.length > 0 && (
+                  <span style={{ marginLeft: 2, background: C.slateL, color: C.slate, borderRadius: 999, padding: "1px 7px", fontSize: 10.5, fontWeight: 800 }}>{bundleSplit.extra.length}</span>
+                )}
+              </button>
+              {extraOpen && (
+                <>
+                  <div onClick={() => setExtraOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 39 }} />
+                  <div style={{ position: "absolute", right: 0, top: "118%", zIndex: 40, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 12px 30px rgba(2,6,23,.18)", width: 330, maxHeight: 360, overflow: "auto", padding: 6 }}>
+                    <div style={{ padding: "4px 8px 6px", fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.muted }}>Add another bundle</div>
+                    {bundleSplit.extra.length === 0 && (
+                      <div style={{ padding: "8px 10px", fontSize: 12, color: C.muted }}>All bundles are already on screen.</div>
+                    )}
+                    {bundleSplit.extra.map(def => {
+                      const hint = DEVICE_DRIVEN.has(def.key)
+                        ? `No ${def.key === "vap" ? "ET tube / tracheostomy" : def.key === "cauti" ? "urinary catheter" : "central line / PICC"} on file`
+                        : "Optional — chart if clinically indicated";
+                      return (
+                        <button key={def.key} type="button" onClick={() => revealBundle(def.key)}
+                          style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 10px", border: "none", background: "transparent", cursor: "pointer", borderRadius: 7, textAlign: "left" }}
+                          onMouseEnter={e => { e.currentTarget.style.background = C.slateL; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                          <i className={`pi ${def.icon}`} style={{ fontSize: 14, color: C.teal, width: 18, textAlign: "center" }} />
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: C.text }}>{def.key.toUpperCase()}</span>
+                            <span style={{ display: "block", fontSize: 10.5, color: C.muted }}>{hint}</span>
+                          </span>
+                          <span style={{ fontSize: 11, color: C.teal, fontWeight: 800, whiteSpace: "nowrap" }}>+ Add</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* R7hr-232 — nothing device-linked: guide the nurse to the picker. */}
+        {patient && sheet && registryReady && bundleSplit.primary.length === 0 && (
+          <div style={{ background: C.card, border: `1.5px dashed ${C.border}`, borderRadius: 12, padding: "20px 18px", marginBottom: 12, textAlign: "center", color: C.muted, fontSize: 12.5 }}>
+            No device-linked bundles for this patient. Use <strong style={{ color: C.slate }}>➕ Extra Bundle</strong> above to chart DVT / Sepsis / SUP if clinically indicated.
+          </div>
+        )}
+
         {/* ── Bundle cards ── */}
-        {patient && sheet && BUNDLE_DEFS.map(def => {
+        {patient && sheet && bundleSplit.primary.map(def => {
           const applicable = sheet?.[def.key]?.applicable !== false;
           const items = itemsFor(def.key);
           const pct = compliance.per[def.key];
