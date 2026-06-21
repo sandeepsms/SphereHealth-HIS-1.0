@@ -454,7 +454,9 @@ class ConsentFormController {
   // the signature image. signedAt is server-stamped.
   staffSign = handle(async (req, res) => {
     const { signatureImage } = req.body || {};
-    if (!signatureImage || !signatureImage.startsWith("data:image/")) {
+    // R7hr-248 (audit: svg+xml scriptable image accepted) — restrict to PNG/JPG
+    // base64 data URLs; the prior data:image/ prefix allowed data:image/svg+xml.
+    if (!signatureImage || !/^data:image\/(png|jpe?g);base64,/i.test(signatureImage)) {
       return res.status(400).json({ success: false, code: "INVALID_SIGNATURE",
         message: "signatureImage must be a data URL (base64 PNG/JPG)" });
     }
