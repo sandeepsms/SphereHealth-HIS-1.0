@@ -473,7 +473,11 @@ class OPDService {
   }
 
   /* ── Nurse updates vitals ── */
-  async updateVitals(visitNumber, vitalsData, nurseName, actor = null) {
+  // PD-03 — `meta` carries the nurse audit trio (employeeId +
+  // signature data URL) plumbed through from the controller. The
+  // OPD Rx Nurse Pre-Assessment print footer reads these so Date,
+  // Time, Emp ID and Signature columns all populate correctly.
+  async updateVitals(visitNumber, vitalsData, nurseName, actor = null, meta = {}) {
     const { chiefComplaint, allergyHistory, ...pureVitals } = vitalsData;
 
     // R7hf — Auto-compose the legacy `bloodPressure: "S/D"` string from
@@ -495,6 +499,11 @@ class OPDService {
       vitalsStatus: "Done",
       vitalsEnteredBy: nurseName || "Nurse",
       vitalsEnteredAt: new Date(),
+      // PD-03 — Persist the nurse audit trio at the visit-doc level so
+      // the OPD Rx print footer can render Emp ID + Signature image
+      // alongside the already-saved Date / Time stamps.
+      vitalsEnteredByEmployeeId: meta.vitalsEnteredByEmployeeId || "",
+      vitalsEnteredBySignature:  meta.vitalsEnteredBySignature  || "",
       status: "In Progress",
     };
 

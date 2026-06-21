@@ -230,7 +230,21 @@ export default function NurseOPDQueuePage() {
       // sending so Mongoose strict mode doesn't drop the real fields
       // and the backend payload stays clean.
       const { _registrationAllergy, ...payload } = vitals;
-      await opdService.updateVitals(selectedVisit.visitNumber, payload, user?.name || user?.username || "Nurse");
+      // PD-03 — Stamp the nurse audit trio (Emp ID + signature image)
+      // alongside the vitals so the OPD Rx Nurse Pre-Assessment print
+      // footer shows Emp ID and a real signature image instead of "—"
+      // and a blank line. Backend extracts these top-level keys before
+      // spreading the rest into the vitals sub-doc.
+      payload.vitalsEnteredByEmployeeId = user?.employeeId || "";
+      payload.vitalsEnteredBySignature  = user?.signature  || "";
+      // PD-03 — Prefer the user's fullName for the print footer's "Nurse"
+      // column. The pre-fix fallback to "Nurse" (role string) is why the
+      // print row showed the role label instead of the actual nurse.
+      await opdService.updateVitals(
+        selectedVisit.visitNumber,
+        payload,
+        user?.fullName || user?.name || user?.username || "Nurse",
+      );
       toast.current?.show({ severity: "success", summary: "Vitals saved", detail: `Vitals updated for ${selectedVisit.UHID}`, life: 3000 });
       setVitalsModal(false);
       loadQueue();
