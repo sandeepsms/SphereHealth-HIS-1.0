@@ -15,3 +15,8 @@ Backend/scripts/resetDoctorPw.js
 .adminrc.json
 .backend-log.txt
 Spherehealth.login_*.json
+
+# R7hr-253 — backup artifacts (never commit DB dumps)
+*.shbak.gz
+*.shbak.gz.sha256
+SphereBackups/
