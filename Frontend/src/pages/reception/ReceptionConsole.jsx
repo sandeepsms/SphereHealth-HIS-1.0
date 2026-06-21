@@ -2243,9 +2243,9 @@ async function printReceipt({ patient, visitType, opd, ipd, dayCare, er, service
         ${visitType === "OPD" && tokenNumber ? `
         <div style="margin: 0 0 20px; padding: 18px 14px; border: 3px dashed ${color}; border-radius: 12px; text-align: center; background: ${color}08;">
           <div style="font-size: 10px; font-weight: 800; color: #64748b; letter-spacing: 2px; text-transform: uppercase;">YOUR TOKEN NUMBER</div>
-          <div style="font-size: 48px; font-weight: 900; color: ${color}; font-family: 'DM Mono', monospace; line-height: 1.1; margin: 4px 0;">${tokenNumber}</div>
-          <div style="font-size: 12px; font-weight: 700; color: #0f172a;">${docLabel || "Doctor"}</div>
-          <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Date: ${opd.appointmentDate || ""} &nbsp; Time: ${opd.appointmentTime || ""}</div>
+          <div style="font-size: 48px; font-weight: 900; color: ${color}; font-family: 'DM Mono', monospace; line-height: 1.1; margin: 4px 0;">${esc(tokenNumber)}</div>
+          <div style="font-size: 12px; font-weight: 700; color: #0f172a;">${esc(docLabel || "Doctor")}</div>
+          <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Date: ${esc(opd.appointmentDate || "")} &nbsp; Time: ${esc(opd.appointmentTime || "")}</div>
           <div style="margin-top: 8px; padding: 6px 10px; background: white; border-radius: 6px; display: inline-block; font-size: 10px; color: #64748b;">
             Please arrive 15 min before your appointment.<br>
             Show this token at the reception when your number is called.
@@ -2254,17 +2254,17 @@ async function printReceipt({ patient, visitType, opd, ipd, dayCare, er, service
         <div class="sec">
           <div class="sec-title">Patient Information</div>
           <table>
-            <tr><td class="lbl">Name</td><td class="val">${patient.title || ""} ${patient.fullName}</td></tr>
-            <tr><td class="lbl">UHID</td><td class="val" style="font-family:'DM Mono',monospace">${patient.UHID || "—"}</td></tr>
-            <tr><td class="lbl">Age / Sex</td><td class="val">${patient.age || "—"} years / ${patient.gender}</td></tr>
-            <tr><td class="lbl">Phone</td><td class="val">${patient.contactNumber}</td></tr>
-            ${patient.bloodGroup && patient.bloodGroup !== "Unknown" ? `<tr><td class="lbl">Blood Group</td><td class="val">${patient.bloodGroup}</td></tr>` : ""}
+            <tr><td class="lbl">Name</td><td class="val">${esc(patient.title || "")} ${esc(patient.fullName)}</td></tr>
+            <tr><td class="lbl">UHID</td><td class="val" style="font-family:'DM Mono',monospace">${esc(patient.UHID || "—")}</td></tr>
+            <tr><td class="lbl">Age / Sex</td><td class="val">${esc(patient.age || "—")} years / ${esc(patient.gender)}</td></tr>
+            <tr><td class="lbl">Phone</td><td class="val">${esc(patient.contactNumber)}</td></tr>
+            ${patient.bloodGroup && patient.bloodGroup !== "Unknown" ? `<tr><td class="lbl">Blood Group</td><td class="val">${esc(patient.bloodGroup)}</td></tr>` : ""}
           </table>
         </div>
         <div class="sec">
           <div class="sec-title">${visitType} Details</div>
           <table>
-            ${detailRows.map(([k, v]) => `<tr><td class="lbl">${k}</td><td class="val">${v || "—"}</td></tr>`).join("")}
+            ${detailRows.map(([k, v]) => `<tr><td class="lbl">${esc(k)}</td><td class="val">${esc(v || "—")}</td></tr>`).join("")}
           </table>
         </div>
         <div class="total">
