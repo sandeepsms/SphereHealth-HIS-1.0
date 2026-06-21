@@ -27,6 +27,11 @@ import ClinicalExaminationCard, { clinExamSummary } from "../../Components/clini
 // IV bag builder UX instead of the legacy hand-built textarea/table.
 import PrescriptionPanel from "../../Components/clinical/PrescriptionPanel";
 import InfusionPanel     from "../../Components/clinical/InfusionPanel";
+// R7hr-174 (USER, 2026-06-09): auto-print Valuables Handover slip on
+// Nurse IA sign when N15.receiptIssued === true. Purely additive — the
+// existing sign+save+gate-flag flow is unchanged; this only opens an
+// extra print popup if the receipt-issued checkbox is ticked.
+import { openPrint } from "../../Components/print/openPrint";
 
 /* ── Design tokens ── */
 const C = {
@@ -2602,6 +2607,37 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         } catch (_) { /* non-fatal */ }
       }
       toast.success(sign ? "Assessment signed & submitted ✓" : "Draft saved");
+      // R7hr-174 (USER, 2026-06-09): Auto-print the Valuables & Belongings
+      // handover slip whenever the nurse signs the IA AND the
+      // "Receipt issued to patient/family" checkbox in N15 is ticked.
+      // Family/patient countersigns the printed slip to confirm receipt
+      // of jewellery/cash/documents — NABH ROP + PSQ compliance. We fire
+      // best-effort (try/catch) so a print failure never blocks the
+      // signed-IA toast/lock the nurse is waiting on.
+      if (sign && section === "nursing" && valuables?.receiptIssued) {
+        try {
+          const slipNo = `VAL-${String(admission?._id || patient?.UHID || "ADM").slice(-6).toUpperCase()}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
+          openPrint("valuables-handover", {
+            slipNo,
+            patientName:    [patient?.title, patient?.fullName].filter(Boolean).join(" "),
+            uhid:           patient?.UHID || "",
+            ipdNo:          admission?.admissionNumber || "",
+            gender:         patient?.gender || "",
+            age:            patient?.age || "",
+            contactNumber:  patient?.contactNumber || patient?.mobile || "",
+            date:           new Date().toISOString(),
+            admissionDate:  admission?.admissionDate || "",
+            wardName:       admission?.wardName || "",
+            bedNumber:      admission?.bedNumber || "",
+            doctor:         admission?.attendingDoctor || "",
+            status:         valuables.status,
+            handedTo:       valuables.handedTo,
+            items:          valuables.items,
+            nurseName:      nurseName || user?.fullName || user?.name || "Nursing Staff",
+            nurseEmployeeId: user?.employeeId || "",
+          });
+        } catch (_) { /* print is best-effort; never block IA sign */ }
+      }
       if (sign) {
         clearDraft();
         // R7hr-98 — IMMEDIATELY lock the IA in-session so the next

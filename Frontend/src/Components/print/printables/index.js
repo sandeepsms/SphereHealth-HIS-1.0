@@ -79,6 +79,10 @@ import KitchenIndentSlip     from "./KitchenIndentSlip";
 import SharpsInjuryPrint        from "./SharpsInjuryPrint";
 import ColdChainLogPrint        from "./ColdChainLogPrint";
 import AdverseFoodReactionPrint from "./AdverseFoodReactionPrint";
+// R7hr-174 (USER, 2026-06-09): Nurse N15 Valuables & Belongings handover
+// slip. Auto-printed from IPDInitialAssessmentPage when the nurse ticks
+// "Receipt issued to patient/family" and signs. NABH ROP + PSQ.
+import ValuablesHandoverSlip    from "./ValuablesHandoverSlip";
 
 export const PRINTABLES = {
   // ── Receipts / billing ─────────────────────────────────
@@ -173,6 +177,12 @@ export const PRINTABLES = {
   "sharps-injury":          { component: SharpsInjuryPrint,         title: "Sharps / Needle-stick Injury Report", defaultPaper: "a4" },
   "cold-chain-log":         { component: ColdChainLogPrint,         title: "Cold-Chain Temperature Log",          defaultPaper: "a4", defaultOrient: "landscape" },
   "adverse-food-reaction":  { component: AdverseFoodReactionPrint,  title: "Adverse Food Reaction Report",        defaultPaper: "a4" },
+
+  // ── R7hr-174: Nurse N15 Valuables & Belongings handover slip ──
+  // Auto-printed from IPDInitialAssessmentPage after the nurse signs the
+  // IA AND has ticked "Receipt issued to patient/family" in N15. Family
+  // signs to confirm receipt of listed items (jewellery, cash, etc.).
+  "valuables-handover":     { component: ValuablesHandoverSlip,     title: "Valuables & Belongings Handover Slip", defaultPaper: "half-a4" },
 };
 
 export default PRINTABLES;
