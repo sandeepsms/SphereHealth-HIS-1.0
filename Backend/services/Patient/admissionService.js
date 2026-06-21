@@ -702,7 +702,16 @@ class AdmissionService {
         });
         cascadeSummary.bedReleased = !!released;
       } catch (e) {
+        // R7hr-236 (audit: ghost-occupied bed) — do NOT swallow this. Bed
+        // release is the FIRST cascade step, so if it errors we fail the whole
+        // cancel here (nothing else mutated yet) instead of falling through to
+        // flip the admission → Cancelled while the bed stays Occupied forever
+        // with no active admission. The caller can safely retry.
         console.warn("[cancelAdmission] bed release failed:", e.message);
+        const err = new Error(`Cannot cancel admission — bed release failed (${e.message}). Please retry.`);
+        err.status = 503;
+        err.code = "BED_RELEASE_FAILED";
+        throw err;
       }
     }
 
