@@ -36,6 +36,7 @@ class DoctorNotesController {
       note = await doctorNotesService.createDoctorNote(
         req.body,
         doctorUserId,
+        req.user?.role, // R7hr-246 (audit) — for the nurse-section guard
       );
     } catch (err) {
       // R7hr-88 — ONE Initial Assessment per admission. The service
