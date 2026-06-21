@@ -93,9 +93,19 @@ export function buildPrintIssuerHtml(opts = {}) {
     ? opts.escapeHtml
     : (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const i = buildPrintIssuer(opts);
+  // R7hr-168 — `i.department` sometimes holds an unpopulated Mongo ObjectId
+  // (24 hex chars) because the JWT actor snapshot stored in sessionStorage
+  // carries department as a ref id, not a populated name. Rendering that
+  // raw hex string in the "Consultant · <hex> · ID: DOC-…" line on every
+  // print is a public-facing leak of an internal id. Filter it out — if
+  // the field doesn't look like a human-readable department label, drop
+  // it from the meta strip.
+  const _isObjectIdLike = (v) =>
+    typeof v === "string" && /^[0-9a-fA-F]{24}$/.test(v.trim());
+  const _deptOk = i.department && !_isObjectIdLike(i.department) ? i.department : null;
   const meta = [
     i.designation || i.role,
-    i.department,
+    _deptOk,
     i.employeeId && `ID: ${i.employeeId}`,
   ].filter(Boolean).map(escape).join(" · ");
   return `
