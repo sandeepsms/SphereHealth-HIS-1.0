@@ -67,6 +67,15 @@ const BillingTriggerSchema = new mongoose.Schema({
   sourceDocumentId:    { type: mongoose.Schema.Types.ObjectId },
   sourceDocumentModel: String, // "NurseNote", "DoctorNote", "MAR", etc.
 
+  // R7hr-233 (audit: dedup silently dead) — sourceRef is the idempotency key
+  // for the unique partial index `{sourceType, sourceRef}` below and the
+  // autoBillingService E11000/findOne dedup (R7hr-163), but it was never a
+  // declared schema path, so Mongoose strict mode stripped every assigned
+  // value on save. The index therefore never indexed anything and the dedup
+  // findOne always returned null → recurring double-billing. Declaring the
+  // path lets the already-written dedup actually engage.
+  sourceRef:           { type: mongoose.Schema.Types.ObjectId },
+
   // ── ORDER trail (who advised/ordered) ──────────────────────
   orderedBy:     String,   // Doctor/Nurse name
   orderedById:   { type: mongoose.Schema.Types.ObjectId, ref: "User" },
