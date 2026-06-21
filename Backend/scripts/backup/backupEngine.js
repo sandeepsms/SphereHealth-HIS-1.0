@@ -65,8 +65,13 @@ async function backupDatabase({ uri, outFile, log = () => {} }) {
       new Promise((resolve, reject) => {
         if (streamErr) return reject(streamErr);
         const ok = gzip.write(JSON.stringify(obj) + "\n");
-        if (ok) resolve();
-        else gzip.once("drain", resolve);
+        if (ok) return resolve();
+        // R7hr-254 (audit: backpressure path could hang on a stream error) —
+        // resolve on drain, but reject if the stream errors while we wait.
+        const onDrain = () => { gzip.removeListener("error", onErr); streamErr ? reject(streamErr) : resolve(); };
+        const onErr   = () => { gzip.removeListener("drain", onDrain); reject(streamErr || new Error("backup write-stream error")); };
+        gzip.once("drain", onDrain);
+        gzip.once("error", onErr);
       });
 
     await writeLine({

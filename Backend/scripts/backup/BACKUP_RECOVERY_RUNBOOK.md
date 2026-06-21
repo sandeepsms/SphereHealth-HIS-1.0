@@ -70,10 +70,10 @@ sidecar. Layout in **both** the offline and online folders:
 # pick the newest good backup (offline or from the synced/cloud folder)
 node Backend/scripts/backup/restore.js \
      --file="E:\SphereBackups\nightly\sphere_20260621_0230.shbak.gz" \
-     --confirm --drop
+     --confirm --drop --yes-overwrite
 ```
-`--drop` = clean restore (drops each collection first). Omit `--drop` to **merge**
-(additive) instead.
+`--drop` = clean restore (drops each collection first; requires `--yes-overwrite`).
+Omit `--drop` to **merge** — the backup version overwrites any matching `_id`.
 
 ### B. Brand-new / replacement machine (total loss)
 1. Install **Node.js** and **MongoDB** (Community Server) on the new box.
@@ -83,7 +83,7 @@ node Backend/scripts/backup/restore.js \
 4. Make sure `Backend/.env` has `MONGO_URI` pointing at the new Mongo.
 5. Restore:
    ```bash
-   node Backend/scripts/backup/restore.js --file="<path>\sphere_YYYYMM.shbak.gz" --confirm --drop
+   node Backend/scripts/backup/restore.js --file="<path>\sphere_YYYYMM.shbak.gz" --confirm --drop --yes-overwrite
    ```
 6. Start the app (`npm start`) and spot-check a few patients / bills.
 
@@ -94,7 +94,7 @@ node Backend/scripts/backup/restore.js --file="<path>" --confirm --only=patients
 
 ### D. Restore into a *different* DB first (safe dry-run before overwriting prod)
 ```bash
-node Backend/scripts/backup/restore.js --file="<path>" --confirm --drop \
+node Backend/scripts/backup/restore.js --file="<path>" --confirm --drop --yes-overwrite \
      --uri="mongodb://localhost:27017/spherehealth_test"
 ```
 
@@ -137,3 +137,48 @@ node Backend/scripts/backup/restore.js --file="<path>" --confirm --drop \
 > Note: the older `backupMongoDB.js` / `restoreMongoDB.js` rely on `mongodump`/
 > `mongorestore`, which are **not installed** on this machine — that path is
 > non-functional here. This R7hr-253 engine replaces it and needs nothing extra.
+
+---
+
+## 7. R7hr-254 hardening — what now FAILS LOUDLY (and why)
+
+A backup audit found the first version could "look healthy while broken." These
+guards now make it fail loudly instead of silently losing data:
+
+- **Empty / wrong-DB backup is refused.** A run that produces fewer than
+  `BACKUP_MIN_DOCS` (1) docs or `BACKUP_MIN_COLLS` (1) collections — or **>50%
+  smaller** than the last good backup — aborts (exit 2, `last-backup.json` →
+  `ok:false`) and **does not prune** the existing good copies. (A real bulk
+  delete? set `BACKUP_ALLOW_SHRINK=1`.)
+- **Prune only after the new backup is verified** (and, monthly, after the
+  restore-drill passes). Retention can never delete the last good copy, and
+  `KEEP=0/negative` is clamped to a safe floor.
+- **The monthly restore-drill is real.** It restores into a **separate** DB and
+  counts the docs **actually in that DB** (not numbers read from the file), and
+  the drill **refuses to run** unless `BACKUP_VERIFY_URI` is a different,
+  `drill`/`verify`-named DB — so a misconfig can never drop the live DB.
+- **Off-site is mandatory.** A missing / dead-OneDrive `BACKUP_SYNCED_DIR` fails
+  the run unless you explicitly accept offline-only (`BACKUP_ALLOW_OFFLINE_ONLY=1`).
+- **Truncation is caught.** Every backup carries a footer + per-collection
+  counts; restore (and the nightly check) **refuse a truncated archive** even
+  if its sha256 matches. Override only with `restore.js --allow-partial`.
+- **Restore is authoritative + safe.** A `--drop` clean restore now also needs
+  `--yes-overwrite` (and prints the backup's age/contents first). A **merge**
+  restore overwrites matching `_id`s with the backup version (no more silently
+  keeping a stale/corrupt live doc).
+- **Runs logged-off.** The Scheduled Tasks use an **S4U** principal, so backups
+  run even when no one is logged in. (Caveat: the OneDrive client only *uploads*
+  the file when the user is next logged in — the local copy is written
+  immediately; `last-backup.json.online = "copied-pending-cloud-upload"`.)
+
+### PHI at rest — encrypt the cloud side
+Backups are **plaintext patient PHI** (gzip ≠ encryption). The synced folder
+goes to a cloud account, so protect it:
+1. **Simplest:** enable **BitLocker** on the backup drive, and use **OneDrive
+   Personal Vault** (or **Cryptomator** over the synced folder) so the cloud
+   copy is encrypted at rest. No key for the app to lose.
+2. Restrict the `BACKUP_OFFLINE_DIR` ACLs to Admins + SYSTEM.
+> App-level backup encryption is intentionally NOT enabled by default: a lost
+> `BACKUP_ENCRYPTION_KEY` would make every backup unrecoverable — a worse
+> data-loss risk for a hospital than the cloud-at-rest exposure, which the
+> options above already close.

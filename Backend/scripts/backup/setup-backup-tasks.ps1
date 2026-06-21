@@ -28,12 +28,21 @@ if (-not (Test-Path $script)) { Write-Error "runBackup.js not found next to this
 Write-Host "node   : $node"
 Write-Host "script : $script`n"
 
+# R7hr-254 (audit): run WHETHER OR NOT a user is logged on. S4U runs as the
+# current user without a stored password, so the per-user OneDrive/Drive folder
+# (the ONLINE target) is still reachable. StartWhenAvailable catches up a window
+# missed because the PC was off; WakeToRun wakes it from sleep.
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType S4U -RunLevel Highest
+$settings  = New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Hours 4) -MultipleInstances IgnoreNew
+Write-Host ("principal : {0}\{1} [S4U - runs logged off]`n" -f $env:USERDOMAIN, $env:USERNAME)
+
 # ── Nightly (daily 02:30) ──
 $nAction  = New-ScheduledTaskAction  -Execute $node -Argument "`"$script`" --mode=nightly" -WorkingDirectory $dir
 $nTrigger = New-ScheduledTaskTrigger -Daily -At "02:30"
 Register-ScheduledTask -TaskName "SphereHealth Nightly Backup" -Action $nAction -Trigger $nTrigger `
-  -Description "SphereHealth HIS nightly MongoDB backup (offline + cloud-synced online copy)." `
-  -RunLevel Highest -Force | Out-Null
+  -Principal $principal -Settings $settings `
+  -Description "SphereHealth HIS nightly MongoDB backup (offline + cloud-synced online copy). Runs logged off." `
+  -Force | Out-Null
 Write-Host "[OK] Registered 'SphereHealth Nightly Backup'  (daily 02:30)"
 
 # ── Monthly (day 1, 03:00) — built via CIM since New-ScheduledTaskTrigger has no -Monthly ──
@@ -44,8 +53,9 @@ $mTrig.DaysOfMonth  = 1
 $mTrig.StartBoundary = ([datetime]"03:00").ToString("yyyy-MM-ddTHH:mm:ss")
 $mTrig.Enabled = $true
 Register-ScheduledTask -TaskName "SphereHealth Monthly Backup" -Action $mAction -Trigger $mTrig `
-  -Description "SphereHealth HIS monthly MongoDB backup + restore-drill (offline + cloud-synced online copy)." `
-  -RunLevel Highest -Force | Out-Null
+  -Principal $principal -Settings $settings `
+  -Description "SphereHealth HIS monthly MongoDB backup + restore-drill (offline + cloud-synced online copy). Runs logged off." `
+  -Force | Out-Null
 Write-Host "[OK] Registered 'SphereHealth Monthly Backup'   (1st of month 03:00, with restore-drill)"
 
 Write-Host "`nDone. Test a run now with:"
