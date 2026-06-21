@@ -157,6 +157,35 @@ class MedicalCertificateController {
           ? `${Math.max(0, new Date().getFullYear() - new Date(patient.dateOfBirth).getFullYear())}Y`
           : "");
 
+    // R7hr-169-FIX — Resolve admission ref so MedCertsTab grid + print
+    // visit-type fallback show "IPD-26-NN" instead of "—". Caller may
+    // pass admissionNumber + admissionId explicitly (Frontend
+    // MedicalCertificatePage already does); if missing, look up the
+    // patient's active admission server-side as defence in depth.
+    let _admissionNumber = (body.admissionNumber || "").toString().trim();
+    let _admissionId     = body.admissionId && mongoose.isValidObjectId(body.admissionId)
+      ? body.admissionId : null;
+    if (!_admissionNumber && !_admissionId && patient?.UHID) {
+      try {
+        const Admission = require("../../models/Patient/admissionModel");
+        // R7hr-264 (sprint review fix): a status:"Active" admission is NOT
+        // necessarily an inpatient one — OPD and Services visits are also
+        // stored as Active (bedless) admissions. Without this filter an OPD
+        // walk-in's active visit was picked up and the cert stamped "IPD" on
+        // a medico-legal document. Link ONLY a hospitalising admission
+        // (everything except the outpatient OPD/Services types).
+        const adm = await Admission.findOne({
+          UHID: patient.UHID,
+          status: "Active",
+          admissionType: { $nin: ["OPD", "Services"] },
+        }).select("_id admissionNumber admissionType").lean();
+        if (adm) {
+          _admissionId     = adm._id;
+          _admissionNumber = adm.admissionNumber || "";
+        }
+      } catch (_) { /* non-fatal — cert still saves without linkage */ }
+    }
+
     const payload = {
       patient: body.patient,
       patientName: patient.fullName || body.patientName || "",
@@ -166,7 +195,11 @@ class MedicalCertificateController {
       mobile: patient.contactNumber || body.mobile || "",
 
       visitId:   body.visitId && mongoose.isValidObjectId(body.visitId) ? body.visitId : null,
-      visitType: body.visitType || "",
+      // R7hr-168 fallback also auto-fills "IPD" when the caller stamped
+      // an admission ref but forgot to set visitType.
+      visitType: body.visitType || (_admissionNumber || _admissionId ? "IPD" : ""),
+      admissionId:     _admissionId,
+      admissionNumber: _admissionNumber,
 
       certNumber,
       certType: body.certType,

@@ -640,7 +640,15 @@ const MedicalCertificate = ({ settings = {}, certificate, receipt }) => {
         { label: "Mobile",          value: c.mobile },
         { label: "Issuing Doctor",  value: c.doctorName },
         { label: "MCI Reg. No",     value: c.doctorReg },
-        { label: "Visit Type",      value: c.visitType },
+        // R7hr-168 — Visit Type defensive fall back. For an IPD-admitted
+        // patient the form's `latestVisit` probe (which only walks OPD
+        // visits) returns null, so c.visitType lands on the saved cert as
+        // "". Fall back to "IPD" whenever the cert carries an admission ref
+        // (admissionNumber / admissionId / admission). The new-cert form
+        // also writes "IPD" at submit time (below), so this fall back only
+        // covers pre-R7hr-168 certs.
+        { label: "Visit Type",      value: c.visitType
+                                          || ((c.admissionNumber || c.admissionId || c.admission) ? "IPD" : "") },
         { label: "Issued On",       value: fmtDate(c.issuedAt) },
       ]
     : [
