@@ -2,8 +2,11 @@
 .vdict {
   position: fixed;
   right: 20px;
-  bottom: 20px;
-  z-index: 4000;
+  /* R7hr-267-FIX: the bottom-right corner already holds the SphereAI FAB
+     stack (🤖 assistant at ~24px + ➕ quick-add at ~96px, z-index up to 9999).
+     Sit the dictation mic ABOVE that column so it isn't hidden behind them. */
+  bottom: 160px;
+  z-index: 4500;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
