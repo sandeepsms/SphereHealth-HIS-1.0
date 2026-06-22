@@ -15,6 +15,7 @@
 // Language: en-IN by default, one-tap toggle to hi-IN (Hindi). Restarts the
 // recogniser on switch so the new language takes effect immediately.
 import { useEffect, useRef, useState, useCallback } from "react";
+import { applyMedicalCorrections } from "./medicalDictionary";
 import "./voiceDictation.css";
 
 const SR =
@@ -174,7 +175,10 @@ export default function VoiceDictation() {
         else interimChunk += r[0].transcript;
       }
       if (finalChunk.trim()) {
-        const processed = applyDictationCommands(finalChunk, langRef.current);
+        // 1) spoken punctuation commands, then 2) medical-vocabulary correction
+        // (drug-name spelling/casing + abbreviation fixes — R7hr-271).
+        let processed = applyDictationCommands(finalChunk, langRef.current);
+        processed = applyMedicalCorrections(processed);
         const target = lastEditableRef.current;
         if (target) insertIntoField(target, processed);
       }
