@@ -59,6 +59,7 @@ const promPremSurveyRoutes = require("./Clinical/promPremSurveyRoutes");
 const nursingCarePlanRoutes = require("./Nurse/nursingCarePlanRoutes");
 const nursingAssessmentsRoutes = require("./Nurse/nursingAssessmentsRoutes");
 const assessmentComplianceRoutes = require("./Compliance/assessmentComplianceRoutes");
+const backupAdminRoutes = require("./backup/backupAdminRoutes"); // R7hr-272
 const marRoutes = require("./Clinical/marRoutes");
 const vitalSheetRoutes = require("./Vitals/vitalSheetRoutes");
 const intakeOutputRoutes = require("./Clinical/intakeOutputRoutes"); // R7bq-3 — I/O ledger
@@ -214,6 +215,7 @@ router.use("/nursing-assessments", nursingAssessmentsRoutes);
 // R7bn-5 / D6-fix: twice-daily compliance read API (used by the
 // Nursing/Doctor Notes header to render OVERDUE / DUE_SOON badges).
 router.use("/compliance", assessmentComplianceRoutes);
+router.use("/backup", backupAdminRoutes); // R7hr-272 — Admin backup & recovery
 router.use("/mar", marRoutes);
 router.use("/intake-output", intakeOutputRoutes); // R7bq-3 — fluid I/O ledger
 router.use("/nursing-charges", nursingChargesRoutes);

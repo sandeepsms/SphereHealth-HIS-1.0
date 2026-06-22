@@ -125,6 +125,8 @@ export const ACTIONS = {
   // Departments + doctor master
   "departments.read":      ["Admin", "Doctor", "Nurse", "Receptionist"],
   "departments.write":     ["Admin"],
+  // R7hr-272 — DB backup & recovery admin page (Admin only). Mirrors backend.
+  "backup.manage":         ["Admin"],
   "doctors.read":          ["Admin", "Receptionist", "Doctor", "Nurse"],
   "doctors.write":         ["Admin"],
 

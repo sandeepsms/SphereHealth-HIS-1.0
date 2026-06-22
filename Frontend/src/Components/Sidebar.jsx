@@ -439,6 +439,8 @@ const NAV = [
       // R7bf-G / NABH HRD.3 — staff credentialing register lives under
       // Masters & Admin since Admin owns the HR function today.
       { label: "Credentialing",      icon: "pi-id-card",    path: "/credentials",       badge: "NABH",  roles: [ADMIN] },
+      // R7hr-272 — DB Backup & Recovery (status / run-now / download). Admin-only.
+      { label: "Backup & Recovery",  icon: "pi-database",   path: "/backup",            badge: "NEW",   roles: [ADMIN] },
       // Buildings / Floors / Rooms / Room Categories moved to Bed Management
       // so the full bed hierarchy lives in one place.
     ],

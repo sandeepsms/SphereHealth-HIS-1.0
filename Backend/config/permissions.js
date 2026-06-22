@@ -312,6 +312,9 @@ const ACTIONS = {
   "ward.create":           ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy"],
   "ward.fulfill":          ["Admin", "Ward Boy"],
   "ward.admin":            ["Admin"],
+  // R7hr-272 — DB backup & recovery admin (status / run-now / download).
+  // Admin only; the destructive RESTORE stays CLI-only (no UI verb).
+  "backup.manage":         ["Admin"],
   // Phase B / C — operations beyond the basic task board
   "ward.shift":            ["Admin", "Ward Boy", "Housekeeping"],   // clock in/out for support staff
   "ward.equipment":        ["Admin", "Ward Boy", "Nurse"],          // issue / return register
