@@ -2395,8 +2395,13 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                     Discharge Summary → the Discharge Summary tile), so a second
                     entry point here was a duplicate. They STAY in MODULES so
                     modDef() still resolves the correct print-header title for
-                    any existing note of those types. */}
-                {MODULES.filter(m => m.id !== "initial" && m.id !== "discharge").map(m => (
+                    any existing note of those types.
+                    R7hr-268 (USER, 2026-06-22) — also hide general / admission /
+                    progress / assessment (Reassessment) from the picker per user
+                    request ("hume nhi chahiye"). They likewise STAY in MODULES so
+                    print headers + timeline labels for any existing notes of these
+                    types still resolve. */}
+                {MODULES.filter(m => !["initial", "discharge", "general", "admission", "progress", "assessment"].includes(m.id)).map(m => (
                     <button
                       key={m.id}
                       type="button"
