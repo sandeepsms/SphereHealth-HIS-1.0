@@ -171,16 +171,14 @@ const MODULES = [
   // R7fx — print-only label entries so modDef() resolves a correct doc title
   // for noteTypes that don't show as tile-cards. Without these, every print
   // header read "Doctor Note — Daily Progress" regardless of type (audit P0).
+  // R7hr-269 (USER) — "admission", "progress" and "assessment" (Reassessment)
+  // removed end-to-end. "general" stays as the system DEFAULT note type (label
+  // + render resolution for any untyped note); it is hidden from the picker by
+  // the filter further down, not shown as a tile-card.
   { id: "general",     label: "General Note",          nabh: "IMS.1", description: "Free-text clinical narrative",
     icon: "pi-file",                border: "#cbd5e1", color: C.slate,  bg: "#f8fafc" },
-  { id: "admission",   label: "Admission Note",        nabh: "AAC.1", description: "Initial in-patient admission note",
-    icon: "pi-sign-in",             border: "#93c5fd", color: C.blue,   bg: C.blueL   },
   { id: "initial",     label: "Initial Assessment",    nabh: "COP.1", description: "NABH COP.1 first-contact in-patient assessment",
     icon: "pi-id-card",             border: "#fcd34d", color: C.amber,  bg: C.amberL  },
-  { id: "progress",    label: "Progress Note",         nabh: "COP.1", description: "Mid-shift progress entry",
-    icon: "pi-arrow-right",         border: C.blueB,   color: C.blue,   bg: C.blueL   },
-  { id: "assessment",  label: "Reassessment Note",     nabh: "COP.1", description: "Formal re-assessment with clinical course",
-    icon: "pi-refresh",             border: C.tealB,   color: C.teal,   bg: C.tealL   },
   { id: "discharge",   label: "Discharge Summary",     nabh: "COP.21", description: "Final discharge summary",
     icon: "pi-check-square",        border: C.greenB,  color: C.green,  bg: C.greenL  },
   // R7gb P0-8 — "operative" tile removed. It duplicated procedure + postop,
@@ -2401,7 +2399,7 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                     request ("hume nhi chahiye"). They likewise STAY in MODULES so
                     print headers + timeline labels for any existing notes of these
                     types still resolve. */}
-                {MODULES.filter(m => !["initial", "discharge", "general", "admission", "progress", "assessment"].includes(m.id)).map(m => (
+                {MODULES.filter(m => !["initial", "discharge", "general"].includes(m.id)).map(m => (
                     <button
                       key={m.id}
                       type="button"
