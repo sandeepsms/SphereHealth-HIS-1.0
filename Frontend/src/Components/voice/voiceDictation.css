@@ -1,0 +1,53 @@
+/* Components/voice/voiceDictation.css — R7hr-267 global voice dictation widget. */
+.vdict {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  font-family: inherit;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.vdict-row { display: flex; align-items: center; gap: 8px; }
+
+.vdict-mic {
+  width: 52px; height: 52px; border-radius: 50%;
+  border: none; cursor: pointer;
+  background: #2563eb; color: #fff; font-size: 22px; line-height: 1;
+  box-shadow: 0 6px 18px rgba(37, 99, 235, .35);
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .12s ease, background .12s ease;
+}
+.vdict-mic:hover { transform: scale(1.06); }
+.vdict-mic.is-live {
+  background: #dc2626;
+  animation: vdict-pulse 1.4s infinite;
+}
+@keyframes vdict-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(220, 38, 38, .55); }
+  70%  { box-shadow: 0 0 0 14px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
+
+.vdict-lang {
+  min-width: 36px; height: 36px; border-radius: 18px;
+  border: 1px solid #cbd5e1; background: #fff; color: #1e293b;
+  font-weight: 700; font-size: 13px; cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
+  display: flex; align-items: center; justify-content: center;
+}
+.vdict-lang:hover { background: #f1f5f9; }
+
+.vdict-bubble {
+  max-width: 280px; background: #0f172a; color: #e2e8f0;
+  padding: 8px 12px; border-radius: 12px; font-size: 13px; line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .25);
+  white-space: pre-wrap; word-break: break-word;
+}
+.vdict-bubble--err { background: #7f1d1d; color: #fee2e2; }
+
+@media print { .vdict { display: none !important; } }

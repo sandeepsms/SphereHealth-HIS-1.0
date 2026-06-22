@@ -17,6 +17,10 @@ import { AuthProvider, useAuth, RoleGuard } from "./context/AuthContext";
 // quick-nav chords, cheat-sheet, smart action keys). Mounted once in the
 // authenticated shell below. Purely additive — no page logic touched.
 import ShortcutLayer from "./Components/shortcuts/ShortcutLayer";
+// R7hr-267 (USER, 2026-06-22): global voice-to-text dictation. One floating
+// mic mounted in the authenticated shell; dictates into the focused text
+// field app-wide. Purely additive — no existing field/page logic touched.
+import VoiceDictation from "./Components/voice/VoiceDictation";
 import { HospitalSettingsProvider } from "./context/HospitalSettingsContext";
 
 // PrimeReact CSS
@@ -454,6 +458,7 @@ function AppLayout({ collapsed, setCollapsed }) {
       <Header />
       <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
       <ShortcutLayer />
+      <VoiceDictation />
       <div
         className={`main-content ${collapsed ? "expanded" : ""}`}
         style={{
