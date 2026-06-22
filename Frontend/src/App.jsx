@@ -344,7 +344,6 @@ const NABHSignagePage = lazy(() => import("./pages/admin/NABHSignagePage"));
 const UserManagementPage = lazy(() => import("./pages/admin/UserManagementPage"));
 const RolesPage          = lazy(() => import("./pages/admin/RolesPage"));
 const RoleDashboardPage  = lazy(() => import("./pages/RoleDashboardPage"));
-const HISAssistant = lazy(() => import("./Components/ai/HISAssistant"));
 
 
 /* ── Full-page loading spinner while session restores ── */
@@ -1197,10 +1196,6 @@ function AppLayout({ collapsed, setCollapsed }) {
         </Suspense>
       </div>
 
-      {/* ── SphereAI Floating Assistant (lazy) ── */}
-      <Suspense fallback={null}>
-        <HISAssistant />
-      </Suspense>
     </div>
   );
 }
