@@ -14,6 +14,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { AdminPage, Card, C } from "../Components/admin-theme";
+import { AnimatedCounter, Ticker } from "../Components/anim/AnimKit"; // R7hr-276
 import { useVisiblePoll } from "../utils/pollingHelpers";
 
 import { API_BASE_URL as API } from "../config/api";
@@ -94,6 +95,17 @@ export default function AdminHome({ user }) {
   return (
     <AdminPage maxWidth={1480}>
       <HospitalHero now={now} hospital={hosp} firstName={firstName} kpi={kpi} />
+
+      {/* R7hr-276 — live ticker */}
+      <Ticker
+        items={[
+          `${hosp.name || "Hospital"} · Mission Control`,
+          `Beds ${kpi.bedsOccupied ?? "—"}/${kpi.bedsTotal ?? "—"} occupied`,
+          `${kpi.staff ?? "—"} active staff accounts`,
+          "SphereHealth HIS · NABH compliant",
+        ]}
+        style={{ background: "#0f172a", color: "#e2e8f0", borderRadius: 10, padding: "7px 0", margin: "0 0 14px", fontSize: 12.5 }}
+      />
 
       {/* Live KPI strip */}
       <div style={kpiGridStyle}>
@@ -282,7 +294,8 @@ function StatCard({ color, icon, label, value, sub, progress, trend }) {
             {label}
           </div>
           <div style={{ fontSize: 22, fontWeight: 900, color: C.text, marginTop: 2, letterSpacing: "-.5px" }}>
-            {value}
+            {((typeof value === "number" && Number.isFinite(value)) || (typeof value === "string" && /^-?\d+(\.\d+)?$/.test(String(value).trim())))
+              ? <AnimatedCounter value={Number(value)} /> : value}
           </div>
           {sub && (
             <div style={{ fontSize: 11, color: trend != null && trend !== 0 ? (trend > 0 ? C.green : C.red) : C.muted, marginTop: 2, fontWeight: 600 }}>

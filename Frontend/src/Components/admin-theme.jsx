@@ -24,6 +24,7 @@
  */
 import React from "react";
 import { createPortal } from "react-dom";
+import { AnimatedCounter } from "./anim/AnimKit"; // R7hr-276 — count-up KPI numbers
 
 export const C = {
   bg: "#f8fafc", card: "#fff", border: "#e2e8f0",
@@ -246,14 +247,21 @@ export function TabStrip({ tabs, value, onChange, accent = C.orange, accentL = C
   );
 }
 
+// R7hr-276 — count-up a KPI value when it's purely numeric (counts); leave
+// currency strings / "—" / composites untouched.
+function _kpiValue(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return <AnimatedCounter value={value} />;
+  if (typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value.trim())) return <AnimatedCounter value={Number(value)} />;
+  return value;
+}
 export function KPI({ label, value, color, icon }) {
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", boxShadow: "0 1px 3px rgba(15,23,42,.04)", display: "flex", alignItems: "center", gap: 12 }}>
+    <div className="hga-lift" style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", boxShadow: "0 1px 3px rgba(15,23,42,.04)", display: "flex", alignItems: "center", gap: 12 }}>
       <div style={{ width: 36, height: 36, borderRadius: 10, background: color + "12", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <i className={`pi ${icon}`} style={{ fontSize: 15, color }} />
       </div>
       <div>
-        <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1 }}>{_kpiValue(value)}</div>
         <div style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginTop: 4 }}>{label}</div>
       </div>
     </div>

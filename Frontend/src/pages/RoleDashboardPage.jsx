@@ -16,6 +16,7 @@ import { useAuth } from "../context/AuthContext";
 import {
   AdminPage, Hero, KPI, Card, Badge, C,
 } from "../Components/admin-theme";
+import { Typewriter, Ticker } from "../Components/anim/AnimKit"; // R7hr-276
 import { ROLES, MODULES, modulesForRole, homePathForRole } from "../config/permissions";
 import AdminHome from "./AdminHome";
 import { useVisiblePoll } from "../utils/pollingHelpers";
@@ -68,9 +69,20 @@ export default function RoleDashboardPage() {
   return (
     <AdminPage>
       <Hero icon={roleMeta.icon} color={heroColor}
-        title={`${greet()}, ${firstName}`}
+        title={<Typewriter text={`${greet()}, ${firstName}`} speed={42} />}
         subtitle={`${roleMeta.label} workspace · ${new Date().toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}`}
         right={<RoleBadge role={user.role} />} />
+
+      {/* R7hr-276 — live ticker, on every role's dashboard */}
+      <Ticker
+        items={[
+          `${roleMeta.label} workspace`,
+          new Date().toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" }),
+          "SphereHealth HIS · NABH compliant",
+          "Tip: use the mic button (bottom-right) to dictate clinical notes",
+        ]}
+        style={{ background: "#0f172a", color: "#e2e8f0", borderRadius: 10, padding: "7px 0", margin: "0 0 14px", fontSize: 12.5 }}
+      />
 
       {user.role === "Doctor"            && <DoctorDashboard user={user} />}
       {user.role === "Nurse"             && <NurseDashboard user={user} />}
