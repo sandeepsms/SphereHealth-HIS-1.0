@@ -24,6 +24,8 @@ import VoiceDictation from "./Components/voice/VoiceDictation";
 // R7hr-273 — global route-transition animator (wraps only the authenticated
 // Routes outlet; print/login branches return before it). Additive.
 import RouteTransition from "./Components/RouteTransition.jsx";
+// R7hr-277 — global confetti burst on any print button (delegated; edits no page).
+import PrintCelebrate from "./Components/anim/PrintCelebrate";
 import { HospitalSettingsProvider } from "./context/HospitalSettingsContext";
 
 // PrimeReact CSS
@@ -463,6 +465,7 @@ function AppLayout({ collapsed, setCollapsed }) {
       <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
       <ShortcutLayer />
       <VoiceDictation />
+      <PrintCelebrate />
       <div
         className={`main-content ${collapsed ? "expanded" : ""}`}
         style={{

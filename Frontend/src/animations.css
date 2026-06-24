@@ -154,4 +154,6 @@ button:not(:disabled):active,
   .hga-nav-item, .hga-lift, .hga-press, .hga-route {
     transform: none !important;
   }
+  /* R7hr-277 — the print-button confetti overlay must never land on a printout */
+  .print-burst-host { display: none !important; }
 }
