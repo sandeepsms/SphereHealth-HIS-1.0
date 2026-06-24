@@ -194,7 +194,7 @@ export default function Header() {
   };
 
   return (
-    <div style={{
+    <div className="hga-slide-down" style={{
       background: bgColor, color: "white",
       padding: "0 24px", height: 52,
       display: "flex", alignItems: "center", justifyContent: "space-between",

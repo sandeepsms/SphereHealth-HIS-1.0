@@ -1043,8 +1043,8 @@ export default function Sidebar({ collapsed, setCollapsed }) {
         </div>
       )}
 
-      {/* ── Scrollable nav ── */}
-      <div style={{
+      {/* ── Scrollable nav ── (R7hr-273b: sections cascade in on mount) */}
+      <div className="hga-stagger" style={{
         flex: 1, overflowY: "auto", overflowX: "hidden",
         padding: "6px 0 20px",
         scrollbarWidth: "thin", scrollbarColor: "#e2e8f0 transparent",

@@ -137,7 +137,7 @@ function QuickAction({ icon, label, sub, onClick, color }) {
 
 function QuickActionsGrid({ items }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+    <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
       {items.map((it, i) => <QuickAction key={i} {...it} />)}
     </div>
   );
@@ -203,7 +203,7 @@ function AdminDashboard({ user }) {
   }, []);
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="Staff users"        value={stats.users || "—"}              color={C.blue}   icon="pi-users" />
         <KPI label="Pharmacy today"     value={stats.pharmacyRevenueToday != null ? fmtINR(stats.pharmacyRevenueToday) : "—"} color={C.green}  icon="pi-receipt" />
         <KPI label="Pharmacy MTD"       value={stats.pharmacyMonthRevenue != null ? fmtINR(stats.pharmacyMonthRevenue) : "—"} color={C.amber}  icon="pi-chart-line" />
@@ -260,7 +260,7 @@ function DoctorDashboard({ user }) {
   }, []);
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="OPD today"        value={stats.opdToday}   color={C.purple} icon="pi-user-edit" />
         <KPI label="Active IPD"       value={stats.ipdActive}  color={C.blue}   icon="pi-home" />
         <KPI label="Pending Rx"       value="—"                color={C.amber}  icon="pi-pen-to-square" />
@@ -294,7 +294,7 @@ function NurseDashboard({ user }) {
   const navigate = useNavigate();
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="My ward patients" value="—" color={C.pink}   icon="pi-heart" />
         <KPI label="Vitals due"       value="—" color={C.red}    icon="pi-clock" />
         <KPI label="MAR doses today"  value="—" color={C.purple} icon="pi-pen-to-square" />
@@ -327,7 +327,7 @@ function ReceptionDashboard({ user }) {
   const navigate = useNavigate();
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="Registrations today"    value="—" color={C.teal}    icon="pi-user-plus" />
         <KPI label="OPD visits"             value="—" color={C.purple}  icon="pi-user-edit" />
         <KPI label="Active admissions"      value="—" color={C.blue}    icon="pi-home" />
@@ -375,7 +375,7 @@ function PharmacistDashboard({ user }) {
   }, []);
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="Drug catalogue"     value={stats.drugsCount ?? "—"}            color={C.orange} icon="pi-box" />
         <KPI label="Active batches"     value={stats.batchesInStock ?? "—"}        color={C.blue}   icon="pi-database" />
         <KPI label="Today sales"        value={stats.todaySales ? `${stats.todaySales.count} · ${fmtINR(stats.todaySales.net)}` : "—"} color={C.green} icon="pi-receipt" />
@@ -435,7 +435,7 @@ function LabDashboard({ user, role }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label={isRad ? "Imaging orders" : "Lab orders"} value="—" color={C.blue}   icon="pi-list" />
         <KPI label="Samples / studies"       value="—" color={C.purple} icon="pi-search-plus" />
         <KPI label="Reports pending"         value="—" color={C.amber}  icon="pi-file-edit" />
@@ -503,7 +503,7 @@ function AccountantDashboard({ user }) {
   }, []);
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="Today's collection"  value={stats.collected != null ? fmtINR(stats.collected) : "—"} color={C.green}  icon="pi-money-bill" />
         <KPI label="Today's gross"       value={stats.gross != null ? fmtINR(stats.gross) : "—"}        color={C.blue}   icon="pi-receipt" />
         <KPI label="Outstanding today"   value={stats.outstand != null ? fmtINR(stats.outstand) : "—"} color={C.red}    icon="pi-clock" />
@@ -538,7 +538,7 @@ function TPADashboard({ user }) {
   const navigate = useNavigate();
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="Open cases"           value="—" color={C.purple} icon="pi-briefcase" />
         <KPI label="Pre-auth pending"     value="—" color={C.amber}  icon="pi-send" />
         <KPI label="Approved this month"  value="—" color={C.green}  icon="pi-check-circle" />
@@ -567,7 +567,7 @@ function WardOpsDashboard({ user, role }) {
   const navigate = useNavigate();
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="Active beds"       value="—" color={C.blue}    icon="pi-th-large" />
         <KPI label="Pending turnovers" value="—" color={C.amber}   icon="pi-clock" />
         <KPI label="Cleaning due"      value="—" color={C.teal}    icon="pi-refresh" />
@@ -620,7 +620,7 @@ function SecurityDashboard({ user }) {
 
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="Passes today"     value={v(passStats, "passesToday")}     color={C.amber}  icon="pi-id-card" />
         <KPI label="Active visitors"  value={v(passStats, "activeVisitors")}  color={C.blue}   icon="pi-users" />
         <KPI label="Expired passes"   value={v(passStats, "expiredPasses")}   color={C.muted}  icon="pi-times-circle" />
@@ -686,7 +686,7 @@ function CareTeamDashboard({ user, role }) {
           </div>
         </div>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         {isDietician ? (
           <>
             <KPI label="Active diet plans"  value={stats.activePlans ?? "—"}      color={C.green}  icon="pi-check-circle" />
