@@ -2004,7 +2004,7 @@ export default function ReceptionBilling() {
               totals.drafts) + unspentAdv state. Sub-text shows
               context-sensitive hints so the tiles never look empty.
               ────────────────────────────────────────────────────── */}
-          <div style={{
+          <div className="hga-stagger" style={{
             display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
             gap: 12, marginBottom: 12,
           }}>
@@ -2344,7 +2344,7 @@ export default function ReceptionBilling() {
                   : Math.max(0, _itemsNet - _paidSum);
                 const rowPaid   = Math.max(0, rowNet - rowBal);
                 return (
-                  <div key={b._id} className={`rx-bill-row ${isActive ? "rx-bill-row--active" : ""}`}
+                  <div key={b._id} className={`rx-bill-row hga-lift ${isActive ? "rx-bill-row--active" : ""}`}
                        onClick={() => loadBill(b._id)}>
                     <div className="rx-min-zero">
                       <div className="rx-bill-row-line">

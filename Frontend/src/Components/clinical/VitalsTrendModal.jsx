@@ -233,6 +233,7 @@ export default function VitalsTrendModal({ uhid, ipdNo, patientName, onClose }) 
 
   return (
     <div
+      className="hga-enter-fade"
       onClick={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
       style={{
         position: "fixed", inset: 0, zIndex: 9999,
@@ -240,7 +241,7 @@ export default function VitalsTrendModal({ uhid, ipdNo, patientName, onClose }) 
         display: "flex", alignItems: "flex-start", justifyContent: "center",
         padding: "5vh 16px", overflowY: "auto",
       }}>
-      <div onClick={(e) => e.stopPropagation()} style={{
+      <div className="hga-pop" onClick={(e) => e.stopPropagation()} style={{
         width: "min(1100px, 100%)", background: "#fff", borderRadius: 14,
         boxShadow: "0 20px 50px rgba(0,0,0,.25)", overflow: "hidden",
         fontFamily: "'DM Sans', system-ui, sans-serif",

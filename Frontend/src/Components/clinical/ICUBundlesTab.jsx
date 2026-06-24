@@ -80,7 +80,7 @@ export default function ICUBundlesTab({ uhid, role = "Nurse" }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       {/* Header band */}
-      <div style={{
+      <div className="hga-enter-fade" style={{
         background: `linear-gradient(135deg, ${C.primary} 0%, ${C.primaryD} 100%)`,
         borderRadius: 12, padding: "12px 16px", color: "#fff",
         display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
@@ -149,7 +149,7 @@ export default function ICUBundlesTab({ uhid, role = "Nurse" }) {
 
       {/* Latest sheet — hero card */}
       {!loading && !error && latest && (
-        <div style={{
+        <div className="hga-enter" style={{
           background: C.card, border: `1px solid ${C.border}`,
           borderRadius: 12, padding: 14,
         }}>
@@ -192,7 +192,7 @@ export default function ICUBundlesTab({ uhid, role = "Nurse" }) {
           </div>
 
           {/* Per-bundle compliance grid */}
-          <div style={{
+          <div className="hga-stagger" style={{
             display: "grid",
             gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
             gap: 10,

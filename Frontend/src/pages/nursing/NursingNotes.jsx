@@ -2060,7 +2060,7 @@ function NursingNotesContent({ selectedPatient }) {
                   Care Note" tile is already lockedwhen the Nursing Initial
                   Assessment is not yet filed, so this picker only renders
                   when the gate is OFF. Modules are always clickable here. */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+              <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
                 {MODULES.map(m => (
                     <button
                       key={m.id}

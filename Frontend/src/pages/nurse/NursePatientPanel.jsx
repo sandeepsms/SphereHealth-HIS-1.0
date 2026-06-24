@@ -251,7 +251,7 @@ function OverviewTab({patient,admission,nursingNotes=[],billing,doctorNotes=[]})
           pill above ("Initial Assessment N"). Counting raw .length
           surfaced "2" on a panel where no daily doctor note was filled
           (just the IA). Same fix as the tab-pill counts. */}
-      <div className="pf-stats-grid">
+      <div className="pf-stats-grid hga-stagger">
         {[
           {label:"Nursing Notes",  val: nursingNotes.filter(n=>n.noteType!=="initial"&&n.noteType!=="initialAssessment").length, icon:"📝", tint:"primary"},
           {label:"Pending Orders", val: todayOrders.length,                         icon:"⏳", tint: todayOrders.length > 0 ? "warn" : "neutral"},
@@ -269,7 +269,7 @@ function OverviewTab({patient,admission,nursingNotes=[],billing,doctorNotes=[]})
       </div>
 
       {/* Demographics + Admission */}
-      <div className="pf-overview-grid">
+      <div className="pf-overview-grid hga-enter">
         <div className="pf-info-card">
           <div className="pf-info-card__head">
             <span className="pf-info-card__icon">👤</span>

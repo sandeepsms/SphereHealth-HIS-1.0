@@ -287,7 +287,7 @@ export default function BiometricConsentPanel({
   }
 
   return (
-    <div style={{
+    <div className="hga-enter" style={{
       background: C.card, border: `1.5px solid ${allComplete ? C.ok : C.border}`, borderRadius: 12,
       padding: "16px 18px", marginTop: 16, position: "relative",
     }}>

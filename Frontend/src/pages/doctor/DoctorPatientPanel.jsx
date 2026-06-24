@@ -257,7 +257,7 @@ function OverviewTab({patient, admission, opdVisits=[], billing, doctorNotes=[],
       )}
 
       {/* Quick stats */}
-      <div className="pf-stats-grid">
+      <div className="pf-stats-grid hga-stagger">
         {[
           {label:"Doctor Notes",    val: doctorNotes.length,  icon:"🩺", tint:"primary"},
           {label:"Signed Notes",    val: signed,              icon:"✅", tint:"ok"},
@@ -277,7 +277,7 @@ function OverviewTab({patient, admission, opdVisits=[], billing, doctorNotes=[],
       </div>
 
       {/* Demographics + Admission */}
-      <div className="pf-overview-grid">
+      <div className="pf-overview-grid hga-enter-fade">
         <div className="pf-info-card">
           <div className="pf-info-card__head">
             <span className="pf-info-card__icon">👤</span>
@@ -1870,7 +1870,7 @@ function EmergencyTab({emergency=[]}) {
             <span className="pf-section-card__count">{fmtDT(em.createdAt || em.arrivalTime)}</span>
           </div>
           <div className="pf-section-card__body pf-section-card__body--pad">
-            <div className="pf-overview-grid">
+            <div className="pf-overview-grid hga-enter-fade">
               <div>
                 {[
                   ["Emergency No.",   em.emergencyNumber || em._id?.slice(-6)],

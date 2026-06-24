@@ -192,7 +192,7 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
       </div>
 
       {admission && (
-        <div className="ppt-card ppt-card--admission">
+        <div className="ppt-card ppt-card--admission hga-enter-fade">
           <div className="ppt-section-title">Admission Summary</div>
           <div className="ppt-detail-grid">
             <Field label="IPD / Admission No." value={admission.admissionNumber} mono />
@@ -602,7 +602,7 @@ export function IntakeOutputChartTab({ nursingNotes = [] }) {
         <div className="ppt-empty">No intake/output recordings yet.</div>
       ) : (
         <>
-          <div className="ppt-io-totals">
+          <div className="ppt-io-totals hga-stagger">
             <div className="ppt-io-card ppt-io-card--in">
               <div className="ppt-io-label">Total Intake</div>
               <div className="ppt-io-val">{totals.intake} <span>mL</span></div>
@@ -1097,7 +1097,7 @@ export function HandoverNotesTab({ patient, admission, doctorNotes = [], nursing
 
       {/* 1 — Pending bed-transfer (action required) */}
       {pending.length > 0 && (
-        <div className="ppt-card ppt-card--mlc">
+        <div className="ppt-card ppt-card--mlc hga-pop">
           <div className="ppt-section-title">
             <span className="ppt-section-icon">🛏</span>
             Bed Transfer — Handover Pending
@@ -1693,7 +1693,7 @@ function ObservationBlock({ data }) {
 
 function MLCExpanded({ mlc }) {
   return (
-    <div className="ppt-card ppt-card--mlc">
+    <div className="ppt-card ppt-card--mlc hga-pop">
       <div className="ppt-section-title">
         <span className="ppt-section-icon">⚖</span>
         MLR&nbsp;<span className="ppt-mlr">{mlc.mlrNumber}</span>

@@ -51,7 +51,7 @@ const C = {
 function Section({ title, icon, color = C.accent, badge, children, defaultOpen = true, disabled = false }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${color}25`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
+    <div className="hga-enter" style={{ background: C.card, border: `1.5px solid ${color}25`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
       <div onClick={() => setOpen(o => !o)} style={{
         padding: "10px 18px", background: color + "08", borderBottom: open ? `1px solid ${color}18` : "none",
         display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer",
