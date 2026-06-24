@@ -8,11 +8,14 @@
    - Auto-applied: .hga-route (page transition), .hga-nav-item (sidebar hover),
      a global tactile button :active press, and opt-in helpers (.hga-stagger,
      .hga-enter*, .hga-pop, .hga-slide-down, .hga-lift, .hga-shimmer, ...).
-     Nothing animates a frozen clinical / print / billing surface by accident.
-   - ALL motion is disabled under prefers-reduced-motion AND @media print.
+   - R7hr-273c (10-dim audit): entrance keyframes END at `transform: none` and
+     .hga-route carries NO `will-change`, so the route wrapper never becomes a
+     persistent containing block that could mis-position fixed modals. The
+     reduced-motion + print kill-switches are now UNIVERSAL (cover every
+     animation in the app — hga, component-scoped, inline — not just hga-*).
 
    Intensity: one class on <html> — hga-minimal | hga-professional | hga-lively.
-   Default (:root) == professional (R7hr-273b: tuned more observable).
+   Default (:root) == professional.
    ============================================================ */
 
 :root {
@@ -22,8 +25,8 @@
   --hga-travel:     20px;
   --hga-lift:       -3px;
   --hga-stagger:    70ms;
-  --hga-ease:       cubic-bezier(0.22, 1, 0.36, 1);   /* easeOutQuint — smooth, slightly springy */
-  --hga-ease-back:  cubic-bezier(0.34, 1.56, 0.64, 1); /* gentle overshoot for pops */
+  --hga-ease:       cubic-bezier(0.22, 1, 0.36, 1);
+  --hga-ease-back:  cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 html.hga-minimal {
   --hga-dur-page: 0.22s; --hga-dur-enter: 0.26s; --hga-dur-micro: 0.10s;
@@ -38,27 +41,28 @@ html.hga-lively {
   --hga-travel: 32px; --hga-lift: -5px; --hga-stagger: 100ms;
 }
 
-/* ── KEYFRAME CATALOG ─────────────────────────────────────── */
+/* ── KEYFRAME CATALOG ─────────────────────────────────────────
+   Entrance animations END at `transform: none` (not translateY(0)/scale(1))
+   so no identity-transform lingers to create a containing block. */
 @keyframes hga-page-in   { from { opacity: 0; transform: translateY(var(--hga-travel)) scale(0.985); }
-                           to   { opacity: 1; transform: translateY(0) scale(1); } }
+                           to   { opacity: 1; transform: none; } }
 @keyframes hga-fade-in   { from { opacity: 0; } to { opacity: 1; } }
 @keyframes hga-fade-up   { from { opacity: 0; transform: translateY(var(--hga-travel)); }
-                           to   { opacity: 1; transform: translateY(0); } }
+                           to   { opacity: 1; transform: none; } }
 @keyframes hga-pop       { 0%   { opacity: 0; transform: translateY(calc(var(--hga-travel) * 0.7)) scale(0.92); }
-                           100% { opacity: 1; transform: translateY(0) scale(1); } }
-@keyframes hga-scale-in  { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
-@keyframes hga-slide-down{ from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes hga-slide-left{ from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: translateX(0); } }
+                           100% { opacity: 1; transform: none; } }
+@keyframes hga-scale-in  { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes hga-slide-down{ from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: none; } }
+@keyframes hga-slide-left{ from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: none; } }
 @keyframes hga-spin      { to { transform: rotate(360deg); } }
 @keyframes hga-shimmer   { 0% { background-position: -468px 0; } 100% { background-position: 468px 0; } }
 @keyframes hga-pulse     { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 @keyframes hga-float     { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
 
-/* ── ROUTE TRANSITION (auto, every authenticated page, all roles) ── */
-.hga-route {
-  animation: hga-page-in var(--hga-dur-page) var(--hga-ease) both;
-  will-change: opacity, transform;
-}
+/* ── ROUTE TRANSITION (auto, every authenticated page, all roles) ──
+   No `will-change` — keeping it would make .hga-route a permanent containing
+   block / stacking context for any position:fixed descendant. */
+.hga-route { animation: hga-page-in var(--hga-dur-page) var(--hga-ease) both; }
 
 /* ── ENTRANCE HELPERS (opt-in) ────────────────────────────── */
 .hga-enter        { animation: hga-fade-up var(--hga-dur-enter) var(--hga-ease) both; }
@@ -68,8 +72,9 @@ html.hga-lively {
 .hga-slide-down   { animation: hga-slide-down var(--hga-dur-enter) var(--hga-ease) both; }
 .hga-slide-left   { animation: hga-slide-left var(--hga-dur-enter) var(--hga-ease) both; }
 
-/* Stagger: parent gets .hga-stagger; DIRECT children pop in sequence
-   (`>` keeps it from reaching nested clinical rows). Up to 12 children. */
+/* Stagger: parent gets .hga-stagger; DIRECT children pop in sequence. Up to 12
+   distinct delays; the 13th+ child uses the max delay (still cascades, never
+   invisible). */
 .hga-stagger > * { animation: hga-pop var(--hga-dur-enter) var(--hga-ease-back) both; }
 .hga-stagger > *:nth-child(1)  { animation-delay: calc(var(--hga-stagger) * 1); }
 .hga-stagger > *:nth-child(2)  { animation-delay: calc(var(--hga-stagger) * 2); }
@@ -82,24 +87,21 @@ html.hga-lively {
 .hga-stagger > *:nth-child(9)  { animation-delay: calc(var(--hga-stagger) * 9); }
 .hga-stagger > *:nth-child(10) { animation-delay: calc(var(--hga-stagger) * 10); }
 .hga-stagger > *:nth-child(11) { animation-delay: calc(var(--hga-stagger) * 11); }
-.hga-stagger > *:nth-child(12) { animation-delay: calc(var(--hga-stagger) * 12); }
+.hga-stagger > *:nth-child(n+12) { animation-delay: calc(var(--hga-stagger) * 12); }
 
 /* ── HOVER MICRO-INTERACTIONS ─────────────────────────────── */
-/* opt-in lift/press (layout-neutral transforms) */
 .hga-lift  { transition: transform var(--hga-dur-micro) var(--hga-ease), box-shadow var(--hga-dur-micro) var(--hga-ease); }
 .hga-lift:hover { transform: translateY(var(--hga-lift)) scale(1.012); box-shadow: 0 10px 26px rgba(15, 23, 42, 0.16); }
 .hga-press { transition: transform var(--hga-dur-micro) var(--hga-ease), filter var(--hga-dur-micro) var(--hga-ease); }
 .hga-press:hover  { filter: brightness(1.05); }
 .hga-press:active { transform: translateY(1px) scale(0.98); }
 
-/* Sidebar nav item (auto, every page/role). Item carries `transition: all .15s`
-   inline, so this stays smooth. translateX + scale are layout-neutral. */
+/* Sidebar nav item (auto, every page/role) — layout-neutral transforms. */
 .hga-nav-item:hover  { transform: translateX(4px) scale(1.015); }
 .hga-nav-item:active { transform: translateX(2px) scale(0.99); }
 
 /* Global tactile press on every button — no `transition` set here, so it can't
-   clobber a component's own transition; instant, layout-neutral press feedback.
-   Disabled in print + reduced-motion below. */
+   clobber a component's own transition; instant, layout-neutral feedback. */
 button:not(:disabled):active,
 [role="button"]:not([aria-disabled="true"]):active {
   transform: scale(0.97);
@@ -120,34 +122,36 @@ button:not(:disabled):active,
 .hga-loading-pulse { animation: hga-pulse 1.6s ease-in-out infinite; }
 .hga-float { animation: hga-float 3s ease-in-out infinite; }
 
-/* ── ACCESSIBILITY — honour "reduce motion" ───────────────── */
+/* ── ACCESSIBILITY — honour "reduce motion" (UNIVERSAL, WCAG-recommended) ──
+   Covers EVERY animation/transition in the app (hga, component-scoped, inline),
+   not just .hga-* — and collapses them to ~instant so entrance animations still
+   land at their visible end-state (never stuck invisible). */
 @media (prefers-reduced-motion: reduce) {
-  .hga-route, .hga-enter, .hga-enter-fade, .hga-enter-scale, .hga-pop,
-  .hga-slide-down, .hga-slide-left, .hga-stagger > *, .hga-shimmer,
-  .hga-spinner, .hga-loading-pulse, .hga-float {
-    animation: none !important;
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
-  .hga-route, .hga-enter, .hga-enter-fade, .hga-enter-scale, .hga-pop,
-  .hga-slide-down, .hga-slide-left, .hga-stagger > * {
-    opacity: 1 !important; transform: none !important;
-  }
-  .hga-lift, .hga-press, .hga-nav-item { transition: none !important; }
-  .hga-lift:hover, .hga-press:hover, .hga-press:active, .hga-nav-item:hover,
-  .hga-nav-item:active, button:not(:disabled):active {
+  button:not(:disabled):active,
+  [role="button"]:not([aria-disabled="true"]):active,
+  .hga-nav-item:hover, .hga-nav-item:active,
+  .hga-lift:hover, .hga-press:hover, .hga-press:active {
     transform: none !important; box-shadow: none !important; filter: none !important;
   }
 }
 
-/* ── PRINT SAFETY — clinical prints must be pixel-stable ───── */
+/* ── PRINT SAFETY — clinical prints must be pixel-stable (UNIVERSAL) ──
+   Collapse every animation to its end-state and kill transitions + hover
+   transforms so nothing is caught mid-motion on a printout. */
 @media print {
-  .hga-route, .hga-enter, .hga-enter-fade, .hga-enter-scale, .hga-pop,
-  .hga-slide-down, .hga-slide-left, .hga-stagger > *, .hga-shimmer,
-  .hga-spinner, .hga-loading-pulse, .hga-float {
-    animation: none !important;
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
   }
-  .hga-route, .hga-enter, .hga-enter-fade, .hga-enter-scale, .hga-pop,
-  .hga-slide-down, .hga-slide-left, .hga-stagger > * {
-    opacity: 1 !important; transform: none !important;
+  button:active, [role="button"]:active,
+  .hga-nav-item, .hga-lift, .hga-press, .hga-route {
+    transform: none !important;
   }
-  .hga-lift, .hga-press, .hga-nav-item, button:active { transition: none !important; transform: none !important; }
 }
