@@ -116,6 +116,7 @@ const RoomChargesPage = lazy(() => import("./pages/admin/RoomChargesPage"));
 // Same auth gate as RoomChargesPage / DoctorChargesPage.
 const NursingEquipmentPage = lazy(() => import("./pages/admin/NursingEquipmentPage"));
 const BackupRecoveryPage = lazy(() => import("./pages/admin/BackupRecoveryPage")); // R7hr-272
+const AnimationGalleryPage = lazy(() => import("./pages/admin/AnimationGalleryPage")); // R7hr-274
 const ChargeableServices = lazy(() => import("./pages/services/ChargeableServices"));
 // BillingIntelligencePage removed — receptionist Billing Counter is now
 // the single billing surface; AI suggestions are no longer auto-applied.
@@ -653,6 +654,8 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/backup" element={
               <RoleGuard action="backup.manage"><BackupRecoveryPage /></RoleGuard>
             } />
+            {/* R7hr-274 — Animation Gallery (showcase; any authenticated role) */}
+            <Route path="/animation-gallery" element={<AnimationGalleryPage />} />
 
             {/* /billing-intelligence routes removed — receptionist Billing
                 Counter at /reception-billing now handles the full flow. */}
