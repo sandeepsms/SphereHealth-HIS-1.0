@@ -1,0 +1,122 @@
+/* ============================================================
+   animations.css — GLOBAL ANIMATION LAYER (R7hr-273, additive, R25-safe)
+   Loaded in main.jsx AFTER his-design.css, BEFORE index.css.
+
+   Design rules:
+   - Keyframe prefix `hga-` (HIS Global Animation) — verified to NOT collide
+     with the 16 existing keyframes (hisSidebarSlide, statPulse, blink, toastIn,
+     modalIn, vdict-pulse, health-skel, pf-*, rd-*, rotation…).
+   - ONLY `.hga-route` (the route-transition wrapper) and `.hga-nav-item`
+     (sidebar item hover) are auto-applied. Everything else is OPT-IN by class,
+     so nothing animates a frozen clinical / print / billing surface by accident.
+   - ALL motion is disabled under prefers-reduced-motion AND @media print
+     (clinical prints must be pixel-stable).
+
+   Intensity: one class on <html> — hga-minimal | hga-professional | hga-lively.
+   Default (:root) == professional.
+   ============================================================ */
+
+:root {
+  --hga-dur-page:   0.32s;
+  --hga-dur-enter:  0.40s;
+  --hga-dur-micro:  0.15s;
+  --hga-travel:     14px;
+  --hga-lift:       -2px;
+  --hga-stagger:    60ms;
+  --hga-ease:       cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+html.hga-minimal {
+  --hga-dur-page: 0.20s; --hga-dur-enter: 0.24s; --hga-dur-micro: 0.10s;
+  --hga-travel: 6px;  --hga-lift: -1px; --hga-stagger: 35ms;
+}
+html.hga-professional {
+  --hga-dur-page: 0.32s; --hga-dur-enter: 0.40s; --hga-dur-micro: 0.15s;
+  --hga-travel: 14px; --hga-lift: -2px; --hga-stagger: 60ms;
+}
+html.hga-lively {
+  --hga-dur-page: 0.45s; --hga-dur-enter: 0.55s; --hga-dur-micro: 0.18s;
+  --hga-travel: 24px; --hga-lift: -4px; --hga-stagger: 90ms;
+}
+
+/* ── KEYFRAME CATALOG ─────────────────────────────────────── */
+@keyframes hga-page-in  { from { opacity: 0; transform: translateY(var(--hga-travel)); } to { opacity: 1; transform: translateY(0); } }
+@keyframes hga-fade-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes hga-fade-up  { from { opacity: 0; transform: translateY(var(--hga-travel)); } to { opacity: 1; transform: translateY(0); } }
+@keyframes hga-scale-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+@keyframes hga-spin     { to { transform: rotate(360deg); } }
+@keyframes hga-shimmer  { 0% { background-position: -468px 0; } 100% { background-position: 468px 0; } }
+@keyframes hga-pulse    { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+/* ── ROUTE TRANSITION (auto, every authenticated page, all roles) ── */
+.hga-route {
+  animation: hga-page-in var(--hga-dur-page) var(--hga-ease) both;
+  will-change: opacity, transform;
+}
+
+/* ── ENTRANCE HELPERS (opt-in) ────────────────────────────── */
+.hga-enter       { animation: hga-fade-up var(--hga-dur-enter) var(--hga-ease) both; }
+.hga-enter-fade  { animation: hga-fade-in var(--hga-dur-enter) var(--hga-ease) both; }
+.hga-enter-scale { animation: hga-scale-in var(--hga-dur-enter) var(--hga-ease) both; }
+
+/* Stagger: parent gets .hga-stagger; DIRECT children fade up in sequence
+   (`>` keeps it from reaching nested clinical rows). */
+.hga-stagger > * { animation: hga-fade-up var(--hga-dur-enter) var(--hga-ease) both; }
+.hga-stagger > *:nth-child(1)  { animation-delay: calc(var(--hga-stagger) * 1); }
+.hga-stagger > *:nth-child(2)  { animation-delay: calc(var(--hga-stagger) * 2); }
+.hga-stagger > *:nth-child(3)  { animation-delay: calc(var(--hga-stagger) * 3); }
+.hga-stagger > *:nth-child(4)  { animation-delay: calc(var(--hga-stagger) * 4); }
+.hga-stagger > *:nth-child(5)  { animation-delay: calc(var(--hga-stagger) * 5); }
+.hga-stagger > *:nth-child(6)  { animation-delay: calc(var(--hga-stagger) * 6); }
+.hga-stagger > *:nth-child(7)  { animation-delay: calc(var(--hga-stagger) * 7); }
+.hga-stagger > *:nth-child(8)  { animation-delay: calc(var(--hga-stagger) * 8); }
+
+/* ── HOVER MICRO-INTERACTIONS (opt-in; layout-neutral transforms) ── */
+.hga-lift  { transition: transform var(--hga-dur-micro) var(--hga-ease), box-shadow var(--hga-dur-micro) var(--hga-ease); }
+.hga-lift:hover { transform: translateY(var(--hga-lift)); box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12); }
+.hga-press { transition: transform var(--hga-dur-micro) var(--hga-ease), filter var(--hga-dur-micro) var(--hga-ease); }
+.hga-press:hover  { filter: brightness(1.04); }
+.hga-press:active { transform: translateY(1px) scale(0.98); }
+
+/* Sidebar nav item (auto — present on every page for every role). The item
+   already carries `transition: all .15s` inline, so this stays smooth.
+   translateX is layout-neutral (composited), so it can't reflow the menu. */
+.hga-nav-item:hover { transform: translateX(2px); }
+
+/* ── LOADING (skeleton shimmer + spinner) ─────────────────── */
+.hga-shimmer {
+  background: linear-gradient(90deg, #eef2f7 25%, #f7fafc 37%, #eef2f7 63%);
+  background-size: 936px 100%;
+  animation: hga-shimmer 1.4s ease-in-out infinite;
+}
+.hga-spinner {
+  display: inline-block; width: 1.25em; height: 1.25em;
+  border: 2px solid rgba(0, 0, 0, 0.12); border-top-color: currentColor;
+  border-radius: 50%;
+  animation: hga-spin 0.8s linear infinite;
+}
+.hga-loading-pulse { animation: hga-pulse 1.6s ease-in-out infinite; }
+
+/* ── ACCESSIBILITY — honour "reduce motion" ───────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .hga-route, .hga-enter, .hga-enter-fade, .hga-enter-scale,
+  .hga-stagger > *, .hga-shimmer, .hga-spinner, .hga-loading-pulse {
+    animation: none !important;
+  }
+  .hga-route, .hga-enter, .hga-enter-fade, .hga-enter-scale,
+  .hga-stagger > * { opacity: 1 !important; transform: none !important; }
+  .hga-lift, .hga-press, .hga-nav-item { transition: none !important; }
+  .hga-lift:hover, .hga-press:hover, .hga-press:active, .hga-nav-item:hover {
+    transform: none !important; box-shadow: none !important; filter: none !important;
+  }
+}
+
+/* ── PRINT SAFETY — clinical prints must be pixel-stable ───── */
+@media print {
+  .hga-route, .hga-enter, .hga-enter-fade, .hga-enter-scale,
+  .hga-stagger > *, .hga-shimmer, .hga-spinner, .hga-loading-pulse {
+    animation: none !important;
+  }
+  .hga-route, .hga-enter, .hga-enter-fade, .hga-enter-scale,
+  .hga-stagger > * { opacity: 1 !important; transform: none !important; }
+  .hga-lift, .hga-press, .hga-nav-item { transition: none !important; transform: none !important; }
+}

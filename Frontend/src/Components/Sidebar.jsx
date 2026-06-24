@@ -692,6 +692,7 @@ function NavItem({ item, color, collapsed, navigate, isActive }) {
   const active = isActive(item.path);
   return (
     <button
+      className="hga-nav-item"
       onClick={() => navigate(item.path)}
       title={collapsed ? item.label : ""}
       style={{

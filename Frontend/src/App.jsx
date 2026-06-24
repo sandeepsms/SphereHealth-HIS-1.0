@@ -21,6 +21,9 @@ import ShortcutLayer from "./Components/shortcuts/ShortcutLayer";
 // mic mounted in the authenticated shell; dictates into the focused text
 // field app-wide. Purely additive — no existing field/page logic touched.
 import VoiceDictation from "./Components/voice/VoiceDictation";
+// R7hr-273 — global route-transition animator (wraps only the authenticated
+// Routes outlet; print/login branches return before it). Additive.
+import RouteTransition from "./Components/RouteTransition.jsx";
 import { HospitalSettingsProvider } from "./context/HospitalSettingsContext";
 
 // PrimeReact CSS
@@ -371,7 +374,7 @@ function AppLoader() {
 /* ── Lightweight route-change spinner (used by Suspense) ── */
 function RouteLoader() {
   return (
-    <div style={{
+    <div className="hga-enter-fade" style={{
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "center", padding: 60, color: "#64748b",
     }}>
@@ -468,6 +471,7 @@ function AppLayout({ collapsed, setCollapsed }) {
         }}
       >
         <Suspense fallback={<RouteLoader />}>
+          <RouteTransition>
           <Routes>
             {/* ── Dashboard ─────────────────────────────────────── */}
             <Route path="/dashboard1" element={<Navigate to="/dashboard" replace />} />
@@ -1198,6 +1202,7 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* ── Catch-all: redirect to dashboard ── */}
             <Route path="*" element={<Navigate to={homePath} replace />} />
           </Routes>
+          </RouteTransition>
         </Suspense>
       </div>
 
