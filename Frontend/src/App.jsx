@@ -26,6 +26,8 @@ import VoiceDictation from "./Components/voice/VoiceDictation";
 import RouteTransition from "./Components/RouteTransition.jsx";
 // R7hr-277 — global confetti burst on any print button (delegated; edits no page).
 import PrintCelebrate from "./Components/anim/PrintCelebrate";
+// R7hr-278 — global ripple on every button/link click (delegated; edits no page).
+import GlobalClickFx from "./Components/anim/GlobalClickFx";
 import { HospitalSettingsProvider } from "./context/HospitalSettingsContext";
 
 // PrimeReact CSS
@@ -466,6 +468,7 @@ function AppLayout({ collapsed, setCollapsed }) {
       <ShortcutLayer />
       <VoiceDictation />
       <PrintCelebrate />
+      <GlobalClickFx />
       <div
         className={`main-content ${collapsed ? "expanded" : ""}`}
         style={{
