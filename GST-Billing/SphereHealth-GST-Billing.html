@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SphereHealth — GST Billing</title>
+<style>
+  :root{
+    --brand:#0f766e; --brand-600:#0d9488; --brand-700:#115e57; --brand-800:#134e4a; --brand-dark:#134e4a;
+    --brand-50:#f0fbf9; --brand-100:#d4f1ec; --brand-light:#f0fbf9;
+    --ink:#10202c; --muted:#647888; --muted-2:#93a4b3;
+    --line:#e7edf1; --line-2:#f0f4f6; --bg:#eef2f5; --card:#ffffff;
+    --ok:#157f4c; --ok-bg:#e7f6ee; --warn:#b45309; --warn-bg:#fbf0e2;
+    --danger:#dc2626; --danger-bg:#fdeced; --exempt:#7c3aed; --exempt-bg:#f1ebfd;
+    --accent:#f59e0b;
+    --sh1:0 1px 2px rgba(16,32,44,.06); --sh2:0 6px 18px rgba(16,32,44,.08); --sh3:0 14px 38px rgba(16,32,44,.14);
+    --r:14px; --r-sm:9px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:'Inter','Segoe UI',Roboto,system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif;color:var(--ink);
+       background:var(--bg);font-size:14px;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  body::before{content:"";position:fixed;inset:0 0 auto 0;height:240px;z-index:-1;
+       background:radial-gradient(1200px 240px at 18% -60%,rgba(15,118,110,.20),transparent 70%),linear-gradient(180deg,#f6fafb,var(--bg))}
+  .num,input[type=number],.tnum{font-variant-numeric:tabular-nums;font-feature-settings:'tnum' 1}
+
+  /* ---------- Header ---------- */
+  header.app{position:sticky;top:0;z-index:30;background:linear-gradient(115deg,var(--brand-800),var(--brand) 60%,var(--brand-600));
+       color:#fff;padding:14px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;box-shadow:var(--sh2)}
+  header.app .brand{display:flex;align-items:center;gap:14px}
+  header.app .logo{width:46px;height:46px;border-radius:13px;background:rgba(255,255,255,.96);color:var(--brand-800);
+       display:flex;align-items:center;justify-content:center;font-weight:900;font-size:22px;letter-spacing:.5px;
+       box-shadow:inset 0 -2px 6px rgba(0,0,0,.12),0 2px 8px rgba(0,0,0,.18)}
+  header.app h1{font-size:18px;margin:0;font-weight:800;letter-spacing:.2px;line-height:1.15}
+  header.app .sub{font-size:11.5px;opacity:.86;margin-top:3px;letter-spacing:.2px}
+  header.app .gstin{margin-left:auto;text-align:right;font-size:11.5px;line-height:1.9;opacity:.97}
+  header.app .gchip{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.24);
+       padding:4px 11px;border-radius:999px;font-size:11.5px}
+  header.app .gchip b{font-weight:800;letter-spacing:.6px}
+  header.app .dot{width:7px;height:7px;border-radius:50%;background:#5ef0c6;box-shadow:0 0 0 3px rgba(94,240,198,.25)}
+
+  /* ---------- Tabs ---------- */
+  nav.tabs{position:sticky;top:74px;z-index:20;display:flex;gap:2px;background:rgba(255,255,255,.94);backdrop-filter:blur(8px);
+       border-bottom:1px solid var(--line);padding:0 16px;flex-wrap:wrap;box-shadow:var(--sh1)}
+  nav.tabs button{background:none;border:none;padding:13px 16px;cursor:pointer;font-size:13.5px;color:var(--muted);
+       border-bottom:3px solid transparent;font-weight:600;border-radius:8px 8px 0 0;transition:.15s}
+  nav.tabs button:hover{color:var(--brand-700);background:var(--brand-50)}
+  nav.tabs button.active{color:var(--brand-700);border-bottom-color:var(--brand);background:linear-gradient(180deg,var(--brand-50),transparent)}
+
+  main{max-width:1200px;margin:0 auto;padding:22px 18px 64px}
+
+  .panel{display:none;animation:fade .25s ease}
+  .panel.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  /* ---------- Cards & forms ---------- */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin-bottom:18px;box-shadow:var(--sh1)}
+  .card h2{margin:0 0 16px;font-size:14px;color:var(--brand-800);display:flex;align-items:center;gap:9px;font-weight:800;
+       letter-spacing:.3px;padding-bottom:12px;border-bottom:1px solid var(--line-2)}
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:1fr 1fr 1fr}.g4{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:760px){.g2,.g3,.g4{grid-template-columns:1fr}}
+  label{display:block;font-size:11px;color:var(--muted);font-weight:700;margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px}
+  input,select,textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:var(--r-sm);font-size:14px;
+       font-family:inherit;background:#fff;color:var(--ink);transition:border-color .15s,box-shadow .15s}
+  input::placeholder,textarea::placeholder{color:var(--muted-2)}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px rgba(15,118,110,.14)}
+  input[readonly]{background:var(--line-2);color:var(--muted)}
+  select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23647888' d='M3 4.5L6 8l3-3.5z'/%3E%3C/svg%3E");
+       background-repeat:no-repeat;background-position:right 10px center;padding-right:28px}
+
+  /* ---------- Buttons ---------- */
+  .btn{background:var(--brand);color:#fff;border:none;padding:10px 17px;border-radius:var(--r-sm);cursor:pointer;font-size:13.5px;
+       font-weight:700;letter-spacing:.2px;box-shadow:0 1px 2px rgba(16,32,44,.12);transition:.15s}
+  .btn:hover{background:var(--brand-700);transform:translateY(-1px);box-shadow:var(--sh2)}
+  .btn:active{transform:translateY(0)}
+  .btn.ghost{background:#fff;color:var(--brand-700);border:1px solid var(--brand-100);box-shadow:none}
+  .btn.ghost:hover{background:var(--brand-50);border-color:var(--brand)}
+  .btn.sm{padding:6px 12px;font-size:12px;border-radius:8px}
+  .btn.gray{background:#566773}.btn.gray:hover{background:#445058}
+  .btn.danger{background:var(--danger)}.btn.danger:hover{background:#b91c1c}
+  .btn.warn{background:var(--warn)}
+  .row-actions{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+
+  /* ---------- Line items ---------- */
+  table.lines{width:100%;border-collapse:separate;border-spacing:0;margin-top:6px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  table.lines th{background:var(--brand-50);color:var(--brand-800);font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;
+       padding:9px 7px;text-align:left;border-bottom:1px solid var(--line);font-weight:800}
+  table.lines td{border-bottom:1px solid var(--line-2);padding:5px 6px;vertical-align:middle}
+  table.lines tbody tr:last-child td{border-bottom:none}
+  table.lines tbody tr:hover{background:var(--brand-50)}
+  table.lines input,table.lines select{padding:7px 7px;font-size:13px;border-color:transparent;background:transparent}
+  table.lines input:focus,table.lines select:focus{background:#fff;border-color:var(--brand)}
+  table.lines td.num{text-align:right}table.lines td.num input{text-align:right}
+  table.lines td.num b{color:var(--brand-800)}
+  .emptyrow td{padding:28px 14px!important;text-align:center;color:var(--muted);font-size:13px;background:var(--line-2);border:none!important}
+
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:800;padding:3px 9px;border-radius:999px;letter-spacing:.3px}
+  .pill.tax{background:var(--ok-bg);color:var(--ok)}
+  .pill.exm{background:var(--exempt-bg);color:var(--exempt)}
+
+  /* ---------- Totals ---------- */
+  .totals{display:grid;grid-template-columns:1fr 340px;gap:18px;margin-top:18px}
+  @media(max-width:760px){.totals{grid-template-columns:1fr}}
+  .totbox{border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--sh1);align-self:start}
+  .totbox .r{display:flex;justify-content:space-between;padding:9px 16px;border-bottom:1px solid var(--line-2);font-size:14px;font-variant-numeric:tabular-nums}
+  .totbox .r:last-child{border-bottom:none}
+  .totbox .r .lbl{color:var(--muted)}
+  .totbox .r.grand{background:linear-gradient(115deg,var(--brand-800),var(--brand));color:#fff;font-weight:800;font-size:17px;padding:13px 16px}
+  .totbox .r.grand .lbl{color:rgba(255,255,255,.85);font-weight:700}
+  .words{font-style:italic;color:var(--brand-800);background:var(--brand-50);border:1px solid var(--brand-100);
+       padding:10px 14px;border-radius:10px;font-size:13px}
+
+  /* ---------- Catalog ---------- */
+  .catlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+  .catitem{border:1px solid var(--line);border-radius:12px;padding:13px;font-size:13px;display:flex;flex-direction:column;gap:7px;
+       background:#fff;box-shadow:var(--sh1);border-left:4px solid var(--brand);transition:.15s}
+  .catitem:hover{transform:translateY(-2px);box-shadow:var(--sh2)}
+  .catitem .nm{font-weight:800;font-size:13px;color:var(--ink);line-height:1.3}
+  .catitem .meta{font-size:11px;color:var(--muted)}
+  .catgroup{font-size:12px;font-weight:800;color:var(--brand-800);margin:18px 0 8px;text-transform:uppercase;letter-spacing:.6px;
+       display:flex;align-items:center;gap:8px}
+  .catgroup::before{content:"";width:14px;height:14px;border-radius:4px;background:var(--brand)}
+
+  /* ---------- Register ---------- */
+  table.reg{width:100%;border-collapse:collapse;font-size:13px}
+  table.reg th{background:var(--brand-50);color:var(--brand-800);padding:10px;text-align:left;border-bottom:2px solid var(--line);
+       font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:800}
+  table.reg td{padding:10px;border-bottom:1px solid var(--line-2)}
+  table.reg tbody tr:hover{background:var(--brand-50)}
+
+  /* ---------- Misc ---------- */
+  .note{font-size:12.5px;color:var(--muted);background:var(--brand-50);border:1px solid var(--brand-100);border-left:4px solid var(--brand);
+       border-radius:10px;padding:12px 14px;line-height:1.65}
+  .note b{color:var(--brand-800)}
+  .inline-help{font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.5}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(10px);background:var(--ink);color:#fff;
+       padding:11px 20px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:99;box-shadow:var(--sh3)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .badge-doc{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:800;padding:5px 13px;border-radius:999px;
+       background:var(--brand-50);border:1px solid var(--brand-100);color:var(--brand-700);letter-spacing:.3px}
+  .badge-doc::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 3px rgba(15,118,110,.18)}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+  @media(max-width:760px){.kpis{grid-template-columns:1fr 1fr}}
+  .kpi{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 16px;box-shadow:var(--sh1);position:relative;overflow:hidden}
+  .kpi::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--brand),var(--brand-600))}
+  .kpi .v{font-size:22px;font-weight:800;color:var(--brand-800);font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+  .kpi .l{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:3px;font-weight:700}
+  .del-x{background:var(--danger-bg);color:var(--danger);border:none;border-radius:7px;width:28px;height:28px;cursor:pointer;font-weight:800;transition:.15s}
+  .del-x:hover{background:var(--danger);color:#fff}
+  .preview-wrap{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#e9eef1}
+  #invPreviewFrame{width:100%;border:none;display:block;min-height:320px;background:#f3f6f7}
+  ::-webkit-scrollbar{height:10px;width:10px}::-webkit-scrollbar-thumb{background:#c7d2d8;border-radius:6px}::-webkit-scrollbar-thumb:hover{background:#aebcc4}
+</style>
+</head>
+<body>
+<header class="app">
+  <div class="brand">
+    <div class="logo">S</div>
+    <div>
+      <h1 id="hdrName">SphereHealth Medical Solutions Pvt. Ltd.</h1>
+      <div class="sub">GST Billing &amp; Invoicing · Home Care · Equipment Rental · Software</div>
+    </div>
+  </div>
+  <div class="gstin">
+    <span class="gchip"><span class="dot"></span> GSTIN <b id="hdrGstin">06ABNCS8193D1ZX</b></span><br/>
+    <span id="hdrPlace">Sonipat, Haryana — 131001</span>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="active" data-tab="invoice">🧾 New / Edit Invoice</button>
+  <button data-tab="register">📚 Invoice Register</button>
+  <button data-tab="catalog">🛠 Services &amp; Rates</button>
+  <button data-tab="settings">⚙️ Firm Settings</button>
+  <button data-tab="guide">📖 GST Guide</button>
+</nav>
+
+<main>
+  <!-- ============ INVOICE ============ -->
+  <section class="panel active" id="panel-invoice">
+    <div class="card">
+      <h2>📄 Document <span id="docBadge" class="badge-doc" style="margin-left:8px">Tax Invoice</span></h2>
+      <div class="grid g4">
+        <div><label>Invoice / Document No.</label><input id="invNo" /></div>
+        <div><label>Invoice Date</label><input id="invDate" type="date" /></div>
+        <div><label>Place of Supply (State)</label><select id="posState"></select></div>
+        <div><label>Reverse Charge</label><select id="revCharge"><option value="No">No</option><option value="Yes">Yes</option></select></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>👤 Bill To (Customer)</h2>
+      <div class="grid g2">
+        <div><label>Customer Name</label><input id="custName" placeholder="Patient / Hospital / Company name" /></div>
+        <div><label>Customer GSTIN (if registered)</label><input id="custGstin" placeholder="Leave blank for unregistered / B2C" style="text-transform:uppercase" /></div>
+      </div>
+      <div class="grid g2" style="margin-top:12px">
+        <div><label>Address</label><textarea id="custAddr" rows="2" placeholder="Street, City, PIN"></textarea></div>
+        <div>
+          <label>Customer State (decides CGST+SGST vs IGST)</label>
+          <select id="custState"></select>
+          <div class="grid g2" style="margin-top:10px">
+            <div><label>Phone</label><input id="custPhone" /></div>
+            <div><label>Patient / Ref</label><input id="custRef" placeholder="optional" /></div>
+          </div>
+        </div>
+      </div>
+      <div id="supplyType" class="inline-help" style="color:var(--brand-dark);font-weight:700"></div>
+    </div>
+
+    <div class="card">
+      <h2>🧮 Line Items</h2>
+      <div class="row-actions" style="margin-bottom:10px">
+        <select id="quickAdd" style="max-width:380px"></select>
+        <select id="basisSel" style="max-width:120px" title="Rental basis for equipment items"><option value="Day">Per Day</option><option value="Week">Per Week</option><option value="Month">Per Month</option></select>
+        <button class="btn sm" id="btnQuickAdd">+ Add from catalog</button>
+        <button class="btn sm ghost" id="btnBlankLine">+ Blank line</button>
+      </div>
+      <div style="overflow-x:auto">
+      <table class="lines">
+        <thead><tr>
+          <th style="min-width:200px">Description</th>
+          <th>SAC/HSN</th>
+          <th>Qty</th>
+          <th>Unit</th>
+          <th>Rate (₹)</th>
+          <th>Incl?</th>
+          <th>Disc %</th>
+          <th>GST %</th>
+          <th>Taxable (₹)</th>
+          <th>Tax (₹)</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="lineBody"></tbody>
+      </table>
+      </div>
+      <div class="inline-help">“Incl?” = rate already includes GST (used for the ₹10,000 / ₹7,000 software price). GST % = 0 marks the line Exempt (Bill of Supply).</div>
+
+      <div class="totals">
+        <div>
+          <div class="words" id="amtWords">Amount in words: —</div>
+          <div style="margin-top:12px">
+            <label>Notes / Terms (printed on invoice)</label>
+            <textarea id="invNotes" rows="3">Payment due on receipt. Equipment remains property of SphereHealth Medical Solutions Pvt. Ltd. and must be returned in working condition.</textarea>
+          </div>
+        </div>
+        <div class="totbox" id="totBox"></div>
+      </div>
+    </div>
+
+    <div class="card" id="previewCard">
+      <h2>👁 Live Bill Preview <span style="font-weight:600;color:var(--muted);font-size:11px;text-transform:none;letter-spacing:0;margin-left:auto">updates automatically as you fill ↑</span></h2>
+      <div class="preview-wrap"><iframe id="invPreviewFrame" title="Live invoice preview"></iframe></div>
+    </div>
+
+    <div class="card">
+      <div class="row-actions">
+        <button class="btn" id="btnSave">💾 Save to Register</button>
+        <button class="btn ghost" id="btnPrint">🖨 Print / Save PDF</button>
+        <button class="btn gray" id="btnNew">🗒 New Blank Invoice</button>
+        <span id="editingTag" style="color:var(--muted);font-size:12px"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ REGISTER ============ -->
+  <section class="panel" id="panel-register">
+    <div class="kpis" id="regKpis"></div>
+    <div class="card">
+      <h2>📚 Saved Invoices</h2>
+      <div class="row-actions" style="margin-bottom:10px">
+        <input id="regSearch" placeholder="Search by no / customer…" style="max-width:280px" />
+        <button class="btn sm ghost" id="btnExport">⬇ Backup (JSON)</button>
+        <label class="btn sm gray" style="cursor:pointer;margin:0">⬆ Restore<input type="file" id="impFile" accept="application/json" style="display:none"/></label>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="reg">
+          <thead><tr><th>Date</th><th>No.</th><th>Type</th><th>Customer</th><th>Taxable</th><th>Tax</th><th>Total</th><th>Actions</th></tr></thead>
+          <tbody id="regBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CATALOG ============ -->
+  <section class="panel" id="panel-catalog">
+    <div class="card">
+      <h2>🛠 Services &amp; Default Rates</h2>
+      <div class="note">These power the “Add from catalog” dropdown on an invoice. Edit a rate once here and every new invoice picks it up. GST % &amp; SAC are pre-set per my consultant classification (see GST Guide) — change only if your CA advises.</div>
+      <div class="grid g4" style="margin-top:12px;align-items:end">
+        <div><label>Service name</label><input id="cName" placeholder="e.g. Wheelchair – Rent"/></div>
+        <div><label>SAC/HSN</label><input id="cHsn" /></div>
+        <div><label>GST %</label><select id="cGst"><option>0</option><option>5</option><option>12</option><option selected>18</option><option>28</option></select></div>
+        <div><label>Category</label><input id="cCat" value="Equipment Rental"/></div>
+      </div>
+      <div class="grid g4" style="margin-top:10px;align-items:end">
+        <div><label>Single Rate (₹) — non-equipment</label><input id="cRate" type="number" value="0"/></div>
+        <div><label>Unit (single)</label><input id="cUnit" value="Day"/></div>
+        <div><label>Rate is GST-inclusive?</label><select id="cIncl"><option value="false">No</option><option value="true">Yes</option></select></div>
+        <div><button class="btn" id="btnAddCat" style="width:100%">+ Add / Update Service</button></div>
+      </div>
+      <div class="note" style="margin-top:12px">🛏 <b>Equipment tiered rates</b> — fill any of Per Day / Week / Month and the item becomes a 3-way rental (you pick the basis while billing). Leave all three at 0 for single-rate services (software, doctor / nursing visits).</div>
+      <div class="grid g3" style="margin-top:10px;align-items:end">
+        <div><label>Per Day (₹)</label><input id="cRateDay" type="number" value="0"/></div>
+        <div><label>Per Week (₹)</label><input id="cRateWeek" type="number" value="0"/></div>
+        <div><label>Per Month (₹)</label><input id="cRateMonth" type="number" value="0"/></div>
+      </div>
+    </div>
+    <div class="card"><div id="catalogList"></div></div>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section class="panel" id="panel-settings">
+    <div class="card">
+      <h2>⚙️ Firm Details (pre-filled from your GST Certificate)</h2>
+      <div class="grid g2">
+        <div><label>Legal / Trade Name</label><input id="sName"/></div>
+        <div><label>GSTIN</label><input id="sGstin" style="text-transform:uppercase"/></div>
+      </div>
+      <div class="grid g3" style="margin-top:12px">
+        <div><label>PAN</label><input id="sPan"/></div>
+        <div><label>State</label><input id="sState"/></div>
+        <div><label>State Code</label><input id="sStateCode"/></div>
+      </div>
+      <div style="margin-top:12px"><label>Registered Address</label><textarea id="sAddr" rows="2"></textarea></div>
+      <div class="grid g3" style="margin-top:12px">
+        <div><label>Phone</label><input id="sPhone"/></div>
+        <div><label>Email</label><input id="sEmail"/></div>
+        <div><label>CIN (optional)</label><input id="sCin"/></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>🔢 Invoice Numbering</h2>
+      <div class="grid g3">
+        <div><label>Number Prefix</label><input id="sPrefix"/></div>
+        <div><label>Next Number</label><input id="sNext" type="number"/></div>
+        <div><label>Pad to digits</label><input id="sPad" type="number"/></div>
+      </div>
+      <div class="inline-help">Example next invoice: <span id="numPreview"></span></div>
+    </div>
+    <div class="card">
+      <h2>🏦 Bank &amp; Signatory (printed on invoice)</h2>
+      <div class="grid g4">
+        <div><label>Bank Name</label><input id="sBank"/></div>
+        <div><label>A/C No.</label><input id="sAcc"/></div>
+        <div><label>IFSC</label><input id="sIfsc"/></div>
+        <div><label>UPI ID</label><input id="sUpi"/></div>
+      </div>
+      <div class="grid g2" style="margin-top:12px">
+        <div><label>Authorised Signatory</label><input id="sSign"/></div>
+        <div><label>Declaration</label><input id="sDecl"/></div>
+      </div>
+    </div>
+    <div class="card"><button class="btn" id="btnSaveSettings">💾 Save Settings</button></div>
+  </section>
+
+  <!-- ============ GUIDE ============ -->
+  <section class="panel" id="panel-guide">
+    <div class="card">
+      <h2>📖 GST Consultant Notes — Rate &amp; SAC Rationale</h2>
+      <div class="note" style="line-height:1.8">
+        <b>Supplier:</b> SPHEREHEALTH MEDICAL SOLUTIONS PVT. LTD., GSTIN 06ABNCS8193D1ZX, Haryana (State 06), Regular taxpayer.<br/><br/>
+        <b>1. Medical equipment on rent</b> (bed, suction, BiPAP, nebulizer, monitor 3/5-para, O₂ concentrator, O₂ cylinder) → <b>SAC 997319, GST 12%.</b> Leasing/renting of goods is taxed at the same rate as supply of the like goods (Notfn 11/2017-CT(R), Heading 9973). Medical devices fall under Chapter 90 / medical oxygen, taxed at 12%.<br/><br/>
+        <b>2. GDA / Attendant at home</b> → <b>SAC 998514, GST 18%.</b> Supply of manpower / temporary staffing. A non-clinical attendant is not “healthcare”, so it is taxable at 18%.<br/><br/>
+        <b>3. Nursing care at home</b> (registered nurse) → <b>SAC 999316, Exempt.</b> Health-care service by para-medics (Notfn 12/2017-CT(R), Sl. 74, Heading 9993).<br/><br/>
+        <b>4. Doctor visit at home</b> → <b>SAC 999312, Exempt.</b> Health-care service by an authorised medical practitioner.<br/><br/>
+        <b>5. ECG at home (diagnostic + report)</b> → <b>SAC 999316, Exempt.</b> Diagnostic health-care service. (If you only rent out the ECG machine without a report, treat it as 12% equipment rental instead.)<br/><br/>
+        <b>6. SphereHealth software — one-time license</b> → <b>SAC 997331, GST 18%.</b> Sale of a one-time license of your offline utility tool to other hospitals = licensing the right to use computer software (taxable at 18%, whether delivered online or on media). <b>Price is fully flexible</b> — quote any amount (₹1,000 / ₹7,000 / ₹15,000 …) per customer. Two catalog picks are provided: <i>“price INCLUDES GST”</i> (tool back-calculates base + 18%, e.g. ₹10,000 → ₹8,474.58 + ₹1,525.42) and <i>“GST EXTRA @18%”</i> (your amount is the base, GST added on top, e.g. ₹10,000 → ₹10,000 + ₹1,800 = ₹11,800). Switch any line’s mode anytime with the <b>“Incl?”</b> column.<br/><br/>
+        <b>Document type (auto):</b> all-taxable → <b>Tax Invoice</b>; all-exempt → <b>Bill of Supply</b>; mixed → <b>Invoice-cum-Bill of Supply</b> (Rule 46 / 46A).<br/>
+        <b>CGST+SGST vs IGST (auto):</b> customer in Haryana → CGST 50% + SGST 50%; any other state → IGST full.<br/><br/>
+        <span style="color:var(--warn)"><b>Disclaimer:</b> These are standard, defensible classifications. Whether your firm qualifies as a “clinical establishment” for the healthcare exemption, and the exact rate on a specific device, should be confirmed with your Chartered Accountant before filing. Every line item rate is editable.</span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================ STATE / STORAGE ============================
+var LS = {set:function(k,v){localStorage.setItem(k,JSON.stringify(v));},
+          get:function(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}}};
+
+var DEFAULT_SETTINGS = {
+  name:"SPHEREHEALTH MEDICAL SOLUTIONS PRIVATE LIMITED",
+  gstin:"06ABNCS8193D1ZX", pan:"ABNCS8193D",
+  state:"Haryana", stateCode:"06",
+  addr:"Bldg X, Kumaro Ki Chopal Ke Samne, Mohalla Jatwara,\nSonipat, Haryana - 131001",
+  phone:"", email:"query.bims@gmail.com", cin:"",
+  prefix:"SHMS/26-27/", next:1, pad:3,
+  bank:"", acc:"", ifsc:"", upi:"",
+  sign:"For SPHEREHEALTH MEDICAL SOLUTIONS PVT. LTD.",
+  decl:"Certified that the particulars given above are true and correct."
+};
+
+var DEFAULT_CATALOG = [
+  {cat:"Software", name:"SphereHealth Software – One-Time License (price INCLUDES GST)", hsn:"997331", gst:18, unit:"License", rate:10000, incl:true},
+  {cat:"Software", name:"SphereHealth Software – One-Time License (GST EXTRA @18%)", hsn:"997331", gst:18, unit:"License", rate:10000, incl:false},
+  {cat:"Equipment Rental", name:"Hospital Bed (Fowler) – Rent", hsn:"997319", gst:12, unit:"Day", rate:0, incl:false},
+  {cat:"Equipment Rental", name:"Suction Machine – Rent", hsn:"997319", gst:12, unit:"Day", rate:0, incl:false},
+  {cat:"Equipment Rental", name:"BiPAP Machine – Rent", hsn:"997319", gst:12, unit:"Day", rate:0, incl:false},
+  {cat:"Equipment Rental", name:"CPAP Machine – Rent", hsn:"997319", gst:12, unit:"Day", rate:0, incl:false},
+  {cat:"Equipment Rental", name:"Nebulizer Machine – Rent", hsn:"997319", gst:12, unit:"Day", rate:0, incl:false},
+  {cat:"Equipment Rental", name:"Patient Monitor 3-Para – Rent", hsn:"997319", gst:12, unit:"Day", rate:0, incl:false},
+  {cat:"Equipment Rental", name:"Patient Monitor 5-Para – Rent", hsn:"997319", gst:12, unit:"Day", rate:0, incl:false},
+  {cat:"Equipment Rental", name:"Oxygen Concentrator – Rent", hsn:"997319", gst:12, unit:"Day", rate:0, incl:false},
+  {cat:"Equipment Rental", name:"Oxygen Cylinder (with Medical O2) – Rent", hsn:"997319", gst:12, unit:"Day", rate:0, incl:false},
+  {cat:"Equipment Rental", name:"Air / Water Mattress – Rent", hsn:"997319", gst:12, unit:"Day", rate:0, incl:false},
+  {cat:"Equipment Rental", name:"Wheelchair – Rent", hsn:"997319", gst:12, unit:"Day", rate:0, incl:false},
+  {cat:"Equipment Rental", name:"Syringe / Infusion Pump – Rent", hsn:"997319", gst:12, unit:"Day", rate:0, incl:false},
+  {cat:"Home Care Staff", name:"GDA / Attendant (General Duty Assistant) – at Home", hsn:"998514", gst:18, unit:"Day", rate:0, incl:false},
+  {cat:"Healthcare (Exempt)", name:"Nursing Care at Home (Registered Nurse)", hsn:"999316", gst:0, unit:"Day", rate:0, incl:false},
+  {cat:"Healthcare (Exempt)", name:"Doctor Visit at Home (Consultation)", hsn:"999312", gst:0, unit:"Visit", rate:0, incl:false},
+  {cat:"Healthcare (Exempt)", name:"ECG at Home (Diagnostic with Report)", hsn:"999316", gst:0, unit:"Test", rate:0, incl:false}
+];
+
+// Category display order — Software first, then the rest. Unknown categories fall to the end.
+var CAT_ORDER = ["Software","Equipment Rental","Home Care Staff","Healthcare (Exempt)"];
+function orderedCats(groups){
+  return Object.keys(groups).sort(function(a,b){
+    var ia=CAT_ORDER.indexOf(a), ib=CAT_ORDER.indexOf(b);
+    if(ia<0)ia=999; if(ib<0)ib=999;
+    return (ia-ib) || a.localeCompare(b);
+  });
+}
+
+var STATES = [["01","Jammu & Kashmir"],["02","Himachal Pradesh"],["03","Punjab"],["04","Chandigarh"],["05","Uttarakhand"],["06","Haryana"],["07","Delhi"],["08","Rajasthan"],["09","Uttar Pradesh"],["10","Bihar"],["11","Sikkim"],["12","Arunachal Pradesh"],["13","Nagaland"],["14","Manipur"],["15","Mizoram"],["16","Tripura"],["17","Meghalaya"],["18","Assam"],["19","West Bengal"],["20","Jharkhand"],["21","Odisha"],["22","Chhattisgarh"],["23","Madhya Pradesh"],["24","Gujarat"],["26","Dadra & Nagar Haveli and Daman & Diu"],["27","Maharashtra"],["29","Karnataka"],["30","Goa"],["31","Lakshadweep"],["32","Kerala"],["33","Tamil Nadu"],["34","Puducherry"],["35","Andaman & Nicobar"],["36","Telangana"],["37","Andhra Pradesh"],["38","Ladakh"]];
+
+var settings = LS.get("sh_gst_settings", null) || JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+var catalog  = LS.get("sh_gst_catalog", null)  || JSON.parse(JSON.stringify(DEFAULT_CATALOG));
+// Normalise: every Equipment Rental item is a 3-tier (Day/Week/Month) rental; ensure a rates object exists.
+catalog.forEach(function(c){ if(c.cat==="Equipment Rental" && !c.tiered){ c.tiered=true; c.rates=c.rates||{Day:c.rate||0,Week:0,Month:0}; } if(c.tiered && !c.rates){ c.rates={Day:c.rate||0,Week:0,Month:0}; } });
+var invoices = LS.get("sh_gst_invoices", []);
+var lines = [];
+var editingId = null;
+
+// ============================ HELPERS ============================
+function $(id){return document.getElementById(id);}
+function money(n){return (Math.round((n+Number.EPSILON)*100)/100).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});}
+function toast(m){var t=$("toast");t.textContent=m;t.classList.add("show");setTimeout(function(){t.classList.remove("show");},1900);}
+function todayISO(){var d=new Date();var m=(d.getMonth()+1).toString().padStart(2,"0");var day=d.getDate().toString().padStart(2,"0");return d.getFullYear()+"-"+m+"-"+day;}
+function fmtDate(iso){if(!iso)return"";var p=iso.split("-");return p[2]+"/"+p[1]+"/"+p[0];}
+
+function numToWords(num){
+  num=Math.round(num);
+  if(num===0)return"Zero Rupees Only";
+  var a=["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
+  var b=["","","Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
+  function two(n){return n<20?a[n]:b[Math.floor(n/10)]+(n%10?" "+a[n%10]:"");}
+  function three(n){return (n>99?a[Math.floor(n/100)]+" Hundred"+(n%100?" ":""):"")+(n%100?two(n%100):"");}
+  var s="";
+  var crore=Math.floor(num/10000000);num%=10000000;
+  var lakh=Math.floor(num/100000);num%=100000;
+  var thou=Math.floor(num/1000);num%=1000;
+  var hund=num;
+  if(crore)s+=three(crore)+" Crore ";
+  if(lakh)s+=two(lakh)+" Lakh ";
+  if(thou)s+=two(thou)+" Thousand ";
+  if(hund)s+=three(hund);
+  return s.trim()+" Rupees Only";
+}
+
+// ============================ DROPDOWNS ============================
+function fillStateSelect(sel,selCode){
+  sel.innerHTML="";
+  STATES.forEach(function(s){
+    var o=document.createElement("option");o.value=s[0];o.textContent=s[0]+" — "+s[1];
+    if(s[0]===selCode)o.selected=true;sel.appendChild(o);
+  });
+}
+function fillQuickAdd(){
+  var q=$("quickAdd");q.innerHTML='<option value="">— choose a service —</option>';
+  var groups={};catalog.forEach(function(c,i){(groups[c.cat]=groups[c.cat]||[]).push(i);});
+  orderedCats(groups).forEach(function(g){
+    var og=document.createElement("optgroup");og.label=g;
+    groups[g].forEach(function(i){var c=catalog[i];var o=document.createElement("option");o.value=i;
+      var rl=c.tiered?(" · D/W/M ₹"+((c.rates&&c.rates.Day)||0)+"/"+((c.rates&&c.rates.Week)||0)+"/"+((c.rates&&c.rates.Month)||0)):(c.rate?(" · ₹"+c.rate+(c.incl?" incl":"")):"");
+      o.textContent=c.name+"  ["+c.hsn+" · "+(c.gst===0?"Exempt":c.gst+"%")+rl+"]";og.appendChild(o);});
+    q.appendChild(og);
+  });
+}
+
+// ============================ LINE ITEMS ============================
+function addLine(data){
+  lines.push(Object.assign({desc:"",hsn:"",qty:1,unit:"Day",rate:0,incl:false,disc:0,gst:18},data||{}));
+  renderLines();
+}
+function renderLines(){
+  var tb=$("lineBody");tb.innerHTML="";
+  if(!lines.length){
+    tb.innerHTML='<tr class="emptyrow"><td colspan="11">🧾 No line items yet — pick a service from <b>“Add from catalog”</b> above, or click <b>“+ Blank line”</b> to start.</td></tr>';
+    recalc();return;
+  }
+  lines.forEach(function(ln,idx){
+    var tr=document.createElement("tr");
+    tr.innerHTML=
+      '<td><input data-f="desc" data-i="'+idx+'" value="'+esc(ln.desc)+'"/></td>'+
+      '<td style="max-width:90px"><input data-f="hsn" data-i="'+idx+'" value="'+esc(ln.hsn)+'"/></td>'+
+      '<td class="num" style="max-width:70px"><input data-f="qty" data-i="'+idx+'" type="number" step="any" value="'+ln.qty+'"/></td>'+
+      (ln.rates?'<td style="max-width:92px"><select data-f="basis" data-i="'+idx+'">'+["Day","Week","Month"].map(function(u){return '<option value="'+u+'"'+(((ln.basis||ln.unit)===u)?" selected":"")+'>/ '+u+'</option>';}).join("")+'</select></td>':'<td style="max-width:80px"><input data-f="unit" data-i="'+idx+'" value="'+esc(ln.unit)+'"/></td>')+
+      '<td class="num" style="max-width:100px"><input data-f="rate" data-i="'+idx+'" type="number" step="any" value="'+ln.rate+'"/></td>'+
+      '<td><select data-f="incl" data-i="'+idx+'"><option value="false"'+(!ln.incl?" selected":"")+'>No</option><option value="true"'+(ln.incl?" selected":"")+'>Yes</option></select></td>'+
+      '<td class="num" style="max-width:70px"><input data-f="disc" data-i="'+idx+'" type="number" step="any" value="'+ln.disc+'"/></td>'+
+      '<td style="max-width:90px"><select data-f="gst" data-i="'+idx+'">'+[0,5,12,18,28].map(function(g){return '<option value="'+g+'"'+(Number(ln.gst)===g?" selected":"")+'>'+(g===0?"Exempt":g+"%")+'</option>';}).join("")+'</select></td>'+
+      '<td class="num"><b>'+money(calcLine(ln).taxable)+'</b></td>'+
+      '<td class="num">'+money(calcLine(ln).tax)+'</td>'+
+      '<td style="text-align:center"><button class="del-x" data-del="'+idx+'">✕</button></td>';
+    tb.appendChild(tr);
+  });
+  bindLineInputs();
+  recalc();
+}
+function esc(s){return String(s==null?"":s).replace(/"/g,"&quot;").replace(/</g,"&lt;");}
+function bindLineInputs(){
+  document.querySelectorAll("#lineBody [data-f]").forEach(function(el){
+    el.addEventListener("input",function(){
+      var i=+el.getAttribute("data-i"),f=el.getAttribute("data-f");
+      var v=el.value;
+      if(f==="basis"){lines[i].basis=v;lines[i].unit=v;if(lines[i].rates)lines[i].rate=parseFloat(lines[i].rates[v])||0;renderLines();return;}
+      if(f==="incl")v=(v==="true");
+      else if(f==="qty"||f==="rate"||f==="disc"||f==="gst")v=parseFloat(v)||0;
+      lines[i][f]=v;
+      if(f==="gst"||f==="incl"||f==="qty"||f==="rate"||f==="disc")renderLines();
+      else recalc();
+    });
+  });
+  document.querySelectorAll("#lineBody [data-del]").forEach(function(b){
+    b.addEventListener("click",function(){lines.splice(+b.getAttribute("data-del"),1);renderLines();});
+  });
+}
+function calcLine(ln){
+  var gross=(parseFloat(ln.qty)||0)*(parseFloat(ln.rate)||0);
+  var afterDisc=gross*(1-(parseFloat(ln.disc)||0)/100);
+  var g=parseFloat(ln.gst)||0;
+  var taxable,tax;
+  if(ln.incl && g>0){taxable=afterDisc/(1+g/100);tax=afterDisc-taxable;}
+  else {taxable=afterDisc;tax=taxable*g/100;}
+  return {taxable:taxable,tax:tax,g:g};
+}
+
+// ============================ TOTALS ============================
+function isIntraState(){return $("custState").value===settings.stateCode;}
+function recalc(){
+  var sumTaxable=0,sumExempt=0,sumTax=0,hasTax=false,hasExempt=false;
+  lines.forEach(function(ln){
+    var c=calcLine(ln);
+    if(c.g>0){sumTaxable+=c.taxable;sumTax+=c.tax;hasTax=true;}
+    else{sumExempt+=c.taxable;hasExempt=true;}
+  });
+  var intra=isIntraState();
+  var cgst=intra?sumTax/2:0, sgst=intra?sumTax/2:0, igst=intra?0:sumTax;
+  var grandRaw=sumTaxable+sumExempt+sumTax;
+  var rounded=Math.round(grandRaw);
+  var roundOff=rounded-grandRaw;
+
+  // document type
+  var docType = hasTax&&hasExempt ? "Invoice-cum-Bill of Supply" : (hasTax ? "Tax Invoice" : (hasExempt ? "Bill of Supply" : "Tax Invoice"));
+  $("docBadge").textContent=docType;
+
+  var rows="";
+  rows+=trow("Taxable Value",money(sumTaxable));
+  if(hasExempt)rows+=trow("Exempt Value",money(sumExempt));
+  if(intra){rows+=trow("CGST",money(cgst));rows+=trow("SGST",money(sgst));}
+  else if(sumTax>0){rows+=trow("IGST",money(igst));}
+  rows+=trow("Round Off",(roundOff>=0?"+":"")+money(roundOff));
+  rows+='<div class="r grand"><span class="lbl">TOTAL (₹)</span><span>'+money(rounded)+'</span></div>';
+  $("totBox").innerHTML=rows;
+  $("amtWords").textContent="Amount in words: "+numToWords(rounded);
+  $("supplyType").textContent=(intra?"Intra-state supply → CGST + SGST":"Inter-state supply → IGST")+"  ·  Place of supply: "+stateName($("custState").value);
+
+  var t={sumTaxable:sumTaxable,sumExempt:sumExempt,sumTax:sumTax,cgst:cgst,sgst:sgst,igst:igst,intra:intra,rounded:rounded,roundOff:roundOff,docType:docType};
+  updatePreview(t);
+  return t;
+}
+function trow(l,v){return '<div class="r"><span class="lbl">'+l+'</span><span>'+v+'</span></div>';}
+function stateName(code){var f=STATES.filter(function(s){return s[0]===code;});return f.length?f[0][1]:code;}
+
+// ============================ CATALOG UI ============================
+function renderCatalog(){
+  var host=$("catalogList");host.innerHTML="";
+  var groups={};catalog.forEach(function(c,i){(groups[c.cat]=groups[c.cat]||[]).push(i);});
+  orderedCats(groups).forEach(function(g){
+    var h=document.createElement("div");h.className="catgroup";h.textContent=g;host.appendChild(h);
+    var wrap=document.createElement("div");wrap.className="catlist";
+    groups[g].forEach(function(i){
+      var c=catalog[i];var d=document.createElement("div");d.className="catitem";
+      d.innerHTML='<div class="nm">'+esc(c.name)+'</div>'+
+        '<div class="meta">SAC/HSN '+c.hsn+' · '+(c.gst===0?'<span class="pill exm">Exempt</span>':'<span class="pill tax">'+c.gst+'%</span>')+' · '+c.unit+'</div>'+
+        '<div class="meta">'+(c.tiered&&c.rates?("Day ₹"+(c.rates.Day||0)+" · Wk ₹"+(c.rates.Week||0)+" · Mo ₹"+(c.rates.Month||0)):("Rate: ₹"+c.rate))+(c.incl?" (incl GST)":"")+'</div>'+
+        '<div class="row-actions"><button class="btn sm ghost" data-edit="'+i+'">Edit</button><button class="btn sm danger" data-rm="'+i+'">Delete</button></div>';
+      wrap.appendChild(d);
+    });
+    host.appendChild(wrap);
+  });
+  host.querySelectorAll("[data-rm]").forEach(function(b){b.onclick=function(){catalog.splice(+b.getAttribute("data-rm"),1);LS.set("sh_gst_catalog",catalog);renderCatalog();fillQuickAdd();};});
+  host.querySelectorAll("[data-edit]").forEach(function(b){b.onclick=function(){var c=catalog[+b.getAttribute("data-edit")];$("cName").value=c.name;$("cHsn").value=c.hsn;$("cGst").value=c.gst;$("cUnit").value=c.unit||"Day";$("cRate").value=c.rate||0;$("cIncl").value=c.incl?"true":"false";$("cCat").value=c.cat;var r=c.rates||{};$("cRateDay").value=r.Day||0;$("cRateWeek").value=r.Week||0;$("cRateMonth").value=r.Month||0;toast("Loaded — edit & click Add/Update");};});
+}
+
+// ============================ REGISTER UI ============================
+function renderRegister(filter){
+  var tb=$("regBody");tb.innerHTML="";
+  var f=(filter||"").toLowerCase();
+  var totTaxable=0,totTax=0,totGrand=0,cnt=0;
+  invoices.slice().reverse().forEach(function(inv){
+    if(f && (inv.invNo+" "+inv.custName).toLowerCase().indexOf(f)<0)return;
+    totTaxable+=inv.t.sumTaxable;totTax+=inv.t.sumTax;totGrand+=inv.t.rounded;cnt++;
+    var tr=document.createElement("tr");
+    tr.innerHTML='<td>'+fmtDate(inv.invDate)+'</td><td>'+esc(inv.invNo)+'</td><td>'+inv.t.docType+'</td><td>'+esc(inv.custName)+'</td>'+
+      '<td>₹'+money(inv.t.sumTaxable)+'</td><td>₹'+money(inv.t.sumTax)+'</td><td><b>₹'+money(inv.t.rounded)+'</b></td>'+
+      '<td class="row-actions"><button class="btn sm ghost" data-open="'+inv.id+'">Open</button><button class="btn sm gray" data-pr="'+inv.id+'">Print</button><button class="btn sm danger" data-del="'+inv.id+'">Del</button></td>';
+    tb.appendChild(tr);
+  });
+  $("regKpis").innerHTML=
+    kpi(cnt,"Invoices")+kpi("₹"+money(totTaxable),"Taxable Value")+kpi("₹"+money(totTax),"GST Collected")+kpi("₹"+money(totGrand),"Total Billed");
+  tb.querySelectorAll("[data-open]").forEach(function(b){b.onclick=function(){loadInvoice(b.getAttribute("data-open"));};});
+  tb.querySelectorAll("[data-pr]").forEach(function(b){b.onclick=function(){var inv=invoices.filter(function(x){return x.id===b.getAttribute("data-pr");})[0];printInvoice(inv);};});
+  tb.querySelectorAll("[data-del]").forEach(function(b){b.onclick=function(){if(confirm("Delete this invoice from the register?")){invoices=invoices.filter(function(x){return x.id!==b.getAttribute("data-del");});LS.set("sh_gst_invoices",invoices);renderRegister($("regSearch").value);}};});
+}
+function kpi(v,l){return '<div class="kpi"><div class="v">'+v+'</div><div class="l">'+l+'</div></div>';}
+
+// ============================ SAVE / LOAD INVOICE ============================
+function buildInvObject(t){
+  return {
+    id: editingId || ("inv_"+invoices.length+"_"+($("invNo").value||"x").replace(/\W/g,"")),
+    invNo:$("invNo").value, invDate:$("invDate").value,
+    posState:$("posState").value, revCharge:$("revCharge").value,
+    custName:$("custName").value, custGstin:$("custGstin").value.toUpperCase(),
+    custAddr:$("custAddr").value, custState:$("custState").value,
+    custPhone:$("custPhone").value, custRef:$("custRef").value,
+    notes:$("invNotes").value,
+    lines:JSON.parse(JSON.stringify(lines)),
+    t:t,
+    settingsSnapshot:JSON.parse(JSON.stringify(settings))
+  };
+}
+function collectInvoice(){ return buildInvObject(recalc()); }
+
+// Live preview (debounced) — renders the same invoice template into the iframe below the form
+var _pvTimer=null;
+function updatePreview(t){
+  clearTimeout(_pvTimer);
+  _pvTimer=setTimeout(function(){
+    var f=$("invPreviewFrame"); if(!f)return;
+    f.srcdoc=buildInvoiceHtml(buildInvObject(t),false);
+  },120);
+}
+function saveInvoice(){
+  if(!$("custName").value.trim()){toast("Enter customer name");return;}
+  if(!lines.length){toast("Add at least one line item");return;}
+  var inv=collectInvoice();
+  var existing=invoices.filter(function(x){return x.id===inv.id;})[0];
+  if(existing){invoices=invoices.map(function(x){return x.id===inv.id?inv:x;});toast("Invoice updated");}
+  else{
+    invoices.push(inv);
+    // advance numbering only for brand-new auto-numbered invoices
+    if($("invNo").value===nextNumberStr()){settings.next=(parseInt(settings.next)||1)+1;LS.set("sh_gst_settings",settings);}
+    toast("Invoice saved to register");
+  }
+  editingId=inv.id;$("editingTag").textContent="Editing: "+inv.invNo;
+  LS.set("sh_gst_invoices",invoices);
+  renderRegister("");
+}
+function loadInvoice(id){
+  var inv=invoices.filter(function(x){return x.id===id;})[0];if(!inv)return;
+  editingId=inv.id;
+  $("invNo").value=inv.invNo;$("invDate").value=inv.invDate;
+  fillStateSelect($("posState"),inv.posState);fillStateSelect($("custState"),inv.custState);
+  $("revCharge").value=inv.revCharge;$("custName").value=inv.custName;$("custGstin").value=inv.custGstin;
+  $("custAddr").value=inv.custAddr;$("custPhone").value=inv.custPhone||"";$("custRef").value=inv.custRef||"";
+  $("invNotes").value=inv.notes||"";
+  lines=JSON.parse(JSON.stringify(inv.lines));
+  $("editingTag").textContent="Editing: "+inv.invNo;
+  switchTab("invoice");renderLines();
+  toast("Loaded "+inv.invNo);
+}
+function nextNumberStr(){return settings.prefix+String(parseInt(settings.next)||1).padStart(parseInt(settings.pad)||1,"0");}
+function newInvoice(){
+  editingId=null;
+  $("invNo").value=nextNumberStr();$("invDate").value=todayISO();
+  fillStateSelect($("posState"),settings.stateCode);fillStateSelect($("custState"),settings.stateCode);
+  $("revCharge").value="No";$("custName").value="";$("custGstin").value="";$("custAddr").value="";$("custPhone").value="";$("custRef").value="";
+  $("invNotes").value="Payment due on receipt. Equipment remains property of SphereHealth Medical Solutions Pvt. Ltd. and must be returned in working condition.";
+  lines=[];$("editingTag").textContent="";renderLines();
+}
+
+// ============================ PRINT ============================
+function buildInvoiceHtml(inv,autoPrint){
+  var s=inv.settingsSnapshot||settings;var t=inv.t;var intra=t.intra;
+  var inclAny=inv.lines.some(function(l){return l.incl;});
+
+  var rowsHtml=inv.lines.map(function(ln,i){
+    var c=calcLine(ln);
+    return "<tr><td class='c'>"+(i+1)+"</td><td class='l'>"+(esc(ln.desc)||"&nbsp;")+"</td><td class='c'>"+esc(ln.hsn)+"</td><td class='c'>"+ln.qty+" "+esc(ln.unit)+"</td><td class='r'>"+money(ln.rate)+(ln.incl?" *":"")+"</td><td class='r'>"+(ln.disc||0)+"%</td><td class='r'>"+money(c.taxable)+"</td><td class='c'>"+(c.g===0?"<span class='ex'>Exempt</span>":c.g+"%")+"</td><td class='r'>"+money(c.tax)+"</td><td class='r b'>"+money(c.taxable+c.tax)+"</td></tr>";
+  }).join("");
+
+  // HSN/SAC rate-wise tax summary
+  var agg={};
+  inv.lines.forEach(function(ln){var c=calcLine(ln);var key=(ln.hsn||"-")+"|"+c.g;
+    if(!agg[key])agg[key]={hsn:ln.hsn||"-",g:c.g,taxable:0,tax:0};
+    agg[key].taxable+=c.taxable;agg[key].tax+=c.tax;});
+  var sumTaxable2=0,sumTax2=0;
+  var hsnRows=Object.keys(agg).map(function(k){var h=agg[k];sumTaxable2+=h.taxable;sumTax2+=h.tax;
+    if(intra){var half=h.tax/2;
+      return "<tr><td>"+esc(h.hsn)+"</td><td class='r'>"+money(h.taxable)+"</td><td>"+(h.g/2)+"%</td><td class='r'>"+money(half)+"</td><td>"+(h.g/2)+"%</td><td class='r'>"+money(half)+"</td><td class='r b'>"+money(h.tax)+"</td></tr>";
+    }
+    return "<tr><td>"+esc(h.hsn)+"</td><td class='r'>"+money(h.taxable)+"</td><td>"+h.g+"%</td><td class='r'>"+money(h.tax)+"</td><td class='r b'>"+money(h.tax)+"</td></tr>";
+  }).join("");
+  var hsnHead = intra
+    ? "<tr><th rowspan='2'>HSN/SAC</th><th rowspan='2' class='r'>Taxable</th><th colspan='2'>CGST</th><th colspan='2'>SGST</th><th rowspan='2' class='r'>Total Tax</th></tr><tr><th>Rate</th><th class='r'>Amt</th><th>Rate</th><th class='r'>Amt</th></tr>"
+    : "<tr><th rowspan='2'>HSN/SAC</th><th rowspan='2' class='r'>Taxable</th><th colspan='2'>IGST</th><th rowspan='2' class='r'>Total Tax</th></tr><tr><th>Rate</th><th class='r'>Amt</th></tr>";
+  var hsnFoot = intra
+    ? "<tr class='ft'><td>Total</td><td class='r'>"+money(sumTaxable2)+"</td><td></td><td class='r'>"+money(sumTax2/2)+"</td><td></td><td class='r'>"+money(sumTax2/2)+"</td><td class='r'>"+money(sumTax2)+"</td></tr>"
+    : "<tr class='ft'><td>Total</td><td class='r'>"+money(sumTaxable2)+"</td><td></td><td class='r'>"+money(sumTax2)+"</td><td class='r'>"+money(sumTax2)+"</td></tr>";
+
+  var taxBlock = intra
+    ? "<tr><td class='l'>CGST</td><td class='r'>"+money(t.cgst)+"</td></tr><tr><td class='l'>SGST</td><td class='r'>"+money(t.sgst)+"</td></tr>"
+    : (t.sumTax>0?"<tr><td class='l'>IGST</td><td class='r'>"+money(t.igst)+"</td></tr>":"");
+
+  var bank=(s.bank||s.acc||s.upi)?("<div class='pay'><div class='ph'>Payment Details</div><b>Bank:</b> "+esc(s.bank||"-")+" &nbsp;·&nbsp; <b>A/C:</b> "+esc(s.acc||"-")+" &nbsp;·&nbsp; <b>IFSC:</b> "+esc(s.ifsc||"-")+(s.upi?(" &nbsp;·&nbsp; <b>UPI:</b> "+esc(s.upi)):"")+"</div>"):"";
+  var custGst=inv.custGstin?("<div><span class='k'>GSTIN</span> <b>"+esc(inv.custGstin)+"</b></div>"):("<div><i>Unregistered / B2C</i></div>");
+  var logoChar=(s.name?s.name.trim().charAt(0):"S");
+
+  return [
+"<!DOCTYPE html><html><head><meta charset='utf-8'><title>"+esc(inv.invNo)+"</title><style>",
+"*{box-sizing:border-box;margin:0;padding:0}",
+"body{font-family:'Segoe UI',Arial,sans-serif;color:#16232e;font-size:11.5px;padding:16px;background:#f3f6f7}",
+".inv{max-width:820px;margin:0 auto;background:#fff;border:1px solid #d3dee2;border-radius:8px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.08)}",
+".band{height:6px;background:linear-gradient(90deg,#134e4a,#0f766e,#14b8a6)}",
+".hd{display:flex;justify-content:space-between;gap:16px;padding:16px 18px 14px}",
+".hd .co{display:flex;gap:12px}",
+".hd .logo{width:46px;height:46px;border-radius:11px;background:linear-gradient(135deg,#0f766e,#134e4a);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:23px;flex:none}",
+".hd .nm{font-size:17px;font-weight:800;color:#134e4a;letter-spacing:.2px}",
+".hd .ad{font-size:10.5px;color:#5b6b75;line-height:1.55;margin-top:3px;max-width:330px}",
+".hd .ad b{color:#16232e}",
+".hd .rt{text-align:right;min-width:236px}",
+".hd .tt{font-size:19px;font-weight:800;color:#134e4a;letter-spacing:1px}",
+".hd .cp{display:inline-block;font-size:9px;font-weight:700;color:#0f766e;background:#effbf9;border:1px solid #cdeee7;border-radius:999px;padding:2px 9px;margin-top:4px;letter-spacing:.5px}",
+"table.meta{margin-top:9px;margin-left:auto;border-collapse:collapse;font-size:10.5px}",
+"table.meta td{padding:2px 0 2px 10px;text-align:right}table.meta td.k{color:#5b6b75;font-weight:600}table.meta td.v{font-weight:700;color:#16232e}",
+".parties{display:flex;border-top:1px solid #e2eaed;border-bottom:1px solid #e2eaed;background:#fafcfc}",
+".parties>div{flex:1;padding:11px 18px;font-size:10.8px;line-height:1.7}",
+".parties>div:first-child{border-right:1px solid #e2eaed}",
+".parties .lbl{font-size:9px;font-weight:800;letter-spacing:.6px;color:#0f766e;text-transform:uppercase;margin-bottom:3px}",
+".parties .cn{font-size:13px;font-weight:800;color:#16232e}",
+".parties .k{display:inline-block;min-width:54px;color:#5b6b75;font-weight:600}",
+"table.it{width:100%;border-collapse:collapse}",
+"table.it thead th{background:#134e4a;color:#fff;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;padding:8px 6px;font-weight:700;text-align:center}",
+"table.it thead th.l{text-align:left}table.it thead th.r{text-align:right}",
+"table.it tbody td{border-bottom:1px solid #e9eff1;padding:7px 6px;font-size:10.8px}",
+"table.it tbody tr:nth-child(even){background:#fafcfc}",
+"table.it td.l{text-align:left}table.it td.r{text-align:right}table.it td.c{text-align:center}table.it td.b{font-weight:700}",
+"table.it .ex{color:#7c3aed;font-weight:700;font-size:9.5px}",
+".mid{display:flex;gap:14px;padding:12px 18px;align-items:flex-start}",
+".hsnwrap{flex:1}",
+".hsnwrap .ht{font-size:9px;font-weight:800;letter-spacing:.5px;color:#0f766e;text-transform:uppercase;margin-bottom:5px}",
+"table.hsn{width:100%;border-collapse:collapse;font-size:9.8px}",
+"table.hsn th{background:#effbf9;color:#134e4a;border:1px solid #d8e7e3;padding:4px 5px;font-weight:700;text-align:center}",
+"table.hsn td{border:1px solid #e4ecee;padding:4px 5px;text-align:center}",
+"table.hsn td.r{text-align:right}table.hsn td.b{font-weight:700}table.hsn tr.ft td{background:#f3f8f7;font-weight:800}",
+".sumbox{min-width:272px}",
+"table.sum{width:100%;border-collapse:collapse}",
+"table.sum td{padding:5px 12px;font-size:11.5px}table.sum td.l{color:#5b6b75}table.sum td.r{text-align:right;font-weight:600}",
+"table.sum tr.g td{background:linear-gradient(115deg,#134e4a,#0f766e);color:#fff;font-weight:800;font-size:13.5px}",
+".words{padding:0 18px 10px;font-size:10.8px}",
+".words .w{font-style:italic;font-weight:700;color:#134e4a;background:#effbf9;border:1px solid #cdeee7;border-radius:6px;padding:7px 10px;margin-top:3px}",
+".pay{font-size:10.5px;padding:9px 18px;background:#fafcfc;border-top:1px solid #e2eaed}",
+".pay .ph{font-size:9px;font-weight:800;letter-spacing:.5px;color:#0f766e;text-transform:uppercase;margin-bottom:3px}",
+".foot{display:flex;justify-content:space-between;gap:18px;padding:14px 18px;border-top:1px solid #e2eaed}",
+".foot .terms{flex:1;font-size:9.8px;color:#5b6b75;line-height:1.6}",
+".foot .terms .decl{color:#16232e;font-weight:700;margin-bottom:4px}",
+".sign{text-align:center;min-width:220px;font-size:10.5px}",
+".sign .for{font-weight:700;color:#16232e;margin-bottom:40px}",
+".sign .ln{border-top:1px solid #9fb1ba;padding-top:4px;color:#5b6b75}",
+".rc{text-align:center;font-size:9px;color:#8595a0;padding:7px;border-top:1px solid #eef3f4;background:#fafcfc}",
+"@media print{body{padding:0;background:#fff}.inv{border:none;box-shadow:none;border-radius:0;max-width:100%}}",
+"</style></head><body><div class='inv'>",
+"<div class='band'></div>",
+"<div class='hd'>",
+  "<div class='co'><div class='logo'>"+esc(logoChar)+"</div><div><div class='nm'>"+esc(s.name)+"</div><div class='ad'>"+esc(s.addr).replace(/\n/g,"<br>")+"<br><b>GSTIN:</b> "+esc(s.gstin)+" &nbsp; <b>PAN:</b> "+esc(s.pan)+(s.email?("<br><b>Email:</b> "+esc(s.email)):"")+(s.phone?(" &nbsp; <b>Ph:</b> "+esc(s.phone)):"")+(s.cin?("<br><b>CIN:</b> "+esc(s.cin)):"")+"</div></div></div>",
+  "<div class='rt'><div class='tt'>"+t.docType.toUpperCase()+"</div><div class='cp'>ORIGINAL FOR RECIPIENT</div>",
+    "<table class='meta'><tr><td class='k'>Invoice No</td><td class='v'>"+esc(inv.invNo)+"</td></tr><tr><td class='k'>Date</td><td class='v'>"+fmtDate(inv.invDate)+"</td></tr><tr><td class='k'>Place of Supply</td><td class='v'>"+stateName(inv.posState)+" ("+inv.posState+")</td></tr><tr><td class='k'>Reverse Charge</td><td class='v'>"+inv.revCharge+"</td></tr></table>",
+  "</div>",
+"</div>",
+"<div class='parties'>",
+  "<div><div class='lbl'>Bill To</div><div class='cn'>"+(esc(inv.custName)||"-")+"</div>"+(inv.custAddr?(esc(inv.custAddr).replace(/\n/g,"<br>")+"<br>"):"")+custGst+(inv.custPhone?("<div><span class='k'>Phone</span> "+esc(inv.custPhone)+"</div>"):"")+"</div>",
+  "<div><div class='lbl'>Supply Details</div><div><span class='k'>State</span> <b>"+stateName(inv.custState)+" ("+inv.custState+")</b></div><div><span class='k'>Supply</span> "+(intra?"Intra-State — CGST + SGST":"Inter-State — IGST")+"</div>"+(inv.custRef?("<div><span class='k'>Ref</span> "+esc(inv.custRef)+"</div>"):"")+"</div>",
+"</div>",
+"<table class='it'><thead><tr><th>#</th><th class='l'>Description of Service</th><th>SAC/HSN</th><th>Qty</th><th class='r'>Rate</th><th class='r'>Disc</th><th class='r'>Taxable</th><th>GST</th><th class='r'>Tax</th><th class='r'>Amount</th></tr></thead><tbody>"+rowsHtml+"</tbody></table>",
+"<div class='mid'>",
+  "<div class='hsnwrap'><div class='ht'>Tax Summary — HSN / SAC wise</div><table class='hsn'><thead>"+hsnHead+"</thead><tbody>"+hsnRows+hsnFoot+"</tbody></table></div>",
+  "<div class='sumbox'><table class='sum'><tr><td class='l'>Taxable Value</td><td class='r'>"+money(t.sumTaxable)+"</td></tr>"+(t.sumExempt>0?"<tr><td class='l'>Exempt Value</td><td class='r'>"+money(t.sumExempt)+"</td></tr>":"")+taxBlock+"<tr><td class='l'>Round Off</td><td class='r'>"+(t.roundOff>=0?"+":"")+money(t.roundOff)+"</td></tr><tr class='g'><td>TOTAL ₹</td><td class='r'>"+money(t.rounded)+"</td></tr></table></div>",
+"</div>",
+"<div class='words'><b>Amount in words:</b><div class='w'>"+numToWords(t.rounded)+"</div>"+(inclAny?"<div style='margin-top:5px;color:#5b6b75'>* rate is GST-inclusive</div>":"")+"</div>",
+bank,
+"<div class='foot'><div class='terms'><div class='decl'>"+esc(s.decl)+"</div>"+(inv.notes?esc(inv.notes).replace(/\n/g,"<br>"):"")+"</div><div class='sign'><div class='for'>"+esc(s.sign)+"</div><div class='ln'>Authorised Signatory</div></div></div>",
+"<div class='rc'>This is a computer-generated "+t.docType.toLowerCase()+" and does not require a physical signature. Subject to Sonipat, Haryana jurisdiction.</div>",
+"</div>"+(autoPrint!==false?"<script>window.onload=function(){window.print();}<\/script>":"")+"</body></html>"
+].join("");
+}
+function printInvoice(inv){
+  if(!inv)inv=collectInvoice();
+  var html=buildInvoiceHtml(inv);
+  var w=window.open("","_blank");
+  if(!w){toast("Allow pop-ups to print");return;}
+  w.document.open();w.document.write(html);w.document.close();
+}
+
+// ============================ SETTINGS UI ============================
+function loadSettingsForm(){
+  $("sName").value=settings.name;$("sGstin").value=settings.gstin;$("sPan").value=settings.pan;
+  $("sState").value=settings.state;$("sStateCode").value=settings.stateCode;$("sAddr").value=settings.addr;
+  $("sPhone").value=settings.phone;$("sEmail").value=settings.email;$("sCin").value=settings.cin;
+  $("sPrefix").value=settings.prefix;$("sNext").value=settings.next;$("sPad").value=settings.pad;
+  $("sBank").value=settings.bank;$("sAcc").value=settings.acc;$("sIfsc").value=settings.ifsc;$("sUpi").value=settings.upi;
+  $("sSign").value=settings.sign;$("sDecl").value=settings.decl;
+  $("numPreview").textContent=nextNumberStr();
+  ["sPrefix","sNext","sPad"].forEach(function(id){$(id).oninput=function(){settings.prefix=$("sPrefix").value;settings.next=$("sNext").value;settings.pad=$("sPad").value;$("numPreview").textContent=nextNumberStr();};});
+}
+function saveSettings(){
+  settings.name=$("sName").value;settings.gstin=$("sGstin").value.toUpperCase();settings.pan=$("sPan").value.toUpperCase();
+  settings.state=$("sState").value;settings.stateCode=$("sStateCode").value;settings.addr=$("sAddr").value;
+  settings.phone=$("sPhone").value;settings.email=$("sEmail").value;settings.cin=$("sCin").value;
+  settings.prefix=$("sPrefix").value;settings.next=$("sNext").value;settings.pad=$("sPad").value;
+  settings.bank=$("sBank").value;settings.acc=$("sAcc").value;settings.ifsc=$("sIfsc").value;settings.upi=$("sUpi").value;
+  settings.sign=$("sSign").value;settings.decl=$("sDecl").value;
+  LS.set("sh_gst_settings",settings);
+  $("hdrName").textContent=settings.name.replace("PRIVATE LIMITED","Pvt. Ltd.");
+  $("hdrGstin").textContent=settings.gstin;
+  toast("Settings saved");
+}
+
+// ============================ TABS ============================
+function switchTab(name){
+  document.querySelectorAll("nav.tabs button").forEach(function(b){b.classList.toggle("active",b.getAttribute("data-tab")===name);});
+  document.querySelectorAll(".panel").forEach(function(p){p.classList.toggle("active",p.id==="panel-"+name);});
+  if(name==="register")renderRegister($("regSearch").value);
+  if(name==="catalog")renderCatalog();
+  if(name==="settings")loadSettingsForm();
+}
+
+// ============================ WIRE-UP ============================
+document.querySelectorAll("nav.tabs button").forEach(function(b){b.onclick=function(){switchTab(b.getAttribute("data-tab"));};});
+$("btnQuickAdd").onclick=function(){
+  var i=$("quickAdd").value;if(i==="")return;var c=catalog[+i];
+  if(c.tiered){
+    var basis=$("basisSel").value||"Day";var r=c.rates||{};
+    addLine({desc:c.name,hsn:c.hsn,unit:basis,basis:basis,rate:parseFloat(r[basis])||0,rates:{Day:parseFloat(r.Day)||0,Week:parseFloat(r.Week)||0,Month:parseFloat(r.Month)||0},incl:c.incl,gst:c.gst,qty:1,disc:0});
+  } else {
+    addLine({desc:c.name,hsn:c.hsn,unit:c.unit,rate:c.rate,incl:c.incl,gst:c.gst,qty:1,disc:0});
+  }
+};
+$("btnBlankLine").onclick=function(){addLine();};
+$("btnSave").onclick=saveInvoice;
+$("btnPrint").onclick=function(){if(!lines.length){toast("Add a line item first");return;}printInvoice(null);};
+$("btnNew").onclick=function(){if(lines.length&&!confirm("Start a new blank invoice? Unsaved changes will be lost."))return;newInvoice();};
+$("custState").onchange=recalc;
+$("custGstin").addEventListener("input",function(){var v=$("custGstin").value.toUpperCase();if(v.length>=2){var code=v.substring(0,2);if(STATES.some(function(s){return s[0]===code;})){fillStateSelect($("custState"),code);fillStateSelect($("posState"),code);recalc();}}});
+$("btnAddCat").onclick=function(){
+  var name=$("cName").value.trim();if(!name){toast("Enter service name");return;}
+  var rd=parseFloat($("cRateDay").value)||0, rw=parseFloat($("cRateWeek").value)||0, rm=parseFloat($("cRateMonth").value)||0;
+  var item={cat:$("cCat").value||"General",name:name,hsn:$("cHsn").value,gst:parseFloat($("cGst").value)||0,incl:$("cIncl").value==="true"};
+  if(rd>0||rw>0||rm>0){ item.tiered=true; item.rates={Day:rd,Week:rw,Month:rm}; item.unit="Day"; item.rate=rd; }
+  else { item.unit=$("cUnit").value||"Day"; item.rate=parseFloat($("cRate").value)||0; }
+  var idx=catalog.findIndex(function(c){return c.name.toLowerCase()===name.toLowerCase();});
+  if(idx>=0)catalog[idx]=item;else catalog.push(item);
+  LS.set("sh_gst_catalog",catalog);renderCatalog();fillQuickAdd();
+  $("cName").value="";$("cRate").value="0";$("cRateDay").value="0";$("cRateWeek").value="0";$("cRateMonth").value="0";toast("Service saved");
+};
+$("btnSaveSettings").onclick=saveSettings;
+$("regSearch").oninput=function(){renderRegister($("regSearch").value);};
+$("btnExport").onclick=function(){
+  var data={settings:settings,catalog:catalog,invoices:invoices,exportedAt:new Date().toISOString()};
+  var blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+  var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="SphereHealth-GST-backup.json";a.click();
+};
+$("impFile").onchange=function(e){
+  var f=e.target.files[0];if(!f)return;var r=new FileReader();
+  r.onload=function(){try{var d=JSON.parse(r.result);
+    if(d.settings){settings=d.settings;LS.set("sh_gst_settings",settings);}
+    if(d.catalog){catalog=d.catalog;LS.set("sh_gst_catalog",catalog);}
+    if(d.invoices){invoices=d.invoices;LS.set("sh_gst_invoices",invoices);}
+    toast("Backup restored");renderRegister("");fillQuickAdd();
+  }catch(err){toast("Invalid backup file");}};
+  r.readAsText(f);
+};
+
+// ============================ INIT ============================
+fillStateSelect($("posState"),settings.stateCode);
+fillStateSelect($("custState"),settings.stateCode);
+fillQuickAdd();
+$("hdrName").textContent=settings.name.replace("PRIVATE LIMITED","Pvt. Ltd.");
+$("hdrGstin").textContent=settings.gstin;
+$("invPreviewFrame").addEventListener("load",function(){try{this.style.height=(this.contentDocument.body.scrollHeight+2)+"px";}catch(e){}});
+newInvoice();
+</script>
+</body>
+</html>
