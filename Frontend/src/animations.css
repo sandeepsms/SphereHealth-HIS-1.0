@@ -43,7 +43,8 @@ html.hga-lively {
 
 /* ── KEYFRAME CATALOG ─────────────────────────────────────────
    Entrance animations END at `transform: none` (not translateY(0)/scale(1))
-   so no identity-transform lingers to create a containing block. */
+   AND every entrance rule fills `backwards` (NOT `both`/`forwards`) — see the
+   route-transition note below for why the fill-mode is what actually matters. */
 @keyframes hga-page-in   { from { opacity: 0; transform: translateY(var(--hga-travel)) scale(0.985); }
                            to   { opacity: 1; transform: none; } }
 @keyframes hga-fade-in   { from { opacity: 0; } to { opacity: 1; } }
@@ -60,22 +61,30 @@ html.hga-lively {
 @keyframes hga-float     { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
 
 /* ── ROUTE TRANSITION (auto, every authenticated page, all roles) ──
-   No `will-change` — keeping it would make .hga-route a permanent containing
-   block / stacking context for any position:fixed descendant. */
-.hga-route { animation: hga-page-in var(--hga-dur-page) var(--hga-ease) both; }
+   OPACITY-ONLY cross-fade — deliberately NO transform. `.hga-route` wraps every
+   routed page, so it is an ancestor of EVERY inline `position:fixed` modal. ANY
+   transform on it makes it a containing block that traps those modals — they then
+   centre within the full page instead of the viewport and "appear far down". This
+   bites not just with a `forwards`/`both`-held identity matrix, but at ANY moment
+   the transform animation is mid-flight or throttle-frozen (e.g. a background tab).
+   Animating only `opacity` (a stacking context, but NOT a containing block) gives
+   a clean page cross-fade with ZERO trap risk in every animation state. Per-page
+   fade-UP motion still comes from the opt-in hga-enter/hga-stagger classes on the
+   page content. `backwards` fill avoids an initial opacity flash. */
+.hga-route { animation: hga-fade-in var(--hga-dur-page) var(--hga-ease) backwards; }
 
 /* ── ENTRANCE HELPERS (opt-in) ────────────────────────────── */
-.hga-enter        { animation: hga-fade-up var(--hga-dur-enter) var(--hga-ease) both; }
-.hga-enter-fade   { animation: hga-fade-in var(--hga-dur-enter) var(--hga-ease) both; }
-.hga-enter-scale  { animation: hga-scale-in var(--hga-dur-enter) var(--hga-ease-back) both; }
-.hga-pop          { animation: hga-pop var(--hga-dur-enter) var(--hga-ease-back) both; }
-.hga-slide-down   { animation: hga-slide-down var(--hga-dur-enter) var(--hga-ease) both; }
-.hga-slide-left   { animation: hga-slide-left var(--hga-dur-enter) var(--hga-ease) both; }
+.hga-enter        { animation: hga-fade-up var(--hga-dur-enter) var(--hga-ease) backwards; }
+.hga-enter-fade   { animation: hga-fade-in var(--hga-dur-enter) var(--hga-ease) backwards; }
+.hga-enter-scale  { animation: hga-scale-in var(--hga-dur-enter) var(--hga-ease-back) backwards; }
+.hga-pop          { animation: hga-pop var(--hga-dur-enter) var(--hga-ease-back) backwards; }
+.hga-slide-down   { animation: hga-slide-down var(--hga-dur-enter) var(--hga-ease) backwards; }
+.hga-slide-left   { animation: hga-slide-left var(--hga-dur-enter) var(--hga-ease) backwards; }
 
 /* Stagger: parent gets .hga-stagger; DIRECT children pop in sequence. Up to 12
    distinct delays; the 13th+ child uses the max delay (still cascades, never
    invisible). */
-.hga-stagger > * { animation: hga-pop var(--hga-dur-enter) var(--hga-ease-back) both; }
+.hga-stagger > * { animation: hga-pop var(--hga-dur-enter) var(--hga-ease-back) backwards; }
 .hga-stagger > *:nth-child(1)  { animation-delay: calc(var(--hga-stagger) * 1); }
 .hga-stagger > *:nth-child(2)  { animation-delay: calc(var(--hga-stagger) * 2); }
 .hga-stagger > *:nth-child(3)  { animation-delay: calc(var(--hga-stagger) * 3); }
@@ -122,6 +131,28 @@ button:not(:disabled):active,
 .hga-loading-pulse { animation: hga-pulse 1.6s ease-in-out infinite; }
 .hga-float { animation: hga-float 3s ease-in-out infinite; }
 
+/* ── iOS-GLASS MODAL BACKDROP (global, applied at runtime by GlassBackdrop.jsx) ──
+   Every translucent full-screen modal scrim is tagged `.hga-glass` (frosted blur
+   + saturate, iOS style). Normal popups ALSO get `.hga-glass-inset`, which starts
+   the frost at the content area's top/left edge (--hga-cl-top/left, set live from
+   the sidebar's right edge) so the SIDEBAR + HEADER stay crisp and interactive —
+   only the content pane frosts. High-z system blockers (forced password change,
+   etc.) get `.hga-glass` only and stay full-screen. The `!important`s beat the
+   scrims' inline `inset:0`/`background`. Tint + blur are tunable here. */
+:root { --hga-glass-tint: rgba(15, 23, 42, 0.22); --hga-glass-blur: 18px; }
+.hga-glass {
+  background: var(--hga-glass-tint) !important;
+  -webkit-backdrop-filter: blur(var(--hga-glass-blur)) saturate(165%);
+  backdrop-filter: blur(var(--hga-glass-blur)) saturate(165%);
+}
+.hga-glass-inset {
+  /* snap the frost to the content pane the instant the modal opens, so the sidebar
+     is crisp from frame 1 (a `transition:left` would briefly frost the sidebar on
+     open AND freeze mid-glide in a throttled/background tab). */
+  top:  var(--hga-cl-top, 52px) !important;
+  left: var(--hga-cl-left, 0px) !important;
+}
+
 /* ── ACCESSIBILITY — honour "reduce motion" (UNIVERSAL, WCAG-recommended) ──
    Covers EVERY animation/transition in the app (hga, component-scoped, inline),
    not just .hga-* — and collapses them to ~instant so entrance animations still
@@ -156,4 +187,7 @@ button:not(:disabled):active,
   }
   /* R7hr-277/278 — click-effect overlays must never land on a printout */
   .print-burst-host, .click-fx-host { display: none !important; }
+  /* R7hr-281 — drop the glass frost on print; restore a plain scrim + full inset */
+  .hga-glass { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  .hga-glass-inset { top: 0 !important; left: 0 !important; transition: none !important; }
 }

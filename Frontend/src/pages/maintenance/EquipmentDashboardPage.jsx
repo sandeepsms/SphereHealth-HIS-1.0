@@ -380,7 +380,7 @@ function ActionBtn({ icon, label, color, onClick }) {
 function ModalShell({ title, color, onClose, onSubmit, submitLabel = "Save", submitting, children }) {
   return (
     <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 999,
+      position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 1100,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
     }}>
       <div onClick={ev => ev.stopPropagation()} style={{

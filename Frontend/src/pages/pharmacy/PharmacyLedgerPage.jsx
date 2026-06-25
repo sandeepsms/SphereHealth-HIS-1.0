@@ -1224,7 +1224,7 @@ export default function PharmacyLedgerPage({
       {collect && (
         <div onClick={() => !colSaving && setCollect(null)} style={{
           position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", display: "flex",
-          alignItems: "center", justifyContent: "center", zIndex: 50,
+          alignItems: "center", justifyContent: "center", zIndex: 1100,
         }}>
           <div onClick={e => e.stopPropagation()} style={{
             background: "#fff", borderRadius: 12, width: 460, maxWidth: "92vw", padding: 22,
@@ -1284,7 +1284,7 @@ export default function PharmacyLedgerPage({
       {advOpen && (
         <div onClick={() => !advSaving && setAdvOpen(false)} style={{
           position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", display: "flex",
-          alignItems: "center", justifyContent: "center", zIndex: 50,
+          alignItems: "center", justifyContent: "center", zIndex: 1100,
         }}>
           <div onClick={e => e.stopPropagation()} style={{
             background: "#fff", borderRadius: 12, width: 460, maxWidth: "92vw", padding: 22,
@@ -1344,7 +1344,7 @@ export default function PharmacyLedgerPage({
       {refOpen && (
         <div onClick={() => !refSaving && setRefOpen(false)} style={{
           position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", display: "flex",
-          alignItems: "center", justifyContent: "center", zIndex: 50,
+          alignItems: "center", justifyContent: "center", zIndex: 1100,
         }}>
           <div onClick={e => e.stopPropagation()} style={{
             background: "#fff", borderRadius: 12, width: 520, maxWidth: "94vw", padding: 22,

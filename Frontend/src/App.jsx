@@ -28,6 +28,8 @@ import RouteTransition from "./Components/RouteTransition.jsx";
 import PrintCelebrate from "./Components/anim/PrintCelebrate";
 // R7hr-278 — global ripple on every button/link click (delegated; edits no page).
 import GlobalClickFx from "./Components/anim/GlobalClickFx";
+// R7hr-281 — global iOS-glass modal backdrop (frost content, keep sidebar/header crisp; edits no page).
+import GlassBackdrop from "./Components/anim/GlassBackdrop";
 import { HospitalSettingsProvider } from "./context/HospitalSettingsContext";
 
 // PrimeReact CSS
@@ -469,6 +471,7 @@ function AppLayout({ collapsed, setCollapsed }) {
       <VoiceDictation />
       <PrintCelebrate />
       <GlobalClickFx />
+      <GlassBackdrop collapsed={collapsed} />
       <div
         className={`main-content ${collapsed ? "expanded" : ""}`}
         style={{
