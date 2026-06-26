@@ -19,11 +19,12 @@ function ensureHost() {
 function ripple(x, y, size) {
   if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   const h = ensureHost();
-  const d = Math.max(36, Math.min(160, size));
+  // R7hr-282 (USER): radius halved (size/2, clamp 18–80) + faded further (.28/.10 → .18/.06)
+  const d = Math.max(18, Math.min(80, size / 2));
   const s = document.createElement("span");
   s.style.cssText =
     `position:absolute;left:${x - d / 2}px;top:${y - d / 2}px;width:${d}px;height:${d}px;` +
-    "border-radius:50%;background:radial-gradient(circle, rgba(37,99,235,.28), rgba(37,99,235,.10) 60%, transparent 72%);" +
+    "border-radius:50%;background:radial-gradient(circle, rgba(37,99,235,.18), rgba(37,99,235,.06) 60%, transparent 72%);" +
     "transform:scale(0);opacity:1;will-change:transform,opacity;";
   h.appendChild(s);
   requestAnimationFrame(() => {

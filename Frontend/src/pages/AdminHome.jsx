@@ -172,13 +172,13 @@ function HospitalHero({ now, hospital, firstName, kpi }) {
   return (
     <div style={{
       borderRadius: 16,
-      background: "linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 45%, #6d28d9 100%)",
+      background: "linear-gradient(135deg, #3730a3 0%, #4338ca 50%, #6366f1 100%)",
       color: "#fff",
       padding: "22px 26px",
       marginBottom: 16,
       position: "relative",
       overflow: "hidden",
-      boxShadow: "0 10px 30px rgba(29,78,216,.35)",
+      boxShadow: "0 10px 30px rgba(79,70,229,.35)",
     }}>
       {/* Decorative concentric rings */}
       <div style={{
@@ -273,12 +273,12 @@ function StatCard({ color, icon, label, value, sub, progress, trend }) {
       border: `1px solid ${C.border}`,
       borderRadius: 14,
       padding: "14px 16px",
-      boxShadow: "0 1px 4px rgba(15,23,42,.06)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.07)",
       position: "relative", overflow: "hidden",
       transition: "transform .15s, box-shadow .15s",
     }}
       onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = `0 8px 22px ${accent}25`; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 4px rgba(15,23,42,.06)"; }}>
+      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.07)"; }}>
       {/* Accent ribbon on the left */}
       <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: accent }} />
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>

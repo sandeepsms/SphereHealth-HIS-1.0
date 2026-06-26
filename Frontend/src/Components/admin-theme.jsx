@@ -30,7 +30,7 @@ export const C = {
   bg: "#f8fafc", card: "#fff", border: "#e2e8f0",
   text: "#0f172a", muted: "#64748b", subtle: "#f8fafc",
   amber: "#d97706", amberL: "#fffbeb",
-  blue: "#1d4ed8", blueL: "#eff6ff",
+  blue: "#4338ca", blueL: "#eef2ff",
   green: "#16a34a", greenL: "#dcfce7",
   red: "#dc2626", redL: "#fef2f2",
   purple: "#7c3aed", purpleL: "#f5f3ff",
@@ -44,7 +44,7 @@ export const C = {
 const HERO_GRADIENTS = {
   orange: ["#ea580c", "#c2410c"],
   teal:   ["#0d9488", "#0f766e"],
-  blue:   ["#1d4ed8", "#1e40af"],
+  blue:   ["#4f46e5", "#3730a3"],
   purple: ["#7c3aed", "#5b21b6"],
   green:  ["#16a34a", "#15803d"],
   pink:   ["#db2777", "#9d174d"],

@@ -10,9 +10,9 @@
   --his-border:        #e2e6ea;
   --his-text:          #1a1d23;
   --his-muted:         #6b7280;
-  --his-accent:        #1e40af;
-  --his-accent-light:  #eff6ff;
-  --his-accent-dark:   #1e3a8a;
+  --his-accent:        #4338ca;
+  --his-accent-light:  #eef2ff;
+  --his-accent-dark:   #3730a3;
   --his-green:         #16a34a;
   --his-green-light:   #dcfce7;
   --his-red:           #dc2626;
@@ -462,3 +462,65 @@ select.his-fld { cursor: pointer; }
 
 /* ── Keep existing Bootstrap + PrimeReact working ── */
 .p-component { font-family: 'DM Sans', sans-serif !important; }
+
+/* ════════════════════════════════════════════════════════════
+   SphereHealth HIS — Design System v2 · Refinement Layer (R7hr-283 USER)
+   App-wide polish that propagates through the existing shared classes:
+   elevation, keyboard-focus a11y, interaction states, tabular numerals,
+   refined scrollbars. ADDITIVE ONLY — overrides via source order,
+   removes/restructures nothing. Honours prefers-reduced-motion.
+   ════════════════════════════════════════════════════════════ */
+:root {
+  /* Soft layered elevation — tuned for a light, data-dense surface */
+  --his-shadow-xs:    0 1px 2px rgba(16,24,40,.04);
+  --his-shadow-sm:    0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+  --his-shadow-md:    0 2px 6px rgba(16,24,40,.06), 0 6px 16px rgba(16,24,40,.08);
+  --his-shadow-lg:    0 12px 32px rgba(16,24,40,.14);
+  --his-ring:         0 0 0 3px rgba(79,70,229,.20);
+  /* Derived accent states */
+  --his-accent-hover: #4f46e5;
+  --his-accent-press: #3730a3;
+}
+
+/* Crisper text rendering app-wide */
+body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+
+/* ── Elevation: lift surfaces off the flat background ── */
+.his-card { box-shadow: var(--his-shadow-sm); transition: box-shadow .2s ease, transform .2s ease; }
+.his-card:hover { box-shadow: var(--his-shadow-md); }
+.his-timeline, .his-tab-nav, .his-search-wrap { box-shadow: var(--his-shadow-sm); }
+.his-card-hdr { background: linear-gradient(180deg, #ffffff, var(--his-gray-light)); }
+
+/* ── Tabular numerals so data/prices/vitals stay column-aligned ── */
+.his-table, .his-table td, .his-table th,
+.his-vc-value, .his-note-time, .his-blood-chip, .his-count-pill { font-variant-numeric: tabular-nums; }
+
+/* ── Accessibility: visible keyboard focus on every interactive surface ── */
+.his-btn:focus-visible, .his-btn-sm:focus-visible, .his-tab-btn:focus-visible,
+.his-filter-chip:focus-visible, .his-mod-btn:focus-visible, .his-sidebar-toggle:focus-visible,
+.his-modal-close:focus-visible, .his-fld:focus-visible {
+  outline: none; box-shadow: var(--his-ring);
+}
+
+/* ── Buttons: real elevation + press feedback (retires the brightness hack) ── */
+.his-btn { box-shadow: var(--his-shadow-xs); }
+.his-btn:hover  { transform: translateY(-1px); filter: none; box-shadow: var(--his-shadow-sm); }
+.his-btn:active { transform: translateY(0) scale(.98); box-shadow: var(--his-shadow-xs); }
+.his-btn-primary:hover  { background: var(--his-accent-hover); }
+.his-btn-primary:active { background: var(--his-accent-press); }
+
+/* ── Smoother row interaction ── */
+.his-table tbody tr { transition: background .12s ease; }
+
+/* ── Refined thin scrollbars for a polished dashboard feel ── */
+* { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: #94a3b8; background-clip: content-box; }
+
+/* ── Respect reduced-motion for the new transitions ── */
+@media (prefers-reduced-motion: reduce) {
+  .his-card, .his-btn, .his-table tbody tr { transition: none; }
+  .his-btn:hover, .his-btn:active { transform: none; }
+}
