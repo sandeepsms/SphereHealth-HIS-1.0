@@ -524,3 +524,71 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
   .his-card, .his-btn, .his-table tbody tr { transition: none; }
   .his-btn:hover, .his-btn:active { transform: none; }
 }
+
+/* ════════════════════════════════════════════════════════════
+   PREMIUM LAYER (R7hr-284 USER) — app-wide enrichment via
+   PrimeReact class overrides + global effects. Reaches the
+   ~1660 inputs / 252 tables / 110 dialogs / 110 PrimeReact
+   buttons that are class-based, so EVERY page gains premium
+   polish at once without touching inline styles. Additive;
+   honours prefers-reduced-motion.
+   ════════════════════════════════════════════════════════════ */
+:root {
+  --pp-ease:        cubic-bezier(.4, 0, .2, 1);
+  --pp-ease-spring: cubic-bezier(.34, 1.4, .64, 1);
+  --pp-radius:      10px;
+  --pp-ring:        0 0 0 3px rgba(79,70,229,.18);
+}
+
+/* ── Buttons (PrimeReact) — elevation + press + focus ── */
+.p-button {
+  border-radius: var(--pp-radius) !important;
+  font-weight: 600 !important;
+  box-shadow: 0 1px 2px rgba(16,24,40,.06) !important;
+  transition: transform .15s var(--pp-ease), box-shadow .18s var(--pp-ease), background-color .15s var(--pp-ease), filter .15s var(--pp-ease) !important;
+}
+.p-button:not(:disabled):hover  { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(67,56,202,.24) !important; filter: brightness(1.03); }
+.p-button:not(:disabled):active { transform: translateY(0) scale(.975); box-shadow: 0 1px 2px rgba(16,24,40,.10) !important; }
+.p-button:focus-visible { outline: none; box-shadow: var(--pp-ring) !important; }
+
+/* ── Inputs / selects / pickers — rounded, soft focus ring ── */
+.p-inputtext, .p-dropdown, .p-multiselect, .p-inputnumber-input,
+.p-password-input, .p-calendar .p-inputtext, .p-autocomplete-input, .p-chips {
+  border-radius: var(--pp-radius) !important;
+  transition: border-color .15s var(--pp-ease), box-shadow .15s var(--pp-ease) !important;
+}
+.p-inputtext:enabled:hover, .p-dropdown:not(.p-disabled):hover,
+.p-multiselect:not(.p-disabled):hover { border-color: #a5b4fc !important; }
+.p-inputtext:enabled:focus, .p-dropdown:not(.p-disabled).p-focus,
+.p-multiselect:not(.p-disabled).p-focus, .p-inputnumber-input:enabled:focus {
+  border-color: #4338ca !important; box-shadow: var(--pp-ring) !important;
+}
+
+/* ── DataTable — premium header + row interaction + tabular nums ── */
+.p-datatable .p-datatable-thead > tr > th {
+  background: #f8fafc !important; color: #475569 !important;
+  font-weight: 700 !important; font-size: 11px !important;
+  text-transform: uppercase !important; letter-spacing: .5px !important;
+}
+.p-datatable .p-datatable-tbody > tr { transition: background-color .12s var(--pp-ease) !important; }
+.p-datatable .p-datatable-tbody > tr:hover { background: #eef2ff !important; }
+.p-datatable .p-datatable-tbody > tr > td { font-variant-numeric: tabular-nums; }
+.p-paginator { border-radius: 0 0 12px 12px !important; }
+
+/* ── Dialog / overlay — premium elevation + blurred scrim ── */
+.p-dialog {
+  border-radius: 16px !important; overflow: hidden !important;
+  box-shadow: 0 24px 64px rgba(16,24,40,.28) !important;
+}
+.p-dialog .p-dialog-header { border-radius: 16px 16px 0 0 !important; }
+.p-dialog-mask.p-component-overlay { background: rgba(15,23,42,.46) !important; backdrop-filter: blur(3px); }
+
+/* ── Cards / panels / chips lift ── */
+.p-card { border-radius: 14px !important; box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06) !important; }
+.p-tabview .p-tabview-nav { border-radius: 10px 10px 0 0 !important; }
+.p-chip { transition: background-color .15s var(--pp-ease) !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .p-button, .p-inputtext, .p-dropdown, .p-datatable .p-datatable-tbody > tr { transition: none !important; }
+  .p-button:not(:disabled):hover, .p-button:not(:disabled):active { transform: none !important; }
+}
