@@ -3081,7 +3081,7 @@ function RegistersTab() {
 
 function _RegisterShell({ title, color, totals, children }) {
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <div style={{ padding: "10px 16px", background: `${color}08`, borderBottom: `1px solid ${color}20`, display: "flex", alignItems: "center", gap: 12 }}>
         <i className="pi pi-book" style={{ color, fontSize: 14 }} />
         <span style={{ fontWeight: 800, fontSize: 13, color }}>{title}</span>
@@ -4021,7 +4021,7 @@ function SupplierModal({ supplier, onClose, onSaved }) {
 ══════════════════════════════════════════════════════════════════ */
 function KPI({ label, value, color, icon }) {
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", boxShadow: "0 1px 3px rgba(15,23,42,.04)", display: "flex", alignItems: "center", gap: 12 }}>
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)", display: "flex", alignItems: "center", gap: 12 }}>
       <div style={{ width: 36, height: 36, borderRadius: 10, background: color + "12", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <i className={`pi ${icon}`} style={{ fontSize: 15, color }} />
       </div>
@@ -4041,7 +4041,7 @@ function PharmStat({ accent, label, value, sub }) {
     <div style={{
       background: C.card, border: `1.5px solid ${C.border}`,
       borderRadius: 12, overflow: "hidden",
-      boxShadow: "0 1px 3px rgba(15,23,42,.04)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
     }}>
       <div style={{ height: 4, background: accent }} />
       <div style={{ padding: "12px 16px" }}>
@@ -4055,7 +4055,7 @@ function PharmStat({ accent, label, value, sub }) {
 
 function Card({ title, color, icon, children }) {
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <div style={{ padding: "10px 16px", background: color + "08", borderBottom: `1px solid ${color}20`, display: "flex", alignItems: "center", gap: 8 }}>
         <i className={`pi ${icon}`} style={{ color, fontSize: 13 }} />
         <span style={{ fontWeight: 800, fontSize: 13, color }}>{title}</span>
@@ -4073,7 +4073,7 @@ function Card({ title, color, icon, children }) {
 // dotted hint so the user discovers they're clickable.
 function Table({ cols, children, compact, sort }) {
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: compact ? 11.5 : 12 }}>
         <thead>
           <tr style={{ background: C.subtle, borderBottom: `1.5px solid ${C.border}` }}>

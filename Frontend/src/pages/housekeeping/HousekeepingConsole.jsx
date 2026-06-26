@@ -356,7 +356,7 @@ function TaskCard({ task, mode, onAction }) {
             : mode === "start"   ? { label: "Start", icon: "pi-play",          color: C.blue }
             :                      { label: "Done",  icon: "pi-check",         color: C.green };
   return (
-    <div style={{ background: "#fff", border: `1.5px solid ${C.border}`, borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10, borderLeft: `4px solid ${color}`, boxShadow: "0 1px 3px rgba(15,23,42,.05)" }}>
+    <div style={{ background: "#fff", border: `1.5px solid ${C.border}`, borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 10, borderLeft: `4px solid ${color}`, boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ width: 30, height: 30, borderRadius: 8, display: "inline-flex", alignItems: "center", justifyContent: "center", background: color + "15", color }}>

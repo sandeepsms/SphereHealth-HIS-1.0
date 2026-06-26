@@ -455,7 +455,7 @@ function DeptCard({ dept, selected, onSelect }) {
       display: "flex", flexDirection: "column", gap: 10,
       boxShadow: active
         ? `0 6px 20px ${hexA(dept.color, 0.18)}`
-        : "0 1px 3px rgba(15,23,42,.04)",
+        : "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
       minHeight: 92,
     }}
       onMouseEnter={e => {
@@ -468,7 +468,7 @@ function DeptCard({ dept, selected, onSelect }) {
       onMouseLeave={e => {
         if (!active) {
           e.currentTarget.style.borderColor = C.border;
-          e.currentTarget.style.boxShadow = "0 1px 3px rgba(15,23,42,.04)";
+          e.currentTarget.style.boxShadow = "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)";
           e.currentTarget.style.transform = "none";
         }
       }}
@@ -1741,7 +1741,7 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
             border: "1px solid #e2e8f0", borderRadius: 12,
             padding: "10px 14px", marginBottom: 14,
             display: "flex", alignItems: "center", gap: 10,
-            boxShadow: "0 1px 3px rgba(0,0,0,.04)",
+            boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
           }}>
             <div style={{
               display: "flex", flexDirection: "column", alignItems: "center",

@@ -1949,7 +1949,7 @@ function DoctorOrdersTab({doctorOrders=[], admission}) {
         return (
           <div key={k} style={{
             background:"#fff", border:"1.5px solid #e2e8f0", borderRadius:12,
-            overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,.04)",
+            overflow:"hidden", boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
           }}>
             <div style={{
               background:"linear-gradient(to right, #f0f9ff, #f8fafc)",
@@ -2011,7 +2011,7 @@ function _legacyDoctorOrdersTab_unused({doctorNotes=[]}) {
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
         {orders.map((o,i)=>(
-          <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"10px 14px",background:C.card,borderRadius:10,border:`1px solid ${C.border}`,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
+          <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"10px 14px",background:C.card,borderRadius:10,border:`1px solid ${C.border}`,boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
             <div style={{width:36,height:36,borderRadius:8,background:o.nurseStatus==="done"?C.greenL:C.primaryL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>
               {typeIcon(o.type)}
             </div>

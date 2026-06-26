@@ -491,7 +491,7 @@ export default function TreatmentChartDayStack({
               background: "white",
               boxShadow: today
                 ? "0 2px 8px rgba(22,163,74,.10)"
-                : "0 1px 3px rgba(15,23,42,.05)",
+                : "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
             }}
           >
             <div

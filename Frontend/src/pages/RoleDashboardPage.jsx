@@ -125,12 +125,12 @@ function QuickAction({ icon, label, sub, onClick, color }) {
       style={{
         background: "#fff", border: `1.5px solid ${C.border}`, borderRadius: 12,
         padding: "16px 18px", textAlign: "left", cursor: "pointer",
-        boxShadow: "0 1px 3px rgba(15,23,42,.04)",
+        boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
         display: "flex", alignItems: "center", gap: 14,
         transition: "all .15s",
       }}
       onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = `0 6px 18px ${color}25`; e.currentTarget.style.borderColor = color + "55"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(15,23,42,.04)"; e.currentTarget.style.borderColor = C.border; }}>
+      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"; e.currentTarget.style.borderColor = C.border; }}>
       <div style={{
         width: 44, height: 44, borderRadius: 12,
         background: color + "15", color, display: "flex",

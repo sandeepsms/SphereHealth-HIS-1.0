@@ -100,7 +100,7 @@ function AuditRow({ trigger, onConfirm, confirmingId }) {
   const isPending    = trigger.status === "pending" && trigger.requiresConfirmation;
 
   return (
-    <div style={{ background:C.card, border:`1.5px solid ${expanded?src.color:C.border}`, borderRadius:12, marginBottom:8, overflow:"hidden", transition:"border-color .15s", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
+    <div style={{ background:C.card, border:`1.5px solid ${expanded?src.color:C.border}`, borderRadius:12, marginBottom:8, overflow:"hidden", transition:"border-color .15s", boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
 
       {/* ── Row header ── */}
       <div
@@ -291,7 +291,7 @@ function AuditRow({ trigger, onConfirm, confirmingId }) {
 // ─── Summary card ─────────────────────────────────────────────────────────────
 function SummaryCard({ icon, label, value, color, sub }) {
   return (
-    <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:12, padding:"14px 18px", display:"flex", alignItems:"center", gap:14, boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
+    <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:12, padding:"14px 18px", display:"flex", alignItems:"center", gap:14, boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <div style={{ width:44, height:44, borderRadius:12, background:color+"18", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
         <i className={`pi ${icon}`} style={{ fontSize:20, color }} />
       </div>

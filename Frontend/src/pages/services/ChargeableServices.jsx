@@ -811,7 +811,7 @@ export default function ChargeableServices() {
       border: `1px solid ${C.border}`,
       borderRadius: 12,
       padding: 8,
-      boxShadow: "0 1px 3px rgba(15,23,42,.04)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
     }}>
       <DataTable
         value={services}
@@ -2058,7 +2058,7 @@ function KpiTile({ label, value, color, icon }) {
       border: "1.5px solid #e2e8f0",
       borderRadius: 12,
       padding: "14px 16px",
-      boxShadow: "0 1px 3px rgba(15,23,42,.04)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
       display: "flex",
       alignItems: "center",
       gap: 12,

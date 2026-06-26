@@ -13,7 +13,7 @@ import {
 const card = {
   background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 18,
   minHeight: 150, display: "flex", flexDirection: "column", gap: 12,
-  boxShadow: "0 1px 3px rgba(0,0,0,.04)",
+  boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
 };
 const num = (n) => ({
   position: "absolute", top: 12, right: 14, fontSize: 11, fontWeight: 800,

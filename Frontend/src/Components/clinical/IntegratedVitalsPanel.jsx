@@ -186,7 +186,7 @@ function VitalTrendChart({ history, onOpenFullSheet, defaultDate }) {
   const tickStride = Math.max(1, Math.ceil(filtered.length / 8));
 
   return (
-    <div style={{ background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
+    <div style={{ background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <div style={{
         padding: "11px 16px",
         background: "linear-gradient(135deg,#eef2ff,#f0f9ff)",

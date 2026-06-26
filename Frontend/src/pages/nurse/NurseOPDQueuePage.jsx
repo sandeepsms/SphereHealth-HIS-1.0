@@ -427,7 +427,7 @@ export default function NurseOPDQueuePage() {
         border: "1.5px solid #e2e8f0",
         borderRadius: 12,
         padding: "12px 16px",
-        boxShadow: "0 1px 3px rgba(0,0,0,.04)",
+        boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
       }}>
         {/* Search */}
         <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
@@ -494,7 +494,7 @@ export default function NurseOPDQueuePage() {
           borderRadius: 14,
           padding: "56px 24px",
           textAlign: "center",
-          boxShadow: "0 1px 3px rgba(0,0,0,.04)",
+          boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
         }}>
           <div style={{
             width: 64, height: 64, borderRadius: 16,
@@ -1036,7 +1036,7 @@ function QueueCard({ visit, onVitals, onStatusChange }) {
       border: "1.5px solid #e2e8f0",
       borderRadius: 12,
       overflow: "hidden",
-      boxShadow: "0 1px 3px rgba(0,0,0,.04)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
       display: "flex",
       alignItems: "stretch",
       transition: "box-shadow .15s",
