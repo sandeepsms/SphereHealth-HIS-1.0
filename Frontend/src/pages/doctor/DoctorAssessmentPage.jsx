@@ -604,7 +604,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
           </div>
 
           {/* My Active IPD Patients */}
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 22, boxShadow: "0 2px 12px rgba(0,0,0,.04)" }}>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 22, boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
             <div style={{ fontWeight: 700, fontSize: 14, color: C.slate, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ background: C.accentL, color: C.accent, padding: "2px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>MY PATIENTS</span>
               {patientsLoading && <span style={{ fontSize: 11, color: C.muted }}>Loading…</span>}

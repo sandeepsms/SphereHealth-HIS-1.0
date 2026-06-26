@@ -568,7 +568,7 @@ function ClinicalNotesTab({notes=[]}) {
       </div>
 
       {/* Timeline container */}
-      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
         {/* Header */}
         <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",background:C.primaryL}}>
           <div style={{fontWeight:800,fontSize:14,color:C.primary}}>Clinical Notes Timeline</div>
@@ -948,7 +948,7 @@ function NursingRecordsTab({notes=[]}) {
       </div>
 
       {/* Timeline container */}
-      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
         <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",background:C.pinkL}}>
           <div style={{fontWeight:800,fontSize:14,color:C.pink}}>Nursing Records Timeline</div>
           <span style={{fontSize:11,color:C.muted}}>{filtered.length} entries</span>
@@ -1503,7 +1503,7 @@ function OrdersTab({doctorNotes=[], doctorOrders=[]}) {
           </div>
 
           {/* Orders list */}
-          <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+          <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
             <div style={{padding:"13px 18px",background:C.amberL,borderBottom:`1px solid ${C.border}`,fontWeight:800,fontSize:13,color:"#92400e"}}>
               📋 Orders — {new Date(selDate).toLocaleDateString("en-IN",{day:"2-digit",month:"long",year:"numeric"})}
             </div>
@@ -1677,7 +1677,7 @@ function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
       )}
 
       {/* ── MAR table ── */}
-      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
         <div style={{padding:"14px 18px",background:C.primaryL,borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontWeight:800,fontSize:14,color:C.primary}}>💉 Medication Administration Record</div>
           <Badge color={C.primary} bg={C.primaryM}>{ordersOnDate.length} medications</Badge>
@@ -2001,7 +2001,7 @@ function ConsentFormsTab({ consents = [], uhid, patient, admission }) {
               background:"#fff", border:`1px solid ${C.border}`,
               borderLeft:`4px solid ${st.color}`, borderRadius:10,
               padding:"16px 18px",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+              boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
             }}
           >
             {/* Header strip — title + status chip + print */}
@@ -2308,7 +2308,7 @@ function MedCertsTab({ certs = [], uhid, patient }) {
           || (c.certType ? c.certType.replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase()) : "Medical Certificate");
         return (
           <div key={c._id || i}
-            style={{background:"#fff",border:`1px solid ${C.border}`,borderLeft:`4px solid ${st.color}`,borderRadius:10,padding:"16px 18px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+            style={{background:"#fff",border:`1px solid ${C.border}`,borderLeft:`4px solid ${st.color}`,borderRadius:10,padding:"16px 18px",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,paddingBottom:12,borderBottom:`1px dashed ${C.border}`}}>
               <span style={{fontSize:22}}>📑</span>
               <div style={{flex:1}}>
