@@ -33,7 +33,7 @@ function SectionCard({ icon, title, color = C.primary, children }) {
   return (
     <div style={{
       background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 14,
-      marginBottom: 16, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,.04)",
+      marginBottom: 16, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
     }}>
       <div style={{
         padding: "12px 20px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0",

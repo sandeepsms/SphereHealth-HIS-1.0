@@ -35,7 +35,7 @@ function Section({ title, icon, color = C.primary, badge, nabh, children, defaul
   return (
     <div style={{
       background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 14,
-      marginBottom: 16, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,.04)",
+      marginBottom: 16, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
     }}>
       <div
         onClick={() => setOpen(o => !o)}
