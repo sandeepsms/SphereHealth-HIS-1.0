@@ -373,7 +373,7 @@ function Section({ title, icon, color = C.blue, nabh, sub, children, defaultOpen
       borderRadius: 14,
       overflow: "hidden",
       marginBottom: 16,
-      boxShadow: "0 1px 3px rgba(15,23,42,.04), 0 4px 12px rgba(15,23,42,.03)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
     }}>
       <div onClick={() => setOpen(o => !o)} style={{
         padding: "14px 20px",
