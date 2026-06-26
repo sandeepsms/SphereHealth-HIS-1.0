@@ -702,10 +702,11 @@ function NavItem({ item, color, collapsed, navigate, isActive }) {
         display: "flex", alignItems: "center",
         gap: 10, padding: collapsed ? "9px 0" : "8px 14px 8px 36px",
         justifyContent: collapsed ? "center" : "flex-start",
-        background: active ? color + "12" : "transparent",
+        background: active ? `linear-gradient(90deg, ${color}24, ${color}0a)` : "transparent",
         borderLeft: active ? `3px solid ${color}` : "3px solid transparent",
         borderRadius: "0 8px 8px 0",
-        marginBottom: 1, transition: "all .15s",
+        boxShadow: active ? `inset 0 0 0 1px ${color}14` : "none",
+        marginBottom: 1, transition: "all .2s cubic-bezier(.4,0,.2,1)",
       }}
       onMouseEnter={e => { if (!active) e.currentTarget.style.background = "#f1f5f9"; }}
       onMouseLeave={e => { if (!active) e.currentTarget.style.background = active ? color + "12" : "transparent"; }}
@@ -878,7 +879,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
     <div style={{
       position: "fixed", left: 0, top: 52, bottom: 0, width: W,
       background: "#fff",
-      boxShadow: "2px 0 20px rgba(0,0,0,.07)",
+      boxShadow: "1px 0 0 #eceef3, 4px 0 24px rgba(16,24,40,.08)",
       transition: "width .25s cubic-bezier(.4,0,.2,1)",
       zIndex: 900, display: "flex", flexDirection: "column",
       overflow: "hidden",
@@ -890,7 +891,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
         borderBottom: "1px solid #f1f5f9",
         display: "flex", alignItems: "center",
         justifyContent: collapsed ? "center" : "space-between",
-        background: "linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%)",
+        background: "linear-gradient(135deg,#1e1b4b 0%,#312e81 55%,#3730a3 100%)",
         flexShrink: 0,
       }}>
         {/* R7dt — Hospital logo (from HospitalSettings.logo). Falls back

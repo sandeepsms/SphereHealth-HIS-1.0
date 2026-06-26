@@ -125,7 +125,10 @@ export default function Header() {
   const [dropOpen, setDropOpen] = useState(false);
   const dropRef = useRef(null);
 
-  const bgColor  = isDoctorPage(pathname) ? "#1e293b" : "#4338ca";
+  // R7hr-285 — premium banner: rich diagonal gradient instead of a flat fill.
+  const bgColor  = isDoctorPage(pathname)
+    ? "linear-gradient(135deg, #0f172a 0%, #1e293b 58%, #334155 100%)"
+    : "linear-gradient(135deg, #312e81 0%, #4338ca 52%, #4f46e5 100%)";
 
   // Should we show the Back button? Hide on:
   //   • Login screen
@@ -199,7 +202,8 @@ export default function Header() {
       padding: "0 24px", height: 52,
       display: "flex", alignItems: "center", justifyContent: "space-between",
       position: "fixed", top: 0, left: 0, right: 0, zIndex: 1000,
-      boxShadow: "0 2px 12px rgba(0,0,0,.25)",
+      boxShadow: "0 4px 20px rgba(16,24,40,.30)",
+      borderBottom: "1px solid rgba(255,255,255,.06)",
       fontFamily: "'DM Sans', sans-serif",
     }}>
       {/* ── Left: Logo + NABH + Back + Module ── */}
