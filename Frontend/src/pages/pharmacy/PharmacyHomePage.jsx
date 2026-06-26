@@ -96,7 +96,7 @@ const C = {
   bg: "#f8fafc", card: "#fff", border: "#e2e8f0",
   text: "#0f172a", muted: "#64748b", subtle: "#f8fafc",
   amber: "#d97706", amberL: "#fffbeb",
-  blue: "#1d4ed8", blueL: "#eff6ff",
+  blue: "#4f46e5", blueL: "#eef2ff",
   green: "#16a34a", greenL: "#dcfce7",
   red: "#dc2626", redL: "#fef2f2",
   purple: "#7c3aed", purpleL: "#f5f3ff",
@@ -635,7 +635,7 @@ function DrugsTab() {
                       requiresRefrigeration on DrugModel. */}
                   {d.requiresRefrigeration && (
                     <span title="Cold-chain — must stay at 2-8 °C"
-                      style={{ padding: "2px 6px", borderRadius: 4, background: "#dbeafe", color: "#1d4ed8", fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", whiteSpace: "nowrap" }}>
+                      style={{ padding: "2px 6px", borderRadius: 4, background: "#e0e7ff", color: "#4f46e5", fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", whiteSpace: "nowrap" }}>
                       ❄ COLD
                     </span>
                   )}
@@ -3482,7 +3482,7 @@ const DEMO_SETTINGS = {
   phone1: "+91-11-4567-8900", email: "info@spherehealth.com",
   gstin: "07ABCDE1234F1Z5", drugLicenseNo: "DL/20B/2024-001",
   bankName: "HDFC Bank", accountNo: "XXXXXXXX1234", ifscCode: "HDFC0000123",
-  printHeaderColor: "#1e293b", printAccentColor: "#1d4ed8",
+  printHeaderColor: "#1e293b", printAccentColor: "#4f46e5",
   billFooterNote: "Thank you for choosing SphereHealth — get well soon!",
   termsLine1: "Goods once sold are not returnable unless the seal is intact (within 7 days).",
   termsLine2: "Medicines must be stored as per pack instructions.",
@@ -3671,7 +3671,7 @@ function SettingsTab() {
           display: "flex", alignItems: "center", gap: 14,
           padding: 14, borderRadius: 10,
           border: `2px solid ${C.blue}`,
-          background: "linear-gradient(135deg, #eff6ff 0%, #fff 100%)",
+          background: "linear-gradient(135deg, #eef2ff 0%, #fff 100%)",
         }}>
           <div style={{
             width: 60, height: 60, borderRadius: 12,
@@ -3695,7 +3695,7 @@ function SettingsTab() {
           <span style={{
             fontSize: 9, fontWeight: 800,
             padding: "3px 8px", borderRadius: 4,
-            background: "#dbeafe", color: "#1e40af",
+            background: "#e0e7ff", color: "#4338ca",
             letterSpacing: ".4px", textTransform: "uppercase",
           }}>Locked</span>
         </div>
@@ -3826,7 +3826,7 @@ function SettingsTab() {
         </div>
 
         {!isOutsourced && (
-          <div style={{ padding: "10px 14px", background: C.blueL, border: `1px solid ${C.blue}30`, borderRadius: 8, fontSize: 12, color: "#1e3a8a", marginBottom: 14 }}>
+          <div style={{ padding: "10px 14px", background: C.blueL, border: `1px solid ${C.blue}30`, borderRadius: 8, fontSize: 12, color: "#3730a3", marginBottom: 14 }}>
             <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
             Currently in-house. Pharmacy bills carry the hospital's header/footer from <b>Admin → Hospital Settings</b>. Switch to "Outsourced" to enter custom identity below.
           </div>
@@ -5101,8 +5101,8 @@ function OPDRxTab() {
               <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
                 {v.status && (
                   <span style={{ padding: "2px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700,
-                    background: v.status === "Completed" ? "#dcfce7" : "#dbeafe",
-                    color:      v.status === "Completed" ? "#15803d" : "#1d4ed8",
+                    background: v.status === "Completed" ? "#dcfce7" : "#e0e7ff",
+                    color:      v.status === "Completed" ? "#15803d" : "#4f46e5",
                     textTransform: "uppercase", letterSpacing: ".4px",
                   }}>{v.status}</span>
                 )}
@@ -5950,7 +5950,7 @@ function IPDCreditTab({ focus, onClearFocus } = {}) {
 
       {/* Hard-block notice */}
       <div style={{
-        background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af",
+        background: "#eef2ff", border: "1px solid #c7d2fe", color: "#4338ca",
         borderRadius: 8, padding: "8px 14px", fontSize: 11.5, marginBottom: 14,
         display: "flex", alignItems: "center", gap: 8,
       }}>

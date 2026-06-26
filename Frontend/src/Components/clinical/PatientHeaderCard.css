@@ -27,11 +27,11 @@
   width: 36px;
   height: 36px;
   border-radius: 9px;
-  background: var(--his-accent-light, #eff6ff);
+  background: var(--his-accent-light, #eef2ff);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--his-accent, #1e40af);
+  color: var(--his-accent, #4338ca);
   font-size: 16px;
 }
 .phc-load-title { font-weight: 700; font-size: 15px; color: #1f2937; }
@@ -54,10 +54,10 @@
   font-size: 13px;
   outline: none;
 }
-.phc-load-input:focus { border-color: var(--his-accent, #1e40af); }
+.phc-load-input:focus { border-color: var(--his-accent, #4338ca); }
 .phc-load-btn {
   padding: 9px 22px;
-  background: var(--his-accent, #1e40af);
+  background: var(--his-accent, #4338ca);
   color: #fff;
   border: 0;
   border-radius: 8px;
@@ -68,7 +68,7 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  box-shadow: 0 4px 12px rgba(30, 64, 175, .25);
+  box-shadow: 0 4px 12px rgba(67,56,202, .25);
 }
 .phc-load-btn[disabled] { cursor: not-allowed; opacity: .6; }
 
@@ -83,7 +83,7 @@
 }
 .phc-accent-bar {
   height: 4px;
-  background: linear-gradient(90deg, var(--his-accent, #1e40af), var(--his-teal, #0d9488), #34d399);
+  background: linear-gradient(90deg, var(--his-accent, #4338ca), var(--his-teal, #0d9488), #34d399);
 }
 .phc-body { padding: 18px 22px; }
 
@@ -106,11 +106,11 @@
   width: 56px;
   height: 56px;
   border-radius: 14px;
-  background: linear-gradient(135deg, var(--his-accent, #1e40af), var(--his-teal, #0d9488));
+  background: linear-gradient(135deg, var(--his-accent, #4338ca), var(--his-teal, #0d9488));
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(30, 64, 175, .25);
+  box-shadow: 0 4px 12px rgba(67,56,202, .25);
 }
 .phc-avatar-text {
   font-size: 20px;
@@ -143,7 +143,7 @@
 }
 .phc-chip-ipd       { background: #f5f3ff; color: #7c3aed; border-color: #c4b5fd; }
 .phc-chip-emergency { background: #fef2f2; color: #dc2626; border-color: #fca5a5; }
-.phc-chip-daycare   { background: #eff6ff; color: #1d4ed8; border-color: #93c5fd; }
+.phc-chip-daycare   { background: #eef2ff; color: #4f46e5; border-color: #93c5fd; }
 .phc-chip-blood {
   background: var(--his-red-light, #fef2f2);
   color: var(--his-red, #dc2626);
@@ -171,7 +171,7 @@
 }
 .phc-meta-id {
   font-weight: 700;
-  color: var(--his-accent, #1e40af);
+  color: var(--his-accent, #4338ca);
   font-family: 'DM Mono', monospace;
 }
 /* R7bi — IPD admission number is a separate identifier from UHID
@@ -235,16 +235,16 @@
 }
 .phc-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(30, 64, 175, .15);
+  box-shadow: 0 4px 14px rgba(67,56,202, .15);
 }
 .phc-btn-accent {
-  background: var(--his-accent-light, #eff6ff);
-  color: var(--his-accent, #1e40af);
-  border-color: rgba(30, 64, 175, .25);
-  box-shadow: 0 2px 8px rgba(30, 64, 175, .15);
+  background: var(--his-accent-light, #eef2ff);
+  color: var(--his-accent, #4338ca);
+  border-color: rgba(67,56,202, .25);
+  box-shadow: 0 2px 8px rgba(67,56,202, .15);
 }
 .phc-btn-accent:hover {
-  box-shadow: 0 4px 14px rgba(30, 64, 175, .25);
+  box-shadow: 0 4px 14px rgba(67,56,202, .25);
 }
 .phc-btn-danger {
   background: var(--his-red-light, #fef2f2);
@@ -289,14 +289,14 @@
   line-height: 1.3;
 }
 .phc-clin-chip--consultant {
-  border-left: 3px solid #2563eb;
-  background: #eff6ff;
+  border-left: 3px solid #4f46e5;
+  background: #eef2ff;
 }
 .phc-clin-icon {
   font-size: 11px;
   color: #64748b;
 }
-.phc-clin-chip--consultant .phc-clin-icon { color: #2563eb; }
+.phc-clin-chip--consultant .phc-clin-icon { color: #4f46e5; }
 .phc-clin-label {
   font-size: 10.5px;
   font-weight: 700;
@@ -304,7 +304,7 @@
   text-transform: uppercase;
   color: #64748b;
 }
-.phc-clin-chip--consultant .phc-clin-label { color: #1d4ed8; }
+.phc-clin-chip--consultant .phc-clin-label { color: #4f46e5; }
 .phc-clin-value {
   font-size: 12px;
   font-weight: 700;
@@ -325,10 +325,10 @@
 }
 .phc-clin-chip--dx.phc-tier-final .phc-clin-tier { background: #16a34a; color: #fff; }
 .phc-clin-chip--dx.phc-tier-working {
-  border-left: 3px solid #2563eb;
-  background: #eff6ff;
+  border-left: 3px solid #4f46e5;
+  background: #eef2ff;
 }
-.phc-clin-chip--dx.phc-tier-working .phc-clin-tier { background: #2563eb; color: #fff; }
+.phc-clin-chip--dx.phc-tier-working .phc-clin-tier { background: #4f46e5; color: #fff; }
 .phc-clin-chip--dx.phc-tier-provisional {
   border-left: 3px solid #d97706;
   background: #fffbeb;
@@ -370,11 +370,11 @@
 .phc-clin-chip--status.phc-status--improving .phc-clin-value { color: #115e59; }
 
 .phc-clin-chip--status.phc-status--stable {
-  border-left: 3px solid #2563eb;
-  background: #eff6ff;
+  border-left: 3px solid #4f46e5;
+  background: #eef2ff;
 }
-.phc-clin-chip--status.phc-status--stable .phc-clin-tier { background: #2563eb; }
-.phc-clin-chip--status.phc-status--stable .phc-clin-value { color: #1d4ed8; }
+.phc-clin-chip--status.phc-status--stable .phc-clin-tier { background: #4f46e5; }
+.phc-clin-chip--status.phc-status--stable .phc-clin-value { color: #4f46e5; }
 
 .phc-clin-chip--status.phc-status--ready-for-discharge {
   border-left: 3px solid #16a34a;
@@ -439,7 +439,7 @@
   margin-left: 4px;
 }
 .phc-tier-final       { background: #dcfce7; color: #166534; }
-.phc-tier-working     { background: #dbeafe; color: #1d4ed8; }
+.phc-tier-working     { background: #e0e7ff; color: #4f46e5; }
 .phc-tier-provisional { background: #fef3c7; color: #92400e; }
 
 /* R7bn-5 — twice-daily compliance badge. Sits under the footer row,

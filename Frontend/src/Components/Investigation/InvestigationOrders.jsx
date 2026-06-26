@@ -29,7 +29,7 @@ const ORDER_STATUS = {
 
 const RESULT_COLOR = {
   PENDING: "#f59e0b",
-  IN_PROGRESS: "#3b82f6",
+  IN_PROGRESS: "#6366f1",
   COMPLETED: "#8b5cf6",
   VERIFIED: "#10b981",
 };
@@ -638,7 +638,7 @@ export default function InvestigationOrders() {
           color="#0891b2"
         />
         <SCard label="Pending" val={summary.pending} color="#f59e0b" />
-        <SCard label="In Progress" val={summary.inProgress} color="#3b82f6" />
+        <SCard label="In Progress" val={summary.inProgress} color="#6366f1" />
         <SCard
           label="Completed Today"
           val={summary.completed}
@@ -1523,7 +1523,7 @@ export default function InvestigationOrders() {
                   const colors = {
                     PENDING: "#f59e0b",
                     COLLECTED: "#10b981",
-                    RECEIVED_AT_LAB: "#3b82f6",
+                    RECEIVED_AT_LAB: "#6366f1",
                     REJECTED: "#dc2626",
                   };
                   return (

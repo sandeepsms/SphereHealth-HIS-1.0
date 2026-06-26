@@ -313,7 +313,7 @@
   transition: width .25s;
 }
 .rd-mode-bar-fill--cash      { background: linear-gradient(90deg, #16a34a, #22c55e); }
-.rd-mode-bar-fill--card      { background: linear-gradient(90deg, #2563eb, #3b82f6); }
+.rd-mode-bar-fill--card      { background: linear-gradient(90deg, #4f46e5, #6366f1); }
 .rd-mode-bar-fill--upi       { background: linear-gradient(90deg, #7c3aed, #a855f7); }
 .rd-mode-bar-fill--tpa       { background: linear-gradient(90deg, #db2777, #ec4899); }
 .rd-mode-bar-fill--insurance { background: linear-gradient(90deg, #be185d, #be4286); }
@@ -452,7 +452,7 @@
   font-size: 11px;
 }
 .rd-presence-chip--me {
-  background: #eff6ff;
+  background: #eef2ff;
   border-color: #93c5fd;
 }
 .rd-presence-dot {
@@ -462,7 +462,7 @@
   box-shadow: 0 0 0 3px rgba(16, 185, 129, .25);
   animation: rd-presence-blink 2s ease-in-out infinite;
 }
-.rd-presence-chip--me .rd-presence-dot { background: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, .25); }
+.rd-presence-chip--me .rd-presence-dot { background: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241, .25); }
 .rd-presence-name {
   font-weight: 800;
   color: #0f172a;

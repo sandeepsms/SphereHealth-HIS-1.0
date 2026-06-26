@@ -71,7 +71,7 @@ const WardTaskTicket = ({ settings, receipt = {} }) => {
               <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: ".5px" }}>From</div>
               <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2 }}>{r.fromLocation || "—"}</div>
             </div>
-            <div style={{ fontSize: 20, color: "#1d4ed8" }}>→</div>
+            <div style={{ fontSize: 20, color: "#4f46e5" }}>→</div>
             <div style={{ textAlign: "center", padding: 8, border: "1px solid #e2e8f0", borderRadius: 6, background: "#f8fafc" }}>
               <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: ".5px" }}>To</div>
               <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2 }}>{r.toLocation || "—"}</div>

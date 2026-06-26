@@ -22,7 +22,7 @@ import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 
 const STATUS_COLORS = {
   Waiting:       { bg: "#fef3c7", color: "#92400e" },
-  "In Progress": { bg: "#dbeafe", color: "#1e40af" },
+  "In Progress": { bg: "#e0e7ff", color: "#4338ca" },
   Completed:     { bg: "#dcfce7", color: "#166534" },
   Referred:      { bg: "#f3e8ff", color: "#6b21a8" },
 };
@@ -294,7 +294,7 @@ export default function DoctorOPDPanelPage() {
         {[
           { label: "Today's Patients", val: todayVisits.length,                                                  icon: "pi-users",            tone: "#0f766e", tint: "#f0fdfa", border: "#a7f3d0" },
           { label: "Waiting",          val: todayVisits.filter(v => v.status === "Waiting").length,             icon: "pi-clock",            tone: "#d97706", tint: "#fffbeb", border: "#fde68a" },
-          { label: "In Progress",      val: todayVisits.filter(v => v.status === "In Progress").length,          icon: "pi-spin pi-spinner",  tone: "#1d4ed8", tint: "#eff6ff", border: "#bfdbfe" },
+          { label: "In Progress",      val: todayVisits.filter(v => v.status === "In Progress").length,          icon: "pi-spin pi-spinner",  tone: "#4f46e5", tint: "#eef2ff", border: "#c7d2fe" },
           { label: "Completed",        val: todayVisits.filter(v => v.status === "Completed").length,            icon: "pi-check-circle",     tone: "#16a34a", tint: "#dcfce7", border: "#bbf7d0" },
           { label: "Vitals Pending",   val: todayVisits.filter(v => v.vitalsStatus === "Pending").length,        icon: "pi-heart",            tone: "#dc2626", tint: "#fef2f2", border: "#fecaca" },
         ].map(({ label, val, icon, tone, tint, border }) => (

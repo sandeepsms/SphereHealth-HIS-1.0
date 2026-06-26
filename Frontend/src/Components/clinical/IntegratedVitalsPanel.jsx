@@ -10,7 +10,7 @@ const C = {
   green: "#16a34a", greenL: "#dcfce7",
   amber: "#d97706", amberL: "#fffbeb",
   red: "#dc2626", redL: "#fef2f2",
-  blue: "#1d4ed8", blueL: "#eff6ff", blueB: "#bfdbfe",
+  blue: "#4f46e5", blueL: "#eef2ff", blueB: "#c7d2fe",
   teal: "#0d9488", tealL: "#f0fdfa",
   slate: "#1e293b",
 };
@@ -94,7 +94,7 @@ const DEFAULT_ENTRY = {
 const SERIES = [
   { key: "sbp",   label: "SBP",   unit: "mmHg",  color: "#dc2626", normLo: 90,  normHi: 140, vitalNames: ["BP Systolic","BP_Systolic","bp_sys"] },
   { key: "dbp",   label: "DBP",   unit: "mmHg",  color: "#f59e0b", normLo: 60,  normHi: 90,  vitalNames: ["BP Diastolic","BP_Diastolic","bp_dia"] },
-  { key: "pulse", label: "Pulse", unit: "bpm",   color: "#2563eb", normLo: 60,  normHi: 100, vitalNames: ["Pulse","pulse"] },
+  { key: "pulse", label: "Pulse", unit: "bpm",   color: "#4f46e5", normLo: 60,  normHi: 100, vitalNames: ["Pulse","pulse"] },
   { key: "temp",  label: "Temp",  unit: "°F",    color: "#16a34a", normLo: 97,  normHi: 99.5, vitalNames: ["Temperature","temp"] },
   { key: "spo2",  label: "SpO₂",  unit: "%",     color: "#7c3aed", normLo: 95,  normHi: 100, vitalNames: ["SpO2","spo2"] },
   { key: "rr",    label: "RR",    unit: "/min",  color: "#0891b2", normLo: 12,  normHi: 20,  vitalNames: ["Resp Rate","rr"] },
@@ -189,13 +189,13 @@ function VitalTrendChart({ history, onOpenFullSheet, defaultDate }) {
     <div style={{ background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
       <div style={{
         padding: "11px 16px",
-        background: "linear-gradient(135deg,#eff6ff,#f0f9ff)",
-        borderBottom: "1px solid #dbeafe",
+        background: "linear-gradient(135deg,#eef2ff,#f0f9ff)",
+        borderBottom: "1px solid #e0e7ff",
         display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <i className="pi pi-chart-line" style={{ fontSize: 14, color: "#1d4ed8" }} />
-          <span style={{ fontWeight: 800, fontSize: 13, color: "#1d4ed8" }}>Vital Trend Chart</span>
+          <i className="pi pi-chart-line" style={{ fontSize: 14, color: "#4f46e5" }} />
+          <span style={{ fontWeight: 800, fontSize: 13, color: "#4f46e5" }}>Vital Trend Chart</span>
           <span style={{ fontSize: 11, color: "#64748b" }}>· {filtered.length} reading{filtered.length === 1 ? "" : "s"}</span>
         </div>
 
@@ -204,9 +204,9 @@ function VitalTrendChart({ history, onOpenFullSheet, defaultDate }) {
             <button key={k} onClick={() => setScope(k)}
               style={{
                 padding: "5px 11px", borderRadius: 6,
-                background: scope === k ? "#1d4ed8" : "#fff",
+                background: scope === k ? "#4f46e5" : "#fff",
                 color:      scope === k ? "#fff"    : "#475569",
-                border: `1px solid ${scope === k ? "#1d4ed8" : "#e2e8f0"}`,
+                border: `1px solid ${scope === k ? "#4f46e5" : "#e2e8f0"}`,
                 fontSize: 11, fontWeight: 700, cursor: "pointer",
               }}>{label}</button>
           ))}
@@ -214,8 +214,8 @@ function VitalTrendChart({ history, onOpenFullSheet, defaultDate }) {
             <button onClick={onOpenFullSheet}
               style={{
                 padding: "5px 12px", borderRadius: 6,
-                background: "#fff", color: "#1d4ed8",
-                border: "1px solid #bfdbfe", fontWeight: 700, fontSize: 11,
+                background: "#fff", color: "#4f46e5",
+                border: "1px solid #c7d2fe", fontWeight: 700, fontSize: 11,
                 cursor: "pointer", display: "flex", alignItems: "center", gap: 5,
               }}>
               <i className="pi pi-external-link" style={{ fontSize: 10 }} />

@@ -114,7 +114,7 @@ const PhysioPlan = ({ settings, receipt = {} }) => {
                     display: "inline-block", marginLeft: 12, width: 140, height: 8,
                     background: "#e2e8f0", borderRadius: 4, overflow: "hidden", verticalAlign: "middle",
                   }}>
-                    <div style={{ width: `${pct}%`, height: "100%", background: pct >= 100 ? "#16a34a" : "#1d4ed8" }} />
+                    <div style={{ width: `${pct}%`, height: "100%", background: pct >= 100 ? "#16a34a" : "#4f46e5" }} />
                   </div>
                 </td>
               </tr>

@@ -66,7 +66,7 @@ const C = {
   text:    "#0f172a",
   muted:   "#64748b",
   subtle:  "#f8fafc",
-  blue:    "#1d4ed8",  blueL:   "#eff6ff",
+  blue:    "#4f46e5",  blueL:   "#eef2ff",
   green:   "#16a34a",  greenL:  "#dcfce7",
   red:     "#dc2626",  redL:    "#fef2f2",
   orange:  "#ea580c",  orangeL: "#fff7ed",
@@ -1074,7 +1074,7 @@ export default function ReceptionBilling() {
     // Receipt + IPD bill style). White hospital band with right-aligned
     // GSTIN/Reg/PAN block; accent title bar; patient info strip; per-bill
     // blocks below now carry the visit number with a dynamic label.
-    const _accent = hs.printAccentColor || "#1d4ed8";
+    const _accent = hs.printAccentColor || "#4f46e5";
     const _bills = billRows.length;
     const _firstVt = String(billRows[0]?.b?.visitType || "OPD").toUpperCase();
     // R7hd-FIX — patient strip was missing Department / Doctor /

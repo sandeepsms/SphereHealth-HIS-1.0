@@ -169,17 +169,17 @@ function printCategoryFor(trigger) {
 }
 
 const C = {
-  primary: "#1d4ed8", accent: "#7c3aed",
+  primary: "#4f46e5", accent: "#7c3aed",
   success: "#059669", warn: "#d97706", danger: "#dc2626",
   bg: "#f8fafc", card: "#ffffff", border: "#e2e8f0",
   muted: "#64748b", dark: "#0f172a",
-  bedTint: "#dbeafe", nurseTint: "#fce7f3", docTint: "#ede9fe",
+  bedTint: "#e0e7ff", nurseTint: "#fce7f3", docTint: "#ede9fe",
   labTint: "#fef9c3", drugTint: "#dcfce7", procTint: "#fed7aa",
 };
 
 // Service-code prefix → friendly category label + badge tint
 const CATEGORY = {
-  BED:        { label: "Bed Charges",     icon: "pi-th-large",     tint: C.bedTint,   fg: "#1d4ed8" },
+  BED:        { label: "Bed Charges",     icon: "pi-th-large",     tint: C.bedTint,   fg: "#4f46e5" },
   NURSING:    { label: "Nursing",         icon: "pi-heart",        tint: C.nurseTint, fg: "#be185d" },
   NRS:        { label: "Nursing",         icon: "pi-heart",        tint: C.nurseTint, fg: "#be185d" },
   DOC:        { label: "Doctor Visits",   icon: "pi-user-edit",    tint: C.docTint,   fg: "#6d28d9" },
@@ -221,8 +221,8 @@ const fmtDate     = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2
 const STATUS_TONE = {
   billed:      { bg: "#dcfce7", fg: "#15803d" },
   pending:     { bg: "#fef3c7", fg: "#a16207" },
-  completed:   { bg: "#dbeafe", fg: "#1d4ed8" },
-  in_progress: { bg: "#dbeafe", fg: "#1d4ed8" },
+  completed:   { bg: "#e0e7ff", fg: "#4f46e5" },
+  in_progress: { bg: "#e0e7ff", fg: "#4f46e5" },
   voided:      { bg: "#fee2e2", fg: "#b91c1c" },
   cancelled:   { bg: "#fee2e2", fg: "#b91c1c" },
   skipped:     { bg: "#f1f5f9", fg: "#475569" },
@@ -1121,7 +1121,7 @@ export default function IPDBillingLedger() {
         .ps-bill .ps-subtotal td { background:#f8fafc; font-weight:700; border-top:1px dashed #cbd5e1; }
         .ps-bill .ps-grand-total td { background:#fef3c7; color:#92400e; font-size:13px; font-weight:900; border-top:2px solid #1f2937; border-bottom:2px solid #1f2937; padding:8px 10px; }
         .ps-amount-words { padding:8px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; font-size:11px; margin:10px 0; }
-        .ps-net-strip { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#1e3a8a; color:#fff; border-radius:6px; font-size:13px; font-weight:800; margin:10px 0 14px; }
+        .ps-net-strip { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#3730a3; color:#fff; border-radius:6px; font-size:13px; font-weight:800; margin:10px 0 14px; }
         .ps-net-strip b { font-size:16px; }
         .ps-section { margin:14px 0; }
         .ps-section-title { font-size:11.5px; font-weight:800; color:#1f2937; background:#e0e7ff; padding:5px 10px; border-left:3px solid #7c3aed; letter-spacing:.4px; margin-bottom:6px; }
@@ -1136,7 +1136,7 @@ export default function IPDBillingLedger() {
         .day-head .day-total { font-weight:900; color:#0f172a; }
         .pill { display:inline-block; padding:1px 7px; border-radius:10px; font-size:9px; font-weight:700; background:#f1f5f9; color:#475569; }
         .pill-adv { background:#f3e8ff; color:#7c3aed; }
-        .pill-active { background:#dbeafe; color:#1d4ed8; }
+        .pill-active { background:#e0e7ff; color:#4f46e5; }
         .pill-refunded { background:#fee2e2; color:#b91c1c; }
         .pill-exhausted { background:#dcfce7; color:#15803d; }
         .ps-status-banner { padding:8px 12px; border-radius:6px; font-size:12px; font-weight:800; margin:8px 0; text-align:center; letter-spacing:.4px; }
@@ -2479,7 +2479,7 @@ function DailyView({ byDay, collapsed, setCollapsed, onUndo, onOverride, onCance
           }}>
             <button onClick={() => toggle(`day-${group.dateKey}`)} style={{
               width: "100%", padding: "12px 16px",
-              background: group.dayN === 1 ? "#eff6ff" : "#f8fafc",
+              background: group.dayN === 1 ? "#eef2ff" : "#f8fafc",
               border: "none", textAlign: "left", cursor: "pointer", fontFamily: "inherit",
               display: "flex", alignItems: "center", gap: 10,
               borderBottom: open ? `1px solid ${C.border}` : "none",

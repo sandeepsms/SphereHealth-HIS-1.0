@@ -107,7 +107,7 @@ const CERT_CATALOGUE = [
   },
   {
     key: "pre-employment", label: "Pre-Employment Medical", icon: "pi-briefcase",
-    color: "#1d4ed8", bg: "#dbeafe",
+    color: "#4f46e5", bg: "#e0e7ff",
     desc: "Pre-employment exam result + fit category + validity.",
     ref: "Factories Act §40 / employer policy.",
     defaults: () => ({
@@ -200,8 +200,8 @@ const C = {
   ink:       "#0f172a",
   muted:     "#64748b",
   border:    "#e2e8f0",
-  primary:   "#1d4ed8",
-  primaryL:  "#dbeafe",
+  primary:   "#4f46e5",
+  primaryL:  "#e0e7ff",
   success:   "#10b981",
   warn:      "#f59e0b",
   danger:    "#dc2626",
@@ -1018,7 +1018,7 @@ export default function MedicalCertificatePage() {
 
         {/* ── Hero ───────────────────────────────────── */}
         <div style={{
-          background: "linear-gradient(135deg, #1e40af 0%, #6366f1 100%)",
+          background: "linear-gradient(135deg, #4338ca 0%, #6366f1 100%)",
           color: "white", borderRadius: 12, padding: 22,
           marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>

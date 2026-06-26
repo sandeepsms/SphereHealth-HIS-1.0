@@ -30,7 +30,7 @@ const DEVICE_LABEL = {
 
 const STATUS_TONE = {
   OPEN:           { color: "#9a3412", bg: "#ffedd5", border: "#fdba74" },
-  UNDER_FOLLOWUP: { color: "#1e3a8a", bg: "#dbeafe", border: "#93c5fd" },
+  UNDER_FOLLOWUP: { color: "#3730a3", bg: "#e0e7ff", border: "#93c5fd" },
   CLOSED:         { color: "#14532d", bg: "#dcfce7", border: "#86efac" },
 };
 

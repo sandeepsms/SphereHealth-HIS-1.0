@@ -60,7 +60,7 @@ const C = {
   green: "#16a34a", greenL: "#dcfce7", greenB: "#bbf7d0",
   amber: "#d97706", amberL: "#fffbeb", amberB: "#fde68a",
   red: "#dc2626", redL: "#fef2f2", redB: "#fecaca",
-  blue: "#1d4ed8", blueL: "#eff6ff", blueB: "#bfdbfe",
+  blue: "#4f46e5", blueL: "#eef2ff", blueB: "#c7d2fe",
   purple: "#7c3aed", purpleL: "#f5f3ff",
   slate: "#1e293b", slateMid: "#334155",
   pink: "#be185d", pinkL: "#fdf2f8",

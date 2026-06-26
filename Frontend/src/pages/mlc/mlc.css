@@ -116,8 +116,8 @@
   border-color: #fca5a5 !important;
 }
 .mlc-pill-source--external {
-  background: #eff6ff !important;
-  color: #1d4ed8 !important;
+  background: #eef2ff !important;
+  color: #4f46e5 !important;
   border-color: #93c5fd !important;
 }
 
@@ -151,9 +151,9 @@
   box-shadow: 0 2px 6px rgba(185, 28, 28, 0.15);
 }
 .mlc-toggle-pill--active.mlc-toggle-pill--external {
-  background: #eff6ff;
-  border-color: #1d4ed8;
-  box-shadow: 0 2px 6px rgba(29, 78, 216, 0.15);
+  background: #eef2ff;
+  border-color: #4f46e5;
+  box-shadow: 0 2px 6px rgba(79,70,229, 0.15);
 }
 .mlc-toggle-pill-title {
   font-weight: 800;

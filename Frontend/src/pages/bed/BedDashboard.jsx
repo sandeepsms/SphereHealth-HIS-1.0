@@ -29,8 +29,8 @@ const C = {
   text:     "#0f172a",
   muted:    "#64748b",
   bg:       "#f8fafc",
-  primary:  "#2563eb",
-  primaryL: "#dbeafe",
+  primary:  "#4f46e5",
+  primaryL: "#e0e7ff",
   green:    "#16a34a",
   greenL:   "#dcfce7",
   amber:    "#d97706",
@@ -224,7 +224,7 @@ const BedDashboard = () => {
     {
       to: "/wards", title: "Wards",
       subtitle: "Configure wards under each floor",
-      icon: "pi-home", color: "#2563eb", tint: "#dbeafe",
+      icon: "pi-home", color: "#4f46e5", tint: "#e0e7ff",
       badges: [{ label: `${wards.length || kpis.wardRows.length} wards`, tone: "info" }],
     },
     {

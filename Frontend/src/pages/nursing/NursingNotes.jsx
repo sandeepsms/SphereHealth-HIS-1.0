@@ -54,11 +54,11 @@ const C = {
   green: "#16a34a", greenL: "#dcfce7", greenB: "#bbf7d0",
   amber: "#d97706", amberL: "#fffbeb", amberB: "#fde68a",
   red: "#dc2626", redL: "#fef2f2", redB: "#fecaca",
-  blue: "#1d4ed8", blueL: "#eff6ff", blueB: "#bfdbfe",
+  blue: "#4f46e5", blueL: "#eef2ff", blueB: "#c7d2fe",
   purple: "#7c3aed", purpleL: "#f5f3ff",
   slate: "#1e293b", slateMid: "#334155",
   // legacy aliases kept for NOTE_STYLE / SHIFT_STYLE references
-  accent: "#1d4ed8", accentL: "#eff6ff",
+  accent: "#4f46e5", accentL: "#eef2ff",
   teal: "#0d9488", tealL: "#f0fdfa",
   orange: "#ea580c", orangeL: "#fff7ed",
   pink: "#db2777",
@@ -94,7 +94,7 @@ const MODULES = [
   { id: "daily",     label: "Daily Assessment",           nabh: "NS.4",         description: "Shift-wise nursing assessment — head-to-toe review",
     icon: "pi-calendar-plus",        border: "#bae6fd", color: "#0369a1", bg: "#e0f2fe" },
   { id: "vitals",    label: "Vital Signs",                nabh: "NS.4",         description: "BP / HR / RR / SpO₂ / Temp / Pain / GCS / Urine",
-    icon: "pi-heart",                border: "#bfdbfe", color: "#1d4ed8", bg: "#dbeafe" },
+    icon: "pi-heart",                border: "#c7d2fe", color: "#4f46e5", bg: "#e0e7ff" },
   { id: "neuro",     label: "Neuro / GCS",                nabh: "AAC.4",        description: "GCS, pupils, motor, posture (NIHSS for stroke)",
     icon: "pi-eye",                  border: "#d8b4fe", color: C.purple, bg: C.purpleL },
   { id: "pain",      label: "Pain Assessment",            nabh: "AAC.4",        description: "VAS / FLACC / numeric — onset, character, relief",
@@ -216,14 +216,14 @@ const DVT_CONTRAINDICATIONS = [
 function _capriniTier(score) {
   if (score >= 9) return { tier: "Highest", bg: "#fef2f2", color: "#991b1b" };
   if (score >= 5) return { tier: "High",    bg: "#fff7ed", color: "#9a3412" };
-  if (score >= 3) return { tier: "Moderate",bg: "#eff6ff", color: "#1d4ed8" };
+  if (score >= 3) return { tier: "Moderate",bg: "#eef2ff", color: "#4f46e5" };
   if (score >= 1) return { tier: "Low",     bg: "#f8fafc", color: "#475569" };
   return                  { tier: "Very Low", bg: "#f8fafc", color: "#64748b" };
 }
 
 /* ── Note badge styles ── */
 const NOTE_STYLE = {
-  vitals:    { bg: "#dbeafe", color: "#1e40af",  dot: "#3b82f6"  },
+  vitals:    { bg: "#e0e7ff", color: "#4338ca",  dot: "#6366f1"  },
   blood:     { bg: "#fecaca", color: "#9f1239",  dot: "#dc2626"  },
   iv:        { bg: C.tealL,  color: C.teal,     dot: C.teal     },
   wound:     { bg: C.redL,   color: C.red,      dot: C.red      },
@@ -244,7 +244,7 @@ const NOTE_STYLE = {
 };
 
 const SHIFT_STYLE = {
-  morning:   { bg: "#dbeafe", color: "#1e40af" },
+  morning:   { bg: "#e0e7ff", color: "#4338ca" },
   afternoon: { bg: C.amberL,  color: "#92400e" },
   evening:   { bg: "#ede9fe", color: C.purple  },
   night:     { bg: C.slate,   color: "#94a3b8" },
@@ -1688,8 +1688,8 @@ function NursingNotesContent({ selectedPatient }) {
                   title: "Equipment Used This Shift",
                   subtitle: "Auto-billed disposables, IV lines, monitoring",
                   icon: "pi-box",
-                  color: "#2563eb",
-                  tint: "#dbeafe",
+                  color: "#4f46e5",
+                  tint: "#e0e7ff",
                   badges: [{ label: "Auto-billed", tone: "info" }],
                 },
                 // R7hr-143 — Pending Investigation Reports tile. Surfaced
@@ -2354,7 +2354,7 @@ function NursingNotesContent({ selectedPatient }) {
                 <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
                   {[
                     { key: 'All',     label: 'All',       color: C.primary },
-                    { key: 'vitals',  label: '❤ Vitals',  color: '#1d4ed8' },
+                    { key: 'vitals',  label: '❤ Vitals',  color: '#4f46e5' },
                     { key: 'blood',   label: '🩸 Blood',   color: '#9f1239' },
                     { key: 'iv',      label: '💉 IV',      color: C.teal    },
                     { key: 'wound',   label: '🩹 Wound',   color: C.red     },
@@ -3163,7 +3163,7 @@ function NursingNotesContent({ selectedPatient }) {
                             const isIn = r.direction === "IN";
                             const srcBadge = {
                               MAR: { label: "MAR", bg: "#fce7f3", color: "#be185d" },
-                              INFUSION_CRON: { label: "Infusion (auto)", bg: "#dbeafe", color: "#1d4ed8" },
+                              INFUSION_CRON: { label: "Infusion (auto)", bg: "#e0e7ff", color: "#4f46e5" },
                               MANUAL: { label: "Manual", bg: "#f1f5f9", color: "#475569" },
                               BLOOD_TRANSFUSION: { label: "Blood", bg: "#fef2f2", color: "#dc2626" },
                               ORAL_INTAKE: { label: "Oral", bg: "#fef3c7", color: "#a16207" },
@@ -3256,7 +3256,7 @@ function NursingNotesContent({ selectedPatient }) {
 
                     {/* ── Manual Intake / Output ── */}
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                      <div style={{ background:"#eff6ff", border:`1px solid ${C.blueB}`, borderRadius:10, padding:"10px 14px" }}>
+                      <div style={{ background:"#eef2ff", border:`1px solid ${C.blueB}`, borderRadius:10, padding:"10px 14px" }}>
                         <div style={{ fontSize:11, fontWeight:700, color:C.blue, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Intake</div>
                         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                           {[{k:"oral",l:"Oral (mL)"},{k:"ivFluids",l:"IV Drip Fluids (mL)"},{k:"bloodProducts",l:"Blood Products (mL)"}].map(f=>(

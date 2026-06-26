@@ -28,11 +28,11 @@ import { createProcedureNote } from "../../Services/procedureNoteService";
 /* ── Design tokens ── */
 const C = {
   bg: "#f8fafc", card: "#ffffff", border: "#e2e8f0", text: "#0f172a", muted: "#64748b",
-  primary: "#1e40af", primaryL: "#eff6ff", primaryMid: "#2563eb",
+  primary: "#4338ca", primaryL: "#eef2ff", primaryMid: "#4f46e5",
   green: "#16a34a", greenL: "#dcfce7", greenB: "#bbf7d0",
   amber: "#d97706", amberL: "#fffbeb", amberB: "#fde68a",
   red: "#dc2626", redL: "#fef2f2", redB: "#fecaca",
-  blue: "#1d4ed8", blueL: "#dbeafe", blueB: "#93c5fd",
+  blue: "#4f46e5", blueL: "#e0e7ff", blueB: "#93c5fd",
   purple: "#7c3aed", purpleL: "#f5f3ff", purpleB: "#c4b5fd",
   teal: "#0d9488", tealL: "#f0fdfa", tealB: "#99f6e4",
   orange: "#ea580c", orangeL: "#fff7ed", orangeB: "#fed7aa",

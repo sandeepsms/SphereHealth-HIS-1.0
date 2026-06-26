@@ -54,7 +54,7 @@ const C = {
   ok:     "#16a34a",   okL:   "#dcfce7", okB:   "#86efac",
   warn:   "#d97706",   warnL: "#fef3c7",
   err:    "#dc2626",   errL:  "#fef2f2", errB:  "#fca5a5",
-  blue:   "#1d4ed8",   blueL: "#dbeafe",
+  blue:   "#4f46e5",   blueL: "#e0e7ff",
   purple: "#7c3aed",   purpleL:"#f3e8ff",
 };
 

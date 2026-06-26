@@ -54,7 +54,7 @@ export const DEFAULT_SETTINGS = {
   rohiniId:     "",
   panNumber:    "",
   printHeaderColor:  "#1e293b",
-  printAccentColor:  "#1d4ed8",
+  printAccentColor:  "#4f46e5",
   showLogoInPrint:   true,
   showTaglineInPrint: true,
   billFooterNote: "Thank you for choosing our hospital.",

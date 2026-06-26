@@ -84,15 +84,15 @@ const PaymentReceipt = ({ settings = {}, receipt = {} }) => {
     >
       {/* Big amount block */}
       <div style={{
-        background: "var(--pr-accent-color, #1d4ed8)10",
-        border: "2px dashed var(--pr-accent-color, #1d4ed8)",
+        background: "var(--pr-accent-color, #4f46e5)10",
+        border: "2px dashed var(--pr-accent-color, #4f46e5)",
         borderRadius: 8, padding: "16px 18px",
         textAlign: "center", marginBottom: 14,
       }}>
         <div style={{ fontSize: 11, color: "#475569", fontWeight: 700, letterSpacing: ".5px", textTransform: "uppercase" }}>
           Amount Received
         </div>
-        <div style={{ fontSize: 30, fontWeight: 800, color: "var(--pr-accent-color, #1d4ed8)", lineHeight: 1, marginTop: 4 }}>
+        <div style={{ fontSize: 30, fontWeight: 800, color: "var(--pr-accent-color, #4f46e5)", lineHeight: 1, marginTop: 4 }}>
           {fmtINR(amount)}
         </div>
         <div style={{ marginTop: 10 }}>

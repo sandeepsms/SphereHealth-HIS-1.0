@@ -18,7 +18,7 @@ const ACCENT_BY_SECTION = {
   "/bed-dashboard":       { tint: "#0f172a", to: "#1e293b" },
   "/bed-visual":          { tint: "#0d9488", to: "#115e59" },
   "/beds":                { tint: "#475569", to: "#1e293b" },
-  "/wards":               { tint: "#2563eb", to: "#1e40af" },
+  "/wards":               { tint: "#4f46e5", to: "#4338ca" },
   "/rooms":               { tint: "#7c3aed", to: "#5b21b6" },
   "/roomcategory":        { tint: "#db2777", to: "#9d174d" },
   "/floors":              { tint: "#ea580c", to: "#9a3412" },

@@ -37,7 +37,7 @@ const fmtDate = (d, withTime = true) => {
 const flagTone = (flag) => {
   const s = String(flag || "").toUpperCase();
   if (s === "H" || s === "HIGH")     return { bg: "#fef3c7", fg: "#92400e", label: "HIGH" };
-  if (s === "L" || s === "LOW")      return { bg: "#dbeafe", fg: "#1d4ed8", label: "LOW" };
+  if (s === "L" || s === "LOW")      return { bg: "#e0e7ff", fg: "#4f46e5", label: "LOW" };
   if (s === "HH" || s === "CRITICAL HIGH") return { bg: "#fee2e2", fg: "#7f1d1d", label: "CRIT HIGH" };
   if (s === "LL" || s === "CRITICAL LOW")  return { bg: "#fecaca", fg: "#7f1d1d", label: "CRIT LOW" };
   if (s === "A" || s === "ABNORMAL") return { bg: "#fef3c7", fg: "#92400e", label: "ABN" };

@@ -431,12 +431,12 @@ function LabDashboard({ user, role }) {
       {isRad && (
         <div style={{
           padding: "12px 16px", marginBottom: 14, borderRadius: 10,
-          background: "#eff6ff", border: "1.5px solid #bfdbfe",
+          background: "#eef2ff", border: "1.5px solid #c7d2fe",
           display: "flex", alignItems: "center", gap: 12,
         }}>
-          <i className="pi pi-info-circle" style={{ fontSize: 18, color: "#1d4ed8" }} />
+          <i className="pi pi-info-circle" style={{ fontSize: 18, color: "#4f46e5" }} />
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#1e3a8a" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#3730a3" }}>
               Radiology reporting workspace — coming soon
             </div>
             <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>

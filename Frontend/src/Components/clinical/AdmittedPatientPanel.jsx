@@ -47,9 +47,9 @@ const T = {
   red:      "#dc2626",
   redL:     "#fef2f2",
   redB:     "#fecaca",
-  blue:     "#1d4ed8",
-  blueL:    "#eff6ff",
-  blueB:    "#bfdbfe",
+  blue:     "#4f46e5",
+  blueL:    "#eef2ff",
+  blueB:    "#c7d2fe",
 };
 
 /* ═══════════════════════  TYPE CONFIG  ═════════════════════════ */
@@ -98,7 +98,7 @@ const GRADIENTS = [
   ["#10b981","#14b8a6"],  // emerald→teal
   ["#ec4899","#8b5cf6"],  // pink→violet
   ["#f97316","#f59e0b"],  // orange→amber
-  ["#3b82f6","#06b6d4"],  // blue→cyan
+  ["#6366f1","#06b6d4"],  // blue→cyan
 ];
 function avatarGradient(name = "") {
   const code = name.charCodeAt(0) || 65;

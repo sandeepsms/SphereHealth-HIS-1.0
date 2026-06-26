@@ -108,7 +108,7 @@ const SettlementStatement = ({ settings = {}, receipt = {} }) => {
       signatureLabels={["Cashier", "Patient / Attendant"]}
     >
       <div style={{
-        background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af",
+        background: "#eef2ff", border: "1px solid #c7d2fe", color: "#4338ca",
         padding: "8px 14px", borderRadius: 6, marginBottom: 12,
         fontSize: 11, fontWeight: 700, letterSpacing: ".3px",
       }}>

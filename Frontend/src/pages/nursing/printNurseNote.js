@@ -508,7 +508,7 @@ const buildBuilder = (note) => {
         d.intWoundCare         && "Wound care",
       ].filter(Boolean);
       const intHtml = intChips.length
-        ? `<div style="margin:6px 0 0;font-size:11px;color:#475569"><strong>Interventions completed:</strong> ${intChips.map(p => `<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;background:#dbeafe;border-radius:9999px;color:#1d4ed8">${escapeHtml(p)}</span>`).join("")}</div>`
+        ? `<div style="margin:6px 0 0;font-size:11px;color:#475569"><strong>Interventions completed:</strong> ${intChips.map(p => `<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;background:#e0e7ff;border-radius:9999px;color:#4f46e5">${escapeHtml(p)}</span>`).join("")}</div>`
         : "";
       // Legacy narrative fields — surface only if present.
       const legacy = _grid([
@@ -520,7 +520,7 @@ const buildBuilder = (note) => {
         _kv("Psychosocial", d.psychosocial),
         _kv("Shift Summary", d.shiftSummary, true),
       ]);
-      return _section("Daily Assessment", "#1d4ed8", vitalsHtml + systems + legacy + intHtml);
+      return _section("Daily Assessment", "#4f46e5", vitalsHtml + systems + legacy + intHtml);
     },
 
     // ─── CARE PLAN ───────────────────────────────────────────────────
@@ -635,7 +635,7 @@ const buildBuilder = (note) => {
       const anthro = nNabh.anthropometry || {};
 
       // Admission identity strip
-      const admit = _section("Admission Identity", "#1d4ed8", _grid([
+      const admit = _section("Admission Identity", "#4f46e5", _grid([
         _kv("Admit Date", nrs.admitDate),
         _kv("Admit Time", nrs.admitTime),
         _kv("IPD No.", nrs.ipdNo),

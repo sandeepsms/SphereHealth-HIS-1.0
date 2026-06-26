@@ -18,7 +18,7 @@ const C = {
   bg: "#f8fafc", card: "#fff", border: "#e2e8f0",
   text: "#0f172a", muted: "#64748b", subtle: "#f8fafc",
   amber: "#d97706", amberL: "#fffbeb",
-  blue: "#1d4ed8", blueL: "#eff6ff",
+  blue: "#4f46e5", blueL: "#eef2ff",
   green: "#16a34a", greenL: "#dcfce7",
   red: "#dc2626", redL: "#fef2f2",
   teal: "#0d9488", tealL: "#f0fdfa",
@@ -366,7 +366,7 @@ function TPAServiceManagement() {
 
         {/* Hero band — blue gradient, briefcase glyph. */}
         <div style={{
-          background: "linear-gradient(135deg,#1d4ed8,#1e40af)",
+          background: "linear-gradient(135deg,#4f46e5,#4338ca)",
           borderRadius: 14,
           padding: "16px 22px",
           marginBottom: 16,
@@ -375,7 +375,7 @@ function TPAServiceManagement() {
           alignItems: "center",
           gap: 16,
           flexWrap: "wrap",
-          boxShadow: "0 4px 14px rgba(29,78,216,.25)",
+          boxShadow: "0 4px 14px rgba(79,70,229,.25)",
         }}>
           <div style={{
             width: 48, height: 48, borderRadius: 12,
@@ -869,7 +869,7 @@ function TPAServiceManagement() {
                       padding: "10px 22px",
                       background: editingService
                         ? `linear-gradient(135deg,${C.amber},#b45309)`
-                        : `linear-gradient(135deg,${C.blue},#1e40af)`,
+                        : `linear-gradient(135deg,${C.blue},#4338ca)`,
                       color: "#fff",
                       border: "none",
                       borderRadius: 9,
@@ -882,7 +882,7 @@ function TPAServiceManagement() {
                       gap: 6,
                       boxShadow: editingService
                         ? "0 4px 12px rgba(217,119,6,.25)"
-                        : "0 4px 12px rgba(29,78,216,.25)",
+                        : "0 4px 12px rgba(79,70,229,.25)",
                     }}
                   >
                     <i className={loading ? "pi pi-spin pi-spinner" : "pi pi-check"} />

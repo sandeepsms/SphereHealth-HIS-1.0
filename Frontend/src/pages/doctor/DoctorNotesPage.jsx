@@ -64,11 +64,11 @@ import TimelineNoteCard from "../../Components/notes/TimelineNoteCard";
 /* ── Design tokens (blue/indigo — doctor theme) ── */
 const C = {
   bg: "#f8fafc", card: "#ffffff", border: "#e2e8f0", text: "#0f172a", muted: "#64748b",
-  primary: "#1e40af", primaryL: "#eff6ff", primaryMid: "#2563eb",
+  primary: "#4338ca", primaryL: "#eef2ff", primaryMid: "#4f46e5",
   green: "#16a34a", greenL: "#dcfce7", greenB: "#bbf7d0",
   amber: "#d97706", amberL: "#fffbeb", amberB: "#fde68a",
   red: "#dc2626", redL: "#fef2f2", redB: "#fecaca",
-  blue: "#1d4ed8", blueL: "#dbeafe", blueB: "#93c5fd",
+  blue: "#4f46e5", blueL: "#e0e7ff", blueB: "#93c5fd",
   purple: "#7c3aed", purpleL: "#f5f3ff", purpleB: "#c4b5fd",
   teal: "#0d9488", tealL: "#f0fdfa", tealB: "#99f6e4",
   orange: "#ea580c", orangeL: "#fff7ed", orangeB: "#fed7aa",
@@ -202,7 +202,7 @@ const NOTE_STYLE = {
 };
 
 const SHIFT_STYLE = {
-  morning:   { bg: "#dbeafe", color: "#1e40af" },
+  morning:   { bg: "#e0e7ff", color: "#4338ca" },
   afternoon: { bg: C.amberL,  color: "#92400e" },
   evening:   { bg: "#ede9fe", color: C.purple  },
   night:     { bg: C.slate,   color: "#94a3b8" },
@@ -1064,19 +1064,19 @@ function DoctorNotesContent({ selectedPatient }) {
         ["BSL", v.bsl ? `${v.bsl} mg/dL` : ""], ["GCS", v.gcs ? String(v.gcs) : ""], ["Urine", v.urine ? `${v.urine} mL/hr` : ""],
       ].filter(r => r[1]);
       if (!rows.length) return "";
-      return `<h4 style="margin:12px 0 6px;color:#1e40af;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Vitals</h4>
+      return `<h4 style="margin:12px 0 6px;color:#4338ca;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Vitals</h4>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px">
-<tr style="background:#eff6ff">${rows.map(r => `<th style="padding:5px 8px;border:1px solid #bfdbfe;text-align:left;font-size:10px;color:#1e40af">${r[0]}</th>`).join("")}</tr>
-<tr>${rows.map(r => `<td style="padding:5px 8px;border:1px solid #bfdbfe;font-family:monospace;font-weight:600">${r[1]}</td>`).join("")}</tr>
+<tr style="background:#eef2ff">${rows.map(r => `<th style="padding:5px 8px;border:1px solid #c7d2fe;text-align:left;font-size:10px;color:#4338ca">${r[0]}</th>`).join("")}</tr>
+<tr>${rows.map(r => `<td style="padding:5px 8px;border:1px solid #c7d2fe;font-family:monospace;font-weight:600">${r[1]}</td>`).join("")}</tr>
 </table>`;
     })();
 
     const soapHtml = (() => {
       const s = note.soap;
       if (!s) return "";
-      const parts = [["S — Subjective","#1d4ed8",s.subjective],["O — Objective","#0d9488",s.objective],["A — Assessment","#d97706",s.assessment],["P — Plan","#16a34a",s.plan]].filter(p=>p[2]);
+      const parts = [["S — Subjective","#4f46e5",s.subjective],["O — Objective","#0d9488",s.objective],["A — Assessment","#d97706",s.assessment],["P — Plan","#16a34a",s.plan]].filter(p=>p[2]);
       if (!parts.length) return "";
-      return `<h4 style="margin:12px 0 6px;color:#1e40af;font-size:11px;text-transform:uppercase;letter-spacing:.5px">SOAP Notes</h4>
+      return `<h4 style="margin:12px 0 6px;color:#4338ca;font-size:11px;text-transform:uppercase;letter-spacing:.5px">SOAP Notes</h4>
 ${parts.map(p=>`<div style="margin-bottom:8px;border-left:3px solid ${p[1]};padding-left:10px"><strong style="font-size:10px;text-transform:uppercase;color:${p[1]}">${p[0]}</strong><p style="margin:3px 0;font-size:12px;white-space:pre-wrap">${p[2]}</p></div>`).join("")}`;
     })();
 
@@ -1090,26 +1090,26 @@ ${parts.map(p=>`<div style="margin-bottom:8px;border-left:3px solid ${p[1]};padd
       if (note.finalDiagnosis)       parts.push(`<strong>Final:</strong> ${escapeHtml(note.finalDiagnosis)}`);
       if (note.icd10Code)            parts.push(`<strong>ICD-10:</strong> ${escapeHtml(note.icd10Code)}${note.icd10Description ? " — " + escapeHtml(note.icd10Description) : ""}`);
       if (!parts.length) return "";
-      return `<h4 style="margin:12px 0 6px;color:#1e40af;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Diagnosis</h4><p style="font-size:12px;margin:0;line-height:1.6">${parts.join(" &nbsp;|&nbsp; ")}</p>`;
+      return `<h4 style="margin:12px 0 6px;color:#4338ca;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Diagnosis</h4><p style="font-size:12px;margin:0;line-height:1.6">${parts.join(" &nbsp;|&nbsp; ")}</p>`;
     })();
 
     const invHtml = note.investigations?.length
-      ? `<h4 style="margin:12px 0 6px;color:#1e40af;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Investigations</h4><p style="font-size:12px;margin:0">${note.investigations.join(", ")}</p>` : "";
+      ? `<h4 style="margin:12px 0 6px;color:#4338ca;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Investigations</h4><p style="font-size:12px;margin:0">${note.investigations.join(", ")}</p>` : "";
 
     const ordersHtml = note.orders?.length
-      ? `<h4 style="margin:12px 0 6px;color:#1e40af;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Doctor Orders</h4>
+      ? `<h4 style="margin:12px 0 6px;color:#4338ca;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Doctor Orders</h4>
 <table style="width:100%;border-collapse:collapse;font-size:11px">
-<tr style="background:#eff6ff"><th style="padding:4px 8px;border:1px solid #bfdbfe;text-align:left">Type</th><th style="padding:4px 8px;border:1px solid #bfdbfe;text-align:left">Instruction</th><th style="padding:4px 8px;border:1px solid #bfdbfe;text-align:left">Route</th><th style="padding:4px 8px;border:1px solid #bfdbfe;text-align:left">Freq</th><th style="padding:4px 8px;border:1px solid #bfdbfe;text-align:left">Priority</th></tr>
-${note.orders.map(o=>`<tr><td style="padding:4px 8px;border:1px solid #dbeafe">${o.type||"—"}</td><td style="padding:4px 8px;border:1px solid #dbeafe">${o.instruction||"—"}</td><td style="padding:4px 8px;border:1px solid #dbeafe">${o.route||"—"}</td><td style="padding:4px 8px;border:1px solid #dbeafe">${o.frequency||"—"}</td><td style="padding:4px 8px;border:1px solid #dbeafe;font-weight:700;color:${o.priority==="STAT"?"#dc2626":o.priority==="URGENT"?"#d97706":"#16a34a"}">${o.priority||"ROUTINE"}</td></tr>`).join("")}
+<tr style="background:#eef2ff"><th style="padding:4px 8px;border:1px solid #c7d2fe;text-align:left">Type</th><th style="padding:4px 8px;border:1px solid #c7d2fe;text-align:left">Instruction</th><th style="padding:4px 8px;border:1px solid #c7d2fe;text-align:left">Route</th><th style="padding:4px 8px;border:1px solid #c7d2fe;text-align:left">Freq</th><th style="padding:4px 8px;border:1px solid #c7d2fe;text-align:left">Priority</th></tr>
+${note.orders.map(o=>`<tr><td style="padding:4px 8px;border:1px solid #e0e7ff">${o.type||"—"}</td><td style="padding:4px 8px;border:1px solid #e0e7ff">${o.instruction||"—"}</td><td style="padding:4px 8px;border:1px solid #e0e7ff">${o.route||"—"}</td><td style="padding:4px 8px;border:1px solid #e0e7ff">${o.frequency||"—"}</td><td style="padding:4px 8px;border:1px solid #e0e7ff;font-weight:700;color:${o.priority==="STAT"?"#dc2626":o.priority==="URGENT"?"#d97706":"#16a34a"}">${o.priority||"ROUTINE"}</td></tr>`).join("")}
 </table>` : "";
 
     const medOrdersHtml = (() => {
       const mo = note.noteDetails?.medicationOrders;
       if (!mo?.length) return "";
-      return `<h4 style="margin:12px 0 6px;color:#1d4ed8;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Medication Orders</h4>
+      return `<h4 style="margin:12px 0 6px;color:#4f46e5;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Medication Orders</h4>
 <table style="width:100%;border-collapse:collapse;font-size:11px">
-<tr style="background:#dbeafe"><th style="padding:4px 8px;border:1px solid #93c5fd;text-align:left">Drug</th><th style="padding:4px 8px;border:1px solid #93c5fd;text-align:left">Dose</th><th style="padding:4px 8px;border:1px solid #93c5fd;text-align:left">Route</th><th style="padding:4px 8px;border:1px solid #93c5fd;text-align:left">Frequency</th><th style="padding:4px 8px;border:1px solid #93c5fd;text-align:left">Status</th></tr>
-${mo.map(m=>`<tr style="${m.status==="Stopped"?"background:#fff1f2":""}"><td style="padding:4px 8px;border:1px solid #bfdbfe;font-weight:600">${m.drug||"—"}</td><td style="padding:4px 8px;border:1px solid #bfdbfe">${m.dose||"—"}</td><td style="padding:4px 8px;border:1px solid #bfdbfe">${m.route||"—"}</td><td style="padding:4px 8px;border:1px solid #bfdbfe">${m.frequency||"—"}</td><td style="padding:4px 8px;border:1px solid #bfdbfe;font-weight:700;color:${m.status==="Stopped"?"#dc2626":"#16a34a"}">${m.status||"Active"}</td></tr>`).join("")}
+<tr style="background:#e0e7ff"><th style="padding:4px 8px;border:1px solid #93c5fd;text-align:left">Drug</th><th style="padding:4px 8px;border:1px solid #93c5fd;text-align:left">Dose</th><th style="padding:4px 8px;border:1px solid #93c5fd;text-align:left">Route</th><th style="padding:4px 8px;border:1px solid #93c5fd;text-align:left">Frequency</th><th style="padding:4px 8px;border:1px solid #93c5fd;text-align:left">Status</th></tr>
+${mo.map(m=>`<tr style="${m.status==="Stopped"?"background:#fff1f2":""}"><td style="padding:4px 8px;border:1px solid #c7d2fe;font-weight:600">${m.drug||"—"}</td><td style="padding:4px 8px;border:1px solid #c7d2fe">${m.dose||"—"}</td><td style="padding:4px 8px;border:1px solid #c7d2fe">${m.route||"—"}</td><td style="padding:4px 8px;border:1px solid #c7d2fe">${m.frequency||"—"}</td><td style="padding:4px 8px;border:1px solid #c7d2fe;font-weight:700;color:${m.status==="Stopped"?"#dc2626":"#16a34a"}">${m.status||"Active"}</td></tr>`).join("")}
 </table>`;
     })();
 
@@ -1276,7 +1276,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
               ? `<div style="margin:3px 0 3px 12px;padding:4px 6px;background:#fafafa;border-left:2px solid #cbd5e1"><div style="font-size:10px;font-weight:600;color:#475569;margin-bottom:2px">#${i + 1}</div>${renderNoteDetailsAsHtml(x, depth + 1)}</div>`
               : `<div class="kv" style="margin-left:12px"><span class="lbl">#${i + 1}</span><span class="val">${escapeHtml(fmtVal(x))}</span></div>`
             ).join("");
-            rows.push(`<div style="margin:6px 0"><div style="font-size:11px;font-weight:700;color:#1e40af;border-bottom:1px solid #dbeafe;padding-bottom:2px;margin-bottom:3px">${lbl}</div>${inner}</div>`);
+            rows.push(`<div style="margin:6px 0"><div style="font-size:11px;font-weight:700;color:#4338ca;border-bottom:1px solid #e0e7ff;padding-bottom:2px;margin-bottom:3px">${lbl}</div>${inner}</div>`);
           }
         } else if (typeof v === "object") {
           // BP shorthand
@@ -1287,7 +1287,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
             // (preopChecklist) and ICU bundle compliance live inside
             // nested objects — disclosure widget would hide them on paper.
             const nested = renderNoteDetailsAsHtml(v, depth + 1);
-            if (nested) rows.push(`<div style="margin:6px 0"><div style="font-size:11px;font-weight:700;color:#1e40af;border-bottom:1px solid #dbeafe;padding-bottom:2px;margin-bottom:3px">${lbl}</div>${nested}</div>`);
+            if (nested) rows.push(`<div style="margin:6px 0"><div style="font-size:11px;font-weight:700;color:#4338ca;border-bottom:1px solid #e0e7ff;padding-bottom:2px;margin-bottom:3px">${lbl}</div>${nested}</div>`);
           }
         } else {
           rows.push(`<div class="kv"><span class="lbl">${lbl}</span><span class="val">${escapeHtml(fmtVal(v))}</span></div>`);
@@ -1297,7 +1297,7 @@ ${io.map(inf=>`<tr style="${inf.status==="Stopped"?"background:#fff1f2":""}"><td
     };
     const noteDetailsHtml = note.noteDetails && Object.keys(note.noteDetails).filter(k => k !== "medicationOrders" && k !== "infusionOrders").length
       ? `<div class="section" style="margin-top:14px;padding-top:10px;border-top:1px solid #e2e8f0">
-<h3 style="margin:0 0 8px;color:#1e40af;font-size:12px;text-transform:uppercase;letter-spacing:.5px">Additional Details (${escapeHtml(modDef(note.noteType)?.label || note.noteType || "Note")})</h3>
+<h3 style="margin:0 0 8px;color:#4338ca;font-size:12px;text-transform:uppercase;letter-spacing:.5px">Additional Details (${escapeHtml(modDef(note.noteType)?.label || note.noteType || "Note")})</h3>
 <style>.kv{display:flex;gap:8px;font-size:12px;margin:2px 0;align-items:baseline}.kv .lbl{flex:0 0 180px;font-weight:600;color:#475569;font-size:11px}.kv .val{flex:1;color:#0f172a;white-space:pre-wrap;word-break:break-word}</style>
 ${renderNoteDetailsAsHtml(note.noteDetails)}
 </div>` : "";
@@ -1392,7 +1392,7 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
     const TYPE_BUILDERS = {
       // ─── ADMISSION (AAC.1) ──────────────────────────────────────────
       admission: () => {
-        const identityPanel = _section("Admission Identity", "#1d4ed8", _grid([
+        const identityPanel = _section("Admission Identity", "#4f46e5", _grid([
           _kv("Mode of Admission", nd.modeOfAdmission),
           _kv("Brought By", nd.broughtBy),
           _kv("First Contact", nd.firstContactTime),
@@ -1510,7 +1510,7 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
           ? _section("Course in Hospital", "#475569", _narr([note.soap?.subjective, note.soap?.objective, note.soap?.assessment].filter(Boolean).join("\n\n")))
           : "";
         const meds = nd.dischargeMedications
-          ? _section("Discharge Medications", "#1d4ed8", `<div style="font-size:11.5px;padding:6px 10px;background:#eff6ff;border-radius:4px">${escapeHtml(nd.dischargeMedications)}</div>`)
+          ? _section("Discharge Medications", "#4f46e5", `<div style="font-size:11.5px;padding:6px 10px;background:#eef2ff;border-radius:4px">${escapeHtml(nd.dischargeMedications)}</div>`)
           : medOrdersHtml;
         const fup = Array.isArray(nd.followUp)
           ? _section("Follow-up Plan", "#0d9488", `<ul style="margin:4px 0;padding-left:18px;font-size:11.5px">${nd.followUp.map(f => `<li>${escapeHtml(f)}</li>`).join("")}</ul>`)
@@ -1704,7 +1704,7 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
           _kv("Analgesia", nd.analgesia),
           _kv("Ward Transfer Time", nd.wardTransferTime, true),
         ]));
-        const orders = note.soap?.plan ? _section("Post-op Orders", "#1d4ed8", _narr(note.soap.plan)) : "";
+        const orders = note.soap?.plan ? _section("Post-op Orders", "#4f46e5", _narr(note.soap.plan)) : "";
         return { bodyHtml: compactGridCss + proc + recovery + orders + ordersHtml, suppressSoap: true, suppressGenericDetails: true };
       },
 
@@ -1785,7 +1785,7 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
     // types (general, progress, daily, assessment) and as a fallback.
     const noteBodyHtml = `
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
-    <div style="padding:5px 14px;border-radius:6px;font-size:13px;font-weight:800;background:#eff6ff;color:#1e40af">${modLabel}</div>
+    <div style="padding:5px 14px;border-radius:6px;font-size:13px;font-weight:800;background:#eef2ff;color:#4338ca">${modLabel}</div>
     <div style="padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:${note.status==="signed"?"#dcfce7":"#fffbeb"};color:${note.status==="signed"?"#16a34a":"#d97706"}">${note.status==="signed"?"✓ SIGNED":"DRAFT"}</div>
     ${note.isCritical ? '<div style="padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:#fef2f2;color:#dc2626">⚠ CRITICAL EVENT</div>' : ""}
     <div style="margin-left:auto;font-size:12px;color:#64748b">Shift: <strong style="text-transform:capitalize">${shift}</strong> · Recorded: ${noteDate}</div>
@@ -1942,8 +1942,8 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                   title: "Patient Diagnosis",
                   subtitle: "Provisional → Working → Final + ICD-10",
                   icon: "pi-bookmark",
-                  color: "#2563eb",
-                  tint: "#dbeafe",
+                  color: "#4f46e5",
+                  tint: "#e0e7ff",
                   badges: [
                     diag.provisional || diag.working || diag.final
                       ? { label: "Filled", tone: "ok" }
@@ -2053,8 +2053,8 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                         title: "Initial Doctor Assessment",
                         subtitle: "IPD Initial Assessment — history, exam, diagnosis, plan (NABH AAC.1)",
                         icon: "pi-clipboard",
-                        color: "#1d4ed8",
-                        tint: "#dbeafe",
+                        color: "#4f46e5",
+                        tint: "#e0e7ff",
                         badges: [{ label: "NABH", tone: "ok" }],
                       };
                 })(),
@@ -2182,12 +2182,12 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
 
           {/* ══ DIAGNOSIS PANEL ══════════════════════════════════════════════ */}
           {patient && activeTile === "diagnosis" && (
-            <div style={{ background: "white", border: "1.5px solid #e0e7ef", borderRadius: 14, padding: "18px 22px", marginBottom: 14, boxShadow: "0 2px 10px rgba(37,99,235,.06)" }}>
+            <div style={{ background: "white", border: "1.5px solid #e0e7ef", borderRadius: 14, padding: "18px 22px", marginBottom: 14, boxShadow: "0 2px 10px rgba(79,70,229,.06)" }}>
               {/* Header */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 34, height: 34, borderRadius: 9, background: "#dbeafe", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <i className="pi pi-bookmark" style={{ fontSize: 15, color: "#1d4ed8" }} />
+                  <div style={{ width: 34, height: 34, borderRadius: 9, background: "#e0e7ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <i className="pi pi-bookmark" style={{ fontSize: 15, color: "#4f46e5" }} />
                   </div>
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 800, color: "#1e3a5f", letterSpacing: ".3px" }}>Patient Diagnosis</div>
@@ -2197,7 +2197,7 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                 <button
                   onClick={saveDiagnosis}
                   disabled={diagSaving}
-                  style={{ padding: "8px 20px", background: diagSaving ? "#93c5fd" : "#2563eb", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: diagSaving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6, boxShadow: diagSaving ? "none" : "0 3px 10px rgba(37,99,235,.28)" }}>
+                  style={{ padding: "8px 20px", background: diagSaving ? "#93c5fd" : "#4f46e5", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: diagSaving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6, boxShadow: diagSaving ? "none" : "0 3px 10px rgba(79,70,229,.28)" }}>
                   {diagSaving
                     ? <><i className="pi pi-spin pi-spinner" style={{ fontSize: 11 }} /> Saving…</>
                     : <><i className="pi pi-check" style={{ fontSize: 11 }} /> Update Diagnosis</>}
@@ -2222,14 +2222,14 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                 {/* Working */}
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#3b82f6", flexShrink: 0 }} />
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: ".6px" }}>Working Dx</span>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#6366f1", flexShrink: 0 }} />
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#4f46e5", textTransform: "uppercase", letterSpacing: ".6px" }}>Working Dx</span>
                   </div>
                   <input
                     value={diag.working}
                     onChange={e => setDiag(p => ({ ...p, working: e.target.value }))}
                     placeholder="Current evolving diagnosis"
-                    style={{ width: "100%", border: "1.5px solid #93c5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#1e293b", outline: "none", background: "#eff6ff", boxSizing: "border-box" }}
+                    style={{ width: "100%", border: "1.5px solid #93c5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#1e293b", outline: "none", background: "#eef2ff", boxSizing: "border-box" }}
                   />
                 </div>
                 {/* Final */}
@@ -2280,7 +2280,7 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                 <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".5px" }}>Patient Status:</span>
                 {["Stable","Improving","Unchanged","Deteriorating","Critical","Ready for Discharge"].map(s => (
                   <button key={s} onClick={() => setDiag(p => ({ ...p, status: s }))}
-                    style={{ padding: "4px 13px", borderRadius: 20, border: `1.5px solid ${diag.status === s ? "#2563eb" : "#e2e8f0"}`, background: diag.status === s ? "#2563eb" : "white", color: diag.status === s ? "white" : "#64748b", fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, cursor: "pointer", transition: "all .15s" }}>
+                    style={{ padding: "4px 13px", borderRadius: 20, border: `1.5px solid ${diag.status === s ? "#4f46e5" : "#e2e8f0"}`, background: diag.status === s ? "#4f46e5" : "white", color: diag.status === s ? "white" : "#64748b", fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, cursor: "pointer", transition: "all .15s" }}>
                     {s}
                   </button>
                 ))}
@@ -2798,7 +2798,7 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                       const addMed    = () => setMedOrders(p => [...p, emptyMedRow()]);
                       const removeMed = (id) => setMedOrders(p => p.filter(r => r.id !== id));
                       return (
-                        <div style={{ background: "#eff6ff", borderRadius: 10, padding: "12px 14px", border: "1.5px solid #93c5fd" }}>
+                        <div style={{ background: "#eef2ff", borderRadius: 10, padding: "12px 14px", border: "1.5px solid #93c5fd" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                             <div style={{ fontSize: 11, fontWeight: 700, color: C.blue, textTransform: "uppercase", letterSpacing: ".6px" }}>
                               <i className="pi pi-tablet" style={{ marginRight: 6 }} />Medication Orders (NABH) — No overwrite · STOP + New Order only
@@ -2810,7 +2810,7 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                           <div style={{ overflowX: "auto" }}>
                             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                               <thead>
-                                <tr style={{ background: "#dbeafe" }}>
+                                <tr style={{ background: "#e0e7ff" }}>
                                   {["Date/Time","Drug *","Dose *","Route","Freq","Times (Auto)","Priority","HAM","Indication","Status","Stop Reason",""].map(h => (
                                     <th key={h} style={{ padding: "6px 8px", border: "1px solid #93c5fd", fontWeight: 700, color: C.blue, textAlign: "left", whiteSpace: "nowrap", fontSize: 10 }}>{h}</th>
                                   ))}
@@ -2822,24 +2822,24 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                                   const hamActive = autoHam || row.hamOverride;
                                   return (
                                   <tr key={row.id} style={{ background: row.status === "Stopped" ? "#fef2f2" : hamActive ? "#fff7ed" : "white" }}>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}><input type="datetime-local" className="his-field" style={{ fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 130 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px", fontWeight: 700 }} value={row.drug} placeholder="Drug name (generic)" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 80 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.dose} placeholder="e.g. 500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 100 }}>
+                                    <td style={{ border: "1px solid #c7d2fe", padding: "4px" }}><input type="datetime-local" className="his-field" style={{ fontSize: 10, padding: "4px 6px" }} value={row.datetime} onChange={e => updateMed(row.id, "datetime", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #c7d2fe", padding: "4px", minWidth: 130 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px", fontWeight: 700 }} value={row.drug} placeholder="Drug name (generic)" onChange={e => updateMed(row.id, "drug", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #c7d2fe", padding: "4px", minWidth: 80 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.dose} placeholder="e.g. 500mg" onChange={e => updateMed(row.id, "dose", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #c7d2fe", padding: "4px", minWidth: 100 }}>
                                       <select className="his-select" style={{ fontSize: 11, padding: "4px 6px" }} value={row.route} onChange={e => updateMed(row.id, "route", e.target.value)}>
                                         {ROUTES.map(r => <option key={r}>{r}</option>)}
                                       </select>
                                     </td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 90 }}>
+                                    <td style={{ border: "1px solid #c7d2fe", padding: "4px", minWidth: 90 }}>
                                       <select className="his-select" style={{ fontSize: 11, padding: "4px 6px" }} value={row.frequency} onChange={e => updateMed(row.id, "frequency", e.target.value)}>
                                         {FREQ_LIST.map(f => <option key={f}>{f}</option>)}
                                       </select>
                                     </td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 110, fontFamily: "monospace", fontSize: 10, color: C.blue, fontWeight: 700 }}>
+                                    <td style={{ border: "1px solid #c7d2fe", padding: "4px", minWidth: 110, fontFamily: "monospace", fontSize: 10, color: C.blue, fontWeight: 700 }}>
                                       {(FREQ_TIMES[row.frequency] || []).join(" · ")}
                                     </td>
                                     {/* Priority */}
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 85 }}>
+                                    <td style={{ border: "1px solid #c7d2fe", padding: "4px", minWidth: 85 }}>
                                       <select className="his-select" style={{ fontSize: 10, padding: "3px 5px", fontWeight: 700, color: row.priority==="STAT"?C.red:row.priority==="Urgent"?C.amber:C.muted }} value={row.priority||"Routine"} onChange={e => updateMed(row.id, "priority", e.target.value)}>
                                         <option value="Routine">Routine</option>
                                         <option value="Urgent">🔶 Urgent</option>
@@ -2847,23 +2847,23 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                                       </select>
                                     </td>
                                     {/* HAM */}
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", textAlign: "center", minWidth: 52 }}>
+                                    <td style={{ border: "1px solid #c7d2fe", padding: "4px", textAlign: "center", minWidth: 52 }}>
                                       {autoHam
                                         ? <span title="Auto-detected High Alert Medication" style={{ fontSize: 14 }}>🔴</span>
                                         : <input type="checkbox" title="Mark as High Alert Medication (HAM)" checked={!!row.hamOverride} onChange={e => updateMed(row.id, "hamOverride", e.target.checked)}
                                             style={{ width: 14, height: 14, cursor: "pointer", accentColor: C.red }} />}
                                     </td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 110 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.indication} placeholder="e.g. GI prophylaxis" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}>
+                                    <td style={{ border: "1px solid #c7d2fe", padding: "4px", minWidth: 110 }}><input className="his-field" style={{ fontSize: 11, padding: "4px 6px" }} value={row.indication} placeholder="e.g. GI prophylaxis" onChange={e => updateMed(row.id, "indication", e.target.value)} /></td>
+                                    <td style={{ border: "1px solid #c7d2fe", padding: "4px" }}>
                                       <select className="his-select" style={{ fontSize: 11, padding: "4px 6px", color: row.status === "Stopped" ? C.red : C.green, fontWeight: 700 }} value={row.status} onChange={e => updateMed(row.id, "status", e.target.value)}>
                                         <option value="Active">Active</option>
                                         <option value="Stopped">Stopped</option>
                                       </select>
                                     </td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px", minWidth: 100 }}>
+                                    <td style={{ border: "1px solid #c7d2fe", padding: "4px", minWidth: 100 }}>
                                       <input className="his-field" style={{ fontSize: 11, padding: "4px 6px", borderColor: row.status === "Stopped" && !row.stopReason ? C.red : "#e2e8f0" }} value={row.stopReason} placeholder={row.status === "Stopped" ? "Required!" : "—"} onChange={e => updateMed(row.id, "stopReason", e.target.value)} />
                                     </td>
-                                    <td style={{ border: "1px solid #bfdbfe", padding: "4px" }}>
+                                    <td style={{ border: "1px solid #c7d2fe", padding: "4px" }}>
                                       <button onClick={() => removeMed(row.id)} style={{ width: 22, height: 22, borderRadius: 4, border: "1px solid #fca5a5", background: "#fef2f2", color: C.red, cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
                                     </td>
                                   </tr>
@@ -2999,7 +2999,7 @@ ${renderNoteDetailsAsHtml(note.noteDetails)}
                                   {FREQ_LIST.map(f => <option key={f}>{f}</option>)}
                                 </select>
                               </td>
-                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 140, background: "#eff6ff" }}>
+                              <td style={{ border: `1px solid ${C.blueB}`, padding: "5px", minWidth: 140, background: "#eef2ff" }}>
                                 <div style={{ fontFamily: "monospace", fontSize: 11, color: C.blue, fontWeight: 700, lineHeight: 1.5 }}>
                                   {(FREQ_TIMES[row.frequency] || []).join(" · ")}
                                 </div>

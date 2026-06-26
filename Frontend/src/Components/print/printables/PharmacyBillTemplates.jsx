@@ -136,11 +136,11 @@ function BilledTo(p) {
                     : isOPD   ? "OPD"
                     : "";
   const variantColor = isWalkIn ? "#15803d"
-                      : isIPD   ? "#1e3a8a"
+                      : isIPD   ? "#3730a3"
                       : isOPD   ? "#9a3412"
                       : COL.mute;
   const variantBg    = isWalkIn ? "#f0fdf4"
-                      : isIPD   ? "#eff6ff"
+                      : isIPD   ? "#eef2ff"
                       : isOPD   ? "#fff7ed"
                       : COL.soft;
 

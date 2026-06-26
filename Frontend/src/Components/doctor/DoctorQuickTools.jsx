@@ -30,7 +30,7 @@ export default function DoctorQuickTools({ uhid = "", admissionId = "", ipdNo = 
 
   const TOOLS = [
     { key: "plan",    label: "Nursing Plan",        icon: "📝", onClick: () => { setOpen(false); setPlanOpen(true); }, accent: "#be185d" },
-    { key: "opd",     label: "OPD Assessment",      icon: "🩻", onClick: () => goWithUhid("/opd-assessment"),      accent: "#2563eb" },
+    { key: "opd",     label: "OPD Assessment",      icon: "🩻", onClick: () => goWithUhid("/opd-assessment"),      accent: "#4f46e5" },
     { key: "panel",   label: "Patient Panel",       icon: "🩺", onClick: () => goWithUhid("/doctor-patient-panel"), accent: "#7c3aed" },
     { key: "medcert", label: "Medical Certificate", icon: "📜", onClick: () => goWithUhid("/medical-certificates"), accent: "#0d9488" },
     { key: "disch",   label: "Discharge Summary",   icon: "📄", onClick: () => goWithUhid("/discharge-summary"),   accent: "#16a34a" },
@@ -49,8 +49,8 @@ export default function DoctorQuickTools({ uhid = "", admissionId = "", ipdNo = 
         ))}
         <button onClick={() => setOpen((o) => !o)} title="Quick tools"
           style={{ width: 54, height: 54, borderRadius: "50%", border: "none", cursor: "pointer",
-            background: open ? "#0f172a" : "#2563eb", color: "#fff", fontSize: 22,
-            boxShadow: "0 8px 22px rgba(37,99,235,.45)", transition: "transform .15s", transform: open ? "rotate(45deg)" : "none" }}>
+            background: open ? "#0f172a" : "#4f46e5", color: "#fff", fontSize: 22,
+            boxShadow: "0 8px 22px rgba(79,70,229,.45)", transition: "transform .15s", transform: open ? "rotate(45deg)" : "none" }}>
           {open ? "✕" : "➕"}
         </button>
       </div>

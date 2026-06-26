@@ -42,7 +42,7 @@ const C = {
 // note had bp_sys="110" / pulse="80" saved correctly.
 const SOURCE_META = {
   vitals:  { label: "Vital Signs",      short: "Vitals", icon: "❤", fg: "#be185d", bg: "#fce7f3" },
-  daily:   { label: "Daily Assessment", short: "Daily",  icon: "📋", fg: "#1d4ed8", bg: "#dbeafe" },
+  daily:   { label: "Daily Assessment", short: "Daily",  icon: "📋", fg: "#4f46e5", bg: "#e0e7ff" },
   mews:    { label: "MEWS Score",       short: "MEWS",   icon: "🚨", fg: "#b45309", bg: "#fef3c7" },
   initial: { label: "Nursing Initial",  short: "Initial",icon: "🧾", fg: "#15803d", bg: "#dcfce7" },
 };

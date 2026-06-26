@@ -32,8 +32,8 @@ const DEPT_TEMPLATES = [
     key: "MEDICINE",
     label: "General Medicine",
     icon: "pi-heart",
-    color: "#2563eb",
-    bg: "#eff6ff",
+    color: "#4f46e5",
+    bg: "#eef2ff",
     specialSections: ["chronicDiseases", "functionalStatus", "vaccinations"],
     template: {
       admissionReasonPrompt: "e.g. Fever with chills for 5 days, breathlessness on exertion…",
@@ -310,7 +310,7 @@ const DEPT_TEMPLATES = [
 const C = {
   bg: "#f0f2f5", card: "#fff", border: "#e2e8f0",
   text: "#0f172a", muted: "#64748b", subtle: "#f8fafc",
-  green: "#16a34a", red: "#dc2626", amber: "#d97706", blue: "#1e40af",
+  green: "#16a34a", red: "#dc2626", amber: "#d97706", blue: "#4338ca",
 };
 
 /* Hex → soft-tint helpers used by Section / DeptBanner. */
@@ -1566,7 +1566,7 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
       {/* ── Header ── */}
       <div style={{ background: C.card, borderRadius: 12, padding: "14px 20px", marginBottom: 14, border: "1.5px solid #6366f130", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 40, height: 40, borderRadius: 10, background: "#eff6ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: "#eef2ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <i className="pi pi-sign-out" style={{ fontSize: 18, color: C.blue }} />
           </div>
           <div>
@@ -1586,7 +1586,7 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
               <button onClick={() => setView("catalogue")} style={{ padding: "7px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "white", cursor: "pointer", fontSize: 12, color: C.muted, fontWeight: 600 }}>
                 <i className="pi pi-arrow-left" style={{ marginRight: 5 }} />Departments
               </button>
-              <button onClick={openPrint} style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: "#eff6ff", color: C.blue, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+              <button onClick={openPrint} style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: "#eef2ff", color: C.blue, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                 <i className="pi pi-eye" style={{ marginRight: 5 }} />Preview
               </button>
               <button onClick={handleSave} disabled={saving} style={{ padding: "7px 18px", borderRadius: 8, border: "none", background: saving ? C.muted : color, color: "white", cursor: saving ? "not-allowed" : "pointer", fontSize: 12, fontWeight: 700 }}>
@@ -1611,7 +1611,7 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
           display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
         }}>
           <div style={{
-            width: 32, height: 32, borderRadius: 8, background: "#eff6ff",
+            width: 32, height: 32, borderRadius: 8, background: "#eef2ff",
             display: "flex", alignItems: "center", justifyContent: "center",
             flexShrink: 0,
           }}>
@@ -1632,10 +1632,10 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
         </div>
       ) : (
         <div style={{
-          background: "linear-gradient(135deg,#1e40af,#0e7490)",
+          background: "linear-gradient(135deg,#4338ca,#0e7490)",
           borderRadius: 12, padding: "14px 18px", marginBottom: 14,
           display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
-          color: "#fff", boxShadow: "0 4px 14px rgba(30,64,175,.25)",
+          color: "#fff", boxShadow: "0 4px 14px rgba(67,56,202,.25)",
         }}>
           {/* Avatar initial */}
           <div style={{
@@ -1687,7 +1687,7 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
       {patInfo && (() => {
         const done1 = !!lastSavedId;
         const STEP_COLORS = {
-          doctor:    { bg: "#2563eb", soft: "#eff6ff", border: "#bfdbfe" },
+          doctor:    { bg: "#4f46e5", soft: "#eef2ff", border: "#c7d2fe" },
           nurse:     { bg: "#db2777", soft: "#fdf2f8", border: "#fbcfe8" },
           reception: { bg: "#0891b2", soft: "#ecfeff", border: "#a5f3fc" },
           finalize:  { bg: "#15803d", soft: "#f0fdf4", border: "#86efac" },

@@ -56,7 +56,7 @@ export default function AnimationGalleryPage() {
 
         <Cell n="01" title="🔢 Animated Counter">
           <div key={reseed} style={{ display: "flex", gap: 18, fontSize: 30 }}>
-            <span style={{ color: "#2563eb" }}><AnimatedCounter value={1284} /></span>
+            <span style={{ color: "#4f46e5" }}><AnimatedCounter value={1284} /></span>
             <span style={{ color: "#16a34a", fontSize: 22 }}><AnimatedCounter value={97.4} decimals={1} suffix="%" /></span>
           </div>
         </Cell>
@@ -75,7 +75,7 @@ export default function AnimationGalleryPage() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={() => toast.success("Saved successfully ✓")} style={btn("#16a34a")}>Success</button>
             <button onClick={() => toast.error("Something went wrong")} style={btn("#dc2626")}>Error</button>
-            <button onClick={() => toast.info("New lab report ready")} style={btn("#2563eb")}>Info</button>
+            <button onClick={() => toast.info("New lab report ready")} style={btn("#4f46e5")}>Info</button>
           </div>
         </Cell>
 
@@ -94,7 +94,7 @@ export default function AnimationGalleryPage() {
         <Cell n="06" title="❤️ Vitals Progress Bars">
           <div key={reseed} style={{ width: "100%", display: "grid", gap: 9 }}>
             <Row lbl="SpO₂ 97%"><VitalsBar value={97} color="#16a34a" /></Row>
-            <Row lbl="HR 88 bpm"><VitalsBar value={73} color="#2563eb" live /></Row>
+            <Row lbl="HR 88 bpm"><VitalsBar value={73} color="#4f46e5" live /></Row>
             <Row lbl="Temp 101°F"><VitalsBar value={62} color="#f59e0b" /></Row>
           </div>
         </Cell>
@@ -110,7 +110,7 @@ export default function AnimationGalleryPage() {
         </Cell>
 
         <Cell n="09" title="💧 Ripple Click Effect">
-          <RippleButton style={{ background: "#2563eb", color: "#fff", border: "none", borderRadius: 10, padding: "12px 22px", fontWeight: 700, cursor: "pointer" }}>Click me</RippleButton>
+          <RippleButton style={{ background: "#4f46e5", color: "#fff", border: "none", borderRadius: 10, padding: "12px 22px", fontWeight: 700, cursor: "pointer" }}>Click me</RippleButton>
         </Cell>
 
         <Cell n="10" title="🧭 Nav Hover Sweep">
@@ -142,13 +142,13 @@ export default function AnimationGalleryPage() {
         </Cell>
 
         <Cell n="16" title="🃏 Hover Lift Card">
-          <div className="ak-lift" style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: "18px 26px", fontWeight: 700, color: "#1e40af", cursor: "pointer" }}>Hover to lift</div>
+          <div className="ak-lift" style={{ background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 12, padding: "18px 26px", fontWeight: 700, color: "#4338ca", cursor: "pointer" }}>Hover to lift</div>
         </Cell>
 
         <Cell n="17" title="⭕ Circular Progress Rings">
           <div key={reseed} style={{ display: "flex", gap: 14 }}>
             <CircularRing value={82} color="#16a34a" />
-            <CircularRing value={64} color="#2563eb" />
+            <CircularRing value={64} color="#4f46e5" />
             <CircularRing value={38} color="#f59e0b" />
           </div>
         </Cell>
@@ -175,7 +175,7 @@ export default function AnimationGalleryPage() {
             <div style={{ fontSize: 34 }}>🪟</div>
             <h3 style={{ margin: "8px 0" }}>Modal Spring Pop</h3>
             <p style={{ color: "#64748b", fontSize: 13, margin: "0 0 16px" }}>Springs in with an overshoot bounce.</p>
-            <button onClick={() => setModal(false)} style={btn("#2563eb")}>Close</button>
+            <button onClick={() => setModal(false)} style={btn("#4f46e5")}>Close</button>
           </div>
         </div>
       )}

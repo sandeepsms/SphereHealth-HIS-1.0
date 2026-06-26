@@ -24,7 +24,7 @@ import API_ENDPOINTS from "../../config/api";
 import { useVisiblePoll } from "../../utils/pollingHelpers";
 
 const C = {
-  primary: "#1d4ed8", accent: "#7c3aed",
+  primary: "#4f46e5", accent: "#7c3aed",
   success: "#059669", warn: "#d97706", danger: "#dc2626",
   bg: "#f8fafc", card: "#ffffff", border: "#e2e8f0",
   muted: "#64748b", dark: "#0f172a",
@@ -36,7 +36,7 @@ const URGENCY = {
   Routine: { fg: "#475569", bg: "#f1f5f9", border: "#cbd5e1", icon: "pi-clock" },
 };
 const STATUS = {
-  Raised:            { fg: "#1d4ed8", bg: "#dbeafe" },
+  Raised:            { fg: "#4f46e5", bg: "#e0e7ff" },
   Acknowledged:      { fg: "#0d9488", bg: "#ccfbf1" },
   PartiallyReleased: { fg: "#d97706", bg: "#fef3c7" },
   Released:          { fg: "#15803d", bg: "#dcfce7" },
@@ -483,8 +483,8 @@ export default function PharmacyIndentsPage({
                         <td style={{ padding: "6px 10px" }}>
                           <span style={{
                             fontSize: 10, fontWeight: 700,
-                            background: it.sourceType === "DoctorOrder" ? "#dbeafe" : "#fef3c7",
-                            color:      it.sourceType === "DoctorOrder" ? "#1d4ed8" : "#a16207",
+                            background: it.sourceType === "DoctorOrder" ? "#e0e7ff" : "#fef3c7",
+                            color:      it.sourceType === "DoctorOrder" ? "#4f46e5" : "#a16207",
                             padding: "2px 7px", borderRadius: 6, textTransform: "uppercase", letterSpacing: ".3px",
                           }}>
                             {it.sourceType === "DoctorOrder" ? "Rx" : "Manual"}

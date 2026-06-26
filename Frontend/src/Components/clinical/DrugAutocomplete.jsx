@@ -36,7 +36,7 @@ import { API_ENDPOINTS } from "../../config/api";
    form value added on the backend just falls through to FORM_DEFAULT
    without breaking the layout. */
 const FORM_BADGE = {
-  Tablet:      { short: "TAB", bg: "#dbeafe", fg: "#1d4ed8" },
+  Tablet:      { short: "TAB", bg: "#e0e7ff", fg: "#4f46e5" },
   Capsule:     { short: "CAP", bg: "#fef3c7", fg: "#a16207" },
   Syrup:       { short: "SYP", bg: "#fce7f3", fg: "#be185d" },
   Injection:   { short: "INJ", bg: "#fee2e2", fg: "#b91c1c" },
@@ -229,7 +229,7 @@ export default function DrugAutocomplete({
                   cursor: "pointer", fontFamily: "inherit",
                   alignItems: "center",
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "#eff6ff")}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#eef2ff")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
               >
                 {/* Form prefix badge — left-aligned so the doctor reads

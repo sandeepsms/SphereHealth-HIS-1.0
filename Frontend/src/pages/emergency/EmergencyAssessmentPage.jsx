@@ -26,7 +26,7 @@ import BedSelectionPanel from "../../Components/bed/BedSelectionPanel";
 /* ── Design tokens ── */
 const C = {
   bg: "#f0f2f5", card: "#fff", border: "#e2e6ea", text: "#1a1d23", muted: "#6b7280",
-  accent: "#1e40af", accentL: "#eff6ff",
+  accent: "#4338ca", accentL: "#eef2ff",
   green: "#16a34a", greenL: "#dcfce7",
   red: "#dc2626", redL: "#fef2f2",
   amber: "#d97706", amberL: "#fffbeb",

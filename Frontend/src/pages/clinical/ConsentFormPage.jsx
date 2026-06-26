@@ -316,8 +316,8 @@ const CONSENT_CATALOGUE = [
     key: "DIALYSIS",
     label: "Dialysis",
     icon: "pi-sync",
-    color: "#2563eb",
-    bg: "#eff6ff",
+    color: "#4f46e5",
+    bg: "#eef2ff",
     nabh: "PRE.4",
     description: "Haemodialysis or peritoneal dialysis",
     template: {
@@ -407,7 +407,7 @@ const CONSENT_CATALOGUE = [
 const C = {
   bg: "#f0f2f5", card: "#fff", border: "#e2e6ea",
   text: "#1a1d23", muted: "#6b7280",
-  green: "#16a34a", red: "#dc2626", amber: "#d97706", blue: "#1e40af",
+  green: "#16a34a", red: "#dc2626", amber: "#d97706", blue: "#4338ca",
 };
 
 function F({ label, required, children }) {

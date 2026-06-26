@@ -29,7 +29,7 @@ const C = {
   red: "#dc2626", redL: "#fef2f2",
   amber: "#d97706", amberL: "#fffbeb",
   green: "#16a34a", greenL: "#dcfce7",
-  blue: "#1d4ed8", blueL: "#eff6ff",
+  blue: "#4f46e5", blueL: "#eef2ff",
   purple: "#7c3aed", purpleL: "#f5f3ff",
   teal: "#0d9488",
 };
@@ -256,10 +256,10 @@ export default function DiabeticChartPage() {
 
         {/* ── Header ── */}
         <div style={{
-          background: "linear-gradient(135deg,#1d4ed8,#0e7490)",
+          background: "linear-gradient(135deg,#4f46e5,#0e7490)",
           borderRadius: 14, padding: "16px 22px", marginBottom: 16,
           color: "#fff", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
-          boxShadow: "0 4px 14px rgba(30,64,175,.25)",
+          boxShadow: "0 4px 14px rgba(67,56,202,.25)",
         }}>
           <div style={{
             width: 48, height: 48, borderRadius: 12,
@@ -453,7 +453,7 @@ export default function DiabeticChartPage() {
             <div style={{
               padding: "12px 18px",
               background: `linear-gradient(135deg, ${C.blueL}, ${C.blueL}80)`,
-              borderBottom: `1px solid #bfdbfe`,
+              borderBottom: `1px solid #c7d2fe`,
               display: "flex", alignItems: "center", gap: 10,
             }}>
               <i className="pi pi-calendar" style={{ fontSize: 14, color: C.blue }} />

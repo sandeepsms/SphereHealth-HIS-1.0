@@ -66,7 +66,7 @@ const MODULE_NAMES = {
 };
 
 const ROLE_COLORS = {
-  Admin:            "#1e40af",
+  Admin:            "#4338ca",
   Receptionist:     "#0d9488",
   Doctor:           "#7c3aed",
   Nurse:            "#db2777",
@@ -125,7 +125,7 @@ export default function Header() {
   const [dropOpen, setDropOpen] = useState(false);
   const dropRef = useRef(null);
 
-  const bgColor  = isDoctorPage(pathname) ? "#1e293b" : "#1e40af";
+  const bgColor  = isDoctorPage(pathname) ? "#1e293b" : "#4338ca";
 
   // Should we show the Back button? Hide on:
   //   • Login screen
@@ -161,7 +161,7 @@ export default function Header() {
     ? (user.fullName || _nameParts || user.employeeId || "User")
     : "Guest";
   const initials    = displayName.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
-  const roleColor   = user ? (ROLE_COLORS[user.role] || "#1e40af") : "#1e40af";
+  const roleColor   = user ? (ROLE_COLORS[user.role] || "#4338ca") : "#4338ca";
 
   // Close dropdown on outside click
   useEffect(() => {

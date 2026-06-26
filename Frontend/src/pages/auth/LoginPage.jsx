@@ -16,7 +16,7 @@ import { API_BASE_URL } from "../../config/api";
 // icon picks intentionally re-use the permissions.js palette so the
 // login screen visually rhymes with the admin user-create UI.
 const ROLE_COLORS = {
-  Admin:             "#1e40af",
+  Admin:             "#4338ca",
   Receptionist:      "#0d9488",
   Doctor:            "#7c3aed",
   Nurse:             "#db2777",
@@ -198,7 +198,7 @@ export default function LoginPage() {
   return (
     <div style={{
       minHeight: "100vh",
-      background: "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #1e3a8a 100%)",
+      background: "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #3730a3 100%)",
       display: "flex", alignItems: "center", justifyContent: "center",
       fontFamily: "'DM Sans', sans-serif", padding: 20, position: "relative", overflow: "hidden",
     }}>
@@ -214,8 +214,8 @@ export default function LoginPage() {
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{
             display: "inline-flex", alignItems: "center", justifyContent: "center",
-            width: 64, height: 64, background: "#1e40af", borderRadius: 16,
-            marginBottom: 16, boxShadow: "0 8px 32px rgba(30,64,175,.4)",
+            width: 64, height: 64, background: "#4338ca", borderRadius: 16,
+            marginBottom: 16, boxShadow: "0 8px 32px rgba(67,56,202,.4)",
           }}>
             <span style={{ fontSize: 28, fontWeight: 900, color: "white" }}>S</span>
           </div>
@@ -360,11 +360,11 @@ export default function LoginPage() {
             <button type="submit" disabled={loading || secondsLeft > 0}
               style={{
                 width: "100%", padding: "13px 0",
-                background: (loading || secondsLeft > 0) ? "#374151" : "linear-gradient(135deg, #1e40af, #1d4ed8)",
+                background: (loading || secondsLeft > 0) ? "#374151" : "linear-gradient(135deg, #4338ca, #4f46e5)",
                 border: "none", borderRadius: 10, color: "white",
                 fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 700,
                 cursor: (loading || secondsLeft > 0) ? "not-allowed" : "pointer",
-                boxShadow: (loading || secondsLeft > 0) ? "none" : "0 4px 20px rgba(30,64,175,.4)",
+                boxShadow: (loading || secondsLeft > 0) ? "none" : "0 4px 20px rgba(67,56,202,.4)",
                 transition: "all .2s", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
               }}>
               {loading

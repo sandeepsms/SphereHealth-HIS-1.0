@@ -548,8 +548,8 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
 
                 <div
                   style={{
-                    backgroundColor: "#eff6ff",
-                    border: "1px solid #bfdbfe",
+                    backgroundColor: "#eef2ff",
+                    border: "1px solid #c7d2fe",
                     borderRadius: 6,
                     padding: "12px 16px",
                     marginBottom: 16,
@@ -560,9 +560,9 @@ const BedForm = ({ visible, onHide, bed, onSave }) => {
                 >
                   <i
                     className="pi pi-info-circle"
-                    style={{ color: "#3b82f6", fontSize: 16 }}
+                    style={{ color: "#6366f1", fontSize: 16 }}
                   />
-                  <span style={{ fontSize: 13, color: "#1e40af" }}>
+                  <span style={{ fontSize: 13, color: "#4338ca" }}>
                     Pricing is managed through TPA configuration and applied at
                     the time of billing.
                   </span>

@@ -271,7 +271,7 @@ body {
   font-family: 'DM Sans', sans-serif; font-size: 13px; color: var(--his-text);
   outline: none; background: white; width: 100%; transition: border-color .2s, box-shadow .2s;
 }
-.his-fld:focus { border-color: var(--his-accent); box-shadow: 0 0 0 3px rgba(30,64,175,.08); }
+.his-fld:focus { border-color: var(--his-accent); box-shadow: 0 0 0 3px rgba(67,56,202,.08); }
 textarea.his-fld { resize: vertical; min-height: 80px; }
 select.his-fld { cursor: pointer; }
 .his-fg { display: flex; flex-direction: column; gap: 5px; }
@@ -332,7 +332,7 @@ select.his-fld { cursor: pointer; }
 .his-note-time-col { display: flex; flex-direction: column; align-items: center; gap: 3px; }
 .his-note-time { font-family: 'DM Mono', monospace; font-size: 11px; font-weight: 500; }
 .his-shift-pill { padding: 2px 7px; border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: .6px; }
-.his-shift-morning   { background: #dbeafe; color: #1e40af; }
+.his-shift-morning   { background: #e0e7ff; color: #4338ca; }
 .his-shift-afternoon { background: var(--his-amber-light); color: #92400e; }
 .his-shift-evening   { background: #ede9fe; color: var(--his-purple); }
 .his-shift-night     { background: #1e293b; color: #94a3b8; }
@@ -340,7 +340,7 @@ select.his-fld { cursor: pointer; }
 
 /* ── Note type badges ── */
 .his-badge { display: inline-block; padding: 3px 10px; border-radius: 5px; font-size: 10px; font-weight: 700; letter-spacing: .6px; }
-.his-nb-vitals    { background: #dbeafe; color: #1e40af; }
+.his-nb-vitals    { background: #e0e7ff; color: #4338ca; }
 .his-nb-blood     { background: #fecaca; color: #9f1239; }
 .his-nb-iv        { background: var(--his-teal-light); color: var(--his-teal); }
 .his-nb-wound     { background: var(--his-red-light); color: var(--his-red); }
@@ -441,7 +441,7 @@ select.his-fld { cursor: pointer; }
 }
 
 /* ── Status badge helpers ── */
-.his-status-active    { background: #dbeafe; color: #1e40af; }
+.his-status-active    { background: #e0e7ff; color: #4338ca; }
 .his-status-pending   { background: var(--his-amber-light); color: #92400e; }
 .his-status-completed { background: var(--his-green-light); color: var(--his-green); }
 .his-status-held      { background: #fef3c7; color: #b45309; }

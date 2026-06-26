@@ -65,7 +65,7 @@ const PrintShell = ({
       className="pr-page"
       style={{
         "--pr-header-color": settings.printHeaderColor || "#1e293b",
-        "--pr-accent-color": settings.printAccentColor || "#1d4ed8",
+        "--pr-accent-color": settings.printAccentColor || "#4f46e5",
         // Font-size knob — falls through to the global pr-page CSS rule
         // when not set, so legacy printables behave exactly as before.
         ...(fontSize ? { fontSize } : {}),

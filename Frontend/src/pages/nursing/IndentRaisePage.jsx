@@ -28,7 +28,7 @@ import DrugAutocomplete from "../../Components/clinical/DrugAutocomplete";
 import { toMoney } from "../../utils/money";
 
 const C = {
-  primary: "#1d4ed8", accent: "#7c3aed",
+  primary: "#4f46e5", accent: "#7c3aed",
   success: "#059669", warn: "#d97706", danger: "#dc2626",
   bg: "#f8fafc", card: "#ffffff", border: "#e2e8f0",
   muted: "#64748b", dark: "#0f172a",
@@ -573,11 +573,11 @@ export default function IndentRaisePage() {
           indent will actually land). Same palette + chrome as the
           Pharmacist's Live Indents page. */}
       <div style={{
-        background: "linear-gradient(135deg, #1d4ed8 0%, #7c3aed 100%)",
+        background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
         borderRadius: 14, padding: "12px 16px",
         marginBottom: 14, color: "#fff",
         display: "flex", alignItems: "center", gap: 10,
-        boxShadow: "0 4px 18px rgba(29,78,216,.15)",
+        boxShadow: "0 4px 18px rgba(79,70,229,.15)",
       }}>
         <button onClick={() => navigate(-1)} style={{
           padding: "6px 12px",
@@ -992,7 +992,7 @@ export default function IndentRaisePage() {
                         (it.category === "Surgical" || it.category === "Consumable" || it.category === "IV Fluid");
                       const label = isRx ? "Rx" : isSupply ? "Supplies" : "Manual";
                       const tone  = isRx
-                        ? { bg: "#dbeafe", fg: "#1d4ed8" }
+                        ? { bg: "#e0e7ff", fg: "#4f46e5" }
                         : isSupply
                           ? { bg: "#ede9fe", fg: "#6d28d9" }
                           : { bg: "#fef3c7", fg: "#a16207" };

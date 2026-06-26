@@ -51,7 +51,7 @@ const C = {
   muted:  "#64748b",
   orange: "#ea580c",
   green:  "#15803d",
-  blue:   "#1d4ed8",
+  blue:   "#4f46e5",
   red:    "#b91c1c",
   amber:  "#a16207",
 };

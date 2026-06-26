@@ -58,7 +58,7 @@ export const ROLE_KEYS = ROLES.map(r => r.key);
 export const MODULES = [
   { id: "reception",  label: "Reception",       icon: "pi-desktop",       home: "/reception",         color: "#0891b2" },
   { id: "opd",        label: "OPD / Emergency", icon: "pi-stethoscope",   home: "/opd-visit",         color: "#7c3aed" },
-  { id: "ipd",        label: "Beds & IPD",      icon: "pi-th-large",      home: "/bed-visual",        color: "#1d4ed8" },
+  { id: "ipd",        label: "Beds & IPD",      icon: "pi-th-large",      home: "/bed-visual",        color: "#4f46e5" },
   { id: "doctor",     label: "Doctor Workbench",icon: "pi-user-edit",     home: "/doctor",            color: "#7c3aed" },
   { id: "nursing",    label: "Nursing",         icon: "pi-heart",         home: "/nursing-notes",     color: "#db2777" },
   { id: "pharmacy",   label: "Pharmacy",        icon: "pi-box",           home: "/pharmacy",          color: "#ea580c" },
@@ -81,7 +81,7 @@ export const MODULES = [
   // RoleDashboardPage's AccessSnapshot.
   { id: "medical-records", label: "Medical Records", icon: "pi-folder-open", home: "/medical-records/discharges", color: "#6366f1" },
   { id: "admin",      label: "Masters & Admin", icon: "pi-cog",           home: "/admin/users",       color: "#1e293b" },
-  { id: "reports",    label: "Reports & MIS",   icon: "pi-chart-bar",     home: "/billing-audit-trail",  color: "#1d4ed8" },
+  { id: "reports",    label: "Reports & MIS",   icon: "pi-chart-bar",     home: "/billing-audit-trail",  color: "#4f46e5" },
 ];
 
 /* ── Module access per role.

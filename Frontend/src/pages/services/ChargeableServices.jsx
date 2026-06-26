@@ -31,7 +31,7 @@ const C = {
   bg: "#f8fafc", card: "#fff", border: "#e2e8f0",
   text: "#0f172a", muted: "#64748b", subtle: "#f8fafc",
   amber: "#d97706", amberL: "#fffbeb",
-  blue: "#1d4ed8", blueL: "#eff6ff",
+  blue: "#4f46e5", blueL: "#eef2ff",
   green: "#16a34a", greenL: "#dcfce7",
   red: "#dc2626", redL: "#fef2f2",
   orange: "#ea580c", orangeL: "#fff7ed",
@@ -113,7 +113,7 @@ const sectionPill = (bg, fg) => ({
 const DOMAIN_TABS = [
   { label: "All", domain: null, color: "#4F46E5", icon: "pi-list" },
   { label: "OPD", domain: "OPD", color: "#10B981", icon: "pi-user" },
-  { label: "IPD", domain: "IPD", color: "#3B82F6", icon: "pi-home" },
+  { label: "IPD", domain: "IPD", color: "#6366f1", icon: "pi-home" },
   { label: "Emergency", domain: "EMERGENCY", color: "#EF4444", icon: "pi-bolt" },
   { label: "Day Care", domain: "DAYCARE", color: "#F59E0B", icon: "pi-sun" },
   { label: "Common", domain: "COMMON", color: "#6B7280", icon: "pi-globe" },
@@ -1485,7 +1485,7 @@ export default function ChargeableServices() {
         {/* ── Accent header band (blue → indigo) ── */}
         <div
           style={{
-            background: `linear-gradient(135deg,${C.blue},#1e3a8a)`,
+            background: `linear-gradient(135deg,${C.blue},#3730a3)`,
             padding: "14px 22px",
             color: "#fff",
             display: "flex",
@@ -1802,7 +1802,7 @@ export default function ChargeableServices() {
                   className="pi pi-check-circle"
                   style={{ color: C.blue, fontSize: 16 }}
                 />
-                <span style={{ fontSize: 12.5, color: "#1E40AF" }}>
+                <span style={{ fontSize: 12.5, color: "#4338ca" }}>
                   <b>CASH price auto-set</b> — only set TPA / Corporate
                   prices here. CASH tariff tracks the service's Default
                   Price.
@@ -1988,7 +1988,7 @@ export default function ChargeableServices() {
                   disabled={billing.loading}
                   style={{
                     padding: "8px 16px",
-                    background: `linear-gradient(135deg,${C.blue},#1e3a8a)`,
+                    background: `linear-gradient(135deg,${C.blue},#3730a3)`,
                     color: "#fff",
                     border: "none",
                     borderRadius: 8,
@@ -1998,7 +1998,7 @@ export default function ChargeableServices() {
                     opacity: billing.loading ? 0.6 : 1,
                     textTransform: "uppercase",
                     letterSpacing: ".4px",
-                    boxShadow: "0 2px 6px rgba(29,78,216,.3)",
+                    boxShadow: "0 2px 6px rgba(79,70,229,.3)",
                   }}
                 >
                   <i className="pi pi-check" style={{ marginRight: 6 }} />

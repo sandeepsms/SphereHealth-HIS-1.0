@@ -125,7 +125,7 @@ export default function PrintShell(props) {
   const opts = normalizeOpts(props);
   const { hospital, docTitle, docSubtitle, patient, signatures, banners, meta, showDisclaimer } = opts;
 
-  const headerColor = hospital.printHeaderColor || "#1e3a8a";
+  const headerColor = hospital.printHeaderColor || "#3730a3";
   const styleVars = { "--pf-header-color": headerColor };
 
   /* R7gb P0-13 — running-header source strings for CSS Paged Media.
@@ -357,7 +357,7 @@ function Footer({ hospital }) {
 
 export function buildPrintShellHtml(opts = {}) {
   const { hospital, docTitle, docSubtitle, patient, signatures, banners, meta, showDisclaimer } = normalizeOpts(opts);
-  const headerColor = hospital.printHeaderColor || "#1e3a8a";
+  const headerColor = hospital.printHeaderColor || "#3730a3";
   const bodyHtml = opts.bodyHtml || "";
 
   /* R7gb P0-13 — running-header source strings for the HTML helper.

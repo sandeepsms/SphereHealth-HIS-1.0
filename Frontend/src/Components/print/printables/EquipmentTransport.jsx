@@ -40,16 +40,16 @@ const EquipmentTransport = ({ settings, receipt = {} }) => {
       {/* Asset summary card */}
       <div style={{
         border: "1.5px solid #93c5fd",
-        background: "linear-gradient(135deg, #dbeafe, #eff6ff)",
+        background: "linear-gradient(135deg, #e0e7ff, #eef2ff)",
         borderRadius: 8, padding: "12px 16px", marginBottom: 12,
       }}>
-        <div style={{ fontSize: 10, color: "#1e3a8a", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 800 }}>
+        <div style={{ fontSize: 10, color: "#3730a3", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 800 }}>
           Asset
         </div>
         <div style={{ fontSize: 18, fontWeight: 800, marginTop: 2, color: "#0f172a" }}>
           {r.equipmentName || "—"}
         </div>
-        <div style={{ fontSize: 11, color: "#1e3a8a", marginTop: 4 }}>
+        <div style={{ fontSize: 11, color: "#3730a3", marginTop: 4 }}>
           <strong>Serial #:</strong> <span style={{ fontFamily: "'DM Mono', monospace" }}>{r.serialNumber || "—"}</span>
           {r.assetTag && <> · <strong>Asset Tag:</strong> <span style={{ fontFamily: "'DM Mono', monospace" }}>{r.assetTag}</span></>}
           {r.category && <> · <strong>Category:</strong> {r.category}</>}

@@ -216,7 +216,7 @@ const BedTransfersListPage = () => {
                   )}
                   {t.shiftingNotes && (
                     <div style={{ fontSize: 12, color: "#475569", background: "#f8fafc", padding: "6px 10px", borderRadius: 6, borderLeft: "2px solid #cbd5e1" }}>
-                      <strong style={{ color: "#1e3a8a" }}>Doctor's note:</strong> {t.shiftingNotes}
+                      <strong style={{ color: "#3730a3" }}>Doctor's note:</strong> {t.shiftingNotes}
                     </div>
                   )}
                   {t.handoverNotes && (

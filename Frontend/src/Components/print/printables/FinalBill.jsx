@@ -137,7 +137,7 @@ const FinalBill = ({ settings, receipt = {} }) => {
     const statusTone = (s) => ({
       billed:    { bg: "#dcfce7", fg: "#15803d" },
       pending:   { bg: "#fef3c7", fg: "#a16207" },
-      completed: { bg: "#dbeafe", fg: "#1d4ed8" },
+      completed: { bg: "#e0e7ff", fg: "#4f46e5" },
       voided:    { bg: "#fee2e2", fg: "#b91c1c" },
       cancelled: { bg: "#fee2e2", fg: "#b91c1c" },
       skipped:   { bg: "#f1f5f9", fg: "#475569" },
@@ -353,8 +353,8 @@ const FinalBill = ({ settings, receipt = {} }) => {
                   <React.Fragment key={gi}>
                     <tr>
                       <td colSpan={cols} style={{
-                        background: "var(--pr-accent-color, #1d4ed8)15",
-                        color: "var(--pr-accent-color, #1d4ed8)",
+                        background: "var(--pr-accent-color, #4f46e5)15",
+                        color: "var(--pr-accent-color, #4f46e5)",
                         fontWeight: 800,
                         fontSize: 10.5,
                         textTransform: "uppercase",

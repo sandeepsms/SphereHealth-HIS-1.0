@@ -1396,7 +1396,7 @@ export default function ReceptionConsole() {
                           onClick={retryPincodeLookup}
                           style={{
                             marginLeft: 8, padding: "2px 8px", fontSize: 10, fontWeight: 700,
-                            background: "#fff", color: "#1e40af",
+                            background: "#fff", color: "#4338ca",
                             border: "1.5px solid #c7d2fe", borderRadius: 6, cursor: "pointer",
                             textTransform: "uppercase", letterSpacing: ".4px",
                           }}
@@ -1521,8 +1521,8 @@ export default function ReceptionConsole() {
                     {opd.feeTypeNote && (
                       <div style={{
                         fontSize: 11,
-                        color: opd.feeType === "opdFollowup" ? "#15803d" : "#1e40af",
-                        background: opd.feeType === "opdFollowup" ? "#dcfce7" : "#dbeafe",
+                        color: opd.feeType === "opdFollowup" ? "#15803d" : "#4338ca",
+                        background: opd.feeType === "opdFollowup" ? "#dcfce7" : "#e0e7ff",
                         padding: "2px 10px", borderRadius: 10, display: "inline-block",
                         marginBottom: 4, fontWeight: 700, letterSpacing: ".3px",
                       }}>

@@ -10,7 +10,7 @@ import { Dialog } from "primereact/dialog";
 const STATUS_META = {
   Available:   { color: "#16a34a", bg: "#dcfce7", icon: "pi-check-circle",      label: "Available" },
   Occupied:    { color: "#dc2626", bg: "#fee2e2", icon: "pi-user",              label: "Occupied" },
-  Reserved:    { color: "#2563eb", bg: "#dbeafe", icon: "pi-bookmark",          label: "Reserved" },
+  Reserved:    { color: "#4f46e5", bg: "#e0e7ff", icon: "pi-bookmark",          label: "Reserved" },
   Maintenance: { color: "#d97706", bg: "#fef3c7", icon: "pi-wrench",            label: "Maintenance" },
   Blocked:     { color: "#475569", bg: "#f1f5f9", icon: "pi-ban",               label: "Blocked" },
 };
@@ -177,7 +177,7 @@ const BedActionMenu = ({ bed, onClose, actions = {}, perms = {} }) => {
             {canAssignBed && (
               <Action icon="pi-bookmark" label="Reserve Bed"
                 sub="Hold for a scheduled admission"
-                color="#2563eb"
+                color="#4f46e5"
                 onClick={() => actions.onReserve?.(bed)} />
             )}
             <Action icon="pi-shield" label="Add Isolation Flag"
@@ -208,7 +208,7 @@ const BedActionMenu = ({ bed, onClose, actions = {}, perms = {} }) => {
           <>
             <Action icon="pi-id-card" label="View Patient File"
               sub="Full timeline · diagnosis · notes · orders"
-              color="#2563eb" primary
+              color="#4f46e5" primary
               onClick={() => actions.onViewPatient?.(bed)} />
             <Action icon="pi-book" label="Doctor Notes"
               sub="Daily progress · ICU · procedure · consultation"
@@ -260,7 +260,7 @@ const BedActionMenu = ({ bed, onClose, actions = {}, perms = {} }) => {
             {canAssignBed && (
               <Action icon="pi-clock" label="Extend Hold"
                 sub="Push reservedUntil further out"
-                color="#2563eb"
+                color="#4f46e5"
                 onClick={() => actions.onExtendReservation?.(bed)} />
             )}
             {canAssignBed && (

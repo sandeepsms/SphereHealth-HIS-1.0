@@ -24,7 +24,7 @@ const C = {
   green: "#16a34a", greenL: "#dcfce7", greenB: "#bbf7d0",
   amber: "#d97706", amberL: "#fffbeb", amberB: "#fde68a",
   red: "#dc2626", redL: "#fef2f2", redB: "#fecaca",
-  blue: "#1d4ed8", blueL: "#eff6ff", blueB: "#bfdbfe",
+  blue: "#4f46e5", blueL: "#eef2ff", blueB: "#c7d2fe",
   purple: "#7c3aed", purpleL: "#f5f3ff",
   slate: "#1e293b", pink: "#be185d",
 };
@@ -261,7 +261,7 @@ function DailyNursingContent({ patient }) {
         icon="pi-clipboard"
         title="Daily Nursing Assessment"
         subtitle="Shift-wise Progress Assessment — NABH Compliant"
-        gradient="linear-gradient(135deg,#1d4ed8,#1e40af)"
+        gradient="linear-gradient(135deg,#4f46e5,#4338ca)"
         right={
           <span style={{ background:"rgba(255,255,255,.2)", color:"#fff", fontSize:11, fontWeight:700, padding:"4px 12px", borderRadius:8 }}>
             NABH COP.6
@@ -562,7 +562,7 @@ function DailyNursingContent({ patient }) {
         <button onClick={handleSave} disabled={saving}
           style={{
             padding:"10px 28px", borderRadius:10, border:"none", cursor:saving?"not-allowed":"pointer",
-            background: saved?`linear-gradient(135deg,${C.green},#15803d)`:`linear-gradient(135deg,${C.blue},#1e40af)`,
+            background: saved?`linear-gradient(135deg,${C.green},#15803d)`:`linear-gradient(135deg,${C.blue},#4338ca)`,
             color:"#fff", fontWeight:700, fontSize:13, display:"flex", alignItems:"center", gap:8,
             opacity:saving?.65:1, transition:"all .2s",
           }}>

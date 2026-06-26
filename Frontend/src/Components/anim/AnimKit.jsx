@@ -49,7 +49,7 @@ export function Typewriter({ text = "", speed = 45, className = "", loop = false
 }
 
 /* 17 — Circular Progress Ring (SVG) */
-export function CircularRing({ value = 0, size = 84, stroke = 9, color = "#2563eb", track = "#e7edf5", label }) {
+export function CircularRing({ value = 0, size = 84, stroke = 9, color = "#4f46e5", track = "#e7edf5", label }) {
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
   const [off, setOff] = useState(circ);
@@ -95,7 +95,7 @@ export function RippleButton({ as = "button", className = "", children, onClick,
 }
 
 /* 20 — Particle Burst (fires confetti particles from the element on trigger) */
-export function ParticleBurst({ children, count = 18, colors = ["#2563eb","#db2777","#16a34a","#f59e0b","#7c3aed"], className = "", ...rest }) {
+export function ParticleBurst({ children, count = 18, colors = ["#4f46e5","#db2777","#16a34a","#f59e0b","#7c3aed"], className = "", ...rest }) {
   const ref = useRef(null);
   const fire = useCallback(() => {
     const el = ref.current; if (!el || prefersReduced()) return;
@@ -164,7 +164,7 @@ export function JourneySteps({ steps = ["Registered","Triaged","Consulted","Admi
       {steps.map((s, i) => (
         <React.Fragment key={s}>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-            <span className="ak-step-dot" style={{ background: i <= current ? "#2563eb" : "#cbd5e1", animationDelay: `${i * 0.12}s` }}>{i < current ? "✓" : i + 1}</span>
+            <span className="ak-step-dot" style={{ background: i <= current ? "#4f46e5" : "#cbd5e1", animationDelay: `${i * 0.12}s` }}>{i < current ? "✓" : i + 1}</span>
             <span style={{ fontSize: 10, color: i <= current ? "#1e293b" : "#94a3b8", fontWeight: i === current ? 700 : 500 }}>{s}</span>
           </div>
           {i < steps.length - 1 && <div className="ak-step-line"><i style={{ animationDelay: `${i * 0.12 + 0.1}s`, width: i < current ? "100%" : 0 }} /></div>}
@@ -175,7 +175,7 @@ export function JourneySteps({ steps = ["Registered","Triaged","Consulted","Admi
 }
 
 /* 06 — Vitals Progress Bar (animates width on mount) */
-export function VitalsBar({ value = 0, max = 100, color = "#2563eb", live = false, height = 10 }) {
+export function VitalsBar({ value = 0, max = 100, color = "#4f46e5", live = false, height = 10 }) {
   const [w, setW] = useState(0);
   useEffect(() => { const id = requestAnimationFrame(() => setW(Math.max(0, Math.min(100, (value/max)*100)))); return () => cancelAnimationFrame(id); }, [value, max]);
   return <div className={`ak-bar ${live ? "is-live" : ""}`} style={{ height }}><i style={{ width: `${w}%`, background: color }} /></div>;
@@ -202,7 +202,7 @@ export function FlipCard({ front, back, flipped, height = 130 }) {
   return (
     <div className={`ak-flip ${flipped ? "is-flipped" : ""}`} style={{ height }}>
       <div className="ak-flip-inner">
-        <div className="ak-flip-face" style={{ background: "#eff6ff", border: "1px solid #bfdbfe" }}>{front}</div>
+        <div className="ak-flip-face" style={{ background: "#eef2ff", border: "1px solid #c7d2fe" }}>{front}</div>
         <div className="ak-flip-face ak-flip-back" style={{ background: "#1e293b", color: "#fff" }}>{back}</div>
       </div>
     </div>

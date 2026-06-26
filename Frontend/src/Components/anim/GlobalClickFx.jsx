@@ -24,7 +24,7 @@ function ripple(x, y, size) {
   const s = document.createElement("span");
   s.style.cssText =
     `position:absolute;left:${x - d / 2}px;top:${y - d / 2}px;width:${d}px;height:${d}px;` +
-    "border-radius:50%;background:radial-gradient(circle, rgba(37,99,235,.18), rgba(37,99,235,.06) 60%, transparent 72%);" +
+    "border-radius:50%;background:radial-gradient(circle, rgba(79,70,229,.18), rgba(79,70,229,.06) 60%, transparent 72%);" +
     "transform:scale(0);opacity:1;will-change:transform,opacity;";
   h.appendChild(s);
   requestAnimationFrame(() => {

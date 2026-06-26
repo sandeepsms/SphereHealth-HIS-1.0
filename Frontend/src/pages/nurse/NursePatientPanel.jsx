@@ -61,7 +61,7 @@ const C = {
   green:"#16a34a",   greenL:"#dcfce7",   greenB:"#86efac",
   red:"#dc2626",     redL:"#fef2f2",     redB:"#fca5a5",
   amber:"#d97706",   amberL:"#fffbeb",   amberB:"#fde68a",
-  blue:"#1d4ed8",    blueL:"#eff6ff",    blueB:"#93c5fd",
+  blue:"#4f46e5",    blueL:"#eef2ff",    blueB:"#93c5fd",
   teal:"#0d9488",    tealL:"#f0fdfa",    tealB:"#99f6e4",
   purple:"#7c3aed",  purpleL:"#f5f3ff",  purpleB:"#c4b5fd",
   muted:"#64748b",   dark:"#0f172a",     text:"#1e293b",
@@ -935,7 +935,7 @@ function NoteModuleBody({note}) {
 
 /* ── Timeline note styles (matches NursingNotes.jsx) ── */
 const NOTE_STYLE_TL = {
-  vitals:    {bg:"#dbeafe", color:"#1e40af",  dot:"#3b82f6"},
+  vitals:    {bg:"#e0e7ff", color:"#4338ca",  dot:"#6366f1"},
   blood:     {bg:"#fecaca", color:"#9f1239",  dot:"#dc2626"},
   iv:        {bg:C.tealL,  color:C.teal,     dot:C.teal},
   wound:     {bg:C.redL,   color:C.red,      dot:C.red},
@@ -1229,9 +1229,9 @@ function NursingNotesTab({notes=[]}) {
 /* ══════════════════════════════════════════════════ TAB: DOCTOR NOTES TIMELINE */
 const DR_NOTE_STYLE = {
   initial:      {bg:"#fffbeb",  color:"#92400e",  dot:"#f59e0b"},
-  medication:   {bg:"#dbeafe",  color:"#1e40af",  dot:"#3b82f6"},
+  medication:   {bg:"#e0e7ff",  color:"#4338ca",  dot:"#6366f1"},
   infusion:     {bg:"#f0fdfa",  color:"#0d9488",  dot:"#0d9488"},
-  daily:        {bg:"#dbeafe",  color:"#1e40af",  dot:"#1d4ed8"},
+  daily:        {bg:"#e0e7ff",  color:"#4338ca",  dot:"#4f46e5"},
   icu:          {bg:"#fef2f2",  color:"#dc2626",  dot:"#dc2626"},
   procedure:    {bg:"#fff7ed",  color:"#ea580c",  dot:"#ea580c"},
   consultation: {bg:"#f5f3ff",  color:"#7c3aed",  dot:"#7c3aed"},
@@ -1729,8 +1729,8 @@ function DoctorOrdersTab({doctorOrders=[], admission}) {
 
   const typeColor = (t) => ({
     "Medication":   { bg:"#fce7f3", fg:"#be185d", border:"#f9a8d4" },
-    "IV_Fluid":     { bg:"#dbeafe", fg:"#1d4ed8", border:"#93c5fd" },
-    "Investigation":{ bg:"#eff6ff", fg:"#1d4ed8", border:"#93c5fd" },
+    "IV_Fluid":     { bg:"#e0e7ff", fg:"#4f46e5", border:"#93c5fd" },
+    "Investigation":{ bg:"#eef2ff", fg:"#4f46e5", border:"#93c5fd" },
     "Procedure":    { bg:"#fef3c7", fg:"#92400e", border:"#fde68a" },
     "Diet":         { bg:"#dcfce7", fg:"#166534", border:"#86efac" },
     "Activity":     { bg:"#fef3c7", fg:"#d97706", border:"#fde68a" },
@@ -1738,8 +1738,8 @@ function DoctorOrdersTab({doctorOrders=[], admission}) {
   }[t] || { bg:"#f1f5f9", fg:"#475569", border:"#cbd5e1" });
   const statusBg = (s) => ({
     Pending:      { bg:"#fef3c7", fg:"#d97706" },
-    Acknowledged: { bg:"#dbeafe", fg:"#1d4ed8" },
-    Active:       { bg:"#dbeafe", fg:"#1d4ed8" },
+    Acknowledged: { bg:"#e0e7ff", fg:"#4f46e5" },
+    Active:       { bg:"#e0e7ff", fg:"#4f46e5" },
     InProgress:   { bg:"#e0e7ff", fg:"#4f46e5" },
     Completed:    { bg:"#d1fae5", fg:"#059669" },
     Cancelled:    { bg:"#fee2e2", fg:"#dc2626" },
@@ -1868,9 +1868,9 @@ function DoctorOrdersTab({doctorOrders=[], admission}) {
                 )}
                 {hasLifecycle && (
                   <div style={{
-                    marginTop:6, padding:"5px 10px", background:"#eff6ff",
-                    borderLeft:"3px solid #3b82f6", borderRadius:4,
-                    fontSize:11, color:"#1e40af", display:"flex", gap:12, flexWrap:"wrap",
+                    marginTop:6, padding:"5px 10px", background:"#eef2ff",
+                    borderLeft:"3px solid #6366f1", borderRadius:4,
+                    fontSize:11, color:"#4338ca", display:"flex", gap:12, flexWrap:"wrap",
                   }}>
                     {o.infusionStarted && <span>▶ Started <strong>{fmtTime(o.infusionStarted)}</strong></span>}
                     {(o.currentRate || det.rate) && <span>Rate <strong>{o.currentRate || det.rate} ml/hr</strong></span>}
@@ -1924,9 +1924,9 @@ function DoctorOrdersTab({doctorOrders=[], admission}) {
           <div style={{ fontSize:10, color:"#92400e", fontWeight:700, letterSpacing:".3px" }}>NEW</div>
           <div style={{ fontSize:18, fontWeight:800, color:"#b45309" }}>{pendingTally}</div>
         </div>
-        <div style={{ background:"#eff6ff", border:"1px solid #93c5fd", borderRadius:8, padding:"8px 10px" }}>
-          <div style={{ fontSize:10, color:"#1e40af", fontWeight:700, letterSpacing:".3px" }}>IN PROGRESS</div>
-          <div style={{ fontSize:18, fontWeight:800, color:"#1d4ed8" }}>{inProgTally}</div>
+        <div style={{ background:"#eef2ff", border:"1px solid #93c5fd", borderRadius:8, padding:"8px 10px" }}>
+          <div style={{ fontSize:10, color:"#4338ca", fontWeight:700, letterSpacing:".3px" }}>IN PROGRESS</div>
+          <div style={{ fontSize:18, fontWeight:800, color:"#4f46e5" }}>{inProgTally}</div>
         </div>
         <div style={{ background:"#ecfdf5", border:"1px solid #86efac", borderRadius:8, padding:"8px 10px" }}>
           <div style={{ fontSize:10, color:"#166534", fontWeight:700, letterSpacing:".3px" }}>COMPLETED</div>
@@ -1959,7 +1959,7 @@ function DoctorOrdersTab({doctorOrders=[], admission}) {
               <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                 {dn && (
                   <span style={{
-                    background:"#1d4ed8", color:"#fff", fontSize:11, fontWeight:800,
+                    background:"#4f46e5", color:"#fff", fontSize:11, fontWeight:800,
                     padding:"3px 10px", borderRadius:20, letterSpacing:".3px",
                   }}>DAY {dn}</span>
                 )}
@@ -1971,7 +1971,7 @@ function DoctorOrdersTab({doctorOrders=[], admission}) {
             </div>
             <div style={{ padding:"10px 16px" }}>
               <SectionInDay title="🔔 New"        list={newList}   tone="#d97706" />
-              <SectionInDay title="⏳ In Progress" list={inProg}    tone="#1d4ed8" />
+              <SectionInDay title="⏳ In Progress" list={inProg}    tone="#4f46e5" />
               <SectionInDay title="✅ Completed"  list={completed} tone="#15803d" />
               <SectionInDay title="🚫 Cancelled"  list={cancelled} tone="#dc2626" />
             </div>

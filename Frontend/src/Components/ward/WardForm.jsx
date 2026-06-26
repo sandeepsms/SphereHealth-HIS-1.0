@@ -223,7 +223,7 @@ const WardForm = ({ visible, onHide, ward, onSave }) => {
             <label htmlFor="building">
               <i
                 className="pi pi-building mr-2"
-                style={{ color: "#3b82f6" }}
+                style={{ color: "#6366f1" }}
               ></i>
               Building *
             </label>
@@ -440,15 +440,15 @@ const WardForm = ({ visible, onHide, ward, onSave }) => {
               backgroundColor: "#f0f9ff",
               padding: "15px",
               borderRadius: "8px",
-              border: "2px solid #3b82f6",
+              border: "2px solid #6366f1",
               marginTop: "15px",
             }}
           >
-            <h4 style={{ margin: "0 0 10px 0", color: "#1e40af" }}>
+            <h4 style={{ margin: "0 0 10px 0", color: "#4338ca" }}>
               <i className="pi pi-info-circle mr-2"></i>Hospital Hierarchy
             </h4>
             <div
-              style={{ fontSize: "14px", color: "#1e40af", lineHeight: "1.6" }}
+              style={{ fontSize: "14px", color: "#4338ca", lineHeight: "1.6" }}
             >
               <div>
                 📍 <strong>Building</strong> → Main structure
@@ -468,7 +468,7 @@ const WardForm = ({ visible, onHide, ward, onSave }) => {
             </div>
             <small
               style={{
-                color: "#1e40af",
+                color: "#4338ca",
                 display: "block",
                 marginTop: "10px",
                 fontStyle: "italic",

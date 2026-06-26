@@ -176,11 +176,11 @@
 .rx-card-stage--done      { background: #ecfeff; color: #0e7490; border-color: #67e8f9; }
 .rx-card-stage--approved  { background: #f0fdf4; color: #15803d; border-color: #86efac; }
 .rx-card-stage--denied    { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
-.rx-card-stage--submitted { background: #eff6ff; color: #1d4ed8; border-color: #93c5fd; }
+.rx-card-stage--submitted { background: #eef2ff; color: #4f46e5; border-color: #93c5fd; }
 .rx-card-stage--expired   { background: #f3f4f6; color: #6b7280; border-color: #d1d5db; }
 .rx-card-stage--active    { background: #f0fdf4; color: #15803d; border-color: #86efac; }
 .rx-card-stage--revoked   { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
-.rx-card-stage--booked    { background: #eff6ff; color: #1d4ed8; border-color: #93c5fd; }
+.rx-card-stage--booked    { background: #eef2ff; color: #4f46e5; border-color: #93c5fd; }
 .rx-card-stage--checkedin { background: #f0fdf4; color: #15803d; border-color: #86efac; }
 /* R7ar-P1-24/D9-aq-04: discharge overage chip — surfaces post-discharge
    surplus that needs a refund. Red so the cashier can't miss it. */
@@ -635,8 +635,8 @@
 .rx-bed--occupied .rx-bed-status-dot  { background: #ef4444; }
 .rx-bed--maintenance { background: #fffbeb; border-color: #fcd34d; }
 .rx-bed--maintenance .rx-bed-status-dot { background: #f59e0b; }
-.rx-bed--reserved { background: #eff6ff; border-color: #93c5fd; }
-.rx-bed--reserved .rx-bed-status-dot { background: #3b82f6; }
+.rx-bed--reserved { background: #eef2ff; border-color: #93c5fd; }
+.rx-bed--reserved .rx-bed-status-dot { background: #6366f1; }
 .rx-bed--blocked { background: #f3f4f6; border-color: #cbd5e1; }
 .rx-bed--blocked .rx-bed-status-dot { background: #9ca3af; }
 /* Cleaning — orange/amber striped pattern so it visually stands out
@@ -767,12 +767,12 @@
 .rx-toolbar input:focus { border-color: #06b6d4; }
 
 .rx-page-info {
-  background: #eff6ff;
+  background: #eef2ff;
   border: 1px solid #93c5fd;
   border-radius: 10px;
   padding: 10px 14px;
   font-size: 12px;
-  color: #1d4ed8;
+  color: #4f46e5;
   margin-bottom: 12px;
 }
 
@@ -788,7 +788,7 @@
 .rx-text-danger   { color: #b91c1c !important; }
 .rx-text-warning  { color: #c2410c !important; }
 .rx-text-info     { color: #0e7490 !important; }
-.rx-text-primary  { color: #1d4ed8 !important; }
+.rx-text-primary  { color: #4f46e5 !important; }
 .rx-text-muted    { color: #94a3b8 !important; }
 .rx-text-subtle   { color: #64748b !important; }
 .rx-text-strong   { color: #0f172a !important; }
@@ -820,8 +820,8 @@
   border-radius: 4px;
   font-size: 9px;
   font-weight: 800;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: #eef2ff;
+  color: #4f46e5;
 }
 
 /* Info banners inside modals (success / warning / danger / neutral / info) */
@@ -831,9 +831,9 @@
   font-size: 12px;
 }
 .rx-banner--info {
-  background: #eff6ff;
+  background: #eef2ff;
   border: 1px solid #93c5fd;
-  color: #1d4ed8;
+  color: #4f46e5;
 }
 .rx-banner--success {
   background: #ecfdf5;
@@ -1137,7 +1137,7 @@
 .rx-kpi-tile--available   { border-left: 4px solid #22c55e; cursor: pointer; }
 .rx-kpi-tile--occupied    { border-left: 4px solid #ef4444; cursor: pointer; }
 .rx-kpi-tile--maintenance { border-left: 4px solid #f59e0b; cursor: pointer; }
-.rx-kpi-tile--reserved    { border-left: 4px solid #3b82f6; cursor: pointer; }
+.rx-kpi-tile--reserved    { border-left: 4px solid #6366f1; cursor: pointer; }
 .rx-kpi-tile--blocked     { border-left: 4px solid #9ca3af; cursor: pointer; }
 /* Cleaning — orange to match the bed-tile striped pattern. */
 .rx-kpi-tile--cleaning    { border-left: 4px solid #ea580c; cursor: pointer; }
@@ -1304,7 +1304,7 @@
 /* Lowercase mapping for KPI tile status variants */
 .rx-kpi-tile--available { border-left: 4px solid #22c55e; cursor: pointer; }
 .rx-kpi-tile--occupied  { border-left: 4px solid #ef4444; cursor: pointer; }
-.rx-kpi-tile--reserved  { border-left: 4px solid #3b82f6; cursor: pointer; }
+.rx-kpi-tile--reserved  { border-left: 4px solid #6366f1; cursor: pointer; }
 .rx-kpi-tile--blocked   { border-left: 4px solid #9ca3af; cursor: pointer; }
 
 /* Bed empty-state sub strong */

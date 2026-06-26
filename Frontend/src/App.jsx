@@ -363,12 +363,12 @@ function AppLoader() {
     <div style={{
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "center", height: "100vh",
-      background: "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #1e3a8a 100%)",
+      background: "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #3730a3 100%)",
     }}>
       <div style={{
-        width: 56, height: 56, background: "#1e40af", borderRadius: 14,
+        width: 56, height: 56, background: "#4338ca", borderRadius: 14,
         display: "flex", alignItems: "center", justifyContent: "center",
-        marginBottom: 20, boxShadow: "0 8px 32px rgba(30,64,175,.5)",
+        marginBottom: 20, boxShadow: "0 8px 32px rgba(67,56,202,.5)",
       }}>
         <span style={{ fontSize: 26, fontWeight: 900, color: "#fff" }}>S</span>
       </div>
@@ -385,7 +385,7 @@ function RouteLoader() {
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "center", padding: 60, color: "#64748b",
     }}>
-      <i className="pi pi-spin pi-spinner" style={{ fontSize: 24, color: "#1e40af", marginBottom: 10 }} />
+      <i className="pi pi-spin pi-spinner" style={{ fontSize: 24, color: "#4338ca", marginBottom: 10 }} />
       <div style={{ fontSize: 12 }}>Loading…</div>
     </div>
   );

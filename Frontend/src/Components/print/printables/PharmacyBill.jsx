@@ -114,7 +114,7 @@ function resolveIdentityForShell(hospital = {}, pharmacy = null) {
       email:         pharmacy.email,
       website:       pharmacy.website,
       gstin:         pharmacy.gstin,
-      printHeaderColor: pharmacy.headerColor || hospital.printHeaderColor || "#1e3a8a",
+      printHeaderColor: pharmacy.headerColor || hospital.printHeaderColor || "#3730a3",
       // R7hr-42 P0-5: privacy leak. An outsourced chemist-shop bill should
       // surface the pharmacy's own emergency / 24×7 line — NEVER the
       // hospital's helpline, which is a separate accountable entity.
@@ -167,7 +167,7 @@ const _COL = {
 function _deriveAccent(primary) {
   // Cheap shade-shift so callers without a saved accent still get a
   // gradient. Strip a leading "#", parse RGB, lighten ~25%, clamp.
-  const c = String(primary || "#1e3a8a").replace(/^#/, "");
+  const c = String(primary || "#3730a3").replace(/^#/, "");
   if (!/^[0-9a-f]{6}$/i.test(c)) return "#0ea5e9";
   const n = parseInt(c, 16);
   const r = Math.min(255, ((n >> 16) & 0xff) + 60);
@@ -188,7 +188,7 @@ function resolveIdentityForTemplate(hospital = {}, pharmacy = null, idShell = {}
   });
   const primary  = (isOut
     ? (pharmacy.headerColor || hospital.printHeaderColor)
-    : (hospital.printHeaderColor || hospital.brandColor)) || "#1e3a8a";
+    : (hospital.printHeaderColor || hospital.brandColor)) || "#3730a3";
   const accent   = (isOut
     ? (pharmacy.accentColor)
     : (hospital.printAccentColor || hospital.accentColor)) || _deriveAccent(primary);
@@ -774,13 +774,13 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
           justifyContent: "space-between",
           alignItems: "center",
           background: isWalkIn ? "#f0fdf4"
-                     : isIPD   ? "#eff6ff"
+                     : isIPD   ? "#eef2ff"
                      : "#fff7ed",
           color:      isWalkIn ? "#166534"
-                     : isIPD   ? "#1e3a8a"
+                     : isIPD   ? "#3730a3"
                      : "#9a3412",
           borderBottom: `1.5px solid ${isWalkIn ? "#bbf7d0"
-                                     : isIPD   ? "#bfdbfe"
+                                     : isIPD   ? "#c7d2fe"
                                      : "#fed7aa"}`,
         }}>
           <span>{docTitle}</span>
@@ -821,8 +821,8 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
         {isIPD && r.isConsolidated && toNum(r.consolidatedFrom) > 0 && (
           <div style={{
             margin: "10px 14px 0", padding: "7px 12px",
-            background: "#eff6ff", border: "1.5px solid #93c5fd",
-            borderRadius: 6, fontSize: 10.5, color: "#1e3a8a",
+            background: "#eef2ff", border: "1.5px solid #93c5fd",
+            borderRadius: 6, fontSize: 10.5, color: "#3730a3",
             display: "flex", justifyContent: "space-between",
             alignItems: "center", gap: 12,
           }}>
@@ -1099,8 +1099,8 @@ const PharmacyBill = ({ settings = {}, receipt = {} }) => {
       {isIPD && r.isConsolidated && toNum(r.consolidatedFrom) > 0 && (
         <div style={{
           margin: "0 0 10px", padding: "7px 12px",
-          background: "#eff6ff", border: "1.5px solid #93c5fd",
-          borderRadius: 6, fontSize: 10.5, color: "#1e3a8a",
+          background: "#eef2ff", border: "1.5px solid #93c5fd",
+          borderRadius: 6, fontSize: 10.5, color: "#3730a3",
           display: "flex", justifyContent: "space-between",
           alignItems: "center", gap: 12,
         }}>

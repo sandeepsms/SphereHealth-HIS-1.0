@@ -66,7 +66,7 @@ const C = {
   green: "#16a34a", greenL: "#dcfce7",
   emerald: "#059669", emeraldL: "#d1fae5",
   teal: "#0d9488", tealL: "#ccfbf1",
-  blue: "#1d4ed8", blueL: "#eff6ff",
+  blue: "#4f46e5", blueL: "#eef2ff",
   slate: "#475569", slateL: "#f1f5f9",
 };
 

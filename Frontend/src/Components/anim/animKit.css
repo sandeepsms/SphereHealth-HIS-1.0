@@ -24,7 +24,7 @@
 
 /* 05 — Morphing Save Button */
 .ak-save { position: relative; overflow: hidden; transition: width .35s cubic-bezier(.2,.8,.2,1), background .3s, border-radius .35s; }
-.ak-save.is-saving { background: #2563eb; }
+.ak-save.is-saving { background: #4f46e5; }
 .ak-save.is-saved  { background: #16a34a; }
 @keyframes ak-check { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
 .ak-check path { stroke-dasharray: 24; stroke-dashoffset: 24; animation: ak-check .4s .05s ease forwards; }
@@ -58,7 +58,7 @@
 /* 13 — Rotating Gradient Border */
 @property --ak-ang { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
 @keyframes ak-rotate { to { --ak-ang: 360deg; } }
-.ak-gradborder { position: relative; border-radius: 16px; padding: 2px; background: conic-gradient(from var(--ak-ang), #2563eb, #db2777, #16a34a, #f59e0b, #2563eb); animation: ak-rotate 4s linear infinite; }
+.ak-gradborder { position: relative; border-radius: 16px; padding: 2px; background: conic-gradient(from var(--ak-ang), #4f46e5, #db2777, #16a34a, #f59e0b, #4f46e5); animation: ak-rotate 4s linear infinite; }
 /* fallback for browsers without @property — still shows a static gradient ring */
 .ak-gradborder > * { border-radius: 14px; background: #fff; }
 
@@ -73,7 +73,7 @@
 .ak-step-dot { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; color: #fff; transform: scale(0); animation: ak-dot-in .45s cubic-bezier(.34,1.56,.64,1) forwards; }
 @keyframes ak-dot-in { to { transform: scale(1); } }
 .ak-step-line { height: 3px; flex: 1; background: #e2e8f0; position: relative; overflow: hidden; }
-.ak-step-line > i { position:absolute; inset:0; width:0; background: #2563eb; animation: ak-line .6s ease forwards; }
+.ak-step-line > i { position:absolute; inset:0; width:0; background: #4f46e5; animation: ak-line .6s ease forwards; }
 @keyframes ak-line { to { width: 100%; } }
 
 /* 19 — Glitch Text */

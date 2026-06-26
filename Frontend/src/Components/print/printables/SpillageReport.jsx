@@ -18,7 +18,7 @@ const TYPE_BADGE = {
   "body-fluid":{ color: "#78350f", bg: "#fef3c7", border: "#fde68a", label: "BODY FLUID" },
   chemical:    { color: "#581c87", bg: "#ede9fe", border: "#c4b5fd", label: "CHEMICAL" },
   cytotoxic:   { color: "#831843", bg: "#fce7f3", border: "#f9a8d4", label: "CYTOTOXIC" },
-  mercury:     { color: "#1e3a8a", bg: "#dbeafe", border: "#93c5fd", label: "MERCURY" },
+  mercury:     { color: "#3730a3", bg: "#e0e7ff", border: "#93c5fd", label: "MERCURY" },
 };
 
 const SEVERITY = {

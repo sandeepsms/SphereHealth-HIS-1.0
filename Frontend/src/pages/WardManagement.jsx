@@ -140,7 +140,7 @@ const WardManagement = () => {
             </button>
             <button onClick={() => { setSelectedWard(null); setShowForm(true); }}
               style={{
-                background: "#fff", color: "#1e40af",
+                background: "#fff", color: "#4338ca",
                 border: "none", fontWeight: 700,
                 borderRadius: 8, padding: "7px 16px", fontSize: 12,
                 boxShadow: "0 2px 8px rgba(0,0,0,.13)",

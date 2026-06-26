@@ -75,7 +75,7 @@ const NAV = [
      breach reported on 13 May 2026. */
   {
     id: "dashboard", label: "Dashboard",
-    icon: "pi-home", color: "#1e40af", light: "#eff6ff",
+    icon: "pi-home", color: "#4338ca", light: "#eef2ff",
     path: "/dashboard", single: true, roles: ALL,
   },
 

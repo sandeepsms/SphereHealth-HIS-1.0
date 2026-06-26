@@ -10,7 +10,7 @@
 // on a printout. "Fingerprint" is NOT matched (word-boundary regex).
 import { useEffect } from "react";
 
-const COLORS = ["#2563eb", "#db2777", "#16a34a", "#f59e0b", "#7c3aed", "#06b6d4", "#ef4444", "#0ea5e9"];
+const COLORS = ["#4f46e5", "#db2777", "#16a34a", "#f59e0b", "#7c3aed", "#06b6d4", "#ef4444", "#0ea5e9"];
 
 function isPrintControl(el) {
   if (!el || !el.querySelector) return false;

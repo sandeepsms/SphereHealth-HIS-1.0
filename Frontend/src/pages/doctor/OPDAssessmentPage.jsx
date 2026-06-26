@@ -37,7 +37,7 @@ import { confirm } from "../../Components/common/ConfirmDialog";
 import { promptInput } from "../../Components/common/InputDialog";
 
 const C = {
-  doctor: "#7c3aed", nurse: "#db2777", primary: "#1e40af",
+  doctor: "#7c3aed", nurse: "#db2777", primary: "#4338ca",
   success: "#059669", warn: "#d97706", danger: "#dc2626",
   bg: "#f8fafc", card: "#ffffff", border: "#e2e8f0",
   muted: "#64748b", dark: "#0f172a",
@@ -2501,7 +2501,7 @@ export default function OPDAssessmentPage() {
               purple ICD-10 row, and a status pill strip. Wrapped in the
               OPD page's <Card> so collapsibility + section ordering stay
               consistent with the rest of the OPD slip. */}
-          <Card title="Patient Diagnosis" icon="pi-bookmark" color="#1d4ed8">
+          <Card title="Patient Diagnosis" icon="pi-bookmark" color="#4f46e5">
             <div style={{ fontSize: 11, color: "#64748b", fontWeight: 500, marginBottom: 12, marginTop: -6 }}>
               Provisional → Working → Final + ICD-10 coding
             </div>
@@ -2524,14 +2524,14 @@ export default function OPDAssessmentPage() {
               {/* Working (blue) — evolving impression */}
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#3b82f6", flexShrink: 0 }} />
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: ".6px" }}>Working Dx</span>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#6366f1", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#4f46e5", textTransform: "uppercase", letterSpacing: ".6px" }}>Working Dx</span>
                 </div>
                 <input
                   value={soap.workingDiagnosis}
                   onChange={e => setSoap(p => ({ ...p, workingDiagnosis: e.target.value }))}
                   placeholder="Current evolving diagnosis"
-                  style={{ width: "100%", border: "1.5px solid #93c5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#eff6ff", boxSizing: "border-box" }}
+                  style={{ width: "100%", border: "1.5px solid #93c5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#eef2ff", boxSizing: "border-box" }}
                 />
               </div>
               {/* Final (green) — confirmed at closure */}
@@ -2587,8 +2587,8 @@ export default function OPDAssessmentPage() {
                   onClick={() => setSoap(p => ({ ...p, patientStatus: p.patientStatus === s ? "" : s }))}
                   style={{
                     padding: "4px 13px", borderRadius: 20,
-                    border: `1.5px solid ${soap.patientStatus === s ? "#2563eb" : "#e2e8f0"}`,
-                    background: soap.patientStatus === s ? "#2563eb" : "white",
+                    border: `1.5px solid ${soap.patientStatus === s ? "#4f46e5" : "#e2e8f0"}`,
+                    background: soap.patientStatus === s ? "#4f46e5" : "white",
                     color: soap.patientStatus === s ? "white" : "#64748b",
                     fontFamily: "inherit", fontSize: 11, fontWeight: 700,
                     cursor: "pointer", transition: "all .15s ease",
@@ -3026,7 +3026,7 @@ export default function OPDAssessmentPage() {
 
               // Status pill colours mirror PharmacyIndentsPage URGENCY map.
               const STATUS_PILL = {
-                Ordered:    { bg: "#dbeafe", fg: "#1d4ed8", label: "Ordered" },
+                Ordered:    { bg: "#e0e7ff", fg: "#4f46e5", label: "Ordered" },
                 InProgress: { bg: "#fef3c7", fg: "#a16207", label: "In Progress" },
                 Completed:  { bg: "#dcfce7", fg: "#15803d", label: "Billed" },
                 Cancelled:  { bg: "#fee2e2", fg: "#b91c1c", label: "Cancelled" },
@@ -3131,8 +3131,8 @@ export default function OPDAssessmentPage() {
                   <tbody>
                     {/* ── Active Orders (Ordered + InProgress) ── */}
                     {activeOrders.length > 0 && (
-                      <tr style={{ background: "#eff6ff" }}>
-                        <td colSpan={7} style={{ padding: "6px 10px", color: "#1d4ed8", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      <tr style={{ background: "#eef2ff" }}>
+                        <td colSpan={7} style={{ padding: "6px 10px", color: "#4f46e5", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>
                           <i className="pi pi-clock" style={{ marginRight: 6 }} />
                           Active Orders · {activeOrders.length} pending · ₹{activeTotal.toLocaleString("en-IN")} will bill on completion
                         </td>
@@ -3164,10 +3164,10 @@ export default function OPDAssessmentPage() {
 
                     {/* ── Twin totals ── */}
                     <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
-                      <td colSpan={4} style={{ padding: "8px 10px", color: "#1d4ed8", textTransform: "uppercase", fontSize: 11, letterSpacing: 0.4 }}>
+                      <td colSpan={4} style={{ padding: "8px 10px", color: "#4f46e5", textTransform: "uppercase", fontSize: 11, letterSpacing: 0.4 }}>
                         Pending orders (not yet billed)
                       </td>
-                      <td style={{ padding: "8px 10px", color: "#1d4ed8", fontFamily: "'DM Mono', monospace", fontSize: 13 }}>
+                      <td style={{ padding: "8px 10px", color: "#4f46e5", fontFamily: "'DM Mono', monospace", fontSize: 13 }}>
                         ₹{activeTotal.toLocaleString("en-IN")}
                       </td>
                       <td colSpan={2} />

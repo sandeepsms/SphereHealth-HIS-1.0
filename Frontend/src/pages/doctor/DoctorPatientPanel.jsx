@@ -46,7 +46,7 @@ import { API_BASE_URL as BASE } from "../../config/api";
 /* ── Design tokens ──────────────────────────────────────────────────────────── */
 const C = {
   primary:"#7c3aed", primaryD:"#4c1d95", primaryL:"#f5f3ff", primaryM:"#ede9fe",
-  blue:"#1e40af",    blueL:"#dbeafe",    blueB:"#93c5fd",
+  blue:"#4338ca",    blueL:"#e0e7ff",    blueB:"#93c5fd",
   green:"#059669",   greenL:"#d1fae5",   greenB:"#6ee7b7",
   red:"#dc2626",     redL:"#fee2e2",     redB:"#fca5a5",
   amber:"#d97706",   amberL:"#fef3c7",   amberB:"#fde68a",
@@ -686,7 +686,7 @@ function ClinicalNotesTab({notes=[]}) {
                         <div style={{display:"flex",flexDirection:"column",gap:5,padding:"8px 12px",background:"#f9fafb",borderRadius:8,marginBottom:8,border:`1px solid ${C.border}`}}>
                           <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:nc.color,marginBottom:3}}>SOAP Note</div>
                           {[
-                            {k:"S",label:"Subjective", v:soap.subjective, color:"#1e40af", bg:"#eff6ff"},
+                            {k:"S",label:"Subjective", v:soap.subjective, color:"#4338ca", bg:"#eef2ff"},
                             {k:"O",label:"Objective",  v:soap.objective,  color:"#0f766e", bg:"#f0fdfa"},
                             {k:"A",label:"Assessment", v:soap.assessment, color:"#9a3412", bg:"#fff7ed"},
                             {k:"P",label:"Plan",       v:soap.plan,       color:"#166534", bg:"#f0fdf4"},
@@ -845,7 +845,7 @@ function ClinicalNotesTab({notes=[]}) {
 
 /* ═══════════════════════════════════════════════════════ TAB: NURSING RECORDS */
 const NURS_NOTE_STYLE_DP = {
-  vitals:    {bg:"#dbeafe", color:"#1e40af",  dot:"#3b82f6"},
+  vitals:    {bg:"#e0e7ff", color:"#4338ca",  dot:"#6366f1"},
   blood:     {bg:"#fecaca", color:"#9f1239",  dot:"#dc2626"},
   iv:        {bg:"#f0fdfa", color:"#0d9488",  dot:"#0d9488"},
   wound:     {bg:"#fee2e2", color:"#b91c1c",  dot:"#ef4444"},
@@ -854,7 +854,7 @@ const NURS_NOTE_STYLE_DP = {
   neuro:     {bg:"#f5f3ff", color:"#7c3aed",  dot:"#7c3aed"},
   fall:      {bg:"#fff7ed", color:"#ea580c",  dot:"#ea580c"},
   skin:      {bg:"#dcfce7", color:"#059669",  dot:"#059669"},
-  intake:    {bg:"#dbeafe", color:"#1d4ed8",  dot:"#1d4ed8"},
+  intake:    {bg:"#e0e7ff", color:"#4f46e5",  dot:"#4f46e5"},
   general:   {bg:"#f9fafb", color:"#374151",  dot:"#9ca3af"},
   discharge: {bg:"#dcfce7", color:"#059669",  dot:"#059669"},
   mews:      {bg:"#fef3c7", color:"#92400e",  dot:"#d97706"},

@@ -112,7 +112,7 @@ export function Hero({ icon, title, subtitle, color = "orange", right }) {
 // receptionist/pharmacist sees urgency at a glance even from another tab.
 const BADGE_TONE_BG = {
   idle:   "#10b981", // emerald — calm "all clear"
-  normal: "#2563eb", // blue — work in queue
+  normal: "#4f46e5", // blue — work in queue
   warn:   "#d97706", // amber — urgent (non-STAT)
   urgent: "#dc2626", // red — STAT / stuck — demands attention
 };
@@ -343,9 +343,9 @@ const BADGE_PALETTE = {
   active:   { bg: C.greenL,  fg: "#15803d", bd: "#86efac" },
   inactive: { bg: C.redL,    fg: "#b91c1c", bd: "#fecaca" },
   pending:  { bg: C.amberL,  fg: "#b45309", bd: "#fcd34d" },
-  approved: { bg: C.blueL,   fg: "#1e40af", bd: "#93c5fd" },
+  approved: { bg: C.blueL,   fg: "#4338ca", bd: "#93c5fd" },
   rejected: { bg: C.redL,    fg: "#b91c1c", bd: "#fecaca" },
-  opd:      { bg: C.blueL,   fg: "#1e40af", bd: "#93c5fd" },
+  opd:      { bg: C.blueL,   fg: "#4338ca", bd: "#93c5fd" },
   ipd:      { bg: C.amberL,  fg: "#b45309", bd: "#fcd34d" },
   emergency:{ bg: C.redL,    fg: "#b91c1c", bd: "#fecaca" },
   default:  { bg: C.subtle,  fg: C.muted,   bd: C.border },

@@ -7,7 +7,7 @@ import { backupService } from "../../Services/backupService";
 
 const C = {
   ink: "#0f172a", sub: "#64748b", line: "#e2e8f0", bg: "#f8fafc",
-  blue: "#2563eb", blueL: "#eff6ff", green: "#16a34a", greenL: "#f0fdf4",
+  blue: "#4f46e5", blueL: "#eef2ff", green: "#16a34a", greenL: "#f0fdf4",
   amber: "#b45309", amberL: "#fffbeb", red: "#dc2626", redL: "#fef2f2",
 };
 

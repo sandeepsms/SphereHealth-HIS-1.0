@@ -48,16 +48,16 @@ const PestControlRegister = ({ settings, receipt = {} }) => {
       {/* Vendor credentials block */}
       <div style={{
         border: "1.5px solid #93c5fd",
-        background: "linear-gradient(135deg, #dbeafe, #eff6ff)",
+        background: "linear-gradient(135deg, #e0e7ff, #eef2ff)",
         borderRadius: 8, padding: "10px 14px", marginBottom: 12,
       }}>
-        <div style={{ fontSize: 10, color: "#1e3a8a", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 800 }}>
+        <div style={{ fontSize: 10, color: "#3730a3", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 800 }}>
           Vendor Credentials
         </div>
         <div style={{ fontSize: 13, fontWeight: 800, marginTop: 2, color: "#0f172a" }}>
           {r.vendorName || "—"}
         </div>
-        <div style={{ fontSize: 11, color: "#1e3a8a", marginTop: 4 }}>
+        <div style={{ fontSize: 11, color: "#3730a3", marginTop: 4 }}>
           {r.vendorFssaiNo && <><strong>FSSAI #:</strong> <span style={{ fontFamily: "'DM Mono', monospace" }}>{r.vendorFssaiNo}</span></>}
           {r.vendorCibNo  && <> · <strong>CIB #:</strong> <span style={{ fontFamily: "'DM Mono', monospace" }}>{r.vendorCibNo}</span></>}
           {r.vendorContact && <> · 📞 {r.vendorContact}</>}
