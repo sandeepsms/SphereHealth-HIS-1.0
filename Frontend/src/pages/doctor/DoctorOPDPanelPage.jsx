@@ -221,6 +221,16 @@ export default function DoctorOPDPanelPage() {
           background: "linear-gradient(180deg,#0f766e,#0d9488)",
         }} />
 
+        {/* R7hr-297 — premium hero icon tile */}
+        <div style={{
+          width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+          background: "linear-gradient(135deg,#0f766e,#0d9488)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          boxShadow: "0 6px 16px rgba(13,148,136,.32), inset 0 1px 0 rgba(255,255,255,.28)",
+        }}>
+          <i className="pi pi-desktop" style={{ fontSize: 19, color: "#fff" }} />
+        </div>
+
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 10, fontWeight: 800, color: "#0f766e", letterSpacing: ".7px", textTransform: "uppercase" }}>
             Doctor · OPD Panel
