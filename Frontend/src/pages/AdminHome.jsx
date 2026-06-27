@@ -342,11 +342,12 @@ function RevenuePanel({ kpi }) {
                 <span style={{ fontSize: 12, color: C.muted, fontWeight: 700 }}>{b.label}</span>
                 <span style={{ fontSize: 14, fontWeight: 900, color: b.bold ? b.color : C.text }}>{fmtINR(b.value)}</span>
               </div>
-              <div style={{ height: 12, background: b.color + "15", borderRadius: 999, overflow: "hidden" }}>
+              <div style={{ height: 12, background: b.color + "15", borderRadius: 999, overflow: "hidden", boxShadow: "inset 0 1px 2px rgba(16,24,40,.07)" }}>
                 <div style={{
                   width: `${pct}%`, height: "100%",
                   background: `linear-gradient(90deg, ${b.color}, ${b.color}aa)`,
-                  borderRadius: 999, transition: "width .5s",
+                  borderRadius: 999, transition: "width .6s cubic-bezier(.34,1.2,.64,1)",
+                  boxShadow: `inset 0 1px 0 rgba(255,255,255,.35), 0 1px 5px ${b.color}55`,
                 }} />
               </div>
             </div>
