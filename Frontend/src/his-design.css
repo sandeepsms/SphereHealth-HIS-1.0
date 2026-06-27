@@ -691,3 +691,66 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .space-y-1 > * + * { margin-top: .25rem; }
 .space-y-2 > * + * { margin-top: .5rem; }
 .whitespace-pre-line { white-space: pre-line; }
+
+/* ════════════════════════════════════════════════════════════
+   PREMIUM FIELD DESIGN (R7hr-301 USER) — the `.his-field` class was
+   referenced by 949 inputs but never defined, and 300+ bare
+   <select>/<input> fell back to raw browser chrome. Define ONE
+   crafted, on-theme field — used by every text input / select /
+   textarea across the HIS — matching the PrimeReact premium inputs:
+   refined border, soft inset depth, indigo focus ring, custom
+   select chevron. Honours prefers-reduced-motion.
+   ════════════════════════════════════════════════════════════ */
+.his-field,
+.his-fld,
+input:not([class]):not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=submit]):not([type=button]):not([type=reset]):not([type=color]),
+select:not([class]),
+textarea:not([class]) {
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--his-text, #1a1d23);
+  background: #ffffff;
+  border: 1.5px solid var(--his-border, #e2e8f0);
+  border-radius: 10px;
+  padding: 9px 12px;
+  outline: none;
+  box-shadow: inset 0 1px 2px rgba(16,24,40,.045);
+  transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+  box-sizing: border-box;
+}
+.his-field:hover,
+input:not([class]):not([type=checkbox]):not([type=radio]):hover,
+select:not([class]):hover,
+textarea:not([class]):hover { border-color: #a5b4fc; }
+.his-field:focus,
+input:not([class]):not([type=checkbox]):not([type=radio]):focus,
+select:not([class]):focus,
+textarea:not([class]):focus {
+  border-color: #4338ca;
+  box-shadow: 0 0 0 3px rgba(79,70,229,.16);
+  background: #fff;
+}
+.his-field::placeholder,
+input:not([class])::placeholder,
+textarea:not([class])::placeholder { color: #94a3b8; }
+.his-field:disabled,
+input:not([class]):disabled,
+select:not([class]):disabled,
+textarea:not([class]):disabled { background: #f1f5f9; color: #94a3b8; cursor: not-allowed; box-shadow: none; }
+/* Selects — replace the native arrow with a crafted chevron */
+select.his-field,
+select.his-fld,
+select:not([class]) {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  padding-right: 34px;
+  cursor: pointer;
+}
+textarea.his-field, textarea.his-fld, textarea:not([class]) { min-height: 80px; resize: vertical; }
+@media (prefers-reduced-motion: reduce) {
+  .his-field, .his-fld,
+  input:not([class]), select:not([class]), textarea:not([class]) { transition: none; }
+}
