@@ -2,8 +2,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Toast } from "primereact/toast";
-import { Card } from "primereact/card";
 import DoctorForm from "../../Components/doctor/DoctorForm";
+// R7hr-296: redesigned to the shared admin-theme so Add/Edit Doctor matches
+// the premium DoctorListPage (hero band + themed card) instead of a bare card.
+import { AdminPage, Hero, Card as ThemeCard, C } from "../../Components/admin-theme";
 
 import { doctorService } from "../../Services/doctors/doctorService";
 
@@ -125,32 +127,33 @@ const DoctorFormPage = () => {
   };
 
   return (
-    <div className="p-4">
+    <AdminPage maxWidth={1100}>
       <Toast ref={toast} position="top-right" />
 
-      <div className="max-w-6xl mx-auto">
-        <Card
-          title={isEditMode ? "Edit Doctor" : "Add New Doctor"}
-          className="shadow-lg"
-        >
-          {loading ? (
-            <div className="p-4 text-center">
-              <i
-                className="pi pi-spin pi-spinner"
-                style={{ fontSize: "2rem" }}
-              />
-              <p className="mt-2">Loading doctor details...</p>
-            </div>
-          ) : (
-            <DoctorForm
-              initialValues={initialValues}
-              onSubmit={handleFormSubmit}
-              submitting={submitting}
-            />
-          )}
-        </Card>
-      </div>
-    </div>
+      <Hero
+        icon={isEditMode ? "pi-user-edit" : "pi-user-plus"}
+        color="teal"
+        title={isEditMode ? "Edit Doctor" : "Add New Doctor"}
+        subtitle={isEditMode
+          ? "Update consultant profile, department, specialisation & credentials"
+          : "Enroll a new consultant — profile, department, specialisation & contact"}
+      />
+
+      <ThemeCard title="Doctor Details" color={C.teal} icon="pi-id-card">
+        {loading ? (
+          <div style={{ padding: "44px 16px", textAlign: "center", color: C.muted }}>
+            <i className="pi pi-spin pi-spinner" style={{ fontSize: 30, color: C.teal }} />
+            <p style={{ marginTop: 14, fontSize: 13, fontWeight: 600 }}>Loading doctor details…</p>
+          </div>
+        ) : (
+          <DoctorForm
+            initialValues={initialValues}
+            onSubmit={handleFormSubmit}
+            submitting={submitting}
+          />
+        )}
+      </ThemeCard>
+    </AdminPage>
   );
 };
 
