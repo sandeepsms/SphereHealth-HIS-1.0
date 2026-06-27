@@ -21,7 +21,7 @@ import "primeicons/primeicons.css";
 /* ══════════════════════════════════════════════════════════════
    ROLE META — color, icon, label for each role
 ══════════════════════════════════════════════════════════════ */
-const ROLE_META = {
+export const ROLE_META = {
   Admin:             { color: "#1e293b", light: "#f1f5f9",  icon: "pi-shield",           label: "Administrator" },
   Receptionist:      { color: "#0891b2", light: "#ecfeff",  icon: "pi-desktop",          label: "Receptionist" },
   Doctor:            { color: "#7c3aed", light: "#f5f3ff",  icon: "pi-user-edit",        label: "Doctor" },
@@ -65,7 +65,7 @@ const SE    = "Security";
    roles: ["*"] = everyone  |  omit or [] = Admin only
    Each item also carries roles for fine-grained filtering.
 ══════════════════════════════════════════════════════════════ */
-const NAV = [
+export const NAV = [
   /* ── Dashboard ──────────────────────────────────────────────
      /dashboard is the role-aware RoleDashboardPage — it reads
      user.role and renders the right layout. Previously this pointed
@@ -641,7 +641,7 @@ const RECEPTION_NAV = [
 // deployment shouldn't see Doctor / Nurse / Reception nav (those
 // modules aren't reachable; the underlying DB collections may not
 // exist). IS_PHARMACY_STANDALONE is imported at the top of file.
-function filterNav(nav, userRole) {
+export function filterNav(nav, userRole) {
   // Standalone short-circuit — only the "pharmacy" section survives.
   // Applied BEFORE the role branches so it overrides every other rule.
   if (IS_PHARMACY_STANDALONE) {

@@ -11,6 +11,7 @@ import "bootstrap/dist/css/bootstrap.css";
 
 // ── Eager-loaded shell (always needed) ──────────────────────────
 import Sidebar from "./Components/Sidebar";
+import BottomDock from "./Components/BottomDock";  // R7hr-306: bottom carousel dock replaces the sidebar
 import Header from "./Components/Header";
 import { AuthProvider, useAuth, RoleGuard } from "./context/AuthContext";
 // R7hr-223 — app-wide Windows-style keyboard shortcut layer (command palette,
@@ -466,7 +467,7 @@ function AppLayout({ collapsed, setCollapsed }) {
   return (
     <div>
       <Header />
-      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
+      <BottomDock />
       <ShortcutLayer />
       <VoiceDictation />
       <PrintCelebrate />
@@ -476,6 +477,8 @@ function AppLayout({ collapsed, setCollapsed }) {
         className={`main-content ${collapsed ? "expanded" : ""}`}
         style={{
           marginTop: 52,
+          marginLeft: 0,           /* R7hr-306: no sidebar — dock at bottom */
+          paddingBottom: 46,       /* clear the collapsed bottom dock */
           minHeight: "calc(100vh - 52px)",
           background: "#f8fafc",
         }}
