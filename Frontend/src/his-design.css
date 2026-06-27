@@ -764,3 +764,52 @@ textarea.his-field, textarea.his-fld, textarea:not([class]) { min-height: 80px; 
   .his-field, .his-fld,
   input:not([class]), select:not([class]), textarea:not([class]) { transition: none; }
 }
+
+/* ════════════════════════════════════════════════════════════
+   FIELD COVERAGE EXTENSION (R7hr-305 USER) — guarantee EVERY field
+   across EVERY page gets the soft-elevated design, no exceptions.
+   Catches the *-input / *-select / *-textarea class conventions
+   (his-input, his-select, his-textarea, hcw-input, pf-input,
+   pl-modal-input, rx-settle-input, …), form-control, and ALL native
+   selects/textareas — beyond just .his-field + bare inputs. Excludes
+   PrimeReact (own premium rule) and checkbox/radio. Future fields that
+   follow the naming convention are covered automatically.
+   ════════════════════════════════════════════════════════════ */
+.form-control,
+input[class*="input"]:not(.p-inputtext):not(.p-inputnumber-input):not(.p-password-input):not(.p-autocomplete-input):not(.p-inputmask):not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=submit]):not([type=button]),
+select:not(.p-dropdown):not(.p-multiselect):not([class*="p-"]),
+textarea:not(.p-inputtextarea):not([class*="p-input"]) {
+  font-family: 'DM Sans', -apple-system, sans-serif;
+  font-size: 13px; line-height: 1.4;
+  color: var(--his-text, #1a1d23);
+  background: #ffffff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 9px 12px;
+  outline: none;
+  box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.045);
+  transition: border-color .15s ease, box-shadow .15s ease;
+  box-sizing: border-box;
+}
+.form-control:hover,
+input[class*="input"]:not([type=checkbox]):not([type=radio]):hover,
+select:not(.p-dropdown):not([class*="p-"]):hover,
+textarea:not([class*="p-input"]):hover { border-color: #a5b4fc; }
+.form-control:focus,
+input[class*="input"]:not([type=checkbox]):not([type=radio]):focus,
+select:not(.p-dropdown):not([class*="p-"]):focus,
+textarea:not([class*="p-input"]):focus {
+  border-color: #4338ca; box-shadow: 0 0 0 3px rgba(79,70,229,.16);
+}
+input[class*="input"]::placeholder, textarea::placeholder { color: #94a3b8; }
+/* All native selects get the crafted chevron */
+select:not(.p-dropdown):not(.p-multiselect):not([class*="p-"]) {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 11px center;
+  padding-right: 34px; cursor: pointer;
+}
+textarea:not(.p-inputtextarea):not([class*="p-input"]) { min-height: 80px; resize: vertical; }
+@media (prefers-reduced-motion: reduce) {
+  .form-control, input[class*="input"], select:not([class*="p-"]), textarea { transition: none; }
+}
