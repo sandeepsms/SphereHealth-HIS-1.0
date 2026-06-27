@@ -50,7 +50,7 @@ export const COMMANDS = [
   { id: "nurse-opd-q",   label: "Nurse OPD Queue",       path: "/opd-queue",              icon: "🧾", keywords: "opd queue vitals triage", roles: [ADMIN, NR], chord: "q" },
   { id: "nurse-initial", label: "Nurse Initial Assessment", path: "/nurse-initial-assessment", icon: "📋", keywords: "initial assessment nursing", roles: [ADMIN, NR] },
   { id: "care-plan",     label: "Nursing Care Plan",     path: "/nursing-care-plan",      icon: "📌", keywords: "care plan nursing", roles: [ADMIN, NR] },
-  { id: "handover",      label: "Nursing Handover",      path: "/nursing-handover-notes", icon: "🔄", keywords: "handover shift sbar", roles: [ADMIN, NR] },
+  { id: "handover",      label: "Nursing Handover",      path: "/nurse-patient-panel?tab=handover", icon: "🔄", keywords: "handover shift sbar", roles: [ADMIN, NR] },
 
   // ── Clinical shared ────────────────────────────────────────────────
   { id: "vitals",      label: "Vital Sheet",   path: "/vitalSheet",      icon: "❤", keywords: "vitals chart bp pulse temperature", roles: [ADMIN, NR, DR], chord: "v" },

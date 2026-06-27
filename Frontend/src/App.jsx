@@ -146,7 +146,6 @@ const VitalSheet = lazy(() => import("./Components/vital/VitalSheet"));
 
 // Nursing (heavy form pages)
 const NursingNotes = lazy(() => import("./pages/nursing/NursingNotes"));
-const NursingHandoverNotes = lazy(() => import("./pages/nursing/NursingHandoverNotes"));
 const NurseInitialAssessmentPage = lazy(() => import("./pages/nursing/NurseInitialAssessmentPage"));
 const NursingCarePlanPage = lazy(() => import("./pages/nursing/NursingCarePlanPage"));
 const FallRiskAssessmentPage = lazy(() => import("./pages/nursing/FallRiskAssessmentPage"));
@@ -515,9 +514,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/nursing-notes" element={
               <RoleGuard action="mar.write"><NursingNotes /></RoleGuard>
             } />
-            <Route path="/nursing-handover-notes" element={
-              <RoleGuard action="mar.write"><NursingHandoverNotes /></RoleGuard>
-            } />
+            {/* R7hr-312 — the old standalone /nursing-handover-notes page was a
+                non-functional prototype (its "Save" only console.logged — it never
+                hit an API). Retired: redirect to the real, API-backed Handover
+                Notes tab inside the nurse patient panel. */}
+            <Route path="/nursing-handover-notes" element={<Navigate to="/nurse-patient-panel?tab=handover" replace />} />
 
             {/* ── OPD ──────────────────────────────────────────── */}
             {/* R7hr-56 — /opd/:UHID (legacy OPDPrint) removed. It rendered

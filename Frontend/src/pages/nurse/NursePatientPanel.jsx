@@ -2600,7 +2600,17 @@ function NursePatientPanelContent({ selectedAdmission }) {
   const [searchParams] = useSearchParams();
 
   const [uhidInput,  setUhidInput]  = useState(searchParams.get("uhid")||"");
-  const [activeTab,  setActiveTab]  = useState("overview");
+  // R7hr-312 — deep-link the opening tab via ?tab= (e.g. the dashboard
+  // "Handover Notes" quick-action opens ?tab=handover). Validated against
+  // TABS; unknown values fall back to the overview tab.
+  const [activeTab,  setActiveTab]  = useState(() => {
+    const t = searchParams.get("tab");
+    return t && TABS.some((x) => x.id === t) ? t : "overview";
+  });
+  // Remember the ?tab= deep-link so the FIRST patient load lands on it
+  // (fetchAll otherwise force-resets to "overview"); later patient switches
+  // then behave normally and reset to overview.
+  const deepLinkTabRef = useRef(searchParams.get("tab"));
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState("");
   const [loaded,     setLoaded]     = useState(false);
@@ -2656,7 +2666,11 @@ function NursePatientPanelContent({ selectedAdmission }) {
     setConsents([]);
     setMedCerts([]);
     setPendingTransfer(null);
-    setActiveTab("overview");
+    // Honour a ?tab= deep-link on the first load (e.g. dashboard "Handover
+    // Notes" → ?tab=handover), then consume it so later loads reset normally.
+    const deepTab = deepLinkTabRef.current;
+    deepLinkTabRef.current = null;
+    setActiveTab(deepTab && TABS.some((x) => x.id === deepTab) ? deepTab : "overview");
     try {
       // Admission + patient
       const [admRes, patRes] = await Promise.all([
