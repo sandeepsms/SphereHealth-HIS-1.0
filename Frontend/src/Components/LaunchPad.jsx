@@ -89,11 +89,12 @@ export default function LaunchPad() {
       {/* ── Launchpad overlay (single screen, no scroll) ── */}
       {open && (
         <div
+          data-no-frost
           onClick={() => setOpen(false)}
           style={{
             position: "fixed", inset: 0, zIndex: 5000,
-            background: "radial-gradient(1100px 600px at 18% -5%, rgba(79,70,229,.28), transparent 60%), rgba(15,23,42,.76)",
-            backdropFilter: "blur(13px)", WebkitBackdropFilter: "blur(13px)",
+            background: "radial-gradient(1100px 600px at 18% -5%, rgba(79,70,229,.22), transparent 55%), rgba(10,13,28,.94)",
+            backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
             display: "flex", flexDirection: "column",
             padding: "14px 16px", animation: "lpFade .18s ease both", fontFamily: "'DM Sans',sans-serif",
           }}
@@ -147,23 +148,26 @@ export default function LaunchPad() {
                       style={{
                         display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 5,
                         padding: "6px 8px 6px", borderRadius: 10, cursor: "pointer", textAlign: "left",
-                        background: active ? `linear-gradient(135deg, ${it.color}, ${it.color}cc)` : "rgba(255,255,255,.06)",
-                        border: "1px solid rgba(255,255,255,.10)",
+                        background: active ? `linear-gradient(135deg, ${it.color}, ${it.color}cc)` : "rgba(255,255,255,.085)",
+                        borderTop: "1px solid rgba(255,255,255,.16)",
+                        borderRight: "1px solid rgba(255,255,255,.16)",
+                        borderBottom: "1px solid rgba(255,255,255,.16)",
                         borderLeft: `3px solid ${it.color}`,
+                        boxShadow: active ? `0 6px 16px ${it.color}55` : "0 1px 2px rgba(0,0,0,.25)",
                         color: "#fff", position: "relative", minHeight: 50,
                         transition: "transform .12s, background .14s",
                         animation: "lpTileIn .2s ease both",
                         animationDelay: `${Math.min(i, 30) * 9}ms`,
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; if (!active) e.currentTarget.style.background = "rgba(255,255,255,.12)"; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; if (!active) e.currentTarget.style.background = "rgba(255,255,255,.06)"; }}
+                      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; if (!active) e.currentTarget.style.background = "rgba(255,255,255,.2)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; if (!active) e.currentTarget.style.background = "rgba(255,255,255,.085)"; }}
                     >
                       <span style={{
                         width: 24, height: 24, borderRadius: 7, flexShrink: 0,
-                        background: active ? "rgba(255,255,255,.2)" : it.color + "2a",
+                        background: active ? "rgba(255,255,255,.22)" : it.color + "44",
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
-                        <i className={`pi ${it.icon}`} style={{ fontSize: 12, color: active ? "#fff" : "#dbeafe" }} />
+                        <i className={`pi ${it.icon}`} style={{ fontSize: 12, color: active ? "#fff" : "#fff" }} />
                       </span>
                       <span style={{
                         fontSize: 10.5, fontWeight: 600, lineHeight: 1.2, width: "100%",
