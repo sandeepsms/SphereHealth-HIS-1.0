@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
@@ -607,7 +607,15 @@ function NursingNotesContent({ selectedPatient }) {
        tile pattern. `activeTile` null → grid view; otherwise the
        matching section expands inline below the patient banner.
        Tile keys: "orders" | "mar" | "addnote" | "equipment" | "timeline" */
-  const [activeTile, setActiveTile] = useState(null);
+  // R7hr-311 — deep-link support: the dashboard "MAR Sheet" quick-action
+  // opens /nursing-notes?tile=mar so it lands straight on the Treatment
+  // Chart — Live MAR section (once a patient is loaded) instead of the
+  // generic tile hub. Any valid tile key works; unknown values fall back
+  // to the grid view.
+  const [searchParams] = useSearchParams();
+  const VALID_TILES = ["orders", "mar", "addnote", "equipment", "pendingreports", "timeline"];
+  const tileParam = searchParams.get("tile");
+  const [activeTile, setActiveTile] = useState(VALID_TILES.includes(tileParam) ? tileParam : null);
 
   /* R7hr-156 — `showReport` + the NursingPatientReport modal were removed.
      If a nursing print is needed in future, route through Complete File /

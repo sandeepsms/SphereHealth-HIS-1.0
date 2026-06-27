@@ -320,7 +320,7 @@ function NurseDashboard({ user }) {
             { icon: "pi-th-large",      label: "Bed View",             sub: "Walk wards · IPD census",        color: C.blue,    onClick: () => navigate("/bed-visual") },
             { icon: "pi-pen-to-square", label: "Update Vitals",        sub: "Record BP / pulse / temp / SpO2",color: C.red,     onClick: () => navigate("/vitalSheet") },
             { icon: "pi-list",          label: "Vital Sheet",          sub: "Patient-wise trends",            color: C.blue,    onClick: () => navigate("/vitalSheet") },
-            { icon: "pi-pen-to-square", label: "MAR Sheet",            sub: "Medication administration",      color: C.purple,  onClick: () => navigate("/nursing-notes") },
+            { icon: "pi-chart-bar",     label: "MAR Sheet",            sub: "Treatment Chart — Live MAR",     color: C.purple,  onClick: () => navigate("/nursing-notes?tile=mar") },
             { icon: "pi-file-edit",     label: "Nursing Notes",        sub: "Daily nursing notes",            color: C.pink,    onClick: () => navigate("/nursing-notes") },
             { icon: "pi-arrow-right-arrow-left", label: "Handover Notes", sub: "Shift handover", color: C.amber, onClick: () => navigate("/nursing-handover-notes") },
             { icon: "pi-shield",        label: "Pressure Care",        sub: "Bedsore assessment",             color: C.green,   onClick: () => navigate("/pressure-area-care") },
