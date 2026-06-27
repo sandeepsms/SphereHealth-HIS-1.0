@@ -279,7 +279,7 @@ const DoctorForm = ({ initialValues, onSubmit, submitting = false }) => {
           receptionist can bill the right amount based on visit type.
           The legacy `opd` field is preserved on the form state but no
           longer shown — `opdFirst` supersedes it. */}
-      <div className="mb-2 mt-2">
+      <div className="mt-3" style={{ marginBottom: 18 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>
           Consultation Charges
         </div>
@@ -288,7 +288,9 @@ const DoctorForm = ({ initialValues, onSubmit, submitting = false }) => {
         </div>
       </div>
 
-      <div className="grid">
+      {/* R7hr-299 — gap so the p-float-label rows (which float up when a fee
+          value is present) don't collide with the section description above. */}
+      <div className="grid" style={{ marginTop: 8 }}>
         <div className="col-12 md:col-6 mb-3">
           <span className="p-float-label">
             <InputNumber
