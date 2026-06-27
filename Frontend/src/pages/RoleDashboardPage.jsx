@@ -92,7 +92,8 @@ export default function RoleDashboardPage() {
       {user.role === "Radiologist"       && <LabDashboard user={user} role="Radiologist" />}
       {user.role === "Accountant"        && <AccountantDashboard user={user} />}
       {user.role === "TPA Coordinator"   && <TPADashboard user={user} />}
-      {(user.role === "Ward Boy" || user.role === "Housekeeping") && <WardOpsDashboard user={user} role={user.role} />}
+      {/* Ward Boy / Housekeeping never reach here — they redirect to /ward-tasks
+          and /housekeeping at the top of this component (R7hr-313). */}
       {user.role === "Security"          && <SecurityDashboard user={user} />}
       {(user.role === "Dietician" || user.role === "Physiotherapist") && <CareTeamDashboard user={user} role={user.role} />}
     </AdminPage>
@@ -179,68 +180,8 @@ function AccessSnapshot({ role }) {
   );
 }
 
-/* ════════════════════════════════════════════════════════════════
-   ADMIN
-══════════════════════════════════════════════════════════════════ */
-function AdminDashboard({ user }) {
-  const navigate = useNavigate();
-  const [stats, setStats] = useState({});
-  useEffect(() => {
-    // AbortController guards against React's "setState on unmounted
-    // component" warning when the user navigates away mid-fetch
-    // (audit E-05). Aborted axios calls reject with an error caught
-    // by the outer try; we check `ac.signal.aborted` before setState
-    // so a stale response can't poison fresh state if the parallel
-    // requests resolve in a surprising order.
-    const ac = new AbortController();
-    (async () => {
-      try {
-        const [u, p] = await Promise.all([
-          axios.get(`${API}/users?limit=1`, { ...authHdr(), signal: ac.signal }).catch(() => null),
-          axios.get(`${API}/pharmacy/stats`, { ...authHdr(), signal: ac.signal }).catch(() => null),
-        ]);
-        if (ac.signal.aborted) return;
-        setStats({
-          users: u?.data?.total ?? u?.data?.data?.length ?? "—",
-          pharmacyRevenueToday: p?.data?.data?.todaySales?.net ?? null,
-          pharmacyMonthRevenue: p?.data?.data?.monthSales?.net ?? null,
-          drugsCount: p?.data?.data?.drugsCount ?? null,
-          expiringCount: p?.data?.data?.expiringWithin90Days ?? null,
-        });
-      } catch (e) {
-        if (!axios.isCancel(e)) console.error("[AdminDashboard] stats fetch:", e?.message);
-      }
-    })();
-    return () => ac.abort();
-  }, []);
-  return (
-    <>
-      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
-        <KPI label="Staff users"        value={stats.users || "—"}              color={C.blue}   icon="pi-users" />
-        <KPI label="Pharmacy today"     value={stats.pharmacyRevenueToday != null ? fmtINR(stats.pharmacyRevenueToday) : "—"} color={C.green}  icon="pi-receipt" />
-        <KPI label="Pharmacy MTD"       value={stats.pharmacyMonthRevenue != null ? fmtINR(stats.pharmacyMonthRevenue) : "—"} color={C.amber}  icon="pi-chart-line" />
-        <KPI label="Drug catalogue"     value={stats.drugsCount ?? "—"}         color={C.purple} icon="pi-box" />
-        <KPI label="Expiring (90d)"     value={stats.expiringCount ?? "—"}      color={C.red}    icon="pi-exclamation-triangle" />
-      </div>
-
-      <div style={{ display: "grid", gap: 14 }}>
-        <Card title="Quick actions" color={C.blue} icon="pi-bolt">
-          <QuickActionsGrid items={[
-            { icon: "pi-building",   label: "Hospital Settings",   sub: "Identity · Print · Legal · Bank",         color: C.blue,    onClick: () => navigate("/hospital-settings") },
-            { icon: "pi-users",      label: "User Management",      sub: "Onboard staff · reset passwords",        color: C.teal,    onClick: () => navigate("/admin/users") },
-            { icon: "pi-shield",     label: "Roles & Permissions",  sub: "See what every role can access",         color: C.purple,  onClick: () => navigate("/admin/roles") },
-            { icon: "pi-sitemap",    label: "Departments",          sub: "Hospital departments + services",        color: C.orange,  onClick: () => navigate("/department") },
-            { icon: "pi-user-edit",  label: "Doctor Master",        sub: "Consultants, specialisations",           color: C.purple,  onClick: () => navigate("/doctors") },
-            { icon: "pi-dollar",     label: "Hospital Charges",     sub: "TPA tariff sheets",                      color: C.amber,   onClick: () => navigate("/hospital-charges") },
-            { icon: "pi-chart-bar",  label: "Reports",              sub: "Operational + financial",                color: C.green,   onClick: () => navigate("/billing-audit-trail") },
-            { icon: "pi-print",      label: "Print Gallery",        sub: "Preview every printable",                color: C.pink,    onClick: () => navigate("/print-gallery") },
-          ]} />
-        </Card>
-        <AccessSnapshot role={user.role} />
-      </div>
-    </>
-  );
-}
+/* Admin lands on the full AdminHome mission-control (see line ~51). The old
+   AdminDashboard component here was never rendered and was removed (R7hr-313). */
 
 /* ════════════════════════════════════════════════════════════════
    DOCTOR
@@ -351,7 +292,7 @@ function ReceptionDashboard({ user }) {
         <Card title="Quick actions" color={C.teal} icon="pi-bolt">
           <QuickActionsGrid items={[
             { icon: "pi-user-plus",  label: "New Registration",   sub: "Walk-in registration",          color: C.teal,    onClick: () => navigate("/reception/register") },
-            { icon: "pi-user-edit",  label: "OPD Admission",      sub: "Create OPD visit",              color: C.purple,  onClick: () => navigate("/reception") },
+            { icon: "pi-user-edit",  label: "OPD Admission",      sub: "Create OPD visit",              color: C.purple,  onClick: () => navigate("/reception/register") },
             { icon: "pi-home",       label: "IPD Admission",      sub: "Bed assignment + admission",    color: C.blue,    onClick: () => navigate("/bed-visual") },
             { icon: "pi-search",     label: "Patient Search",     sub: "Find by UHID / name / phone",   color: C.amber,   onClick: () => navigate("/patient-search") },
             { icon: "pi-sign-out",   label: "Discharge Queue",    sub: "Bills + clearance",             color: C.green,   onClick: () => navigate("/discharge-queue") },
@@ -561,7 +502,7 @@ function TPADashboard({ user }) {
         <Card title="Quick actions" color={C.purple} icon="pi-bolt">
           <QuickActionsGrid items={[
             { icon: "pi-briefcase",    label: "TPA Cases",       sub: "All cashless cases",            color: C.purple,  onClick: () => navigate("/tpa-cases") },
-            { icon: "pi-send",         label: "New Pre-Auth",    sub: "Send to TPA",                   color: C.amber,   onClick: () => navigate("/addtpa") },
+            { icon: "pi-building",     label: "TPA Master",      sub: "Manage TPA payor records",      color: C.amber,   onClick: () => navigate("/addtpa") },
             { icon: "pi-receipt",      label: "Claim Files",     sub: "File final bill claim",         color: C.blue,    onClick: () => navigate("/tpa-cases") },
             { icon: "pi-dollar",       label: "Hospital Charges",sub: "TPA tariff sheets",             color: C.green,   onClick: () => navigate("/hospital-charges") },
           ]} />
@@ -572,33 +513,10 @@ function TPADashboard({ user }) {
   );
 }
 
-/* ════════════════════════════════════════════════════════════════
-   WARD BOY / HOUSEKEEPING
-══════════════════════════════════════════════════════════════════ */
-function WardOpsDashboard({ user, role }) {
-  const navigate = useNavigate();
-  return (
-    <>
-      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
-        <KPI label="Active beds"       value="—" color={C.blue}    icon="pi-th-large" />
-        <KPI label="Pending turnovers" value="—" color={C.amber}   icon="pi-clock" />
-        <KPI label="Cleaning due"      value="—" color={C.teal}    icon="pi-refresh" />
-        <KPI label="Equipment alerts"  value="—" color={C.red}     icon="pi-exclamation-triangle" />
-      </div>
-
-      <div style={{ display: "grid", gap: 14 }}>
-        <Card title="Quick actions" color={C.teal} icon="pi-bolt">
-          <QuickActionsGrid items={[
-            { icon: "pi-th-large",      label: "Bed View",         sub: "All beds · status",       color: C.blue,   onClick: () => navigate("/bed-visual") },
-            { icon: "pi-refresh",       label: "Mark turnover",    sub: "Room cleaned + ready",    color: C.teal,   onClick: () => navigate("/bed-visual") },
-            { icon: "pi-wrench",        label: "Maintenance",      sub: "Equipment / facilities",  color: C.amber,  onClick: () => navigate("/maintenance") },
-          ]} />
-        </Card>
-        <AccessSnapshot role={user.role} />
-      </div>
-    </>
-  );
-}
+/* Ward Boy / Housekeeping have no RoleDashboardPage view — they redirect to
+   their dedicated consoles (/ward-tasks, /housekeeping) at the top of this
+   file. The old WardOpsDashboard component was dead code and was removed
+   (R7hr-313). */
 
 /* ════════════════════════════════════════════════════════════════
    SECURITY

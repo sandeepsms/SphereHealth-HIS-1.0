@@ -112,7 +112,7 @@ export default function VisitorPasses() {
           <button className="rx-btn-primary" onClick={() => setIssueOpen(true)}>
             <i className="pi pi-plus" /> Issue New Pass
           </button>
-          <button className="rx-btn-ghost" onClick={() => navigate("/reception")}>
+          <button className="rx-btn-ghost" onClick={() => navigate("/dashboard")}>
             <i className="pi pi-arrow-left" /> Dashboard
           </button>
         </div>

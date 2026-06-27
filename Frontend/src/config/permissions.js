@@ -59,7 +59,7 @@ export const MODULES = [
   { id: "reception",  label: "Reception",       icon: "pi-desktop",       home: "/reception",         color: "#0891b2" },
   { id: "opd",        label: "OPD / Emergency", icon: "pi-stethoscope",   home: "/opd-visit",         color: "#7c3aed" },
   { id: "ipd",        label: "Beds & IPD",      icon: "pi-th-large",      home: "/bed-visual",        color: "#4f46e5" },
-  { id: "doctor",     label: "Doctor Workbench",icon: "pi-user-edit",     home: "/doctor",            color: "#7c3aed" },
+  { id: "doctor",     label: "Doctor Workbench",icon: "pi-user-edit",     home: "/doctor-opd-panel",  color: "#7c3aed" },
   { id: "nursing",    label: "Nursing",         icon: "pi-heart",         home: "/nursing-notes",     color: "#db2777" },
   { id: "pharmacy",   label: "Pharmacy",        icon: "pi-box",           home: "/pharmacy",          color: "#ea580c" },
   // Module `home` paths drive the AccessSnapshot tile clicks on
@@ -91,7 +91,11 @@ export const MODULE_ROLES = {
   opd:         ["Admin", "Doctor", "Nurse", "Receptionist"],
   ipd:         ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy", "Housekeeping", "Physiotherapist", "Dietician", "MRD"],
   doctor:      ["Admin", "Doctor"],
-  nursing:     ["Admin", "Nurse", "Doctor", "Physiotherapist", "Dietician"],
+  // R7hr-313 — /nursing-notes is gated by mar.write (Admin+Nurse only), so
+  // showing the Nursing module tile to Doctor/Physio/Dietician dropped them
+  // on an "Access denied" wall. Doctors read nursing notes via their own
+  // patient panel's Nursing tab; physio/dietician have no nursing surface.
+  nursing:     ["Admin", "Nurse"],
   pharmacy:    ["Admin", "Pharmacist", "Doctor"],
   lab:         ["Admin", "Lab Technician", "Radiologist", "Doctor"],
   billing:     ["Admin", "Receptionist", "Accountant", "TPA Coordinator"],

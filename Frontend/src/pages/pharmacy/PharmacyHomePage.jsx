@@ -8,6 +8,7 @@
  * sectioned cards, his-field inputs, tight modals.
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import "../../Components/clinical/clinical-forms.css";
 import { toast } from "react-toastify";
@@ -216,7 +217,11 @@ function indentBadgeFor(stats) {
 }
 
 export default function PharmacyHomePage() {
-  const [tab, setTab] = useState("dashboard");
+  // R7hr-313 — seed the active tab from ?tab= so the dashboard quick-actions
+  // (/pharmacy?tab=dispense, ?tab=grn, …) deep-link straight to their tab
+  // instead of always opening on the Dashboard tab.
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(searchParams.get("tab") || "dashboard");
 
   // R7hr-17: Warm the pharmacy-settings cache on mount so every Print
   // click handler in this page can read it synchronously (Chrome blocks
