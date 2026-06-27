@@ -400,8 +400,8 @@ function LabDashboard({ user, role }) {
           <QuickActionsGrid items={[
             { icon: "pi-list",         label: "Investigation Orders", sub: "All open requests",         color: C.blue,    onClick: () => navigate("/investigation-orders") },
             { icon: "pi-flask",        label: "Test Master",          sub: "Tests catalogue + setup",   color: C.purple,  onClick: () => navigate("/investigation-master") },
-            { icon: "pi-pen-to-square",label: "Result Entry",         sub: "Enter & verify results",    color: C.green,   onClick: () => navigate("/investigation-orders") },
-            { icon: "pi-print",        label: "Dispatch Reports",     sub: "Print + share with patient",color: C.amber,   onClick: () => navigate("/investigation-orders") },
+            { icon: "pi-pen-to-square",label: "Result Entry",         sub: "Enter & verify results",    color: C.green,   onClick: () => navigate("/investigation-orders?status=SAMPLE_COLLECTED") },
+            { icon: "pi-print",        label: "Dispatch Reports",     sub: "Print + share with patient",color: C.amber,   onClick: () => navigate("/investigation-orders?status=COMPLETED") },
           ]} />
         </Card>
         <AccessSnapshot role={user.role} />
@@ -503,7 +503,7 @@ function TPADashboard({ user }) {
           <QuickActionsGrid items={[
             { icon: "pi-briefcase",    label: "TPA Cases",       sub: "All cashless cases",            color: C.purple,  onClick: () => navigate("/tpa-cases") },
             { icon: "pi-building",     label: "TPA Master",      sub: "Manage TPA payor records",      color: C.amber,   onClick: () => navigate("/addtpa") },
-            { icon: "pi-receipt",      label: "Claim Files",     sub: "File final bill claim",         color: C.blue,    onClick: () => navigate("/tpa-cases") },
+            { icon: "pi-receipt",      label: "Claim Files",     sub: "File final bill claim",         color: C.blue,    onClick: () => navigate("/tpa-cases?tab=SUBMITTED") },
             { icon: "pi-dollar",       label: "Hospital Charges",sub: "TPA tariff sheets",             color: C.green,   onClick: () => navigate("/hospital-charges") },
           ]} />
         </Card>
@@ -562,7 +562,7 @@ function SecurityDashboard({ user }) {
       <div style={{ display: "grid", gap: 14 }}>
         <Card title="Quick actions" color={C.amber} icon="pi-bolt">
           <QuickActionsGrid items={[
-            { icon: "pi-id-card",             label: "Visitor passes",   sub: "Issue / verify attendant pass",            color: C.amber, onClick: () => navigate("/visitor-passes") },
+            { icon: "pi-bell",                label: "Fire Drills",      sub: "Mock-drill register · NABH FMS",           color: C.amber, onClick: () => navigate("/fire-drills") },
             { icon: "pi-shield",              label: "Gate log",         sub: "Log every entry / exit",                    color: C.green, onClick: () => navigate("/gate-log") },
             { icon: "pi-exclamation-triangle",label: "Incident reports", sub: "Theft / fire / disturbance — full audit",   color: C.red,   onClick: () => navigate("/incidents") },
           ]} />

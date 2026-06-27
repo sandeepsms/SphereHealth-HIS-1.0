@@ -5,7 +5,7 @@
  *   PENDING (incl. NOT_APPLICABLE) → SUBMITTED → APPROVED / PARTIAL_APPROVED / REJECTED
  */
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
@@ -97,7 +97,13 @@ export default function TPACases() {
   const canClaim = typeof can === "function" ? can("tpa.claim") : false;
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("PENDING");
+  // R7hr-314 — seed the stage tab from ?tab= so the TPA dashboard "Claim Files"
+  // tile deep-links to the SUBMITTED claims; "TPA Cases" stays on PENDING.
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => {
+    const t = searchParams.get("tab");
+    return STATUSES.includes(t) ? t : "PENDING";
+  });
   const [search, setSearch] = useState("");
   const [actionBill, setActionBill] = useState(null);
   const [actionType, setActionType] = useState(null); // 'submit' | 'approve' | 'deny'

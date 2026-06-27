@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { tpaService } from "../../Services/tpa/tpaService";
 import patientService from "../../Services/patient/patientService";
 import { Card } from "primereact/card";
@@ -177,9 +178,13 @@ export default function InvestigationOrders() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState({});
+  // R7hr-314 — seed the status filter from ?status= so the Lab dashboard
+  // tiles deep-link: Result Entry → ?status=SAMPLE_COLLECTED, Dispatch
+  // Reports → ?status=COMPLETED (else the worklist opens unfiltered).
+  const [searchParams] = useSearchParams();
   const [filters, setFilters] = useState({
     UHID: "",
-    orderStatus: null,
+    orderStatus: searchParams.get("status") || null,
     priority: null,
     fromDate: "",
     toDate: "",
