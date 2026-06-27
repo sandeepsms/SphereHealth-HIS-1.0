@@ -35,10 +35,12 @@ body {
   margin-right: 10px;
 }
 
+/* R7hr-303: was a muddy dark #464141 border on EVERY PrimeReact input —
+   the main reason the fields looked off-theme. Cleaned to a light border
+   that pairs with the filled premium field (his-design.css). */
 .p-inputtext,
 .p-dropdown {
-  border: 1px solid #464141 !important;
-  /* margin-bottom: 1rem; */
+  border: 1.5px solid #e2e8f0 !important;
 }
 
 .p-dropdown .p-dropdown-label {
