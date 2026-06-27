@@ -198,15 +198,19 @@ export default function LoginPage() {
   return (
     <div style={{
       minHeight: "100vh",
-      background: "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #3730a3 100%)",
+      background: "radial-gradient(1200px 600px at 80% -10%, rgba(99,102,241,.20), transparent 60%), radial-gradient(1000px 520px at -10% 110%, rgba(124,58,237,.18), transparent 60%), linear-gradient(135deg, #0b1020 0%, #121829 46%, #1e1b4b 100%)",
       display: "flex", alignItems: "center", justifyContent: "center",
       fontFamily: "'DM Sans', sans-serif", padding: 20, position: "relative", overflow: "hidden",
     }}>
-      {/* Background decoration */}
-      <div style={{ position: "absolute", top: -100, right: -100, width: 400, height: 400,
-        background: "radial-gradient(circle, rgba(56,189,248,.08), transparent 70%)", pointerEvents: "none" }} />
-      <div style={{ position: "absolute", bottom: -80, left: -80, width: 350, height: 350,
-        background: "radial-gradient(circle, rgba(124,58,237,.08), transparent 70%)", pointerEvents: "none" }} />
+      {/* Background decoration — premium aurora glows */}
+      <div style={{ position: "absolute", top: -120, right: -120, width: 460, height: 460,
+        background: "radial-gradient(circle, rgba(79,70,229,.16), transparent 70%)", filter: "blur(6px)", pointerEvents: "none" }} />
+      <div style={{ position: "absolute", bottom: -100, left: -100, width: 400, height: 400,
+        background: "radial-gradient(circle, rgba(124,58,237,.14), transparent 70%)", filter: "blur(6px)", pointerEvents: "none" }} />
+      {/* Fine grid texture for depth */}
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: .4,
+        backgroundImage: "linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px)",
+        backgroundSize: "44px 44px", maskImage: "radial-gradient(ellipse at center, #000 35%, transparent 75%)", WebkitMaskImage: "radial-gradient(ellipse at center, #000 35%, transparent 75%)" }} />
 
       <div style={{ width: "100%", maxWidth: 440, position: "relative" }}>
 
@@ -214,10 +218,13 @@ export default function LoginPage() {
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{
             display: "inline-flex", alignItems: "center", justifyContent: "center",
-            width: 64, height: 64, background: "#4338ca", borderRadius: 16,
-            marginBottom: 16, boxShadow: "0 8px 32px rgba(67,56,202,.4)",
+            width: 64, height: 64,
+            background: "linear-gradient(135deg, #6366f1 0%, #4338ca 50%, #7c3aed 100%)",
+            borderRadius: 18, marginBottom: 16,
+            boxShadow: "0 12px 36px rgba(79,70,229,.5), inset 0 1px 0 rgba(255,255,255,.28)",
+            border: "1px solid rgba(255,255,255,.14)",
           }}>
-            <span style={{ fontSize: 28, fontWeight: 900, color: "white" }}>S</span>
+            <span style={{ fontSize: 28, fontWeight: 900, color: "white", textShadow: "0 2px 8px rgba(0,0,0,.25)" }}>S</span>
           </div>
           <div style={{ fontSize: 24, fontWeight: 800, color: "white", lineHeight: 1.2 }}>
             {hospitalName} <span style={{ color: "#38bdf8" }}>HIS</span>
@@ -243,9 +250,11 @@ export default function LoginPage() {
 
         {/* Login card */}
         <div style={{
-          background: "rgba(255,255,255,.04)", backdropFilter: "blur(20px)",
-          border: "1px solid rgba(255,255,255,.1)", borderRadius: 20,
-          padding: "36px 40px", boxShadow: "0 24px 64px rgba(0,0,0,.4)",
+          background: "linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03))",
+          backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
+          border: "1px solid rgba(255,255,255,.12)", borderRadius: 20,
+          padding: "36px 40px",
+          boxShadow: "0 24px 64px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.10)",
         }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: "white", marginBottom: 6 }}>
             Sign in to your account
@@ -366,7 +375,9 @@ export default function LoginPage() {
                 cursor: (loading || secondsLeft > 0) ? "not-allowed" : "pointer",
                 boxShadow: (loading || secondsLeft > 0) ? "none" : "0 4px 20px rgba(67,56,202,.4)",
                 transition: "all .2s", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              }}>
+              }}
+              onMouseEnter={e => { if (!(loading || secondsLeft > 0)) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 12px 32px rgba(79,70,229,.55)"; } }}
+              onMouseLeave={e => { if (!(loading || secondsLeft > 0)) { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 20px rgba(67,56,202,.4)"; } }}>
               {loading
                 ? <><i className="pi pi-spin pi-spinner" />Signing in…</>
                 : secondsLeft > 0
