@@ -129,8 +129,18 @@ function Spin() {
     </div>
   );
 }
-function Empty({icon="📭",msg="No data"}) {
-  return <div style={{textAlign:"center",padding:"40px 24px",color:C.muted}}><div style={{fontSize:40,marginBottom:10}}>{icon}</div><div style={{fontSize:13}}>{msg}</div></div>;
+function Empty({icon="pi-inbox",msg="No data"}) {
+  // R7hr-298: premium empty state — vector icon by default (no emoji),
+  // still renders any explicit emoji a caller passes for back-compat.
+  const isPi = typeof icon === "string" && icon.startsWith("pi-");
+  return (
+    <div style={{textAlign:"center",padding:"44px 24px",color:C.muted}}>
+      {isPi
+        ? <i className={`pi ${icon}`} style={{fontSize:34,color:C.border,display:"block",marginBottom:12}} />
+        : <div style={{fontSize:40,marginBottom:10}}>{icon}</div>}
+      <div style={{fontSize:13,fontWeight:600}}>{msg}</div>
+    </div>
+  );
 }
 function Chip({label,value,color=C.primary,bg=C.primaryL}) {
   return (
@@ -145,8 +155,8 @@ function Badge({children,color=C.primary,bg=C.primaryL}) {
 }
 function Card({title,titleColor=C.primaryD,children,style={}}) {
   return (
-    <div style={{background:C.card,borderRadius:12,border:`1px solid ${C.border}`,overflow:"hidden",...style}}>
-      {title && <div style={{padding:"11px 18px",borderBottom:`1px solid ${C.border}`,background:C.primaryL,fontWeight:700,fontSize:13,color:titleColor}}>{title}</div>}
+    <div style={{background:C.card,borderRadius:14,border:`1px solid ${C.border}`,overflow:"hidden",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",...style}}>
+      {title && <div style={{padding:"12px 18px",borderBottom:`1px solid ${C.border}`,background:`linear-gradient(180deg, #ffffff, ${C.primaryL})`,fontWeight:800,fontSize:13,color:titleColor,letterSpacing:"-.1px"}}>{title}</div>}
       <div style={{padding:18}}>{children}</div>
     </div>
   );
