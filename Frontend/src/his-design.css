@@ -630,3 +630,64 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 }
 @keyframes ppShimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
 @media (prefers-reduced-motion: reduce) { .p-skeleton { animation: none !important; } }
+
+/* ════════════════════════════════════════════════════════════
+   TAILWIND COMPATIBILITY SHIM (R7hr-300 USER) — this app is styled
+   with PrimeFlex + Bootstrap, NOT Tailwind, yet several pages were
+   authored with Tailwind utility classes that therefore rendered
+   UNSTYLED (elements not centred, rounded corners missing, slate
+   text falling back to black, wrong line-heights). These were the
+   "broken visuals". Define only the Tailwind-only utilities that
+   PrimeFlex/Bootstrap do NOT already provide, so those pages render
+   as their authors intended — on-theme.
+   ════════════════════════════════════════════════════════════ */
+/* Flex alignment (PrimeFlex uses align-items-*/justify-content-*) */
+.items-center { align-items: center; }
+.items-start  { align-items: flex-start; }
+.items-end    { align-items: flex-end; }
+.justify-center  { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.justify-around  { justify-content: space-around; }
+.justify-end     { justify-content: flex-end; }
+.flex-col  { flex-direction: column; }
+.flex-wrap { flex-wrap: wrap; }
+/* Radius (PrimeFlex uses border-round) */
+.rounded-xl  { border-radius: 12px; }
+.rounded-2xl { border-radius: 16px; }
+.rounded-3xl { border-radius: 24px; }
+.rounded-full{ border-radius: 9999px; }
+/* Elevation */
+.shadow-xl  { box-shadow: 0 20px 25px -5px rgba(16,24,40,.10), 0 8px 10px -6px rgba(16,24,40,.10); }
+.shadow-2xl { box-shadow: 0 25px 50px -12px rgba(16,24,40,.25); }
+/* Max width */
+.max-w-xl  { max-width: 36rem; }
+.max-w-2xl { max-width: 42rem; }
+.max-w-3xl { max-width: 48rem; }
+.max-w-5xl { max-width: 64rem; }
+.max-w-7xl { max-width: 80rem; }
+/* Letter spacing */
+.tracking-tight  { letter-spacing: -.015em; }
+.tracking-wide   { letter-spacing: .025em; }
+.tracking-wider  { letter-spacing: .05em; }
+.tracking-widest { letter-spacing: .1em; }
+/* Line height */
+.leading-none    { line-height: 1; }
+.leading-tight   { line-height: 1.25; }
+.leading-snug    { line-height: 1.375; }
+.leading-relaxed { line-height: 1.625; }
+/* Slate scale (not in PrimeFlex) */
+.text-slate-400 { color: #94a3b8; } .text-slate-500 { color: #64748b; }
+.text-slate-600 { color: #475569; } .text-slate-700 { color: #334155; }
+.text-slate-800 { color: #1e293b; } .text-slate-900 { color: #0f172a; }
+.bg-slate-50 { background-color: #f8fafc; } .bg-slate-100 { background-color: #f1f5f9; }
+.bg-slate-300 { background-color: #cbd5e1; } .bg-slate-900 { background-color: #0f172a; }
+/* CSS grid columns — force display:grid so it wins over PrimeFlex's
+   flex-based .grid when both classes sit on the same element. */
+.grid-cols-2 { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
+.grid-cols-3 { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); }
+.grid-cols-4 { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); }
+/* Vertical rhythm + wrapping */
+.space-y-0 > * + * { margin-top: 0; }
+.space-y-1 > * + * { margin-top: .25rem; }
+.space-y-2 > * + * { margin-top: .5rem; }
+.whitespace-pre-line { white-space: pre-line; }
