@@ -1059,7 +1059,7 @@ function NursingNotesTab({notes=[]}) {
       </div>
 
       {/* Timeline container */}
-      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
         {/* Timeline header */}
         <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",background:C.primaryL}}>
           <div style={{fontWeight:800,fontSize:14,color:C.primaryD}}>Nursing Notes Timeline</div>
@@ -1406,7 +1406,7 @@ function DoctorNotesTab({doctorNotes=[]}) {
       </div>
 
       {/* Timeline container */}
-      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
         {/* Header */}
         <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",background:C.purpleL}}>
           <div style={{fontWeight:800,fontSize:14,color:C.purple}}>Doctor Notes Timeline</div>
@@ -2306,7 +2306,7 @@ function ConsentFormsTab({ consents = [], uhid, patient, admission }) {
         const doctor  = c.doctorName    || admission?.attendingDoctor || "—";
         return (
           <div key={c._id || i}
-            style={{background:"#fff",border:`1px solid ${C.border}`,borderLeft:`4px solid ${st.color}`,borderRadius:10,padding:"16px 18px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+            style={{background:"#fff",border:`1px solid ${C.border}`,borderLeft:`4px solid ${st.color}`,borderRadius:10,padding:"16px 18px",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,paddingBottom:12,borderBottom:`1px dashed ${C.border}`}}>
               <span style={{fontSize:22}}>📜</span>
               <div style={{flex:1}}>
@@ -2549,7 +2549,7 @@ function MedCertsTab({ certs = [], uhid, patient }) {
           || (c.certType ? c.certType.replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase()) : "Medical Certificate");
         return (
           <div key={c._id || i}
-            style={{background:"#fff",border:`1px solid ${C.border}`,borderLeft:`4px solid ${st.color}`,borderRadius:10,padding:"16px 18px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+            style={{background:"#fff",border:`1px solid ${C.border}`,borderLeft:`4px solid ${st.color}`,borderRadius:10,padding:"16px 18px",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,paddingBottom:12,borderBottom:`1px dashed ${C.border}`}}>
               <span style={{fontSize:22}}>📑</span>
               <div style={{flex:1}}>

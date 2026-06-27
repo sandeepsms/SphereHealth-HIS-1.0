@@ -477,7 +477,7 @@ export default function BillingAuditTrailPage() {
       <div style={{ padding:"20px 24px" }}>
 
         {/* ── Patient search ── */}
-        <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:14, padding:"16px 18px", marginBottom:16, boxShadow:"0 1px 4px rgba(0,0,0,.04)" }}>
+        <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:14, padding:"16px 18px", marginBottom:16, boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
           <form onSubmit={handleSearch} style={{ display:"flex", gap:10 }}>
             <input
               value={searchVal}

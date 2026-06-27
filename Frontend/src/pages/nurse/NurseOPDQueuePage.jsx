@@ -305,7 +305,7 @@ export default function NurseOPDQueuePage() {
         display: "flex",
         alignItems: "center",
         gap: 14,
-        boxShadow: "0 1px 2px rgba(15,23,42,.04)",
+        boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
       }}>
         {/* Accent left strip */}
         <div style={{
@@ -393,7 +393,7 @@ export default function NurseOPDQueuePage() {
             display: "flex",
             alignItems: "center",
             gap: 12,
-            boxShadow: "0 1px 2px rgba(15,23,42,.03)",
+            boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
           }}>
             <div style={{
               width: 36, height: 36, borderRadius: 10,

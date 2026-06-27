@@ -319,7 +319,7 @@ const RoomVisualLayout = ({ onEdit, onRefresh }) => {
           justifyContent: "space-between",
           flexWrap: "wrap",
           gap: 10,
-          boxShadow: "0 1px 6px rgba(0,0,0,.06)",
+          boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
         }}
       >
         {/* Stats */}
@@ -491,7 +491,7 @@ const RoomVisualLayout = ({ onEdit, onRefresh }) => {
             borderRadius: 10,
             border: "1px solid #e2e8f0",
             color: "#94a3b8",
-            boxShadow: "0 1px 6px rgba(0,0,0,.06)",
+            boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
           }}
         >
           <i
@@ -525,7 +525,7 @@ const RoomVisualLayout = ({ onEdit, onRefresh }) => {
                   borderRadius: 10,
                   border: "1px solid #e2e8f0",
                   overflow: "hidden",
-                  boxShadow: "0 2px 10px rgba(0,0,0,.07)",
+                  boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
                 }}
               >
                 {/* Building header */}
@@ -603,7 +603,7 @@ const RoomVisualLayout = ({ onEdit, onRefresh }) => {
                             border: "1px solid #e2e8f0",
                             borderRadius: 8,
                             overflow: "hidden",
-                            boxShadow: "0 1px 4px rgba(0,0,0,.04)",
+                            boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
                           }}
                         >
                           {/* Floor header */}
@@ -982,7 +982,7 @@ const RoomVisualLayout = ({ onEdit, onRefresh }) => {
           gap: 16,
           flexWrap: "wrap",
           alignItems: "center",
-          boxShadow: "0 1px 4px rgba(0,0,0,.04)",
+          boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
         }}
       >
         <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8" }}>

@@ -429,7 +429,7 @@ function NursingCarePlanContent({ selectedPatient }) {
             {problems.map((pr, pi) => {
               const pc = PRIORITY_CFG[pr.priority] || PRIORITY_CFG.MEDIUM;
               return (
-                <div key={pi} style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, marginBottom: 16, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,.03)" }}>
+                <div key={pi} style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, marginBottom: 16, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
                   {/* Problem header */}
                   <div style={{ padding: "12px 18px", background: "#f8fafc", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>

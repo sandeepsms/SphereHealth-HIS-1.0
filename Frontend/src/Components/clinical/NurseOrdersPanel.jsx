@@ -157,7 +157,7 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
       borderRadius: 10,
       marginBottom: 10,
       borderLeft: `4px solid ${allDone ? C.success : typeColor}`,
-      boxShadow: "0 1px 4px rgba(0,0,0,.04)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
       overflow: "hidden",
     }}>
       {/* ── Card header ── */}
@@ -728,7 +728,7 @@ export default function NurseOrdersPanel({ UHID, onConsentRequest, refreshTrigge
   const pending       = newOrders.length;
 
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 8px rgba(0,0,0,.06)", fontFamily: "'DM Sans',sans-serif" }}>
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)", fontFamily: "'DM Sans',sans-serif" }}>
 
       {/* ── Header ── */}
       <div style={{ padding: "12px 18px", background: "linear-gradient(90deg, #db277710, #7c3aed08)", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>

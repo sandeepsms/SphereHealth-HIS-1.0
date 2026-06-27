@@ -87,7 +87,7 @@ function KPI({ label, value, tone = C.text, sub, mono = true }) {
       flex: 1, minWidth: 170,
       background: C.card, border: `1.5px solid ${C.border}`,
       borderRadius: 12, padding: "12px 14px",
-      boxShadow: "0 1px 2px rgba(15,23,42,.04)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
     }}>
       <div style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 800, color: tone, marginTop: 4, fontFamily: mono ? FONT_MONO : FONT_SANS, lineHeight: 1.1 }}>{value}</div>

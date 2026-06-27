@@ -99,7 +99,7 @@ function Card({ title, icon, color = C.doctor, children, badge, defaultOpen = tr
     });
   };
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 6px rgba(0,0,0,.05)" }}>
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <button
         type="button"
         onClick={toggle}
