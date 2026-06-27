@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { getPatients } from "../../Services/userService";
 import { Calendar } from "primereact/calendar";
 import { Dropdown } from "primereact/dropdown";
@@ -12,9 +12,12 @@ import { saveVitalSheet } from "../../Services/vital/vitalService";
 import { useLocation } from "react-router-dom";
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
+import ClinicalLayout from "../clinical/ClinicalLayout";
+import PickPatientPrompt from "../clinical/PickPatientPrompt";
 
 export default function VitalSheet() {
   const { uhid } = useParams();
+  const navigate = useNavigate();
   const toast = useRef(null);
 
   const [patient, setPatient] = useState(null);
@@ -79,19 +82,6 @@ export default function VitalSheet() {
     }
   }, [slot, editMode]);
 
-  // Bail out cleanly if the route had no :uhid — show a patient picker prompt.
-  if (!uhid && !editMode && !existingRecord) {
-    return (
-      <div className="p-4 text-center">
-        <h3>Pick a patient first</h3>
-        <p>The vital sheet is keyed to a UHID. Open the patient list and choose a patient to record vitals for.</p>
-        <Link to="/allpatient" className="btn btn-primary">Open Patient List</Link>
-      </div>
-    );
-  }
-
-
-
   const handleSlotChange = (value) => {
     if (editMode) return;
 
@@ -115,6 +105,7 @@ export default function VitalSheet() {
 
 
   useEffect(() => {
+    if (!uhid) return;
     async function fetchPatient() {
       const all = await getPatients();
       const selected = all.find((p) => p.UHID === uhid);
@@ -154,6 +145,32 @@ export default function VitalSheet() {
       }
     }
   }, [editMode, existingRecord]);
+
+  // No :uhid in the route → land on the page with the admitted-patient picker
+  // (same as every other clinical page) instead of dead-ending. Picking a
+  // patient routes to /vitalSheet/:uhid, which remounts with the patient
+  // loaded. Placed AFTER all hooks so the hook order stays constant across
+  // the no-patient → patient-selected transition.
+  if (!uhid && !editMode && !existingRecord) {
+    return (
+      <ClinicalLayout
+        onPatientSelect={(adm) => {
+          const u = adm?.UHID || adm?.uhid;
+          if (u) navigate(`/vitalSheet/${u}`);
+        }}
+        pageType="vitals"
+      >
+        <PickPatientPrompt
+          icon="pi-heart"
+          title="Record Vitals"
+          lines={[
+            "Choose an admitted patient to start recording",
+            "BP / pulse / temperature / SpO₂.",
+          ]}
+        />
+      </ClinicalLayout>
+    );
+  }
 
 
 

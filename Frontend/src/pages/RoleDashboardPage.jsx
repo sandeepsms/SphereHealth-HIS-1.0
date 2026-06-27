@@ -318,7 +318,7 @@ function NurseDashboard({ user }) {
           <QuickActionsGrid items={[
             { icon: "pi-clipboard",     label: "OPD Queue",            sub: "Current patient queue",          color: C.teal,    onClick: () => navigate("/opd-queue") },
             { icon: "pi-th-large",      label: "Bed View",             sub: "Walk wards · IPD census",        color: C.blue,    onClick: () => navigate("/bed-visual") },
-            { icon: "pi-pen-to-square", label: "Update Vitals",        sub: "Record BP / pulse / temp / SpO2",color: C.red,     onClick: () => navigate("/updateVitalSheet") },
+            { icon: "pi-pen-to-square", label: "Update Vitals",        sub: "Record BP / pulse / temp / SpO2",color: C.red,     onClick: () => navigate("/vitalSheet") },
             { icon: "pi-list",          label: "Vital Sheet",          sub: "Patient-wise trends",            color: C.blue,    onClick: () => navigate("/vitalSheet") },
             { icon: "pi-pen-to-square", label: "MAR Sheet",            sub: "Medication administration",      color: C.purple,  onClick: () => navigate("/nursing-notes") },
             { icon: "pi-file-edit",     label: "Nursing Notes",        sub: "Daily nursing notes",            color: C.pink,    onClick: () => navigate("/nursing-notes") },
