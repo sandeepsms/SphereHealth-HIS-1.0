@@ -555,9 +555,9 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .p-inputtext, .p-dropdown, .p-multiselect, .p-inputnumber-input,
 .p-password-input, .p-calendar .p-inputtext, .p-autocomplete-input, .p-chips {
   border-radius: var(--pp-radius) !important;
-  background: #eef1f6 !important;                    /* R7hr-303: visibly-filled premium field */
-  border: 1.5px solid transparent !important;        /* fill defines the field, not a hard outline */
-  box-shadow: inset 0 0 0 1px rgba(16,24,40,.05) !important;
+  background: #ffffff !important;                    /* R7hr-304: soft-elevated field */
+  border: 1.5px solid #e2e8f0 !important;
+  box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.045) !important;
   transition: border-color .15s var(--pp-ease), box-shadow .15s var(--pp-ease), background-color .15s var(--pp-ease) !important;
 }
 /* Dropdown / number are wrappers; inner regions inherit the fill */
@@ -725,7 +725,7 @@ textarea:not([class]) {
   border-radius: 10px;
   padding: 9px 12px;
   outline: none;
-  box-shadow: inset 0 1px 2px rgba(16,24,40,.045);
+  box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.045);  /* R7hr-304: soft elevated */
   transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
   box-sizing: border-box;
 }
