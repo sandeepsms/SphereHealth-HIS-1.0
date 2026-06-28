@@ -560,12 +560,23 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
   box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.045) !important;
   transition: border-color .15s var(--pp-ease), box-shadow .15s var(--pp-ease), background-color .15s var(--pp-ease) !important;
 }
+/* R7hr-316 — slim field height. PrimeReact's default .75rem vertical padding
+   made every input/select bulky (Add Doctor, Hospital Charges, …). Tighten
+   the text-bearing elements (NOT the dropdown wrapper, which would double-pad)
+   to a slim, even height. */
+.p-inputtext, .p-inputnumber-input, .p-autocomplete-input, .p-password-input,
+.p-calendar > .p-inputtext, .p-chips .p-inputtext {
+  padding: .42rem .7rem !important; font-size: 13.5px !important;
+}
+.p-dropdown .p-dropdown-label, .p-multiselect .p-multiselect-label {
+  padding: .42rem .7rem !important; font-size: 13.5px !important;
+}
 /* Dropdown / number are wrappers; inner regions inherit the fill */
 .p-dropdown .p-dropdown-label, .p-multiselect .p-multiselect-label,
 .p-inputnumber, .p-inputnumber-input { background: transparent !important; }
 /* Compact the oversized float-label fields (DoctorForm etc.) */
 .p-float-label .p-inputtext, .p-float-label .p-dropdown .p-dropdown-label,
-.p-float-label .p-inputnumber-input { padding-top: .7rem !important; padding-bottom: .7rem !important; }
+.p-float-label .p-inputnumber-input { padding-top: .55rem !important; padding-bottom: .55rem !important; }
 .p-inputtext:enabled:hover, .p-dropdown:not(.p-disabled):hover,
 .p-multiselect:not(.p-disabled):hover { border-color: #a5b4fc !important; }
 .p-inputtext:enabled:focus, .p-dropdown:not(.p-disabled).p-focus,
