@@ -84,17 +84,28 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
     return times;
   };
 
+  // R7hr-326 — merge the saved rows' times with the current interval's grid so
+  // that changing the charting interval mid-day (e.g. hourly → 3-hourly) keeps
+  // the earlier entries visible while future slots follow the new interval.
+  const buildTimeRows = (slotVal, sheet) => {
+    const base = generateTimeSlots(slotVal);
+    const savedTimes = (sheet?.tableData || []).map((r) => r.time).filter(Boolean);
+    const toMin = (t) => { const [h, m] = String(t).split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+    return [...new Set([...base, ...savedTimes])].sort((a, b) => toMin(a) - toMin(b));
+  };
+
   useEffect(() => {
     if (!editMode && slot) {
-      setTimeRows(generateTimeSlots(slot));
+      setTimeRows(buildTimeRows(slot, savedSheet));
     }
-  }, [slot, editMode]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slot, editMode, savedSheet]);
 
   const handleSlotChange = (value) => {
     if (editMode) return;
 
     setSlot(value);
-    setTimeRows(generateTimeSlots(value));
+    setTimeRows(buildTimeRows(value, savedSheet));
     setShowDialog(false);
   };
 
@@ -138,6 +149,7 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
     { label: "30 Minutes", value: "30 Minutes" },
     { label: "01 Hours", value: "01 Hours" },
     { label: "02 Hours", value: "02 Hours" },
+    { label: "03 Hours", value: "03 Hours" },
     { label: "04 Hours", value: "04 Hours" },
     { label: "06 Hours", value: "06 Hours" },
     { label: "08 Hours", value: "08 Hours" },
@@ -148,7 +160,7 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
     if (editMode && existingRecord) {
       setSlot(existingRecord.slot);
 
-      setTimeRows(generateTimeSlots(existingRecord.slot));
+      setTimeRows(buildTimeRows(existingRecord.slot, existingRecord));
 
       // Vitals
       setVitals(existingRecord.activeVitals.map(v => ({
@@ -479,7 +491,7 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
         <Formik
           enableReinitialize
           initialValues={{
-            tableData: generateTimeSlots(slot).map((time) => {
+            tableData: timeRows.map((time) => {
               const oldRow = (existingRecord || savedSheet)?.tableData?.find(r => r.time === time);
 
               return {
