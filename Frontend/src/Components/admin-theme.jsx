@@ -288,22 +288,42 @@ export function Card({ title, color, icon, right, children, padding = 16 }) {
 // a raw object as a child was a hard crash — "Objects are not valid as a
 // React child" — encountered when DieticianConsole was opened in the
 // browser on 13 May 2026.
-export function Table({ cols, children, compact }) {
+// Table — supports TWO call styles so every caller is covered:
+//   • <Table cols={[...]}>{rows as <tr>…}</Table>   (manual body)
+//   • <Table headers={[...]} rows={[[cell,…],…]} />  (auto-rendered body)
+// `cols`/`headers` are interchangeable and default to [] so a not-yet-loaded
+// data set never crashes the header map (was: cols.map on undefined → white
+// screen on /tax-returns, /tds-certificates and ~8 other report pages).
+export function Table({ cols, headers, rows, children, compact }) {
+  const columns = cols || headers || [];
+  const cellPad = compact ? "7px 10px" : "9px 12px";
   return (
     <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.07)" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: compact ? 11.5 : 12 }}>
         <thead>
           <tr style={{ background: C.subtle, borderBottom: `1.5px solid ${C.border}` }}>
-            {cols.map((c, i) => {
+            {columns.map((c, i) => {
               const label = typeof c === "string" ? c : c?.label ?? "";
               const align = typeof c === "object" && c?.align ? c.align : "left";
               return (
-                <th key={i} style={{ padding: compact ? "7px 10px" : "9px 12px", textAlign: align, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontSize: 10, whiteSpace: "nowrap" }}>{label}</th>
+                <th key={i} style={{ padding: cellPad, textAlign: align, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontSize: 10, whiteSpace: "nowrap" }}>{label}</th>
               );
             })}
           </tr>
         </thead>
-        <tbody>{children}</tbody>
+        <tbody>
+          {Array.isArray(rows)
+            ? rows.map((r, ri) => (
+                <tr key={ri} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  {(Array.isArray(r) ? r : [r]).map((cell, ci) => {
+                    const col = columns[ci];
+                    const align = typeof col === "object" && col?.align ? col.align : "left";
+                    return <td key={ci} style={{ padding: cellPad, textAlign: align, color: C.text, verticalAlign: "middle" }}>{cell}</td>;
+                  })}
+                </tr>
+              ))
+            : children}
+        </tbody>
       </table>
     </div>
   );
@@ -316,11 +336,11 @@ export function EmptyRow({ span, text }) {
 // Empty — block-level empty-state. Use this OUTSIDE a <table> (EmptyRow
 // only works inside a <tbody>; rendering it bare causes "tr cannot be a
 // child of div" hydration errors).
-export function Empty({ text, icon = "pi-inbox" }) {
+export function Empty({ text, msg, icon = "pi-inbox" }) {
   return (
     <div style={{ padding: "24px 16px", textAlign: "center", color: C.muted, fontSize: 12.5, fontStyle: "italic" }}>
       <i className={`pi ${icon}`} style={{ fontSize: 24, color: C.border, display: "block", marginBottom: 8 }} />
-      {text}
+      {text ?? msg}
     </div>
   );
 }
