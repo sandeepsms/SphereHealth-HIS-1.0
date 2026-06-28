@@ -168,9 +168,9 @@ export default function PrintShell(props) {
       {/* 1. Triple-zone header */}
       <header className="pf-header">
         <div className="pf-header-left">
-          {hospital.logo ? (
-            <img src={hospital.logo} alt="" className="pf-logo" />
-          ) : null}
+          {/* R7hr-328 — BIMS logo default when none uploaded. */}
+          <img src={hospital.logo || "/bims-logo.png"} alt="" className="pf-logo"
+            onError={(e) => { e.currentTarget.style.display = "none"; }} />
           {hospital.taglineLeft ? (
             <div className="pf-tagline-side">{hospital.taglineLeft}</div>
           ) : null}
@@ -419,7 +419,7 @@ export function buildPrintShellHtml(opts = {}) {
 
   const headerLeft = `
     <div class="pf-header-left">
-      ${hospital.logo ? `<img src="${esc(hospital.logo)}" alt="" class="pf-logo" />` : ""}
+      <img src="${esc(hospital.logo || ((typeof window !== "undefined" ? window.location.origin : "") + "/bims-logo.png"))}" alt="" class="pf-logo" />
       ${hospital.taglineLeft ? `<div class="pf-tagline-side">${esc(hospital.taglineLeft)}</div>` : ""}
     </div>`;
 

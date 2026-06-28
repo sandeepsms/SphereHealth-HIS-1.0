@@ -208,17 +208,13 @@ export default function Header() {
     }}>
       {/* ── Left: Logo + NABH + Back + Module ── */}
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        {/* R7hr-327 — show the hospital logo (from Hospital Settings) when set;
-            fall back to the gradient "S" mark. White chip so a coloured logo
-            stays legible on the dark header. */}
-        {settings?.logo ? (
-          <img src={settings.logo} alt={hospitalName}
-            style={{ height: 32, width: "auto", maxWidth: 46, objectFit: "contain", borderRadius: 7,
-              background: "#fff", padding: "2px 4px", flexShrink: 0 }} />
-        ) : (
-          <div style={{ width: 28, height: 28, background: "linear-gradient(135deg,#38bdf8,#7c3aed)", borderRadius: 7,
-            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "white", flexShrink: 0 }}>S</div>
-        )}
+        {/* R7hr-328 — BIMS logo baked as the default (public/bims-logo.png); an
+            uploaded Hospital-Settings logo overrides it. White chip keeps the
+            red logo legible on the dark header. */}
+        <img src={settings?.logo || "/bims-logo.png"} alt={hospitalName}
+          style={{ height: 34, width: "auto", maxWidth: 48, objectFit: "contain", borderRadius: 7,
+            background: "#fff", padding: "2px 4px", flexShrink: 0 }}
+          onError={(e) => { e.currentTarget.style.visibility = "hidden"; }} />
         <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: ".3px", color: "white" }}>
           {hospitalName}<span style={{ color: "#38bdf8" }}> HIS</span>
         </span>

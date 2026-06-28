@@ -81,12 +81,13 @@ const PrintShell = ({
 
       {/* ── Header ── */}
       <div className="pr-header">
-        {settings.showLogoInPrint && settings.logo ? (
+        {settings.showLogoInPrint ? (
           <img
             className="pr-header__logo"
             /* R7bf-F / A4-MED-2: rewrite relative logo to absolute URL
-               so staging deploys don't 404 the asset. */
-            src={absoluteLogoUrl(settings.logo)}
+               so staging deploys don't 404 the asset. R7hr-328: fall back to
+               the baked BIMS logo when no logo is uploaded. */
+            src={absoluteLogoUrl(settings.logo || "/bims-logo.png")}
             alt="logo"
             style={{ width: settings.logoWidth || 120, maxWidth: "30%" }}
           />

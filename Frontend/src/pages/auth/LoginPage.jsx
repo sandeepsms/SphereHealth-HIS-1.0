@@ -216,15 +216,20 @@ export default function LoginPage() {
 
         {/* Hospital branding */}
         <div style={{ textAlign: "center", marginBottom: 32 }}>
+          {/* R7hr-328 — BIMS logo (public/bims-logo.png) as default; uploaded
+              Hospital-Settings logo overrides. White card keeps the red mark
+              legible on the dark login screen. */}
           <div style={{
             display: "inline-flex", alignItems: "center", justifyContent: "center",
-            width: 64, height: 64,
-            background: "linear-gradient(135deg, #6366f1 0%, #4338ca 50%, #7c3aed 100%)",
-            borderRadius: 18, marginBottom: 16,
-            boxShadow: "0 12px 36px rgba(79,70,229,.5), inset 0 1px 0 rgba(255,255,255,.28)",
+            width: 78, height: 78,
+            background: "#fff",
+            borderRadius: 18, marginBottom: 16, padding: 9,
+            boxShadow: "0 12px 36px rgba(79,70,229,.4), inset 0 1px 0 rgba(255,255,255,.28)",
             border: "1px solid rgba(255,255,255,.14)",
           }}>
-            <span style={{ fontSize: 28, fontWeight: 900, color: "white", textShadow: "0 2px 8px rgba(0,0,0,.25)" }}>S</span>
+            <img src={settings?.logo || "/bims-logo.png"} alt={hospitalName}
+              style={{ width: "100%", height: "100%", objectFit: "contain" }}
+              onError={(e) => { e.currentTarget.style.display = "none"; }} />
           </div>
           <div style={{ fontSize: 24, fontWeight: 800, color: "white", lineHeight: 1.2 }}>
             {hospitalName} <span style={{ color: "#38bdf8" }}>HIS</span>
