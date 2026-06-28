@@ -585,6 +585,35 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
   background: #ffffff !important;
 }
 
+/* ── Vital Sheet hourly grid (R7hr-317) — premium, system-themed. Used on
+   the /vitalSheet page AND embedded in the Nursing Notes "Vital Signs"
+   section. Overrides the legacy bootstrap table classes in place. ── */
+.vsheet-grid { border-radius: 14px; border: 1.5px solid #e2e8f0; overflow: auto; background: #fff;
+  box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 4px 14px rgba(16,24,40,.06); }
+.vsheet-grid table { margin: 0 !important; border-collapse: separate !important; border-spacing: 0; width: 100%; }
+.vsheet-grid thead th {
+  background: linear-gradient(180deg,#eef2ff,#e0e7ff) !important; color: #3730a3 !important;
+  font-weight: 800 !important; font-size: 11px !important; text-transform: uppercase; letter-spacing: .4px;
+  padding: 11px 10px !important; border: none !important; border-bottom: 2px solid #c7d2fe !important;
+  white-space: nowrap; position: sticky; top: 0; z-index: 2; text-align: center;
+}
+.vsheet-grid tbody td { border: none !important; border-bottom: 1px solid #eef2f6 !important;
+  padding: 5px 8px !important; vertical-align: middle; background: #fff; }
+.vsheet-grid tbody tr:hover td { background: #f8faff; }
+.vsheet-grid tbody td:first-child {
+  font-weight: 700; color: #4338ca; background: #f5f7ff !important;
+  font-variant-numeric: tabular-nums; position: sticky; left: 0; z-index: 1; white-space: nowrap;
+}
+.vsheet-grid input.form-control, .vsheet-grid input[type="time"], .vsheet-grid input[type="number"], .vsheet-grid input[type="text"] {
+  border: 1.5px solid #e2e8f0 !important; border-radius: 8px !important; padding: .38rem .55rem !important;
+  font-size: 13px !important; box-shadow: 0 1px 2px rgba(16,24,40,.04) !important; text-align: center;
+  transition: border-color .15s, box-shadow .15s;
+}
+.vsheet-grid input.form-control:focus, .vsheet-grid input:focus {
+  border-color: #4338ca !important; box-shadow: 0 0 0 3px rgba(67,56,202,.15) !important; outline: none;
+}
+.vsheet-grid input[readonly], .vsheet-grid input.bg-light { background: #f8fafc !important; color: #475569 !important; font-weight: 600; }
+
 /* ── DataTable — premium header + row interaction + tabular nums ── */
 .p-datatable .p-datatable-thead > tr > th {
   background: #f8fafc !important; color: #475569 !important;

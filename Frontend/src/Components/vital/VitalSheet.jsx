@@ -15,8 +15,9 @@ import * as Yup from "yup";
 import ClinicalLayout from "../clinical/ClinicalLayout";
 import PickPatientPrompt from "../clinical/PickPatientPrompt";
 
-export default function VitalSheet() {
-  const { uhid } = useParams();
+export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
+  const params = useParams();
+  const uhid = uhidProp || params.uhid;
   const navigate = useNavigate();
   const toast = useRef(null);
 
@@ -146,6 +147,13 @@ export default function VitalSheet() {
     }
   }, [editMode, existingRecord]);
 
+  // Embedded (in the Nursing Notes Vital Signs modal) the patient is always
+  // supplied via the `uhid` prop, so never show the full-page picker inside a
+  // modal — just a tiny hint on the rare no-patient case.
+  if (embedded && !uhid) {
+    return <div style={{ padding: 24, textAlign: "center", color: "#64748b", fontSize: 13 }}>Load a patient to chart vitals.</div>;
+  }
+
   // No :uhid in the route → land on the page with the admitted-patient picker
   // (same as every other clinical page) instead of dead-ending. Picking a
   // patient routes to /vitalSheet/:uhid, which remounts with the patient
@@ -225,21 +233,31 @@ export default function VitalSheet() {
   // });
 
   return (
-    <div className="mw-100 h-100 p-3 mt-6 bg-light px-5">
+    <div className={embedded ? "" : "mw-100 h-100 p-3 mt-6 bg-light px-5"}>
       <Toast ref={toast} />
 
-      <div className="d-flex justify-content-center ">
-        <h2>Vital Sheet</h2>
-      </div>
-      <div className="d-flex justify-content-between">
-        {patient && (
+      {!embedded && (
+        <div className="d-flex justify-content-center ">
+          <h2>Vital Sheet</h2>
+        </div>
+      )}
+      <div className="d-flex justify-content-between" style={embedded ? { alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 } : undefined}>
+        {embedded ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 30, height: 30, borderRadius: 8, background: "#eef2ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <i className="pi pi-heart-fill" style={{ color: "#4338ca", fontSize: 14 }} />
+            </span>
+            <span style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>Hourly Vital Chart</span>
+            {patient && <span style={{ fontSize: 12, color: "#64748b" }}>· {patient.name} · {patient.UHID}</span>}
+          </div>
+        ) : (patient && (
           <div className="row g-1">
             <div className="col-6"><p><strong>Patient Name :</strong> {patient.name}</p></div>
             <div className="col-6"><p><strong>Age :</strong> {patient.age}</p></div>
             <div className="col-6"><p><strong>Gender :</strong> {patient.gender}</p></div>
             <div className="col-6"><p><strong>UHID :</strong> {patient.UHID}</p></div>
           </div>
-        )}
+        ))}
 
 
         <div className="d-flex gap-3 align-content-center">
@@ -490,6 +508,7 @@ export default function VitalSheet() {
 
           {({ values, isSubmitting }) => (
             <Form>
+              <div className="vsheet-grid" style={{ maxHeight: embedded ? "56vh" : "none" }}>
               <table className="table table-bordered table-striped text-center align-middle">
                 <thead className="table-primary">
                   <tr>
@@ -602,8 +621,9 @@ export default function VitalSheet() {
                   ))}
                 </tbody>
               </table>
+              </div>
 
-              <div className="w-100 d-flex justify-content-center">
+              <div className="w-100 d-flex justify-content-center" style={{ marginTop: 14 }}>
                 <Button label={isSubmitting ? "Saving..." : "Save"} type="submit" disabled={isSubmitting} />
               </div>
             </Form>

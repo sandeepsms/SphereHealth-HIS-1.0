@@ -19,7 +19,7 @@ import { PendingInvestigationReportsTab } from "../../Components/clinical/Patien
 // R7hr-231 — doctor-assigned required-assessments view (+ Extra Note dropdown)
 import NurseRequiredAssessments from "../../Components/nursing/NurseRequiredAssessments";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
-import IntegratedVitalsPanel from "../../Components/clinical/IntegratedVitalsPanel";
+import VitalSheet from "../../Components/vital/VitalSheet";
 import { saveVitalSheet, getVitalSheet } from "../../Services/vital/vitalService";
 // R7hr-158 — Vitals Trend popup. The old /vitalsView page rendered an empty
 // placeholder; the trend now opens inline as a modal driven by nurse notes.
@@ -2794,7 +2794,7 @@ function NursingNotesContent({ selectedPatient }) {
       {activeModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.6)", backdropFilter: "blur(4px)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
           onClick={() => setActiveModal(null)}>
-          <div style={{ background: "white", borderRadius: 16, width: 640, maxWidth: "96vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,.28)" }}
+          <div style={{ background: "white", borderRadius: 16, width: activeModal === "vitals" ? 1080 : 640, maxWidth: "96vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,.28)" }}
             onClick={e => e.stopPropagation()}>
 
             {/* Modal header */}
@@ -2821,16 +2821,7 @@ function NursingNotesContent({ selectedPatient }) {
 
               {/* ── Vitals (NABH NS.3) — Integrated VitalSheet Panel ── */}
               {activeModal === "vitals" && (
-                <IntegratedVitalsPanel
-                  UHID={patient?.uhid || patient?.UHID || searchUHID}
-                  nurseName={user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim()}
-                  onVitalsChange={v => {
-                    setVitals(v);
-                    const sbp = v.bp_sys || "";
-                    const dbp = v.bp_dia || "";
-                    setMews(p => ({ ...p, rr: v.rr || p.rr, spo2: v.spo2 || p.spo2, temp: v.temp || p.temp, sbp: sbp || p.sbp, dbp: dbp || p.dbp, hr: v.pulse || p.hr }));
-                  }}
-                />
+                <VitalSheet uhid={patient?.uhid || patient?.UHID || searchUHID} embedded />
               )}
 
               {/* ── Neuro / GCS (NABH COP.2) ── */}
@@ -4346,7 +4337,7 @@ function NursingNotesContent({ selectedPatient }) {
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => setActiveModal(null)}
                   style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer", color: C.muted }}>
-                  Cancel
+                  {activeModal === "vitals" ? "Close" : "Cancel"}
                 </button>
                 {/* R7hr-149 \u2014 Blood Transfusion gets a second "Save & Start
                     Monitoring" button so the nurse can keep the bag in
@@ -4363,11 +4354,17 @@ function NursingNotesContent({ selectedPatient }) {
                     Save & Start Monitoring
                   </button>
                 )}
+                {/* R7hr-317 \u2014 the Vital Signs modal now hosts the embedded
+                    VitalSheet hourly grid, which has its OWN Save button. Hide
+                    the generic note "Sign & Submit" here so vitals aren't saved
+                    twice (and never as an empty vitals note). */}
+                {activeModal !== "vitals" && (
                 <button onClick={() => saveNote(false)} disabled={loading}
                   style={{ padding: "9px 28px", background: loading ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}35` }}>
                   <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-check"}`} style={{ fontSize: 12 }} />
                   {loading ? "Saving\u2026" : "Sign & Submit"}
                 </button>
+                )}
               </div>
             </div>
           </div>
