@@ -1,13 +1,17 @@
 /**
- * BrandTransition.jsx — R7hr-330
- * Branded route-transition loader (Suspense fallback for the authenticated
- * shell). Shows the animated hospital/BIMS logo + a short, role-specific
- * encouraging line while the next page's chunk loads. A 120ms delay keeps
- * fast (cached) navigations from flashing the loader.
+ * BrandTransition.jsx — R7hr-330 / R7hr-331
+ * Branded transitions between pages with role-specific encouragement.
  *
- * The lines are original, attribution-free encouragements written per role.
+ *  • BrandSplash        — the visual (animated logo + hospital + line + dots).
+ *  • BrandTransition    — Suspense fallback (shown while a lazy chunk loads).
+ *  • RouteInterstitial  — a short overlay shown on EVERY route change (even
+ *                         cached navigations), so the brand + encouragement
+ *                         always plays when switching pages from the dashboard.
+ *
+ * Lines are original, attribution-free encouragements written per role.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useHospitalSettings } from "../context/HospitalSettingsContext";
 
@@ -84,38 +88,18 @@ const ROLE_LINES = {
   ],
 };
 
-export default function BrandTransition() {
-  const { user } = useAuth();
-  const { settings } = useHospitalSettings();
-  const [show, setShow] = useState(false);
+function pickLine(role) {
+  const lines = ROLE_LINES[role] || ROLE_LINES.default;
+  return lines[Math.floor(Math.random() * lines.length)];
+}
 
-  // Skip the loader for fast (cached) navigations — only reveal after 120ms.
-  useEffect(() => {
-    const t = setTimeout(() => setShow(true), 120);
-    return () => clearTimeout(t);
-  }, []);
-
-  const role = user?.role || "default";
-  const logo = settings?.logo || "/bims-logo.png";
-  const hospital = settings?.hospitalName || "Bright Institute of Medical Sciences";
-  // Pick one line per mount (per navigation).
-  const line = useMemo(() => {
-    const lines = ROLE_LINES[role] || ROLE_LINES.default;
-    return lines[Math.floor(Math.random() * lines.length)];
-  }, [role]);
-
-  if (!show) return null;
-
+/* ── Shared visual: animated logo + hospital + encouragement + dots ── */
+export function BrandSplash({ logo, hospital, line }) {
   return (
-    <div
-      className="hga-enter-fade"
-      style={{
-        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-        minHeight: "calc(100vh - 140px)", padding: 40, textAlign: "center",
-        fontFamily: "'DM Sans', sans-serif",
-      }}
-    >
-      {/* Logo + spinning ring + pulse */}
+    <div style={{
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      textAlign: "center", fontFamily: "'DM Sans', sans-serif",
+    }}>
       <div style={{ position: "relative", width: 96, height: 96, marginBottom: 22 }}>
         <div style={{
           position: "absolute", inset: 0, borderRadius: "50%",
@@ -134,19 +118,16 @@ export default function BrandTransition() {
         </div>
       </div>
 
-      {/* Hospital name */}
       <div style={{
         fontSize: 11.5, fontWeight: 800, letterSpacing: "1.4px", textTransform: "uppercase",
         color: "#6366f1", marginBottom: 10,
       }}>{hospital}</div>
 
-      {/* Role-specific encouragement */}
       <div key={line} style={{
         fontSize: 16.5, fontWeight: 700, color: "#1e293b", maxWidth: 460, lineHeight: 1.5,
-        animation: "btRise .5s ease both",
+        padding: "0 16px", animation: "btRise .5s ease both",
       }}>{line}</div>
 
-      {/* Progress dots */}
       <div style={{ display: "flex", gap: 7, marginTop: 20 }}>
         {[0, 1, 2].map((i) => (
           <span key={i} style={{
@@ -165,6 +146,63 @@ export default function BrandTransition() {
           [style*="btSpin"], [style*="btPulse"], [style*="btDot"] { animation: none !important; }
         }
       `}</style>
+    </div>
+  );
+}
+
+/* ── Suspense fallback — shown while a lazy chunk loads (slow/first visit) ── */
+export default function BrandTransition() {
+  const { user } = useAuth();
+  const { settings } = useHospitalSettings();
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setShow(true), 120);
+    return () => clearTimeout(t);
+  }, []);
+  const line = useMemo(() => pickLine(user?.role || "default"), [user?.role]);
+  if (!show) return null;
+  return (
+    <div className="hga-enter-fade" style={{
+      display: "flex", alignItems: "center", justifyContent: "center",
+      minHeight: "calc(100vh - 140px)", padding: 40,
+    }}>
+      <BrandSplash logo={settings?.logo || "/bims-logo.png"} hospital={settings?.hospitalName || "Bright Institute of Medical Sciences"} line={line} />
+    </div>
+  );
+}
+
+/* ── Route-change interstitial — plays on EVERY navigation (even cached), so
+   the brand + role encouragement always shows when switching pages. ── */
+export function RouteInterstitial({ duration = 650 }) {
+  const location = useLocation();
+  const { user } = useAuth();
+  const { settings } = useHospitalSettings();
+  const prevPath = useRef(location.pathname);
+  const [active, setActive] = useState(false);
+  const [line, setLine] = useState("");
+
+  useEffect(() => {
+    if (location.pathname === prevPath.current) return; // ignore query-only changes
+    prevPath.current = location.pathname;
+    if (location.pathname === "/login") return;         // not on the login screen
+    setLine(pickLine(user?.role || "default"));
+    setActive(true);
+    const t = setTimeout(() => setActive(false), duration);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
+
+  if (!active) return null;
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 4000,
+      background: "radial-gradient(900px 500px at 50% 8%, #eef2ff, #f8fafc 60%)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      animation: `btInterOut ${duration}ms ease both`,
+    }}>
+      <BrandSplash logo={settings?.logo || "/bims-logo.png"} hospital={settings?.hospitalName || "Bright Institute of Medical Sciences"} line={line} />
+      <style>{`@keyframes btInterOut { 0%{opacity:1} 68%{opacity:1} 100%{opacity:0} }`}</style>
     </div>
   );
 }
