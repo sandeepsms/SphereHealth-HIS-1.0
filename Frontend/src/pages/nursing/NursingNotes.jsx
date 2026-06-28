@@ -93,8 +93,9 @@ const MODULES = [
   // is the source of truth.
   { id: "daily",     label: "Daily Assessment",           nabh: "NS.4",         description: "Shift-wise nursing assessment — head-to-toe review",
     icon: "pi-calendar-plus",        border: "#bae6fd", color: "#0369a1", bg: "#e0f2fe" },
-  { id: "vitals",    label: "Vital Signs",                nabh: "NS.4",         description: "BP / HR / RR / SpO₂ / Temp / Pain / GCS / Urine",
-    icon: "pi-heart",                border: "#c7d2fe", color: "#4f46e5", bg: "#e0e7ff" },
+  // R7hr-318 — "Vital Signs" note-type removed: vital charting now lives in
+  // its own top-level "Vital Chart" tile (hourly VitalSheet grid), not inside
+  // Add-a-Note.
   { id: "neuro",     label: "Neuro / GCS",                nabh: "AAC.4",        description: "GCS, pupils, motor, posture (NIHSS for stroke)",
     icon: "pi-eye",                  border: "#d8b4fe", color: C.purple, bg: C.purpleL },
   { id: "pain",      label: "Pain Assessment",            nabh: "AAC.4",        description: "VAS / FLACC / numeric — onset, character, relief",
@@ -613,7 +614,7 @@ function NursingNotesContent({ selectedPatient }) {
   // generic tile hub. Any valid tile key works; unknown values fall back
   // to the grid view.
   const [searchParams] = useSearchParams();
-  const VALID_TILES = ["orders", "mar", "addnote", "equipment", "pendingreports", "timeline"];
+  const VALID_TILES = ["orders", "mar", "addnote", "equipment", "pendingreports", "vitalchart"];
   const tileParam = searchParams.get("tile");
   const [activeTile, setActiveTile] = useState(VALID_TILES.includes(tileParam) ? tileParam : null);
 
@@ -1716,20 +1717,13 @@ function NursingNotesContent({ selectedPatient }) {
                   badges: [{ label: "Open", tone: "warn" }],
                 },
                 {
-                  id: "timeline",
-                  title: "Nursing Notes Timeline",
-                  subtitle: "All historical care notes + filters",
-                  icon: "pi-history",
-                  color: "#ea580c",
-                  tint: "#ffedd5",
-                  badges: [
-                    notes.length > 0
-                      ? { label: `${notes.length} recorded`, tone: "info" }
-                      : { label: "No notes yet", tone: "warn" },
-                    notes.length > 0 && notes[0]?.shift
-                      ? { label: `Last: ${notes[0].shift}`, tone: "accent" }
-                      : null,
-                  ].filter(Boolean),
+                  id: "vitalchart",
+                  title: "Vital Chart",
+                  subtitle: "Hourly vital-signs charting · BP / Pulse / Temp / SpO₂ / GCS",
+                  icon: "pi-heart",
+                  color: "#4338ca",
+                  tint: "#eef2ff",
+                  badges: [{ label: "Hourly", tone: "info" }, { label: "NABH NS.4", tone: "accent" }],
                 },
                 /* ── R7be — relocated from patient-header action buttons ──
                    Care Plan / Vitals Trend / IPD Assessment / Print&PDF used
@@ -2342,8 +2336,20 @@ function NursingNotesContent({ selectedPatient }) {
             );
           })()}
 
-          {/* ── Notes Timeline ── */}
-          {activeTile === "timeline" && (
+          {/* ── Vital Chart (hourly grid) — R7hr-318. Replaces the old "Nursing
+                Notes Timeline" tile. Renders the same premium VitalSheet grid
+                full-width in the hub (moved here from the Add-a-Note modal). ── */}
+          {activeTile === "vitalchart" && (
+            <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 16, padding: "18px 20px", boxShadow: '0 2px 10px rgba(0,0,0,.04)' }}>
+              <VitalSheet uhid={patient?.uhid || patient?.UHID || searchUHID} embedded />
+            </div>
+          )}
+
+          {/* ── Notes Timeline — R7hr-318: tile removed from the hub; this view
+                is now unreachable (kept dead, not deleted, to avoid a 400-line
+                removal in this critical file). Historical notes remain visible
+                in the Nurse Patient Panel → Nursing Notes tab. ── */}
+          {false && (
           <div id="nursing-notes-timeline" style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,.04)' }}>
             {/* Timeline header */}
             <div style={{ background: 'linear-gradient(to right, #f0fdfa, #f8fafc)', borderBottom: `1px solid ${C.border}`, padding: '14px 22px' }}>
@@ -2794,7 +2800,7 @@ function NursingNotesContent({ selectedPatient }) {
       {activeModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.6)", backdropFilter: "blur(4px)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
           onClick={() => setActiveModal(null)}>
-          <div style={{ background: "white", borderRadius: 16, width: activeModal === "vitals" ? 1080 : 640, maxWidth: "96vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,.28)" }}
+          <div style={{ background: "white", borderRadius: 16, width: 640, maxWidth: "96vw", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,.28)" }}
             onClick={e => e.stopPropagation()}>
 
             {/* Modal header */}
@@ -2819,10 +2825,6 @@ function NursingNotesContent({ selectedPatient }) {
             {/* Modal body */}
             <div style={{ padding: "20px 22px" }}>
 
-              {/* ── Vitals (NABH NS.3) — Integrated VitalSheet Panel ── */}
-              {activeModal === "vitals" && (
-                <VitalSheet uhid={patient?.uhid || patient?.UHID || searchUHID} embedded />
-              )}
 
               {/* ── Neuro / GCS (NABH COP.2) ── */}
               {activeModal === "neuro" && (
@@ -4337,7 +4339,7 @@ function NursingNotesContent({ selectedPatient }) {
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => setActiveModal(null)}
                   style={{ padding: "9px 20px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: "white", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer", color: C.muted }}>
-                  {activeModal === "vitals" ? "Close" : "Cancel"}
+                  Cancel
                 </button>
                 {/* R7hr-149 \u2014 Blood Transfusion gets a second "Save & Start
                     Monitoring" button so the nurse can keep the bag in
@@ -4354,17 +4356,11 @@ function NursingNotesContent({ selectedPatient }) {
                     Save & Start Monitoring
                   </button>
                 )}
-                {/* R7hr-317 \u2014 the Vital Signs modal now hosts the embedded
-                    VitalSheet hourly grid, which has its OWN Save button. Hide
-                    the generic note "Sign & Submit" here so vitals aren't saved
-                    twice (and never as an empty vitals note). */}
-                {activeModal !== "vitals" && (
                 <button onClick={() => saveNote(false)} disabled={loading}
                   style={{ padding: "9px 28px", background: loading ? "#5eead4" : `linear-gradient(135deg, ${C.primary}, ${C.primaryMid})`, color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7, boxShadow: `0 4px 12px ${C.primary}35` }}>
                   <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-check"}`} style={{ fontSize: 12 }} />
                   {loading ? "Saving\u2026" : "Sign & Submit"}
                 </button>
-                )}
               </div>
             </div>
           </div>
