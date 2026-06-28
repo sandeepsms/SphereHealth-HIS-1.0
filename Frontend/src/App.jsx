@@ -13,6 +13,7 @@ import "bootstrap/dist/css/bootstrap.css";
 import Sidebar from "./Components/Sidebar";
 import LaunchPad from "./Components/LaunchPad";  // R7hr-307: app-launcher grid replaces the sidebar
 import Header from "./Components/Header";
+import BrandTransition from "./Components/BrandTransition";
 import { AuthProvider, useAuth, RoleGuard } from "./context/AuthContext";
 // R7hr-223 — app-wide Windows-style keyboard shortcut layer (command palette,
 // quick-nav chords, cheat-sheet, smart action keys). Mounted once in the
@@ -481,7 +482,7 @@ function AppLayout({ collapsed, setCollapsed }) {
           background: "#f8fafc",
         }}
       >
-        <Suspense fallback={<RouteLoader />}>
+        <Suspense fallback={<BrandTransition />}>
           <RouteTransition>
           <Routes>
             {/* ── Dashboard ─────────────────────────────────────── */}
