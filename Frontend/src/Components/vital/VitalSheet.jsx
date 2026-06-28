@@ -310,7 +310,7 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
           <h2>Vital Sheet</h2>
         </div>
       )}
-      <div className="d-flex justify-content-between" style={embedded ? { alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 } : undefined}>
+      <div className="d-flex justify-content-between" style={embedded ? { alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 } : { alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
         {embedded ? (
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ width: 30, height: 30, borderRadius: 8, background: "#eef2ff", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -329,28 +329,32 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
         ))}
 
 
-        <div className="d-flex gap-3 align-content-center">
-          {/* <input
-            type="text"
-            className="form-control"
-            style={{ width: "200px", height: "45px", border: "1px solid gray" }}
-            placeholder="doctor name"
-            value={doctorName}
-            onChange={(e) => setDoctorName(e.target.value)}
-          /> */}
+        {/* R7hr-325 — compact controls. align-items:center stops the Calendar
+            stretching to the (tall) patient-info block's height. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, fontFamily: "'DM Sans',sans-serif" }}>
+          {/* Change patient — standalone only (in the note the left panel switches) */}
+          {!embedded && (
+            <button onClick={() => navigate("/vitalSheet")} title="Switch to another patient"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 14px", borderRadius: 9,
+                border: "1.5px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", fontWeight: 700, fontSize: 13,
+                cursor: "pointer", whiteSpace: "nowrap" }}>
+              <i className="pi pi-user-edit" style={{ fontSize: 12 }} /> Change patient
+            </button>
+          )}
 
           <Calendar
             value={date instanceof Date ? date : new Date(date)}
             onChange={(e) => setDate(e.value)}
             dateFormat="dd-mm-yy"
+            inputStyle={{ height: 36, width: 132, fontSize: 13 }}
           />
 
-
-          <Button
-            icon="pi pi-cog"
-            onClick={() => setShowDialog(true)}
-            style={{ width: "35px", height: "35px", padding: "0" }}
-          />
+          <button onClick={() => setShowDialog(true)} title="Vital sheet settings"
+            style={{ width: 36, height: 36, borderRadius: 9, border: "none", flexShrink: 0,
+              background: "linear-gradient(135deg,#4f46e5,#4338ca)", color: "#fff", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 12px rgba(67,56,202,.3)" }}>
+            <i className="pi pi-cog" style={{ fontSize: 14 }} />
+          </button>
         </div>
       </div>
 
