@@ -602,14 +602,18 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
                     <th>Time</th>
                     {vitals.filter(v => v.active).map((v, idx) => (
                       <th key={idx}>
-                        {/* R7hr-321 — keep the unit in its exact entered case
-                            (e.g. mmHg, mL) even though the header is uppercased. */}
-                        {v.name}{v.unit ? <span style={{ textTransform: "none" }}> ({v.unit})</span> : ""}
+                        {/* R7hr-323 — name on top, unit stacked below (keeps its
+                            exact case). Narrows each vital column so the Remarks
+                            column has more room for long text. */}
+                        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15, alignItems: "center" }}>
+                          <span>{v.name}</span>
+                          {v.unit ? <span style={{ textTransform: "none", fontSize: 9, fontWeight: 600, color: "#64748b", marginTop: 1 }}>({v.unit})</span> : null}
+                        </div>
                       </th>
                     ))}
 
-                    <th>Remarks </th>
-                    <th>Nursing Officer</th>
+                    <th style={{ minWidth: 240 }}>Remarks</th>
+                    <th style={{ minWidth: 130 }}>Nursing Officer</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -685,8 +689,9 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
                             <input
                               {...field}
                               type="text"
-                              className="form-control text-center"
+                              className="form-control"
                               value={field.value ?? ""}
+                              style={{ textAlign: "left", minWidth: 220 }}
                             />
                           )}
                         </Field>
