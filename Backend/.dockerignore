@@ -1,0 +1,12 @@
+# Keep the build context small + never bake secrets / local state into the image.
+node_modules
+npm-debug.log*
+.env
+.env.*
+uploads
+backups
+*.log
+.git
+.gitignore
+Dockerfile
+.dockerignore
