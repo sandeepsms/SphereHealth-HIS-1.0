@@ -10,7 +10,7 @@
  *
  * Lines are original, attribution-free encouragements written per role.
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useHospitalSettings } from "../context/HospitalSettingsContext";
@@ -181,7 +181,10 @@ export function RouteInterstitial({ duration = 650 }) {
   const [active, setActive] = useState(false);
   const [line, setLine] = useState("");
 
-  useEffect(() => {
+  // useLayoutEffect so the overlay is committed BEFORE the browser paints the
+  // newly-routed (often heavy) page — otherwise the page flashes for a frame
+  // and the splash arrives late, which read as "not showing everywhere".
+  useLayoutEffect(() => {
     if (location.pathname === prevPath.current) return; // ignore query-only changes
     prevPath.current = location.pathname;
     if (location.pathname === "/login") return;         // not on the login screen
@@ -196,7 +199,7 @@ export function RouteInterstitial({ duration = 650 }) {
 
   return (
     <div style={{
-      position: "fixed", inset: 0, zIndex: 4000,
+      position: "fixed", inset: 0, zIndex: 6000,
       background: "radial-gradient(900px 500px at 50% 8%, #eef2ff, #f8fafc 60%)",
       display: "flex", alignItems: "center", justifyContent: "center",
       animation: `btInterOut ${duration}ms ease both`,
