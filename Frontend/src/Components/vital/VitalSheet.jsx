@@ -560,7 +560,9 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
                     <th>Time</th>
                     {vitals.filter(v => v.active).map((v, idx) => (
                       <th key={idx}>
-                        {v.name} {v.unit ? `(${v.unit})` : ""}
+                        {/* R7hr-321 — keep the unit in its exact entered case
+                            (e.g. mmHg, mL) even though the header is uppercased. */}
+                        {v.name}{v.unit ? <span style={{ textTransform: "none" }}> ({v.unit})</span> : ""}
                       </th>
                     ))}
 
