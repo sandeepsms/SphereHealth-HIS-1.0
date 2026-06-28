@@ -66,7 +66,7 @@ const C = {
   text:    "#0f172a",
   muted:   "#64748b",
   subtle:  "#f8fafc",
-  blue:    "#1d4ed8",  blueL:   "#eff6ff",
+  blue:    "#4f46e5",  blueL:   "#eef2ff",
   green:   "#16a34a",  greenL:  "#dcfce7",
   red:     "#dc2626",  redL:    "#fef2f2",
   orange:  "#ea580c",  orangeL: "#fff7ed",
@@ -87,7 +87,7 @@ function KPI({ label, value, tone = C.text, sub, mono = true }) {
       flex: 1, minWidth: 170,
       background: C.card, border: `1.5px solid ${C.border}`,
       borderRadius: 12, padding: "12px 14px",
-      boxShadow: "0 1px 2px rgba(15,23,42,.04)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
     }}>
       <div style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 800, color: tone, marginTop: 4, fontFamily: mono ? FONT_MONO : FONT_SANS, lineHeight: 1.1 }}>{value}</div>
@@ -1074,7 +1074,7 @@ export default function ReceptionBilling() {
     // Receipt + IPD bill style). White hospital band with right-aligned
     // GSTIN/Reg/PAN block; accent title bar; patient info strip; per-bill
     // blocks below now carry the visit number with a dynamic label.
-    const _accent = hs.printAccentColor || "#1d4ed8";
+    const _accent = hs.printAccentColor || "#4f46e5";
     const _bills = billRows.length;
     const _firstVt = String(billRows[0]?.b?.visitType || "OPD").toUpperCase();
     // R7hd-FIX — patient strip was missing Department / Doctor /
@@ -2004,7 +2004,7 @@ export default function ReceptionBilling() {
               totals.drafts) + unspentAdv state. Sub-text shows
               context-sensitive hints so the tiles never look empty.
               ────────────────────────────────────────────────────── */}
-          <div style={{
+          <div className="hga-stagger" style={{
             display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
             gap: 12, marginBottom: 12,
           }}>
@@ -2176,9 +2176,11 @@ export default function ReceptionBilling() {
                       )}
                       {/* R7ao: Refund the unspent portion of this advance.
                           Visible only when the row has remaining balance AND the
-                          user has billing.refund permission. ACTIVE and
-                          PARTIALLY_APPLIED rows are both refundable. */}
-                      {!isVoid && Number(a.remainingAmount || 0) > 0 && can("billing.refund") && (
+                          user has billing.advance-refund permission (R7hr-261 —
+                          narrow advance-only refund tier; Receptionist included
+                          without the broad bill-refund/credit-note power). ACTIVE
+                          and PARTIALLY_APPLIED rows are both refundable. */}
+                      {!isVoid && Number(a.remainingAmount || 0) > 0 && can("billing.advance-refund") && (
                         <button
                           type="button"
                           onClick={() => setAdvanceRefundTarget(a)}
@@ -2342,7 +2344,7 @@ export default function ReceptionBilling() {
                   : Math.max(0, _itemsNet - _paidSum);
                 const rowPaid   = Math.max(0, rowNet - rowBal);
                 return (
-                  <div key={b._id} className={`rx-bill-row ${isActive ? "rx-bill-row--active" : ""}`}
+                  <div key={b._id} className={`rx-bill-row hga-lift ${isActive ? "rx-bill-row--active" : ""}`}
                        onClick={() => loadBill(b._id)}>
                     <div className="rx-min-zero">
                       <div className="rx-bill-row-line">

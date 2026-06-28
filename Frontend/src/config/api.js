@@ -109,9 +109,12 @@ export const API_ENDPOINTS = {
   OPD_ASSESSMENT: (visitNumber) => `${API_BASE_URL}/opd/${visitNumber}/assessment`,
   OPD_AUDIT_TRAIL: (visitNumber) => `${API_BASE_URL}/opd/${visitNumber}/audit-trail`,
 
-  // ── SphereAI Assistant ────────────────────────────────────────
-  AI_CHAT: `${API_BASE_URL}/ai/chat`,
   VITAL_SHEET: `${API_BASE_URL}/vitalsheet`,
+
+  // ── R7hr-272 — Admin Backup & Recovery ────────────────────────
+  BACKUP_STATUS:   `${API_BASE_URL}/backup/status`,
+  BACKUP_RUN:      `${API_BASE_URL}/backup/run`,
+  BACKUP_DOWNLOAD: (file) => `${API_BASE_URL}/backup/download/${encodeURIComponent(file)}`,
 };
 
 export default API_ENDPOINTS;

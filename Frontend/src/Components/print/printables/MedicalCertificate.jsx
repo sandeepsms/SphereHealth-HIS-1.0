@@ -94,7 +94,7 @@ const SECTION_TITLE = {
   textTransform: "uppercase",
   marginTop: 14,
   marginBottom: 6,
-  color: "var(--pr-accent-color, #1d4ed8)",
+  color: "var(--pr-accent-color, #4f46e5)",
   borderBottom: "1px solid #cbd5e1",
   paddingBottom: 4,
 };
@@ -519,7 +519,7 @@ function LegacyBody({ r, kind, title }) {
     }}>
       <div style={{ textAlign: "center", fontSize: 16, fontWeight: 800,
         textTransform: "uppercase", letterSpacing: ".5px",
-        color: "var(--pr-accent-color, #1d4ed8)", marginBottom: 14,
+        color: "var(--pr-accent-color, #4f46e5)", marginBottom: 14,
         paddingBottom: 8, borderBottom: "2px solid currentColor",
       }}>{title}</div>
       <p style={{ margin: "0 0 12px" }}>To Whom It May Concern,</p>
@@ -640,7 +640,15 @@ const MedicalCertificate = ({ settings = {}, certificate, receipt }) => {
         { label: "Mobile",          value: c.mobile },
         { label: "Issuing Doctor",  value: c.doctorName },
         { label: "MCI Reg. No",     value: c.doctorReg },
-        { label: "Visit Type",      value: c.visitType },
+        // R7hr-168 — Visit Type defensive fall back. For an IPD-admitted
+        // patient the form's `latestVisit` probe (which only walks OPD
+        // visits) returns null, so c.visitType lands on the saved cert as
+        // "". Fall back to "IPD" whenever the cert carries an admission ref
+        // (admissionNumber / admissionId / admission). The new-cert form
+        // also writes "IPD" at submit time (below), so this fall back only
+        // covers pre-R7hr-168 certs.
+        { label: "Visit Type",      value: c.visitType
+                                          || ((c.admissionNumber || c.admissionId || c.admission) ? "IPD" : "") },
         { label: "Issued On",       value: fmtDate(c.issuedAt) },
       ]
     : [
@@ -694,7 +702,7 @@ const MedicalCertificate = ({ settings = {}, certificate, receipt }) => {
         <div style={{
           textAlign: "center", fontSize: 15, fontWeight: 800,
           textTransform: "uppercase", letterSpacing: ".5px",
-          color: "var(--pr-accent-color, #1d4ed8)", marginBottom: 6,
+          color: "var(--pr-accent-color, #4f46e5)", marginBottom: 6,
         }}>{typeLabel}</div>
         {subtitle && (
           <div style={{ textAlign: "center", fontSize: 10, color: "#475569", marginBottom: 14 }}>

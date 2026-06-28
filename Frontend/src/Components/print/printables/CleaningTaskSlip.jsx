@@ -16,7 +16,7 @@ const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", {
 }) : "—";
 
 const TYPE_BADGE = {
-  routine:           { color: "#1e3a8a", bg: "#dbeafe", border: "#93c5fd" },
+  routine:           { color: "#3730a3", bg: "#e0e7ff", border: "#93c5fd" },
   terminal:          { color: "#7f1d1d", bg: "#fee2e2", border: "#fca5a5" },
   spillage:          { color: "#78350f", bg: "#fef3c7", border: "#fde68a" },
   "isolation-prep":  { color: "#581c87", bg: "#ede9fe", border: "#c4b5fd" },

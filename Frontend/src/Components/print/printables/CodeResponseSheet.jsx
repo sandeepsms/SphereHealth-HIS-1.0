@@ -16,7 +16,7 @@ const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", {
 }) : "—";
 
 const CODE_BADGE = {
-  blue:   { color: "#1e3a8a", bg: "#dbeafe", border: "#3b82f6", label: "CODE BLUE",   purpose: "Cardiac arrest / adult code" },
+  blue:   { color: "#3730a3", bg: "#e0e7ff", border: "#6366f1", label: "CODE BLUE",   purpose: "Cardiac arrest / adult code" },
   pink:   { color: "#831843", bg: "#fce7f3", border: "#ec4899", label: "CODE PINK",   purpose: "Paediatric / infant emergency" },
   red:    { color: "#7f1d1d", bg: "#fee2e2", border: "#ef4444", label: "CODE RED",    purpose: "Fire / evacuation" },
   black:  { color: "#0f172a", bg: "#e2e8f0", border: "#0f172a", label: "CODE BLACK",  purpose: "Bomb threat / security" },
@@ -79,7 +79,7 @@ const CodeResponseSheet = ({ settings, receipt = {} }) => {
               <td>{fmtDateTime(r.alertedAt)} — by {r.alertedBy || "—"}</td>
             </tr>
             <tr>
-              <td style={{ fontWeight: 700, color: "#1d4ed8" }}>First MRT On-Scene</td>
+              <td style={{ fontWeight: 700, color: "#4f46e5" }}>First MRT On-Scene</td>
               <td>
                 <strong>{r.firstResponderName || "—"}</strong> {r.firstResponderRole && <>({r.firstResponderRole})</>}
                 {r.firstResponderAt && <> · arrived {fmtDateTime(r.firstResponderAt)}</>}

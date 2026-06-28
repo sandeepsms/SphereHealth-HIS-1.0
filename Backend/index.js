@@ -1049,6 +1049,14 @@ const _cancelRetentionReview = scheduleDaily("retention-review", 4, 0, async () 
 // one reads turns a 5-year-old data-retention gap into a startup warn.
 (async () => {
   try {
+    // These four retention targets are only require()d lazily by their
+    // routes, so they aren't registered with mongoose yet when this
+    // boot-time check runs — pull them in first (idempotent: module
+    // cache + mongoose.models guards make double-require a no-op).
+    require("./models/Doctor/DoctorNotesModel");
+    require("./models/Clinical/MARModel");
+    require("./models/Clinical/ConsentFormModel");
+    require("./models/Pharmacy/PharmacyVendorReturnModel");
     const svc = require("./services/MRD/retentionEnforcer");
     const results = await svc.startupSelfTest();
     const failures = results.filter((r) => !r.ok);

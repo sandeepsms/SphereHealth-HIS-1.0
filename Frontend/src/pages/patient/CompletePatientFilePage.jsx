@@ -1000,16 +1000,16 @@ function VitalsPanel({ data }) {
   return (
     <div style={{
       marginTop: 4, padding: "8px 12px", borderRadius: 6,
-      background: "linear-gradient(180deg, #eff6ff 0%, #fff 30%)",
-      border: "1px solid #bfdbfe", borderLeft: "4px solid #2563eb",
+      background: "linear-gradient(180deg, #eef2ff 0%, #fff 30%)",
+      border: "1px solid #c7d2fe", borderLeft: "4px solid #4f46e5",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#1d4ed8" }}>📊 VITALS</span>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#4f46e5" }}>📊 VITALS</span>
         {flags.map((f, i) => (
           <span key={i} style={{ padding: "1px 8px", borderRadius: 4, fontSize: 10.5, fontWeight: 800,
             background: "#fee2e2", color: "#b91c1c", border: "1px solid #fca5a5" }}>⚠ {f.k}: {f.v}</span>
         ))}
-        {lc(data, "position") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#dbeafe", color: "#1e40af" }}>{lc(data, "position")}</span>}
+        {lc(data, "position") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#e0e7ff", color: "#4338ca" }}>{lc(data, "position")}</span>}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "3px 14px", fontSize: 11.5, fontFamily: "monospace" }}>
         {(bp_s || bp_d) && <div><span style={{ color: "var(--pf-muted)", fontWeight: 700, fontFamily: "system-ui" }}>BP:</span> <b>{bp_s ?? "?"}/{bp_d ?? "?"}</b> mmHg</div>}
@@ -1168,7 +1168,7 @@ function NutritionPanel({ data }) {
           </span>
         )}
         {lc(data, "dietitianReferral") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#fef3c7", color: "#92400e" }}>📨 Dietitian referral</span>}
-        {lc(data, "fluidRestriction") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#dbeafe", color: "#1e40af" }}>💧 Fluid restricted</span>}
+        {lc(data, "fluidRestriction") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#e0e7ff", color: "#4338ca" }}>💧 Fluid restricted</span>}
         {lc(data, "ngtPresent") && <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#fef3c7", color: "#92400e" }}>NGT</span>}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "3px 14px", fontSize: 11.5 }}>
@@ -2790,7 +2790,7 @@ function TimelineSection({ data }) {
     "transfer":          { icon: "🛏",  color: "#0d9488" },
     "handover":          { icon: "🔄", color: "#0284c7" },
     "mlc":               { icon: "⚖",  color: "#dc2626" },
-    "admission":         { icon: "🏥", color: "#2563eb" },
+    "admission":         { icon: "🏥", color: "#4f46e5" },
     "discharge":         { icon: "🚪", color: "#0d9488" },
     "discharge-summary": { icon: "📄", color: "#0d9488" },
   };
@@ -3532,7 +3532,7 @@ function TreatmentChartPrintSection({ doctorOrders = [], currentAdmission, icuBu
                   : s === "skipped"       ? { bg: "#fee2e2", fg: "#b91c1c", bd: "#fca5a5", icon: "✗", label: "SKIPPED" }
                   : s === "not_available" ? { bg: "#fef3c7", fg: "#92400e", bd: "#fcd34d", icon: "⚠", label: "N/A" }
                   : s === "delayed"       ? { bg: "#fef3c7", fg: "#92400e", bd: "#fcd34d", icon: "⏱", label: "DELAYED" }
-                  : s === "partial"       ? { bg: "#dbeafe", fg: "#1e40af", bd: "#93c5fd", icon: "◐", label: "PARTIAL" }
+                  : s === "partial"       ? { bg: "#e0e7ff", fg: "#4338ca", bd: "#93c5fd", icon: "◐", label: "PARTIAL" }
                   :                         { bg: "#f1f5f9", fg: "#475569", bd: "#cbd5e1", icon: "○", label: "PENDING" };
     return (
       <div style={{ display: "inline-flex", flexDirection: "column", marginRight: 10, marginBottom: 4 }}>
@@ -3822,7 +3822,7 @@ function ICUBundlesPrintSection({ bundles = [] }) {
                   }}>
                     {sheet.status}
                   </span>
-                  <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 800, background: "#dbeafe", color: "#1e40af" }}>
+                  <span style={{ padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 800, background: "#e0e7ff", color: "#4338ca" }}>
                     Overall: {sheet.overallCompliancePct ?? 0}%
                   </span>
                   <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--pf-muted)" }}>

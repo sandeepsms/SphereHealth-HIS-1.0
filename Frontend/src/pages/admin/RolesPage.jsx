@@ -74,7 +74,7 @@ function RoleGrid({ onInspect }) {
         return (
           <div key={r.key} style={{
             background: "#fff", border: `1.5px solid ${C.border}`, borderRadius: 12,
-            overflow: "hidden", boxShadow: "0 1px 3px rgba(15,23,42,.04)", display: "flex", flexDirection: "column",
+            overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)", display: "flex", flexDirection: "column",
           }}>
             {/* Header */}
             <div style={{ padding: "12px 14px", background: r.light, borderBottom: `1px solid ${r.color}20`, display: "flex", alignItems: "center", gap: 10 }}>

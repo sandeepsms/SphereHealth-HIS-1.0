@@ -155,7 +155,7 @@ const buildSparkline = (trend, width, height) => {
         <polyline points={sysPts} fill="none" stroke="#dc2626" strokeWidth="1.2" />
       ) : null}
       {pulsePts ? (
-        <polyline points={pulsePts} fill="none" stroke="#1d4ed8" strokeWidth="1.2" />
+        <polyline points={pulsePts} fill="none" stroke="#4f46e5" strokeWidth="1.2" />
       ) : null}
     </svg>
   );
@@ -210,8 +210,8 @@ const SectionHeader = ({ children }) => (
       letterSpacing: "0.7px",
       textTransform: "uppercase",
       fontWeight: 700,
-      color: "var(--pr-accent-color, #1d4ed8)",
-      borderBottom: "1.5px solid var(--pr-accent-color, #1d4ed8)",
+      color: "var(--pr-accent-color, #4f46e5)",
+      borderBottom: "1.5px solid var(--pr-accent-color, #4f46e5)",
       paddingBottom: 2,
       margin: "12px 0 6px",
     }}
@@ -541,7 +541,7 @@ const ExecutiveTheme = ({ settings = {}, file, events = [] }) => {
                   BP sys
                 </span>
                 <span>
-                  <span style={{ display: "inline-block", width: 8, height: 2, background: "#1d4ed8", verticalAlign: "middle", marginRight: 3 }} />
+                  <span style={{ display: "inline-block", width: 8, height: 2, background: "#4f46e5", verticalAlign: "middle", marginRight: 3 }} />
                   Pulse
                 </span>
               </div>
@@ -617,7 +617,7 @@ const ExecutiveTheme = ({ settings = {}, file, events = [] }) => {
                     style={{
                       fontSize: 15,
                       fontWeight: 700,
-                      color: "var(--pr-accent-color, #1d4ed8)",
+                      color: "var(--pr-accent-color, #4f46e5)",
                       lineHeight: 1.1,
                     }}
                   >
@@ -694,7 +694,7 @@ const ExecutiveTheme = ({ settings = {}, file, events = [] }) => {
                 const dateLabel = dayDateRef ? fmtDayMonth(dayDateRef) : "";
                 return (
                   <Para key={`day-${day}`}>
-                    <strong style={{ color: "var(--pr-accent-color, #1d4ed8)" }}>
+                    <strong style={{ color: "var(--pr-accent-color, #4f46e5)" }}>
                       Day {day}{dateLabel ? ` (${dateLabel})` : ""}.
                     </strong>{" "}
                     {cleanSentence(sentences.join(". "))}

@@ -16,7 +16,7 @@
 //     emergency banner and footer for free. This stays a medical
 //     document, not a wedding card — restraint is luxury.
 //   • Hospital accent colour (settings.printAccentColor, default
-//     #1d4ed8) is wired through a single CSS variable on the body
+//     #4f46e5) is wired through a single CSS variable on the body
 //     wrapper so every chrome element (dividers, drop-caps,
 //     pull-quote rails, day labels) honours it automatically.
 //   • Browser-native column-count CSS works in print; column-span:
@@ -120,7 +120,7 @@ const vitalsSentence = (v = {}) => {
    and ships without touching printShell.css)
    ============================================================ */
 
-const ACCENT = "var(--pr-accent-color, #1d4ed8)";
+const ACCENT = "var(--pr-accent-color, #4f46e5)";
 
 /* Section heading that spans both columns — accent rule on either
    side gives the magazine "feature heading" feel without needing a
@@ -720,10 +720,10 @@ const EditorialTheme = ({ settings = {}, file, events = [] }) => {
 
   /* The wrapping style on the body wires the hospital accent into a
      CSS variable so every accent reference (`var(--pr-accent-color,
-     #1d4ed8)`) honours admin settings without any prop drilling. The
+     #4f46e5)`) honours admin settings without any prop drilling. The
      2-column rule is applied to a child `<div>` (not this wrapper)
      because the hero card / final page must NOT be columnar. */
-  const accentColor = settings.printAccentColor || "#1d4ed8";
+  const accentColor = settings.printAccentColor || "#4f46e5";
 
   return (
     <PrintShell

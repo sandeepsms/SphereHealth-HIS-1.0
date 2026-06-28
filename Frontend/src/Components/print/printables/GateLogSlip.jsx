@@ -16,7 +16,7 @@ const fmtDateTime = (d) => d ? new Date(d).toLocaleString("en-IN", {
 }) : "—";
 
 const PERSON_BADGE = {
-  visitor:    { color: "#1e3a8a", bg: "#dbeafe", border: "#93c5fd" },
+  visitor:    { color: "#3730a3", bg: "#e0e7ff", border: "#93c5fd" },
   vendor:     { color: "#14532d", bg: "#dcfce7", border: "#86efac" },
   ambulance:  { color: "#7f1d1d", bg: "#fee2e2", border: "#fca5a5" },
   staff:      { color: "#475569", bg: "#e2e8f0", border: "#94a3b8" },

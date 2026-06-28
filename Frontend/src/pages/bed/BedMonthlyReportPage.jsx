@@ -137,7 +137,7 @@ const BedMonthlyReportPage = () => {
 
           {/* By Ward */}
           <h3 style={{ fontSize: 14, fontWeight: 800, color: "#0f172a", margin: "20px 0 10px" }}>
-            <i className="pi pi-building" style={{ marginRight: 8, color: "#2563eb" }} />
+            <i className="pi pi-building" style={{ marginRight: 8, color: "#4f46e5" }} />
             Occupancy by Ward
           </h3>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>

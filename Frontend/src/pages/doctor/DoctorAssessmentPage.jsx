@@ -14,7 +14,7 @@ import SignatureStamp from "../../Components/signature/SignatureStamp";
 /* ── Design tokens ── */
 const C = {
   bg: "#f0f2f5", card: "#fff", border: "#e2e6ea", text: "#1a1d23", muted: "#6b7280",
-  accent: "#1e40af", accentL: "#eff6ff",
+  accent: "#4338ca", accentL: "#eef2ff",
   green: "#16a34a", greenL: "#dcfce7",
   red: "#dc2626", redL: "#fef2f2",
   amber: "#d97706", amberL: "#fffbeb",
@@ -31,7 +31,7 @@ const C = {
 /* Form primitive moved to clinical-forms.css — use className="his-field" */
 
 const ORDER_TYPES = [
-  { key: "medication",   label: "💊 Medication",          bg: "#dbeafe",        color: C.accent },
+  { key: "medication",   label: "💊 Medication",          bg: "#e0e7ff",        color: C.accent },
   { key: "iv_fluid",     label: "💧 IV Infusion",          bg: "#ccfbf1",        color: C.teal },
   { key: "blood",        label: "🩸 Blood Product",        bg: "#fecaca",        color: "#9f1239" },
   { key: "lab",          label: "🔬 Lab Investigation",    bg: "#ede9fe",        color: C.purple },
@@ -44,7 +44,7 @@ const ORDER_TYPES = [
 ];
 
 const TYPE_STYLE = {
-  medication:   { bg: "#dbeafe", color: C.accent,  label: "Med" },
+  medication:   { bg: "#e0e7ff", color: C.accent,  label: "Med" },
   iv_fluid:     { bg: "#ccfbf1", color: C.teal,    label: "Infusion" },
   blood:        { bg: "#fecaca", color: "#9f1239",  label: "Blood" },
   investigation:{ bg: "#ede9fe", color: C.purple,  label: "Lab" },
@@ -59,7 +59,7 @@ const TYPE_STYLE = {
 };
 
 const STATUS_STYLE = {
-  active:    { bg: "#dbeafe", color: C.accent  },
+  active:    { bg: "#e0e7ff", color: C.accent  },
   pending:   { bg: C.amberL, color: "#92400e" },
   scheduled: { bg: C.purpleL,color: C.purple  },
   completed: { bg: C.greenL, color: C.green   },
@@ -604,7 +604,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
           </div>
 
           {/* My Active IPD Patients */}
-          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 22, boxShadow: "0 2px 12px rgba(0,0,0,.04)" }}>
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 22, boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
             <div style={{ fontWeight: 700, fontSize: 14, color: C.slate, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ background: C.accentL, color: C.accent, padding: "2px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>MY PATIENTS</span>
               {patientsLoading && <span style={{ fontSize: 11, color: C.muted }}>Loading…</span>}
@@ -623,7 +623,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                 const dayNo = adm.admissionDate ? Math.max(1, Math.ceil((Date.now() - new Date(adm.admissionDate)) / 86400000)) : "?";
                 return (
                   <div key={adm._id} onClick={() => loadAdmission(adm)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", border: `1.5px solid ${C.border}`, borderRadius: 10, cursor: "pointer", transition: "border-color .15s, box-shadow .15s" }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.boxShadow = "0 2px 12px rgba(30,64,175,.1)"; }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.boxShadow = "0 2px 12px rgba(67,56,202,.1)"; }}
                     onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                       <div style={{ width: 38, height: 38, borderRadius: "50%", background: C.accentL, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: C.accent }}>
@@ -1057,18 +1057,18 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
               </SectionCard>
 
               {/* ══ TREATMENT CHART ORDERS (connected to DoctorOrders collection) ══ */}
-              <div style={{ background: C.card, border: "1.5px solid #e0e7ef", borderRadius: 14, marginBottom: 14, overflow: "hidden", boxShadow: "0 2px 10px rgba(37,99,235,.05)" }}>
+              <div style={{ background: C.card, border: "1.5px solid #e0e7ef", borderRadius: 14, marginBottom: 14, overflow: "hidden", boxShadow: "0 2px 10px rgba(79,70,229,.05)" }}>
                 {/* Header */}
                 <div style={{ padding: "14px 20px", background: "#1e3a5f", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div style={{ color: "white", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", gap: 8 }}>
                     <span>💊</span> Treatment Chart Orders
-                    <span style={{ background: "rgba(255,255,255,.15)", color: "#bfdbfe", padding: "1px 9px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>
+                    <span style={{ background: "rgba(255,255,255,.15)", color: "#c7d2fe", padding: "1px 9px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>
                       NABH MOM.1 — Linked to MAR Sheet &amp; Nursing Notes
                     </span>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <button onClick={() => { setShowMedForm(p => !p); setShowInfForm(false); }}
-                      style={{ padding: "6px 16px", background: showMedForm ? "#3b82f6" : "rgba(255,255,255,.15)", color: "white", border: "1.5px solid rgba(255,255,255,.3)", borderRadius: 7, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      style={{ padding: "6px 16px", background: showMedForm ? "#6366f1" : "rgba(255,255,255,.15)", color: "white", border: "1.5px solid rgba(255,255,255,.3)", borderRadius: 7, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                       💊 Add Medication
                     </button>
                     <button onClick={() => { setShowInfForm(p => !p); setShowMedForm(false); }}
@@ -1080,8 +1080,8 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
 
                 {/* Medication entry form */}
                 {showMedForm && (
-                  <div style={{ padding: "14px 20px", background: "#eff6ff", borderBottom: "1px solid #bfdbfe" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>New Medication Order</div>
+                  <div style={{ padding: "14px 20px", background: "#eef2ff", borderBottom: "1px solid #c7d2fe" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#4f46e5", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>New Medication Order</div>
                     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
                       <FG label="Drug Name *">
                         <input className="his-field" style={{ fontWeight: 700, borderColor: isHAM_IA(medForm.drug) ? "#f59e0b" : C.border }} value={medForm.drug} onChange={e => setMedForm(p => ({ ...p, drug: e.target.value }))} placeholder="Generic drug name" />
@@ -1117,7 +1117,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                           </label>
                         )}
                         <button onClick={addMedicationOrder} disabled={orderAddSaving}
-                          style={{ padding: "9px 20px", background: orderAddSaving ? "#93c5fd" : "#2563eb", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+                          style={{ padding: "9px 20px", background: orderAddSaving ? "#93c5fd" : "#4f46e5", color: "white", border: "none", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
                           {orderAddSaving ? "Adding…" : "✓ Add to Chart"}
                         </button>
                       </div>
@@ -1146,7 +1146,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                         {medForm.dilutionVol && <div style={{ fontSize: 10, color: "#0369a1", marginTop: 5 }}>📋 {medForm.drug || "Drug"} will be diluted in <strong>{medForm.dilutionVol} ml {medForm.dilutionFluid}</strong> — nurse's Input chart updated automatically on each dose given.</div>}
                       </div>
                     )}
-                    {medForm.frequency && <div style={{ marginTop: 6, fontSize: 10, color: "#1d4ed8", fontFamily: "monospace" }}>Admin times: {(FREQ_TIMES_IA[medForm.frequency] || []).join(" · ")}</div>}
+                    {medForm.frequency && <div style={{ marginTop: 6, fontSize: 10, color: "#4f46e5", fontFamily: "monospace" }}>Admin times: {(FREQ_TIMES_IA[medForm.frequency] || []).join(" · ")}</div>}
                   </div>
                 )}
 
@@ -1212,7 +1212,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                             return (
                               <tr key={o._id} style={{ borderBottom: "1px solid #f1f5f9", background: o.hamFlag ? "#fff7ed" : o.priority==="STAT" ? "#fef2f2" : "white" }}>
                                 <td style={{ padding: "8px 12px" }}>
-                                  <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: o.orderType==="Medication"?"#dbeafe":o.orderType==="IV_Fluid"?"#ccfbf1":"#ede9fe", color: o.orderType==="Medication"?C.accent:o.orderType==="IV_Fluid"?C.teal:C.purple }}>
+                                  <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: o.orderType==="Medication"?"#e0e7ff":o.orderType==="IV_Fluid"?"#ccfbf1":"#ede9fe", color: o.orderType==="Medication"?C.accent:o.orderType==="IV_Fluid"?C.teal:C.purple }}>
                                     {o.orderType === "Medication" ? "Med" : o.orderType === "IV_Fluid" ? "Infusion" : o.orderType || "Other"}
                                   </span>
                                 </td>
@@ -1245,7 +1245,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                                 <td style={{ padding: "8px 12px", fontSize: 10, color: C.muted, whiteSpace: "nowrap", fontFamily: "monospace" }}>
                                   {o.createdAt ? new Date(o.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
                                   {(o.auditLog||[]).length > 0 && (
-                                    <div style={{ color: "#3b82f6", fontSize: 9, marginTop: 1 }}>
+                                    <div style={{ color: "#6366f1", fontSize: 9, marginTop: 1 }}>
                                       {o.auditLog.length} audit step{o.auditLog.length > 1 ? "s" : ""}
                                     </div>
                                   )}
@@ -1359,7 +1359,7 @@ export function DoctorAssessmentContent({ selectedPatient, onSaved }) {
                     <div>
                       <div style={{ display: "flex", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
                         <span style={{ padding: "3px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: n.status === "signed" ? C.greenL : C.amberL, color: n.status === "signed" ? C.green : "#92400e" }}>{n.status?.toUpperCase()}</span>
-                        <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#dbeafe", color: C.accent }}>{n.shift?.toUpperCase()}</span>
+                        <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#e0e7ff", color: C.accent }}>{n.shift?.toUpperCase()}</span>
                         <span style={{ fontSize: 11, color: C.muted }}>{n.doctorName || "—"}</span>
                       </div>
                       {n.soap?.assessment && <div style={{ fontSize: 12.5, lineHeight: 1.6, marginBottom: 4 }}><strong>A:</strong> {n.soap.assessment}</div>}

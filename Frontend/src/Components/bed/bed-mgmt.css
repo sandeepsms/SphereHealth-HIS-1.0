@@ -123,7 +123,7 @@
   outline: none;
   transition: border-color .15s;
 }
-.bm-filter input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px #2563eb22; }
+.bm-filter input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px #4f46e522; }
 .bm-filter .pi {
   position: absolute;
   left: 11px;
@@ -198,7 +198,7 @@
   font-size: 12px;
 }
 .bm-icon-btn:hover { background: var(--bm-soft); }
-.bm-icon-btn--info:hover    { color: #2563eb; border-color: #93c5fd; background: #eff6ff; }
+.bm-icon-btn--info:hover    { color: #4f46e5; border-color: #93c5fd; background: #eef2ff; }
 .bm-icon-btn--danger:hover  { color: #dc2626; border-color: #fca5a5; background: #fef2f2; }
 
 /* ── Empty state ───────────────────────────────────────────────── */
@@ -293,8 +293,8 @@
 }
 
 /* ── Stat strip color variants ─────────────────────────────────── */
-.bm-stat--blue    { border-left-color: #2563eb; }
-.bm-stat--blue   .bm-stat__icon { background: #dbeafe; color: #2563eb; }
+.bm-stat--blue    { border-left-color: #4f46e5; }
+.bm-stat--blue   .bm-stat__icon { background: #e0e7ff; color: #4f46e5; }
 .bm-stat--green   { border-left-color: #16a34a; }
 .bm-stat--green  .bm-stat__icon { background: #dcfce7; color: #16a34a; }
 .bm-stat--amber   { border-left-color: #d97706; }
@@ -309,8 +309,8 @@
 .bm-stat--slate  .bm-stat__icon { background: #f1f5f9; color: #475569; }
 
 /* ── Grid card color variants ──────────────────────────────────── */
-.bm-grid-card--blue    { border-left-color: #2563eb; }
-.bm-grid-card--blue   .bm-grid-card__icon { background: #dbeafe; color: #2563eb; }
+.bm-grid-card--blue    { border-left-color: #4f46e5; }
+.bm-grid-card--blue   .bm-grid-card__icon { background: #e0e7ff; color: #4f46e5; }
 .bm-grid-card--orange  { border-left-color: #ea580c; }
 .bm-grid-card--orange .bm-grid-card__icon { background: #ffedd5; color: #ea580c; }
 .bm-grid-card--purple  { border-left-color: #7c3aed; }
@@ -346,7 +346,7 @@
 .bm-bar__fill--low    { background: linear-gradient(90deg, #22c55e, #16a34a); }
 .bm-bar__fill--mid    { background: linear-gradient(90deg, #f59e0b, #d97706); }
 .bm-bar__fill--high   { background: linear-gradient(90deg, #ef4444, #dc2626); }
-.bm-bar__fill--info   { background: linear-gradient(90deg, #3b82f6, #2563eb); }
+.bm-bar__fill--info   { background: linear-gradient(90deg, #6366f1, #4f46e5); }
 .bm-bar__fill--purple { background: linear-gradient(90deg, #a78bfa, #7c3aed); }
 
 /* Bed-fill mini visual: row of small dots representing beds */
@@ -364,7 +364,7 @@
 }
 .bm-dot--occ      { background: #dc2626; border-color: #b91c1c; }
 .bm-dot--avail    { background: #22c55e; border-color: #16a34a; }
-.bm-dot--reserved { background: #3b82f6; border-color: #2563eb; }
+.bm-dot--reserved { background: #6366f1; border-color: #4f46e5; }
 .bm-dot--maint    { background: #f59e0b; border-color: #d97706; }
 .bm-dot--blocked  { background: #94a3b8; border-color: #64748b; }
 .bm-dot--empty    { background: #f1f5f9; border-color: #e2e8f0; }
@@ -404,7 +404,7 @@
   font-weight: 800;
   flex-shrink: 0;
 }
-.bm-avatar--blue   { background: linear-gradient(135deg,#dbeafe,#bfdbfe); color: #2563eb; }
+.bm-avatar--blue   { background: linear-gradient(135deg,#e0e7ff,#c7d2fe); color: #4f46e5; }
 .bm-avatar--purple { background: linear-gradient(135deg,#ede9fe,#ddd6fe); color: #7c3aed; }
 .bm-avatar--pink   { background: linear-gradient(135deg,#fce7f3,#fbcfe8); color: #db2777; }
 .bm-avatar--orange { background: linear-gradient(135deg,#ffedd5,#fed7aa); color: #ea580c; }
@@ -433,7 +433,7 @@
   letter-spacing: .4px;
 }
 .bm-class--Economy  { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
-.bm-class--Standard { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
+.bm-class--Standard { background: #e0e7ff; color: #4338ca; border: 1px solid #93c5fd; }
 .bm-class--Premium  { background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; }
 .bm-class--Deluxe   { background: #fce7f3; color: #9d174d; border: 1px solid #f9a8d4; }
 .bm-class--VIP      { background: linear-gradient(135deg, #fef3c7, #fde68a); color: #92400e; border: 1px solid #fbbf24; }
@@ -481,9 +481,9 @@
   flex-shrink: 0;
 }
 .bm-form-section__head--pink   .bm-form-section__icon { background: #fce7f3; color: #db2777; }
-.bm-form-section__head--blue   .bm-form-section__icon { background: #dbeafe; color: #2563eb; }
+.bm-form-section__head--blue   .bm-form-section__icon { background: #e0e7ff; color: #4f46e5; }
 .bm-form-section__head--purple .bm-form-section__icon { background: #ede9fe; color: #7c3aed; }
-.bm-form-section__head--blue   { background: linear-gradient(to right, #eff6ff, #fff); }
+.bm-form-section__head--blue   { background: linear-gradient(to right, #eef2ff, #fff); }
 .bm-form-section__head--purple { background: linear-gradient(to right, #f5f3ff, #fff); }
 .bm-form-section__title {
   font-size: 14px;
@@ -532,8 +532,8 @@
   transition: border-color .15s, box-shadow .15s, background .15s;
 }
 .bm-input:focus-within {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px #2563eb22;
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 3px #4f46e522;
 }
 .bm-input--invalid { border-color: #dc2626; }
 .bm-input--invalid:focus-within { box-shadow: 0 0 0 3px #dc262622; }
@@ -649,8 +649,8 @@
   flex-wrap: wrap;
 }
 .bm-bv-filterbar__chip {
-  background: #eff6ff;
-  color: #1e40af;
+  background: #eef2ff;
+  color: #4338ca;
   border: 1px solid #93c5fd;
   border-radius: 999px;
   padding: 3px 5px 3px 10px;
@@ -670,7 +670,7 @@
   display: flex; align-items: center; justify-content: center;
   font-size: 11px;
 }
-.bm-bv-filterbar__chip button:hover { background: rgba(30,64,175,.12); }
+.bm-bv-filterbar__chip button:hover { background: rgba(67,56,202,.12); }
 
 .bm-bv-empty {
   background: var(--bm-card);
@@ -797,7 +797,7 @@
 }
 .bm-bed-card--avail   { --bed-color: #16a34a; background: linear-gradient(180deg, #f0fdf4, #fff 60%); }
 .bm-bed-card--occ     { --bed-color: #dc2626; background: white; }
-.bm-bed-card--res     { --bed-color: #2563eb; background: linear-gradient(180deg, #eff6ff, #fff 60%); }
+.bm-bed-card--res     { --bed-color: #4f46e5; background: linear-gradient(180deg, #eef2ff, #fff 60%); }
 .bm-bed-card--maint   { --bed-color: #d97706; background: linear-gradient(180deg, #fffbeb, #fff 60%); }
 .bm-bed-card--blocked { --bed-color: #475569; background: linear-gradient(180deg, #f8fafc, #fff 60%); opacity: .85; }
 

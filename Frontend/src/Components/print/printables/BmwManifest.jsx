@@ -23,7 +23,7 @@ const COLOR_STYLE = {
   yellow: { bg: "#fef3c7", color: "#78350f", border: "#fde68a", label: "Yellow" },
   red:    { bg: "#fee2e2", color: "#7f1d1d", border: "#fca5a5", label: "Red" },
   white:  { bg: "#f8fafc", color: "#0f172a", border: "#cbd5e1", label: "White (Translucent)" },
-  blue:   { bg: "#dbeafe", color: "#1e3a8a", border: "#93c5fd", label: "Blue" },
+  blue:   { bg: "#e0e7ff", color: "#3730a3", border: "#93c5fd", label: "Blue" },
 };
 
 const BmwManifest = ({ settings, receipt = {} }) => {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { tpaService } from "../../Services/tpa/tpaService";
 import patientService from "../../Services/patient/patientService";
 import { Card } from "primereact/card";
@@ -29,7 +30,7 @@ const ORDER_STATUS = {
 
 const RESULT_COLOR = {
   PENDING: "#f59e0b",
-  IN_PROGRESS: "#3b82f6",
+  IN_PROGRESS: "#6366f1",
   COMPLETED: "#8b5cf6",
   VERIFIED: "#10b981",
 };
@@ -177,9 +178,13 @@ export default function InvestigationOrders() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState({});
+  // R7hr-314 — seed the status filter from ?status= so the Lab dashboard
+  // tiles deep-link: Result Entry → ?status=SAMPLE_COLLECTED, Dispatch
+  // Reports → ?status=COMPLETED (else the worklist opens unfiltered).
+  const [searchParams] = useSearchParams();
   const [filters, setFilters] = useState({
     UHID: "",
-    orderStatus: null,
+    orderStatus: searchParams.get("status") || null,
     priority: null,
     fromDate: "",
     toDate: "",
@@ -638,7 +643,7 @@ export default function InvestigationOrders() {
           color="#0891b2"
         />
         <SCard label="Pending" val={summary.pending} color="#f59e0b" />
-        <SCard label="In Progress" val={summary.inProgress} color="#3b82f6" />
+        <SCard label="In Progress" val={summary.inProgress} color="#6366f1" />
         <SCard
           label="Completed Today"
           val={summary.completed}
@@ -1523,7 +1528,7 @@ export default function InvestigationOrders() {
                   const colors = {
                     PENDING: "#f59e0b",
                     COLLECTED: "#10b981",
-                    RECEIVED_AT_LAB: "#3b82f6",
+                    RECEIVED_AT_LAB: "#6366f1",
                     REJECTED: "#dc2626",
                   };
                   return (

@@ -1,0 +1,193 @@
+/* ============================================================
+   animations.css — GLOBAL ANIMATION LAYER (R7hr-273, additive, R25-safe)
+   Loaded in main.jsx AFTER his-design.css, BEFORE index.css.
+
+   Design rules:
+   - Keyframe prefix `hga-` (HIS Global Animation) — verified NOT to collide
+     with the 16 existing keyframes.
+   - Auto-applied: .hga-route (page transition), .hga-nav-item (sidebar hover),
+     a global tactile button :active press, and opt-in helpers (.hga-stagger,
+     .hga-enter*, .hga-pop, .hga-slide-down, .hga-lift, .hga-shimmer, ...).
+   - R7hr-273c (10-dim audit): entrance keyframes END at `transform: none` and
+     .hga-route carries NO `will-change`, so the route wrapper never becomes a
+     persistent containing block that could mis-position fixed modals. The
+     reduced-motion + print kill-switches are now UNIVERSAL (cover every
+     animation in the app — hga, component-scoped, inline — not just hga-*).
+
+   Intensity: one class on <html> — hga-minimal | hga-professional | hga-lively.
+   Default (:root) == professional.
+   ============================================================ */
+
+:root {
+  --hga-dur-page:   0.42s;
+  --hga-dur-enter:  0.52s;
+  --hga-dur-micro:  0.16s;
+  --hga-travel:     20px;
+  --hga-lift:       -3px;
+  --hga-stagger:    70ms;
+  --hga-ease:       cubic-bezier(0.22, 1, 0.36, 1);
+  --hga-ease-back:  cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+html.hga-minimal {
+  --hga-dur-page: 0.22s; --hga-dur-enter: 0.26s; --hga-dur-micro: 0.10s;
+  --hga-travel: 8px;  --hga-lift: -1px; --hga-stagger: 40ms;
+}
+html.hga-professional {
+  --hga-dur-page: 0.42s; --hga-dur-enter: 0.52s; --hga-dur-micro: 0.16s;
+  --hga-travel: 20px; --hga-lift: -3px; --hga-stagger: 70ms;
+}
+html.hga-lively {
+  --hga-dur-page: 0.58s; --hga-dur-enter: 0.7s; --hga-dur-micro: 0.2s;
+  --hga-travel: 32px; --hga-lift: -5px; --hga-stagger: 100ms;
+}
+
+/* ── KEYFRAME CATALOG ─────────────────────────────────────────
+   Entrance animations END at `transform: none` (not translateY(0)/scale(1))
+   AND every entrance rule fills `backwards` (NOT `both`/`forwards`) — see the
+   route-transition note below for why the fill-mode is what actually matters. */
+@keyframes hga-page-in   { from { opacity: 0; transform: translateY(var(--hga-travel)) scale(0.985); }
+                           to   { opacity: 1; transform: none; } }
+@keyframes hga-fade-in   { from { opacity: 0; } to { opacity: 1; } }
+@keyframes hga-fade-up   { from { opacity: 0; transform: translateY(var(--hga-travel)); }
+                           to   { opacity: 1; transform: none; } }
+@keyframes hga-pop       { 0%   { opacity: 0; transform: translateY(calc(var(--hga-travel) * 0.7)) scale(0.92); }
+                           100% { opacity: 1; transform: none; } }
+@keyframes hga-scale-in  { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes hga-slide-down{ from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: none; } }
+@keyframes hga-slide-left{ from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: none; } }
+@keyframes hga-spin      { to { transform: rotate(360deg); } }
+@keyframes hga-shimmer   { 0% { background-position: -468px 0; } 100% { background-position: 468px 0; } }
+@keyframes hga-pulse     { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@keyframes hga-float     { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+
+/* ── ROUTE TRANSITION (auto, every authenticated page, all roles) ──
+   OPACITY-ONLY cross-fade — deliberately NO transform. `.hga-route` wraps every
+   routed page, so it is an ancestor of EVERY inline `position:fixed` modal. ANY
+   transform on it makes it a containing block that traps those modals — they then
+   centre within the full page instead of the viewport and "appear far down". This
+   bites not just with a `forwards`/`both`-held identity matrix, but at ANY moment
+   the transform animation is mid-flight or throttle-frozen (e.g. a background tab).
+   Animating only `opacity` (a stacking context, but NOT a containing block) gives
+   a clean page cross-fade with ZERO trap risk in every animation state. Per-page
+   fade-UP motion still comes from the opt-in hga-enter/hga-stagger classes on the
+   page content. `backwards` fill avoids an initial opacity flash. */
+.hga-route { animation: hga-fade-in var(--hga-dur-page) var(--hga-ease) backwards; }
+
+/* ── ENTRANCE HELPERS (opt-in) ────────────────────────────── */
+.hga-enter        { animation: hga-fade-up var(--hga-dur-enter) var(--hga-ease) backwards; }
+.hga-enter-fade   { animation: hga-fade-in var(--hga-dur-enter) var(--hga-ease) backwards; }
+.hga-enter-scale  { animation: hga-scale-in var(--hga-dur-enter) var(--hga-ease-back) backwards; }
+.hga-pop          { animation: hga-pop var(--hga-dur-enter) var(--hga-ease-back) backwards; }
+.hga-slide-down   { animation: hga-slide-down var(--hga-dur-enter) var(--hga-ease) backwards; }
+.hga-slide-left   { animation: hga-slide-left var(--hga-dur-enter) var(--hga-ease) backwards; }
+
+/* Stagger: parent gets .hga-stagger; DIRECT children pop in sequence. Up to 12
+   distinct delays; the 13th+ child uses the max delay (still cascades, never
+   invisible). */
+.hga-stagger > * { animation: hga-pop var(--hga-dur-enter) var(--hga-ease-back) backwards; }
+.hga-stagger > *:nth-child(1)  { animation-delay: calc(var(--hga-stagger) * 1); }
+.hga-stagger > *:nth-child(2)  { animation-delay: calc(var(--hga-stagger) * 2); }
+.hga-stagger > *:nth-child(3)  { animation-delay: calc(var(--hga-stagger) * 3); }
+.hga-stagger > *:nth-child(4)  { animation-delay: calc(var(--hga-stagger) * 4); }
+.hga-stagger > *:nth-child(5)  { animation-delay: calc(var(--hga-stagger) * 5); }
+.hga-stagger > *:nth-child(6)  { animation-delay: calc(var(--hga-stagger) * 6); }
+.hga-stagger > *:nth-child(7)  { animation-delay: calc(var(--hga-stagger) * 7); }
+.hga-stagger > *:nth-child(8)  { animation-delay: calc(var(--hga-stagger) * 8); }
+.hga-stagger > *:nth-child(9)  { animation-delay: calc(var(--hga-stagger) * 9); }
+.hga-stagger > *:nth-child(10) { animation-delay: calc(var(--hga-stagger) * 10); }
+.hga-stagger > *:nth-child(11) { animation-delay: calc(var(--hga-stagger) * 11); }
+.hga-stagger > *:nth-child(n+12) { animation-delay: calc(var(--hga-stagger) * 12); }
+
+/* ── HOVER MICRO-INTERACTIONS ─────────────────────────────── */
+.hga-lift  { transition: transform var(--hga-dur-micro) var(--hga-ease), box-shadow var(--hga-dur-micro) var(--hga-ease); }
+.hga-lift:hover { transform: translateY(var(--hga-lift)) scale(1.012); box-shadow: 0 10px 26px rgba(15, 23, 42, 0.16); }
+.hga-press { transition: transform var(--hga-dur-micro) var(--hga-ease), filter var(--hga-dur-micro) var(--hga-ease); }
+.hga-press:hover  { filter: brightness(1.05); }
+.hga-press:active { transform: translateY(1px) scale(0.98); }
+
+/* Sidebar nav item (auto, every page/role) — layout-neutral transforms. */
+.hga-nav-item:hover  { transform: translateX(4px) scale(1.015); }
+.hga-nav-item:active { transform: translateX(2px) scale(0.99); }
+
+/* Global tactile press on every button — no `transition` set here, so it can't
+   clobber a component's own transition; instant, layout-neutral feedback. */
+button:not(:disabled):active,
+[role="button"]:not([aria-disabled="true"]):active {
+  transform: scale(0.97);
+}
+
+/* ── LOADING (skeleton shimmer + spinner) ─────────────────── */
+.hga-shimmer {
+  background: linear-gradient(90deg, #eef2f7 25%, #f7fafc 37%, #eef2f7 63%);
+  background-size: 936px 100%;
+  animation: hga-shimmer 1.4s ease-in-out infinite;
+}
+.hga-spinner {
+  display: inline-block; width: 1.25em; height: 1.25em;
+  border: 2px solid rgba(0, 0, 0, 0.12); border-top-color: currentColor;
+  border-radius: 50%;
+  animation: hga-spin 0.8s linear infinite;
+}
+.hga-loading-pulse { animation: hga-pulse 1.6s ease-in-out infinite; }
+.hga-float { animation: hga-float 3s ease-in-out infinite; }
+
+/* ── iOS-GLASS MODAL BACKDROP (global, applied at runtime by GlassBackdrop.jsx) ──
+   Every translucent full-screen modal scrim is tagged `.hga-glass` (frosted blur
+   + saturate, iOS style). Normal popups ALSO get `.hga-glass-inset`, which starts
+   the frost at the content area's top/left edge (--hga-cl-top/left, set live from
+   the sidebar's right edge) so the SIDEBAR + HEADER stay crisp and interactive —
+   only the content pane frosts. High-z system blockers (forced password change,
+   etc.) get `.hga-glass` only and stay full-screen. The `!important`s beat the
+   scrims' inline `inset:0`/`background`. Tint + blur are tunable here. */
+:root { --hga-glass-tint: rgba(15, 23, 42, 0.22); --hga-glass-blur: 18px; }
+.hga-glass {
+  background: var(--hga-glass-tint) !important;
+  -webkit-backdrop-filter: blur(var(--hga-glass-blur)) saturate(165%);
+  backdrop-filter: blur(var(--hga-glass-blur)) saturate(165%);
+}
+.hga-glass-inset {
+  /* snap the frost to the content pane the instant the modal opens, so the sidebar
+     is crisp from frame 1 (a `transition:left` would briefly frost the sidebar on
+     open AND freeze mid-glide in a throttled/background tab). */
+  top:  var(--hga-cl-top, 52px) !important;
+  left: var(--hga-cl-left, 0px) !important;
+}
+
+/* ── ACCESSIBILITY — honour "reduce motion" (UNIVERSAL, WCAG-recommended) ──
+   Covers EVERY animation/transition in the app (hga, component-scoped, inline),
+   not just .hga-* — and collapses them to ~instant so entrance animations still
+   land at their visible end-state (never stuck invisible). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  button:not(:disabled):active,
+  [role="button"]:not([aria-disabled="true"]):active,
+  .hga-nav-item:hover, .hga-nav-item:active,
+  .hga-lift:hover, .hga-press:hover, .hga-press:active {
+    transform: none !important; box-shadow: none !important; filter: none !important;
+  }
+}
+
+/* ── PRINT SAFETY — clinical prints must be pixel-stable (UNIVERSAL) ──
+   Collapse every animation to its end-state and kill transitions + hover
+   transforms so nothing is caught mid-motion on a printout. */
+@media print {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+  }
+  button:active, [role="button"]:active,
+  .hga-nav-item, .hga-lift, .hga-press, .hga-route {
+    transform: none !important;
+  }
+  /* R7hr-277/278 — click-effect overlays must never land on a printout */
+  .print-burst-host, .click-fx-host { display: none !important; }
+  /* R7hr-281 — drop the glass frost on print; restore a plain scrim + full inset */
+  .hga-glass { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  .hga-glass-inset { top: 0 !important; left: 0 !important; transition: none !important; }
+}

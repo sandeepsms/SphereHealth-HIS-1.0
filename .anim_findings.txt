@@ -1,0 +1,56 @@
+[low] (print-safety) Shimmer animation in AdmittedPatientPanel not disabled in print
+   Add `@media print { .shimmer { animation: none !important; } }` to animations.css or add a global print-disable rule in print.css that targets all inline-defined animations.
+
+[low] (print-safety) Pulse animation in NursingNotes not disabled in print
+   Add `@media print { [style*='animation: pulse'] { animation: none !important; } }` or define a print-safe global rule for all component-scoped animations.
+
+[low] (print-safety) BedModalIn animation not disabled in print
+   Extend animations.css @media print block to include rule: `[style*='animation: bed'], [style*='animation: fadeIn'], [style*='animation: slideIn'], [style*='animation: spin'], [style*='animation: pulse'], [style*='animation: npulse'], [style*='animation: sma-spin'], [style*='animation: fp'] { animation: none !important; }`
+
+[low] (print-safety) Multiple component-scoped animations lack print-safety coverage
+   Audit all component <style> tags and either: (1) Move all @keyframes to animations.css with hga- prefix and add them to the print media query, OR (2) Add a wildcard print rule `@media print { [style*='animation:'] { animation: none !important; } }` to disable all inline animations universally.
+
+[low] (reduced-motion) Button role=button :active state not covered in reduced-motion media query
+   Update line 136 to include the [role=button] variant: `.hga-lift:hover, .hga-press:hover, .hga-press:active, .hga-nav-item:hover, .hga-nav-item:active, button:not(:disabled):active, [role="button"]:not([aria-disabled="true"]):active {`
+
+[polish] (reduced-motion) Print media query missing [role=button] :active reset
+   Update line 152 to include both variants for print safety: `.hga-lift, .hga-press, .hga-nav-item, button:active, [role="button"]:not([aria-disabled="true"]):active { transition: none !important; transform: none !important; }`
+
+[polish] (performance) Unnecessary will-change on route wrapper — persistent memory cost
+   Remove will-change: opacity, transform from .hga-route and let the GPU compositing layer self-discard after the animation completes (~0.42s per route). Alternatively, use will-change: auto in the @media print rule to explicitly release the layer during clinical print workflows. If the layer is needed for interactive smoothness post-animation, use a CSS-only toggle (animation-state or JS to add the will-change after completion and remove on next nav).
+
+[polish] (performance) Infinite animations auto-applied to loading UI — CPU drain on background tabs
+   Bind infinite animations to visibility state using the Intersection Observer API or a visibility-polling hook (React.useVisiblePoll if already in use, per RoleDashboardPage.jsx:617 pattern). Pause hga-shimmer, hga-spinner, and hga-loading-pulse when off-screen or on a hidden tab via animation-play-state: paused. Example: add a media query or CSS class rule `.hga-spinner:not(:visible) { animation-play-state: paused; }` (note: :visible is a Level 4 selector, fallback to Intersection Observer for older browsers).
+
+[polish] (performance) hga-float infinite animation on non-interactive elements — minor CPU cost
+   If .hga-float is used for emphasis (e.g., a floating CTA button), consider replacing the infinite loop with a hover-triggered animation or a once-on-load entrance (e.g., hga-pop + hga-lift on hover). If it's a purely decorative effect (e.g., floating background shapes), keep it but apply animation-play-state: paused when the containing viewport scrolls out of view.
+
+[polish] (performance) Stagger animation on large grids — no reflow risk but verify child count
+   Either: (a) add a final rule `.hga-stagger > *:nth-child(n+13) { animation-delay: calc(var(--hga-stagger) * 12); }` to cap the delay at the 12th item, or (b) use CSS custom properties + :nth-child(n) with a CSS function to auto-calculate delay (CSS Containment / CSS-in-JS approach). Verify that all .hga-stagger containers in the codebase stay under 12 children; if not, document the limitation or switch to a JS-driven stagger lib.
+
+[polish] (layout-stability) Sidebar nav sections 13+ lack stagger delays, breaking animation sequencing
+   Extend the nth-child animation-delay rules in animations.css to cover at least nth-child(13-20) using the same stagger formula, or conditionally limit the hga-stagger class to only containers expected to have ≤12 children. For example: '.hga-stagger > *:nth-child(13) { animation-delay: calc(var(--hga-stagger) * 13); } ... .hga-stagger > *:nth-child(20) { animation-delay: calc(var(--hga-stagger) * 20); }' This ensures all nav sections animate in sequence regardless of count.
+
+[polish] (layout-stability) No safeguard for hga-stagger containers exceeding 12 children in future expansions
+   Add a CSS rule for .hga-stagger > *:nth-child(n+13) { animation-delay: 840ms; } (or calc(var(--hga-stagger) * 12) as a safe ceiling) to ensure any child beyond the 12th still receives a reasonable delay rather than 0. Alternatively, add a comment in animations.css documenting the 12-child limit and the risk of > 12.
+
+[low] (stacking-overlays) RouteTransition wrapper creates stacking context that could trap sticky/fixed descendants
+   Remove `will-change: opacity, transform` from .hga-route (lines 59-60 in animations.css). The animation still functions because the keyframe applies the properties; will-change is a performance hint that is unnecessary here and creates an unwanted stacking context. Alternatively, ensure ALL sticky/fixed descendants of page content have explicit z-index values that sit above the modal/overlay range (>1100), or wrap problematic sticky headers in their own stacking-context-breaking container.
+
+[polish] (cross-browser) Missing -webkit- Prefix for filter Property
+   Add -webkit-filter as a fallback: '-webkit-filter: brightness(1.05); filter: brightness(1.05);' to ensure compatibility with Safari versions before 16 and older iOS Safari browsers.
+
+[polish] (cross-browser) Inconsistent Prefix Strategy for Scrollbar Styling
+   Add a code comment above the scrollbar styling section explaining the dual approach: '/* Scrollbar styling: Firefox 64+ uses scrollbarColor/Width; WebKit browsers (Chrome/Safari/Edge) use ::-webkit-scrollbar pseudo-elements. Both systems apply independently. */'.
+
+[polish] (ux-quality) Page transition delay on every clinical navigation (1.78s total cascade)
+   Consider reducing hga-stagger interval from 70ms to 40ms (or use hga-minimal preset by default on non-landing pages) to cut cascade time to ~750ms total. Alternatively, split KPI grids into two groups with separate staggers so only the above-fold cards stagger (3-4 cards × 70ms = 210ms + 520ms = 730ms). This preserves visual polish for landing pages while unblocking power users on repeat navigations.
+
+[polish] (ux-quality) Unused/underutilized CSS keyframes (hga-float, hga-slide-left, hga-spin, etc.)
+   Document intent in the CSS header (intended for future features, or prune them). If these are scaffolds for future work, add a TODO comment. If they are old utilities, remove hga-float (line 121), hga-slide-left (line 69), hga-spin/hga-shimmer/hga-pulse/hga-scale-in (lines 49-54) and their keyframes to reduce CSS payload and maintenance surface.
+
+[polish] (ux-quality) Sidebar stagger cascade fires only on initial mount, not on navigation (intentional but silent)
+   This is working as designed. Consider: (1) adding a visual indicator (e.g., a subtle pulse or glow) on the newly-opened section header to signal state change without full re-cascade, or (2) if dynamic role grants occur, use a forced re-mount key prop to restart the animation. For now, document the one-time behavior in the comment: 'Cascade fires once on app load, then persists. On role/nav updates, stagger is NOT re-triggered.'
+
+[polish] (ux-quality) KPI grid responsive breakpoints are hard-coded CSS Grid (no media queries for mobile shrinkage)
+   Add a mobile-first preset in animations.css: @media (max-width: 640px) { html { --hga-travel: 12px; --hga-lift: -2px; --hga-stagger: 50ms; } }. This scales down cascade and pop jumps on small screens. Consider increasing KPI grid minmax from 180px to 200px or using CSS Container Queries to adapt based on parent width, not viewport.

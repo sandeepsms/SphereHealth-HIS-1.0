@@ -596,7 +596,7 @@
 .pl-bill-status--partial   { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
 .pl-bill-status--unpaid    { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
 .pl-bill-status--cancelled { background: #f3f4f6; color: #6b7280; border-color: #d1d5db; }
-.pl-bill-status--refunded  { background: #eff6ff; color: #1d4ed8; border-color: #93c5fd; }
+.pl-bill-status--refunded  { background: #eef2ff; color: #4f46e5; border-color: #93c5fd; }
 .pl-bill-status--draft     { background: #f8fafc; color: #64748b; border-color: #e2e8f0; }
 
 .pl-bill-rows {

@@ -10,9 +10,9 @@
   --his-border:        #e2e6ea;
   --his-text:          #1a1d23;
   --his-muted:         #6b7280;
-  --his-accent:        #1e40af;
-  --his-accent-light:  #eff6ff;
-  --his-accent-dark:   #1e3a8a;
+  --his-accent:        #4338ca;
+  --his-accent-light:  #eef2ff;
+  --his-accent-dark:   #3730a3;
   --his-green:         #16a34a;
   --his-green-light:   #dcfce7;
   --his-red:           #dc2626;
@@ -271,7 +271,7 @@ body {
   font-family: 'DM Sans', sans-serif; font-size: 13px; color: var(--his-text);
   outline: none; background: white; width: 100%; transition: border-color .2s, box-shadow .2s;
 }
-.his-fld:focus { border-color: var(--his-accent); box-shadow: 0 0 0 3px rgba(30,64,175,.08); }
+.his-fld:focus { border-color: var(--his-accent); box-shadow: 0 0 0 3px rgba(67,56,202,.08); }
 textarea.his-fld { resize: vertical; min-height: 80px; }
 select.his-fld { cursor: pointer; }
 .his-fg { display: flex; flex-direction: column; gap: 5px; }
@@ -332,7 +332,7 @@ select.his-fld { cursor: pointer; }
 .his-note-time-col { display: flex; flex-direction: column; align-items: center; gap: 3px; }
 .his-note-time { font-family: 'DM Mono', monospace; font-size: 11px; font-weight: 500; }
 .his-shift-pill { padding: 2px 7px; border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: .6px; }
-.his-shift-morning   { background: #dbeafe; color: #1e40af; }
+.his-shift-morning   { background: #e0e7ff; color: #4338ca; }
 .his-shift-afternoon { background: var(--his-amber-light); color: #92400e; }
 .his-shift-evening   { background: #ede9fe; color: var(--his-purple); }
 .his-shift-night     { background: #1e293b; color: #94a3b8; }
@@ -340,7 +340,7 @@ select.his-fld { cursor: pointer; }
 
 /* ── Note type badges ── */
 .his-badge { display: inline-block; padding: 3px 10px; border-radius: 5px; font-size: 10px; font-weight: 700; letter-spacing: .6px; }
-.his-nb-vitals    { background: #dbeafe; color: #1e40af; }
+.his-nb-vitals    { background: #e0e7ff; color: #4338ca; }
 .his-nb-blood     { background: #fecaca; color: #9f1239; }
 .his-nb-iv        { background: var(--his-teal-light); color: var(--his-teal); }
 .his-nb-wound     { background: var(--his-red-light); color: var(--his-red); }
@@ -441,7 +441,7 @@ select.his-fld { cursor: pointer; }
 }
 
 /* ── Status badge helpers ── */
-.his-status-active    { background: #dbeafe; color: #1e40af; }
+.his-status-active    { background: #e0e7ff; color: #4338ca; }
 .his-status-pending   { background: var(--his-amber-light); color: #92400e; }
 .his-status-completed { background: var(--his-green-light); color: var(--his-green); }
 .his-status-held      { background: #fef3c7; color: #b45309; }
@@ -462,3 +462,400 @@ select.his-fld { cursor: pointer; }
 
 /* ── Keep existing Bootstrap + PrimeReact working ── */
 .p-component { font-family: 'DM Sans', sans-serif !important; }
+
+/* ════════════════════════════════════════════════════════════
+   SphereHealth HIS — Design System v2 · Refinement Layer (R7hr-283 USER)
+   App-wide polish that propagates through the existing shared classes:
+   elevation, keyboard-focus a11y, interaction states, tabular numerals,
+   refined scrollbars. ADDITIVE ONLY — overrides via source order,
+   removes/restructures nothing. Honours prefers-reduced-motion.
+   ════════════════════════════════════════════════════════════ */
+:root {
+  /* Soft layered elevation — tuned for a light, data-dense surface */
+  --his-shadow-xs:    0 1px 2px rgba(16,24,40,.04);
+  --his-shadow-sm:    0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+  --his-shadow-md:    0 2px 6px rgba(16,24,40,.06), 0 6px 16px rgba(16,24,40,.08);
+  --his-shadow-lg:    0 12px 32px rgba(16,24,40,.14);
+  --his-ring:         0 0 0 3px rgba(79,70,229,.20);
+  /* Derived accent states */
+  --his-accent-hover: #4f46e5;
+  --his-accent-press: #3730a3;
+}
+
+/* Crisper text rendering app-wide */
+body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+
+/* ── Elevation: lift surfaces off the flat background ── */
+.his-card { box-shadow: var(--his-shadow-sm); transition: box-shadow .2s ease, transform .2s ease; }
+.his-card:hover { box-shadow: var(--his-shadow-md); }
+.his-timeline, .his-tab-nav, .his-search-wrap { box-shadow: var(--his-shadow-sm); }
+.his-card-hdr { background: linear-gradient(180deg, #ffffff, var(--his-gray-light)); }
+
+/* ── Tabular numerals so data/prices/vitals stay column-aligned ── */
+.his-table, .his-table td, .his-table th,
+.his-vc-value, .his-note-time, .his-blood-chip, .his-count-pill { font-variant-numeric: tabular-nums; }
+
+/* ── Accessibility: visible keyboard focus on every interactive surface ── */
+.his-btn:focus-visible, .his-btn-sm:focus-visible, .his-tab-btn:focus-visible,
+.his-filter-chip:focus-visible, .his-mod-btn:focus-visible, .his-sidebar-toggle:focus-visible,
+.his-modal-close:focus-visible, .his-fld:focus-visible {
+  outline: none; box-shadow: var(--his-ring);
+}
+
+/* ── Buttons: real elevation + press feedback (retires the brightness hack) ── */
+.his-btn { box-shadow: var(--his-shadow-xs); }
+.his-btn:hover  { transform: translateY(-1px); filter: none; box-shadow: var(--his-shadow-sm); }
+.his-btn:active { transform: translateY(0) scale(.98); box-shadow: var(--his-shadow-xs); }
+.his-btn-primary:hover  { background: var(--his-accent-hover); }
+.his-btn-primary:active { background: var(--his-accent-press); }
+
+/* ── Smoother row interaction ── */
+.his-table tbody tr { transition: background .12s ease; }
+
+/* ── Refined thin scrollbars for a polished dashboard feel ── */
+* { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: #94a3b8; background-clip: content-box; }
+
+/* ── Respect reduced-motion for the new transitions ── */
+@media (prefers-reduced-motion: reduce) {
+  .his-card, .his-btn, .his-table tbody tr { transition: none; }
+  .his-btn:hover, .his-btn:active { transform: none; }
+}
+
+/* ════════════════════════════════════════════════════════════
+   PREMIUM LAYER (R7hr-284 USER) — app-wide enrichment via
+   PrimeReact class overrides + global effects. Reaches the
+   ~1660 inputs / 252 tables / 110 dialogs / 110 PrimeReact
+   buttons that are class-based, so EVERY page gains premium
+   polish at once without touching inline styles. Additive;
+   honours prefers-reduced-motion.
+   ════════════════════════════════════════════════════════════ */
+:root {
+  --pp-ease:        cubic-bezier(.4, 0, .2, 1);
+  --pp-ease-spring: cubic-bezier(.34, 1.4, .64, 1);
+  --pp-radius:      10px;
+  --pp-ring:        0 0 0 3px rgba(79,70,229,.18);
+}
+
+/* ── Buttons (PrimeReact) — elevation + press + focus ── */
+.p-button {
+  border-radius: var(--pp-radius) !important;
+  font-weight: 600 !important;
+  box-shadow: 0 1px 2px rgba(16,24,40,.06) !important;
+  transition: transform .15s var(--pp-ease), box-shadow .18s var(--pp-ease), background-color .15s var(--pp-ease), filter .15s var(--pp-ease) !important;
+}
+.p-button:not(:disabled):hover  { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(67,56,202,.24) !important; filter: brightness(1.03); }
+.p-button:not(:disabled):active { transform: translateY(0) scale(.975); box-shadow: 0 1px 2px rgba(16,24,40,.10) !important; }
+.p-button:focus-visible { outline: none; box-shadow: var(--pp-ring) !important; }
+
+/* ── Inputs / selects / pickers — rounded, soft focus ring ── */
+.p-inputtext, .p-dropdown, .p-multiselect, .p-inputnumber-input,
+.p-password-input, .p-calendar .p-inputtext, .p-autocomplete-input, .p-chips {
+  border-radius: var(--pp-radius) !important;
+  background: #ffffff !important;                    /* R7hr-304: soft-elevated field */
+  border: 1.5px solid #e2e8f0 !important;
+  box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.045) !important;
+  transition: border-color .15s var(--pp-ease), box-shadow .15s var(--pp-ease), background-color .15s var(--pp-ease) !important;
+}
+/* R7hr-316 — slim field height. PrimeReact's default .75rem vertical padding
+   made every input/select bulky (Add Doctor, Hospital Charges, …). Tighten
+   the text-bearing elements (NOT the dropdown wrapper, which would double-pad)
+   to a slim, even height. */
+.p-inputtext, .p-inputnumber-input, .p-autocomplete-input, .p-password-input,
+.p-calendar > .p-inputtext, .p-chips .p-inputtext {
+  padding: .42rem .7rem !important; font-size: 13.5px !important;
+}
+.p-dropdown .p-dropdown-label, .p-multiselect .p-multiselect-label {
+  padding: .42rem .7rem !important; font-size: 13.5px !important;
+}
+/* Dropdown / number are wrappers; inner regions inherit the fill */
+.p-dropdown .p-dropdown-label, .p-multiselect .p-multiselect-label,
+.p-inputnumber, .p-inputnumber-input { background: transparent !important; }
+/* Compact the oversized float-label fields (DoctorForm etc.) */
+.p-float-label .p-inputtext, .p-float-label .p-dropdown .p-dropdown-label,
+.p-float-label .p-inputnumber-input { padding-top: .55rem !important; padding-bottom: .55rem !important; }
+.p-inputtext:enabled:hover, .p-dropdown:not(.p-disabled):hover,
+.p-multiselect:not(.p-disabled):hover { border-color: #a5b4fc !important; }
+.p-inputtext:enabled:focus, .p-dropdown:not(.p-disabled).p-focus,
+.p-multiselect:not(.p-disabled).p-focus, .p-inputnumber-input:enabled:focus {
+  border-color: #4338ca !important; box-shadow: var(--pp-ring) !important;
+  background: #ffffff !important;
+}
+
+/* ── Vital Sheet hourly grid (R7hr-317) — premium, system-themed. Used on
+   the /vitalSheet page AND embedded in the Nursing Notes "Vital Signs"
+   section. Overrides the legacy bootstrap table classes in place. ── */
+.vsheet-grid { border-radius: 14px; border: 1.5px solid #e2e8f0; overflow: auto; background: #fff;
+  box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 4px 14px rgba(16,24,40,.06); }
+.vsheet-grid table { margin: 0 !important; border-collapse: separate !important; border-spacing: 0; width: 100%; }
+.vsheet-grid thead th {
+  background: linear-gradient(180deg,#eef2ff,#e0e7ff) !important; color: #3730a3 !important;
+  font-weight: 800 !important; font-size: 11px !important; text-transform: uppercase; letter-spacing: .4px;
+  padding: 11px 10px !important; border: none !important; border-bottom: 2px solid #c7d2fe !important;
+  white-space: nowrap; position: sticky; top: 0; z-index: 2; text-align: center;
+}
+.vsheet-grid tbody td { border: none !important; border-bottom: 1px solid #eef2f6 !important;
+  padding: 5px 8px !important; vertical-align: middle; background: #fff; }
+.vsheet-grid tbody tr:hover td { background: #f8faff; }
+.vsheet-grid tbody td:first-child {
+  font-weight: 700; color: #4338ca; background: #f5f7ff !important;
+  font-variant-numeric: tabular-nums; position: sticky; left: 0; z-index: 1; white-space: nowrap;
+}
+.vsheet-grid input.form-control, .vsheet-grid input[type="time"], .vsheet-grid input[type="number"], .vsheet-grid input[type="text"] {
+  border: 1.5px solid #e2e8f0 !important; border-radius: 8px !important; padding: .38rem .55rem !important;
+  font-size: 13px !important; box-shadow: 0 1px 2px rgba(16,24,40,.04) !important; text-align: center;
+  transition: border-color .15s, box-shadow .15s;
+}
+.vsheet-grid input.form-control:focus, .vsheet-grid input:focus {
+  border-color: #4338ca !important; box-shadow: 0 0 0 3px rgba(67,56,202,.15) !important; outline: none;
+}
+.vsheet-grid input[readonly], .vsheet-grid input.bg-light { background: #f8fafc !important; color: #475569 !important; font-weight: 600; cursor: not-allowed; }
+/* R7hr-324 — hide number spinners + trim horizontal padding so 2-3 digit
+   vitals (15, 121) are fully visible in the narrow columns (spinner arrows
+   were clipping the value). */
+.vsheet-grid input[type="number"]::-webkit-inner-spin-button,
+.vsheet-grid input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.vsheet-grid input[type="number"] { -moz-appearance: textfield; appearance: textfield; padding-left: .3rem !important; padding-right: .3rem !important; }
+
+/* ── DataTable — premium header + row interaction + tabular nums ── */
+.p-datatable .p-datatable-thead > tr > th {
+  background: #f8fafc !important; color: #475569 !important;
+  font-weight: 700 !important; font-size: 11px !important;
+  text-transform: uppercase !important; letter-spacing: .5px !important;
+}
+.p-datatable .p-datatable-tbody > tr { transition: background-color .12s var(--pp-ease) !important; }
+.p-datatable .p-datatable-tbody > tr:hover { background: #eef2ff !important; }
+.p-datatable .p-datatable-tbody > tr > td { font-variant-numeric: tabular-nums; }
+.p-paginator { border-radius: 0 0 12px 12px !important; }
+
+/* ── Dialog / overlay — premium elevation + blurred scrim ── */
+.p-dialog {
+  border-radius: 16px !important; overflow: hidden !important;
+  box-shadow: 0 24px 64px rgba(16,24,40,.28) !important;
+}
+.p-dialog .p-dialog-header { border-radius: 16px 16px 0 0 !important; }
+.p-dialog-mask.p-component-overlay { background: rgba(15,23,42,.46) !important; backdrop-filter: blur(3px); }
+
+/* ── Cards / panels / chips lift ── */
+.p-card { border-radius: 14px !important; box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06) !important; }
+.p-tabview .p-tabview-nav { border-radius: 10px 10px 0 0 !important; }
+.p-chip { transition: background-color .15s var(--pp-ease) !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .p-button, .p-inputtext, .p-dropdown, .p-datatable .p-datatable-tbody > tr { transition: none !important; }
+  .p-button:not(:disabled):hover, .p-button:not(:disabled):active { transform: none !important; }
+}
+
+/* ════════════════════════════════════════════════════════════
+   PREMIUM FEEDBACK LAYER (R7hr-294 USER) — toasts + skeletons.
+   App-wide: every react-toastify notification + PrimeReact
+   skeleton gains a premium look at once.
+   ════════════════════════════════════════════════════════════ */
+/* ── Toasts (react-toastify) — rounded, elevated, accent-edged ── */
+.Toastify__toast {
+  border-radius: 12px !important;
+  box-shadow: 0 12px 32px rgba(16,24,40,.18), 0 2px 8px rgba(16,24,40,.10) !important;
+  border: 1px solid rgba(16,24,40,.06) !important;
+  font-family: 'DM Sans', sans-serif !important;
+  font-size: 13px !important; font-weight: 500 !important;
+  padding: 12px 16px !important;
+}
+.Toastify__toast-body { font-family: 'DM Sans', sans-serif !important; }
+.Toastify__toast--success { border-left: 4px solid #16a34a !important; }
+.Toastify__toast--error   { border-left: 4px solid #dc2626 !important; }
+.Toastify__toast--warning { border-left: 4px solid #d97706 !important; }
+.Toastify__toast--info,
+.Toastify__toast--default  { border-left: 4px solid #4338ca !important; }
+.Toastify__progress-bar--success { background: #16a34a !important; }
+.Toastify__progress-bar--error   { background: #dc2626 !important; }
+.Toastify__progress-bar--warning { background: #d97706 !important; }
+.Toastify__progress-bar--info,
+.Toastify__progress-bar--default  { background: #4338ca !important; }
+.Toastify__close-button { color: #94a3b8 !important; opacity: .85; }
+.Toastify__close-button:hover { color: #334155 !important; opacity: 1; }
+
+/* ── Skeletons (PrimeReact) — premium shimmer ── */
+.p-skeleton {
+  border-radius: 8px !important;
+  background: linear-gradient(90deg, #eef1f6 25%, #e2e8f0 37%, #eef1f6 63%) !important;
+  background-size: 400% 100% !important;
+  animation: ppShimmer 1.4s ease infinite !important;
+}
+@keyframes ppShimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+@media (prefers-reduced-motion: reduce) { .p-skeleton { animation: none !important; } }
+
+/* ════════════════════════════════════════════════════════════
+   TAILWIND COMPATIBILITY SHIM (R7hr-300 USER) — this app is styled
+   with PrimeFlex + Bootstrap, NOT Tailwind, yet several pages were
+   authored with Tailwind utility classes that therefore rendered
+   UNSTYLED (elements not centred, rounded corners missing, slate
+   text falling back to black, wrong line-heights). These were the
+   "broken visuals". Define only the Tailwind-only utilities that
+   PrimeFlex/Bootstrap do NOT already provide, so those pages render
+   as their authors intended — on-theme.
+   ════════════════════════════════════════════════════════════ */
+/* Flex alignment (PrimeFlex uses align-items-*/justify-content-*) */
+.items-center { align-items: center; }
+.items-start  { align-items: flex-start; }
+.items-end    { align-items: flex-end; }
+.justify-center  { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.justify-around  { justify-content: space-around; }
+.justify-end     { justify-content: flex-end; }
+.flex-col  { flex-direction: column; }
+.flex-wrap { flex-wrap: wrap; }
+/* Radius (PrimeFlex uses border-round) */
+.rounded-xl  { border-radius: 12px; }
+.rounded-2xl { border-radius: 16px; }
+.rounded-3xl { border-radius: 24px; }
+.rounded-full{ border-radius: 9999px; }
+/* Elevation */
+.shadow-xl  { box-shadow: 0 20px 25px -5px rgba(16,24,40,.10), 0 8px 10px -6px rgba(16,24,40,.10); }
+.shadow-2xl { box-shadow: 0 25px 50px -12px rgba(16,24,40,.25); }
+/* Max width */
+.max-w-xl  { max-width: 36rem; }
+.max-w-2xl { max-width: 42rem; }
+.max-w-3xl { max-width: 48rem; }
+.max-w-5xl { max-width: 64rem; }
+.max-w-7xl { max-width: 80rem; }
+/* Letter spacing */
+.tracking-tight  { letter-spacing: -.015em; }
+.tracking-wide   { letter-spacing: .025em; }
+.tracking-wider  { letter-spacing: .05em; }
+.tracking-widest { letter-spacing: .1em; }
+/* Line height */
+.leading-none    { line-height: 1; }
+.leading-tight   { line-height: 1.25; }
+.leading-snug    { line-height: 1.375; }
+.leading-relaxed { line-height: 1.625; }
+/* Slate scale (not in PrimeFlex) */
+.text-slate-400 { color: #94a3b8; } .text-slate-500 { color: #64748b; }
+.text-slate-600 { color: #475569; } .text-slate-700 { color: #334155; }
+.text-slate-800 { color: #1e293b; } .text-slate-900 { color: #0f172a; }
+.bg-slate-50 { background-color: #f8fafc; } .bg-slate-100 { background-color: #f1f5f9; }
+.bg-slate-300 { background-color: #cbd5e1; } .bg-slate-900 { background-color: #0f172a; }
+/* CSS grid columns — force display:grid so it wins over PrimeFlex's
+   flex-based .grid when both classes sit on the same element. */
+.grid-cols-2 { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
+.grid-cols-3 { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); }
+.grid-cols-4 { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); }
+/* Vertical rhythm + wrapping */
+.space-y-0 > * + * { margin-top: 0; }
+.space-y-1 > * + * { margin-top: .25rem; }
+.space-y-2 > * + * { margin-top: .5rem; }
+.whitespace-pre-line { white-space: pre-line; }
+
+/* ════════════════════════════════════════════════════════════
+   PREMIUM FIELD DESIGN (R7hr-301 USER) — the `.his-field` class was
+   referenced by 949 inputs but never defined, and 300+ bare
+   <select>/<input> fell back to raw browser chrome. Define ONE
+   crafted, on-theme field — used by every text input / select /
+   textarea across the HIS — matching the PrimeReact premium inputs:
+   refined border, soft inset depth, indigo focus ring, custom
+   select chevron. Honours prefers-reduced-motion.
+   ════════════════════════════════════════════════════════════ */
+.his-field,
+.his-fld,
+input:not([class]):not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=submit]):not([type=button]):not([type=reset]):not([type=color]),
+select:not([class]),
+textarea:not([class]) {
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--his-text, #1a1d23);
+  background: #ffffff;
+  border: 1.5px solid var(--his-border, #e2e8f0);
+  border-radius: 10px;
+  padding: 9px 12px;
+  outline: none;
+  box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.045);  /* R7hr-304: soft elevated */
+  transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+  box-sizing: border-box;
+}
+.his-field:hover,
+input:not([class]):not([type=checkbox]):not([type=radio]):hover,
+select:not([class]):hover,
+textarea:not([class]):hover { border-color: #a5b4fc; }
+.his-field:focus,
+input:not([class]):not([type=checkbox]):not([type=radio]):focus,
+select:not([class]):focus,
+textarea:not([class]):focus {
+  border-color: #4338ca;
+  box-shadow: 0 0 0 3px rgba(79,70,229,.16);
+  background: #fff;
+}
+.his-field::placeholder,
+input:not([class])::placeholder,
+textarea:not([class])::placeholder { color: #94a3b8; }
+.his-field:disabled,
+input:not([class]):disabled,
+select:not([class]):disabled,
+textarea:not([class]):disabled { background: #f1f5f9; color: #94a3b8; cursor: not-allowed; box-shadow: none; }
+/* Selects — replace the native arrow with a crafted chevron */
+select.his-field,
+select.his-fld,
+select:not([class]) {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  padding-right: 34px;
+  cursor: pointer;
+}
+textarea.his-field, textarea.his-fld, textarea:not([class]) { min-height: 80px; resize: vertical; }
+@media (prefers-reduced-motion: reduce) {
+  .his-field, .his-fld,
+  input:not([class]), select:not([class]), textarea:not([class]) { transition: none; }
+}
+
+/* ════════════════════════════════════════════════════════════
+   FIELD COVERAGE EXTENSION (R7hr-305 USER) — guarantee EVERY field
+   across EVERY page gets the soft-elevated design, no exceptions.
+   Catches the *-input / *-select / *-textarea class conventions
+   (his-input, his-select, his-textarea, hcw-input, pf-input,
+   pl-modal-input, rx-settle-input, …), form-control, and ALL native
+   selects/textareas — beyond just .his-field + bare inputs. Excludes
+   PrimeReact (own premium rule) and checkbox/radio. Future fields that
+   follow the naming convention are covered automatically.
+   ════════════════════════════════════════════════════════════ */
+.form-control,
+input[class*="input"]:not(.p-inputtext):not(.p-inputnumber-input):not(.p-password-input):not(.p-autocomplete-input):not(.p-inputmask):not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=submit]):not([type=button]),
+select:not(.p-dropdown):not(.p-multiselect):not([class*="p-"]),
+textarea:not(.p-inputtextarea):not([class*="p-input"]) {
+  font-family: 'DM Sans', -apple-system, sans-serif;
+  font-size: 13px; line-height: 1.4;
+  color: var(--his-text, #1a1d23);
+  background: #ffffff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 9px 12px;
+  outline: none;
+  box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.045);
+  transition: border-color .15s ease, box-shadow .15s ease;
+  box-sizing: border-box;
+}
+.form-control:hover,
+input[class*="input"]:not([type=checkbox]):not([type=radio]):hover,
+select:not(.p-dropdown):not([class*="p-"]):hover,
+textarea:not([class*="p-input"]):hover { border-color: #a5b4fc; }
+.form-control:focus,
+input[class*="input"]:not([type=checkbox]):not([type=radio]):focus,
+select:not(.p-dropdown):not([class*="p-"]):focus,
+textarea:not([class*="p-input"]):focus {
+  border-color: #4338ca; box-shadow: 0 0 0 3px rgba(79,70,229,.16);
+}
+input[class*="input"]::placeholder, textarea::placeholder { color: #94a3b8; }
+/* All native selects get the crafted chevron */
+select:not(.p-dropdown):not(.p-multiselect):not([class*="p-"]) {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 11px center;
+  padding-right: 34px; cursor: pointer;
+}
+textarea:not(.p-inputtextarea):not([class*="p-input"]) { min-height: 80px; resize: vertical; }
+@media (prefers-reduced-motion: reduce) {
+  .form-control, input[class*="input"], select:not([class*="p-"]), textarea { transition: none; }
+}

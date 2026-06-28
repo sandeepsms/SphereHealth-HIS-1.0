@@ -56,7 +56,7 @@ function resolveIdentity(hospital, pharmacy) {
     gstin:       hospital.gstin,
     drugLicense: hospital.drugLicenseNo || hospital.drugLicenseNumber,
     color:       hospital.printHeaderColor || "#1e293b",
-    accent:      hospital.printAccentColor || "#1d4ed8",
+    accent:      hospital.printAccentColor || "#4f46e5",
   };
 }
 

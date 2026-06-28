@@ -35,14 +35,14 @@ const STATUS_COLOR = {
   Available: "#22c55e",
   Occupied: "#ef4444",
   Maintenance: "#f59e0b",
-  Reserved: "#3b82f6",
+  Reserved: "#6366f1",
   Blocked: "#9ca3af",
 };
 const STATUS_BG = {
   Available: { bg: "#d1fae5", color: "#065f46" },
   Occupied: { bg: "#fee2e2", color: "#991b1b" },
   Maintenance: { bg: "#fef3c7", color: "#92400e" },
-  Reserved: { bg: "#dbeafe", color: "#1e40af" },
+  Reserved: { bg: "#e0e7ff", color: "#4338ca" },
   Blocked: { bg: "#f3f4f6", color: "#374151" },
 };
 
@@ -51,7 +51,7 @@ const STATUS_BG = {
 // Keys match Bed.isolationFlags enum on the backend.
 const ISOLATION_STYLE = {
   Contact:     { bg: "#fef3c7", color: "#92400e", border: "#fcd34d", icon: "pi-hand-paper" },
-  Droplet:     { bg: "#dbeafe", color: "#1e40af", border: "#93c5fd", icon: "pi-cloud" },
+  Droplet:     { bg: "#e0e7ff", color: "#4338ca", border: "#93c5fd", icon: "pi-cloud" },
   Airborne:    { bg: "#fee2e2", color: "#991b1b", border: "#fca5a5", icon: "pi-wind" },
   Neutropenic: { bg: "#ede9fe", color: "#5b21b6", border: "#c4b5fd", icon: "pi-shield" },
   MRSA:        { bg: "#fee2e2", color: "#991b1b", border: "#fca5a5", icon: "pi-exclamation-triangle" },
@@ -71,7 +71,7 @@ const PRECAUTION_LEVEL_TINT = {
 // ── Housekeeping state styles (P1 #5) ──
 const HK_STYLE = {
   CleaningPending:    { bg: "#fef3c7", color: "#92400e", border: "#fcd34d", icon: "pi-clock",       label: "Cleaning Pending" },
-  CleaningInProgress: { bg: "#dbeafe", color: "#1e40af", border: "#93c5fd", icon: "pi-spin pi-spinner", label: "Cleaning In Progress" },
+  CleaningInProgress: { bg: "#e0e7ff", color: "#4338ca", border: "#93c5fd", icon: "pi-spin pi-spinner", label: "Cleaning In Progress" },
   CleaningDone:       { bg: "#dcfce7", color: "#15803d", border: "#bbf7d0", icon: "pi-check",       label: "Cleaning Done" },
   Inspected:          { bg: "#ede9fe", color: "#5b21b6", border: "#c4b5fd", icon: "pi-verified",    label: "Inspected" },
 };
@@ -1148,7 +1148,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
     /* Condition badge */
     .condition { display:inline-block; padding:4px 14px; border-radius:20px; font-size:12px; font-weight:700; }
     .Stable   { background:#d1fae5; color:#065f46; }
-    .Improved { background:#dbeafe; color:#1e40af; }
+    .Improved { background:#e0e7ff; color:#4338ca; }
     .Critical { background:#fee2e2; color:#991b1b; }
     .LAMA     { background:#ede9fe; color:#5b21b6; }
     /* Footer */
@@ -1334,7 +1334,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
             findLabel: (v) => wards.find((w) => w._id === v)?.wardName,
             onChange: setFWard,
             disabled: !fFloor,
-            color: "#2563eb",
+            color: "#4f46e5",
           },
           {
             key: "room", icon: "pi-box",
@@ -1581,7 +1581,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                       <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
                         {STAT_PILL("Available", available, "#d1fae5", "#065f46", "pi-check-circle")}
                         {STAT_PILL("Occupied",  occupied,  "#fee2e2", "#991b1b", "pi-user")}
-                        {reserved > 0 && STAT_PILL("Reserved", reserved, "#dbeafe", "#1e40af", "pi-bookmark")}
+                        {reserved > 0 && STAT_PILL("Reserved", reserved, "#e0e7ff", "#4338ca", "pi-bookmark")}
                         {maint    > 0 && STAT_PILL("Maintenance", maint, "#fef3c7", "#92400e", "pi-wrench")}
                         {blocked  > 0 && STAT_PILL("Blocked", blocked, "#f1f5f9", "#475569", "pi-ban")}
                         {isolation > 0 && STAT_PILL("Isolation", isolation, "#fee2e2", "#7f1d1d", "pi-shield")}
@@ -1650,7 +1650,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                         if (t.includes("female") || t.includes("maternity"))
                           return { stripe: "#db2777", soft: "#fce7f3", text: "#9d174d", icon: "pi-heart" };
                         if (t.includes("male"))
-                          return { stripe: "#2563eb", soft: "#dbeafe", text: "#1e40af", icon: "pi-home" };
+                          return { stripe: "#4f46e5", soft: "#e0e7ff", text: "#4338ca", icon: "pi-home" };
                         if (t.includes("private"))
                           return { stripe: "#d97706", soft: "#fef3c7", text: "#92400e", icon: "pi-star" };
                         return { stripe: TEAL, soft: "#ccfbf1", text: "#115e59", icon: "pi-home" };
@@ -1877,8 +1877,8 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                                   style={{
                                     background: pInfo.gender === "Female"
                                       ? "linear-gradient(135deg,#fbcfe8,#f9a8d4)"
-                                      : "linear-gradient(135deg,#bfdbfe,#93c5fd)",
-                                    color: pInfo.gender === "Female" ? "#9d174d" : "#1e3a8a",
+                                      : "linear-gradient(135deg,#c7d2fe,#93c5fd)",
+                                    color: pInfo.gender === "Female" ? "#9d174d" : "#3730a3",
                                   }}>
                                   {pName.slice(0, 1).toUpperCase()}
                                 </span>
@@ -1955,7 +1955,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                             {/* Reserved info */}
                             {res && (
                               <div className="bm-bed-card__reason">
-                                <i className="pi pi-bookmark" style={{ marginRight: 5, color: "#2563eb" }} />
+                                <i className="pi pi-bookmark" style={{ marginRight: 5, color: "#4f46e5" }} />
                                 {bed.reservedBy ? `Held by ${bed.reservedBy}` : "Reserved"}
                                 {bed.reservedUntil && (
                                   <> · until {new Date(bed.reservedUntil).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</>
@@ -2242,8 +2242,8 @@ const BedVisualLayout = ({ onRefreshParent }) => {
           {selBed && (
             <div
               style={{
-                background: "#eff6ff",
-                border: "1px solid #bfdbfe",
+                background: "#eef2ff",
+                border: "1px solid #c7d2fe",
                 borderRadius: 12,
                 padding: "12px 16px",
                 marginBottom: 14,
@@ -2257,7 +2257,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                   margin: 0,
                   fontWeight: 700,
                   fontSize: 16,
-                  color: "#1e40af",
+                  color: "#4338ca",
                 }}
               >
                 {selBed.bedNumber} — {resolveRoomName(selBed)},{" "}
@@ -2463,7 +2463,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
         header={
           <div
             style={{
-              background: "linear-gradient(135deg,#2563eb,#06b6d4)",
+              background: "linear-gradient(135deg,#4f46e5,#06b6d4)",
               margin: "-1px -1px 0",
               padding: "18px 24px",
               borderRadius: "10px 10px 0 0",
@@ -2550,7 +2550,7 @@ const BedVisualLayout = ({ onRefreshParent }) => {
                           width: 64,
                           height: 64,
                           borderRadius: "50%",
-                          background: "linear-gradient(135deg,#e0e7ff,#dbeafe)",
+                          background: "linear-gradient(135deg,#e0e7ff,#e0e7ff)",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",

@@ -191,7 +191,7 @@ export default function LAMARegisterPage() {
               <strong style={{ color: C.text }}>{rows.length}</strong> entries
               {totalOpen > 0 && <> · <span style={{ color: "#ea580c", fontWeight: 600 }}>{totalOpen} open</span></>}
               {totalRisks > 0 && <> · <span style={{ color: "#dc2626", fontWeight: 600 }}>{totalRisks} missing-risk-attestation</span></>}
-              {totalPolice > 0 && <> · <span style={{ color: "#2563eb", fontWeight: 600 }}>{totalPolice} police-notified</span></>}
+              {totalPolice > 0 && <> · <span style={{ color: "#4f46e5", fontWeight: 600 }}>{totalPolice} police-notified</span></>}
             </div>
             <button
               type="button"

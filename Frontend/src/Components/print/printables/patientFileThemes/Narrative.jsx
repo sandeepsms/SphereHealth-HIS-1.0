@@ -201,8 +201,8 @@ const COL = {
   body:    "#1f2937",  // running text
   muted:   "#475569",  // sub-heading / minor labels
   faded:   "#94a3b8",  // chips, decorative
-  accent:  "#1e3a8a",  // KEY-fact bold tint
-  head:    "#1e3a8a",  // Day banner + IA signer pill (R7gu / R7gt)
+  accent:  "#3730a3",  // KEY-fact bold tint
+  head:    "#3730a3",  // Day banner + IA signer pill (R7gu / R7gt)
   rule:    "#0f172a",  // section rule
   pillBg:  "#f1f5f9",
   pillTxt: "#475569",
@@ -1344,7 +1344,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                   marginTop: 12,
                   marginBottom: 6,
                   padding: "4px 10px",
-                  background: "#eff6ff",
+                  background: "#eef2ff",
                   borderLeft: `3px solid ${COL.head}`,
                   fontWeight: 700,
                   fontSize: 11,

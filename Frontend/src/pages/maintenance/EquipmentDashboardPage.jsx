@@ -24,7 +24,7 @@ const C = {
   bg: "#f8fafc", card: "#fff", border: "#e2e8f0",
   text: "#0f172a", muted: "#64748b",
   amber: "#d97706", amberL: "#fffbeb",
-  blue: "#1d4ed8", blueL: "#eff6ff",
+  blue: "#4f46e5", blueL: "#eef2ff",
   green: "#16a34a", greenL: "#dcfce7",
   red: "#dc2626", redL: "#fef2f2",
   purple: "#7c3aed", purpleL: "#f5f3ff",
@@ -164,7 +164,7 @@ export default function EquipmentDashboardPage() {
               <div key={i} style={{
                 background: C.card, border: `1.5px solid ${C.border}`,
                 borderRadius: 12, padding: "14px 16px",
-                boxShadow: "0 1px 3px rgba(15,23,42,.04)",
+                boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
                 display: "flex", alignItems: "center", gap: 14,
               }}>
                 <div style={{
@@ -246,7 +246,7 @@ export default function EquipmentDashboardPage() {
         </div>
 
         {/* Table */}
-        <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
+        <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
           <div style={{ padding: "10px 16px", background: C.tealL, borderBottom: `1px solid ${C.teal}30`, display: "flex", alignItems: "center", gap: 8 }}>
             <i className="pi pi-list" style={{ fontSize: 13, color: C.teal }} />
             <span style={{ fontWeight: 800, fontSize: 13, color: C.teal }}>Equipment inventory</span>
@@ -380,7 +380,7 @@ function ActionBtn({ icon, label, color, onClick }) {
 function ModalShell({ title, color, onClose, onSubmit, submitLabel = "Save", submitting, children }) {
   return (
     <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 999,
+      position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 1100,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
     }}>
       <div onClick={ev => ev.stopPropagation()} style={{

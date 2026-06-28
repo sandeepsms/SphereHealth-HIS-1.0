@@ -11,12 +11,27 @@ import "bootstrap/dist/css/bootstrap.css";
 
 // ── Eager-loaded shell (always needed) ──────────────────────────
 import Sidebar from "./Components/Sidebar";
+import LaunchPad from "./Components/LaunchPad";  // R7hr-307: app-launcher grid replaces the sidebar
 import Header from "./Components/Header";
+import BrandTransition, { RouteInterstitial } from "./Components/BrandTransition";
 import { AuthProvider, useAuth, RoleGuard } from "./context/AuthContext";
 // R7hr-223 — app-wide Windows-style keyboard shortcut layer (command palette,
 // quick-nav chords, cheat-sheet, smart action keys). Mounted once in the
 // authenticated shell below. Purely additive — no page logic touched.
 import ShortcutLayer from "./Components/shortcuts/ShortcutLayer";
+// R7hr-267 (USER, 2026-06-22): global voice-to-text dictation. One floating
+// mic mounted in the authenticated shell; dictates into the focused text
+// field app-wide. Purely additive — no existing field/page logic touched.
+import VoiceDictation from "./Components/voice/VoiceDictation";
+// R7hr-273 — global route-transition animator (wraps only the authenticated
+// Routes outlet; print/login branches return before it). Additive.
+import RouteTransition from "./Components/RouteTransition.jsx";
+// R7hr-277 — global confetti burst on any print button (delegated; edits no page).
+import PrintCelebrate from "./Components/anim/PrintCelebrate";
+// R7hr-278 — global ripple on every button/link click (delegated; edits no page).
+import GlobalClickFx from "./Components/anim/GlobalClickFx";
+// R7hr-281 — global iOS-glass modal backdrop (frost content, keep sidebar/header crisp; edits no page).
+import GlassBackdrop from "./Components/anim/GlassBackdrop";
 import { HospitalSettingsProvider } from "./context/HospitalSettingsContext";
 
 // PrimeReact CSS
@@ -70,7 +85,6 @@ const BedMonthlyReportPage = lazy(() => import("./pages/bed/BedMonthlyReportPage
 // (/patient-search). The /patients* routes below redirect there.
 
 // OPD
-const OPList = lazy(() => import("./pages/OPD/OPDList"));
 const OPDDetails = lazy(() => import("./pages/OPD/OPDDetails"));
 
 // Emergency
@@ -108,6 +122,8 @@ const RoomChargesPage = lazy(() => import("./pages/admin/RoomChargesPage"));
 // for the "Equipment Used This Shift" catalogue surfaced on NursingNotes.
 // Same auth gate as RoomChargesPage / DoctorChargesPage.
 const NursingEquipmentPage = lazy(() => import("./pages/admin/NursingEquipmentPage"));
+const BackupRecoveryPage = lazy(() => import("./pages/admin/BackupRecoveryPage")); // R7hr-272
+const AnimationGalleryPage = lazy(() => import("./pages/admin/AnimationGalleryPage")); // R7hr-274
 const ChargeableServices = lazy(() => import("./pages/services/ChargeableServices"));
 // BillingIntelligencePage removed — receptionist Billing Counter is now
 // the single billing surface; AI suggestions are no longer auto-applied.
@@ -130,7 +146,6 @@ const VitalSheet = lazy(() => import("./Components/vital/VitalSheet"));
 
 // Nursing (heavy form pages)
 const NursingNotes = lazy(() => import("./pages/nursing/NursingNotes"));
-const NursingHandoverNotes = lazy(() => import("./pages/nursing/NursingHandoverNotes"));
 const NurseInitialAssessmentPage = lazy(() => import("./pages/nursing/NurseInitialAssessmentPage"));
 const NursingCarePlanPage = lazy(() => import("./pages/nursing/NursingCarePlanPage"));
 const FallRiskAssessmentPage = lazy(() => import("./pages/nursing/FallRiskAssessmentPage"));
@@ -340,7 +355,6 @@ const NABHSignagePage = lazy(() => import("./pages/admin/NABHSignagePage"));
 const UserManagementPage = lazy(() => import("./pages/admin/UserManagementPage"));
 const RolesPage          = lazy(() => import("./pages/admin/RolesPage"));
 const RoleDashboardPage  = lazy(() => import("./pages/RoleDashboardPage"));
-const HISAssistant = lazy(() => import("./Components/ai/HISAssistant"));
 
 
 /* ── Full-page loading spinner while session restores ── */
@@ -349,12 +363,12 @@ function AppLoader() {
     <div style={{
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "center", height: "100vh",
-      background: "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #1e3a8a 100%)",
+      background: "linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #3730a3 100%)",
     }}>
       <div style={{
-        width: 56, height: 56, background: "#1e40af", borderRadius: 14,
+        width: 56, height: 56, background: "#4338ca", borderRadius: 14,
         display: "flex", alignItems: "center", justifyContent: "center",
-        marginBottom: 20, boxShadow: "0 8px 32px rgba(30,64,175,.5)",
+        marginBottom: 20, boxShadow: "0 8px 32px rgba(67,56,202,.5)",
       }}>
         <span style={{ fontSize: 26, fontWeight: 900, color: "#fff" }}>S</span>
       </div>
@@ -367,11 +381,11 @@ function AppLoader() {
 /* ── Lightweight route-change spinner (used by Suspense) ── */
 function RouteLoader() {
   return (
-    <div style={{
+    <div className="hga-enter-fade" style={{
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "center", padding: 60, color: "#64748b",
     }}>
-      <i className="pi pi-spin pi-spinner" style={{ fontSize: 24, color: "#1e40af", marginBottom: 10 }} />
+      <i className="pi pi-spin pi-spinner" style={{ fontSize: 24, color: "#4338ca", marginBottom: 10 }} />
       <div style={{ fontSize: 12 }}>Loading…</div>
     </div>
   );
@@ -451,18 +465,25 @@ function AppLayout({ collapsed, setCollapsed }) {
   /* ── Main app shell (authenticated) ── */
   return (
     <div>
+      <RouteInterstitial />
       <Header />
-      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
+      <LaunchPad />
       <ShortcutLayer />
+      <VoiceDictation />
+      <PrintCelebrate />
+      <GlobalClickFx />
+      <GlassBackdrop collapsed={collapsed} />
       <div
         className={`main-content ${collapsed ? "expanded" : ""}`}
         style={{
           marginTop: 52,
+          marginLeft: 0,           /* R7hr-307: no sidebar — launcher grid instead */
           minHeight: "calc(100vh - 52px)",
           background: "#f8fafc",
         }}
       >
-        <Suspense fallback={<RouteLoader />}>
+        <Suspense fallback={<BrandTransition />}>
+          <RouteTransition>
           <Routes>
             {/* ── Dashboard ─────────────────────────────────────── */}
             <Route path="/dashboard1" element={<Navigate to="/dashboard" replace />} />
@@ -494,9 +515,11 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/nursing-notes" element={
               <RoleGuard action="mar.write"><NursingNotes /></RoleGuard>
             } />
-            <Route path="/nursing-handover-notes" element={
-              <RoleGuard action="mar.write"><NursingHandoverNotes /></RoleGuard>
-            } />
+            {/* R7hr-312 — the old standalone /nursing-handover-notes page was a
+                non-functional prototype (its "Save" only console.logged — it never
+                hit an API). Retired: redirect to the real, API-backed Handover
+                Notes tab inside the nurse patient panel. */}
+            <Route path="/nursing-handover-notes" element={<Navigate to="/nurse-patient-panel?tab=handover" replace />} />
 
             {/* ── OPD ──────────────────────────────────────────── */}
             {/* R7hr-56 — /opd/:UHID (legacy OPDPrint) removed. It rendered
@@ -505,7 +528,10 @@ function AppLayout({ collapsed, setCollapsed }) {
                 from Billing Counter → bill detail → Print, which uses
                 the unified openPrint() + variant-aware template system. */}
             <Route path="/opd/:UHID" element={<Navigate to="/reception-billing" replace />} />
-            <Route path="/opd-visit" element={<OPList />} />
+            {/* R7hr-333 — /opd-visit OPDList page removed (redundant read-only
+                list). The live OPD work surface is /doctor-opd-panel; redirect
+                there so old links/bookmarks don't fall through to the catch-all. */}
+            <Route path="/opd-visit" element={<Navigate to="/doctor-opd-panel" replace />} />
             {/* /opd/new moved to /reception (see below) */}
             <Route path="/opd/new" element={<Navigate to="/reception" replace />} />
             <Route path="/opd/edit/:visitNumber" element={<Navigate to="/reception" replace />} />
@@ -640,6 +666,12 @@ function AppLayout({ collapsed, setCollapsed }) {
             <Route path="/nursing-equipment" element={
               <RoleGuard allow={["Admin", "Accountant"]}><NursingEquipmentPage /></RoleGuard>
             } />
+            {/* R7hr-272 — Admin Backup & Recovery */}
+            <Route path="/backup" element={
+              <RoleGuard action="backup.manage"><BackupRecoveryPage /></RoleGuard>
+            } />
+            {/* R7hr-274 — Animation Gallery (showcase; any authenticated role) */}
+            <Route path="/animation-gallery" element={<AnimationGalleryPage />} />
 
             {/* /billing-intelligence routes removed — receptionist Billing
                 Counter at /reception-billing now handles the full flow. */}
@@ -1189,13 +1221,10 @@ function AppLayout({ collapsed, setCollapsed }) {
             {/* ── Catch-all: redirect to dashboard ── */}
             <Route path="*" element={<Navigate to={homePath} replace />} />
           </Routes>
+          </RouteTransition>
         </Suspense>
       </div>
 
-      {/* ── SphereAI Floating Assistant (lazy) ── */}
-      <Suspense fallback={null}>
-        <HISAssistant />
-      </Suspense>
     </div>
   );
 }

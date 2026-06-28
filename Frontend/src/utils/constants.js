@@ -11,7 +11,7 @@ export const BED_STATUS_COLORS = {
   Occupied: "#ef4444",
   Maintenance: "#f59e0b",
   Blocked: "#6b7280",
-  Reserved: "#3b82f6",
+  Reserved: "#6366f1",
 };
 
 export const BED_STATUS_ICONS = {

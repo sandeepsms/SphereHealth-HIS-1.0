@@ -192,7 +192,7 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
       </div>
 
       {admission && (
-        <div className="ppt-card ppt-card--admission">
+        <div className="ppt-card ppt-card--admission hga-enter-fade">
           <div className="ppt-section-title">Admission Summary</div>
           <div className="ppt-detail-grid">
             <Field label="IPD / Admission No." value={admission.admissionNumber} mono />
@@ -602,7 +602,7 @@ export function IntakeOutputChartTab({ nursingNotes = [] }) {
         <div className="ppt-empty">No intake/output recordings yet.</div>
       ) : (
         <>
-          <div className="ppt-io-totals">
+          <div className="ppt-io-totals hga-stagger">
             <div className="ppt-io-card ppt-io-card--in">
               <div className="ppt-io-label">Total Intake</div>
               <div className="ppt-io-val">{totals.intake} <span>mL</span></div>
@@ -1097,7 +1097,7 @@ export function HandoverNotesTab({ patient, admission, doctorNotes = [], nursing
 
       {/* 1 — Pending bed-transfer (action required) */}
       {pending.length > 0 && (
-        <div className="ppt-card ppt-card--mlc">
+        <div className="ppt-card ppt-card--mlc hga-pop">
           <div className="ppt-section-title">
             <span className="ppt-section-icon">🛏</span>
             Bed Transfer — Handover Pending
@@ -1693,7 +1693,7 @@ function ObservationBlock({ data }) {
 
 function MLCExpanded({ mlc }) {
   return (
-    <div className="ppt-card ppt-card--mlc">
+    <div className="ppt-card ppt-card--mlc hga-pop">
       <div className="ppt-section-title">
         <span className="ppt-section-icon">⚖</span>
         MLR&nbsp;<span className="ppt-mlr">{mlc.mlrNumber}</span>
@@ -1959,15 +1959,15 @@ export function InvestigationsSummaryTab({ admission, patient }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "4px 2px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>🧪 Investigations — this admission</div>
-        <span style={{ fontSize: 11.5, color: "#475569", background: "#eff6ff", border: "1px solid #dbe3ec", borderRadius: 999, padding: "3px 10px" }}>
+        <span style={{ fontSize: 11.5, color: "#475569", background: "#eef2ff", border: "1px solid #dbe3ec", borderRadius: 999, padding: "3px 10px" }}>
           {data?.counts?.days || 0} day{(data?.counts?.days || 0) === 1 ? "" : "s"} · {data?.counts?.panels || 0} lab panel{(data?.counts?.panels || 0) === 1 ? "" : "s"} · {data?.counts?.reports || 0} report{(data?.counts?.reports || 0) === 1 ? "" : "s"}
         </span>
       </div>
 
       {/* The narrative paragraph (same text that flows to the discharge summary) */}
       {para && (
-        <div style={{ ...card, borderLeft: "4px solid #2563eb" }}>
-          <div style={head("#eff6ff", "#1e40af")}>Summary (day-wise + trend)</div>
+        <div style={{ ...card, borderLeft: "4px solid #4f46e5" }}>
+          <div style={head("#eef2ff", "#4338ca")}>Summary (day-wise + trend)</div>
           <p style={{ margin: 0, padding: "12px 16px", fontSize: 13, lineHeight: 1.6, color: "#0f172a", whiteSpace: "pre-wrap" }}>{para}</p>
           <div style={{ padding: "0 16px 10px", fontSize: 10.5, color: "#94a3b8" }}>This is the same summary that auto-fills the discharge summary's Key Investigations.</div>
         </div>
@@ -2147,9 +2147,9 @@ export function PendingInvestigationReportsTab({ admission, patient, canMarkRepo
           <div style={{ fontSize: 11, color: "#166534", fontWeight: 700, letterSpacing: 0.5 }}>REPORTS RECEIVED TODAY</div>
           <div style={{ fontSize: 24, fontWeight: 800, color: "#15803d", marginTop: 2 }}>{completedToday.length}</div>
         </div>
-        <div style={{ background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 8, padding: 12 }}>
-          <div style={{ fontSize: 11, color: "#1e40af", fontWeight: 700, letterSpacing: 0.5 }}>STAT / URGENT WAITING</div>
-          <div style={{ fontSize: 24, fontWeight: 800, color: "#1d4ed8", marginTop: 2 }}>
+        <div style={{ background: "#eef2ff", border: "1px solid #93c5fd", borderRadius: 8, padding: 12 }}>
+          <div style={{ fontSize: 11, color: "#4338ca", fontWeight: 700, letterSpacing: 0.5 }}>STAT / URGENT WAITING</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "#4f46e5", marginTop: 2 }}>
             {pending.filter((o) => ["STAT","Urgent","URGENT"].includes(o.orderDetails?.urgency)).length}
           </div>
         </div>
@@ -2201,7 +2201,7 @@ export function PendingInvestigationReportsTab({ admission, patient, canMarkRepo
                       {(o.orderDetails?.urgency || "Routine").toUpperCase()}
                     </span>
                     <span style={{
-                      background: "#eff6ff", color: "#1d4ed8", border: "1px solid #93c5fd",
+                      background: "#eef2ff", color: "#4f46e5", border: "1px solid #93c5fd",
                       borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700,
                     }}>
                       Investigation

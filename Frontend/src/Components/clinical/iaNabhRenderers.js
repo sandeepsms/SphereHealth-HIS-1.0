@@ -303,7 +303,7 @@ export function renderEducationNeeds(nNabh, H) {
   if (!_isFilled(en.preferredLanguage) && !_isFilled(en.learningStyle)
       && !_isFilled(en.barriersToLearning) && !_isFilled(en.targetAudience)
       && en.canRead == null && en.canWrite == null) return "";
-  return H._section("Education Needs (NABH AAC.6 / PRE.5)", "#1d4ed8", H._grid([
+  return H._section("Education Needs (NABH AAC.6 / PRE.5)", "#4f46e5", H._grid([
     H._kv("Preferred Language", en.preferredLanguage),
     H._kv("Learning Style",     en.learningStyle),
     H._kv("Target Audience",    en.targetAudience),

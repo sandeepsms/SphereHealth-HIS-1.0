@@ -49,7 +49,7 @@ const PrintGalleryPage = () => {
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{
                 width: 38, height: 38, borderRadius: 10,
-                background: "#dbeafe", color: "#1d4ed8",
+                background: "#e0e7ff", color: "#4f46e5",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 fontSize: 16,
               }}>

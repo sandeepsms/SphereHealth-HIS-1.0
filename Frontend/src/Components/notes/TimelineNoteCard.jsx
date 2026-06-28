@@ -30,8 +30,8 @@ import { buildNurseNoteCardHtml }  from "../../pages/nursing/printNurseNote";
 
 /* ── Note-type accent colour palette ────────────────────────────────── */
 const ACCENT = {
-  daily:        { color: "#1d4ed8", tint: "#dbeafe", soft: "#eff6ff", label: "DAILY PROGRESS",      icon: "pi-file-edit" },
-  progress:     { color: "#1d4ed8", tint: "#dbeafe", soft: "#eff6ff", label: "DAILY PROGRESS",      icon: "pi-file-edit" },
+  daily:        { color: "#4f46e5", tint: "#e0e7ff", soft: "#eef2ff", label: "DAILY PROGRESS",      icon: "pi-file-edit" },
+  progress:     { color: "#4f46e5", tint: "#e0e7ff", soft: "#eef2ff", label: "DAILY PROGRESS",      icon: "pi-file-edit" },
   initial:      { color: "#7c3aed", tint: "#ede9fe", soft: "#f5f3ff", label: "INITIAL ASSESSMENT",  icon: "pi-clipboard" },
   assessment:   { color: "#7c3aed", tint: "#ede9fe", soft: "#f5f3ff", label: "INITIAL ASSESSMENT",  icon: "pi-clipboard" },
   procedure:    { color: "#0891b2", tint: "#cffafe", soft: "#ecfeff", label: "PROCEDURE NOTE",      icon: "pi-cog" },
@@ -76,7 +76,7 @@ const accentOf = t => ACCENT[t] || ACCENT.general;
 
 /* ── SubCard colour map (left-rule + tint + label colour) ─────────── */
 const SUB_COLOR = {
-  blue:    { rule: "#1d4ed8", bg: "#eff6ff", label: "#1e40af" },
+  blue:    { rule: "#4f46e5", bg: "#eef2ff", label: "#4338ca" },
   green:   { rule: "#16a34a", bg: "#f0fdf4", label: "#15803d" },
   amber:   { rule: "#d97706", bg: "#fffbeb", label: "#92400e" },
   teal:    { rule: "#0d9488", bg: "#f0fdfa", label: "#0f766e" },
@@ -152,7 +152,7 @@ export function StatusBadge({ status }) {
   const map = {
     draft:    { bg: "#fef3c7", color: "#92400e", border: "#fbbf24", text: "DRAFT" },
     signed:   { bg: "#dcfce7", color: "#166534", border: "#86efac", text: "✓ SIGNED" },
-    amended:  { bg: "#dbeafe", color: "#1e40af", border: "#93c5fd", text: "AMENDED" },
+    amended:  { bg: "#e0e7ff", color: "#4338ca", border: "#93c5fd", text: "AMENDED" },
     revoked:  { bg: "#fee2e2", color: "#991b1b", border: "#fca5a5", text: "REVOKED" },
   };
   const s = map[status] || map.draft;
@@ -377,7 +377,7 @@ export default function TimelineNoteCard({
                 {note.orders.slice(0, 4).map((o, oi) => (
                   <span key={oi} style={{
                     padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600,
-                    background: "#dbeafe", color: "#1d4ed8", border: "1px solid #93c5fd",
+                    background: "#e0e7ff", color: "#4f46e5", border: "1px solid #93c5fd",
                   }}>{(o.instruction || o.drug || "—").slice(0, 36)}</span>
                 ))}
                 {note.orders.length > 4 && (

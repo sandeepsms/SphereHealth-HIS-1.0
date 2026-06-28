@@ -30,7 +30,7 @@
  * Style notes:
  *   • Inline styles only — DoctorOrdersPanel has no shared CSS and we
  *     don't want to drag a stylesheet into a new directory.
- *   • Colours match the panel's tokens: border #d1d5db, focus #2563eb,
+ *   • Colours match the panel's tokens: border #d1d5db, focus #4f46e5,
  *     row hover #f3f4f6.
  *   • Absolutely-positioned popover (no portal) — the parent rows are
  *     already z-stacked and don't clip overflow at the row level, so a
@@ -358,9 +358,9 @@ export default function ServiceMasterAutocomplete({
           autoComplete="off"
           style={inputStyle}
           onFocusCapture={(e) => {
-            e.currentTarget.style.borderColor = "#2563eb";
+            e.currentTarget.style.borderColor = "#4f46e5";
             e.currentTarget.style.boxShadow =
-              "0 0 0 2px rgba(37, 99, 235, 0.18)";
+              "0 0 0 2px rgba(79,70,229, 0.18)";
           }}
           onBlurCapture={(e) => {
             e.currentTarget.style.borderColor = "#d1d5db";
@@ -381,7 +381,7 @@ export default function ServiceMasterAutocomplete({
               height: 12,
               borderRadius: "50%",
               border: "2px solid #cbd5e1",
-              borderTopColor: "#2563eb",
+              borderTopColor: "#4f46e5",
               animation: "sma-spin 0.7s linear infinite",
               pointerEvents: "none",
             }}

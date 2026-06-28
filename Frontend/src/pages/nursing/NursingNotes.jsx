@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { API_ENDPOINTS } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
@@ -19,7 +19,7 @@ import { PendingInvestigationReportsTab } from "../../Components/clinical/Patien
 // R7hr-231 — doctor-assigned required-assessments view (+ Extra Note dropdown)
 import NurseRequiredAssessments from "../../Components/nursing/NurseRequiredAssessments";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
-import IntegratedVitalsPanel from "../../Components/clinical/IntegratedVitalsPanel";
+import VitalSheet from "../../Components/vital/VitalSheet";
 import { saveVitalSheet, getVitalSheet } from "../../Services/vital/vitalService";
 // R7hr-158 — Vitals Trend popup. The old /vitalsView page rendered an empty
 // placeholder; the trend now opens inline as a modal driven by nurse notes.
@@ -54,11 +54,11 @@ const C = {
   green: "#16a34a", greenL: "#dcfce7", greenB: "#bbf7d0",
   amber: "#d97706", amberL: "#fffbeb", amberB: "#fde68a",
   red: "#dc2626", redL: "#fef2f2", redB: "#fecaca",
-  blue: "#1d4ed8", blueL: "#eff6ff", blueB: "#bfdbfe",
+  blue: "#4f46e5", blueL: "#eef2ff", blueB: "#c7d2fe",
   purple: "#7c3aed", purpleL: "#f5f3ff",
   slate: "#1e293b", slateMid: "#334155",
   // legacy aliases kept for NOTE_STYLE / SHIFT_STYLE references
-  accent: "#1d4ed8", accentL: "#eff6ff",
+  accent: "#4f46e5", accentL: "#eef2ff",
   teal: "#0d9488", tealL: "#f0fdfa",
   orange: "#ea580c", orangeL: "#fff7ed",
   pink: "#db2777",
@@ -93,8 +93,9 @@ const MODULES = [
   // is the source of truth.
   { id: "daily",     label: "Daily Assessment",           nabh: "NS.4",         description: "Shift-wise nursing assessment — head-to-toe review",
     icon: "pi-calendar-plus",        border: "#bae6fd", color: "#0369a1", bg: "#e0f2fe" },
-  { id: "vitals",    label: "Vital Signs",                nabh: "NS.4",         description: "BP / HR / RR / SpO₂ / Temp / Pain / GCS / Urine",
-    icon: "pi-heart",                border: "#bfdbfe", color: "#1d4ed8", bg: "#dbeafe" },
+  // R7hr-318 — "Vital Signs" note-type removed: vital charting now lives in
+  // its own top-level "Vital Chart" tile (hourly VitalSheet grid), not inside
+  // Add-a-Note.
   { id: "neuro",     label: "Neuro / GCS",                nabh: "AAC.4",        description: "GCS, pupils, motor, posture (NIHSS for stroke)",
     icon: "pi-eye",                  border: "#d8b4fe", color: C.purple, bg: C.purpleL },
   { id: "pain",      label: "Pain Assessment",            nabh: "AAC.4",        description: "VAS / FLACC / numeric — onset, character, relief",
@@ -216,14 +217,14 @@ const DVT_CONTRAINDICATIONS = [
 function _capriniTier(score) {
   if (score >= 9) return { tier: "Highest", bg: "#fef2f2", color: "#991b1b" };
   if (score >= 5) return { tier: "High",    bg: "#fff7ed", color: "#9a3412" };
-  if (score >= 3) return { tier: "Moderate",bg: "#eff6ff", color: "#1d4ed8" };
+  if (score >= 3) return { tier: "Moderate",bg: "#eef2ff", color: "#4f46e5" };
   if (score >= 1) return { tier: "Low",     bg: "#f8fafc", color: "#475569" };
   return                  { tier: "Very Low", bg: "#f8fafc", color: "#64748b" };
 }
 
 /* ── Note badge styles ── */
 const NOTE_STYLE = {
-  vitals:    { bg: "#dbeafe", color: "#1e40af",  dot: "#3b82f6"  },
+  vitals:    { bg: "#e0e7ff", color: "#4338ca",  dot: "#6366f1"  },
   blood:     { bg: "#fecaca", color: "#9f1239",  dot: "#dc2626"  },
   iv:        { bg: C.tealL,  color: C.teal,     dot: C.teal     },
   wound:     { bg: C.redL,   color: C.red,      dot: C.red      },
@@ -244,7 +245,7 @@ const NOTE_STYLE = {
 };
 
 const SHIFT_STYLE = {
-  morning:   { bg: "#dbeafe", color: "#1e40af" },
+  morning:   { bg: "#e0e7ff", color: "#4338ca" },
   afternoon: { bg: C.amberL,  color: "#92400e" },
   evening:   { bg: "#ede9fe", color: C.purple  },
   night:     { bg: C.slate,   color: "#94a3b8" },
@@ -361,7 +362,7 @@ function FL({ label, children }) {
 /* ── Section card ── */
 function Section({ title, icon, color = C.primary, children }) {
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, marginBottom: 14, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,.04)" }}>
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, marginBottom: 14, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <div style={{ padding: "10px 18px", background: "#f8fafc", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ width: 28, height: 28, borderRadius: 7, background: color + "18", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <i className={`pi ${icon}`} style={{ fontSize: 12, color }} />
@@ -607,7 +608,15 @@ function NursingNotesContent({ selectedPatient }) {
        tile pattern. `activeTile` null → grid view; otherwise the
        matching section expands inline below the patient banner.
        Tile keys: "orders" | "mar" | "addnote" | "equipment" | "timeline" */
-  const [activeTile, setActiveTile] = useState(null);
+  // R7hr-311 — deep-link support: the dashboard "MAR Sheet" quick-action
+  // opens /nursing-notes?tile=mar so it lands straight on the Treatment
+  // Chart — Live MAR section (once a patient is loaded) instead of the
+  // generic tile hub. Any valid tile key works; unknown values fall back
+  // to the grid view.
+  const [searchParams] = useSearchParams();
+  const VALID_TILES = ["orders", "mar", "addnote", "equipment", "pendingreports", "vitalchart"];
+  const tileParam = searchParams.get("tile");
+  const [activeTile, setActiveTile] = useState(VALID_TILES.includes(tileParam) ? tileParam : null);
 
   /* R7hr-156 — `showReport` + the NursingPatientReport modal were removed.
      If a nursing print is needed in future, route through Complete File /
@@ -1688,8 +1697,8 @@ function NursingNotesContent({ selectedPatient }) {
                   title: "Equipment Used This Shift",
                   subtitle: "Auto-billed disposables, IV lines, monitoring",
                   icon: "pi-box",
-                  color: "#2563eb",
-                  tint: "#dbeafe",
+                  color: "#4f46e5",
+                  tint: "#e0e7ff",
                   badges: [{ label: "Auto-billed", tone: "info" }],
                 },
                 // R7hr-143 — Pending Investigation Reports tile. Surfaced
@@ -1708,20 +1717,13 @@ function NursingNotesContent({ selectedPatient }) {
                   badges: [{ label: "Open", tone: "warn" }],
                 },
                 {
-                  id: "timeline",
-                  title: "Nursing Notes Timeline",
-                  subtitle: "All historical care notes + filters",
-                  icon: "pi-history",
-                  color: "#ea580c",
-                  tint: "#ffedd5",
-                  badges: [
-                    notes.length > 0
-                      ? { label: `${notes.length} recorded`, tone: "info" }
-                      : { label: "No notes yet", tone: "warn" },
-                    notes.length > 0 && notes[0]?.shift
-                      ? { label: `Last: ${notes[0].shift}`, tone: "accent" }
-                      : null,
-                  ].filter(Boolean),
+                  id: "vitalchart",
+                  title: "Vital Chart",
+                  subtitle: "Hourly vital-signs charting · BP / Pulse / Temp / SpO₂ / GCS",
+                  icon: "pi-heart",
+                  color: "#4338ca",
+                  tint: "#eef2ff",
+                  badges: [{ label: "Hourly", tone: "info" }, { label: "NABH NS.4", tone: "accent" }],
                 },
                 /* ── R7be — relocated from patient-header action buttons ──
                    Care Plan / Vitals Trend / IPD Assessment / Print&PDF used
@@ -2060,7 +2062,7 @@ function NursingNotesContent({ selectedPatient }) {
                   Care Note" tile is already lockedwhen the Nursing Initial
                   Assessment is not yet filed, so this picker only renders
                   when the gate is OFF. Modules are always clickable here. */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+              <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
                 {MODULES.map(m => (
                     <button
                       key={m.id}
@@ -2334,8 +2336,20 @@ function NursingNotesContent({ selectedPatient }) {
             );
           })()}
 
-          {/* ── Notes Timeline ── */}
-          {activeTile === "timeline" && (
+          {/* ── Vital Chart (hourly grid) — R7hr-318. Replaces the old "Nursing
+                Notes Timeline" tile. Renders the same premium VitalSheet grid
+                full-width in the hub (moved here from the Add-a-Note modal). ── */}
+          {activeTile === "vitalchart" && (
+            <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 16, padding: "18px 20px", boxShadow: '0 2px 10px rgba(0,0,0,.04)' }}>
+              <VitalSheet uhid={patient?.uhid || patient?.UHID || searchUHID} embedded />
+            </div>
+          )}
+
+          {/* ── Notes Timeline — R7hr-318: tile removed from the hub; this view
+                is now unreachable (kept dead, not deleted, to avoid a 400-line
+                removal in this critical file). Historical notes remain visible
+                in the Nurse Patient Panel → Nursing Notes tab. ── */}
+          {false && (
           <div id="nursing-notes-timeline" style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,.04)' }}>
             {/* Timeline header */}
             <div style={{ background: 'linear-gradient(to right, #f0fdfa, #f8fafc)', borderBottom: `1px solid ${C.border}`, padding: '14px 22px' }}>
@@ -2354,7 +2368,7 @@ function NursingNotesContent({ selectedPatient }) {
                 <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
                   {[
                     { key: 'All',     label: 'All',       color: C.primary },
-                    { key: 'vitals',  label: '❤ Vitals',  color: '#1d4ed8' },
+                    { key: 'vitals',  label: '❤ Vitals',  color: '#4f46e5' },
                     { key: 'blood',   label: '🩸 Blood',   color: '#9f1239' },
                     { key: 'iv',      label: '💉 IV',      color: C.teal    },
                     { key: 'wound',   label: '🩹 Wound',   color: C.red     },
@@ -2811,19 +2825,6 @@ function NursingNotesContent({ selectedPatient }) {
             {/* Modal body */}
             <div style={{ padding: "20px 22px" }}>
 
-              {/* ── Vitals (NABH NS.3) — Integrated VitalSheet Panel ── */}
-              {activeModal === "vitals" && (
-                <IntegratedVitalsPanel
-                  UHID={patient?.uhid || patient?.UHID || searchUHID}
-                  nurseName={user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim()}
-                  onVitalsChange={v => {
-                    setVitals(v);
-                    const sbp = v.bp_sys || "";
-                    const dbp = v.bp_dia || "";
-                    setMews(p => ({ ...p, rr: v.rr || p.rr, spo2: v.spo2 || p.spo2, temp: v.temp || p.temp, sbp: sbp || p.sbp, dbp: dbp || p.dbp, hr: v.pulse || p.hr }));
-                  }}
-                />
-              )}
 
               {/* ── Neuro / GCS (NABH COP.2) ── */}
               {activeModal === "neuro" && (
@@ -3163,7 +3164,7 @@ function NursingNotesContent({ selectedPatient }) {
                             const isIn = r.direction === "IN";
                             const srcBadge = {
                               MAR: { label: "MAR", bg: "#fce7f3", color: "#be185d" },
-                              INFUSION_CRON: { label: "Infusion (auto)", bg: "#dbeafe", color: "#1d4ed8" },
+                              INFUSION_CRON: { label: "Infusion (auto)", bg: "#e0e7ff", color: "#4f46e5" },
                               MANUAL: { label: "Manual", bg: "#f1f5f9", color: "#475569" },
                               BLOOD_TRANSFUSION: { label: "Blood", bg: "#fef2f2", color: "#dc2626" },
                               ORAL_INTAKE: { label: "Oral", bg: "#fef3c7", color: "#a16207" },
@@ -3256,7 +3257,7 @@ function NursingNotesContent({ selectedPatient }) {
 
                     {/* ── Manual Intake / Output ── */}
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                      <div style={{ background:"#eff6ff", border:`1px solid ${C.blueB}`, borderRadius:10, padding:"10px 14px" }}>
+                      <div style={{ background:"#eef2ff", border:`1px solid ${C.blueB}`, borderRadius:10, padding:"10px 14px" }}>
                         <div style={{ fontSize:11, fontWeight:700, color:C.blue, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Intake</div>
                         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                           {[{k:"oral",l:"Oral (mL)"},{k:"ivFluids",l:"IV Drip Fluids (mL)"},{k:"bloodProducts",l:"Blood Products (mL)"}].map(f=>(

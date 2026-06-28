@@ -84,7 +84,7 @@ const PrintPreviewPage = ({
                 title={o.label}
                 style={{
                   padding: "5px 12px", border: "none",
-                  background: active ? "#1d4ed8" : "#fff",
+                  background: active ? "#4f46e5" : "#fff",
                   color: active ? "#fff" : "#475569",
                   fontWeight: 700, fontSize: 11, cursor: "pointer",
                   letterSpacing: ".3px",

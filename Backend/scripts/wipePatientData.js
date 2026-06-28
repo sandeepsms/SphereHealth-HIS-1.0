@@ -180,6 +180,10 @@ function loadModels() {
     "../models/Clinical/WardTaskModel",
     "../models/Clinical/housekeepingModels",
     "../models/MLC/MLCReportModel",
+    // R7hr-DEMO — MedicalCertificate was missing from the wipe set; orphan
+    // certs were leaking across wipe cycles. Add the model load + collection
+    // entry below so the next wipe catches them.
+    "../models/Clinical/MedicalCertificateModel",
     "../models/CounterModel",
     "../models/Vitals/vitalSheetModel",
     "../models/vital/vital",
@@ -229,6 +233,7 @@ const WIPE_MODELS = [
   "VitalSheet",
   "InvestigationOrder",
   "MLCReport", "VisitorPass",
+  "MedicalCertificate",
   // Pharmacy transactional
   "PharmacyIndent", "PharmacySale",
   "PharmacyVendorReturn", "PharmacyStockTake",
@@ -370,22 +375,45 @@ async function main() {
     log("  · Beds model not registered, skip");
   }
 
-  // ── Phase 3: Reset PharmacyDrugBatch.remaining = received ──
-  log("\n─── Phase 3: Restore pharmacy stock (batch.remaining = received) ───\n");
+  // ── Phase 3: Reset PharmacyDrugBatch.remaining = quantityIn ──
+  // R7hr-DEMO-FIX — The PharmacyDrugBatch schema fields are
+  //   quantityIn (received qty), quantityOut (dispensed),
+  //   vendorReturned, and the canonical computed `remaining`
+  // (refreshed by the pre("save") hook as quantityIn - quantityOut -
+  //  vendorReturned). The pre-fix block here used a non-existent
+  // `received` field, so `$received` evaluated to `undefined` and
+  // 1064/1064 batches ended up with `remaining: undefined`. Every
+  // FEFO stock read in the system then returned 0 (Dispense All,
+  // Indent Raise, OPD Rx auto-match, IPD med fan-out — everywhere).
+  //
+  // Schema-correct restore: recompute remaining via the canonical
+  // formula AND zero out quantityOut + vendorReturned so the demo
+  // starts with full received stock and no stale dispense counters.
+  log("\n─── Phase 3: Restore pharmacy stock (remaining = quantityIn - quantityOut - vendorReturned) ───\n");
   const DrugBatch = mongoose.models.PharmacyDrugBatch;
   if (DrugBatch) {
     const batchCount = await DrugBatch.estimatedDocumentCount();
     if (APPLY) {
-      // received is a Number on the schema. We use updateMany with an
-      // aggregation pipeline so each row sets remaining to its OWN
-      // received qty (not a fixed value).
-      const r = await DrugBatch.updateMany(
+      const r = await DrugBatch.collection.updateMany(
         {},
-        [{ $set: { remaining: "$received" } }],
+        [{ $set: {
+          remaining: { $max: [0, { $subtract: [
+            { $ifNull: ["$quantityIn", 0] },
+            { $add: [
+              { $ifNull: ["$quantityOut", 0] },
+              { $ifNull: ["$vendorReturned", 0] }
+            ]}
+          ]}]},
+          quantityOut: 0,
+          vendorReturned: 0,
+        }}],
       );
-      log(`  · DrugBatch remaining=received reset — ${r.modifiedCount}/${batchCount} rows`);
+      // Self-test: ensure no batch was left with remaining undefined.
+      const broken = await DrugBatch.collection.countDocuments({ remaining: { $exists: false } });
+      log(`  · DrugBatch remaining restored — ${r.modifiedCount}/${batchCount} rows · undefined leftovers: ${broken}`);
+      if (broken > 0) log("  · \x1b[33mWARN: some batches did not get a remaining value — check the pipeline\x1b[0m");
     } else {
-      log(`  · ${batchCount} drug batches would have remaining reset to received`);
+      log(`  · ${batchCount} drug batches would have remaining recomputed (quantityIn - quantityOut - vendorReturned) + counters zero'd`);
     }
   } else {
     log("  · PharmacyDrugBatch model not registered, skip");

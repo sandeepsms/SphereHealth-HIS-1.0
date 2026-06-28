@@ -84,7 +84,7 @@ const DayBookPrint = ({ settings = {}, receipt = {} }) => {
         {/* R7eo-A — Multi-Counter chip when payload aggregates >1 counter */}
         {isMultiCounter && (
           <span style={{
-            background: "#1e40af", color: "#fff",
+            background: "#4338ca", color: "#fff",
             padding: "2px 9px", borderRadius: 999,
             fontSize: 9.5, fontWeight: 800,
             letterSpacing: ".5px", textTransform: "uppercase",

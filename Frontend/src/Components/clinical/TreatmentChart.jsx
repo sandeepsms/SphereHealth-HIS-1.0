@@ -221,7 +221,7 @@ const FREQ_TIMES = {
 const STATUS_CFG = {
   pending:       { label: "Pending",       icon: "⏳", color: "#d97706", bg: "#fffbeb", border: "#fde68a" },
   given:         { label: "Given ✓",       icon: "✅", color: "#15803d", bg: "#dcfce7", border: "#86efac" },
-  hold:          { label: "Hold ⏸",        icon: "⏸", color: "#1d4ed8", bg: "#dbeafe", border: "#93c5fd" },
+  hold:          { label: "Hold ⏸",        icon: "⏸", color: "#4f46e5", bg: "#e0e7ff", border: "#93c5fd" },
   not_available: { label: "Not Available", icon: "📦", color: "#7c3aed", bg: "#f5f3ff", border: "#c4b5fd" },
   delayed:       { label: "Delayed ⏰",    icon: "⏰", color: "#ea580c", bg: "#fff7ed", border: "#fed7aa" },
   skipped:       { label: "Skipped",       icon: "⏭", color: "#64748b", bg: "#f1f5f9", border: "#e2e8f0" },
@@ -294,11 +294,11 @@ const FREQ_INTERVALS = { "OD": 24, "BD": 12, "TDS": 8, "QID": 6, "Q4H": 4, "Q6H"
 /* ── Design tokens ── */
 const C = {
   bg: "#f8fafc", card: "#ffffff", border: "#e2e8f0", text: "#0f172a", muted: "#64748b",
-  primary: "#1e40af", primaryL: "#eff6ff", primaryMid: "#2563eb",
+  primary: "#4338ca", primaryL: "#eef2ff", primaryMid: "#4f46e5",
   green: "#15803d", greenL: "#dcfce7", greenB: "#86efac",
   amber: "#d97706", amberL: "#fffbeb", amberB: "#fde68a",
   red: "#dc2626", redL: "#fef2f2", redB: "#fecaca",
-  blue: "#1d4ed8", blueL: "#dbeafe", blueB: "#93c5fd",
+  blue: "#4f46e5", blueL: "#e0e7ff", blueB: "#93c5fd",
   purple: "#7c3aed", purpleL: "#f5f3ff", purpleB: "#c4b5fd",
   teal: "#0d9488", tealL: "#f0fdfa", tealB: "#99f6e4",
   orange: "#ea580c", orangeL: "#fff7ed",
@@ -1698,7 +1698,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                                 ) : (
                                   <>
                                     <button onClick={() => openDocAction(order, "modify")}
-                                      style={{ ...DOCBTN, background: "#eff6ff", color: "#1d4ed8", border: "1.5px solid #bfdbfe" }}>
+                                      style={{ ...DOCBTN, background: "#eef2ff", color: "#4f46e5", border: "1.5px solid #c7d2fe" }}>
                                       <i className="pi pi-pencil" style={{ fontSize: 9 }} /> Modify
                                     </button>
                                     {order.status === "OnHold" ? (
@@ -2266,7 +2266,7 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                           ) : (
                             <>
                               <button onClick={() => openDocAction(order, "rate")}
-                                style={{ ...ACTBTN, background: "#eff6ff", color: "#1d4ed8", border: "1.5px solid #bfdbfe" }}>
+                                style={{ ...ACTBTN, background: "#eef2ff", color: "#4f46e5", border: "1.5px solid #c7d2fe" }}>
                                 <i className="pi pi-arrows-v" style={{ fontSize: 10 }} /> Change Rate
                               </button>
                               <button onClick={() => openDocAction(order, "modify")}

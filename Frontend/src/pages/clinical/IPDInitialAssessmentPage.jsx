@@ -27,11 +27,16 @@ import ClinicalExaminationCard, { clinExamSummary } from "../../Components/clini
 // IV bag builder UX instead of the legacy hand-built textarea/table.
 import PrescriptionPanel from "../../Components/clinical/PrescriptionPanel";
 import InfusionPanel     from "../../Components/clinical/InfusionPanel";
+// R7hr-174 (USER, 2026-06-09): auto-print Valuables Handover slip on
+// Nurse IA sign when N15.receiptIssued === true. Purely additive — the
+// existing sign+save+gate-flag flow is unchanged; this only opens an
+// extra print popup if the receipt-issued checkbox is ticked.
+import { openPrint } from "../../Components/print/openPrint";
 
 /* ── Design tokens ── */
 const C = {
   bg: "#f0f2f5", card: "#fff", border: "#e2e6ea", text: "#1a1d23", muted: "#6b7280",
-  accent: "#1e40af", accentL: "#eff6ff",
+  accent: "#4338ca", accentL: "#eef2ff",
   green: "#16a34a", greenL: "#dcfce7",
   red: "#dc2626", redL: "#fef2f2",
   amber: "#d97706", amberL: "#fffbeb",
@@ -46,7 +51,7 @@ const C = {
 function Section({ title, icon, color = C.accent, badge, children, defaultOpen = true, disabled = false }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${color}25`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
+    <div className="hga-enter" style={{ background: C.card, border: `1.5px solid ${color}25`, borderRadius: 14, overflow: "hidden", marginBottom: 14, boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <div onClick={() => setOpen(o => !o)} style={{
         padding: "10px 18px", background: color + "08", borderBottom: open ? `1px solid ${color}18` : "none",
         display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer",
@@ -2289,7 +2294,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
     const bodyCss = `
       <style>
         .block{margin-top:10px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
-        .block-title{display:flex;justify-content:space-between;align-items:center;background:#e0e7ff;padding:6px 12px;font-size:12px;font-weight:800;color:#1e3a8a;border-left:4px solid #4f46e5}
+        .block-title{display:flex;justify-content:space-between;align-items:center;background:#e0e7ff;padding:6px 12px;font-size:12px;font-weight:800;color:#3730a3;border-left:4px solid #4f46e5}
         .badge{background:#fff;color:#4f46e5;border:1px solid #c7d2fe;padding:1px 7px;border-radius:4px;font-size:9px;font-weight:700;letter-spacing:.3px}
         .block-body{padding:8px 12px}
         .grid{display:grid;gap:4px 12px}
@@ -2602,6 +2607,37 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         } catch (_) { /* non-fatal */ }
       }
       toast.success(sign ? "Assessment signed & submitted ✓" : "Draft saved");
+      // R7hr-174 (USER, 2026-06-09): Auto-print the Valuables & Belongings
+      // handover slip whenever the nurse signs the IA AND the
+      // "Receipt issued to patient/family" checkbox in N15 is ticked.
+      // Family/patient countersigns the printed slip to confirm receipt
+      // of jewellery/cash/documents — NABH ROP + PSQ compliance. We fire
+      // best-effort (try/catch) so a print failure never blocks the
+      // signed-IA toast/lock the nurse is waiting on.
+      if (sign && section === "nursing" && valuables?.receiptIssued) {
+        try {
+          const slipNo = `VAL-${String(admission?._id || patient?.UHID || "ADM").slice(-6).toUpperCase()}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
+          openPrint("valuables-handover", {
+            slipNo,
+            patientName:    [patient?.title, patient?.fullName].filter(Boolean).join(" "),
+            uhid:           patient?.UHID || "",
+            ipdNo:          admission?.admissionNumber || "",
+            gender:         patient?.gender || "",
+            age:            patient?.age || "",
+            contactNumber:  patient?.contactNumber || patient?.mobile || "",
+            date:           new Date().toISOString(),
+            admissionDate:  admission?.admissionDate || "",
+            wardName:       admission?.wardName || "",
+            bedNumber:      admission?.bedNumber || "",
+            doctor:         admission?.attendingDoctor || "",
+            status:         valuables.status,
+            handedTo:       valuables.handedTo,
+            items:          valuables.items,
+            nurseName:      nurseName || user?.fullName || user?.name || "Nursing Staff",
+            nurseEmployeeId: user?.employeeId || "",
+          });
+        } catch (_) { /* print is best-effort; never block IA sign */ }
+      }
       if (sign) {
         clearDraft();
         // R7hr-98 — IMMEDIATELY lock the IA in-session so the next
@@ -4572,14 +4608,14 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               {/* Working (blue) — evolving impression */}
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#3b82f6", flexShrink: 0 }} />
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: ".6px" }}>Working Dx</span>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#6366f1", flexShrink: 0 }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#4f46e5", textTransform: "uppercase", letterSpacing: ".6px" }}>Working Dx</span>
                 </div>
                 <textarea
                   value={workingDx}
                   onChange={e => setWorkingDx(e.target.value)}
                   placeholder="Refined after labs / imaging"
-                  style={{ width: "100%", border: "1.5px solid #93c5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#eff6ff", boxSizing: "border-box", minHeight: 64, resize: "vertical" }}
+                  style={{ width: "100%", border: "1.5px solid #93c5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13, color: "#1e293b", outline: "none", background: "#eef2ff", boxSizing: "border-box", minHeight: 64, resize: "vertical" }}
                 />
               </div>
               {/* Final (green) — confirmed at discharge */}
@@ -4635,8 +4671,8 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                   onClick={() => setPatientStatus(p => p === s ? "" : s)}
                   style={{
                     padding: "4px 13px", borderRadius: 20,
-                    border: `1.5px solid ${patientStatus === s ? "#2563eb" : C.border}`,
-                    background: patientStatus === s ? "#2563eb" : "white",
+                    border: `1.5px solid ${patientStatus === s ? "#4f46e5" : C.border}`,
+                    background: patientStatus === s ? "#4f46e5" : "white",
                     color: patientStatus === s ? "white" : C.muted,
                     fontFamily: "inherit", fontSize: 11, fontWeight: 700,
                     cursor: "pointer", transition: "all .15s ease",

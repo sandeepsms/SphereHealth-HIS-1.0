@@ -1390,6 +1390,19 @@ function printAdvanceReceipt(advance, patient) {
     receiptNo:    advance.receiptNumber,
     patientName:  [patient.title, patient.fullName].filter(Boolean).join(" "),
     uhid:         patient.UHID,
+    // PD-01 — Forward the patient demographic strip (gender / age /
+    // contact / address / payer) so the AdvanceReceipt left column
+    // populates instead of "—".
+    gender:           patient.gender || "",
+    age:              patient.age || "",
+    contactNumber:    patient.contactNumber || patient.mobile || "",
+    // PD-01 (sprint review fix): use the module-level fullAddr helper (L70)
+    // which composes completeAddress/city/district/state/pincode and never
+    // emits the raw object ([object Object]).
+    completeAddress:  fullAddr(patient.address),
+    // PD-01 (sprint review fix): patient.tpa is a populated object on this page
+    // (tpaName||name, mirrors the TPA field at L1019); resolve it properly.
+    payer:            advance.payer || patient.tpa?.tpaName || patient.tpa?.name || "Self",
     // R7en-2: surface IPD No / Bed / Ward / Department / Doctor on the
     // advance receipt — they previously printed blank because callers
     // only wired the admission number.
@@ -1414,7 +1427,9 @@ function printAdvanceReceipt(advance, patient) {
   // Open in a new window so the existing app session stays open
   // behind the print dialog. Width/height match the printable's A5
   // default layout — toolbar lets the user upsize to A4 if needed.
-  window.open("/print/advance-receipt", "_blank", "noopener,noreferrer,width=900,height=1100");
+  // R7hr-172: NO `noopener` — same-origin print popup needs the parent
+  // tab's sessionStorage (JWT) to survive App.jsx's auth gate.
+  window.open("/print/advance-receipt", "_print_advance-receipt", "popup=yes,width=900,height=1100,resizable=yes,scrollbars=yes");
 }
 
 /* ═══════════════════════════════════════════════════════════════

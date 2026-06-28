@@ -66,7 +66,7 @@ const C = {
   green: "#16a34a", greenL: "#dcfce7",
   emerald: "#059669", emeraldL: "#d1fae5",
   teal: "#0d9488", tealL: "#ccfbf1",
-  blue: "#1d4ed8", blueL: "#eff6ff",
+  blue: "#4f46e5", blueL: "#eef2ff",
   slate: "#475569", slateL: "#f1f5f9",
 };
 
@@ -959,7 +959,7 @@ export default function ICUBundlesPage() {
             <div key={def.key} style={{
               background: C.card, border: `1.5px solid ${C.border}`,
               borderRadius: 12, marginBottom: 12, overflow: "hidden",
-              boxShadow: "0 1px 3px rgba(15,23,42,.04)",
+              boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
             }}>
               {/* Card header */}
               <div

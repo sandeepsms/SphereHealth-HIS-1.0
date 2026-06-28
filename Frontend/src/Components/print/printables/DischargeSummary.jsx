@@ -178,7 +178,7 @@ const DischargeSummary = ({ settings = {}, receipt = {} }) => {
           still carries the at-a-glance LOS context. */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10, fontSize: 10.5 }}>
         {r.totalDays != null && (
-          <span style={{ padding: "3px 9px", borderRadius: 6, background: "#eff6ff", color: "#1e3a8a", fontWeight: 700 }}>
+          <span style={{ padding: "3px 9px", borderRadius: 6, background: "#eef2ff", color: "#3730a3", fontWeight: 700 }}>
             Length of Stay: {r.totalDays} day{r.totalDays === 1 ? "" : "s"}
           </span>
         )}

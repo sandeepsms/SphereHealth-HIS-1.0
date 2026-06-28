@@ -357,8 +357,8 @@ function BrandingTab({ form, upd, updRaw }) {
         </Row>
         <Row label="Accent colour (rules, badges)">
           <div className="hcw-colorrow">
-            <input type="color" className="hcw-color" value={form.printAccentColor || "#1d4ed8"} onChange={upd("printAccentColor")} />
-            <input className="hcw-input hcw-input--mono" value={form.printAccentColor || ""} onChange={upd("printAccentColor")} placeholder="#1d4ed8" />
+            <input type="color" className="hcw-color" value={form.printAccentColor || "#4f46e5"} onChange={upd("printAccentColor")} />
+            <input className="hcw-input hcw-input--mono" value={form.printAccentColor || ""} onChange={upd("printAccentColor")} placeholder="#4f46e5" />
           </div>
         </Row>
       </Section>
@@ -386,8 +386,8 @@ function BrandingTab({ form, upd, updRaw }) {
                   onClick={upd("patientFilePrintTheme", t.key)}
                   style={{
                     textAlign: "left",
-                    border: selected ? "2px solid var(--hcw-pv-accent, #1d4ed8)" : "1.5px solid #e2e8f0",
-                    background: selected ? "#eff6ff" : "#fff",
+                    border: selected ? "2px solid var(--hcw-pv-accent, #4f46e5)" : "1.5px solid #e2e8f0",
+                    background: selected ? "#eef2ff" : "#fff",
                     borderRadius: 10,
                     padding: "12px 14px",
                     cursor: "pointer",
@@ -403,7 +403,7 @@ function BrandingTab({ form, upd, updRaw }) {
                     {selected && (
                       <span style={{
                         fontSize: 9, fontWeight: 800, padding: "2px 8px", borderRadius: 999,
-                        background: "var(--hcw-pv-accent, #1d4ed8)", color: "#fff", letterSpacing: 0.5,
+                        background: "var(--hcw-pv-accent, #4f46e5)", color: "#fff", letterSpacing: 0.5,
                       }}>DEFAULT</span>
                     )}
                   </div>
@@ -419,7 +419,7 @@ function BrandingTab({ form, upd, updRaw }) {
                       onClick={(e) => e.stopPropagation()}
                       style={{
                         fontSize: 10.5, fontWeight: 700,
-                        color: "var(--hcw-pv-accent, #1d4ed8)",
+                        color: "var(--hcw-pv-accent, #4f46e5)",
                         textDecoration: "none",
                       }}
                     >
@@ -434,7 +434,7 @@ function BrandingTab({ form, upd, updRaw }) {
       </Section>
 
       <Section title="Live preview" icon="pi-eye" color="blue">
-        <div className="hcw-preview" style={{ "--hcw-pv-bg": form.printHeaderColor || "#1e293b", "--hcw-pv-accent": form.printAccentColor || "#1d4ed8" }}>
+        <div className="hcw-preview" style={{ "--hcw-pv-bg": form.printHeaderColor || "#1e293b", "--hcw-pv-accent": form.printAccentColor || "#4f46e5" }}>
           <div className="hcw-preview__head">
             {form.logo
               ? (

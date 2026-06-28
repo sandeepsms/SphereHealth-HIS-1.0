@@ -52,7 +52,7 @@ const ReferralLetter = ({ settings, receipt = {} }) => {
 
         {r.clinicalSummary && (
           <div style={{ margin: "0 0 12px" }}>
-            <strong style={{ color: "var(--pr-accent-color, #1d4ed8)" }}>Clinical Summary</strong>
+            <strong style={{ color: "var(--pr-accent-color, #4f46e5)" }}>Clinical Summary</strong>
             <div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{r.clinicalSummary}</div>
           </div>
         )}
@@ -65,7 +65,7 @@ const ReferralLetter = ({ settings, receipt = {} }) => {
 
         {Array.isArray(r.investigationsDone) && r.investigationsDone.length > 0 && (
           <div style={{ margin: "0 0 12px" }}>
-            <strong style={{ color: "var(--pr-accent-color, #1d4ed8)" }}>Investigations Done</strong>
+            <strong style={{ color: "var(--pr-accent-color, #4f46e5)" }}>Investigations Done</strong>
             <ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
               {r.investigationsDone.map((inv, i) => (
                 <li key={i}>{inv.name || inv} {inv.result && <span className="muted">— {inv.result}</span>}</li>
@@ -76,14 +76,14 @@ const ReferralLetter = ({ settings, receipt = {} }) => {
 
         {r.treatmentGiven && (
           <div style={{ margin: "0 0 12px" }}>
-            <strong style={{ color: "var(--pr-accent-color, #1d4ed8)" }}>Treatment Given</strong>
+            <strong style={{ color: "var(--pr-accent-color, #4f46e5)" }}>Treatment Given</strong>
             <div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{r.treatmentGiven}</div>
           </div>
         )}
 
         {r.reasonForReferral && (
           <div style={{ margin: "0 0 12px" }}>
-            <strong style={{ color: "var(--pr-accent-color, #1d4ed8)" }}>Reason for Referral</strong>
+            <strong style={{ color: "var(--pr-accent-color, #4f46e5)" }}>Reason for Referral</strong>
             <div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{r.reasonForReferral}</div>
           </div>
         )}
@@ -97,10 +97,10 @@ const ReferralLetter = ({ settings, receipt = {} }) => {
               fontSize: 11, fontWeight: 800, letterSpacing: ".3px",
               background: r.urgency === "Emergency" ? "#fee2e2"
                 : r.urgency === "Urgent" ? "#fef3c7"
-                : "#dbeafe",
+                : "#e0e7ff",
               color: r.urgency === "Emergency" ? "#991b1b"
                 : r.urgency === "Urgent" ? "#92400e"
-                : "#1e40af",
+                : "#4338ca",
               border: `1.5px solid currentColor`,
             }}>
               {r.urgency.toUpperCase()} REFERRAL

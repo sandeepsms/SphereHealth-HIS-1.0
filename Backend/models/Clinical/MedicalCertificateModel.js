@@ -97,6 +97,18 @@ const MedicalCertificateSchema = new mongoose.Schema(
       default: "",
     },
 
+    // ── R7hr-169-FIX — Admission ref persist (IPD certs) ─────────
+    // Front-end MedicalCertificatePage.jsx submits admissionNumber +
+    // admissionId on IPD-context certs so the printable Visit Type
+    // fallback chain ((c.admissionNumber || c.admissionId || c.admission)
+    // ? "IPD" : "") and the MedCertsTab inline grid (R7hr-169) can show
+    // "IPD-26-NN" instead of "—". Pre-fix the controller whitelist
+    // dropped these fields silently; this adds them as first-class
+    // schema members so they round-trip cleanly. Additive — does not
+    // change any existing serialised cert.
+    admissionId:     { type: mongoose.Schema.Types.ObjectId, ref: "Admission", default: null },
+    admissionNumber: { type: String, trim: true, default: "" },
+
     // ── Identity ────────────────────────────────────────────────
     certNumber: {
       type: String,

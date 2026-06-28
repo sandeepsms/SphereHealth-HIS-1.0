@@ -6,8 +6,12 @@
 // Hospital logo + name + address now live entirely in the shell.
 //
 // Patient-strip mapping (per Track-A contract):
-//   left:  Receipt No · UMID · Patient Name · Gender/Age · Contact · Address
+//   left:  Receipt No · UHID · Patient Name · Gender/Age · Contact · Address
 //   right: Receipt Date · IP No · Admission Date · Payer · Doctor · Specialization
+//
+// PD-01 — Rename "UMID" → "UHID" everywhere on the receipt label set so
+// the field matches the rest of the system (every screen, every print,
+// every API contract calls it UHID). Pure label edit.
 //
 // R7bh-F7 / R7bg-7-HIGH-1: 2026 GST circular — advances ≥ ₹50,000 must
 // capture the customer's GSTIN on the receipt (B2B threshold). The
@@ -55,7 +59,7 @@ const AdvanceReceipt = ({ settings = {}, receipt = {} }) => {
 
   const patientLeft = [
     { label: "Receipt No",   value: receiptNo },
-    { label: "UMID",         value: receipt.uhid || "—" },
+    { label: "UHID",         value: receipt.uhid || "—" },
     { label: "Patient Name", value: receipt.patientName || "—" },
     { label: "Gender/Age",   value: genderAge || "—" },
     { label: "Contact",      value: receipt.contactNumber || receipt.mobile || "—" },

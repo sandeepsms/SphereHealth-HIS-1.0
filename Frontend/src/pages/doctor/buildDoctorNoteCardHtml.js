@@ -118,7 +118,7 @@ const buildBuilder = (note, opts = {}) => {
 
   const BUILDERS = {
     admission: () => {
-      const identity = _section("Admission Identity", "#1d4ed8", _grid([
+      const identity = _section("Admission Identity", "#4f46e5", _grid([
         _kv("Mode of Admission", nd.modeOfAdmission),
         _kv("Brought By", nd.broughtBy),
         _kv("First Contact", nd.firstContactTime),
@@ -215,7 +215,7 @@ const buildBuilder = (note, opts = {}) => {
         ? _section("Course in Hospital", "#475569", _narr([note.soap?.subjective, note.soap?.objective, note.soap?.assessment].filter(Boolean).join("\n\n")))
         : "";
       const meds = nd.dischargeMedications
-        ? _section("Discharge Medications", "#1d4ed8", _narr(nd.dischargeMedications))
+        ? _section("Discharge Medications", "#4f46e5", _narr(nd.dischargeMedications))
         : "";
       const advice = note.soap?.plan ? _section("Discharge Instructions", "#0d9488", _narr(note.soap.plan)) : "";
       return meta + course + meds + advice;
@@ -386,7 +386,7 @@ const buildBuilder = (note, opts = {}) => {
       const allergyText = allergyList.length
         ? allergyList.map(a => `${a.agent || "—"} (${a.severity || "?"}${a.reaction ? " — " + a.reaction : ""})`).join("; ")
         : ((nabh.allergies?.noKnown || nNabh.allergies?.noKnown) ? "No known allergies" : "");
-      const history = _section("History", "#1d4ed8", _grid([
+      const history = _section("History", "#4f46e5", _grid([
         _kv("PMH", docPayload.pmh || nNabh.briefPmh, true),
         _kv("PSH", docPayload.psh, true),
         _kv("Family Hx", docPayload.famHx, true),
@@ -579,7 +579,7 @@ const buildBuilder = (note, opts = {}) => {
                     : [];
       const labOrdersHtml = invList.length
         ? _section("Laboratory & Investigation Orders", "#0ea5e9",
-            `<table class="ndx-tbl"><tr><th>Test</th><th>Urgency</th><th>Instructions</th></tr>${invList.map(i => `<tr><td><strong>${escapeHtml(i.name || i.test || i.investigation || "—")}</strong></td><td>${i.urgency ? `<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:600;background:${/urgent|stat/i.test(i.urgency)?"#fee2e2":"#dbeafe"};color:${/urgent|stat/i.test(i.urgency)?"#dc2626":"#1d4ed8"}">${escapeHtml(i.urgency)}</span>` : "—"}</td><td>${escapeHtml(i.instructions || i.notes || "—")}</td></tr>`).join("")}</table>`)
+            `<table class="ndx-tbl"><tr><th>Test</th><th>Urgency</th><th>Instructions</th></tr>${invList.map(i => `<tr><td><strong>${escapeHtml(i.name || i.test || i.investigation || "—")}</strong></td><td>${i.urgency ? `<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:600;background:${/urgent|stat/i.test(i.urgency)?"#fee2e2":"#e0e7ff"};color:${/urgent|stat/i.test(i.urgency)?"#dc2626":"#4f46e5"}">${escapeHtml(i.urgency)}</span>` : "—"}</td><td>${escapeHtml(i.instructions || i.notes || "—")}</td></tr>`).join("")}</table>`)
         : "";
 
       const medsList = Array.isArray(docPayload.meds) ? docPayload.meds
@@ -728,13 +728,13 @@ export function buildDoctorNoteCardHtml(note, opts = {}) {
   const soapHtml = note.soap && !["admission","icu","procedure","consultation","discharge","death","amendment","operative","preop","postop","initial"].includes(note.noteType)
     ? (() => {
         const parts = [
-          ["S — Subjective", "#1d4ed8", note.soap.subjective],
+          ["S — Subjective", "#4f46e5", note.soap.subjective],
           ["O — Objective", "#0d9488", note.soap.objective],
           ["A — Assessment", "#d97706", note.soap.assessment],
           ["P — Plan", "#16a34a", note.soap.plan],
         ].filter(p => p[2]);
         if (!parts.length) return "";
-        return `<div style="font-size:11px;font-weight:700;color:#1e40af;text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">SOAP Notes</div>
+        return `<div style="font-size:11px;font-weight:700;color:#4338ca;text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">SOAP Notes</div>
 ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};padding-left:10px"><strong style="font-size:10px;text-transform:uppercase;color:${p[1]}">${escapeHtml(p[0])}</strong><p style="margin:3px 0;font-size:12px;white-space:pre-wrap">${escapeHtml(p[2])}</p></div>`).join("")}`;
       })()
     : "";
@@ -751,7 +751,7 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
     if (note.icd10Code)            diagParts.push(`<strong>ICD-10:</strong> ${escapeHtml(note.icd10Code)}${note.icd10Description ? " — " + escapeHtml(note.icd10Description) : ""}`);
   }
   const diagHtml = diagParts.length
-    ? `<div style="font-size:11px;font-weight:700;color:#1e40af;text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">Diagnosis</div><p style="font-size:12px;margin:0;line-height:1.6">${diagParts.join(" &nbsp;|&nbsp; ")}</p>`
+    ? `<div style="font-size:11px;font-weight:700;color:#4338ca;text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">Diagnosis</div><p style="font-size:12px;margin:0;line-height:1.6">${diagParts.join(" &nbsp;|&nbsp; ")}</p>`
     : "";
 
   // Per-type builder body
@@ -800,7 +800,7 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
   const _accent = note.isCritical ? "#dc2626"
     : ({ death: "#475569", icu: "#dc2626", procedure: "#7c3aed", operative: "#7c3aed",
          preop: "#7c3aed", postop: "#7c3aed", discharge: "#0d9488", consultation: "#0891b2",
-         amendment: "#b45309", initial: "#2563eb" }[note.noteType] || "#2563eb");
+         amendment: "#b45309", initial: "#4f46e5" }[note.noteType] || "#4f46e5");
   // Sub-label is a record CLASSIFICATION line under the type title — it must
   // add information, not repeat the title. NABH chapter tags only where the
   // codebase already asserts them; everything else → the generic discipline tag.

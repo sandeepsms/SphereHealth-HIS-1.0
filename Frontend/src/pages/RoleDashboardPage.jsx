@@ -13,9 +13,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
+import { useHospitalSettings } from "../context/HospitalSettingsContext";
 import {
   AdminPage, Hero, KPI, Card, Badge, C,
 } from "../Components/admin-theme";
+import { Typewriter, Ticker } from "../Components/anim/AnimKit"; // R7hr-276
 import { ROLES, MODULES, modulesForRole, homePathForRole } from "../config/permissions";
 import AdminHome from "./AdminHome";
 import { useVisiblePoll } from "../utils/pollingHelpers";
@@ -36,6 +38,7 @@ function greet() {
 
 export default function RoleDashboardPage() {
   const { user } = useAuth();
+  const { settings } = useHospitalSettings();
   if (!user) return <AdminPage><div style={{ padding: 40 }}>Loading…</div></AdminPage>;
   // Single-page roles — their console is their dashboard.
   if (user.role === "Dietician")    return <Navigate to="/dietitian" replace />;
@@ -67,10 +70,21 @@ export default function RoleDashboardPage() {
 
   return (
     <AdminPage>
-      <Hero icon={roleMeta.icon} color={heroColor}
-        title={`${greet()}, ${firstName}`}
+      <Hero icon={roleMeta.icon} color={heroColor} logo={settings?.logo || "/bims-logo.png"}
+        title={<Typewriter text={`${greet()}, ${firstName}`} speed={42} />}
         subtitle={`${roleMeta.label} workspace · ${new Date().toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}`}
         right={<RoleBadge role={user.role} />} />
+
+      {/* R7hr-276 — live ticker, on every role's dashboard */}
+      <Ticker
+        items={[
+          `${roleMeta.label} workspace`,
+          new Date().toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" }),
+          "SphereHealth HIS · NABH compliant",
+          "Tip: use the mic button (bottom-right) to dictate clinical notes",
+        ]}
+        style={{ background: "#0f172a", color: "#e2e8f0", borderRadius: 10, padding: "7px 0", margin: "0 0 14px", fontSize: 12.5 }}
+      />
 
       {user.role === "Doctor"            && <DoctorDashboard user={user} />}
       {user.role === "Nurse"             && <NurseDashboard user={user} />}
@@ -80,7 +94,8 @@ export default function RoleDashboardPage() {
       {user.role === "Radiologist"       && <LabDashboard user={user} role="Radiologist" />}
       {user.role === "Accountant"        && <AccountantDashboard user={user} />}
       {user.role === "TPA Coordinator"   && <TPADashboard user={user} />}
-      {(user.role === "Ward Boy" || user.role === "Housekeeping") && <WardOpsDashboard user={user} role={user.role} />}
+      {/* Ward Boy / Housekeeping never reach here — they redirect to /ward-tasks
+          and /housekeeping at the top of this component (R7hr-313). */}
       {user.role === "Security"          && <SecurityDashboard user={user} />}
       {(user.role === "Dietician" || user.role === "Physiotherapist") && <CareTeamDashboard user={user} role={user.role} />}
     </AdminPage>
@@ -113,12 +128,12 @@ function QuickAction({ icon, label, sub, onClick, color }) {
       style={{
         background: "#fff", border: `1.5px solid ${C.border}`, borderRadius: 12,
         padding: "16px 18px", textAlign: "left", cursor: "pointer",
-        boxShadow: "0 1px 3px rgba(15,23,42,.04)",
+        boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
         display: "flex", alignItems: "center", gap: 14,
         transition: "all .15s",
       }}
       onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = `0 6px 18px ${color}25`; e.currentTarget.style.borderColor = color + "55"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(15,23,42,.04)"; e.currentTarget.style.borderColor = C.border; }}>
+      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"; e.currentTarget.style.borderColor = C.border; }}>
       <div style={{
         width: 44, height: 44, borderRadius: 12,
         background: color + "15", color, display: "flex",
@@ -137,7 +152,7 @@ function QuickAction({ icon, label, sub, onClick, color }) {
 
 function QuickActionsGrid({ items }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+    <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
       {items.map((it, i) => <QuickAction key={i} {...it} />)}
     </div>
   );
@@ -167,68 +182,8 @@ function AccessSnapshot({ role }) {
   );
 }
 
-/* ════════════════════════════════════════════════════════════════
-   ADMIN
-══════════════════════════════════════════════════════════════════ */
-function AdminDashboard({ user }) {
-  const navigate = useNavigate();
-  const [stats, setStats] = useState({});
-  useEffect(() => {
-    // AbortController guards against React's "setState on unmounted
-    // component" warning when the user navigates away mid-fetch
-    // (audit E-05). Aborted axios calls reject with an error caught
-    // by the outer try; we check `ac.signal.aborted` before setState
-    // so a stale response can't poison fresh state if the parallel
-    // requests resolve in a surprising order.
-    const ac = new AbortController();
-    (async () => {
-      try {
-        const [u, p] = await Promise.all([
-          axios.get(`${API}/users?limit=1`, { ...authHdr(), signal: ac.signal }).catch(() => null),
-          axios.get(`${API}/pharmacy/stats`, { ...authHdr(), signal: ac.signal }).catch(() => null),
-        ]);
-        if (ac.signal.aborted) return;
-        setStats({
-          users: u?.data?.total ?? u?.data?.data?.length ?? "—",
-          pharmacyRevenueToday: p?.data?.data?.todaySales?.net ?? null,
-          pharmacyMonthRevenue: p?.data?.data?.monthSales?.net ?? null,
-          drugsCount: p?.data?.data?.drugsCount ?? null,
-          expiringCount: p?.data?.data?.expiringWithin90Days ?? null,
-        });
-      } catch (e) {
-        if (!axios.isCancel(e)) console.error("[AdminDashboard] stats fetch:", e?.message);
-      }
-    })();
-    return () => ac.abort();
-  }, []);
-  return (
-    <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
-        <KPI label="Staff users"        value={stats.users || "—"}              color={C.blue}   icon="pi-users" />
-        <KPI label="Pharmacy today"     value={stats.pharmacyRevenueToday != null ? fmtINR(stats.pharmacyRevenueToday) : "—"} color={C.green}  icon="pi-receipt" />
-        <KPI label="Pharmacy MTD"       value={stats.pharmacyMonthRevenue != null ? fmtINR(stats.pharmacyMonthRevenue) : "—"} color={C.amber}  icon="pi-chart-line" />
-        <KPI label="Drug catalogue"     value={stats.drugsCount ?? "—"}         color={C.purple} icon="pi-box" />
-        <KPI label="Expiring (90d)"     value={stats.expiringCount ?? "—"}      color={C.red}    icon="pi-exclamation-triangle" />
-      </div>
-
-      <div style={{ display: "grid", gap: 14 }}>
-        <Card title="Quick actions" color={C.blue} icon="pi-bolt">
-          <QuickActionsGrid items={[
-            { icon: "pi-building",   label: "Hospital Settings",   sub: "Identity · Print · Legal · Bank",         color: C.blue,    onClick: () => navigate("/hospital-settings") },
-            { icon: "pi-users",      label: "User Management",      sub: "Onboard staff · reset passwords",        color: C.teal,    onClick: () => navigate("/admin/users") },
-            { icon: "pi-shield",     label: "Roles & Permissions",  sub: "See what every role can access",         color: C.purple,  onClick: () => navigate("/admin/roles") },
-            { icon: "pi-sitemap",    label: "Departments",          sub: "Hospital departments + services",        color: C.orange,  onClick: () => navigate("/department") },
-            { icon: "pi-user-edit",  label: "Doctor Master",        sub: "Consultants, specialisations",           color: C.purple,  onClick: () => navigate("/doctors") },
-            { icon: "pi-dollar",     label: "Hospital Charges",     sub: "TPA tariff sheets",                      color: C.amber,   onClick: () => navigate("/hospital-charges") },
-            { icon: "pi-chart-bar",  label: "Reports",              sub: "Operational + financial",                color: C.green,   onClick: () => navigate("/billing-audit-trail") },
-            { icon: "pi-print",      label: "Print Gallery",        sub: "Preview every printable",                color: C.pink,    onClick: () => navigate("/print-gallery") },
-          ]} />
-        </Card>
-        <AccessSnapshot role={user.role} />
-      </div>
-    </>
-  );
-}
+/* Admin lands on the full AdminHome mission-control (see line ~51). The old
+   AdminDashboard component here was never rendered and was removed (R7hr-313). */
 
 /* ════════════════════════════════════════════════════════════════
    DOCTOR
@@ -260,7 +215,7 @@ function DoctorDashboard({ user }) {
   }, []);
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="OPD today"        value={stats.opdToday}   color={C.purple} icon="pi-user-edit" />
         <KPI label="Active IPD"       value={stats.ipdActive}  color={C.blue}   icon="pi-home" />
         <KPI label="Pending Rx"       value="—"                color={C.amber}  icon="pi-pen-to-square" />
@@ -294,7 +249,7 @@ function NurseDashboard({ user }) {
   const navigate = useNavigate();
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="My ward patients" value="—" color={C.pink}   icon="pi-heart" />
         <KPI label="Vitals due"       value="—" color={C.red}    icon="pi-clock" />
         <KPI label="MAR doses today"  value="—" color={C.purple} icon="pi-pen-to-square" />
@@ -306,11 +261,11 @@ function NurseDashboard({ user }) {
           <QuickActionsGrid items={[
             { icon: "pi-clipboard",     label: "OPD Queue",            sub: "Current patient queue",          color: C.teal,    onClick: () => navigate("/opd-queue") },
             { icon: "pi-th-large",      label: "Bed View",             sub: "Walk wards · IPD census",        color: C.blue,    onClick: () => navigate("/bed-visual") },
-            { icon: "pi-pen-to-square", label: "Update Vitals",        sub: "Record BP / pulse / temp / SpO2",color: C.red,     onClick: () => navigate("/updateVitalSheet") },
+            { icon: "pi-pen-to-square", label: "Update Vitals",        sub: "Record BP / pulse / temp / SpO2",color: C.red,     onClick: () => navigate("/vitalSheet") },
             { icon: "pi-list",          label: "Vital Sheet",          sub: "Patient-wise trends",            color: C.blue,    onClick: () => navigate("/vitalSheet") },
-            { icon: "pi-pen-to-square", label: "MAR Sheet",            sub: "Medication administration",      color: C.purple,  onClick: () => navigate("/nursing-notes") },
+            { icon: "pi-chart-bar",     label: "MAR Sheet",            sub: "Treatment Chart — Live MAR",     color: C.purple,  onClick: () => navigate("/nursing-notes?tile=mar") },
             { icon: "pi-file-edit",     label: "Nursing Notes",        sub: "Daily nursing notes",            color: C.pink,    onClick: () => navigate("/nursing-notes") },
-            { icon: "pi-arrow-right-arrow-left", label: "Handover Notes", sub: "Shift handover", color: C.amber, onClick: () => navigate("/nursing-handover-notes") },
+            { icon: "pi-arrow-right-arrow-left", label: "Handover Notes", sub: "Shift / SBAR / bed-transfer handover", color: C.amber, onClick: () => navigate("/nurse-patient-panel?tab=handover") },
             { icon: "pi-shield",        label: "Pressure Care",        sub: "Bedsore assessment",             color: C.green,   onClick: () => navigate("/pressure-area-care") },
           ]} />
         </Card>
@@ -327,7 +282,7 @@ function ReceptionDashboard({ user }) {
   const navigate = useNavigate();
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="Registrations today"    value="—" color={C.teal}    icon="pi-user-plus" />
         <KPI label="OPD visits"             value="—" color={C.purple}  icon="pi-user-edit" />
         <KPI label="Active admissions"      value="—" color={C.blue}    icon="pi-home" />
@@ -339,7 +294,7 @@ function ReceptionDashboard({ user }) {
         <Card title="Quick actions" color={C.teal} icon="pi-bolt">
           <QuickActionsGrid items={[
             { icon: "pi-user-plus",  label: "New Registration",   sub: "Walk-in registration",          color: C.teal,    onClick: () => navigate("/reception/register") },
-            { icon: "pi-user-edit",  label: "OPD Admission",      sub: "Create OPD visit",              color: C.purple,  onClick: () => navigate("/reception") },
+            { icon: "pi-user-edit",  label: "OPD Admission",      sub: "Create OPD visit",              color: C.purple,  onClick: () => navigate("/reception/register") },
             { icon: "pi-home",       label: "IPD Admission",      sub: "Bed assignment + admission",    color: C.blue,    onClick: () => navigate("/bed-visual") },
             { icon: "pi-search",     label: "Patient Search",     sub: "Find by UHID / name / phone",   color: C.amber,   onClick: () => navigate("/patient-search") },
             { icon: "pi-sign-out",   label: "Discharge Queue",    sub: "Bills + clearance",             color: C.green,   onClick: () => navigate("/discharge-queue") },
@@ -375,7 +330,7 @@ function PharmacistDashboard({ user }) {
   }, []);
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="Drug catalogue"     value={stats.drugsCount ?? "—"}            color={C.orange} icon="pi-box" />
         <KPI label="Active batches"     value={stats.batchesInStock ?? "—"}        color={C.blue}   icon="pi-database" />
         <KPI label="Today sales"        value={stats.todaySales ? `${stats.todaySales.count} · ${fmtINR(stats.todaySales.net)}` : "—"} color={C.green} icon="pi-receipt" />
@@ -419,12 +374,12 @@ function LabDashboard({ user, role }) {
       {isRad && (
         <div style={{
           padding: "12px 16px", marginBottom: 14, borderRadius: 10,
-          background: "#eff6ff", border: "1.5px solid #bfdbfe",
+          background: "#eef2ff", border: "1.5px solid #c7d2fe",
           display: "flex", alignItems: "center", gap: 12,
         }}>
-          <i className="pi pi-info-circle" style={{ fontSize: 18, color: "#1d4ed8" }} />
+          <i className="pi pi-info-circle" style={{ fontSize: 18, color: "#4f46e5" }} />
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#1e3a8a" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#3730a3" }}>
               Radiology reporting workspace — coming soon
             </div>
             <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>
@@ -435,7 +390,7 @@ function LabDashboard({ user, role }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label={isRad ? "Imaging orders" : "Lab orders"} value="—" color={C.blue}   icon="pi-list" />
         <KPI label="Samples / studies"       value="—" color={C.purple} icon="pi-search-plus" />
         <KPI label="Reports pending"         value="—" color={C.amber}  icon="pi-file-edit" />
@@ -447,8 +402,8 @@ function LabDashboard({ user, role }) {
           <QuickActionsGrid items={[
             { icon: "pi-list",         label: "Investigation Orders", sub: "All open requests",         color: C.blue,    onClick: () => navigate("/investigation-orders") },
             { icon: "pi-flask",        label: "Test Master",          sub: "Tests catalogue + setup",   color: C.purple,  onClick: () => navigate("/investigation-master") },
-            { icon: "pi-pen-to-square",label: "Result Entry",         sub: "Enter & verify results",    color: C.green,   onClick: () => navigate("/investigation-orders") },
-            { icon: "pi-print",        label: "Dispatch Reports",     sub: "Print + share with patient",color: C.amber,   onClick: () => navigate("/investigation-orders") },
+            { icon: "pi-pen-to-square",label: "Result Entry",         sub: "Enter & verify results",    color: C.green,   onClick: () => navigate("/investigation-orders?status=SAMPLE_COLLECTED") },
+            { icon: "pi-print",        label: "Dispatch Reports",     sub: "Print + share with patient",color: C.amber,   onClick: () => navigate("/investigation-orders?status=COMPLETED") },
           ]} />
         </Card>
         <AccessSnapshot role={user.role} />
@@ -503,7 +458,7 @@ function AccountantDashboard({ user }) {
   }, []);
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="Today's collection"  value={stats.collected != null ? fmtINR(stats.collected) : "—"} color={C.green}  icon="pi-money-bill" />
         <KPI label="Today's gross"       value={stats.gross != null ? fmtINR(stats.gross) : "—"}        color={C.blue}   icon="pi-receipt" />
         <KPI label="Outstanding today"   value={stats.outstand != null ? fmtINR(stats.outstand) : "—"} color={C.red}    icon="pi-clock" />
@@ -538,7 +493,7 @@ function TPADashboard({ user }) {
   const navigate = useNavigate();
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="Open cases"           value="—" color={C.purple} icon="pi-briefcase" />
         <KPI label="Pre-auth pending"     value="—" color={C.amber}  icon="pi-send" />
         <KPI label="Approved this month"  value="—" color={C.green}  icon="pi-check-circle" />
@@ -549,8 +504,8 @@ function TPADashboard({ user }) {
         <Card title="Quick actions" color={C.purple} icon="pi-bolt">
           <QuickActionsGrid items={[
             { icon: "pi-briefcase",    label: "TPA Cases",       sub: "All cashless cases",            color: C.purple,  onClick: () => navigate("/tpa-cases") },
-            { icon: "pi-send",         label: "New Pre-Auth",    sub: "Send to TPA",                   color: C.amber,   onClick: () => navigate("/addtpa") },
-            { icon: "pi-receipt",      label: "Claim Files",     sub: "File final bill claim",         color: C.blue,    onClick: () => navigate("/tpa-cases") },
+            { icon: "pi-building",     label: "TPA Master",      sub: "Manage TPA payor records",      color: C.amber,   onClick: () => navigate("/addtpa") },
+            { icon: "pi-receipt",      label: "Claim Files",     sub: "File final bill claim",         color: C.blue,    onClick: () => navigate("/tpa-cases?tab=SUBMITTED") },
             { icon: "pi-dollar",       label: "Hospital Charges",sub: "TPA tariff sheets",             color: C.green,   onClick: () => navigate("/hospital-charges") },
           ]} />
         </Card>
@@ -560,33 +515,10 @@ function TPADashboard({ user }) {
   );
 }
 
-/* ════════════════════════════════════════════════════════════════
-   WARD BOY / HOUSEKEEPING
-══════════════════════════════════════════════════════════════════ */
-function WardOpsDashboard({ user, role }) {
-  const navigate = useNavigate();
-  return (
-    <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
-        <KPI label="Active beds"       value="—" color={C.blue}    icon="pi-th-large" />
-        <KPI label="Pending turnovers" value="—" color={C.amber}   icon="pi-clock" />
-        <KPI label="Cleaning due"      value="—" color={C.teal}    icon="pi-refresh" />
-        <KPI label="Equipment alerts"  value="—" color={C.red}     icon="pi-exclamation-triangle" />
-      </div>
-
-      <div style={{ display: "grid", gap: 14 }}>
-        <Card title="Quick actions" color={C.teal} icon="pi-bolt">
-          <QuickActionsGrid items={[
-            { icon: "pi-th-large",      label: "Bed View",         sub: "All beds · status",       color: C.blue,   onClick: () => navigate("/bed-visual") },
-            { icon: "pi-refresh",       label: "Mark turnover",    sub: "Room cleaned + ready",    color: C.teal,   onClick: () => navigate("/bed-visual") },
-            { icon: "pi-wrench",        label: "Maintenance",      sub: "Equipment / facilities",  color: C.amber,  onClick: () => navigate("/maintenance") },
-          ]} />
-        </Card>
-        <AccessSnapshot role={user.role} />
-      </div>
-    </>
-  );
-}
+/* Ward Boy / Housekeeping have no RoleDashboardPage view — they redirect to
+   their dedicated consoles (/ward-tasks, /housekeeping) at the top of this
+   file. The old WardOpsDashboard component was dead code and was removed
+   (R7hr-313). */
 
 /* ════════════════════════════════════════════════════════════════
    SECURITY
@@ -620,7 +552,7 @@ function SecurityDashboard({ user }) {
 
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 14 }}>
         <KPI label="Passes today"     value={v(passStats, "passesToday")}     color={C.amber}  icon="pi-id-card" />
         <KPI label="Active visitors"  value={v(passStats, "activeVisitors")}  color={C.blue}   icon="pi-users" />
         <KPI label="Expired passes"   value={v(passStats, "expiredPasses")}   color={C.muted}  icon="pi-times-circle" />
@@ -632,7 +564,7 @@ function SecurityDashboard({ user }) {
       <div style={{ display: "grid", gap: 14 }}>
         <Card title="Quick actions" color={C.amber} icon="pi-bolt">
           <QuickActionsGrid items={[
-            { icon: "pi-id-card",             label: "Visitor passes",   sub: "Issue / verify attendant pass",            color: C.amber, onClick: () => navigate("/visitor-passes") },
+            { icon: "pi-bell",                label: "Fire Drills",      sub: "Mock-drill register · NABH FMS",           color: C.amber, onClick: () => navigate("/fire-drills") },
             { icon: "pi-shield",              label: "Gate log",         sub: "Log every entry / exit",                    color: C.green, onClick: () => navigate("/gate-log") },
             { icon: "pi-exclamation-triangle",label: "Incident reports", sub: "Theft / fire / disturbance — full audit",   color: C.red,   onClick: () => navigate("/incidents") },
           ]} />
@@ -686,7 +618,7 @@ function CareTeamDashboard({ user, role }) {
           </div>
         </div>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+      <div className="hga-stagger" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
         {isDietician ? (
           <>
             <KPI label="Active diet plans"  value={stats.activePlans ?? "—"}      color={C.green}  icon="pi-check-circle" />

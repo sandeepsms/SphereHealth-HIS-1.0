@@ -26,11 +26,11 @@ import { fmtDate, fmtTime } from "./normalizeData";
 
 /* ── Event-kind metadata (colour + label) ──────────────────────── */
 const KIND_META = {
-  admission:     { color: "#1d4ed8", label: "ADMISSION"     },
+  admission:     { color: "#4f46e5", label: "ADMISSION"     },
   discharge:     { color: "#059669", label: "DISCHARGE"     },
   "ia-doctor":   { color: "#7c3aed", label: "IA-DOCTOR"     },
   "ia-nursing":  { color: "#db2777", label: "IA-NURSING"    },
-  "doctor-note": { color: "#1d4ed8", label: "DOCTOR-NOTE"   },
+  "doctor-note": { color: "#4f46e5", label: "DOCTOR-NOTE"   },
   "nursing-note":{ color: "#db2777", label: "NURSING-NOTE"  },
   "lab-order":   { color: "#ea580c", label: "LAB-ORDER"     },
   "lab-report":  { color: "#16a34a", label: "LAB-REPORT"    },
@@ -88,7 +88,7 @@ const SectionRow = ({ title, children }) => (
       fontWeight:     700,
       letterSpacing:  0.6,
       textTransform:  "uppercase",
-      color:          "#1e3a8a",
+      color:          "#3730a3",
       marginBottom:   6,
     }}>{title}</div>
     {children}
@@ -244,7 +244,7 @@ const SummaryCard = ({ file, eventCount, losDays }) => {
 const DayDividerBanner = ({ dayNumber, date }) => (
   <div style={{
     background:     "#f1f5f9",
-    color:          "#1e3a8a",
+    color:          "#3730a3",
     padding:        "4px 10px",
     margin:         "12px 0 8px",
     fontSize:       10,
@@ -423,9 +423,9 @@ const TimelineTheme = ({ settings, file, events }) => {
           fontWeight:    700,
           letterSpacing: 0.5,
           textTransform: "uppercase",
-          color:         "#1e3a8a",
+          color:         "#3730a3",
           paddingBottom: 6,
-          borderBottom:  "2px solid #1e3a8a",
+          borderBottom:  "2px solid #3730a3",
           marginBottom:  10,
         }}>
           Chronological Event Timeline

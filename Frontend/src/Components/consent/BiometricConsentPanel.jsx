@@ -54,7 +54,7 @@ const C = {
   ok:     "#16a34a",   okL:   "#dcfce7", okB:   "#86efac",
   warn:   "#d97706",   warnL: "#fef3c7",
   err:    "#dc2626",   errL:  "#fef2f2", errB:  "#fca5a5",
-  blue:   "#1d4ed8",   blueL: "#dbeafe",
+  blue:   "#4f46e5",   blueL: "#e0e7ff",
   purple: "#7c3aed",   purpleL:"#f3e8ff",
 };
 
@@ -287,7 +287,7 @@ export default function BiometricConsentPanel({
   }
 
   return (
-    <div style={{
+    <div className="hga-enter" style={{
       background: C.card, border: `1.5px solid ${allComplete ? C.ok : C.border}`, borderRadius: 12,
       padding: "16px 18px", marginTop: 16, position: "relative",
     }}>

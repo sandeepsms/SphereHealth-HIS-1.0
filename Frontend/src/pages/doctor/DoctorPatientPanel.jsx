@@ -46,7 +46,7 @@ import { API_BASE_URL as BASE } from "../../config/api";
 /* ── Design tokens ──────────────────────────────────────────────────────────── */
 const C = {
   primary:"#7c3aed", primaryD:"#4c1d95", primaryL:"#f5f3ff", primaryM:"#ede9fe",
-  blue:"#1e40af",    blueL:"#dbeafe",    blueB:"#93c5fd",
+  blue:"#4338ca",    blueL:"#e0e7ff",    blueB:"#93c5fd",
   green:"#059669",   greenL:"#d1fae5",   greenB:"#6ee7b7",
   red:"#dc2626",     redL:"#fee2e2",     redB:"#fca5a5",
   amber:"#d97706",   amberL:"#fef3c7",   amberB:"#fde68a",
@@ -129,8 +129,18 @@ function Spin() {
     </div>
   );
 }
-function Empty({icon="📭",msg="No data"}) {
-  return <div style={{textAlign:"center",padding:"40px 24px",color:C.muted}}><div style={{fontSize:40,marginBottom:10}}>{icon}</div><div style={{fontSize:13}}>{msg}</div></div>;
+function Empty({icon="pi-inbox",msg="No data"}) {
+  // R7hr-298: premium empty state — vector icon by default (no emoji),
+  // still renders any explicit emoji a caller passes for back-compat.
+  const isPi = typeof icon === "string" && icon.startsWith("pi-");
+  return (
+    <div style={{textAlign:"center",padding:"44px 24px",color:C.muted}}>
+      {isPi
+        ? <i className={`pi ${icon}`} style={{fontSize:34,color:C.border,display:"block",marginBottom:12}} />
+        : <div style={{fontSize:40,marginBottom:10}}>{icon}</div>}
+      <div style={{fontSize:13,fontWeight:600}}>{msg}</div>
+    </div>
+  );
 }
 function Chip({label,value,color=C.primary,bg=C.primaryL}) {
   return (
@@ -145,8 +155,8 @@ function Badge({children,color=C.primary,bg=C.primaryL}) {
 }
 function Card({title,titleColor=C.primaryD,children,style={}}) {
   return (
-    <div style={{background:C.card,borderRadius:12,border:`1px solid ${C.border}`,overflow:"hidden",...style}}>
-      {title && <div style={{padding:"11px 18px",borderBottom:`1px solid ${C.border}`,background:C.primaryL,fontWeight:700,fontSize:13,color:titleColor}}>{title}</div>}
+    <div style={{background:C.card,borderRadius:14,border:`1px solid ${C.border}`,overflow:"hidden",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",...style}}>
+      {title && <div style={{padding:"12px 18px",borderBottom:`1px solid ${C.border}`,background:`linear-gradient(180deg, #ffffff, ${C.primaryL})`,fontWeight:800,fontSize:13,color:titleColor,letterSpacing:"-.1px"}}>{title}</div>}
       <div style={{padding:18}}>{children}</div>
     </div>
   );
@@ -257,7 +267,7 @@ function OverviewTab({patient, admission, opdVisits=[], billing, doctorNotes=[],
       )}
 
       {/* Quick stats */}
-      <div className="pf-stats-grid">
+      <div className="pf-stats-grid hga-stagger">
         {[
           {label:"Doctor Notes",    val: doctorNotes.length,  icon:"🩺", tint:"primary"},
           {label:"Signed Notes",    val: signed,              icon:"✅", tint:"ok"},
@@ -277,7 +287,7 @@ function OverviewTab({patient, admission, opdVisits=[], billing, doctorNotes=[],
       </div>
 
       {/* Demographics + Admission */}
-      <div className="pf-overview-grid">
+      <div className="pf-overview-grid hga-enter-fade">
         <div className="pf-info-card">
           <div className="pf-info-card__head">
             <span className="pf-info-card__icon">👤</span>
@@ -568,7 +578,7 @@ function ClinicalNotesTab({notes=[]}) {
       </div>
 
       {/* Timeline container */}
-      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
         {/* Header */}
         <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",background:C.primaryL}}>
           <div style={{fontWeight:800,fontSize:14,color:C.primary}}>Clinical Notes Timeline</div>
@@ -686,7 +696,7 @@ function ClinicalNotesTab({notes=[]}) {
                         <div style={{display:"flex",flexDirection:"column",gap:5,padding:"8px 12px",background:"#f9fafb",borderRadius:8,marginBottom:8,border:`1px solid ${C.border}`}}>
                           <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".5px",color:nc.color,marginBottom:3}}>SOAP Note</div>
                           {[
-                            {k:"S",label:"Subjective", v:soap.subjective, color:"#1e40af", bg:"#eff6ff"},
+                            {k:"S",label:"Subjective", v:soap.subjective, color:"#4338ca", bg:"#eef2ff"},
                             {k:"O",label:"Objective",  v:soap.objective,  color:"#0f766e", bg:"#f0fdfa"},
                             {k:"A",label:"Assessment", v:soap.assessment, color:"#9a3412", bg:"#fff7ed"},
                             {k:"P",label:"Plan",       v:soap.plan,       color:"#166534", bg:"#f0fdf4"},
@@ -845,7 +855,7 @@ function ClinicalNotesTab({notes=[]}) {
 
 /* ═══════════════════════════════════════════════════════ TAB: NURSING RECORDS */
 const NURS_NOTE_STYLE_DP = {
-  vitals:    {bg:"#dbeafe", color:"#1e40af",  dot:"#3b82f6"},
+  vitals:    {bg:"#e0e7ff", color:"#4338ca",  dot:"#6366f1"},
   blood:     {bg:"#fecaca", color:"#9f1239",  dot:"#dc2626"},
   iv:        {bg:"#f0fdfa", color:"#0d9488",  dot:"#0d9488"},
   wound:     {bg:"#fee2e2", color:"#b91c1c",  dot:"#ef4444"},
@@ -854,7 +864,7 @@ const NURS_NOTE_STYLE_DP = {
   neuro:     {bg:"#f5f3ff", color:"#7c3aed",  dot:"#7c3aed"},
   fall:      {bg:"#fff7ed", color:"#ea580c",  dot:"#ea580c"},
   skin:      {bg:"#dcfce7", color:"#059669",  dot:"#059669"},
-  intake:    {bg:"#dbeafe", color:"#1d4ed8",  dot:"#1d4ed8"},
+  intake:    {bg:"#e0e7ff", color:"#4f46e5",  dot:"#4f46e5"},
   general:   {bg:"#f9fafb", color:"#374151",  dot:"#9ca3af"},
   discharge: {bg:"#dcfce7", color:"#059669",  dot:"#059669"},
   mews:      {bg:"#fef3c7", color:"#92400e",  dot:"#d97706"},
@@ -948,7 +958,7 @@ function NursingRecordsTab({notes=[]}) {
       </div>
 
       {/* Timeline container */}
-      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
         <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",background:C.pinkL}}>
           <div style={{fontWeight:800,fontSize:14,color:C.pink}}>Nursing Records Timeline</div>
           <span style={{fontSize:11,color:C.muted}}>{filtered.length} entries</span>
@@ -1503,7 +1513,7 @@ function OrdersTab({doctorNotes=[], doctorOrders=[]}) {
           </div>
 
           {/* Orders list */}
-          <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+          <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
             <div style={{padding:"13px 18px",background:C.amberL,borderBottom:`1px solid ${C.border}`,fontWeight:800,fontSize:13,color:"#92400e"}}>
               📋 Orders — {new Date(selDate).toLocaleDateString("en-IN",{day:"2-digit",month:"long",year:"numeric"})}
             </div>
@@ -1677,7 +1687,7 @@ function TreatmentChartTab({doctorOrders=[], doctorNotes=[]}) {
       )}
 
       {/* ── MAR table ── */}
-      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+      <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:16,overflow:"hidden",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
         <div style={{padding:"14px 18px",background:C.primaryL,borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontWeight:800,fontSize:14,color:C.primary}}>💉 Medication Administration Record</div>
           <Badge color={C.primary} bg={C.primaryM}>{ordersOnDate.length} medications</Badge>
@@ -1870,7 +1880,7 @@ function EmergencyTab({emergency=[]}) {
             <span className="pf-section-card__count">{fmtDT(em.createdAt || em.arrivalTime)}</span>
           </div>
           <div className="pf-section-card__body pf-section-card__body--pad">
-            <div className="pf-overview-grid">
+            <div className="pf-overview-grid hga-enter-fade">
               <div>
                 {[
                   ["Emergency No.",   em.emergencyNumber || em._id?.slice(-6)],
@@ -2001,7 +2011,7 @@ function ConsentFormsTab({ consents = [], uhid, patient, admission }) {
               background:"#fff", border:`1px solid ${C.border}`,
               borderLeft:`4px solid ${st.color}`, borderRadius:10,
               padding:"16px 18px",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+              boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
             }}
           >
             {/* Header strip — title + status chip + print */}
@@ -2308,7 +2318,7 @@ function MedCertsTab({ certs = [], uhid, patient }) {
           || (c.certType ? c.certType.replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase()) : "Medical Certificate");
         return (
           <div key={c._id || i}
-            style={{background:"#fff",border:`1px solid ${C.border}`,borderLeft:`4px solid ${st.color}`,borderRadius:10,padding:"16px 18px",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
+            style={{background:"#fff",border:`1px solid ${C.border}`,borderLeft:`4px solid ${st.color}`,borderRadius:10,padding:"16px 18px",boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,paddingBottom:12,borderBottom:`1px dashed ${C.border}`}}>
               <span style={{fontSize:22}}>📑</span>
               <div style={{flex:1}}>

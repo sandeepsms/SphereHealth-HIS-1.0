@@ -24,7 +24,7 @@ const C = {
   green: "#16a34a", greenL: "#dcfce7",
   amber: "#d97706", amberL: "#fffbeb",
   red: "#dc2626", redL: "#fef2f2",
-  blue: "#1e40af", blueL: "#eff6ff",
+  blue: "#4338ca", blueL: "#eef2ff",
   teal: "#0d9488", tealL: "#f0fdfa",
   orange: "#ea580c", orangeL: "#fff7ed",
   slate: "#334155",

@@ -14,6 +14,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { AdminPage, Card, C } from "../Components/admin-theme";
+import { AnimatedCounter, Ticker } from "../Components/anim/AnimKit"; // R7hr-276
 import { useVisiblePoll } from "../utils/pollingHelpers";
 
 import { API_BASE_URL as API } from "../config/api";
@@ -95,6 +96,17 @@ export default function AdminHome({ user }) {
     <AdminPage maxWidth={1480}>
       <HospitalHero now={now} hospital={hosp} firstName={firstName} kpi={kpi} />
 
+      {/* R7hr-276 — live ticker */}
+      <Ticker
+        items={[
+          `${hosp.name || "Hospital"} · Mission Control`,
+          `Beds ${kpi.bedsOccupied ?? "—"}/${kpi.bedsTotal ?? "—"} occupied`,
+          `${kpi.staff ?? "—"} active staff accounts`,
+          "SphereHealth HIS · NABH compliant",
+        ]}
+        style={{ background: "#0f172a", color: "#e2e8f0", borderRadius: 10, padding: "7px 0", margin: "0 0 14px", fontSize: 12.5 }}
+      />
+
       {/* Live KPI strip */}
       <div style={kpiGridStyle}>
         <StatCard
@@ -160,13 +172,13 @@ function HospitalHero({ now, hospital, firstName, kpi }) {
   return (
     <div style={{
       borderRadius: 16,
-      background: "linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 45%, #6d28d9 100%)",
+      background: "linear-gradient(135deg, #3730a3 0%, #4338ca 50%, #6366f1 100%)",
       color: "#fff",
       padding: "22px 26px",
       marginBottom: 16,
       position: "relative",
       overflow: "hidden",
-      boxShadow: "0 10px 30px rgba(29,78,216,.35)",
+      boxShadow: "0 10px 30px rgba(79,70,229,.35)",
     }}>
       {/* Decorative concentric rings */}
       <div style={{
@@ -184,14 +196,19 @@ function HospitalHero({ now, hospital, firstName, kpi }) {
       }} />
 
       <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+        {/* R7hr-329 — BIMS/hospital logo in the mission-control badge (white
+            card so the red mark reads on the indigo hero); uploaded settings
+            logo overrides the baked default. */}
         <div style={{
           width: 64, height: 64, borderRadius: 16,
-          background: "rgba(255,255,255,.16)",
+          background: "#fff",
           border: "1.5px solid rgba(255,255,255,.32)",
           display: "flex", alignItems: "center", justifyContent: "center",
-          backdropFilter: "blur(10px)",
+          overflow: "hidden", padding: 7, flexShrink: 0,
         }}>
-          <i className="pi pi-shield" style={{ fontSize: 28 }} />
+          <img src={hospital?.logo || "/bims-logo.png"} alt={hospital?.name || "Hospital"}
+            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+            onError={(e) => { e.currentTarget.style.display = "none"; }} />
         </div>
 
         <div style={{ flex: 1, minWidth: 280 }}>
@@ -261,12 +278,12 @@ function StatCard({ color, icon, label, value, sub, progress, trend }) {
       border: `1px solid ${C.border}`,
       borderRadius: 14,
       padding: "14px 16px",
-      boxShadow: "0 1px 4px rgba(15,23,42,.06)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.07)",
       position: "relative", overflow: "hidden",
       transition: "transform .15s, box-shadow .15s",
     }}
       onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = `0 8px 22px ${accent}25`; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 4px rgba(15,23,42,.06)"; }}>
+      onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.07)"; }}>
       {/* Accent ribbon on the left */}
       <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 3, background: accent }} />
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
@@ -282,7 +299,8 @@ function StatCard({ color, icon, label, value, sub, progress, trend }) {
             {label}
           </div>
           <div style={{ fontSize: 22, fontWeight: 900, color: C.text, marginTop: 2, letterSpacing: "-.5px" }}>
-            {value}
+            {((typeof value === "number" && Number.isFinite(value)) || (typeof value === "string" && /^-?\d+(\.\d+)?$/.test(String(value).trim())))
+              ? <AnimatedCounter value={Number(value)} /> : value}
           </div>
           {sub && (
             <div style={{ fontSize: 11, color: trend != null && trend !== 0 ? (trend > 0 ? C.green : C.red) : C.muted, marginTop: 2, fontWeight: 600 }}>
@@ -329,11 +347,12 @@ function RevenuePanel({ kpi }) {
                 <span style={{ fontSize: 12, color: C.muted, fontWeight: 700 }}>{b.label}</span>
                 <span style={{ fontSize: 14, fontWeight: 900, color: b.bold ? b.color : C.text }}>{fmtINR(b.value)}</span>
               </div>
-              <div style={{ height: 12, background: b.color + "15", borderRadius: 999, overflow: "hidden" }}>
+              <div style={{ height: 12, background: b.color + "15", borderRadius: 999, overflow: "hidden", boxShadow: "inset 0 1px 2px rgba(16,24,40,.07)" }}>
                 <div style={{
                   width: `${pct}%`, height: "100%",
                   background: `linear-gradient(90deg, ${b.color}, ${b.color}aa)`,
-                  borderRadius: 999, transition: "width .5s",
+                  borderRadius: 999, transition: "width .6s cubic-bezier(.34,1.2,.64,1)",
+                  boxShadow: `inset 0 1px 0 rgba(255,255,255,.35), 0 1px 5px ${b.color}55`,
                 }} />
               </div>
             </div>

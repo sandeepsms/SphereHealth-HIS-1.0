@@ -107,7 +107,7 @@ const CERT_CATALOGUE = [
   },
   {
     key: "pre-employment", label: "Pre-Employment Medical", icon: "pi-briefcase",
-    color: "#1d4ed8", bg: "#dbeafe",
+    color: "#4f46e5", bg: "#e0e7ff",
     desc: "Pre-employment exam result + fit category + validity.",
     ref: "Factories Act §40 / employer policy.",
     defaults: () => ({
@@ -200,8 +200,8 @@ const C = {
   ink:       "#0f172a",
   muted:     "#64748b",
   border:    "#e2e8f0",
-  primary:   "#1d4ed8",
-  primaryL:  "#dbeafe",
+  primary:   "#4f46e5",
+  primaryL:  "#e0e7ff",
   success:   "#10b981",
   warn:      "#f59e0b",
   danger:    "#dc2626",
@@ -887,10 +887,34 @@ export default function MedicalCertificatePage() {
 
   // ── Submit ────────────────────────────────────────────────────
   const buildPayload = useCallback(() => {
+    // R7hr-168 — detect an active IPD admission on the picked patient.
+    // The patient-search API returns `currentAdmission` (full sub-object)
+    // or `admissionNumber` on records that are currently admitted.
+    // Pre-R7hr-168 only `latestVisit` (OPD) was probed, so admitted
+    // patients ended up with visitType:"" and the printed "Visit Type"
+    // row was a bare em-dash even though IPD-XX-NN existed on the chart.
+    const _admission = selectedPatient?.currentAdmission || selectedPatient?.admission || null;
+    const _admissionNo = _admission?.admissionNumber
+      || selectedPatient?.currentAdmissionNumber
+      || selectedPatient?.admissionNumber
+      || "";
+    // R7hr-264 (sprint review fix): an OPD / Services visit is also an "active
+    // admission" — don't let it flip visitType to "IPD" on a medico-legal cert.
+    // When the admission carries an outpatient type, treat as not-admitted; if
+    // the type is unknown we keep the prior behaviour (no regression). The
+    // backend lookup applies the same OPD/Services exclusion as the authority.
+    const _admType = (_admission?.admissionType || "").toString();
+    const _isOutpatientAdm = _admType === "OPD" || _admType === "Services";
+    const _isAdmitted = !!(_admission || _admissionNo) && !_isOutpatientAdm;
     return {
       patient: selectedPatient?._id,
       visitId: latestVisit?._id || null,
-      visitType: latestVisit?.visitType || "",
+      visitType: latestVisit?.visitType || (_isAdmitted ? "IPD" : ""),
+      // Persist admissionNumber alongside so the printable + downstream
+      // consumers can read it without an extra hop. The backend uses an
+      // explicit payload whitelist (no req.body spread) and now carries the
+      // admissionNumber/admissionId fields (R7hr-169), so this round-trips.
+      ...(_admissionNo ? { admissionNumber: _admissionNo } : {}),
       certType,
       typeSpecific,
       diagnosis,
@@ -994,7 +1018,7 @@ export default function MedicalCertificatePage() {
 
         {/* ── Hero ───────────────────────────────────── */}
         <div style={{
-          background: "linear-gradient(135deg, #1e40af 0%, #6366f1 100%)",
+          background: "linear-gradient(135deg, #4338ca 0%, #6366f1 100%)",
           color: "white", borderRadius: 12, padding: 22,
           marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>

@@ -316,8 +316,8 @@ const CONSENT_CATALOGUE = [
     key: "DIALYSIS",
     label: "Dialysis",
     icon: "pi-sync",
-    color: "#2563eb",
-    bg: "#eff6ff",
+    color: "#4f46e5",
+    bg: "#eef2ff",
     nabh: "PRE.4",
     description: "Haemodialysis or peritoneal dialysis",
     template: {
@@ -407,7 +407,7 @@ const CONSENT_CATALOGUE = [
 const C = {
   bg: "#f0f2f5", card: "#fff", border: "#e2e6ea",
   text: "#1a1d23", muted: "#6b7280",
-  green: "#16a34a", red: "#dc2626", amber: "#d97706", blue: "#1e40af",
+  green: "#16a34a", red: "#dc2626", amber: "#d97706", blue: "#4338ca",
 };
 
 function F({ label, required, children }) {
@@ -428,7 +428,7 @@ function G4({ children }) { return <div style={{ display: "grid", gridTemplateCo
 function Section({ title, icon, color = C.blue, children, defaultOpen = true }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${color}25`, borderRadius: 12, overflow: "hidden", marginBottom: 14 }}>
+    <div className="hga-enter" style={{ background: C.card, border: `1.5px solid ${color}25`, borderRadius: 14, overflow: "hidden", marginBottom: 14, boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <div onClick={() => setOpen(o => !o)} style={{
         padding: "10px 18px", background: color + "08", borderBottom: open ? `1px solid ${color}18` : "none",
         display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer",

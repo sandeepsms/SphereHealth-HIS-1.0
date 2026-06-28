@@ -248,7 +248,7 @@ async function test_DoctorNote_IPD() {
     admissionId: adm._id,
     patientId:   adm.patientId,
     UHID:        adm.UHID,
-    noteType:    "progress",
+    noteType:    "daily", // R7hr-269: "progress" noteType removed; "daily" is the live progress note
     shift:       "morning",
     doctorName:  "E2E Test Doctor",
     chiefComplaint: "Stable, no fever",

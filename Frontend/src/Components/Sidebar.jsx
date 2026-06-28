@@ -21,7 +21,7 @@ import "primeicons/primeicons.css";
 /* ══════════════════════════════════════════════════════════════
    ROLE META — color, icon, label for each role
 ══════════════════════════════════════════════════════════════ */
-const ROLE_META = {
+export const ROLE_META = {
   Admin:             { color: "#1e293b", light: "#f1f5f9",  icon: "pi-shield",           label: "Administrator" },
   Receptionist:      { color: "#0891b2", light: "#ecfeff",  icon: "pi-desktop",          label: "Receptionist" },
   Doctor:            { color: "#7c3aed", light: "#f5f3ff",  icon: "pi-user-edit",        label: "Doctor" },
@@ -65,7 +65,7 @@ const SE    = "Security";
    roles: ["*"] = everyone  |  omit or [] = Admin only
    Each item also carries roles for fine-grained filtering.
 ══════════════════════════════════════════════════════════════ */
-const NAV = [
+export const NAV = [
   /* ── Dashboard ──────────────────────────────────────────────
      /dashboard is the role-aware RoleDashboardPage — it reads
      user.role and renders the right layout. Previously this pointed
@@ -75,7 +75,7 @@ const NAV = [
      breach reported on 13 May 2026. */
   {
     id: "dashboard", label: "Dashboard",
-    icon: "pi-home", color: "#1e40af", light: "#eff6ff",
+    icon: "pi-home", color: "#4338ca", light: "#eef2ff",
     path: "/dashboard", single: true, roles: ALL,
   },
 
@@ -439,6 +439,10 @@ const NAV = [
       // R7bf-G / NABH HRD.3 — staff credentialing register lives under
       // Masters & Admin since Admin owns the HR function today.
       { label: "Credentialing",      icon: "pi-id-card",    path: "/credentials",       badge: "NABH",  roles: [ADMIN] },
+      // R7hr-272 — DB Backup & Recovery (status / run-now / download). Admin-only.
+      { label: "Backup & Recovery",  icon: "pi-database",   path: "/backup",            badge: "NEW",   roles: [ADMIN] },
+      // R7hr-274 — Animation Gallery (live showcase of the 20-effect toolkit).
+      { label: "Animation Gallery",  icon: "pi-sparkles",   path: "/animation-gallery", badge: "NEW",   roles: [ADMIN] },
       // Buildings / Floors / Rooms / Room Categories moved to Bed Management
       // so the full bed hierarchy lives in one place.
     ],
@@ -637,7 +641,7 @@ const RECEPTION_NAV = [
 // deployment shouldn't see Doctor / Nurse / Reception nav (those
 // modules aren't reachable; the underlying DB collections may not
 // exist). IS_PHARMACY_STANDALONE is imported at the top of file.
-function filterNav(nav, userRole) {
+export function filterNav(nav, userRole) {
   // Standalone short-circuit — only the "pharmacy" section survives.
   // Applied BEFORE the role branches so it overrides every other rule.
   if (IS_PHARMACY_STANDALONE) {
@@ -690,6 +694,7 @@ function NavItem({ item, color, collapsed, navigate, isActive }) {
   const active = isActive(item.path);
   return (
     <button
+      className="hga-nav-item"
       onClick={() => navigate(item.path)}
       title={collapsed ? item.label : ""}
       style={{
@@ -697,10 +702,11 @@ function NavItem({ item, color, collapsed, navigate, isActive }) {
         display: "flex", alignItems: "center",
         gap: 10, padding: collapsed ? "9px 0" : "8px 14px 8px 36px",
         justifyContent: collapsed ? "center" : "flex-start",
-        background: active ? color + "12" : "transparent",
+        background: active ? `linear-gradient(90deg, ${color}24, ${color}0a)` : "transparent",
         borderLeft: active ? `3px solid ${color}` : "3px solid transparent",
         borderRadius: "0 8px 8px 0",
-        marginBottom: 1, transition: "all .15s",
+        boxShadow: active ? `inset 0 0 0 1px ${color}14` : "none",
+        marginBottom: 1, transition: "all .2s cubic-bezier(.4,0,.2,1)",
       }}
       onMouseEnter={e => { if (!active) e.currentTarget.style.background = "#f1f5f9"; }}
       onMouseLeave={e => { if (!active) e.currentTarget.style.background = active ? color + "12" : "transparent"; }}
@@ -873,7 +879,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
     <div style={{
       position: "fixed", left: 0, top: 52, bottom: 0, width: W,
       background: "#fff",
-      boxShadow: "2px 0 20px rgba(0,0,0,.07)",
+      boxShadow: "1px 0 0 #eceef3, 4px 0 24px rgba(16,24,40,.08)",
       transition: "width .25s cubic-bezier(.4,0,.2,1)",
       zIndex: 900, display: "flex", flexDirection: "column",
       overflow: "hidden",
@@ -885,7 +891,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
         borderBottom: "1px solid #f1f5f9",
         display: "flex", alignItems: "center",
         justifyContent: collapsed ? "center" : "space-between",
-        background: "linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%)",
+        background: "linear-gradient(135deg,#1e1b4b 0%,#312e81 55%,#3730a3 100%)",
         flexShrink: 0,
       }}>
         {/* R7dt — Hospital logo (from HospitalSettings.logo). Falls back
@@ -1040,8 +1046,8 @@ export default function Sidebar({ collapsed, setCollapsed }) {
         </div>
       )}
 
-      {/* ── Scrollable nav ── */}
-      <div style={{
+      {/* ── Scrollable nav ── (R7hr-273b: sections cascade in on mount) */}
+      <div className="hga-stagger" style={{
         flex: 1, overflowY: "auto", overflowX: "hidden",
         padding: "6px 0 20px",
         scrollbarWidth: "thin", scrollbarColor: "#e2e8f0 transparent",

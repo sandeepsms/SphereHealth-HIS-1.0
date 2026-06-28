@@ -39,7 +39,7 @@ const VitalCell = ({ label, value, unit }) => {
    distinguishable on B/W photocopy. */
 const DX_TIER_TONE = {
   Provisional: { bg: "#fef3c7", fg: "#92400e", border: "#b45309", short: "PROV"  },
-  Working:     { bg: "#dbeafe", fg: "#1e40af", border: "#1d4ed8", short: "WORK"  },
+  Working:     { bg: "#e0e7ff", fg: "#4338ca", border: "#4f46e5", short: "WORK"  },
   Final:       { bg: "#dcfce7", fg: "#14532d", border: "#15803d", short: "FINAL" },
 };
 const DxTier = ({ tier, text }) => {
@@ -66,7 +66,7 @@ const DxTier = ({ tier, text }) => {
    same colour the doctor saw while typing. */
 const STATUS_TONE = {
   Stable:        { bg: "#dcfce7", fg: "#15803d", border: "#86efac" },
-  Improving:     { bg: "#dbeafe", fg: "#1d4ed8", border: "#93c5fd" },
+  Improving:     { bg: "#e0e7ff", fg: "#4f46e5", border: "#93c5fd" },
   Worsening:     { bg: "#fee2e2", fg: "#b91c1c", border: "#fca5a5" },
   Critical:      { bg: "#fecaca", fg: "#7f1d1d", border: "#f87171" },
   "Under Review":{ bg: "#fef3c7", fg: "#a16207", border: "#fcd34d" },
@@ -566,7 +566,7 @@ const OPDPrescription = ({ settings, receipt = {} }) => {
             display: "flex", alignItems: "center", gap: 8, fontSize: 10.5,
           }}>
             <span style={{
-              background: "var(--pr-accent-color, #1d4ed8)", color: "white",
+              background: "var(--pr-accent-color, #4f46e5)", color: "white",
               width: 26, height: 26, borderRadius: 6,
               display: "inline-flex", alignItems: "center", justifyContent: "center",
               fontSize: 16, fontWeight: 800, fontStyle: "italic",
@@ -595,7 +595,7 @@ const OPDPrescription = ({ settings, receipt = {} }) => {
                 const ms = d.mealStatus || d.meal || "";
                 const msTone = /before/i.test(ms) ? { bg: "#fef3c7", fg: "#92400e" }
                   : /after/i.test(ms)  ? { bg: "#dcfce7", fg: "#15803d" }
-                  : /with/i.test(ms)   ? { bg: "#dbeafe", fg: "#1d4ed8" }
+                  : /with/i.test(ms)   ? { bg: "#e0e7ff", fg: "#4f46e5" }
                   : /bed/i.test(ms)    ? { bg: "#ede9fe", fg: "#6d28d9" }
                   : null;
                 /* OPD-PRINT-AUDIT Item 22: HAM (Hospital Acquired

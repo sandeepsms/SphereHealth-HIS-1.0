@@ -107,7 +107,7 @@ export default function LabResultsEntry() {
               style={{ width: 200, padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 13, fontWeight: 700, fontFamily: "monospace" }} />
           </Field>
           {patient && (
-            <div style={{ fontSize: 13.5, color: C.text, padding: "8px 12px", background: "#eff6ff", borderRadius: 7, border: "1px solid #bfdbfe" }}>
+            <div style={{ fontSize: 13.5, color: C.text, padding: "8px 12px", background: "#eef2ff", borderRadius: 7, border: "1px solid #c7d2fe" }}>
               <strong>{patient.patientName}</strong>
               {patient.age != null && <span style={{ color: C.muted, marginLeft: 8 }}>{patient.age} / {patient.gender || "—"}</span>}
             </div>
@@ -118,7 +118,7 @@ export default function LabResultsEntry() {
       <div style={{ marginTop: 12 }}>
         <TabStrip
           value={tab} onChange={setTab}
-          accent={C.blue} accentL="#eff6ff"
+          accent={C.blue} accentL="#eef2ff"
           tabs={[
             { id: "trend",   label: "Trend Sheet",      icon: "pi-table" },
             { id: "report",  label: "Imaging / Reports",icon: "pi-file" },

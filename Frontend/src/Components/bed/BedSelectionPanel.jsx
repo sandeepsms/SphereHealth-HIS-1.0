@@ -20,14 +20,14 @@ const STATUS_COLOR = {
   Available: "#22c55e",
   Occupied: "#ef4444",
   Maintenance: "#f59e0b",
-  Reserved: "#3b82f6",
+  Reserved: "#6366f1",
   Blocked: "#9ca3af",
 };
 const STATUS_BG = {
   Available: { bg: "#d1fae5", color: "#065f46" },
   Occupied: { bg: "#fee2e2", color: "#991b1b" },
   Maintenance: { bg: "#fef3c7", color: "#92400e" },
-  Reserved: { bg: "#dbeafe", color: "#1e40af" },
+  Reserved: { bg: "#e0e7ff", color: "#4338ca" },
   Blocked: { bg: "#f3f4f6", color: "#374151" },
 };
 const TEAL = "#0891b2";

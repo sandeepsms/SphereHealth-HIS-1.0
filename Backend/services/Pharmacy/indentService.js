@@ -113,6 +113,22 @@ async function createIndent({ admissionId, items, urgency = "Routine", notes, us
     };
   });
 
+  // R7hr-255 (indent batch-fetch fix) — indent lines almost always arrive
+  // WITHOUT a pharmacy-drug id (the doctor order rarely carries one) and with a
+  // free-text name ("Inj Ondansetron 4mg") that doesn't match the master verbatim
+  // ("Ondansetron 4mg"). That left the pharmacist's release modal unable to fetch
+  // batches and FEFO unable to decrement stock. Resolve a PharmacyDrug link by
+  // name NOW (reusing the GRN drug-matcher) so the link is stored from the start.
+  try {
+    const { findDrug } = require("./drugMatcher");
+    for (const ci of cleanedItems) {
+      if (!ci.drugId && ci.drugName) {
+        const m = await findDrug(ci.drugName, { minConfidence: 0.45 });
+        if (m && m.drug) ci.drugId = m.drug._id;
+      }
+    }
+  } catch (_) { /* best-effort — a manual line without a master match still works */ }
+
   const doc = await PharmacyIndent.create({
     UHID:            admission.UHID,
     patientId:       admission.patientId?._id,
@@ -406,11 +422,23 @@ async function releaseIndent(indentId, { items = [], user = {}, adminOverride = 
     // master. Skip FEFO + record only the legacy batchNumber the
     // pharmacist typed. Audit trail loses a batchId in this case
     // but the workflow still progresses.
-    if (!item.drugId) {
+    // R7hr-255 — resolve the drug link for the FEFO decrement: prefer one the
+    // pharmacist picked in the release modal (r.drugId), then the stored link,
+    // then match by name (legacy indents raised before the create-time resolver).
+    // Only a truly unresolvable line falls back to the legacy no-batch release.
+    let effDrugId = r.drugId || item.drugId;
+    if (!effDrugId && item.drugName) {
+      try {
+        const { findDrug } = require("./drugMatcher");
+        const m = await findDrug(item.drugName, { minConfidence: 0.45 });
+        if (m && m.drug) effDrugId = m.drug._id;
+      } catch (_) { /* best-effort */ }
+    }
+    if (!effDrugId) {
       allPicks.set(String(item._id), []);
       continue;
     }
-    fefoTasks.push({ itemId: String(item._id), drugId: item.drugId, qty: issuedClamped, drugName: item.drugName });
+    fefoTasks.push({ itemId: String(item._id), drugId: effDrugId, qty: issuedClamped, drugName: item.drugName });
   }
 
   // Use Promise.allSettled so even if one task rejects, the others'

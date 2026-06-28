@@ -24,12 +24,13 @@
  */
 import React from "react";
 import { createPortal } from "react-dom";
+import { AnimatedCounter } from "./anim/AnimKit"; // R7hr-276 — count-up KPI numbers
 
 export const C = {
   bg: "#f8fafc", card: "#fff", border: "#e2e8f0",
   text: "#0f172a", muted: "#64748b", subtle: "#f8fafc",
   amber: "#d97706", amberL: "#fffbeb",
-  blue: "#1d4ed8", blueL: "#eff6ff",
+  blue: "#4338ca", blueL: "#eef2ff",
   green: "#16a34a", greenL: "#dcfce7",
   red: "#dc2626", redL: "#fef2f2",
   purple: "#7c3aed", purpleL: "#f5f3ff",
@@ -43,7 +44,7 @@ export const C = {
 const HERO_GRADIENTS = {
   orange: ["#ea580c", "#c2410c"],
   teal:   ["#0d9488", "#0f766e"],
-  blue:   ["#1d4ed8", "#1e40af"],
+  blue:   ["#4f46e5", "#3730a3"],
   purple: ["#7c3aed", "#5b21b6"],
   green:  ["#16a34a", "#15803d"],
   pink:   ["#db2777", "#9d174d"],
@@ -58,7 +59,7 @@ export function AdminPage({ children, maxWidth = 1600 }) {
   );
 }
 
-export function Hero({ icon, title, subtitle, color = "orange", right }) {
+export function Hero({ icon, title, subtitle, color = "orange", right, logo }) {
   const [from, to] = HERO_GRADIENTS[color] || HERO_GRADIENTS.orange;
   return (
     <div style={{
@@ -69,10 +70,14 @@ export function Hero({ icon, title, subtitle, color = "orange", right }) {
     }}>
       <div style={{
         width: 48, height: 48, borderRadius: 12,
-        background: "rgba(255,255,255,.18)", border: "1.5px solid rgba(255,255,255,.32)",
-        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+        background: logo ? "#fff" : "rgba(255,255,255,.18)", border: "1.5px solid rgba(255,255,255,.32)",
+        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden",
       }}>
-        <i className={`pi ${icon}`} style={{ fontSize: 22 }} />
+        {/* R7hr-329 — show the hospital/BIMS logo in the hero badge when a
+            `logo` src is passed (dashboards); otherwise the contextual icon. */}
+        {logo
+          ? <img src={logo} alt="" style={{ width: "100%", height: "100%", objectFit: "contain", padding: 5 }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
+          : <i className={`pi ${icon}`} style={{ fontSize: 22 }} />}
       </div>
       <div style={{ flex: 1, minWidth: 220 }}>
         <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-.2px" }}>{title}</div>
@@ -111,7 +116,7 @@ export function Hero({ icon, title, subtitle, color = "orange", right }) {
 // receptionist/pharmacist sees urgency at a glance even from another tab.
 const BADGE_TONE_BG = {
   idle:   "#10b981", // emerald — calm "all clear"
-  normal: "#2563eb", // blue — work in queue
+  normal: "#4f46e5", // blue — work in queue
   warn:   "#d97706", // amber — urgent (non-STAT)
   urgent: "#dc2626", // red — STAT / stuck — demands attention
 };
@@ -246,14 +251,21 @@ export function TabStrip({ tabs, value, onChange, accent = C.orange, accentL = C
   );
 }
 
+// R7hr-276 — count-up a KPI value when it's purely numeric (counts); leave
+// currency strings / "—" / composites untouched.
+function _kpiValue(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return <AnimatedCounter value={value} />;
+  if (typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value.trim())) return <AnimatedCounter value={Number(value)} />;
+  return value;
+}
 export function KPI({ label, value, color, icon }) {
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", boxShadow: "0 1px 3px rgba(15,23,42,.04)", display: "flex", alignItems: "center", gap: 12 }}>
+    <div className="hga-lift" style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.07)", display: "flex", alignItems: "center", gap: 12 }}>
       <div style={{ width: 36, height: 36, borderRadius: 10, background: color + "12", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <i className={`pi ${icon}`} style={{ fontSize: 15, color }} />
       </div>
       <div>
-        <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1 }}>{_kpiValue(value)}</div>
         <div style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginTop: 4 }}>{label}</div>
       </div>
     </div>
@@ -262,7 +274,7 @@ export function KPI({ label, value, color, icon }) {
 
 export function Card({ title, color, icon, right, children, padding = 16 }) {
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.07)" }}>
       {(title || right) && (
         <div style={{ padding: "10px 16px", background: color + "08", borderBottom: `1px solid ${color}20`, display: "flex", alignItems: "center", gap: 8 }}>
           {icon && <i className={`pi ${icon}`} style={{ color, fontSize: 13 }} />}
@@ -280,22 +292,42 @@ export function Card({ title, color, icon, right, children, padding = 16 }) {
 // a raw object as a child was a hard crash — "Objects are not valid as a
 // React child" — encountered when DieticianConsole was opened in the
 // browser on 13 May 2026.
-export function Table({ cols, children, compact }) {
+// Table — supports TWO call styles so every caller is covered:
+//   • <Table cols={[...]}>{rows as <tr>…}</Table>   (manual body)
+//   • <Table headers={[...]} rows={[[cell,…],…]} />  (auto-rendered body)
+// `cols`/`headers` are interchangeable and default to [] so a not-yet-loaded
+// data set never crashes the header map (was: cols.map on undefined → white
+// screen on /tax-returns, /tds-certificates and ~8 other report pages).
+export function Table({ cols, headers, rows, children, compact }) {
+  const columns = cols || headers || [];
+  const cellPad = compact ? "7px 10px" : "9px 12px";
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.07)" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: compact ? 11.5 : 12 }}>
         <thead>
           <tr style={{ background: C.subtle, borderBottom: `1.5px solid ${C.border}` }}>
-            {cols.map((c, i) => {
+            {columns.map((c, i) => {
               const label = typeof c === "string" ? c : c?.label ?? "";
               const align = typeof c === "object" && c?.align ? c.align : "left";
               return (
-                <th key={i} style={{ padding: compact ? "7px 10px" : "9px 12px", textAlign: align, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontSize: 10, whiteSpace: "nowrap" }}>{label}</th>
+                <th key={i} style={{ padding: cellPad, textAlign: align, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", fontSize: 10, whiteSpace: "nowrap" }}>{label}</th>
               );
             })}
           </tr>
         </thead>
-        <tbody>{children}</tbody>
+        <tbody>
+          {Array.isArray(rows)
+            ? rows.map((r, ri) => (
+                <tr key={ri} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  {(Array.isArray(r) ? r : [r]).map((cell, ci) => {
+                    const col = columns[ci];
+                    const align = typeof col === "object" && col?.align ? col.align : "left";
+                    return <td key={ci} style={{ padding: cellPad, textAlign: align, color: C.text, verticalAlign: "middle" }}>{cell}</td>;
+                  })}
+                </tr>
+              ))
+            : children}
+        </tbody>
       </table>
     </div>
   );
@@ -308,11 +340,11 @@ export function EmptyRow({ span, text }) {
 // Empty — block-level empty-state. Use this OUTSIDE a <table> (EmptyRow
 // only works inside a <tbody>; rendering it bare causes "tr cannot be a
 // child of div" hydration errors).
-export function Empty({ text, icon = "pi-inbox" }) {
+export function Empty({ text, msg, icon = "pi-inbox" }) {
   return (
     <div style={{ padding: "24px 16px", textAlign: "center", color: C.muted, fontSize: 12.5, fontStyle: "italic" }}>
       <i className={`pi ${icon}`} style={{ fontSize: 24, color: C.border, display: "block", marginBottom: 8 }} />
-      {text}
+      {text ?? msg}
     </div>
   );
 }
@@ -335,9 +367,9 @@ const BADGE_PALETTE = {
   active:   { bg: C.greenL,  fg: "#15803d", bd: "#86efac" },
   inactive: { bg: C.redL,    fg: "#b91c1c", bd: "#fecaca" },
   pending:  { bg: C.amberL,  fg: "#b45309", bd: "#fcd34d" },
-  approved: { bg: C.blueL,   fg: "#1e40af", bd: "#93c5fd" },
+  approved: { bg: C.blueL,   fg: "#4338ca", bd: "#93c5fd" },
   rejected: { bg: C.redL,    fg: "#b91c1c", bd: "#fecaca" },
-  opd:      { bg: C.blueL,   fg: "#1e40af", bd: "#93c5fd" },
+  opd:      { bg: C.blueL,   fg: "#4338ca", bd: "#93c5fd" },
   ipd:      { bg: C.amberL,  fg: "#b45309", bd: "#fcd34d" },
   emergency:{ bg: C.redL,    fg: "#b91c1c", bd: "#fecaca" },
   default:  { bg: C.subtle,  fg: C.muted,   bd: C.border },
@@ -389,7 +421,7 @@ export function Modal({ title, color = C.orange, onClose, onSubmit, submitting, 
 
   const tree = (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, width: size, maxWidth: "100%", maxHeight: "88vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 50px rgba(0,0,0,.25)", overflow: "hidden" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: size, maxWidth: "100%", maxHeight: "88vh", display: "flex", flexDirection: "column", boxShadow: "0 24px 64px rgba(16,24,40,.30)", overflow: "hidden", animation: "modalIn .22s cubic-bezier(.34,1.4,.64,1)" }}>
         <div style={{ padding: "12px 18px", background: `linear-gradient(135deg, ${color}, ${color}cc)`, color: "#fff", display: "flex", alignItems: "center", gap: 10 }}>
           {icon && <i className={`pi ${icon}`} style={{ fontSize: 16 }} />}
           <div style={{ fontWeight: 800, fontSize: 15, flex: 1 }}>{title}</div>

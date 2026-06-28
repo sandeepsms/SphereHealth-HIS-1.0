@@ -280,18 +280,33 @@ exports.completeHandover = async (req, res) => {
       ));
     }
 
-    // Step 4: mark transfer complete
-    transfer.handoverNotes = handoverNotes.trim();
-    transfer.handoverBy    = handoverBy    || "";
-    transfer.handoverById  = handoverById  || null;
-    transfer.handoverAt    = new Date();
-    transfer.status        = "Complete";
-    await transfer.save();
+    // Step 4: mark transfer complete — R7hr-256 (audit: TOCTOU) flip the status
+    // ATOMICALLY so a concurrent complete/cancel can't both slip past the
+    // status read-check above. The loser gets a clean 409 instead of a double
+    // handover.
+    const completed = await BedTransfer.findOneAndUpdate(
+      { _id: transfer._id, status: "PendingHandover" },
+      { $set: {
+        handoverNotes: handoverNotes.trim(),
+        handoverBy:    handoverBy   || "",
+        handoverById:  handoverById || null,
+        handoverAt:    new Date(),
+        status:        "Complete",
+      } },
+      { new: true },
+    );
+    if (!completed) {
+      return res.status(409).json({
+        success: false,
+        code: "TRANSFER_ALREADY_RESOLVED",
+        message: "This transfer was just completed or cancelled by another action.",
+      });
+    }
 
     res.json({
       success: true,
       message: "Handover complete — patient bed updated successfully.",
-      data: transfer,
+      data: completed,
     });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

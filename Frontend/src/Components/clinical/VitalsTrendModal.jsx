@@ -42,7 +42,7 @@ const C = {
 // note had bp_sys="110" / pulse="80" saved correctly.
 const SOURCE_META = {
   vitals:  { label: "Vital Signs",      short: "Vitals", icon: "❤", fg: "#be185d", bg: "#fce7f3" },
-  daily:   { label: "Daily Assessment", short: "Daily",  icon: "📋", fg: "#1d4ed8", bg: "#dbeafe" },
+  daily:   { label: "Daily Assessment", short: "Daily",  icon: "📋", fg: "#4f46e5", bg: "#e0e7ff" },
   mews:    { label: "MEWS Score",       short: "MEWS",   icon: "🚨", fg: "#b45309", bg: "#fef3c7" },
   initial: { label: "Nursing Initial",  short: "Initial",icon: "🧾", fg: "#15803d", bg: "#dcfce7" },
 };
@@ -233,6 +233,7 @@ export default function VitalsTrendModal({ uhid, ipdNo, patientName, onClose }) 
 
   return (
     <div
+      className="hga-enter-fade"
       onClick={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
       style={{
         position: "fixed", inset: 0, zIndex: 9999,
@@ -240,7 +241,7 @@ export default function VitalsTrendModal({ uhid, ipdNo, patientName, onClose }) 
         display: "flex", alignItems: "flex-start", justifyContent: "center",
         padding: "5vh 16px", overflowY: "auto",
       }}>
-      <div onClick={(e) => e.stopPropagation()} style={{
+      <div className="hga-pop" onClick={(e) => e.stopPropagation()} style={{
         width: "min(1100px, 100%)", background: "#fff", borderRadius: 14,
         boxShadow: "0 20px 50px rgba(0,0,0,.25)", overflow: "hidden",
         fontFamily: "'DM Sans', system-ui, sans-serif",

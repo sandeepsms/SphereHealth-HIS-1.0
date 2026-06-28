@@ -20,7 +20,7 @@ import { API_ENDPOINTS } from "../../config/api";
 /* Short prefix + colour per service category. Same visual language
    as DrugAutocomplete — the doctor sees TYPE first, name second. */
 const CATEGORY_BADGE = {
-  CONSULTATION: { short: "CON", bg: "#dbeafe", fg: "#1d4ed8" },
+  CONSULTATION: { short: "CON", bg: "#e0e7ff", fg: "#4f46e5" },
   ROOM:         { short: "BED", bg: "#ede9fe", fg: "#6d28d9" },
   NURSING:      { short: "NRS", bg: "#fce7f3", fg: "#be185d" },
   LAB:          { short: "LAB", bg: "#fef9c3", fg: "#854d0e" },
@@ -160,7 +160,7 @@ export default function ServiceAutocomplete({
                   cursor: "pointer", fontFamily: "inherit",
                   alignItems: "center",
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "#eff6ff")}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#eef2ff")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
               >
                 <span style={{

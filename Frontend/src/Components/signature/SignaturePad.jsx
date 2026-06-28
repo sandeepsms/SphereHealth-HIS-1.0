@@ -11,7 +11,7 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 
 const C = {
-  primary: "#1e40af", primaryL: "#eff6ff",
+  primary: "#4338ca", primaryL: "#eef2ff",
   green: "#16a34a", greenL: "#dcfce7",
   red: "#dc2626", redL: "#fef2f2",
   border: "#e2e8f0", muted: "#64748b", text: "#0f172a",
@@ -155,7 +155,7 @@ export default function SignaturePad({ onSave, onCancel, existing, userName }) {
       }}>
         {/* Header */}
         <div style={{
-          background: "linear-gradient(135deg,#1e3a8a,#1e40af)",
+          background: "linear-gradient(135deg,#3730a3,#4338ca)",
           padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
           <div>
@@ -283,7 +283,7 @@ export default function SignaturePad({ onSave, onCancel, existing, userName }) {
           }}>Cancel</button>
           <button onClick={handleSave} disabled={!canSave} style={{
             padding: "9px 20px",
-            background: canSave ? "linear-gradient(135deg,#1e3a8a,#1e40af)" : "#cbd5e1",
+            background: canSave ? "linear-gradient(135deg,#3730a3,#4338ca)" : "#cbd5e1",
             border: "none", borderRadius: 8, cursor: canSave ? "pointer" : "not-allowed",
             fontWeight: 700, fontSize: 13, color: "#fff",
           }}>

@@ -77,7 +77,7 @@ const PRIORITY_STYLE = {
 
 const STATUS_BG = {
   Pending:      { bg: "#fef3c7", color: "#d97706" },
-  Acknowledged: { bg: "#dbeafe", color: "#1d4ed8" },
+  Acknowledged: { bg: "#e0e7ff", color: "#4f46e5" },
   InProgress:   { bg: "#e0e7ff", color: "#4f46e5" },
   Completed:    { bg: "#d1fae5", color: "#059669" },
   Cancelled:    { bg: "#fee2e2", color: "#dc2626" },
@@ -157,7 +157,7 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
       borderRadius: 10,
       marginBottom: 10,
       borderLeft: `4px solid ${allDone ? C.success : typeColor}`,
-      boxShadow: "0 1px 4px rgba(0,0,0,.04)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
       overflow: "hidden",
     }}>
       {/* ── Card header ── */}
@@ -454,8 +454,8 @@ function OrderCard({ order, nurseName, onStepDone, onConsentRequest, readOnly = 
 function MedOrderCard({ order, inProgress }) {
   const details = order.orderDetails || {};
   const isSTAT  = order.priority === "STAT";
-  const borderColor = isSTAT ? "#dc2626" : inProgress ? "#1d4ed8" : "#db2777";
-  const bgColor     = isSTAT ? "#fef2f2" : inProgress ? "#eff6ff" : "#fdf2f8";
+  const borderColor = isSTAT ? "#dc2626" : inProgress ? "#4f46e5" : "#db2777";
+  const bgColor     = isSTAT ? "#fef2f2" : inProgress ? "#eef2ff" : "#fdf2f8";
 
   return (
     <div style={{
@@ -469,7 +469,7 @@ function MedOrderCard({ order, inProgress }) {
             <span style={{ background: "#dc2626", color: "#fff", fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 4 }}>STAT</span>
           )}
           <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: "#db277715", color: "#db2777" }}>Medication</span>
-          <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 20, background: inProgress ? "#dbeafe" : "#fef3c7", color: inProgress ? "#1d4ed8" : "#d97706" }}>
+          <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 20, background: inProgress ? "#e0e7ff" : "#fef3c7", color: inProgress ? "#4f46e5" : "#d97706" }}>
             {order.status}
           </span>
           {order.hamFlag && <span style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fca5a5", fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 4 }}>🔴 HAM</span>}
@@ -506,7 +506,7 @@ function MedOrderCard({ order, inProgress }) {
           Ordered by {order.orderedBy || "Doctor"} · {timeAgo(order.createdAt)}
         </div>
       </div>
-      <div style={{ background: inProgress ? "#dbeafe" : "#fce7f3", border: `1px solid ${inProgress ? "#93c5fd" : "#f9a8d4"}`, borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 600, color: inProgress ? "#1d4ed8" : "#be185d", flexShrink: 0, textAlign: "center" }}>
+      <div style={{ background: inProgress ? "#e0e7ff" : "#fce7f3", border: `1px solid ${inProgress ? "#93c5fd" : "#f9a8d4"}`, borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 600, color: inProgress ? "#4f46e5" : "#be185d", flexShrink: 0, textAlign: "center" }}>
         <i className="pi pi-arrow-down" style={{ fontSize: 10, marginRight: 4 }} />
         {inProgress ? "Recording in Treatment Chart ↓" : "Administer via Treatment Chart (MAR) ↓"}
       </div>
@@ -728,7 +728,7 @@ export default function NurseOrdersPanel({ UHID, onConsentRequest, refreshTrigge
   const pending       = newOrders.length;
 
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 8px rgba(0,0,0,.06)", fontFamily: "'DM Sans',sans-serif" }}>
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, marginBottom: 20, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)", fontFamily: "'DM Sans',sans-serif" }}>
 
       {/* ── Header ── */}
       <div style={{ padding: "12px 18px", background: "linear-gradient(90deg, #db277710, #7c3aed08)", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
@@ -862,7 +862,7 @@ export default function NurseOrdersPanel({ UHID, onConsentRequest, refreshTrigge
             {/* ── IN PROGRESS ── */}
             {inProgress.length > 0 && (
               <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#1d4ed8", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#4f46e5", textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 8 }}>
                   ⏳ In Progress ({inProgress.length})
                 </div>
                 {inProgress.map(order => (

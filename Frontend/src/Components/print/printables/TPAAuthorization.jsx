@@ -127,10 +127,10 @@ const TPAAuthorization = ({ settings, receipt = {} }) => {
             </tbody>
             <tfoot>
               <tr>
-                <td style={{ background: "var(--pr-accent-color, #1d4ed8)", color: "white" }}>
+                <td style={{ background: "var(--pr-accent-color, #4f46e5)", color: "white" }}>
                   TOTAL ESTIMATED COST
                 </td>
-                <td className="right" style={{ background: "var(--pr-accent-color, #1d4ed8)", color: "white" }}>
+                <td className="right" style={{ background: "var(--pr-accent-color, #4f46e5)", color: "white" }}>
                   {fmtINR(r.totalEstimated)}
                 </td>
               </tr>

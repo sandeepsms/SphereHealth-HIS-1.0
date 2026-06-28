@@ -390,6 +390,29 @@ router.post("/:id/cosign-verbal", validateObjectIdParam("id"), requireAction("do
 router.post("/", requireAction("doctor-orders.write"), credentialExpiryBlocker("NMC_REG"), async (req, res) => {
   try {
     const body = req.body;
+
+    // R7hr-170 — Patient existence guard. Pre-fix POST /doctor-orders
+    // accepted ANY UHID (even fake/typo) and silently created a ghost
+    // order with admissionId:null / ipdNo:null that no patient panel
+    // would ever surface. Reject up-front with 422 so callers get an
+    // honest error instead of an orphaned write. Defence-in-depth —
+    // the front-end UI only ever passes real patient UHIDs, so this
+    // never triggers on the happy path. Additive guard (no change to
+    // existing logic).
+    if (body.UHID && typeof body.UHID === "string" && body.UHID.trim()) {
+      try {
+        const Patient = require("../../models/Patient/patientModel");
+        const exists = await Patient.exists({ UHID: body.UHID.trim() });
+        if (!exists) {
+          return res.status(422).json({
+            ok: false,
+            code: "PATIENT_NOT_FOUND",
+            message: `No patient found with UHID "${body.UHID.trim()}". Order rejected to prevent orphan write.`,
+          });
+        }
+      } catch (_) { /* lookup failure is non-fatal — fall through */ }
+    }
+
     // Auto-set HAM flags
     const name = body.orderDetails?.medicineName || body.orderDetails?.displayName || "";
     if (name) {

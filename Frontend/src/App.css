@@ -1,5 +1,5 @@
 /* body {
-  /* background: linear-gradient(to right, #0D1452, #182D74, #1E3A8A); */
+  /* background: linear-gradient(to right, #0D1452, #182D74, #3730a3); */
 
 
 
@@ -35,10 +35,12 @@ body {
   margin-right: 10px;
 }
 
+/* R7hr-303: was a muddy dark #464141 border on EVERY PrimeReact input —
+   the main reason the fields looked off-theme. Cleaned to a light border
+   that pairs with the filled premium field (his-design.css). */
 .p-inputtext,
 .p-dropdown {
-  border: 1px solid #464141 !important;
-  /* margin-bottom: 1rem; */
+  border: 1.5px solid #e2e8f0 !important;
 }
 
 .p-dropdown .p-dropdown-label {
@@ -196,9 +198,9 @@ body {
 }
 
 .custom-input.p-inputtext:focus {
-  border-color: #3b82f6;
+  border-color: #6366f1;
   /* blue border on focus */
-  box-shadow: 0 0 4px #3b82f6;
+  box-shadow: 0 0 4px #6366f1;
 }
 
 .p-dropdown {
@@ -216,7 +218,7 @@ body {
 }
 
 .p-dropdown-panel .p-dropdown-items .p-dropdown-item.p-highlight {
-  background: #3b82f6;
+  background: #6366f1;
   /* Tailwind Blue */
   color: white;
 }
@@ -231,7 +233,7 @@ body {
 /* Handle styling */
 .pain-slider.p-slider .p-slider-handle {
   border: 2px solid #111827;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 0 3px rgba(99,102,241, 0.2);
 }
 
 /* Tick line + label */

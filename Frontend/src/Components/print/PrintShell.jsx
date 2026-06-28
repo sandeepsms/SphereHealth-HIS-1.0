@@ -65,7 +65,7 @@ const PrintShell = ({
       className="pr-page"
       style={{
         "--pr-header-color": settings.printHeaderColor || "#1e293b",
-        "--pr-accent-color": settings.printAccentColor || "#1d4ed8",
+        "--pr-accent-color": settings.printAccentColor || "#4f46e5",
         // Font-size knob — falls through to the global pr-page CSS rule
         // when not set, so legacy printables behave exactly as before.
         ...(fontSize ? { fontSize } : {}),
@@ -81,12 +81,13 @@ const PrintShell = ({
 
       {/* ── Header ── */}
       <div className="pr-header">
-        {settings.showLogoInPrint && settings.logo ? (
+        {settings.showLogoInPrint ? (
           <img
             className="pr-header__logo"
             /* R7bf-F / A4-MED-2: rewrite relative logo to absolute URL
-               so staging deploys don't 404 the asset. */
-            src={absoluteLogoUrl(settings.logo)}
+               so staging deploys don't 404 the asset. R7hr-328: fall back to
+               the baked BIMS logo when no logo is uploaded. */
+            src={absoluteLogoUrl(settings.logo || "/bims-logo.png")}
             alt="logo"
             style={{ width: settings.logoWidth || 120, maxWidth: "30%" }}
           />

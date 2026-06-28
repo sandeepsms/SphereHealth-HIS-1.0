@@ -1,8 +1,30 @@
 // controllers/Patient/patientController.js
 const patientService = require("../../services/Patient/patientService");
 
+// R7hr-171 — `visitType` ↔ `registrationType` defensive alias. Two
+// upstream callers (a Frontend SDK helper that mirrors visit-side
+// terminology and an external lab-integration POST) historically sent
+// `visitType:"IPD"` instead of the canonical `registrationType:"IPD"`.
+// Pre-fix the service silently fell back to the default `"OPD"` and the
+// IPD patient ended up with an OPD-2026-NNN patientId — a data
+// integrity drift that NABH would flag at audit time. We now normalise
+// at the controller edge: if `visitType` is present and a valid
+// `registrationType` is missing, copy it across. Live receptionist UI
+// (ReceptionConsole.jsx) already sends the canonical field, so this
+// branch fires only on the off-contract paths. Additive.
+const _RT_ALIASES = new Set(["OPD", "IPD", "Emergency", "Daycare"]);
+function _normaliseRegistrationType(body) {
+  if (!body || typeof body !== "object") return body;
+  if (!body.registrationType && body.visitType) {
+    const v = String(body.visitType).trim();
+    if (_RT_ALIASES.has(v)) body.registrationType = v;
+  }
+  return body;
+}
+
 exports.createPatient = async (req, res) => {
   try {
+    _normaliseRegistrationType(req.body);
     const patient = await patientService.createPatient(req.body);
     res
       .status(201)

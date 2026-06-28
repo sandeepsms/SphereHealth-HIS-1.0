@@ -22,6 +22,7 @@ import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
 import { buildPrintIssuerHtml } from "../../Components/print/printIssuer";
+import { openPrint } from "../../Components/print/openPrint";
 import "../../Components/clinical/clinical-forms.css";
 import "./ReceptionConsole.css";
 
@@ -899,6 +900,25 @@ export default function ReceptionConsole() {
               receiptNo:     adv.receiptNumber || null,
               patientName:   [patient.title, patient.fullName].filter(Boolean).join(" "),
               uhid:          patientUHID,
+              // PD-01 — Forward the patient demographic strip so the
+              // AdvanceReceipt left column populates instead of "—".
+              gender:           patient.gender || "",
+              age:              patient.age || "",
+              contactNumber:    patient.contactNumber || patient.mobile || "",
+              // PD-01 (sprint review fix): patient.address is an object
+              // { completeAddress, city, district, state, pincode }. Prefer the
+              // typed completeAddress, else compose from city/district/state.
+              // NEVER fall back to the raw object (would print "[object Object]").
+              completeAddress:  patient.address?.completeAddress
+                                 || [patient.address?.city, patient.address?.district, patient.address?.state]
+                                    .filter(Boolean).join(", ")
+                                 || "",
+              // PD-01 (sprint review fix): patient.tpa is a <select> id, not an
+              // object — resolve its label via tpaList (mirrors the receipt
+              // preview at L2128). Cash / self-pay -> "Self".
+              payer:            patient.tpa
+                                 ? (tpaList.find(t => t.value === patient.tpa)?.label || "Self")
+                                 : "Self",
               ipdNo:         createdAdm.admissionNumber || null,
               admissionDate: createdAdm.admissionDate || new Date().toISOString(),
               bedNumber:     bedData.bedNumber || null,
@@ -911,10 +931,13 @@ export default function ReceptionConsole() {
               refNo:         adv.transactionId || null,
               depositPurpose: "hospitalization advance",
             };
-            try {
-              sessionStorage.setItem("printPayload-advance-receipt", JSON.stringify(advPayload));
-            } catch (e) { /* sessionStorage full / unavailable */ }
-            window.open("/print/advance-receipt", "_blank", "noopener,noreferrer,width=900,height=1100");
+            // R7hr-172 / sprint review: use the shared openPrint helper — it
+            // stashes advPayload under printPayload-advance-receipt, opens the
+            // same-origin /print route (which inherits the JWT from the parent
+            // tab's sessionStorage), appends a ?ts cache-buster, and falls back
+            // to an <a rel="opener"> click if the popup is blocked. Same-origin,
+            // so reverse-tabnabbing isn't a realistic threat for this URL.
+            openPrint("advance-receipt", advPayload);
           } catch (e) {
             console.error("Advance creation failed:", e);
             toast.warning("Admission saved, but advance deposit could not be recorded — please add via Billing Counter. " + (e?.response?.data?.message || e?.message || ""));
@@ -1373,7 +1396,7 @@ export default function ReceptionConsole() {
                           onClick={retryPincodeLookup}
                           style={{
                             marginLeft: 8, padding: "2px 8px", fontSize: 10, fontWeight: 700,
-                            background: "#fff", color: "#1e40af",
+                            background: "#fff", color: "#4338ca",
                             border: "1.5px solid #c7d2fe", borderRadius: 6, cursor: "pointer",
                             textTransform: "uppercase", letterSpacing: ".4px",
                           }}
@@ -1498,8 +1521,8 @@ export default function ReceptionConsole() {
                     {opd.feeTypeNote && (
                       <div style={{
                         fontSize: 11,
-                        color: opd.feeType === "opdFollowup" ? "#15803d" : "#1e40af",
-                        background: opd.feeType === "opdFollowup" ? "#dcfce7" : "#dbeafe",
+                        color: opd.feeType === "opdFollowup" ? "#15803d" : "#4338ca",
+                        background: opd.feeType === "opdFollowup" ? "#dcfce7" : "#e0e7ff",
                         padding: "2px 10px", borderRadius: 10, display: "inline-block",
                         marginBottom: 4, fontWeight: 700, letterSpacing: ".3px",
                       }}>

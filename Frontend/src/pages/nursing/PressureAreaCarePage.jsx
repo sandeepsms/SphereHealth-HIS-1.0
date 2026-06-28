@@ -22,7 +22,7 @@ const C = {
   green: "#16a34a", greenL: "#dcfce7", greenB: "#bbf7d0",
   amber: "#d97706", amberL: "#fffbeb", amberB: "#fde68a",
   red: "#dc2626", redL: "#fef2f2", redB: "#fecaca",
-  blue: "#1d4ed8", blueL: "#eff6ff", blueB: "#bfdbfe",
+  blue: "#4f46e5", blueL: "#eef2ff", blueB: "#c7d2fe",
   purple: "#7c3aed", purpleL: "#f5f3ff",
   slate: "#1e293b", pink: "#be185d",
   orange: "#ea580c", orangeL: "#fff7ed",
@@ -32,7 +32,7 @@ const C = {
 function Section({ title, icon, color=C.primary, badge, children, defaultOpen=true }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:14, marginBottom:16, overflow:"hidden", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
+    <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:14, marginBottom:16, overflow:"hidden", boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <div onClick={()=>setOpen(o=>!o)} style={{ padding:"12px 20px", background:"#f8fafc", borderBottom:open?`1px solid ${C.border}`:"none", display:"flex", alignItems:"center", justifyContent:"space-between", cursor:"pointer", userSelect:"none" }}>
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
           <span style={{ width:30, height:30, borderRadius:8, background:color+"18", display:"flex", alignItems:"center", justifyContent:"center" }}>

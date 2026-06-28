@@ -226,7 +226,7 @@
   line-height: 1.6;
   white-space: pre-wrap;
 }
-.dnp-soap-cell--s { --soap-c: #1d4ed8; }
+.dnp-soap-cell--s { --soap-c: #4f46e5; }
 .dnp-soap-cell--o { --soap-c: #0d9488; }
 .dnp-soap-cell--a { --soap-c: #d97706; }
 .dnp-soap-cell--p { --soap-c: #059669; }
@@ -257,8 +257,8 @@
   gap: 6px 18px;
   flex-wrap: wrap;
   padding: 10px 14px;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
   border-radius: 9px;
   margin-bottom: 10px;
 }
@@ -268,7 +268,7 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: .6px;
-  color: #1d4ed8;
+  color: #4f46e5;
   align-self: center;
   min-width: 44px;
 }
@@ -398,8 +398,8 @@
 }
 .dnp-note__btn--info {
   border-color: #93c5fd;
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: #eef2ff;
+  color: #4f46e5;
 }
 
 /* Nursing-specific extensions */
@@ -631,8 +631,8 @@
 }
 
 .dnp-tile {
-  --tile-color: #2563eb;
-  --tile-tint: #dbeafe;
+  --tile-color: #4f46e5;
+  --tile-tint: #e0e7ff;
   display: flex;
   align-items: flex-start;
   gap: 14px;

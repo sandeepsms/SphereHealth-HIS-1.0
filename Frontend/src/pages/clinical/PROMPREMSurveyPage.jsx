@@ -226,7 +226,7 @@ export default function PROMPREMSurveyPage() {
               {dim.help && <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>{dim.help}</div>}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
                 {EQ5D5L_LEVELS.map((lvl) => (
-                  <label key={lvl.v} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", border: "1px solid", borderColor: responses[dim.key] === lvl.v ? "#2563eb" : "#e2e8f0", borderRadius: 6, background: responses[dim.key] === lvl.v ? "#dbeafe" : "white", cursor: "pointer", fontSize: 13 }}>
+                  <label key={lvl.v} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", border: "1px solid", borderColor: responses[dim.key] === lvl.v ? "#4f46e5" : "#e2e8f0", borderRadius: 6, background: responses[dim.key] === lvl.v ? "#e0e7ff" : "white", cursor: "pointer", fontSize: 13 }}>
                     <input type="radio" checked={responses[dim.key] === lvl.v} onChange={() => setResponses((r) => ({ ...r, [dim.key]: lvl.v }))} />
                     <span><strong>{lvl.v}</strong> · {lvl.label}</span>
                   </label>
@@ -387,7 +387,7 @@ export default function PROMPREMSurveyPage() {
 
       {/* Patient banner */}
       {admission ? (
-        <div style={{ padding: 12, background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, marginBottom: 16 }}>
+        <div style={{ padding: 12, background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 8, marginBottom: 16 }}>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             <div><strong>{admission.patientName || admission.fullName}</strong></div>
             <div>UHID: <code>{admission.UHID}</code></div>
@@ -414,7 +414,7 @@ export default function PROMPREMSurveyPage() {
           <label style={{ fontSize: 12, color: "#64748b", textTransform: "uppercase", fontWeight: 600 }}>Survey Type</label>
           <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
             {["PROM", "PREM"].map((t) => (
-              <button key={t} disabled={signed} onClick={() => { setType(t); setInstrument(t === "PROM" ? "EQ-5D-5L" : "NABH-PSQ"); setResponses({}); }} style={{ flex: 1, padding: "8px 12px", border: "1px solid", borderColor: type === t ? "#2563eb" : "#cbd5e1", borderRadius: 6, background: type === t ? "#dbeafe" : "white", cursor: signed ? "not-allowed" : "pointer", fontWeight: 600 }}>
+              <button key={t} disabled={signed} onClick={() => { setType(t); setInstrument(t === "PROM" ? "EQ-5D-5L" : "NABH-PSQ"); setResponses({}); }} style={{ flex: 1, padding: "8px 12px", border: "1px solid", borderColor: type === t ? "#4f46e5" : "#cbd5e1", borderRadius: 6, background: type === t ? "#e0e7ff" : "white", cursor: signed ? "not-allowed" : "pointer", fontWeight: 600 }}>
                 {t === "PROM" ? "PROM — Outcome" : "PREM — Experience"}
               </button>
             ))}
@@ -487,7 +487,7 @@ export default function PROMPREMSurveyPage() {
       {/* Actions */}
       {!signed && (
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button onClick={saveDraft} disabled={loading || !admission} style={{ padding: "10px 18px", border: "1px solid #2563eb", borderRadius: 8, background: "white", color: "#2563eb", fontWeight: 600, cursor: "pointer" }}>💾 Save Draft</button>
+          <button onClick={saveDraft} disabled={loading || !admission} style={{ padding: "10px 18px", border: "1px solid #4f46e5", borderRadius: 8, background: "white", color: "#4f46e5", fontWeight: 600, cursor: "pointer" }}>💾 Save Draft</button>
           <button onClick={signSurvey} disabled={loading || !admission} style={{ padding: "10px 18px", border: "none", borderRadius: 8, background: "#16a34a", color: "white", fontWeight: 700, cursor: "pointer" }}>✓ Sign & Submit</button>
         </div>
       )}

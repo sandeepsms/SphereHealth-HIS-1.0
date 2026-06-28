@@ -335,7 +335,7 @@ export default function ECGRegisterPage() {
               {patientLookup && (
                 <div style={{
                   flex: 1, padding: "6px 12px", borderRadius: 6,
-                  background: "#eff6ff", border: `1px solid #bfdbfe`,
+                  background: "#eef2ff", border: `1px solid #c7d2fe`,
                   fontSize: 13,
                 }}>
                   <strong>{patientLookup.fullName || patientLookup.name}</strong>{" "}

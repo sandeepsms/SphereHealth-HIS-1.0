@@ -22,7 +22,7 @@ const C = {
   green: "#16a34a", greenL: "#dcfce7", greenB: "#bbf7d0",
   amber: "#d97706", amberL: "#fffbeb", amberB: "#fde68a",
   red: "#dc2626", redL: "#fef2f2", redB: "#fecaca",
-  blue: "#1d4ed8", blueL: "#eff6ff", blueB: "#bfdbfe",
+  blue: "#4f46e5", blueL: "#eef2ff", blueB: "#c7d2fe",
   purple: "#7c3aed", purpleL: "#f5f3ff",
   slate: "#1e293b", slateMid: "#334155",
   pink: "#be185d", pinkL: "#fdf2f8",
@@ -31,7 +31,7 @@ const C = {
 // ─── Status config ─────────────────────────────────────────────────────────────
 const STATUS_CFG = {
   Waiting:      { bg: C.amberL,  color: C.amber,  dot: "#f59e0b",  border: C.amberB },
-  "In Progress":{ bg: C.blueL,   color: C.blue,   dot: "#3b82f6",  border: C.blueB  },
+  "In Progress":{ bg: C.blueL,   color: C.blue,   dot: "#6366f1",  border: C.blueB  },
   Completed:    { bg: C.greenL,  color: C.green,  dot: "#22c55e",  border: C.greenB },
   Referred:     { bg: C.purpleL, color: C.purple, dot: "#a855f7",  border: "#ddd6fe" },
 };
@@ -230,7 +230,21 @@ export default function NurseOPDQueuePage() {
       // sending so Mongoose strict mode doesn't drop the real fields
       // and the backend payload stays clean.
       const { _registrationAllergy, ...payload } = vitals;
-      await opdService.updateVitals(selectedVisit.visitNumber, payload, user?.name || user?.username || "Nurse");
+      // PD-03 — Stamp the nurse audit trio (Emp ID + signature image)
+      // alongside the vitals so the OPD Rx Nurse Pre-Assessment print
+      // footer shows Emp ID and a real signature image instead of "—"
+      // and a blank line. Backend extracts these top-level keys before
+      // spreading the rest into the vitals sub-doc.
+      payload.vitalsEnteredByEmployeeId = user?.employeeId || "";
+      payload.vitalsEnteredBySignature  = user?.signature  || "";
+      // PD-03 — Prefer the user's fullName for the print footer's "Nurse"
+      // column. The pre-fix fallback to "Nurse" (role string) is why the
+      // print row showed the role label instead of the actual nurse.
+      await opdService.updateVitals(
+        selectedVisit.visitNumber,
+        payload,
+        user?.fullName || user?.name || user?.username || "Nurse",
+      );
       toast.current?.show({ severity: "success", summary: "Vitals saved", detail: `Vitals updated for ${selectedVisit.UHID}`, life: 3000 });
       setVitalsModal(false);
       loadQueue();
@@ -291,7 +305,7 @@ export default function NurseOPDQueuePage() {
         display: "flex",
         alignItems: "center",
         gap: 14,
-        boxShadow: "0 1px 2px rgba(15,23,42,.04)",
+        boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
       }}>
         {/* Accent left strip */}
         <div style={{
@@ -379,7 +393,7 @@ export default function NurseOPDQueuePage() {
             display: "flex",
             alignItems: "center",
             gap: 12,
-            boxShadow: "0 1px 2px rgba(15,23,42,.03)",
+            boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
           }}>
             <div style={{
               width: 36, height: 36, borderRadius: 10,
@@ -413,7 +427,7 @@ export default function NurseOPDQueuePage() {
         border: "1.5px solid #e2e8f0",
         borderRadius: 12,
         padding: "12px 16px",
-        boxShadow: "0 1px 3px rgba(0,0,0,.04)",
+        boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
       }}>
         {/* Search */}
         <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
@@ -480,7 +494,7 @@ export default function NurseOPDQueuePage() {
           borderRadius: 14,
           padding: "56px 24px",
           textAlign: "center",
-          boxShadow: "0 1px 3px rgba(0,0,0,.04)",
+          boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
         }}>
           <div style={{
             width: 64, height: 64, borderRadius: 16,
@@ -1022,7 +1036,7 @@ function QueueCard({ visit, onVitals, onStatusChange }) {
       border: "1.5px solid #e2e8f0",
       borderRadius: 12,
       overflow: "hidden",
-      boxShadow: "0 1px 3px rgba(0,0,0,.04)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
       display: "flex",
       alignItems: "stretch",
       transition: "box-shadow .15s",

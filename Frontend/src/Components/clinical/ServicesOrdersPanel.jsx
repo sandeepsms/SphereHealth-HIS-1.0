@@ -36,7 +36,7 @@ const DEFAULT_THEME = {
 };
 
 const STATUS_PILL = {
-  Ordered:    { bg: "#dbeafe", fg: "#1d4ed8", label: "Ordered" },
+  Ordered:    { bg: "#e0e7ff", fg: "#4f46e5", label: "Ordered" },
   InProgress: { bg: "#fef3c7", fg: "#a16207", label: "In Progress" },
   Completed:  { bg: "#dcfce7", fg: "#15803d", label: "Billed" },
   Cancelled:  { bg: "#fee2e2", fg: "#b91c1c", label: "Cancelled" },
@@ -151,7 +151,22 @@ export default function ServicesOrdersPanel({ uhid, visitType = "OPD", addedBy =
       const bill = data?.data || data;
       setOrderItems(Array.isArray(bill?.billItems) ? bill.billItems : []);
       setOrderBillNum(bill?.billNumber || orderBillNum || "(DRAFT)");
-      setNewOrder({ service: null, name: "", qty: 1, urgency: "Routine", instructions: "" });
+      // PD-02 — Sticky urgency + instructions across rapid multi-add.
+      // Pre-PD-02 every successful add reset urgency to "Routine" and
+      // wiped instructions, so a doctor ordering 6 STAT-Fasting labs had
+      // to re-pick the urgency and re-type the instructions 6 times.
+      // Now we reset only the per-row fields (service / name / qty) and
+      // KEEP the shared row metadata so the doctor types it once and
+      // adds 6 tests with 6 quick autocomplete picks. The IPD IA pattern
+      // (R7hr-69 chip-flow) would be the richer fix; this is the smallest
+      // additive nudge that materially solves the click-fatigue UX.
+      setNewOrder(prev => ({
+        service: null,
+        name: "",
+        qty: 1,
+        urgency:      prev.urgency      || "Routine",
+        instructions: prev.instructions || "",
+      }));
       toast.success(`${svc.serviceName} ordered — will bill once completed`);
     } catch (e) {
       // R7bp-OPD-DUP — Surface the real backend error so the user isn't
@@ -391,8 +406,8 @@ export default function ServicesOrdersPanel({ uhid, visitType = "OPD", addedBy =
           </tr></thead>
           <tbody>
             {activeOrders.length > 0 && (
-              <tr style={{ background: "#eff6ff" }}>
-                <td colSpan={7} style={{ padding: "6px 10px", color: "#1d4ed8", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>
+              <tr style={{ background: "#eef2ff" }}>
+                <td colSpan={7} style={{ padding: "6px 10px", color: "#4f46e5", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>
                   <i className="pi pi-clock" style={{ marginRight: 6 }} />
                   Active Orders · {activeOrders.length} pending · ₹{activeTotal.toLocaleString("en-IN")} will bill on completion
                 </td>
@@ -421,10 +436,10 @@ export default function ServicesOrdersPanel({ uhid, visitType = "OPD", addedBy =
             {cancelledItems.map(renderRow)}
 
             <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
-              <td colSpan={4} style={{ padding: "8px 10px", color: "#1d4ed8", textTransform: "uppercase", fontSize: 11, letterSpacing: 0.4 }}>
+              <td colSpan={4} style={{ padding: "8px 10px", color: "#4f46e5", textTransform: "uppercase", fontSize: 11, letterSpacing: 0.4 }}>
                 Pending orders (not yet billed)
               </td>
-              <td style={{ padding: "8px 10px", color: "#1d4ed8", fontFamily: "'DM Mono', monospace", fontSize: 13 }}>
+              <td style={{ padding: "8px 10px", color: "#4f46e5", fontFamily: "'DM Mono', monospace", fontSize: 13 }}>
                 ₹{activeTotal.toLocaleString("en-IN")}
               </td>
               <td colSpan={2} />

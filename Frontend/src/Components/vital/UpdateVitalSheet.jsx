@@ -1,13 +1,16 @@
 import React, { useEffect, useState, useRef } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { getPatients } from "../../Services/userService";
 import { getVitalSheet, updateVitalSheet } from "../../Services/vital/vitalService";
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import { Button } from "primereact/button";
 import { Toast } from "primereact/toast";
+import ClinicalLayout from "../clinical/ClinicalLayout";
+import PickPatientPrompt from "../clinical/PickPatientPrompt";
 
 export default function UpdateVitalSheet() {
   const { uhid, date } = useParams();
+  const navigate = useNavigate();
   const [patient, setPatient] = useState(null);
   const [formData, setFormData] = useState(null);
   const toast = useRef(null);
@@ -36,14 +39,26 @@ export default function UpdateVitalSheet() {
     fetchVital();
   }, [uhid, date]);
 
-  // Show a picker prompt when the route lacks UHID/date params
+  // No patient in the route → show the admitted-patient picker instead of a
+  // dead-end. Selecting a patient routes to the vitals recording page for them.
   if (!uhid || !date) {
     return (
-      <div className="p-4 text-center">
-        <h3>Pick a patient first</h3>
-        <p>Vitals are recorded against a specific UHID and date. Open the patient list, click a patient, then choose "Update Vitals" from their visit context.</p>
-        <Link to="/allpatient" className="btn btn-primary">Open Patient List</Link>
-      </div>
+      <ClinicalLayout
+        onPatientSelect={(adm) => {
+          const u = adm?.UHID || adm?.uhid;
+          if (u) navigate(`/vitalSheet/${u}`);
+        }}
+        pageType="vitals"
+      >
+        <PickPatientPrompt
+          icon="pi-pen-to-square"
+          title="Record / Update Vitals"
+          lines={[
+            "Choose an admitted patient to record or",
+            "update their vital signs.",
+          ]}
+        />
+      </ClinicalLayout>
     );
   }
 

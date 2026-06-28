@@ -22,7 +22,7 @@ import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 
 const STATUS_COLORS = {
   Waiting:       { bg: "#fef3c7", color: "#92400e" },
-  "In Progress": { bg: "#dbeafe", color: "#1e40af" },
+  "In Progress": { bg: "#e0e7ff", color: "#4338ca" },
   Completed:     { bg: "#dcfce7", color: "#166534" },
   Referred:      { bg: "#f3e8ff", color: "#6b21a8" },
 };
@@ -212,7 +212,7 @@ export default function DoctorOPDPanelPage() {
         display: "flex",
         alignItems: "center",
         gap: 14,
-        boxShadow: "0 1px 2px rgba(15,23,42,.04)",
+        boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
         fontFamily: "'DM Sans',sans-serif",
       }}>
         {/* Accent left strip */}
@@ -220,6 +220,16 @@ export default function DoctorOPDPanelPage() {
           width: 4, alignSelf: "stretch", borderRadius: 4,
           background: "linear-gradient(180deg,#0f766e,#0d9488)",
         }} />
+
+        {/* R7hr-297 — premium hero icon tile */}
+        <div style={{
+          width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+          background: "linear-gradient(135deg,#0f766e,#0d9488)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          boxShadow: "0 6px 16px rgba(13,148,136,.32), inset 0 1px 0 rgba(255,255,255,.28)",
+        }}>
+          <i className="pi pi-desktop" style={{ fontSize: 19, color: "#fff" }} />
+        </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 10, fontWeight: 800, color: "#0f766e", letterSpacing: ".7px", textTransform: "uppercase" }}>
@@ -294,7 +304,7 @@ export default function DoctorOPDPanelPage() {
         {[
           { label: "Today's Patients", val: todayVisits.length,                                                  icon: "pi-users",            tone: "#0f766e", tint: "#f0fdfa", border: "#a7f3d0" },
           { label: "Waiting",          val: todayVisits.filter(v => v.status === "Waiting").length,             icon: "pi-clock",            tone: "#d97706", tint: "#fffbeb", border: "#fde68a" },
-          { label: "In Progress",      val: todayVisits.filter(v => v.status === "In Progress").length,          icon: "pi-spin pi-spinner",  tone: "#1d4ed8", tint: "#eff6ff", border: "#bfdbfe" },
+          { label: "In Progress",      val: todayVisits.filter(v => v.status === "In Progress").length,          icon: "pi-spin pi-spinner",  tone: "#4f46e5", tint: "#eef2ff", border: "#c7d2fe" },
           { label: "Completed",        val: todayVisits.filter(v => v.status === "Completed").length,            icon: "pi-check-circle",     tone: "#16a34a", tint: "#dcfce7", border: "#bbf7d0" },
           { label: "Vitals Pending",   val: todayVisits.filter(v => v.vitalsStatus === "Pending").length,        icon: "pi-heart",            tone: "#dc2626", tint: "#fef2f2", border: "#fecaca" },
         ].map(({ label, val, icon, tone, tint, border }) => (
@@ -308,7 +318,7 @@ export default function DoctorOPDPanelPage() {
             display: "flex",
             alignItems: "center",
             gap: 12,
-            boxShadow: "0 1px 2px rgba(15,23,42,.03)",
+            boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
           }}>
             <div style={{
               width: 36, height: 36, borderRadius: 10,
@@ -510,7 +520,7 @@ function VisitList({ visits, loading, onAssess, onHistory, onAddNote, onPrint, e
         const deptName = visit.departmentId?.departmentName || visit.department || "—";
 
         return (
-          <div key={visit._id} style={{ background: "#fff", borderRadius: 10, boxShadow: "0 1px 6px rgba(0,0,0,.06)", overflow: "hidden", display: "flex" }}>
+          <div key={visit._id} style={{ background: "#fff", borderRadius: 10, boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)", overflow: "hidden", display: "flex" }}>
             {/* Token */}
             <div style={{ background: "#14b8a6", color: "#fff", padding: "10px 14px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minWidth: 68 }}>
               <div style={{ fontSize: 9, opacity: .8, letterSpacing: 1 }}>TOKEN</div>

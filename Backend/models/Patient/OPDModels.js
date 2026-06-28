@@ -139,6 +139,16 @@ const OPDSchema = new mongoose.Schema(
     },
     vitalsEnteredBy: String,
     vitalsEnteredAt: Date,
+    // PD-03 — Nurse audit trio for the OPD Rx Nurse Pre-Assessment
+    // sign-off footer. The print template reads these via the
+    // OPDAssessmentPage caller and renders Date / Time / Employee ID /
+    // Signature image in the footer row. Pre-PD-03 the writer
+    // (NurseOPDQueuePage) never stamped them, so the footer always
+    // showed "—" for those columns even when the nurse legitimately
+    // took the vitals. Additive — pre-fix visits keep working since
+    // these are optional strings.
+    vitalsEnteredByEmployeeId: { type: String, default: "" },
+    vitalsEnteredBySignature:  { type: String, default: "" },
 
     // ── Examination ──
     // R7bt-PrintAudit-Phase2: generalExamination + systemicExamination were

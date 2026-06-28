@@ -57,9 +57,9 @@ export const ROLE_KEYS = ROLES.map(r => r.key);
 /* ── High-level modules ──────────────────────────────────────────── */
 export const MODULES = [
   { id: "reception",  label: "Reception",       icon: "pi-desktop",       home: "/reception",         color: "#0891b2" },
-  { id: "opd",        label: "OPD / Emergency", icon: "pi-stethoscope",   home: "/opd-visit",         color: "#7c3aed" },
-  { id: "ipd",        label: "Beds & IPD",      icon: "pi-th-large",      home: "/bed-visual",        color: "#1d4ed8" },
-  { id: "doctor",     label: "Doctor Workbench",icon: "pi-user-edit",     home: "/doctor",            color: "#7c3aed" },
+  { id: "opd",        label: "OPD / Emergency", icon: "pi-stethoscope",   home: "/doctor-opd-panel",  color: "#7c3aed" },
+  { id: "ipd",        label: "Beds & IPD",      icon: "pi-th-large",      home: "/bed-visual",        color: "#4f46e5" },
+  { id: "doctor",     label: "Doctor Workbench",icon: "pi-user-edit",     home: "/doctor-opd-panel",  color: "#7c3aed" },
   { id: "nursing",    label: "Nursing",         icon: "pi-heart",         home: "/nursing-notes",     color: "#db2777" },
   { id: "pharmacy",   label: "Pharmacy",        icon: "pi-box",           home: "/pharmacy",          color: "#ea580c" },
   // Module `home` paths drive the AccessSnapshot tile clicks on
@@ -81,7 +81,7 @@ export const MODULES = [
   // RoleDashboardPage's AccessSnapshot.
   { id: "medical-records", label: "Medical Records", icon: "pi-folder-open", home: "/medical-records/discharges", color: "#6366f1" },
   { id: "admin",      label: "Masters & Admin", icon: "pi-cog",           home: "/admin/users",       color: "#1e293b" },
-  { id: "reports",    label: "Reports & MIS",   icon: "pi-chart-bar",     home: "/billing-audit-trail",  color: "#1d4ed8" },
+  { id: "reports",    label: "Reports & MIS",   icon: "pi-chart-bar",     home: "/billing-audit-trail",  color: "#4f46e5" },
 ];
 
 /* ── Module access per role.
@@ -91,7 +91,11 @@ export const MODULE_ROLES = {
   opd:         ["Admin", "Doctor", "Nurse", "Receptionist"],
   ipd:         ["Admin", "Doctor", "Nurse", "Receptionist", "Ward Boy", "Housekeeping", "Physiotherapist", "Dietician", "MRD"],
   doctor:      ["Admin", "Doctor"],
-  nursing:     ["Admin", "Nurse", "Doctor", "Physiotherapist", "Dietician"],
+  // R7hr-313 — /nursing-notes is gated by mar.write (Admin+Nurse only), so
+  // showing the Nursing module tile to Doctor/Physio/Dietician dropped them
+  // on an "Access denied" wall. Doctors read nursing notes via their own
+  // patient panel's Nursing tab; physio/dietician have no nursing surface.
+  nursing:     ["Admin", "Nurse"],
   pharmacy:    ["Admin", "Pharmacist", "Doctor"],
   lab:         ["Admin", "Lab Technician", "Radiologist", "Doctor"],
   billing:     ["Admin", "Receptionist", "Accountant", "TPA Coordinator"],
@@ -125,6 +129,8 @@ export const ACTIONS = {
   // Departments + doctor master
   "departments.read":      ["Admin", "Doctor", "Nurse", "Receptionist"],
   "departments.write":     ["Admin"],
+  // R7hr-272 — DB backup & recovery admin page (Admin only). Mirrors backend.
+  "backup.manage":         ["Admin"],
   "doctors.read":          ["Admin", "Receptionist", "Doctor", "Nurse"],
   "doctors.write":         ["Admin"],
 
@@ -225,7 +231,14 @@ export const ACTIONS = {
   // Mirrors Backend/config/permissions.js. Money-write paths stay blocked by
   // the blockNonClinicalForDoctorNurse middleware on the server.
   "billing.write":         ["Admin", "Accountant", "Receptionist", "Doctor", "Nurse"],
+  // R7hr-261 (sprint-review SoD fix): mirrors Backend. billing.refund is the
+  // SENSITIVE tier (bill refund/cancel, credit-note approve, bulk-settle,
+  // settlement-adjust, cashier clear-close) — Accountant/Admin only.
   "billing.refund":        ["Admin", "Accountant"],
+  // R7hr-170, re-scoped by R7hr-261: Receptionist may refund a patient ADVANCE
+  // DEPOSIT only. Narrow action so the Advance-Deposits-row Refund button shows
+  // for reception without granting the bill-level refund / credit-note tier.
+  "billing.advance-refund": ["Admin", "Accountant", "Receptionist"],
   "billing.discount":      ["Admin", "Accountant"],
   // IPD Live Ledger — mirror of backend permissions for the same actions.
   // Backend keeps the source of truth (controllers re-check); these are

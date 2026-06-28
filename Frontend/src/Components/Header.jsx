@@ -29,7 +29,6 @@ const MODULE_NAMES = {
   "/registration":           "Patient Registration",
   "/allpatient":             "Patient List",
   "/patients":               "Patient Management",
-  "/opd-visit":              "OPD Visits",
   "/emergency":              "Emergency",
   "/reception":              "Reception Console — Single Window Registration",
   "/reception-console":      "Reception Console — Single Window Registration",
@@ -66,7 +65,7 @@ const MODULE_NAMES = {
 };
 
 const ROLE_COLORS = {
-  Admin:            "#1e40af",
+  Admin:            "#4338ca",
   Receptionist:     "#0d9488",
   Doctor:           "#7c3aed",
   Nurse:            "#db2777",
@@ -125,7 +124,10 @@ export default function Header() {
   const [dropOpen, setDropOpen] = useState(false);
   const dropRef = useRef(null);
 
-  const bgColor  = isDoctorPage(pathname) ? "#1e293b" : "#1e40af";
+  // R7hr-285 — premium banner: rich diagonal gradient instead of a flat fill.
+  const bgColor  = isDoctorPage(pathname)
+    ? "linear-gradient(135deg, #0f172a 0%, #1e293b 58%, #334155 100%)"
+    : "linear-gradient(135deg, #312e81 0%, #4338ca 52%, #4f46e5 100%)";
 
   // Should we show the Back button? Hide on:
   //   • Login screen
@@ -161,7 +163,7 @@ export default function Header() {
     ? (user.fullName || _nameParts || user.employeeId || "User")
     : "Guest";
   const initials    = displayName.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
-  const roleColor   = user ? (ROLE_COLORS[user.role] || "#1e40af") : "#1e40af";
+  const roleColor   = user ? (ROLE_COLORS[user.role] || "#4338ca") : "#4338ca";
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -194,18 +196,24 @@ export default function Header() {
   };
 
   return (
-    <div style={{
+    <div className="hga-slide-down" style={{
       background: bgColor, color: "white",
       padding: "0 24px", height: 52,
       display: "flex", alignItems: "center", justifyContent: "space-between",
       position: "fixed", top: 0, left: 0, right: 0, zIndex: 1000,
-      boxShadow: "0 2px 12px rgba(0,0,0,.25)",
+      boxShadow: "0 4px 20px rgba(16,24,40,.30)",
+      borderBottom: "1px solid rgba(255,255,255,.06)",
       fontFamily: "'DM Sans', sans-serif",
     }}>
       {/* ── Left: Logo + NABH + Back + Module ── */}
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <div style={{ width: 28, height: 28, background: "linear-gradient(135deg,#38bdf8,#7c3aed)", borderRadius: 7,
-          display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "white", flexShrink: 0 }}>S</div>
+        {/* R7hr-328 — BIMS logo baked as the default (public/bims-logo.png); an
+            uploaded Hospital-Settings logo overrides it. White chip keeps the
+            red logo legible on the dark header. */}
+        <img src={settings?.logo || "/bims-logo.png"} alt={hospitalName}
+          style={{ height: 34, width: "auto", maxWidth: 48, objectFit: "contain", borderRadius: 7,
+            background: "#fff", padding: "2px 4px", flexShrink: 0 }}
+          onError={(e) => { e.currentTarget.style.visibility = "hidden"; }} />
         <span style={{ fontWeight: 700, fontSize: 16, letterSpacing: ".3px", color: "white" }}>
           {hospitalName}<span style={{ color: "#38bdf8" }}> HIS</span>
         </span>

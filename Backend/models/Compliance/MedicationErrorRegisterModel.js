@@ -79,7 +79,7 @@ const MedicationErrorRegisterSchema = new Schema({
   // ── Idempotency / lineage ─────────────────────────────────────
   // sourceRef is a string (UUID or external id) — used to dedupe
   // auto-emits from MAR.administrationRecord.nurseError=true.
-  sourceRef:        { type: String, default: "", index: true },
+  sourceRef:        { type: String, default: "" }, // indexed below via schema.index({sourceRef:1},{sparse:true})
   sourceType:       { type: String, default: "Manual" },           // Manual | MAR | DoctorOrder | PharmacyDispense
 
   // ── Status ────────────────────────────────────────────────────

@@ -252,7 +252,7 @@
 .phv-tag--status { text-transform: uppercase; }
 .phv-status--completed   { background: #d1fae5; color: #065f46; border-color: #6ee7b7; }
 .phv-status--waiting     { background: #fef3c7; color: #92400e; border-color: #fde68a; }
-.phv-status--in-progress { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+.phv-status--in-progress { background: #e0e7ff; color: #4338ca; border-color: #93c5fd; }
 .phv-status--referred    { background: #fce7f3; color: #9d174d; border-color: #f9a8d4; }
 .phv-status--active      { background: #d1fae5; color: #065f46; border-color: #6ee7b7; }
 .phv-status--discharged  { background: #e0e7ff; color: #3730a3; border-color: #a5b4fc; }

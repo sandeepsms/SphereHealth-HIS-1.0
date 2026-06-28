@@ -12,8 +12,16 @@ import "react-toastify/dist/ReactToastify.css";
 // HIS Design System - load before index.css
 import "./his-design.css";
 
+// R7hr-273 — global animation layer (additive). After the design system so it
+// can use its tokens, before index.css so custom CSS can still override.
+import "./animations.css";
+
 // Your custom CSS - MUST BE LAST
 import "./index.css";
+
+// R7hr-273 — animation intensity preset: hga-minimal | hga-professional | hga-lively.
+// Default is "professional"; change this one string to re-tune motion app-wide.
+document.documentElement.classList.add("hga-professional");
 
 import "./config/axiosInterceptor"; // attach JWT to all axios requests
 import App from "./App.jsx";

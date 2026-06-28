@@ -213,6 +213,10 @@ router.get ("/advance/uhid/:UHID",               requireAction("billing.read"), 
 // doesn't get caught by the :advanceId param.
 router.get ("/advance/refunds",                  requireAction("billing.read"),   ctrl.listAdvanceRefunds);
 router.post("/advance/:advanceId/apply",         vAdv, requireAction("billing.write"),  idempotencyGuard("applyAdvanceToBill"), ctrl.applyAdvanceToBill);
-router.post("/advance/:advanceId/refund",        vAdv, requireAction("billing.refund"), idempotencyGuard("refundAdvance"),      ctrl.refundAdvance);
+// R7hr-261 (sprint-review SoD fix): advance-deposit refund is the one refund a
+// Receptionist may perform, so it gates on the narrow billing.advance-refund
+// (Admin/Accountant/Receptionist) — NOT the broad billing.refund tier that also
+// covers bill refund/cancel + credit-note approval.
+router.post("/advance/:advanceId/refund",        vAdv, requireAction("billing.advance-refund"), idempotencyGuard("refundAdvance"),      ctrl.refundAdvance);
 
 module.exports = router;

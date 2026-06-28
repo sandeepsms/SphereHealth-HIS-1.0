@@ -18,7 +18,7 @@ const C = {
   green: "#16a34a", greenL: "#dcfce7", greenB: "#bbf7d0",
   amber: "#d97706", amberL: "#fffbeb", amberB: "#fde68a",
   red:   "#dc2626", redL:   "#fef2f2", redB:   "#fecaca",
-  blue:  "#1d4ed8", blueL:  "#eff6ff", blueB:  "#bfdbfe",
+  blue:  "#4f46e5", blueL:  "#eef2ff", blueB:  "#c7d2fe",
   purple:"#7c3aed", purpleL:"#f5f3ff", purpleB:"#ddd6fe",
   indigo:"#4f46e5", indigoL:"#eef2ff",
   orange:"#ea580c", orangeL:"#fff7ed",
@@ -43,9 +43,9 @@ const STATUS_META = {
 // rows may have legacy enum values that have since been renamed).
 const SOURCE_META = {
   NurseNote:         { color:"#be185d", bg:"#fce7f3", icon:"pi-heart",         label:"Nurse Note" },
-  DoctorNote:        { color:"#1d4ed8", bg:"#dbeafe", icon:"pi-user-edit",     label:"Doctor Note" },
+  DoctorNote:        { color:"#4f46e5", bg:"#e0e7ff", icon:"pi-user-edit",     label:"Doctor Note" },
   DoctorAssessment:  { color:"#7c3aed", bg:"#ede9fe", icon:"pi-file-edit",     label:"Doctor Assessment" },
-  DoctorVisit:       { color:"#1d4ed8", bg:"#dbeafe", icon:"pi-user-edit",     label:"Doctor Visit" },
+  DoctorVisit:       { color:"#4f46e5", bg:"#e0e7ff", icon:"pi-user-edit",     label:"Doctor Visit" },
   MAR:               { color:"#15803d", bg:"#dcfce7", icon:"pi-box",           label:"MAR (Drug)" },
   InvestigationOrder:{ color:"#854d0e", bg:"#fef9c3", icon:"pi-search-plus",   label:"Investigation" },
   Equipment:         { color:"#0369a1", bg:"#e0f2fe", icon:"pi-server",        label:"Equipment" },
@@ -55,12 +55,12 @@ const SOURCE_META = {
   Manual:            { color:"#64748b", bg:"#f1f5f9", icon:"pi-pencil",        label:"Manual" },
   AutoCharge:        { color:"#0891b2", bg:"#cffafe", icon:"pi-cog",           label:"Auto Charge" },
   Admission:         { color:"#475569", bg:"#f1f5f9", icon:"pi-id-card",       label:"Admission" },
-  BedCharge:         { color:"#1d4ed8", bg:"#dbeafe", icon:"pi-th-large",      label:"Bed Charge" },
+  BedCharge:         { color:"#4f46e5", bg:"#e0e7ff", icon:"pi-th-large",      label:"Bed Charge" },
   Emergency:         { color:"#dc2626", bg:"#fee2e2", icon:"pi-flag",          label:"Emergency" },
 };
 
 // ─── Role badge ───────────────────────────────────────────────────────────────
-const ROLE_COLOR = { Doctor:"#1d4ed8", Nurse:"#0d9488", Lab:"#16a34a", System:"#64748b", Receptionist:"#7c3aed", Auto:"#64748b" };
+const ROLE_COLOR = { Doctor:"#4f46e5", Nurse:"#0d9488", Lab:"#16a34a", System:"#64748b", Receptionist:"#7c3aed", Auto:"#64748b" };
 
 function RoleBadge({ role, name }) {
   const col = ROLE_COLOR[role] || C.muted;
@@ -100,7 +100,7 @@ function AuditRow({ trigger, onConfirm, confirmingId }) {
   const isPending    = trigger.status === "pending" && trigger.requiresConfirmation;
 
   return (
-    <div style={{ background:C.card, border:`1.5px solid ${expanded?src.color:C.border}`, borderRadius:12, marginBottom:8, overflow:"hidden", transition:"border-color .15s", boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
+    <div style={{ background:C.card, border:`1.5px solid ${expanded?src.color:C.border}`, borderRadius:12, marginBottom:8, overflow:"hidden", transition:"border-color .15s", boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
 
       {/* ── Row header ── */}
       <div
@@ -291,7 +291,7 @@ function AuditRow({ trigger, onConfirm, confirmingId }) {
 // ─── Summary card ─────────────────────────────────────────────────────────────
 function SummaryCard({ icon, label, value, color, sub }) {
   return (
-    <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:12, padding:"14px 18px", display:"flex", alignItems:"center", gap:14, boxShadow:"0 1px 3px rgba(0,0,0,.04)" }}>
+    <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:12, padding:"14px 18px", display:"flex", alignItems:"center", gap:14, boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <div style={{ width:44, height:44, borderRadius:12, background:color+"18", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
         <i className={`pi ${icon}`} style={{ fontSize:20, color }} />
       </div>
@@ -477,7 +477,7 @@ export default function BillingAuditTrailPage() {
       <div style={{ padding:"20px 24px" }}>
 
         {/* ── Patient search ── */}
-        <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:14, padding:"16px 18px", marginBottom:16, boxShadow:"0 1px 4px rgba(0,0,0,.04)" }}>
+        <div style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:14, padding:"16px 18px", marginBottom:16, boxShadow:"0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
           <form onSubmit={handleSearch} style={{ display:"flex", gap:10 }}>
             <input
               value={searchVal}

@@ -707,7 +707,7 @@ function ChangePasswordPrompt() {
             Log out
           </button>
           <button type="submit" disabled={busy}
-            style={{ padding: "9px 18px", background: busy ? "#94a3b8" : "#1e40af", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: busy ? "wait" : "pointer" }}>
+            style={{ padding: "9px 18px", background: busy ? "#94a3b8" : "#4338ca", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: busy ? "wait" : "pointer" }}>
             {busy ? "Saving…" : "Update password"}
           </button>
         </div>

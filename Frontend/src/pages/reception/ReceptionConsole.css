@@ -243,7 +243,7 @@
 .rc-section-icon--daycare  { background: #d97706; }
 .rc-section-icon--emergency{ background: #dc2626; }
 .rc-section-icon--services { background: #059669; }
-.rc-section-icon--patient  { background: #1e40af; }
+.rc-section-icon--patient  { background: #4338ca; }
 .rc-section-icon--bed      { background: #0d9488; }
 .rc-section-icon--tpa      { background: #be185d; }
 .rc-section-title {
@@ -462,7 +462,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 12px 14px;
-  background: linear-gradient(135deg, #ecfeff, #dbeafe);
+  background: linear-gradient(135deg, #ecfeff, #e0e7ff);
   border: 1.5px solid #0891b2;
   border-radius: 10px;
   margin-top: 6px;

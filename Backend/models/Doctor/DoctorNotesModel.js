@@ -153,19 +153,23 @@ const DoctorNotesSchema = new mongoose.Schema(
     noteType: {
       type: String,
       enum: [
+        // R7hr-269 (USER, 2026-06-22): the "admission", "progress" and
+        // "assessment" (Reassessment) note types were removed end-to-end at
+        // user request. They are no longer offered in the Add-a-Note picker and
+        // are no longer accepted by this enum, so they can never be created.
+        // "general" STAYS: it is this model's `default` and the system-wide
+        // fallback bucket for any untyped note (DoctorPatientPanel /
+        // NursePatientPanel / patientFile + history aggregation all do
+        // `noteType || "general"`). Removing it would break note creation +
+        // those fallbacks — so it remains here (hidden from the picker) to keep
+        // systemic integrity. "initial" is the NABH COP.1 first-contact note
+        // posted by the Initial Assessment surface.
         "general",
-        "admission",
-        // R7g: "initial" is the NABH COP.1 first contact note — distinct
-        // from "admission" (administrative) and "progress" (daily). The
-        // frontend's Initial Assessment modal posts this value; without
-        // it, save fails enum validation silently.
         "initial",
-        "progress",
         "daily",
         "icu",
         "procedure",
         "consultation",
-        "assessment",
         "discharge",
         "death",
         "amendment",

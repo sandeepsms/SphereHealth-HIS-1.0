@@ -37,8 +37,8 @@ const C = {
   subtle: "#f8fafc",
   orange: "#ea580c",
   orangeL: "#fff7ed",
-  blue: "#1d4ed8",
-  blueL: "#eff6ff",
+  blue: "#4f46e5",
+  blueL: "#eef2ff",
   green: "#16a34a",
   greenL: "#dcfce7",
   red: "#dc2626",
@@ -362,10 +362,10 @@ function RoomChargesInner() {
 
         {/* Hero */}
         <div style={{
-          background: "linear-gradient(135deg,#1d4ed8,#1e40af)",
+          background: "linear-gradient(135deg,#4f46e5,#4338ca)",
           borderRadius: 14, padding: "16px 22px", marginBottom: 16,
           color: "#fff", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
-          boxShadow: "0 4px 14px rgba(29,78,216,.25)",
+          boxShadow: "0 4px 14px rgba(79,70,229,.25)",
         }}>
           <div style={{
             width: 48, height: 48, borderRadius: 12,

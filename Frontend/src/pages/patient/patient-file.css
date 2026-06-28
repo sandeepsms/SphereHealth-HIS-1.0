@@ -893,9 +893,9 @@
   line-height: 1.6;
 }
 .pf-info-box--blue {
-  background: #eff6ff;
+  background: #eef2ff;
   border-color: #93c5fd;
-  color: #1d4ed8;
+  color: #4f46e5;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1709,4 +1709,24 @@
   .pf-section { break-inside: avoid; page-break-inside: avoid; }
   .pf-section__head { background: #f5f5f5; }
   .pf-record:hover, .pf-table tbody tr:hover { background: transparent; }
+}
+
+/* ════════════════════════════════════════════════════════════
+   PREMIUM PATIENT-PANEL REFINEMENT (R7hr-298 USER) — elevates the
+   shared shell used by BOTH the Doctor and Nurse patient panels:
+   identity strip, tab active state, and action buttons. Additive;
+   honours prefers-reduced-motion.
+   ════════════════════════════════════════════════════════════ */
+.pf-strip { box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 6px 18px rgba(16,24,40,.07); }
+.pf-tabs__btn { transition: background .15s cubic-bezier(.4,0,.2,1), color .15s, border-color .15s, transform .1s, box-shadow .15s; }
+.pf-tabs__btn:hover:not(.pf-tabs__btn--active) { transform: translateY(-1px); }
+.pf-tabs__btn--active { box-shadow: 0 4px 12px color-mix(in srgb, var(--pf-accent) 34%, transparent), inset 0 1px 0 rgba(255,255,255,.22); }
+.pf-action, .pf-shell__search-btn, .pf-shell__quick-btn { transition: transform .12s, box-shadow .15s, background .15s, filter .15s; }
+.pf-action:hover, .pf-shell__quick-btn:hover { transform: translateY(-1px); }
+.pf-action:active, .pf-shell__quick-btn:active { transform: translateY(0) scale(.97); }
+.pf-shell__search-btn { box-shadow: 0 1px 3px color-mix(in srgb, var(--pf-accent) 25%, transparent); }
+.pf-shell__search-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px color-mix(in srgb, var(--pf-accent) 30%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .pf-tabs__btn, .pf-action, .pf-shell__search-btn, .pf-shell__quick-btn { transition: none; }
+  .pf-tabs__btn:hover, .pf-action:hover, .pf-action:active, .pf-shell__quick-btn:hover, .pf-shell__search-btn:hover { transform: none; }
 }

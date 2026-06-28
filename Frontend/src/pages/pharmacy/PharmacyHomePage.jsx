@@ -8,6 +8,7 @@
  * sectioned cards, his-field inputs, tight modals.
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import "../../Components/clinical/clinical-forms.css";
 import { toast } from "react-toastify";
@@ -96,7 +97,7 @@ const C = {
   bg: "#f8fafc", card: "#fff", border: "#e2e8f0",
   text: "#0f172a", muted: "#64748b", subtle: "#f8fafc",
   amber: "#d97706", amberL: "#fffbeb",
-  blue: "#1d4ed8", blueL: "#eff6ff",
+  blue: "#4f46e5", blueL: "#eef2ff",
   green: "#16a34a", greenL: "#dcfce7",
   red: "#dc2626", redL: "#fef2f2",
   purple: "#7c3aed", purpleL: "#f5f3ff",
@@ -216,7 +217,11 @@ function indentBadgeFor(stats) {
 }
 
 export default function PharmacyHomePage() {
-  const [tab, setTab] = useState("dashboard");
+  // R7hr-313 — seed the active tab from ?tab= so the dashboard quick-actions
+  // (/pharmacy?tab=dispense, ?tab=grn, …) deep-link straight to their tab
+  // instead of always opening on the Dashboard tab.
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(searchParams.get("tab") || "dashboard");
 
   // R7hr-17: Warm the pharmacy-settings cache on mount so every Print
   // click handler in this page can read it synchronously (Chrome blocks
@@ -635,7 +640,7 @@ function DrugsTab() {
                       requiresRefrigeration on DrugModel. */}
                   {d.requiresRefrigeration && (
                     <span title="Cold-chain — must stay at 2-8 °C"
-                      style={{ padding: "2px 6px", borderRadius: 4, background: "#dbeafe", color: "#1d4ed8", fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", whiteSpace: "nowrap" }}>
+                      style={{ padding: "2px 6px", borderRadius: 4, background: "#e0e7ff", color: "#4f46e5", fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", whiteSpace: "nowrap" }}>
                       ❄ COLD
                     </span>
                   )}
@@ -3081,7 +3086,7 @@ function RegistersTab() {
 
 function _RegisterShell({ title, color, totals, children }) {
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <div style={{ padding: "10px 16px", background: `${color}08`, borderBottom: `1px solid ${color}20`, display: "flex", alignItems: "center", gap: 12 }}>
         <i className="pi pi-book" style={{ color, fontSize: 14 }} />
         <span style={{ fontWeight: 800, fontSize: 13, color }}>{title}</span>
@@ -3482,7 +3487,7 @@ const DEMO_SETTINGS = {
   phone1: "+91-11-4567-8900", email: "info@spherehealth.com",
   gstin: "07ABCDE1234F1Z5", drugLicenseNo: "DL/20B/2024-001",
   bankName: "HDFC Bank", accountNo: "XXXXXXXX1234", ifscCode: "HDFC0000123",
-  printHeaderColor: "#1e293b", printAccentColor: "#1d4ed8",
+  printHeaderColor: "#1e293b", printAccentColor: "#4f46e5",
   billFooterNote: "Thank you for choosing SphereHealth — get well soon!",
   termsLine1: "Goods once sold are not returnable unless the seal is intact (within 7 days).",
   termsLine2: "Medicines must be stored as per pack instructions.",
@@ -3671,7 +3676,7 @@ function SettingsTab() {
           display: "flex", alignItems: "center", gap: 14,
           padding: 14, borderRadius: 10,
           border: `2px solid ${C.blue}`,
-          background: "linear-gradient(135deg, #eff6ff 0%, #fff 100%)",
+          background: "linear-gradient(135deg, #eef2ff 0%, #fff 100%)",
         }}>
           <div style={{
             width: 60, height: 60, borderRadius: 12,
@@ -3695,7 +3700,7 @@ function SettingsTab() {
           <span style={{
             fontSize: 9, fontWeight: 800,
             padding: "3px 8px", borderRadius: 4,
-            background: "#dbeafe", color: "#1e40af",
+            background: "#e0e7ff", color: "#4338ca",
             letterSpacing: ".4px", textTransform: "uppercase",
           }}>Locked</span>
         </div>
@@ -3826,7 +3831,7 @@ function SettingsTab() {
         </div>
 
         {!isOutsourced && (
-          <div style={{ padding: "10px 14px", background: C.blueL, border: `1px solid ${C.blue}30`, borderRadius: 8, fontSize: 12, color: "#1e3a8a", marginBottom: 14 }}>
+          <div style={{ padding: "10px 14px", background: C.blueL, border: `1px solid ${C.blue}30`, borderRadius: 8, fontSize: 12, color: "#3730a3", marginBottom: 14 }}>
             <i className="pi pi-info-circle" style={{ marginRight: 6 }} />
             Currently in-house. Pharmacy bills carry the hospital's header/footer from <b>Admin → Hospital Settings</b>. Switch to "Outsourced" to enter custom identity below.
           </div>
@@ -4021,7 +4026,7 @@ function SupplierModal({ supplier, onClose, onSaved }) {
 ══════════════════════════════════════════════════════════════════ */
 function KPI({ label, value, color, icon }) {
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", boxShadow: "0 1px 3px rgba(15,23,42,.04)", display: "flex", alignItems: "center", gap: 12 }}>
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)", display: "flex", alignItems: "center", gap: 12 }}>
       <div style={{ width: 36, height: 36, borderRadius: 10, background: color + "12", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <i className={`pi ${icon}`} style={{ fontSize: 15, color }} />
       </div>
@@ -4041,7 +4046,7 @@ function PharmStat({ accent, label, value, sub }) {
     <div style={{
       background: C.card, border: `1.5px solid ${C.border}`,
       borderRadius: 12, overflow: "hidden",
-      boxShadow: "0 1px 3px rgba(15,23,42,.04)",
+      boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)",
     }}>
       <div style={{ height: 4, background: accent }} />
       <div style={{ padding: "12px 16px" }}>
@@ -4055,7 +4060,7 @@ function PharmStat({ accent, label, value, sub }) {
 
 function Card({ title, color, icon, children }) {
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <div style={{ padding: "10px 16px", background: color + "08", borderBottom: `1px solid ${color}20`, display: "flex", alignItems: "center", gap: 8 }}>
         <i className={`pi ${icon}`} style={{ color, fontSize: 13 }} />
         <span style={{ fontWeight: 800, fontSize: 13, color }}>{title}</span>
@@ -4073,7 +4078,7 @@ function Card({ title, color, icon, children }) {
 // dotted hint so the user discovers they're clickable.
 function Table({ cols, children, compact, sort }) {
   return (
-    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: "0 1px 3px rgba(15,23,42,.04)" }}>
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: 12, overflow: "auto", boxShadow: "0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06)" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: compact ? 11.5 : 12 }}>
         <thead>
           <tr style={{ background: C.subtle, borderBottom: `1.5px solid ${C.border}` }}>
@@ -5101,8 +5106,8 @@ function OPDRxTab() {
               <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
                 {v.status && (
                   <span style={{ padding: "2px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700,
-                    background: v.status === "Completed" ? "#dcfce7" : "#dbeafe",
-                    color:      v.status === "Completed" ? "#15803d" : "#1d4ed8",
+                    background: v.status === "Completed" ? "#dcfce7" : "#e0e7ff",
+                    color:      v.status === "Completed" ? "#15803d" : "#4f46e5",
                     textTransform: "uppercase", letterSpacing: ".4px",
                   }}>{v.status}</span>
                 )}
@@ -5950,7 +5955,7 @@ function IPDCreditTab({ focus, onClearFocus } = {}) {
 
       {/* Hard-block notice */}
       <div style={{
-        background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af",
+        background: "#eef2ff", border: "1px solid #c7d2fe", color: "#4338ca",
         borderRadius: 8, padding: "8px 14px", fontSize: 11.5, marginBottom: 14,
         display: "flex", alignItems: "center", gap: 8,
       }}>

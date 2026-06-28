@@ -15,3 +15,33 @@ Backend/scripts/resetDoctorPw.js
 .adminrc.json
 .backend-log.txt
 Spherehealth.login_*.json
+
+# R7hr-253 — backup artifacts (never commit DB dumps)
+*.shbak.gz
+*.shbak.gz.sha256
+SphereBackups/
+
+# R7hr-257 — debug/session litter (never commit; these hold JWTs, PHI dumps and
+# throwaway probe output). Cleaned out 2026-06-21; this keeps them from creeping
+# back into the working tree.
+.token*.json
+.token*.txt
+.*.out
+*.out
+.*_audit_parsed.txt
+.inv.json
+.rc.json
+.rcat.json
+.rms.json
+.mort_probe.json
+.create-item.json
+.del-item.json
+.nurse-items.json
+Spherehealth.*.json
+PHARMACY_AUDIT_*.json
+orders*.json
+ledger.json
+nul.css
+Frontend/nul.css
+nabh-audit/
+registers/
