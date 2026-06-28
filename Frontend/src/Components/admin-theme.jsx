@@ -59,7 +59,7 @@ export function AdminPage({ children, maxWidth = 1600 }) {
   );
 }
 
-export function Hero({ icon, title, subtitle, color = "orange", right }) {
+export function Hero({ icon, title, subtitle, color = "orange", right, logo }) {
   const [from, to] = HERO_GRADIENTS[color] || HERO_GRADIENTS.orange;
   return (
     <div style={{
@@ -70,10 +70,14 @@ export function Hero({ icon, title, subtitle, color = "orange", right }) {
     }}>
       <div style={{
         width: 48, height: 48, borderRadius: 12,
-        background: "rgba(255,255,255,.18)", border: "1.5px solid rgba(255,255,255,.32)",
-        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+        background: logo ? "#fff" : "rgba(255,255,255,.18)", border: "1.5px solid rgba(255,255,255,.32)",
+        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden",
       }}>
-        <i className={`pi ${icon}`} style={{ fontSize: 22 }} />
+        {/* R7hr-329 — show the hospital/BIMS logo in the hero badge when a
+            `logo` src is passed (dashboards); otherwise the contextual icon. */}
+        {logo
+          ? <img src={logo} alt="" style={{ width: "100%", height: "100%", objectFit: "contain", padding: 5 }} onError={(e) => { e.currentTarget.style.display = "none"; }} />
+          : <i className={`pi ${icon}`} style={{ fontSize: 22 }} />}
       </div>
       <div style={{ flex: 1, minWidth: 220 }}>
         <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-.2px" }}>{title}</div>

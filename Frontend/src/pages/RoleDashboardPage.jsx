@@ -13,6 +13,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
+import { useHospitalSettings } from "../context/HospitalSettingsContext";
 import {
   AdminPage, Hero, KPI, Card, Badge, C,
 } from "../Components/admin-theme";
@@ -37,6 +38,7 @@ function greet() {
 
 export default function RoleDashboardPage() {
   const { user } = useAuth();
+  const { settings } = useHospitalSettings();
   if (!user) return <AdminPage><div style={{ padding: 40 }}>Loading…</div></AdminPage>;
   // Single-page roles — their console is their dashboard.
   if (user.role === "Dietician")    return <Navigate to="/dietitian" replace />;
@@ -68,7 +70,7 @@ export default function RoleDashboardPage() {
 
   return (
     <AdminPage>
-      <Hero icon={roleMeta.icon} color={heroColor}
+      <Hero icon={roleMeta.icon} color={heroColor} logo={settings?.logo || "/bims-logo.png"}
         title={<Typewriter text={`${greet()}, ${firstName}`} speed={42} />}
         subtitle={`${roleMeta.label} workspace · ${new Date().toLocaleDateString("en-IN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" })}`}
         right={<RoleBadge role={user.role} />} />

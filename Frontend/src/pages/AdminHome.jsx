@@ -196,14 +196,19 @@ function HospitalHero({ now, hospital, firstName, kpi }) {
       }} />
 
       <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+        {/* R7hr-329 — BIMS/hospital logo in the mission-control badge (white
+            card so the red mark reads on the indigo hero); uploaded settings
+            logo overrides the baked default. */}
         <div style={{
           width: 64, height: 64, borderRadius: 16,
-          background: "rgba(255,255,255,.16)",
+          background: "#fff",
           border: "1.5px solid rgba(255,255,255,.32)",
           display: "flex", alignItems: "center", justifyContent: "center",
-          backdropFilter: "blur(10px)",
+          overflow: "hidden", padding: 7, flexShrink: 0,
         }}>
-          <i className="pi pi-shield" style={{ fontSize: 28 }} />
+          <img src={hospital?.logo || "/bims-logo.png"} alt={hospital?.name || "Hospital"}
+            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+            onError={(e) => { e.currentTarget.style.display = "none"; }} />
         </div>
 
         <div style={{ flex: 1, minWidth: 280 }}>
