@@ -111,6 +111,17 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
     return `${yyyy}-${mm}-${dd}`;
   };
 
+  // R7hr-324 — NABH amendment policy: a time-slot row locks 1 hour after its
+  // scheduled time, so charted vitals can be corrected within the hour but not
+  // silently edited later (past dates lock entirely). editMode is exempt.
+  const isRowLocked = (time) => {
+    if (editMode) return false;
+    const [hh, mm] = String(time || "00:00").split(":").map(Number);
+    const slot = new Date(date);
+    slot.setHours(hh || 0, mm || 0, 0, 0);
+    return (Date.now() - slot.getTime()) > 60 * 60 * 1000;
+  };
+
 
   useEffect(() => {
     if (!uhid) return;
@@ -601,7 +612,7 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
                   <tr>
                     <th>Time</th>
                     {vitals.filter(v => v.active).map((v, idx) => (
-                      <th key={idx}>
+                      <th key={idx} style={{ minWidth: 58 }}>
                         {/* R7hr-323 — name on top, unit stacked below (keeps its
                             exact case). Narrows each vital column so the Remarks
                             column has more room for long text. */}
@@ -620,7 +631,10 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
                   {timeRows.map((time, rowIndex) => (
                     <tr key={rowIndex}>
                       <td>
-                        <input type="time" readOnly value={time} className="form-control bg-light text-center" />
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                          {isRowLocked(time) && <i className="pi pi-lock" title="Locked — charted over an hour ago" style={{ fontSize: 10, color: "#94a3b8", flexShrink: 0 }} />}
+                          <input type="time" readOnly value={time} className="form-control bg-light text-center" />
+                        </div>
                       </td>
                       {vitals.filter(v => v.active).map((v, colIndex) => {
                         const safe = makeSafeId(v.name);
@@ -636,6 +650,7 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
                                   type="number"
                                   className="form-control text-center"
                                   value={field.value ?? ""}
+                                  readOnly={isRowLocked(time)}
                                   min={v.name === "GCS" ? 3 : undefined}
                                   max={v.name === "GCS" ? 15 : undefined}
                                   onKeyDown={(e) =>
@@ -691,6 +706,7 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
                               type="text"
                               className="form-control"
                               value={field.value ?? ""}
+                              readOnly={isRowLocked(time)}
                               style={{ textAlign: "left", minWidth: 220 }}
                             />
                           )}
@@ -705,6 +721,7 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
                               type="text"
                               className="form-control text-center"
                               value={field.value ?? ""}
+                              readOnly={isRowLocked(time)}
                             />
                           )}
                         </Field>

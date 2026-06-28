@@ -612,7 +612,13 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 .vsheet-grid input.form-control:focus, .vsheet-grid input:focus {
   border-color: #4338ca !important; box-shadow: 0 0 0 3px rgba(67,56,202,.15) !important; outline: none;
 }
-.vsheet-grid input[readonly], .vsheet-grid input.bg-light { background: #f8fafc !important; color: #475569 !important; font-weight: 600; }
+.vsheet-grid input[readonly], .vsheet-grid input.bg-light { background: #f8fafc !important; color: #475569 !important; font-weight: 600; cursor: not-allowed; }
+/* R7hr-324 — hide number spinners + trim horizontal padding so 2-3 digit
+   vitals (15, 121) are fully visible in the narrow columns (spinner arrows
+   were clipping the value). */
+.vsheet-grid input[type="number"]::-webkit-inner-spin-button,
+.vsheet-grid input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.vsheet-grid input[type="number"] { -moz-appearance: textfield; appearance: textfield; padding-left: .3rem !important; padding-right: .3rem !important; }
 
 /* ── DataTable — premium header + row interaction + tabular nums ── */
 .p-datatable .p-datatable-thead > tr > th {
