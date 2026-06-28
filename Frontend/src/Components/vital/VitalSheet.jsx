@@ -8,6 +8,8 @@ import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
 import { Toast } from "primereact/toast";
 import { saveVitalSheet, getVitalSheet } from "../../Services/vital/vitalService";
+import axios from "axios";
+import { API_ENDPOINTS } from "../../config/api";
 import { useLocation } from "react-router-dom";
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
@@ -33,6 +35,9 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
   // R7hr-320 — the sheet already saved for this UHID + date, fetched on open
   // so previously-charted rows are visible/pre-filled (nurse fills the next row).
   const [savedSheet, setSavedSheet] = useState(null);
+  // R7hr-322 — IV-fluid volume per hour from the ongoing infusion (Intake/Output
+  // ledger, INFUSION_CRON + MAR IN rows) → auto-fills the "IV Fluid" column.
+  const [ivFluidByHour, setIvFluidByHour] = useState({});
 
 
   const location = useLocation();
@@ -177,6 +182,34 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
           }
         }
       } catch { if (!cancelled) setSavedSheet(null); }
+
+      // Ongoing-infusion IV fluid → per-hour buckets for the "IV Fluid" column.
+      // Sums IN rows from the running-drip cron + MAR (IV dilutions) by hour.
+      try {
+        const d0 = new Date(date); d0.setHours(0, 0, 0, 0);
+        const d1 = new Date(date); d1.setHours(23, 59, 59, 999);
+        const qs = new URLSearchParams({ UHID: uhid, from: d0.toISOString(), to: d1.toISOString() });
+        const io = await axios.get(`${API_ENDPOINTS.INTAKE_OUTPUT}?${qs}`);
+        if (!cancelled) {
+          const rows = io?.data?.data?.rows || [];
+          const byHour = {};
+          rows.forEach((r) => {
+            if (r.direction !== "IN" || r.voided) return;
+            if (!["INFUSION_CRON", "MAR"].includes(r.source)) return;
+            const hh = String(new Date(r.ts).getHours()).padStart(2, "0") + ":00";
+            byHour[hh] = (byHour[hh] || 0) + (Number(r.volumeML) || 0);
+          });
+          setIvFluidByHour(byHour);
+          // If the patient has ongoing infusion fluid, make sure the IV Fluid
+          // column is visible so the auto value shows (it may be off in the
+          // saved sheet's column set).
+          if (Object.keys(byHour).length) {
+            setVitals((prev) => prev.some((v) => v.name === "IV Fluid")
+              ? prev.map((v) => v.name === "IV Fluid" ? { ...v, active: true } : v)
+              : [...prev, { name: "IV Fluid", unit: "mL", active: true }]);
+          }
+        }
+      } catch { if (!cancelled) setIvFluidByHour({}); }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -437,10 +470,19 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
               return {
                 notes: oldRow?.notes || "",
                 nurse: oldRow?.nurse || oldRow?.nurseName || oldRow?.recordedBy || "",
-                values: Object.keys(oldRow?.values || {}).reduce((acc, key) => {
-                  acc[makeSafeId(key)] = oldRow.values[key]?.value ?? "";
+                values: (() => {
+                  const acc = Object.keys(oldRow?.values || {}).reduce((a, key) => {
+                    a[makeSafeId(key)] = oldRow.values[key]?.value ?? "";
+                    return a;
+                  }, {});
+                  // R7hr-322 — auto-fill IV Fluid from the ongoing infusion when
+                  // this slot hasn't already been charted (a saved value wins).
+                  const ivKey = makeSafeId("IV Fluid");
+                  if ((acc[ivKey] === undefined || acc[ivKey] === "") && ivFluidByHour[time] != null) {
+                    acc[ivKey] = ivFluidByHour[time];
+                  }
                   return acc;
-                }, {}),
+                })(),
               };
             }),
           }}
