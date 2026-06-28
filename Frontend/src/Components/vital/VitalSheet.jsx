@@ -3,7 +3,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import { getPatients } from "../../Services/userService";
 import { Calendar } from "primereact/calendar";
 import { Dropdown } from "primereact/dropdown";
-import { OrderList } from "primereact/orderlist";
 import { InputSwitch } from "primereact/inputswitch";
 import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
@@ -183,45 +182,35 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
 
 
 
-  const vitalTemplate = (item) => (
-    <div className="d-flex justify-content-between align-items-center w-100 py-2">
-      <strong>{item.name}</strong>
-      <div className="d-flex gap-3">
-        <Button
-          label="Edit"
-          size="small"
-          onClick={() => {
-            setEditVital(item);
-            setEditName(item.name);
-          }}
-        />
-        <InputSwitch
-          checked={item.active}
-          onChange={(e) => {
-            setVitals((prev) =>
-              prev.map((v) => {
-
-                if (
-                  (item.name === "BP Systolic" && v.name === "BP Diastolic") ||
-                  (item.name === "BP Diastolic" && v.name === "BP Systolic")
-                ) {
-                  return { ...v, active: e.value };
-                }
-
-
-                if (v.name === item.name) {
-                  return { ...v, active: e.value };
-                }
-
-                return v;
-              })
-            );
-          }}
-        />
-
-      </div>
-    </div>
-  );
+  // R7hr-319 — settings dialog redesigned; the PrimeReact OrderList (detached
+  // reorder arrows) is replaced by a custom premium list. These helpers drive
+  // the active toggle (BP Systolic/Diastolic stay paired), per-row reorder, and
+  // the small reorder-button style.
+  const toggleVital = (item, value) => {
+    setVitals((prev) => prev.map((v) => {
+      if ((item.name === "BP Systolic" && v.name === "BP Diastolic") ||
+          (item.name === "BP Diastolic" && v.name === "BP Systolic")) return { ...v, active: value };
+      if (v.name === item.name) return { ...v, active: value };
+      return v;
+    }));
+  };
+  const moveVital = (idx, dir) => {
+    setVitals((prev) => {
+      const j = idx + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[j]] = [next[j], next[idx]];
+      return next;
+    });
+  };
+  const reorderBtnStyle = (disabled) => ({
+    width: 26, height: 19, borderRadius: 6, border: "1px solid #e2e8f0",
+    background: disabled ? "#f8fafc" : "#fff", color: disabled ? "#cbd5e1" : "#4338ca",
+    cursor: disabled ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
+  });
+  const dlgLabelStyle = { display: "block", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 };
+  const ghostBtnStyle = { padding: "8px 16px", borderRadius: 8, border: "1.5px solid #e2e8f0", background: "#fff", color: "#64748b", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans',sans-serif" };
+  const primaryBtnStyle = (disabled) => ({ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 18px", borderRadius: 8, border: "none", background: disabled ? "#cbd5e1" : "linear-gradient(135deg,#4f46e5,#4338ca)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: disabled ? "not-allowed" : "pointer", boxShadow: disabled ? "none" : "0 4px 12px rgba(67,56,202,.3)", fontFamily: "'DM Sans',sans-serif" });
 
   // const VitalSheetSchema = Yup.object().shape({
   //   tableData: Yup.array().of(
@@ -285,100 +274,120 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
         </div>
       </div>
 
-      {/* SETTINGS */}
+      {/* SETTINGS — R7hr-319 premium redesign */}
       <Dialog
         header="Vital Data Sheet Setting"
         visible={showDialog}
-        style={{ width: "60vw" }}
+        style={{ width: 580, maxWidth: "96vw" }}
         onHide={() => setShowDialog(false)}
       >
-        <div className="d-flex gap-3 mb-3">
-          <Dropdown
-            value={slot}
-            options={slotOptions}
-            onChange={(e) => handleSlotChange(e.value)}
-            className="w-25"
-          />
-          <Button
-            label="Add Vital"
-            icon="pi pi-plus"
-            onClick={() => setShowAddVital(true)}
-          />
-        </div>
+        <div style={{ fontFamily: "'DM Sans',sans-serif" }}>
+          {/* Top bar: charting interval + add vital */}
+          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+            <div>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Charting interval</label>
+              <Dropdown value={slot} options={slotOptions} onChange={(e) => handleSlotChange(e.value)} style={{ width: 210 }} />
+            </div>
+            <button onClick={() => setShowAddVital(true)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 16px", borderRadius: 9, border: "none",
+                background: "linear-gradient(135deg,#4f46e5,#4338ca)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer",
+                boxShadow: "0 4px 12px rgba(67,56,202,.3)", fontFamily: "'DM Sans',sans-serif" }}>
+              <i className="pi pi-plus" style={{ fontSize: 12 }} /> Add Vital
+            </button>
+          </div>
 
-        <OrderList
-          value={vitals}
-          onChange={(e) => setVitals(e.value)}
-          itemTemplate={vitalTemplate}
-          listStyle={{ height: "400px" }}
-        />
+          {/* Hint */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "#94a3b8", marginBottom: 10 }}>
+            <i className="pi pi-info-circle" style={{ fontSize: 11 }} />
+            Toggle which vitals chart as columns · arrows reorder ·
+            <b style={{ color: "#4338ca" }}>{vitals.filter(v => v.active).length} active</b>
+          </div>
+
+          {/* Vitals list */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "46vh", overflowY: "auto", paddingRight: 4 }}>
+            {vitals.map((item, idx) => (
+              <div key={item.name + idx}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 12px", borderRadius: 12,
+                  border: `1.5px solid ${item.active ? "#c7d2fe" : "#e2e8f0"}`,
+                  background: item.active ? "#f5f7ff" : "#fff", transition: "border-color .15s, background .15s" }}>
+                {/* reorder */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                  <button title="Move up" disabled={idx === 0} onClick={() => moveVital(idx, -1)} style={reorderBtnStyle(idx === 0)}>
+                    <i className="pi pi-chevron-up" style={{ fontSize: 9 }} />
+                  </button>
+                  <button title="Move down" disabled={idx === vitals.length - 1} onClick={() => moveVital(idx, 1)} style={reorderBtnStyle(idx === vitals.length - 1)}>
+                    <i className="pi pi-chevron-down" style={{ fontSize: 9 }} />
+                  </button>
+                </div>
+                {/* name + unit */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13.5, color: "#0f172a" }}>{item.name}</div>
+                  {item.unit && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1 }}>{item.unit}</div>}
+                </div>
+                {/* edit */}
+                <button onClick={() => { setEditVital(item); setEditName(item.name); }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8,
+                    border: "1.5px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
+                  <i className="pi pi-pencil" style={{ fontSize: 10 }} /> Edit
+                </button>
+                {/* toggle */}
+                <InputSwitch checked={item.active} onChange={(e) => toggleVital(item, e.value)} />
+              </div>
+            ))}
+          </div>
+        </div>
       </Dialog>
 
-      {/* ADD VITAL */}
+      {/* ADD VITAL — R7hr-319 */}
       <Dialog
         header="Add New Vital"
         visible={showAddVital}
         onHide={() => setShowAddVital(false)}
+        style={{ width: 420, maxWidth: "94vw" }}
       >
-        <input
-          type="text"
-          className="form-control mb-2"
-          placeholder="Enter new vital name"
-          value={newVitalName}
-          onChange={(e) => setNewVitalName(e.target.value)}
-        />
-
-        <input
-          type="text"
-          className="form-control"
-          placeholder="Enter unit (e.g. bpm, °C, mmHg)"
-          value={newVitalUnit}
-          onChange={(e) => setNewVitalUnit(e.target.value)}
-        />
-
-        <Button
-          label="Add"
-          className="mt-3"
-          onClick={() => {
-            if (!newVitalName.trim()) return;
-
-            setVitals([
-              ...vitals,
-              {
-                name: newVitalName.trim(),
-                unit: newVitalUnit.trim(),
-                active: true,
-              },
-            ]);
-
-            setNewVitalName("");
-            setNewVitalUnit("");
-            setShowAddVital(false);
-          }}
-        />
+        <div style={{ fontFamily: "'DM Sans',sans-serif", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label style={dlgLabelStyle}>Vital name</label>
+            <input type="text" className="form-control" placeholder="e.g. Respiratory Rate"
+              value={newVitalName} onChange={(e) => setNewVitalName(e.target.value)} />
+          </div>
+          <div>
+            <label style={dlgLabelStyle}>Unit <span style={{ fontWeight: 500, textTransform: "none", color: "#94a3b8" }}>(optional)</span></label>
+            <input type="text" className="form-control" placeholder="e.g. bpm, °C, mmHg"
+              value={newVitalUnit} onChange={(e) => setNewVitalUnit(e.target.value)} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
+            <button onClick={() => setShowAddVital(false)} style={ghostBtnStyle}>Cancel</button>
+            <button disabled={!newVitalName.trim()} style={primaryBtnStyle(!newVitalName.trim())}
+              onClick={() => {
+                if (!newVitalName.trim()) return;
+                setVitals([...vitals, { name: newVitalName.trim(), unit: newVitalUnit.trim(), active: true }]);
+                setNewVitalName(""); setNewVitalUnit(""); setShowAddVital(false);
+              }}>
+              <i className="pi pi-plus" style={{ fontSize: 11 }} /> Add Vital
+            </button>
+          </div>
+        </div>
       </Dialog>
 
-
-      {/* EDIT VITAL */}
-      <Dialog header="Edit Vital Name" visible={!!editVital} onHide={() => setEditVital(null)}>
-        <input
-          type="text"
-          className="form-control"
-          value={editName}
-          onChange={(e) => setEditName(e.target.value)}
-        />
-        <Button
-          label="Save"
-          className="mt-3"
-          onClick={() => {
-            setVitals((prev) =>
-              prev.map((v) =>
-                v.name === editVital.name ? { ...v, name: editName } : v
-              )
-            );
-            setEditVital(null);
-          }}
-        />
+      {/* EDIT VITAL — R7hr-319 */}
+      <Dialog header="Edit Vital Name" visible={!!editVital} onHide={() => setEditVital(null)} style={{ width: 420, maxWidth: "94vw" }}>
+        <div style={{ fontFamily: "'DM Sans',sans-serif", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label style={dlgLabelStyle}>Vital name</label>
+            <input type="text" className="form-control" value={editName} onChange={(e) => setEditName(e.target.value)} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 4 }}>
+            <button onClick={() => setEditVital(null)} style={ghostBtnStyle}>Cancel</button>
+            <button disabled={!editName.trim()} style={primaryBtnStyle(!editName.trim())}
+              onClick={() => {
+                setVitals((prev) => prev.map((v) => v.name === editVital.name ? { ...v, name: editName } : v));
+                setEditVital(null);
+              }}>
+              <i className="pi pi-check" style={{ fontSize: 11 }} /> Save
+            </button>
+          </div>
+        </div>
       </Dialog>
 
       {/* FORM SECTION */}
