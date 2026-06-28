@@ -7,7 +7,7 @@ import { InputSwitch } from "primereact/inputswitch";
 import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
 import { Toast } from "primereact/toast";
-import { saveVitalSheet } from "../../Services/vital/vitalService";
+import { saveVitalSheet, getVitalSheet } from "../../Services/vital/vitalService";
 import { useLocation } from "react-router-dom";
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
@@ -30,6 +30,9 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
   const [newVitalName, setNewVitalName] = useState("");
   const [newVitalUnit, setNewVitalUnit] = useState("");
   const [timeRows, setTimeRows] = useState([]);
+  // R7hr-320 — the sheet already saved for this UHID + date, fetched on open
+  // so previously-charted rows are visible/pre-filled (nurse fills the next row).
+  const [savedSheet, setSavedSheet] = useState(null);
 
 
   const location = useLocation();
@@ -145,6 +148,39 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
       }
     }
   }, [editMode, existingRecord]);
+
+  // R7hr-320 — load the already-saved sheet for this UHID + selected date so
+  // its rows pre-fill the grid (the nurse sees prior entries and fills the
+  // next empty time-slot). editMode uses location.state instead, so skip it.
+  useEffect(() => {
+    if (!uhid || editMode) { setSavedSheet(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await getVitalSheet(uhid, formatDate(date));
+        if (cancelled) return;
+        const sheet = res?.success && res.data
+          ? (Array.isArray(res.data) ? res.data[0] : res.data)
+          : null;
+        setSavedSheet(sheet || null);
+        if (sheet) {
+          if (sheet.slot) setSlot(sheet.slot);
+          if (Array.isArray(sheet.activeVitals) && sheet.activeVitals.length) {
+            const savedNames = new Set(sheet.activeVitals.map((v) => v.name));
+            setVitals((prev) => {
+              const base = prev.map((v) => ({ ...v, active: savedNames.has(v.name) }));
+              sheet.activeVitals.forEach((sv) => {
+                if (!base.some((v) => v.name === sv.name)) base.push({ name: sv.name, unit: sv.unit || "", active: true });
+              });
+              return base;
+            });
+          }
+        }
+      } catch { if (!cancelled) setSavedSheet(null); }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uhid, date, editMode]);
 
   // Embedded (in the Nursing Notes Vital Signs modal) the patient is always
   // supplied via the `uhid` prop, so never show the full-page picker inside a
@@ -396,11 +432,11 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
           enableReinitialize
           initialValues={{
             tableData: generateTimeSlots(slot).map((time) => {
-              const oldRow = existingRecord?.tableData?.find(r => r.time === time);
+              const oldRow = (existingRecord || savedSheet)?.tableData?.find(r => r.time === time);
 
               return {
                 notes: oldRow?.notes || "",
-                nurse: oldRow?.nurse || "",
+                nurse: oldRow?.nurse || oldRow?.nurseName || oldRow?.recordedBy || "",
                 values: Object.keys(oldRow?.values || {}).reduce((acc, key) => {
                   acc[makeSafeId(key)] = oldRow.values[key]?.value ?? "";
                   return acc;
@@ -455,7 +491,7 @@ export default function VitalSheet({ uhid: uhidProp, embedded = false }) {
                         // the form wins. Only fall back to oldVal when the
                         // user has explicitly cleared the field (empty
                         // string + undefined).
-                        const oldVal = existingRecord?.tableData
+                        const oldVal = (existingRecord || savedSheet)?.tableData
                           ?.find(r => r.time === time)
                           ?.values?.[v.name];
 
