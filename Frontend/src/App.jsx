@@ -85,7 +85,6 @@ const BedMonthlyReportPage = lazy(() => import("./pages/bed/BedMonthlyReportPage
 // (/patient-search). The /patients* routes below redirect there.
 
 // OPD
-const OPList = lazy(() => import("./pages/OPD/OPDList"));
 const OPDDetails = lazy(() => import("./pages/OPD/OPDDetails"));
 
 // Emergency
@@ -529,7 +528,10 @@ function AppLayout({ collapsed, setCollapsed }) {
                 from Billing Counter → bill detail → Print, which uses
                 the unified openPrint() + variant-aware template system. */}
             <Route path="/opd/:UHID" element={<Navigate to="/reception-billing" replace />} />
-            <Route path="/opd-visit" element={<OPList />} />
+            {/* R7hr-333 — /opd-visit OPDList page removed (redundant read-only
+                list). The live OPD work surface is /doctor-opd-panel; redirect
+                there so old links/bookmarks don't fall through to the catch-all. */}
+            <Route path="/opd-visit" element={<Navigate to="/doctor-opd-panel" replace />} />
             {/* /opd/new moved to /reception (see below) */}
             <Route path="/opd/new" element={<Navigate to="/reception" replace />} />
             <Route path="/opd/edit/:visitNumber" element={<Navigate to="/reception" replace />} />

@@ -57,7 +57,7 @@ export const ROLE_KEYS = ROLES.map(r => r.key);
 /* ── High-level modules ──────────────────────────────────────────── */
 export const MODULES = [
   { id: "reception",  label: "Reception",       icon: "pi-desktop",       home: "/reception",         color: "#0891b2" },
-  { id: "opd",        label: "OPD / Emergency", icon: "pi-stethoscope",   home: "/opd-visit",         color: "#7c3aed" },
+  { id: "opd",        label: "OPD / Emergency", icon: "pi-stethoscope",   home: "/doctor-opd-panel",  color: "#7c3aed" },
   { id: "ipd",        label: "Beds & IPD",      icon: "pi-th-large",      home: "/bed-visual",        color: "#4f46e5" },
   { id: "doctor",     label: "Doctor Workbench",icon: "pi-user-edit",     home: "/doctor-opd-panel",  color: "#7c3aed" },
   { id: "nursing",    label: "Nursing",         icon: "pi-heart",         home: "/nursing-notes",     color: "#db2777" },

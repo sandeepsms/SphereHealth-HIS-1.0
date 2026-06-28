@@ -29,7 +29,6 @@ const MODULE_NAMES = {
   "/registration":           "Patient Registration",
   "/allpatient":             "Patient List",
   "/patients":               "Patient Management",
-  "/opd-visit":              "OPD Visits",
   "/emergency":              "Emergency",
   "/reception":              "Reception Console — Single Window Registration",
   "/reception-console":      "Reception Console — Single Window Registration",
