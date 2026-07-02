@@ -20,6 +20,10 @@ Backend/scripts/resetDoctorPw.js
 .backend-log.txt
 Spherehealth.login_*.json
 
+# Uploaded PHI files (visitor photos, incident attachments, …) — served by
+# the authenticated /uploads route; NEVER commit patient data to git.
+Backend/uploads/
+
 # R7hr-253 — backup artifacts (never commit DB dumps)
 *.shbak.gz
 *.shbak.gz.sha256
