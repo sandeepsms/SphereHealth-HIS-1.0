@@ -78,6 +78,16 @@ const composeGstinLine = (h) => {
 
 const safe = (o, k, d = "") => (o && o[k] != null ? o[k] : d);
 
+// R7hr — "no dashes on printouts". A patient-strip row prints only when it
+// carries a real value; empty / "—" / "-" rows are omitted entirely. Numeric
+// 0 stays printable (the old `x || "—"` caller habit used to eat it).
+const _kvHasValue = (kv) => {
+  const v = kv?.value;
+  if (v === undefined || v === null) return false;
+  const s = String(v).trim();
+  return s !== "" && s !== "—" && s !== "-";
+};
+
 const normalizeOpts = (opts = {}) => {
   const hospital = opts.hospital || {};
   const docTitle = opts.docTitle || "Document";
@@ -207,11 +217,13 @@ export default function PrintShell(props) {
         {docSubtitle ? <div className="pf-subtitle">{docSubtitle}</div> : null}
       </div>
 
-      {/* 4. Patient demographics strip */}
+      {/* 4. Patient demographics strip.
+          R7hr — "no dashes on printouts": empty / "—" values are omitted
+          entirely instead of printing a dash row. (0 stays printable.) */}
       {(patient.left.length > 0 || patient.right.length > 0) ? (
         <div className="pf-patient">
           <div>
-            {patient.left.map((kv, i) => (
+            {patient.left.filter(_kvHasValue).map((kv, i) => (
               <div className="pf-kv" key={`pL-${i}`}>
                 <div className="pf-kv-label">{kv.label}</div>
                 <div className="pf-kv-value">{kv.value}</div>
@@ -219,7 +231,7 @@ export default function PrintShell(props) {
             ))}
           </div>
           <div>
-            {patient.right.map((kv, i) => (
+            {patient.right.filter(_kvHasValue).map((kv, i) => (
               <div className="pf-kv" key={`pR-${i}`}>
                 <div className="pf-kv-label">{kv.label}</div>
                 <div className="pf-kv-value">{kv.value}</div>
@@ -449,10 +461,12 @@ export function buildPrintShellHtml(opts = {}) {
         <div class="pf-kv-value">${esc(kv.value)}</div>
       </div>`;
 
+  // R7hr — "no dashes on printouts": drop empty / "—" rows (mirrors the
+  // React strip above; callers habitually pass `value: x || "—"`).
   const patientStrip = (patient.left.length || patient.right.length) ? `
     <div class="pf-patient">
-      <div>${patient.left.map(kvHtml).join("")}</div>
-      <div>${patient.right.map(kvHtml).join("")}</div>
+      <div>${patient.left.filter(_kvHasValue).map(kvHtml).join("")}</div>
+      <div>${patient.right.filter(_kvHasValue).map(kvHtml).join("")}</div>
     </div>` : "";
 
   const sigHtml = (() => {

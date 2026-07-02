@@ -12,6 +12,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import useHospitalSettings from "../../Components/print/useHospitalSettings";
 import PrintPreviewPage from "../../Components/print/PrintPreviewPage";
 import PRINTABLES from "../../Components/print/printables";
+import { useEnrichedPrintPayload } from "../../Components/print/printEnrichment";
 import "../../Components/print/print.css";
 
 /* Demo data used when no payload is supplied (visual preview only). */
@@ -477,6 +478,12 @@ const PrintRouterPage = () => {
 
   const { settings, ready } = useHospitalSettings();
 
+  // R7hr — "no dashes on printouts". If the payload carries a UHID but is
+  // missing standard patient/admission fields, backfill them from the API
+  // before the template renders — otherwise the strip under the header
+  // prints "—" wherever the calling page didn't hand-plumb a field.
+  const { receipt, enriching } = useEnrichedPrintPayload(payload);
+
   if (!cfg) {
     return (
       <PrintPreviewPage toolbarTitle="Unknown printable">
@@ -506,7 +513,7 @@ const PrintRouterPage = () => {
     || payload?.pharmacySettings?.registerOrientation
     || cfg.defaultOrient;
 
-  if (!ready) {
+  if (!ready || enriching) {
     return (
       <PrintPreviewPage
         key={`loading-${overridePaper}-${overrideOrient}`}
@@ -515,7 +522,7 @@ const PrintRouterPage = () => {
         defaultOrient={overrideOrient}
       >
         <div className="pr-page" style={{ textAlign: "center", color: "#64748b" }}>
-          Loading hospital settings…
+          {ready ? "Fetching patient details…" : "Loading hospital settings…"}
         </div>
       </PrintPreviewPage>
     );
@@ -533,7 +540,7 @@ const PrintRouterPage = () => {
          POSTs to /api/print-audit before window.print(). */
       printAudit={payload?.printAudit}
     >
-      <Component settings={settings} receipt={payload || {}} />
+      <Component settings={settings} receipt={receipt || {}} />
     </PrintPreviewPage>
   );
 };
