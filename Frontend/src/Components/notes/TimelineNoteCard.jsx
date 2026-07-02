@@ -27,6 +27,7 @@ import React, { useState } from "react";
 // Emp ID + digital signature image (R7go / R7gu).
 import { buildDoctorNoteCardHtml } from "../../pages/doctor/buildDoctorNoteCardHtml";
 import { buildNurseNoteCardHtml }  from "../../pages/nursing/printNurseNote";
+import { useInlinedUploadsHtml }   from "../../utils/secureUploads";
 
 /* ── Note-type accent colour palette ────────────────────────────────── */
 const ACCENT = {
@@ -259,9 +260,12 @@ function BodyFor({ note }) {
   // Progress / ICU / Procedure / Discharge / etc.
   const isDoctorIA =
     note?.noteType === "initial" || note?.noteType === "initialAssessment";
-  const html = NURSING_TYPES.has(note.noteType)
+  const rawHtml = NURSING_TYPES.has(note.noteType)
     ? buildNurseNoteCardHtml(note)
     : buildDoctorNoteCardHtml(note, isDoctorIA ? { hideNursingExtras: true } : {});
+  // /uploads signature images are JWT-gated — swap them to authenticated
+  // data: URLs before injecting (raw <img> tags can't send the header).
+  const html = useInlinedUploadsHtml(rawHtml);
   return (
     <div
       className="tnc-body-embed"

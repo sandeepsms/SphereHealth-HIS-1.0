@@ -21,6 +21,7 @@ import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import SecureImage from "../SecureImage";
+import { useInlinedUploadsHtml } from "../../utils/secureUploads";
 import "./patient-panel-tabs.css";
 // R7gn — Reuse the SAME per-type card builders that the Complete File
 // (Narrative.jsx) prints. The patient panel was showing a generic
@@ -72,9 +73,13 @@ function NoteCardEmbed({ note, role, hideNursingExtras = false }) {
   // the Initial Assessment tab can suppress the "NURSING INTAKE — CROSS-
   // DISCIPLINARY" block when no separate Nurse IA exists. Default false
   // preserves all existing call sites (prints, timelines, MLC tab).
-  const html = role === "nurse"
+  const rawHtml = role === "nurse"
     ? buildNurseNoteCardHtml(note)
     : buildDoctorNoteCardHtml(note, { hideNursingExtras });
+  // /uploads signature images are JWT-gated — resolve them to data: URLs
+  // through the authenticated axios pipe before injecting the markup
+  // (a raw <img src="/uploads/…"> can't send the Authorization header).
+  const html = useInlinedUploadsHtml(rawHtml);
   return (
     <div
       className={`ppt-embed-card ppt-embed-card--${role}`}

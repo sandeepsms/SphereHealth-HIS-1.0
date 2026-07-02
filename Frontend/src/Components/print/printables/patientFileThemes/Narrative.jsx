@@ -53,6 +53,25 @@ import { fmtDate, fmtTime, fmtDayMonth, pronoun } from "./normalizeData";
 // layout the user saw in the standalone printouts.
 import { buildDoctorNoteCardHtml } from "@/pages/doctor/buildDoctorNoteCardHtml";
 import { buildNurseNoteCardHtml }  from "@/pages/nursing/printNurseNote";
+// /uploads signature images are JWT-gated — SecureImage (JSX) and the
+// inline-to-data-URL hook (builder HTML) fetch them through axios with
+// the Bearer token; a plain <img src="/uploads/…"> would 401.
+import SecureImage from "@/Components/SecureImage";
+import { useInlinedUploadsHtml } from "@/utils/secureUploads";
+
+/* R7gd note-card embed wrapped in a component so the JWT-gated /uploads
+   signature inlining hook can run per-card (hooks can't live in a .map). */
+function EmbeddedNoteCard({ note }) {
+  const isDoc = note._kind === "doctor";
+  const raw = isDoc ? buildDoctorNoteCardHtml(note) : buildNurseNoteCardHtml(note);
+  const html = useInlinedUploadsHtml(raw);
+  return (
+    <div
+      style={{ marginBottom: 6 }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
 
 /* =====================================================================
    1. PROSE HELPERS (kept compatible with pre-R7fu Narrative)
@@ -1124,7 +1143,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                   {dIAAt ? <> · {fmtDateTime(dIAAt)}</> : null}
                   {dIASig && typeof dIASig === "string" && (dIASig.startsWith("data:image/") || dIASig.startsWith("/uploads/") || /^https?:\/\//.test(dIASig)) ? (
                     <div style={{ marginTop: 4 }}>
-                      <img src={dIASig} alt="Doctor signature"
+                      <SecureImage src={dIASig} alt="Doctor signature"
                         style={{ maxHeight: 36, maxWidth: 180, border: "1px solid #e2e8f0", background: "#fff", padding: 2, borderRadius: 3 }} />
                     </div>
                   ) : null}
@@ -1264,7 +1283,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                 {nIAAt ? <> · {fmtDateTime(nIAAt)}</> : null}
                 {nIASig && typeof nIASig === "string" && (nIASig.startsWith("data:image/") || nIASig.startsWith("/uploads/") || /^https?:\/\//.test(nIASig)) ? (
                   <div style={{ marginTop: 4 }}>
-                    <img src={nIASig} alt="Nurse signature"
+                    <SecureImage src={nIASig} alt="Nurse signature"
                       style={{ maxHeight: 36, maxWidth: 180, border: "1px solid #e2e8f0", background: "#fff", padding: 2, borderRadius: 3 }} />
                   </div>
                 ) : null}
@@ -1361,24 +1380,18 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                   <Para style={{ fontWeight: 700, fontSize: 9.5, color: COL.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 0 2px" }}>
                     Clinical Notes
                   </Para>
-                  {notes.map((n, idx) => {
+                  {notes.map((n, idx) => (
                     // R7gd — replace the prose summary with the EXACT same
                     // structured per-type card that renders in the
                     // individual note print path. Death MCCD, ICU bundle
                     // table, WHO Safety Checklist, Procedure metadata,
                     // Vitals/IV/Pain/Wound/Braden/MEWS — every card shape
                     // the user sees on the doctor- or nurse-notes page now
-                    // appears inline in the Complete File too.
-                    const isDoc = n._kind === "doctor";
-                    const html = isDoc ? buildDoctorNoteCardHtml(n) : buildNurseNoteCardHtml(n);
-                    return (
-                      <div
-                        key={`day-${k}-n-${idx}`}
-                        style={{ marginBottom: 6 }}
-                        dangerouslySetInnerHTML={{ __html: html }}
-                      />
-                    );
-                  })}
+                    // appears inline in the Complete File too. Wrapped in
+                    // EmbeddedNoteCard (top of file) so JWT-gated /uploads
+                    // signatures inline to data: URLs before injection.
+                    <EmbeddedNoteCard key={`day-${k}-n-${idx}`} note={n} />
+                  ))}
                 </div>
               ) : null;
 
