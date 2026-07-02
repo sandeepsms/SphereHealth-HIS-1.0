@@ -5,6 +5,10 @@ Frontend/dist/
 Backend/.env
 Frontend/.env
 .claude/scheduled_tasks.lock
+# Personal per-machine Claude Code settings — never commit (the shared,
+# team-visible config is .claude/launch.json; settings.local.json is local
+# permission grants + machine paths).
+.claude/settings.local.json
 Backend/scripts/resetDoctorPw.js
 
 # R7hr-233 (audit: logging PHI hygiene) — never commit local log/err captures

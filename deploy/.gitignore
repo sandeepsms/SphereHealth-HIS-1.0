@@ -1,0 +1,3 @@
+# Keep generated per-hospital env files (with real secrets) out of git.
+*.env
+!.env.example
