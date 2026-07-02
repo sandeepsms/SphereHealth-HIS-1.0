@@ -68,8 +68,17 @@ for i in $(seq 1 40); do
 done
 [[ "$ok" -eq 1 ]] || { echo "❌ Backend did not become healthy — check: docker compose -p $SLUG logs backend"; exit 1; }
 
-echo "🌱 Seeding default users + building/bed structure…"
-docker compose -p "$SLUG" exec -T backend node scripts/seedUsers.js || echo "  (seedUsers skipped/failed — run manually if needed)"
+echo "🌱 Seeding role users + building/bed structure…"
+# Security: NEVER seed the shared default password on a hospital box.
+# seedRoleUsers.js accepts SEED_PASSWORD (R7hr-247) and refuses to run in
+# production without SEED_FORCE=yes + SEED_PASSWORD — we generate a strong
+# per-hospital password here. Every seeded user also carries
+# mustChangePassword:true, so first login forces a rotation anyway.
+SEED_PW="$(gen 20)"
+docker compose -p "$SLUG" exec -T \
+  -e SEED_FORCE=yes -e SEED_PASSWORD="$SEED_PW" \
+  backend node scripts/seedRoleUsers.js \
+  || echo "  (seedRoleUsers failed — run manually: docker compose -p $SLUG exec -e SEED_FORCE=yes -e SEED_PASSWORD=<strong> backend node scripts/seedRoleUsers.js)"
 docker compose -p "$SLUG" exec -T backend node scripts/seedBIMS.js  || echo "  (seedBIMS skipped/failed — run manually if needed)"
 
 cat <<EOF
@@ -79,8 +88,13 @@ cat <<EOF
    Env file   : $ENV_FILE
    Project    : docker compose -p $SLUG ps
 
-   ⚠️  Log in as the seeded admin and CHANGE THE PASSWORD immediately.
-   ⚠️  Put a TLS reverse proxy (Caddy/Traefik/nginx) in front for HTTPS.
+   🔑 Seeded logins (admin@spherehealth.com + role accounts):
+        password: $SEED_PW
+      This is shown ONCE and not stored anywhere — note it down now.
+      Every account must change its password at first login (enforced).
+
+   ⚠️  Put a TLS reverse proxy (Caddy/Traefik/nginx) in front for HTTPS —
+      without it, logins + patient data cross the network in plaintext.
    ⚠️  Back up this hospital regularly:
         docker compose -p $SLUG exec backend node scripts/backup/runBackup.js
 EOF

@@ -57,7 +57,10 @@ services:
       - backend
     ports:
       # Put a TLS reverse proxy (Caddy/Traefik/nginx) in front of this in prod.
-      - "${PUBLIC_HTTP_PORT:-8080}:80"
+      # BIND_ADDR=127.0.0.1 keeps the plain-HTTP port loopback-only when the
+      # TLS proxy runs on the same host (recommended); default 0.0.0.0 suits
+      # on-prem LAN installs.
+      - "${BIND_ADDR:-0.0.0.0}:${PUBLIC_HTTP_PORT:-8080}:80"
 
 volumes:
   mongo-data:

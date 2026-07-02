@@ -13,9 +13,10 @@ ENV NODE_ENV=production
 # Copy only the manifests first so `docker build` re-uses the npm layer
 # whenever source changes but dependencies don't.
 COPY package*.json ./
-# Prefer the reproducible `npm ci` (needs package-lock.json); fall back to
-# `npm install` so a fresh checkout without a lockfile still builds.
-RUN npm ci --omit=dev 2>/dev/null || npm install --omit=dev
+# Strict `npm ci` — package-lock.json is committed, so every hospital's image
+# gets the exact same dependency tree (no npm-install drift / supply-chain
+# surprises between builds).
+RUN npm ci --omit=dev
 
 # ── App source ─────────────────────────────────────────────────
 COPY . .

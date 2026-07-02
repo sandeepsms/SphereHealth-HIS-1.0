@@ -55,7 +55,11 @@ chmod +x deploy/provision-hospital.sh         # first time only
 ```
 
 That single command generates secrets, builds + starts the stack, waits for
-health, seeds the default users + building/bed structure, and prints the URL.
+health, seeds the role users + building/bed structure, and prints the URL
+**plus a one-time generated password** for the seeded logins
+(`admin@spherehealth.com` + role accounts). The password is random per
+hospital, shown once, never stored — and every account is forced to change
+it at first login (`mustChangePassword`).
 
 **Add another hospital** — just pick a new slug + a free host port:
 
@@ -93,8 +97,13 @@ docker compose --env-file deploy/apollo.env -p apollo up -d --build
 
 ## Production checklist
 
-- [ ] **TLS**: terminate HTTPS in a reverse proxy in front of `PUBLIC_HTTP_PORT`.
-- [ ] **Change the admin password** right after provisioning (the seed sets a default).
+- [ ] **TLS**: terminate HTTPS in a reverse proxy in front of `PUBLIC_HTTP_PORT`
+      — without it, logins (JWTs) and patient data cross the network in
+      plaintext. Have the proxy add `Strict-Transport-Security` (HSTS).
+      When the proxy runs on the same host, set `BIND_ADDR=127.0.0.1` so the
+      plain-HTTP port never leaves the box.
+- [ ] **Note the one-time seeded password** printed by the provisioner and log
+      in once as admin — first login forces a rotation for every account.
 - [ ] **Secrets**: `deploy/<slug>.env` is git-ignored and `chmod 600`. Back it up
       somewhere safe — losing `JWT_SECRET`/Mongo creds means re-issuing logins.
 - [ ] **Backups**: schedule `scripts/backup/runBackup.js` (cron on the host) and
