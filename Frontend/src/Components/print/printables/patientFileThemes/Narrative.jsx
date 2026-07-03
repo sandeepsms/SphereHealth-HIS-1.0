@@ -365,6 +365,151 @@ const MiniTable = ({ headers, rows, widths }) => (
 // Alias kept for any legacy reference inside helpers.
 const Table = MiniTable;
 
+/* ── R7hr — full-coverage record renderers ─────────────────────────────
+   Config-driven so every remaining captured collection reaches the file
+   with minimal code. Each entry: how to read a row into table cells.
+   A block renders only when it has ≥1 row (self-eliding).            */
+const _cfmt = (v) => {
+  if (v == null || v === "") return "";
+  if (v instanceof Date) return _cfmtDate(v);
+  if (typeof v === "object") return "";               // never dump [object Object]
+  // ISO date-only ("2026-05-14") or full timestamp → localised print date.
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return _cfmtDate(v);
+  return String(v);
+};
+const _cfmtDate = (d) => {
+  try {
+    return new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+  } catch { return ""; }
+};
+const _pick = (o, ...keys) => { for (const k of keys) { const v = o?.[k]; if (v != null && v !== "") return v; } return ""; };
+
+// Each: { key (file field), title, nabh, headers, widths, row(x)->cells }
+const COVERAGE_BLOCKS = [
+  { key: "appointments", title: "Appointments", nabh: "",
+    headers: ["Date", "Department", "Doctor", "Complaint", "Status"], widths: ["16%","20%","22%","28%","14%"],
+    row: (x) => [_cfmt(_pick(x,"appointmentDate","date","slotStart","createdAt")), _pick(x,"department","departmentName"), _pick(x,"doctorName","consultantName"), _pick(x,"chiefComplaint","reason"), _pick(x,"status")] },
+  { key: "emergencyCases", title: "Emergency / ER Visits", nabh: "NABH AAC.1",
+    headers: ["Date", "Triage", "Complaint", "Disposition", "Consultant"], widths: ["15%","12%","33%","20%","20%"],
+    row: (x) => [_cfmt(_pick(x,"arrivalTime","visitDate","createdAt")), _pick(x,"triageLevel","triageCategory"), _pick(x,"chiefComplaint","presentingComplaint"), _pick(x,"disposition","outcome"), _pick(x,"consultantName","attendingDoctor")] },
+  { key: "prescriptions", title: "Prescriptions (Rx)", nabh: "NABH MOM.2",
+    headers: ["Date", "Rx no", "Doctor", "Medicines", "Advice"], widths: ["14%","16%","20%","32%","18%"],
+    row: (x) => [_cfmt(_pick(x,"prescriptionDate","createdAt")), _pick(x,"prescriptionNumber","rxNo"), _pick(x,"doctorName","consultantName"),
+      (Array.isArray(x.medicines || x.medications) ? (x.medicines||x.medications) : []).map(m=>_pick(m,"medicineName","name","drug")).filter(Boolean).join(", "), _pick(x,"advice","generalAdvice")] },
+  { key: "medReconciliation", title: "Medication Reconciliation", nabh: "NABH MOM.1",
+    headers: ["Date", "Phase", "Home meds", "Reconciled by", "Discrepancies"], widths: ["15%","16%","26%","22%","21%"],
+    row: (x) => [_cfmt(_pick(x,"reconciledAt","createdAt")), _pick(x,"phase","stage","type"),
+      String((Array.isArray(x.homeMedications||x.medications)?(x.homeMedications||x.medications):[]).length || _pick(x,"homeMedCount") || ""),
+      _pick(x,"reconciledByName","pharmacistName","reconciledBy"), _pick(x,"discrepancies","discrepancyNotes")] },
+  { key: "diabeticCharts", title: "Diabetic / Blood-Sugar Chart", nabh: "NABH COP.3",
+    headers: ["Date", "Readings", "Insulin", "Notes"], widths: ["18%","34%","24%","24%"],
+    row: (x) => {
+      const n = (Array.isArray(x.readings || x.entries) ? (x.readings || x.entries) : []).length;
+      return [_cfmt(_pick(x,"chartDate","date","createdAt")),
+        n > 0 ? `${n} reading(s)` : "", _pick(x,"insulinRegimen","insulin"), _pick(x,"notes","remarks")];
+    } },
+  { key: "procedureNotes", title: "Procedure Notes", nabh: "NABH COP.13",
+    headers: ["Date", "Procedure", "Performed by", "Site", "Notes"], widths: ["15%","22%","20%","15%","28%"],
+    row: (x) => [_cfmt(_pick(x,"procedureDate","performedAt","createdAt")), _pick(x,"procedureName","procedure","name"), _pick(x,"performedByName","doctorName","performedBy"), _pick(x,"site","bodyPart"), _pick(x,"notes","findings")] },
+  { key: "physioPlans", title: "Physiotherapy Plans", nabh: "NABH COP.20",
+    headers: ["Date", "Diagnosis", "Goals", "Modalities", "Sessions"], widths: ["14%","22%","24%","24%","16%"],
+    row: (x) => [_cfmt(_pick(x,"createdAt","planDate")), _pick(x,"diagnosis","indication"), _pick(x,"goals","goal"),
+      (Array.isArray(x.modalities)?x.modalities:[]).join(", ") || _pick(x,"modalities"), String(_pick(x,"sessionCount","totalSessions") || "")] },
+  { key: "physioSessions", title: "Physiotherapy Sessions", nabh: "NABH COP.20",
+    headers: ["Date", "Modality", "Duration", "Therapist", "Response"], widths: ["16%","24%","14%","22%","24%"],
+    row: (x) => [_cfmt(_pick(x,"sessionDate","performedAt","createdAt")), _pick(x,"modality","treatment"), _pick(x,"duration","durationMin"), _pick(x,"therapistName","performedBy"), _pick(x,"patientResponse","response","notes")] },
+  { key: "medicalCertificates", title: "Medical Certificates", nabh: "NABH IMS.1",
+    headers: ["Date", "Cert no", "Type", "Issued by", "Validity"], widths: ["15%","18%","22%","23%","22%"],
+    row: (x) => [_cfmt(_pick(x,"issuedAt","createdAt")), _pick(x,"certificateNumber","certNo"), _pick(x,"certificateType","type"), _pick(x,"issuedByName","doctorName"),
+      [_cfmt(_pick(x,"validFrom","fromDate")), _cfmt(_pick(x,"validTo","toDate"))].filter(Boolean).join(" – ")] },
+  { key: "pharmacySales", title: "Pharmacy Dispenses", nabh: "",
+    headers: ["Date", "Bill no", "Type", "Items", "Net (₹)"], widths: ["16%","20%","14%","32%","18%"],
+    row: (x) => [_cfmt(_pick(x,"createdAt","saleDate")), _pick(x,"billNumber","invoiceNumber"), _pick(x,"saleType","type"),
+      String((Array.isArray(x.items)?x.items:[]).length || "") + " item(s)", _cnum(_pick(x,"grandTotal","netAmount","total"))] },
+  { key: "advances", title: "Advance Deposits & Refunds", nabh: "",
+    headers: ["Date", "Receipt", "Amount (₹)", "Mode", "Applied / Refund"], widths: ["16%","18%","16%","16%","34%"],
+    row: (x) => [_cfmt(_pick(x,"paidAt","createdAt")), _pick(x,"receiptNumber","receiptNo"), _cnum(_pick(x,"amount")), _pick(x,"paymentMode","mode"),
+      [_pick(x,"appliedAmount") && `applied ${_cnum(x.appliedAmount)}`, _pick(x,"refundedAmount") && `refunded ${_cnum(x.refundedAmount)}`].filter(Boolean).join(" · ")] },
+  { key: "adrReports", title: "Adverse Drug Reactions", nabh: "Pharmacovigilance",
+    headers: ["Date", "Suspected drug", "Reaction", "Severity", "Outcome"], widths: ["15%","22%","28%","15%","20%"],
+    row: (x) => [_cfmt(_pick(x,"reportedAt","reactionDate","createdAt")), _pick(x,"suspectedDrug","drugName"), _pick(x,"reaction","adverseEffect"), _pick(x,"severity"), _pick(x,"outcome")] },
+  { key: "foodReactions", title: "Adverse Food Reactions", nabh: "",
+    headers: ["Date", "Food", "Reaction", "Severity", "Action"], widths: ["16%","22%","28%","14%","20%"],
+    row: (x) => [_cfmt(_pick(x,"reactionDate","createdAt")), _pick(x,"foodItem","food"), _pick(x,"reaction","symptoms"), _pick(x,"severity"), _pick(x,"actionTaken","action")] },
+  { key: "codeResponseEvents", title: "Code / Resuscitation Events", nabh: "NABH FMS.5",
+    headers: ["Time", "Code", "Location", "Outcome", "Response"], widths: ["18%","16%","22%","22%","22%"],
+    row: (x) => [_cfmt(_pick(x,"alertTime","createdAt")), _pick(x,"codeType","code"), _pick(x,"location","area"), _pick(x,"outcome"), _pick(x,"responseTime") && `${x.responseTime} min`] },
+  { key: "promPremSurveys", title: "Patient Experience (PROM / PREM)", nabh: "Patient Feedback",
+    headers: ["Date", "Type", "Score", "Comments"], widths: ["18%","20%","16%","46%"],
+    row: (x) => [_cfmt(_pick(x,"submittedAt","createdAt")), _pick(x,"surveyType","type"), String(_pick(x,"overallScore","score") || ""), _pick(x,"comments","feedback")] },
+];
+
+function _cnum(v) {
+  const n = typeof v === "object" && v ? Number(v.$numberDecimal ?? v) : Number(v);
+  return Number.isFinite(n) ? n.toLocaleString("en-IN") : "";
+}
+
+function CoverageRecords({ file }) {
+  const blocks = COVERAGE_BLOCKS
+    .map((b) => ({ b, rows: Array.isArray(file?.[b.key]) ? file[b.key] : [] }))
+    .filter(({ rows }) => rows.length > 0);
+  if (blocks.length === 0) return null;
+  return (
+    <>
+      {blocks.map(({ b, rows }) => (
+        <React.Fragment key={b.key}>
+          <SectionHeader nabh={b.nabh || undefined}>{b.title}</SectionHeader>
+          <MiniTable headers={b.headers} widths={b.widths} rows={rows.map((x) => b.row(x))} />
+        </React.Fragment>
+      ))}
+    </>
+  );
+}
+
+const REGISTER_META = {
+  restraints:       { title: "Restraint Register",        nabh: "NABH COP.17" },
+  fallEvents:       { title: "Fall-Risk / Fall Register", nabh: "NABH COP.12" },
+  pressureUlcers:   { title: "Pressure-Ulcer Register",   nabh: "NABH COP.4"  },
+  medicationErrors: { title: "Medication-Error Register", nabh: "NABH COP.16" },
+  sentinelEvents:   { title: "Sentinel-Event Register",   nabh: "NABH QMS"    },
+  haiSurveillance:  { title: "HAI Surveillance",          nabh: "NABH HIC.1"  },
+  lama:             { title: "LAMA / DAMA Register",      nabh: "NABH COP.20" },
+  mortality:        { title: "Mortality Register",        nabh: "NABH IMS"    },
+  nearMissEvents:   { title: "Near-Miss Register",        nabh: "NABH FMS.7"  },
+  otRegister:       { title: "OT Register",               nabh: "NABH COP.7"  },
+  antimicrobialUse: { title: "Antimicrobial Use",         nabh: "NABH IPC"    },
+};
+
+function ComplianceRegisters({ registers }) {
+  const reg = registers || {};
+  const present = Object.keys(REGISTER_META).filter((k) => Array.isArray(reg[k]) && reg[k].length > 0);
+  if (present.length === 0) return null;
+  return (
+    <>
+      <SectionHeader nabh="NABH">Safety &amp; Compliance Registers</SectionHeader>
+      {present.map((k) => {
+        const meta = REGISTER_META[k];
+        return (
+          <React.Fragment key={k}>
+            <SubHeader>{meta.title}{meta.nabh ? ` · ${meta.nabh}` : ""}</SubHeader>
+            <MiniTable
+              headers={["Date", "Detail", "Indication / Reason", "By", "Status"]}
+              widths={["16%","30%","26%","16%","12%"]}
+              rows={reg[k].map((x) => [
+                _cfmt(_pick(x,"eventDate","assessedAt","appliedAt","occurredAt","createdAt")),
+                _pick(x,"deviceType","stage","errorType","eventType","diagnosis","organism","detail","summary","description","title"),
+                _pick(x,"indication","reason","rootCause","cause","riskLevel","category"),
+                _pick(x,"recordedByName","orderedByName","assessedByName","recordedBy","actorName"),
+                _pick(x,"status","outcome","severity"),
+              ])}
+            />
+          </React.Fragment>
+        );
+      })}
+    </>
+  );
+}
+
 const Callout = ({ tone = "red", title, children }) => {
   const palette = tone === "amber"
     ? { border: "#ca8a04", bg: "#fef9c3", text: "#713f12" }
@@ -1011,6 +1156,46 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               </td>
             </tr>
           ) : null}
+          {/* R7hr — coverage: registration demographics + ER context that
+              used to be dropped. Each row renders only when populated. */}
+          {(() => {
+            const px = f.patientExtra || {};
+            const addr = px.addressDetail || {};
+            const addrLine = [addr.completeAddress, addr.district, addr.city, addr.state, addr.pincode]
+              .filter(Boolean).join(", ");
+            const contact = [px.emergencyContact?.name,
+              px.emergencyContact?.relation && `(${px.emergencyContact.relation})`,
+              px.emergencyContact?.phone && `☎ ${px.emergencyContact.phone}`]
+              .filter(Boolean).join(" ");
+            const demo = [
+              f.patient?.mobile && `☎ ${f.patient.mobile}`,
+              px.email, px.maritalStatus,
+            ].filter(Boolean).join(" · ");
+            const payer = [
+              px.paymentType, px.tpaName,
+              px.policyNumber && `Policy ${px.policyNumber}`,
+            ].filter(Boolean).join(" · ");
+            const er = [
+              px.triageLevel && `Triage ${px.triageLevel}`, px.erType,
+              px.broughtBy && `brought by ${px.broughtBy}`,
+              px.policeStation && `PS ${px.policeStation}`,
+            ].filter(Boolean).join(" · ");
+            const Row = (label, val) => val ? (
+              <tr>
+                <td style={{ padding: "2px 6px", color: COL.muted }}>{label}</td>
+                <td style={{ padding: "2px 6px", color: COL.body }}>{val}</td>
+              </tr>
+            ) : null;
+            return (
+              <>
+                {Row("Contact", demo)}
+                {Row("Address", addrLine)}
+                {Row("Emergency contact", contact)}
+                {Row("Payer", payer)}
+                {Row("Emergency / triage", er)}
+              </>
+            );
+          })()}
         </tbody>
       </table>
 
@@ -2260,6 +2445,23 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
           </>
         );
       })() : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          R7hr — FULL-COVERAGE RECORDS
+          Every remaining captured collection, rendered config-driven so
+          "everything the system records reaches the file". Each block is
+          a compact chronological table that self-elides when empty.
+          ════════════════════════════════════════════════════════════ */}
+      <CoverageRecords file={f} />
+
+      {/* ════════════════════════════════════════════════════════════
+          R7hr — SAFETY & COMPLIANCE REGISTERS (patient-linked)
+          The NABH registers this patient appears in — restraint, falls,
+          pressure ulcer, medication error, sentinel, HAI, LAMA, mortality,
+          near-miss, OT, antimicrobial. Self-elides when the patient has
+          no register rows at all.
+          ════════════════════════════════════════════════════════════ */}
+      <ComplianceRegisters registers={f.complianceRegisters} />
 
       {/* ════════════════════════════════════════════════════════════
           19. ACTIVITY LOG                                 [NABH IMS.1]

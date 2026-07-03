@@ -206,6 +206,45 @@ const PF_PRINT_SECTIONS = [
   { key: "billing",           label: "Billing Summary" },
   { key: "timeline",          label: "Chronological Timeline" },
 ];
+/* R7hr — full-coverage collections ("everything captured must reach the
+   Complete File"). One list drives BOTH receipt builders; the aggregator
+   returns these as arrays + a grouped complianceRegisters object. */
+const PF_EXTRA_COLLECTIONS = [
+  "emergencyCases", "prescriptions", "medicalCertificates",
+  "physioPlans", "physioSessions", "medReconciliation", "diabeticCharts",
+  "pharmacySales", "advances", "appointments", "procedureNotes",
+  "adrReports", "foodReactions", "promPremSurveys", "codeResponseEvents",
+];
+const packExtraCollections = (data) => ({
+  ...Object.fromEntries(
+    PF_EXTRA_COLLECTIONS.map((k) => [k, Array.isArray(data?.[k]) ? data[k] : []]),
+  ),
+  complianceRegisters:
+    data?.complianceRegisters && typeof data.complianceRegisters === "object"
+      ? data.complianceRegisters
+      : {},
+});
+/* Demographics + ER-context fields captured at registration that never
+   reached the print (coverage audit): emergency contact, email, marital
+   status, structured address, TPA/policy, triage. */
+const packPatientExtras = (patient, adm) => ({
+  email:            patient?.email || "",
+  maritalStatus:    patient?.maritalStatus || "",
+  emergencyContact: {
+    name:     patient?.companionName || "",
+    relation: patient?.companionRelationship || "",
+    phone:    patient?.companionContact || "",
+  },
+  addressDetail:    patient?.address || {},
+  paymentType:      patient?.paymentType || "",
+  tpaName:          patient?.tpa?.tpaName || "",
+  policyNumber:     patient?.policyNumber || "",
+  triageLevel:      adm?.triageLevel || "",
+  erType:           adm?.erType || "",
+  broughtBy:        adm?.broughtBy || "",
+  policeStation:    adm?.policeStation || "",
+});
+
 const PF_AUDIT_SECTIONS = [
   { key: "activityLog",   label: "Activity log — who opened/edited the file (IMS.1)" },
   { key: "printAudit",    label: "Print history — who printed what, copy no. (IMS.4)" },
@@ -4405,6 +4444,10 @@ export default function CompletePatientFilePage() {
       // recent PREVIOUS OPD assessments. devices = full lifecycle rows.
       opdAssessments: (Array.isArray(data.opdVisits) ? data.opdVisits : []).slice(0, 2),
       devices: Array.isArray(data.devices) ? data.devices : [],
+      // R7hr — full-coverage: every captured collection + registration
+      // demographics reach the print.
+      ...packExtraCollections(data),
+      ...packPatientExtras(patient, adm),
       activityLog: ["Admin", "Doctor", "MRD", "Accountant"].includes(viewerRole)
         ? (Array.isArray(data.activityLog) ? data.activityLog : []) : [],
       ...((ds) => {
@@ -4803,6 +4846,9 @@ export default function CompletePatientFilePage() {
                 // device lifecycle rows.
                 opdAssessments:      (Array.isArray(data.opdVisits) ? data.opdVisits : []).slice(0, 2),
                 devices:             Array.isArray(data.devices)             ? data.devices             : [],
+                // R7hr — full-coverage collections + registration demographics.
+                ...packExtraCollections(data),
+                ...packPatientExtras(patient, adm),
                 // R7gb P0-12: activity log is operational/PHI-adjacent
                 // — gate to the same roles permitted on-page (line
                 // 2586). Other viewers get an empty array so the

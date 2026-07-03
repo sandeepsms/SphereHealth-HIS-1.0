@@ -197,6 +197,68 @@ exports.getCompleteFile = async (req, res) => {
       ? await safe("devices", () => PatientDevice.find({ UHID }).sort({ placedAt: 1 }).limit(100).lean())
       : [];
 
+    // ── R7hr — "everything captured must reach the Complete File" ──────
+    // Coverage audit (2026-07) found ~25 patient-scoped collections that
+    // never reached this aggregator: ER visits, standalone prescriptions,
+    // medical certificates, physio, med-reconciliation, diabetic charts,
+    // pharmacy dispenses, advances, appointments, procedure notes, ADR /
+    // food reactions, PROM-PREM, code-response events, and the patient-
+    // linked NABH safety registers. All are surfaced here through one
+    // defensive helper: lazy-require (absent model ⇒ []), $or over both
+    // UHID spellings (schemas are split between UHID and patientUHID),
+    // capped + lean. A schema without either field simply matches zero
+    // rows — never throws.
+    const _lazyModel = (p) => { try { return require(p); } catch { return null; } };
+    const _byPatient = (Model, name, { sort = { createdAt: -1 }, cap = 100 } = {}) =>
+      Model
+        ? safe(name, () => Model.find({ $or: [{ UHID }, { patientUHID: UHID }] }).sort(sort).limit(cap).lean())
+        : Promise.resolve([]);
+
+    const [
+      emergencyCases, prescriptions, medicalCertificates,
+      physioPlans, physioSessions, medReconciliation, diabeticCharts,
+      pharmacySales, advances, appointments, procedureNotes,
+      adrReports, foodReactions, promPremSurveys, codeResponseEvents,
+    ] = await Promise.all([
+      _byPatient(_lazyModel("../../models/Patient/emergencyModel"), "emergencyCases"),
+      _byPatient(_lazyModel("../../models/Doctor/prescription"), "prescriptions"),
+      _byPatient(_lazyModel("../../models/Clinical/MedicalCertificateModel"), "medicalCertificates", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Clinical/PhysioPlanModel"), "physioPlans", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Clinical/PhysioSessionModel"), "physioSessions"),
+      _byPatient(_lazyModel("../../models/Clinical/MedReconciliationModel"), "medReconciliation", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Clinical/DiabeticChartModel"), "diabeticCharts"),
+      _byPatient(_lazyModel("../../models/Pharmacy/PharmacySaleModel"), "pharmacySales"),
+      _byPatient(_lazyModel("../../models/PatientBillModel/PatientAdvanceModel"), "advances", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Appointment/appointmentModel"), "appointments"),
+      _byPatient(_lazyModel("../../models/Clinical/ProcedureNoteModel"), "procedureNotes"),
+      _byPatient(_lazyModel("../../models/Pharmacy/ADRReportModel"), "adrReports", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Clinical/AdverseFoodReactionModel"), "foodReactions", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Clinical/PROMPREMSurveyModel"), "promPremSurveys", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Compliance/CodeResponseEventModel"), "codeResponseEvents", { cap: 50 }),
+    ]);
+
+    // Patient-linked NABH safety/compliance registers — grouped so the
+    // print can render them as one "Safety & Compliance" section.
+    const _REGISTERS = [
+      ["restraints",        "../../models/Compliance/RestraintRegisterModel"],
+      ["fallEvents",        "../../models/Compliance/FallRiskRegisterModel"],
+      ["pressureUlcers",    "../../models/Compliance/PressureUlcerRegisterModel"],
+      ["medicationErrors",  "../../models/Compliance/MedicationErrorRegisterModel"],
+      ["sentinelEvents",    "../../models/Compliance/SentinelEventRegisterModel"],
+      ["haiSurveillance",   "../../models/Compliance/HAISurveillanceRegisterModel"],
+      ["lama",              "../../models/Compliance/LAMARegisterModel"],
+      ["mortality",         "../../models/Compliance/MortalityRegisterModel"],
+      ["nearMissEvents",    "../../models/Compliance/NearMissEventRegisterModel"],
+      ["otRegister",        "../../models/Compliance/OTRegisterModel"],
+      ["antimicrobialUse",  "../../models/Compliance/AntimicrobialUseRegisterModel"],
+    ];
+    const _regRows = await Promise.all(
+      _REGISTERS.map(([name, path]) => _byPatient(_lazyModel(path), `registers.${name}`, { cap: 50 })),
+    );
+    const complianceRegisters = Object.fromEntries(
+      _REGISTERS.map(([name], i) => [name, _regRows[i]]),
+    );
+
     // Lab-records (manual trend sheets + imaging/micro/histopath reports).
     // Fetched separately so the optional-require null-guard is local — the
     // main Promise.all above stays uncluttered.
@@ -475,6 +537,24 @@ exports.getCompleteFile = async (req, res) => {
         // R7hr — device lifecycle rows (placed → changes[] → removed) for
         // the chronological Complete File print's Devices History section.
         devices,
+        // R7hr — full-coverage additions ("everything captured must reach
+        // the Complete File"): see the coverage-audit block above.
+        emergencyCases,
+        prescriptions,
+        medicalCertificates,
+        physioPlans,
+        physioSessions,
+        medReconciliation,
+        diabeticCharts,
+        pharmacySales,
+        advances,
+        appointments,
+        procedureNotes,
+        adrReports,
+        foodReactions,
+        promPremSurveys,
+        codeResponseEvents,
+        complianceRegisters,
         timeline,
         completeness,
         pagination,

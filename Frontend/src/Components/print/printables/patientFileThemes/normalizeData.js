@@ -508,6 +508,43 @@ export function normalizeFileData(receipt = {}) {
       };
     }),
 
+    // ── R7hr — full-coverage collections ("everything captured must reach
+    // the Complete File"). Rows pass through as-is (renderer configs pick
+    // the display fields); the sortChrono pass below orders them. ──
+    emergencyCases:      toArr(r.emergencyCases),
+    prescriptions:       toArr(r.prescriptions),
+    medicalCertificates: toArr(r.medicalCertificates),
+    physioPlans:         toArr(r.physioPlans),
+    physioSessions:      toArr(r.physioSessions),
+    medReconciliation:   toArr(r.medReconciliation),
+    diabeticCharts:      toArr(r.diabeticCharts),
+    pharmacySales:       toArr(r.pharmacySales),
+    advances:            toArr(r.advances),
+    appointments:        toArr(r.appointments),
+    procedureNotes:      toArr(r.procedureNotes),
+    adrReports:          toArr(r.adrReports),
+    foodReactions:       toArr(r.foodReactions),
+    promPremSurveys:     toArr(r.promPremSurveys),
+    codeResponseEvents:  toArr(r.codeResponseEvents),
+    complianceRegisters: (r.complianceRegisters && typeof r.complianceRegisters === "object")
+      ? r.complianceRegisters : {},
+
+    // R7hr — registration demographics + ER context that never reached
+    // the print (coverage audit): rendered in the patient strip.
+    patientExtra: {
+      email:            toStr(r.email),
+      maritalStatus:    toStr(r.maritalStatus),
+      emergencyContact: r.emergencyContact || {},
+      addressDetail:    r.addressDetail || {},
+      paymentType:      toStr(r.paymentType),
+      tpaName:          toStr(r.tpaName),
+      policyNumber:     toStr(r.policyNumber),
+      triageLevel:      toStr(r.triageLevel),
+      erType:           toStr(r.erType),
+      broughtBy:        toStr(r.broughtBy),
+      policeStation:    toStr(r.policeStation),
+    },
+
     signatures: {
       consultant: toStr(r.consultantName || r.attendingDoctor),
       mro:        toStr(r.mro || r.medicalRecordsOfficer),
@@ -529,8 +566,16 @@ export function normalizeFileData(receipt = {}) {
     "procedures", "consents", "intakeOutput", "labReports", "shiftHandovers",
     "nursingAssessments", "nursingCarePlans", "bedTransfers", "bloodTransfusion",
     "dietPlans", "mlc", "bills", "activityLog", "opdAssessments", "devices",
+    // R7hr full-coverage collections
+    "emergencyCases", "prescriptions", "medicalCertificates", "physioPlans",
+    "physioSessions", "medReconciliation", "diabeticCharts", "pharmacySales",
+    "advances", "appointments", "procedureNotes", "adrReports", "foodReactions",
+    "promPremSurveys", "codeResponseEvents",
   ].forEach((k) => { canonical[k] = sortChrono(canonical[k]); });
   if (canonical.vitals) canonical.vitals.trend = sortChrono(canonical.vitals.trend);
+  Object.keys(canonical.complianceRegisters || {}).forEach((k) => {
+    canonical.complianceRegisters[k] = sortChrono(canonical.complianceRegisters[k]);
+  });
 
   return canonical;
 }
