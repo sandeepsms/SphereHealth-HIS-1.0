@@ -30,6 +30,54 @@ import TimelineTheme  from "./patientFileThemes/Timeline";
 import ExecutiveTheme from "./patientFileThemes/Executive";
 import AuditTheme     from "./patientFileThemes/Audit";
 import EditorialTheme from "./patientFileThemes/Editorial";
+import AuditAppendix  from "./patientFileThemes/AuditAppendix";
+
+/* ── R7hr — Print Center section filtering ─────────────────────────
+   The Print Center dialog on CompletePatientFilePage passes
+   `receipt.printSections` (array of section keys). We strip the
+   EXCLUDED sections' canonical fields here — every theme already
+   collapses empty sections, so one data-level filter covers all 5
+   themes with zero per-theme edits. Absent/empty printSections
+   (old payloads, demo mode, gallery) ⇒ print everything.          */
+const SECTION_FIELDS = {
+  initialAssessment: ["ia", "chiefComplaints", "history", "medicalHistory", "surgicalHistory", "familyHistory", "socialHistory", "generalExamination", "systemicExamination", "vitalsOnAdmission"],
+  doctorNotes:       ["doctorNotes"],
+  nursingNotes:      ["nursingNotes", "nursingAssessments", "nursingCarePlans"],
+  treatmentChart:    ["doctorOrders", "mar", "medications"],
+  vitals:            ["vitalsTrend", "intakeOutput"],
+  investigations:    ["investigations", "labReports", "labTrends"],
+  procedures:        ["procedures"],
+  consents:          ["consents"],
+  diet:              ["dietPlans"],
+  transfusion:       ["bloodTransfusion"],
+  mlc:               ["mlc"],
+  handovers:         ["shiftHandovers", "bedTransfers"],
+  discharge:         ["discharge", "dischargeSummary", "dischargeAdvice", "dischargeMedications"],
+  billing:           ["bills"],
+  activityLog:       ["activityLog"],
+  // `timeline` (section 21) is handled via the events array below.
+};
+export const PRINT_SECTION_KEYS = [...Object.keys(SECTION_FIELDS), "timeline"];
+
+function filterFileBySections(file, printSections) {
+  // null/undefined ⇒ old payload / demo ⇒ print everything.
+  // [] (nothing ticked) ⇒ strip ALL sections (audit-only print keeps just
+  // the identity header + appendix).
+  if (!Array.isArray(printSections)) return file;
+  const keep = new Set(printSections);
+  const out = { ...file };
+  Object.entries(SECTION_FIELDS).forEach(([key, fields]) => {
+    if (keep.has(key)) return;
+    fields.forEach((f) => {
+      if (!(f in out)) return;
+      const v = out[f];
+      if (Array.isArray(v)) out[f] = [];
+      else if (v && typeof v === "object") out[f] = {};
+      else out[f] = "";
+    });
+  });
+  return out;
+}
 
 const THEMES = {
   narrative: NarrativeTheme,
@@ -68,8 +116,14 @@ const CompleteIPDFile = ({ settings = {}, receipt = {} }) => {
   // Normalize once, pass to theme. Themes never touch raw `receipt`
   // unless they need a field we don't yet model — in which case the
   // contract is to ADD it to normalizeFileData(), not bypass it.
-  const file   = normalizeFileData(receipt);
-  const events = buildChronologicalEvents(file);
+  // R7hr — Print Center: strip un-ticked sections at the DATA level so
+  // every theme (they all collapse empty sections) honours the picker.
+  const printSections = Array.isArray(receipt?.printSections) ? receipt.printSections : null;
+  const file = filterFileBySections(normalizeFileData(receipt), printSections);
+  const events =
+    printSections && !printSections.includes("timeline")
+      ? []
+      : buildChronologicalEvents(file);
 
   /* R7gb P0-12 — viewer role propagation. CompletePatientFilePage
      stuffs the authenticated user's RBAC role into the receipt
@@ -80,13 +134,27 @@ const CompleteIPDFile = ({ settings = {}, receipt = {} }) => {
   const viewerRole = String(receipt?.viewerRole || "").toLowerCase();
 
   return (
-    <Theme
-      settings={settings}
-      receipt={receipt}   // still passed for backward-compat / niche fields
-      file={file}
-      events={events}
-      viewerRole={viewerRole}
-    />
+    <>
+      <Theme
+        settings={settings}
+        receipt={receipt}   // still passed for backward-compat / niche fields
+        file={file}
+        events={events}
+        viewerRole={viewerRole}
+      />
+      {/* R7hr — audit-logs print option. Rendered AFTER the theme body so
+          every theme gets the same appendix without per-theme edits. Only
+          present when the Print Center attached an auditBundle (fetched
+          from /patient-file/:uhid/audit-bundle, Admin/MRD-gated). */}
+      {receipt?.auditBundle && (
+        <AuditAppendix
+          bundle={receipt.auditBundle}
+          selections={receipt.auditSelections}
+          patient={{ name: file?.patientName || receipt.patientName, uhid: file?.uhid || receipt.uhid, ipdNo: file?.ipdNo || receipt.ipdNo }}
+          viewerRole={viewerRole}
+        />
+      )}
+    </>
   );
 };
 

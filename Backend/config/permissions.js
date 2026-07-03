@@ -359,6 +359,11 @@ const ACTIONS = {
   "mrd.read":              ["Admin", "Doctor", "MRD"],
   "mrd.list":              ["Admin", "Doctor", "MRD"],
   "mrd.write":             ["Admin"],
+  // Patient-scoped audit-bundle print (Complete File + activity/print/billing/
+  // clinical trails). Dedicated token so MRD can print a patient's audit
+  // appendix WITHOUT inheriting the hospital-wide reports.audit surfaces
+  // (billing audit register, print-audit register). Mirror of Frontend.
+  "patient-file.audit-print": ["Admin", "MRD"],
   // Same-day discharge undo — Admin ONLY, time-gated by
   // controller (≤ 24h since actualDischargeDate) and bed
   // must still be free.

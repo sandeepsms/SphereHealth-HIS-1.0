@@ -21,6 +21,13 @@ router.get("/:uhid/complete",     requireAction("patient-file.read"), ctrl.getCo
 // Paginated activity feed (audit trail) — same clinical-only audience as /complete.
 router.get("/:uhid/activity",     requireAction("patient-file.read"), ctrl.getActivityFeed);
 
+// Aggregated audit bundle (activity + print + billing + clinical trails) for
+// the "print Complete File WITH audit logs" option. Deliberately gated on the
+// dedicated patient-file.audit-print token [Admin, MRD] — NOT reports.audit —
+// so MRD gets patient-scoped audit prints without inheriting the hospital-wide
+// billing-audit surfaces that reports.audit unlocks.
+router.get("/:uhid/audit-bundle", requireAction("patient-file.audit-print"), ctrl.getAuditBundle);
+
 // Frontend-driven event logger (clicks, dropdown selects, navigation)
 // Write is auto-allow-listed for MRD in blockReadOnlyRoleWrites so MRD's
 // view actions still log to PatientActivityLog.

@@ -686,3 +686,86 @@ exports.logEvent = async (req, res) => {
     return res.status(500).json({ success: false, message: e.message });
   }
 };
+
+// ─────────────────────────────────────────────────────────────
+// GET /api/patient-file/:uhid/audit-bundle
+// Aggregates the four patient-scoped audit trails for the
+// "Complete Patient File + audit logs" print (Admin + MRD only —
+// gated by the dedicated patient-file.audit-print action so the
+// broader reports.audit token doesn't have to widen to MRD):
+//   activityLog   — PatientActivityLog (file access; NABH IMS.1)
+//   printAudit    — PrintAudit (who printed what; NABH IMS.4)
+//   billingAudit  — BillingAudit (money trail)
+//   clinicalAudit — ClinicalAudit (clinical action trail; AAC.7)
+// Optional query: admissionId (narrows billing/clinical rows),
+// from / to (createdAt window). Each source capped at 500 rows,
+// newest first; before/after blobs are never included.
+// ─────────────────────────────────────────────────────────────
+const PrintAuditModel   = (() => { try { return require("../../models/Billing/PrintAuditModel"); } catch { return null; } })();
+const BillingAuditModel = (() => { try { return require("../../models/Billing/BillingAudit"); } catch { return null; } })();
+const ClinicalAuditModel = (() => { try { return require("../../models/Compliance/ClinicalAuditModel"); } catch { return null; } })();
+
+exports.getAuditBundle = async (req, res) => {
+  try {
+    const UHID = String(req.params.uhid || "").toUpperCase();
+    if (!UHID) return res.status(400).json({ success: false, message: "UHID is required" });
+    const CAP = 500;
+
+    const window = {};
+    if (req.query.from) window.$gte = new Date(req.query.from);
+    if (req.query.to)   window.$lte = new Date(req.query.to);
+    const withWindow = (filter, field = "createdAt") =>
+      (window.$gte || window.$lte) ? { ...filter, [field]: window } : filter;
+
+    const admissionId = req.query.admissionId && /^[a-f0-9]{24}$/i.test(String(req.query.admissionId))
+      ? String(req.query.admissionId) : null;
+    const scoped = (filter) => admissionId ? { ...filter, admissionId } : filter;
+
+    const [activityLog, printAudit, billingAudit, clinicalAudit] = await Promise.all([
+      PatientActivityLog
+        .find(withWindow({ UHID }))
+        .select("action module area summary userName userRole createdAt")
+        .sort({ createdAt: -1 }).limit(CAP).lean(),
+      PrintAuditModel
+        ? PrintAuditModel
+            .find(withWindow({ UHID }, "printedAt"))
+            .select("entityType entityNumber printCount printedByName printedByRole printedAt")
+            .sort({ printedAt: -1 }).limit(CAP).lean()
+        : [],
+      BillingAuditModel
+        ? BillingAuditModel
+            .find(withWindow(scoped({ UHID })))
+            .select("event billNumber amount paymentMode actorName actorRole reason createdAt")
+            .sort({ createdAt: -1 }).limit(CAP).lean()
+            // amount is Decimal128 — lean() leaves it as {$numberDecimal:"x"},
+            // which the print appendix can't format. Flatten to a plain number.
+            .then((rows) => rows.map((r) => ({
+              ...r,
+              amount: r.amount != null ? Number(r.amount.$numberDecimal ?? r.amount) : null,
+            })))
+        : [],
+      ClinicalAuditModel
+        ? ClinicalAuditModel
+            .find(withWindow(scoped({ UHID })))
+            .select("event targetType actorName actorRole reason createdAt")
+            .sort({ createdAt: -1 }).limit(CAP).lean()
+        : [],
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        activityLog, printAudit, billingAudit, clinicalAudit,
+        window: { from: req.query.from || null, to: req.query.to || null, admissionId },
+        capped: {
+          activityLog:   activityLog.length   >= CAP,
+          printAudit:    printAudit.length    >= CAP,
+          billingAudit:  billingAudit.length  >= CAP,
+          clinicalAudit: clinicalAudit.length >= CAP,
+        },
+      },
+    });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+};
