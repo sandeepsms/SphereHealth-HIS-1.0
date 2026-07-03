@@ -145,7 +145,14 @@ exports.getCompleteFile = async (req, res) => {
       // Bounded at 100 to protect against pathological histories.
       safe("opdVisits",        () => OPDRegistration.find({ UHID }).sort({ visitDate: -1, createdAt: -1 }).limit(100).lean()),
       // The 7-day window applies to high-cardinality recorded data.
-      safe("doctorNotes",      () => DoctorNotes.find({ patientUHID: UHID, createdAt: win }).sort({ visitDate: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      // R7hr — the "Complete File" must show the WHOLE admission, not the last
+      // 7 days. The Initial Assessment is always the OLDEST note (day 1), so
+      // the createdAt window silently dropped it (and every early note/order/
+      // MAR) for any stay > 7 days. Mirror the R7fo nurseNotes/vitals fix:
+      // drop the window on the clinical-record collections; PER_SECTION_LIMIT
+      // still bounds the payload. (Operational billingTriggers + activityLog
+      // keep the window — activity is served separately via the audit bundle.)
+      safe("doctorNotes",      () => DoctorNotes.find({ patientUHID: UHID }).sort({ visitDate: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       // R7fo — nursing-timeline visibility regression. The `createdAt: win`
       // 7-day default hid older nurse notes from the patient file (e.g.
       // an admission's initial assessment from day-1 vanished on day-9).
@@ -153,15 +160,15 @@ exports.getCompleteFile = async (req, res) => {
       // PER_SECTION_LIMIT cap (default 200, max 500) prevents bloat.
       // Sort DESC by createdAt picks the newest within the cap.
       safe("nurseNotes",       () => NurseNotes.find({ patientUHID: UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
-      safe("doctorOrders",     () => DoctorOrder.find({ UHID, createdAt: win }).sort({ orderedAt: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("doctorOrders",     () => DoctorOrder.find({ UHID }).sort({ orderedAt: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       // Consents are infrequent + must be visible historically — load all but capped.
       safe("consents",         () => ConsentForm.find({ UHID }).sort({ createdAt: -1 }).limit(100).lean()),
       safe("dischargeSummary", () => DischargeSummary.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean()),
-      safe("nursingAssessments", () => NursingAssessment.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
-      safe("nursingCarePlans",   () => NursingCarePlan.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
-      safe("shiftHandovers",     () => ShiftHandover.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("nursingAssessments", () => NursingAssessment.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("nursingCarePlans",   () => NursingCarePlan.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("shiftHandovers",     () => ShiftHandover.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("bedTransfers",       () => BedTransfer ? BedTransfer.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
-      safe("mar",                () => MAR ? MAR.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
+      safe("mar",                () => MAR ? MAR.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
       // R7bu — VitalSheet schema uses `uhid` (lowercase) NOT `UHID`, and
       // there is NO top-level `recordedAt` field — entries with their
       // own time live in tableData[]. The old `{ UHID, recordedAt: win }`
@@ -173,7 +180,7 @@ exports.getCompleteFile = async (req, res) => {
       safe("vitals",             () => VitalSheet ? VitalSheet.find({ uhid: UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
       // MLC + bills + admissions don't bloat — keep small, no window.
       safe("mlc",                () => MLCReport ? MLCReport.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
-      safe("investigations",     () => InvestigationOrder.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("investigations",     () => InvestigationOrder.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("bills",              () => PatientBill.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean()),
       safe("billingTriggers",    () => BillingTrigger.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("activityLog",        () => PatientActivityLog.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
@@ -262,8 +269,8 @@ exports.getCompleteFile = async (req, res) => {
     // Lab-records (manual trend sheets + imaging/micro/histopath reports).
     // Fetched separately so the optional-require null-guard is local — the
     // main Promise.all above stays uncluttered.
-    const labTrends  = LabTrend  ? await safe("labTrends",  () => LabTrend.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean())  : [];
-    const labReports = LabReport ? await safe("labReports", () => LabReport.find({ UHID, reportDate: win }).sort({ reportDate: -1 }).limit(PER_SECTION_LIMIT).lean()) : [];
+    const labTrends  = LabTrend  ? await safe("labTrends",  () => LabTrend.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean())  : [];
+    const labReports = LabReport ? await safe("labReports", () => LabReport.find({ UHID }).sort({ reportDate: -1 }).limit(PER_SECTION_LIMIT).lean()) : [];
 
     // R7ey-F19 — .lean() bypasses each schema's toJSON decimalToNumber
     // transform, so every money field on bills/triggers shipped as raw

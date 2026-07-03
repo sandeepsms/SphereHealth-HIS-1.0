@@ -80,7 +80,53 @@ async function main() {
   const base = { UHID, patientUHID: UHID, admissionId, _demoSeed: true };
   const B = (extra) => Object.assign({}, base, { createdAt: extra.createdAt || now, updatedAt: now }, extra);
 
+  const ipdNo = adm?.admissionNumber || "";
+  const DN = (extra) => Object.assign({}, base, {
+    patientUHID: UHID, ipdNo, admissionId,
+    createdAt: extra.createdAt || now, updatedAt: now, status: "signed", _demoSeed: true,
+  }, extra);
+
   const SETS = {
+    // Doctor notes — an Initial Assessment (the day-1 note that powers the
+    // "Initial Assessment → Doctor" section) + daily progress notes so the
+    // day-wise Clinical Journey has doctor entries too.
+    "../models/Doctor/DoctorNotesModel": [
+      DN({
+        createdAt: day(0, 12), visitDate: day(0, 12), noteType: "initial", section: "doctor",
+        doctorName: "Dr. Sandeep Kumar", signedByName: "Dr. Sandeep Kumar", doctorRegNo: "HMC-45821",
+        signedAt: day(0, 12),
+        noteDetails: { doctor: {
+          chiefComplaints: "High-grade fever with chills × 4 days; foul-smelling ulcer over right foot; drowsiness × 1 day.",
+          historyOfPresentingIllness: "Known type-2 diabetic (12 yrs, on OHA) noticed a small blister over the right sole 10 days ago that rapidly ulcerated with purulent discharge. Fever became high-grade with rigors; family reports altered sensorium since yesterday.",
+          pastMedicalHistory: "Type-2 Diabetes Mellitus × 12 yrs. Hypertension × 6 yrs. No IHD/CKD.",
+          familyHistory: "Father — diabetic.", socialHistory: "Non-smoker, occasional alcohol.",
+          generalExamination: "Ill-looking, febrile (39.4°C), dehydrated. PR 118, BP 96/60, SpO2 94% RA, GCS E3V4M5. Right foot — 4×3 cm plantar ulcer, surrounding cellulitis, foul discharge, crepitus absent.",
+          systemicExamination: "CVS: tachycardia, no murmur. RS: bibasal crepts. P/A: soft. CNS: drowsy, no focal deficit.",
+          provisionalDiagnosis: "Septic diabetic foot (right) with sepsis; diabetic ketoacidosis to rule out.",
+          workingDiagnosis: "Right diabetic foot infection with sepsis + hyperglycaemia.",
+          codeStatus: "Full code",
+        } },
+      }),
+      DN({
+        createdAt: day(2, 9), visitDate: day(2, 9), noteType: "daily", section: "doctor",
+        doctorName: "Dr. Sandeep Kumar", signedByName: "Dr. Sandeep Kumar", signedAt: day(2, 9),
+        // buildDoctorNoteCardHtml reads note.soap at top level for progress notes.
+        soap: {
+          subjective: "Fever settling, more alert. Pain at debridement site.",
+          objective: "Afebrile, PR 92, BP 110/70, SpO2 97%. Wound post-debridement — clean margins.",
+          assessment: "Diabetic foot infection responding to IV meropenem; glycaemia improving on insulin infusion.",
+          plan: "Continue meropenem, daily dressing, insulin sliding scale, physio referral, monitor renal function.",
+        },
+      }),
+      DN({
+        createdAt: day(7, 10), visitDate: day(7, 10), noteType: "daily", section: "doctor",
+        doctorName: "Dr. Sandeep Kumar", signedByName: "Dr. Sandeep Kumar", signedAt: day(7, 10),
+        soap: {
+          subjective: "No fever, walking with support in physio.", objective: "Vitals stable, wound granulating well.",
+          assessment: "Recovering; sepsis resolved.", plan: "Step down to oral antibiotics, continue physio, plan discharge in 3-4 days.",
+        },
+      }),
+    ],
     "../models/Patient/emergencyModel": [B({
       createdAt: admit, arrivalTime: admit, triageLevel: "Red (Emergent)", erType: "Medical Emergency",
       chiefComplaint: "High-grade fever, altered sensorium, foul-smelling right-foot ulcer",
