@@ -188,6 +188,15 @@ exports.getCompleteFile = async (req, res) => {
       safe("bloodTransfusion",   () => BloodTransfusionRegister ? BloodTransfusionRegister.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
     ]);
 
+    // R7hr — devices history (IV cannula / catheter / ET tube …) for the
+    // chronological Complete File print. ASC by placedAt — a device row is
+    // a lifecycle (placed → changes[] → removed), so bedside order is the
+    // natural read. Lazy-require mirrors the other optional models.
+    const PatientDevice = (() => { try { return require("../../models/Clinical/PatientDeviceModel"); } catch { return null; } })();
+    const devices = PatientDevice
+      ? await safe("devices", () => PatientDevice.find({ UHID }).sort({ placedAt: 1 }).limit(100).lean())
+      : [];
+
     // Lab-records (manual trend sheets + imaging/micro/histopath reports).
     // Fetched separately so the optional-require null-guard is local — the
     // main Promise.all above stays uncluttered.
@@ -463,6 +472,9 @@ exports.getCompleteFile = async (req, res) => {
         icuBundles,
         // R7ft-FIX2 — blood transfusion register (NABH HIC.4 / MOM.4).
         bloodTransfusion,
+        // R7hr — device lifecycle rows (placed → changes[] → removed) for
+        // the chronological Complete File print's Devices History section.
+        devices,
         timeline,
         completeness,
         pagination,

@@ -1294,6 +1294,63 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       ) : null}
 
       {/* ════════════════════════════════════════════════════════════
+          R7hr — PREVIOUS OPD ASSESSMENTS (latest 2)     [NABH AAC.4]
+          The two most recent saved OPD visit assessments before/around
+          this encounter, rendered like the on-page OPD assessment form
+          (visit header → complaint → vitals → 3-tier Dx → Rx table →
+          advice/follow-up). Empty ⇒ section collapses entirely.
+          ════════════════════════════════════════════════════════════ */}
+      {Array.isArray(file.opdAssessments) && file.opdAssessments.length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH AAC.4">Previous OPD Assessments</SectionHeader>
+          {file.opdAssessments.map((v, i) => {
+            const vit = v.vitals || {};
+            const vitLine = [
+              vit.bloodPressure || vit.bp ? `BP ${vit.bloodPressure || vit.bp}` : "",
+              vit.pulse ? `Pulse ${vit.pulse}` : "",
+              vit.temperature || vit.temp ? `Temp ${vit.temperature || vit.temp}` : "",
+              vit.oxygenSaturation || vit.spo2 ? `SpO₂ ${vit.oxygenSaturation || vit.spo2}` : "",
+              vit.weight ? `Wt ${vit.weight}` : "",
+            ].filter(Boolean).join(" · ");
+            const rx = Array.isArray(v.prescribedMedications) ? v.prescribedMedications : [];
+            return (
+              <div key={v._id || i} style={{ border: "1px solid #e2e8f0", borderLeft: "4px solid #0891b2", borderRadius: 8, padding: "9px 12px", margin: "0 0 10px", pageBreakInside: "avoid" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", borderBottom: "1px solid #e2e8f0", paddingBottom: 5, marginBottom: 6 }}>
+                  <strong style={{ fontSize: 11.5 }}>{v.visitNumber ? (/^OPD/i.test(v.visitNumber) ? v.visitNumber : `OPD ${v.visitNumber}`) : `OPD Visit ${i + 1}`}</strong>
+                  <span style={{ fontSize: 10, color: COL.muted }}>
+                    {v.at ? fmtDate(v.at) : ""}{v.department ? ` · ${v.department}` : ""}{v.consultantName ? ` · ${v.consultantName}` : ""}{v.visitType ? ` · ${v.visitType}` : ""}
+                  </span>
+                </div>
+                {v.chiefComplaint ? <Para style={{ margin: "2px 0" }}><strong>Chief complaint:</strong> {v.chiefComplaint}</Para> : null}
+                {vitLine ? <Para style={{ margin: "2px 0" }}><strong>Vitals:</strong> <em>{vitLine}</em></Para> : null}
+                {(v.provisionalDiagnosis || v.workingDiagnosis || v.finalDiagnosis) ? (
+                  <Para style={{ margin: "2px 0" }}>
+                    <strong>Diagnosis:</strong>{" "}
+                    {[v.provisionalDiagnosis && `Provisional — ${v.provisionalDiagnosis}`,
+                      v.workingDiagnosis && `Working — ${v.workingDiagnosis}`,
+                      v.finalDiagnosis && `Final — ${v.finalDiagnosis}`].filter(Boolean).join("; ")}
+                  </Para>
+                ) : null}
+                {v.assessmentNote ? <Para style={{ margin: "2px 0" }}><strong>Assessment:</strong> {v.assessmentNote}</Para> : null}
+                {rx.length > 0 ? (
+                  <MiniTable
+                    headers={["Medicine", "Dosage", "Frequency", "Duration", "Instructions"]}
+                    widths={["28%", "14%", "16%", "14%", "28%"]}
+                    rows={rx.map((m) => [
+                      m.medicineName, m.dosage, m.frequency, m.duration,
+                      [m.instructions, m.mealStatus].filter(Boolean).join(" · "),
+                    ])}
+                  />
+                ) : null}
+                {v.advice ? <Para style={{ margin: "3px 0 0" }}><strong>Advice:</strong> {v.advice}</Para> : null}
+                {v.followUpDate ? <Para style={{ margin: "2px 0 0" }}><strong>Follow-up:</strong> {fmtDate(v.followUpDate)}{v.followUpInstructions ? ` — ${v.followUpInstructions}` : ""}</Para> : null}
+              </div>
+            );
+          })}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
           R7fy — DAY-WISE CLINICAL JOURNEY              [NABH COP.6/7/2]
           Per user requirement, the body now mirrors the bedside record:
           one block per calendar day with 4 sub-sections each — Notes
@@ -1785,6 +1842,36 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               {p.notes ? <> {cleanSentence(p.notes)}</> : null}
             </Para>
           ))}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          R7hr — DEVICES HISTORY                        [NABH HIC.5]
+          Lifecycle of every indwelling device (IV cannula, urinary
+          catheter, central line, ET tube …) in placement order:
+          placed → site changes → removed. Mirrors the on-page
+          devices strip; dwell time is the infection-control signal.
+          ════════════════════════════════════════════════════════════ */}
+      {Array.isArray(file.devices) && file.devices.length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH HIC.5">Devices History</SectionHeader>
+          <MiniTable
+            headers={["Device", "Site", "Placed", "By", "Changes", "Removed", "Status"]}
+            widths={["18%", "13%", "15%", "13%", "16%", "15%", "10%"]}
+            rows={file.devices.map((d) => [
+              [d.deviceType, d.deviceName].filter(Boolean).join(" · "),
+              d.site,
+              d.placedAt ? fmtDateTime(d.placedAt) : "",
+              displayActor(d.placedBy),
+              (d.changes || []).length
+                ? (d.changes || []).map((c) =>
+                    [c.at ? fmtDate(c.at) : "", c.reason || c.site].filter(Boolean).join(" — ")
+                  ).join("; ")
+                : "",
+              d.removedAt ? `${fmtDateTime(d.removedAt)}${d.removedBy ? ` (${displayActor(d.removedBy)})` : ""}` : "",
+              d.status || (d.removedAt ? "Removed" : "Active"),
+            ])}
+          />
         </>
       ) : null}
 

@@ -61,7 +61,11 @@ export function normalizeFileData(receipt = {}) {
   const iaDoctor  = ia.doctor  || r.doctorIA  || {};
   const iaNursing = ia.nursing || r.nursingIA || {};
 
-  return {
+  // R7hr — the print is a bedside file: every list must read oldest→newest.
+  // Backend sections arrive newest-first (UI convenience); the sortChrono
+  // pass at the end of this function flips every canonical array into
+  // true chronological order for ALL themes at once.
+  const canonical = {
     meta: {
       ipdNo:       toStr(r.ipdNo || r.admissionNo),
       uhid:        toStr(r.uhid || r.uhId),
@@ -466,11 +470,69 @@ export function normalizeFileData(receipt = {}) {
       raisedBy:    toStr(b.raisedByName || b.raisedBy || b.createdByName),
     })),
 
+    // R7hr — previous OPD assessments (latest 2, packed by buildReceipt).
+    // Spread the original first (mirrors doctorNotes) so the flexible
+    // department-payload / prescription blobs survive for the renderer.
+    opdAssessments: toArr(r.opdAssessments).map(v => ({
+      ...v,
+      at:             toDate(v.visitDate || v.createdAt),
+      visitNumber:    toStr(v.visitNumber),
+      department:     toStr(typeof v.department === "object" ? v.department?.departmentName : v.department),
+      consultantName: toStr(v.consultantName),
+      chiefComplaint: toStr(v.chiefComplaint),
+      visitType:      toStr(v.visitType),
+      status:         toStr(v.status),
+    })),
+
+    // R7hr — device lifecycle rows (IV cannula / catheter / ET tube …).
+    // placedBy/removedBy are ActorSchema objects ({name, employeeId, role})
+    // — resolve to the display name. deviceType is the backend enum key
+    // (IV_CANNULA) — humanise for print (IV Cannula).
+    devices: toArr(r.devices).map(d => {
+      const actor = (a) => typeof a === "string" ? a : toStr(a?.name || a?.userName || "");
+      const human = (k) => toStr(k)
+        .split("_")
+        .map(w => ["IV","ET","NG","CVC","PICC","ICD"].includes(w) ? w : (w.charAt(0) + w.slice(1).toLowerCase()))
+        .join(" ");
+      return {
+        ...d,
+        placedAt:   toDate(d.placedAt || d.createdAt),
+        removedAt:  toDate(d.removedAt),
+        deviceType: human(d.deviceType),
+        deviceName: toStr(d.deviceName || d.article),
+        site:       toStr(d.site),
+        status:     toStr(d.status),
+        placedBy:   actor(d.placedBy) || toStr(d.placedByName),
+        removedBy:  actor(d.removedBy) || toStr(d.removedByName),
+        changes:    toArr(d.changes),
+      };
+    }),
+
     signatures: {
       consultant: toStr(r.consultantName || r.attendingDoctor),
       mro:        toStr(r.mro || r.medicalRecordsOfficer),
     },
   };
+
+  // ── R7hr — chronological pass (oldest → newest, bedside-file order) ──
+  const _chronoTime = (x) => {
+    const v = x?.at || x?.orderedAt || x?.placedAt || x?.startedAt || x?.visitDate
+      || x?.reportDate || x?.assignedAt || x?.ts || x?.givenAt || x?.signedAt
+      || x?.date || x?.createdAt || x?.reportedAt || 0;
+    const t = v instanceof Date ? v.getTime() : new Date(v || 0).getTime();
+    return Number.isFinite(t) ? t : 0;
+  };
+  const sortChrono = (arr) =>
+    Array.isArray(arr) ? [...arr].sort((a, b) => _chronoTime(a) - _chronoTime(b)) : arr;
+  [
+    "investigations", "doctorNotes", "nursingNotes", "doctorOrders", "mar",
+    "procedures", "consents", "intakeOutput", "labReports", "shiftHandovers",
+    "nursingAssessments", "nursingCarePlans", "bedTransfers", "bloodTransfusion",
+    "dietPlans", "mlc", "bills", "activityLog", "opdAssessments", "devices",
+  ].forEach((k) => { canonical[k] = sortChrono(canonical[k]); });
+  if (canonical.vitals) canonical.vitals.trend = sortChrono(canonical.vitals.trend);
+
+  return canonical;
 }
 
 /* ── public: chronological event timeline ────────────────────

@@ -189,6 +189,8 @@ function IdentityBanner({ patient, currentAdmission, role, onBack, onPrint, onPr
 */
 const PF_PRINT_SECTIONS = [
   { key: "initialAssessment", label: "Initial Assessment (Dr + Nursing)" },
+  { key: "opdAssessments",    label: "Previous OPD Assessments (last 2)" },
+  { key: "devices",           label: "Devices History" },
   { key: "doctorNotes",       label: "Doctor Notes" },
   { key: "nursingNotes",      label: "Nursing Notes & Assessments" },
   { key: "treatmentChart",    label: "Treatment Chart (Orders + MAR)" },
@@ -4398,6 +4400,11 @@ export default function CompletePatientFilePage() {
       icuBundles: Array.isArray(data.icuBundles) ? data.icuBundles : [],
       mlc: Array.isArray(data.mlc) ? data.mlc : [],
       bills: Array.isArray(data.bills) ? data.bills : [],
+      // R7hr — chronological Complete File additions. opdVisits arrive
+      // newest-first from the aggregator → slice(0,2) = the two most
+      // recent PREVIOUS OPD assessments. devices = full lifecycle rows.
+      opdAssessments: (Array.isArray(data.opdVisits) ? data.opdVisits : []).slice(0, 2),
+      devices: Array.isArray(data.devices) ? data.devices : [],
       activityLog: ["Admin", "Doctor", "MRD", "Accountant"].includes(viewerRole)
         ? (Array.isArray(data.activityLog) ? data.activityLog : []) : [],
       ...((ds) => {
@@ -4791,6 +4798,11 @@ export default function CompletePatientFilePage() {
                 // R7gb P0-11: surface backend bills so the Narrative
                 // bills section is wired.
                 bills:               Array.isArray(data.bills)               ? data.bills               : [],
+                // R7hr — chronological Complete File additions (mirror of
+                // buildPrintReceipt): latest 2 previous OPD assessments +
+                // device lifecycle rows.
+                opdAssessments:      (Array.isArray(data.opdVisits) ? data.opdVisits : []).slice(0, 2),
+                devices:             Array.isArray(data.devices)             ? data.devices             : [],
                 // R7gb P0-12: activity log is operational/PHI-adjacent
                 // — gate to the same roles permitted on-page (line
                 // 2586). Other viewers get an empty array so the

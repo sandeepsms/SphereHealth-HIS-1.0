@@ -41,6 +41,8 @@ import AuditAppendix  from "./patientFileThemes/AuditAppendix";
    (old payloads, demo mode, gallery) ⇒ print everything.          */
 const SECTION_FIELDS = {
   initialAssessment: ["ia", "chiefComplaints", "history", "medicalHistory", "surgicalHistory", "familyHistory", "socialHistory", "generalExamination", "systemicExamination", "vitalsOnAdmission"],
+  opdAssessments:    ["opdAssessments"],
+  devices:           ["devices"],
   doctorNotes:       ["doctorNotes"],
   nursingNotes:      ["nursingNotes", "nursingAssessments", "nursingCarePlans"],
   treatmentChart:    ["doctorOrders", "mar", "medications"],
