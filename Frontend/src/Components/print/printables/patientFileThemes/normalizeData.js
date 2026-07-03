@@ -185,7 +185,12 @@ export function normalizeFileData(receipt = {}) {
                             || n.noteDetails?.lateReason),
       lateEntryAt:     toDate(n.lateEntryAt || n.lateEnteredAt
                             || n.noteDetails?.lateEntryAt),
-    })).filter(n => n.createdAt && n.content),  // skip empty-body notes
+    // R7hr — keep structured-payload notes even when they carry no free-text
+    // `content`. Death (MCCD), pre-op (WHO checklist) and post-op notes record
+    // their entire clinical record in noteDetails, not a narrative field — the
+    // old `n.content`-only filter silently dropped those whole note types from
+    // the Complete File. Their TYPE_BUILDER renders the structured card.
+    })).filter(n => n.createdAt && (n.content || (n.noteDetails && Object.keys(n.noteDetails).length > 0))),
 
     nursingNotes: toArr(r.nursingNotes).map(n => ({
       // R7ge — Spread ORIGINAL note first so per-type structured fields
