@@ -368,6 +368,9 @@ export const ACTIONS = {
   "pharmacy.adr.read":             ["Admin", "Doctor", "Pharmacist", "Nurse"],
   "quality.grievance.write":       ["Admin", "MRD", "Receptionist"],
   "quality.grievance.read":        ["Admin", "MRD", "Receptionist", "Doctor"],
+  // PRE.3 — patient satisfaction & experience feedback (mirror of Backend)
+  "feedback.write":                ["Admin", "MRD", "Receptionist", "Nurse"],
+  "feedback.read":                 ["Admin", "MRD", "Receptionist"],
   "hr.credential.write":           ["Admin"],
   "hr.credential.read":            ["Admin", "Doctor"],
   "compliance.firedrill.write":    ["Admin", "Security"],

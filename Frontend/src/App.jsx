@@ -68,6 +68,9 @@ const WardManagement = lazy(() => import("./pages/WardManagement"));
 const BuildingManagement = lazy(() => import("./pages/BuildingManagement"));
 const FloorManagement = lazy(() => import("./pages/FloorManagement"));
 const BedVisualLayout = lazy(() => import("./Components/bed/BedVisualLayout"));
+// Patient feedback (NABH PRE.3) — staff page + public no-login patient page
+const PatientFeedbackPage = lazy(() => import("./pages/quality/PatientFeedbackPage"));
+const PublicFeedbackPage  = lazy(() => import("./pages/quality/PublicFeedbackPage"));
 const BedDashboard = lazy(() => import("./pages/bed/BedDashboard"));
 const PrintRouterPage = lazy(() => import("./pages/print/PrintRouterPage"));
 const PrintGalleryPage = lazy(() => import("./pages/print/PrintGalleryPage"));
@@ -409,6 +412,8 @@ function AppLayout({ collapsed, setCollapsed }) {
 
   const isLogin    = location.pathname === "/login";
   const isPrintable = location.pathname.startsWith("/print/");
+  // Public patient-feedback page (link / QR) — reachable WITHOUT a login.
+  const isPublicFeedback = location.pathname.startsWith("/feedback/");
 
   /* Complete-patient-file in print mode — strip sidebar / header so the
    * popup window the Print button opens shows nothing but the clinical
@@ -418,6 +423,19 @@ function AppLayout({ collapsed, setCollapsed }) {
     location.search.includes("mode=print") ||
     location.search.includes("autoprint=1")
   );
+
+  /* Public patient feedback — no login. A patient opens the link / QR on
+   * their own phone and fills the satisfaction form; rendered before the
+   * auth redirect so no JWT is required. */
+  if (isPublicFeedback) {
+    return (
+      <Suspense fallback={<RouteLoader />}>
+        <Routes>
+          <Route path="/feedback/:token" element={<PublicFeedbackPage />} />
+        </Routes>
+      </Suspense>
+    );
+  }
 
   /* Redirect unauthenticated users to login */
   if (!user && !isLogin) {
@@ -768,6 +786,13 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/grievances" element={
               <RoleGuard action="quality.grievance.read"><GrievancesPage /></RoleGuard>
+            } />
+            {/* NABH PRE.3 — patient satisfaction & experience feedback (staff
+                entry + patient link/QR dashboard). Gated on feedback.write —
+                the widest set of feedback users; the Dashboard tab inside
+                further hides itself for roles without feedback.read. */}
+            <Route path="/patient-feedback" element={
+              <RoleGuard action="feedback.write"><PatientFeedbackPage /></RoleGuard>
             } />
             <Route path="/adr-reports" element={
               <RoleGuard action="pharmacy.adr.read"><ADRReportsPage /></RoleGuard>

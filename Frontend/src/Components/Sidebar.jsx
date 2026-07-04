@@ -476,6 +476,12 @@ export const NAV = [
       { label: "NABH Registers", icon: "pi-th-large", path: "/compliance/nabh-registers",
         nabh: true, badge: "R7bo",
         roles: [ADMIN, DR, NR, RX, PH, LB, SE, DT, WB, "Housekeeping", "MRD"] },
+      // NABH PRE.3 — patient satisfaction & experience feedback. Reception /
+      // discharge-desk Nurse collect it or mint a patient link/QR; Admin/MRD
+      // read the dashboard.
+      { label: "Patient Feedback", icon: "pi-comments", path: "/patient-feedback",
+        nabh: true, badge: "NEW",
+        roles: [ADMIN, "MRD", RX, NR] },
     ],
   },
 ];

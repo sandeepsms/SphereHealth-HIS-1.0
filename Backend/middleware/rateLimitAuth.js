@@ -122,8 +122,30 @@ const rosterRateLimit = rateLimit({
   },
 });
 
+// ── /api/public-feedback/:token ────────────────────────────────────
+// Patient satisfaction feedback submitted by the patient on their phone via
+// a shareable link / QR — no login. Anonymous surface, so throttle per IP to
+// stop a bot spamming junk feedback while staying generous for a real patient
+// (a few GETs to load the form + one POST to submit): 20 / 10 min / IP.
+const publicFeedbackRateLimit = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req, res) => ipKeyGenerator(req.ip),
+  handler: (req, res /*, next, options */) => {
+    res.status(429).json({
+      ok: false,
+      success: false,
+      code: "TOO_MANY_FEEDBACK_REQUESTS",
+      message: "Too many requests from this device. Please try again in a few minutes.",
+    });
+  },
+});
+
 module.exports = {
   loginRateLimit,
   clientErrorRateLimit,
   rosterRateLimit,
+  publicFeedbackRateLimit,
 };
