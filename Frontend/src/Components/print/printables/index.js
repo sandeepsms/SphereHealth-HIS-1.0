@@ -83,6 +83,9 @@ import AdverseFoodReactionPrint from "./AdverseFoodReactionPrint";
 // slip. Auto-printed from IPDInitialAssessmentPage when the nurse ticks
 // "Receipt issued to patient/family" and signs. NABH ROP + PSQ.
 import ValuablesHandoverSlip    from "./ValuablesHandoverSlip";
+// NABH PRE.3 — Patient Feedback Slip. QR + link to the no-login feedback
+// form; printed from the Patient Feedback page's generate-link flow.
+import FeedbackSlip             from "./FeedbackSlip";
 
 export const PRINTABLES = {
   // ── Receipts / billing ─────────────────────────────────
@@ -183,6 +186,9 @@ export const PRINTABLES = {
   // IA AND has ticked "Receipt issued to patient/family" in N15. Family
   // signs to confirm receipt of listed items (jewellery, cash, etc.).
   "valuables-handover":     { component: ValuablesHandoverSlip,     title: "Valuables & Belongings Handover Slip", defaultPaper: "half-a4" },
+
+  // ── NABH PRE.3: Patient feedback QR slip ──
+  "feedback-slip":          { component: FeedbackSlip,              title: "Patient Feedback Slip",               defaultPaper: "half-a4" },
 };
 
 export default PRINTABLES;

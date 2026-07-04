@@ -14,6 +14,7 @@ import { API_BASE_URL } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
 import { roleCan } from "../../config/permissions";
 import { CategoryRatings, NpsScale, FeedbackTextFields, CATEGORY_META, emptyRatings } from "./feedbackShared";
+import { openPrint } from "../../Components/print/openPrint";
 
 const FB = `${API_BASE_URL}/feedback`;
 const authHeaders = () => ({ headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token")}` } });
@@ -94,10 +95,20 @@ function NewFeedback({ user }) {
       const { data } = await axios.post(`${FB}/generate-link`, { ...ctx }, authHeaders());
       const url = `${window.location.origin}${data.data.path}`;
       const qr = await QRCode.toDataURL(url, { width: 240, margin: 1, color: { dark: "#1e293b", light: "#ffffff" } });
-      setLink({ url, qr });
+      setLink({ url, qr, ctx: { ...ctx }, expiresAt: data.data.expiresAt });
     } catch (e) {
       toast.error(e?.response?.data?.message || "Could not generate link.");
     } finally { setSaving(false); }
+  };
+
+  const printSlip = () => {
+    if (!link) return;
+    openPrint("feedback-slip", {
+      url: link.url, qr: link.qr,
+      patientName: link.ctx?.patientName, UHID: link.ctx?.UHID,
+      visitType: link.ctx?.visitType, department: link.ctx?.department,
+      date: new Date().toISOString(), validUntil: link.expiresAt,
+    });
   };
 
   const copy = async () => {
@@ -155,7 +166,10 @@ function NewFeedback({ user }) {
               <input readOnly value={link.url} style={{ ...field, fontSize: 12 }} onFocus={(e) => e.target.select()} />
               <button onClick={copy} style={{ ...btn("#4338ca"), padding: "9px 14px", whiteSpace: "nowrap" }}><i className="pi pi-copy" /></button>
             </div>
-            <button onClick={() => setLink(null)} style={{ marginTop: 14, background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13 }}>Close</button>
+            <button onClick={printSlip} style={{ ...btn("#0891b2"), width: "100%", marginTop: 10, justifyContent: "center" }}>
+              <i className="pi pi-print" /> Print feedback slip
+            </button>
+            <button onClick={() => setLink(null)} style={{ marginTop: 12, background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13 }}>Close</button>
           </div>
         </div>
       )}
