@@ -202,8 +202,36 @@ async function main() {
     data: { note: summary }, assessmentDate: day(n, 11),
     createdAt: day(n, 11), updatedAt: now, _demoSeed: true,
   });
+  // One MAR administration line for the demo medication order below: a
+  // scheduled HH:MM slot on day n, given (with an accurate time so the print
+  // computes on-time / late) or missed.
+  const dose = (n, sched, givenH, givenM, status) => {
+    const [sh, sm] = sched.split(":").map(Number);
+    return {
+      scheduledTime: sched, scheduledDate: day(n, sh, sm), status,
+      givenAt: status === "given" ? day(n, givenH, givenM) : null,
+      givenBy: status === "given" ? "Sunita Patil" : null, givenByRole: "Nurse",
+      doseGiven: status === "given" ? "1 g" : "", routeUsed: status === "given" ? "IV" : "",
+      fiveRightsChecked: status === "given",
+    };
+  };
 
   const SETS = {
+    // R7hu — a clean demo medication order so the day-wise Treatment Chart
+    // showcases the MAR: Meropenem TDS across three days with on-time, late
+    // and missed doses (one drug = one row; who / when / timely).
+    "../models/Doctor/DoctorOrderModel": [Object.assign({}, base, {
+      patientName: patient.fullName || patient.firstName,
+      visitType: "IPD", orderType: "Medication", priority: "Routine",
+      orderDetails: { medicineName: "Inj Meropenem", dose: "1 g", frequency: "TDS", route: "IV", indication: "Septic diabetic foot — sepsis" },
+      orderedBy: "Dr. Sandeep Kumar", orderedByRole: "Doctor", orderedAt: day(0, 11), status: "InProgress",
+      administrationRecord: [
+        dose(0, "06:00", 6, 10, "given"), dose(0, "14:00", 14, 40, "given"), dose(0, "22:00", 0, 0, "missed"),
+        dose(1, "06:00", 6, 5, "given"),  dose(1, "14:00", 14, 10, "given"), dose(1, "22:00", 22, 20, "given"),
+        dose(2, "06:00", 6, 15, "given"), dose(2, "14:00", 0, 0, "missed"),  dose(2, "22:00", 22, 5, "given"),
+      ],
+      createdAt: day(0, 11), updatedAt: now, _demoSeed: true,
+    })],
     // Doctor notes — an Initial Assessment (the day-1 note that powers the
     // "Initial Assessment → Doctor" section) + daily progress notes so the
     // day-wise Clinical Journey has doctor entries too.

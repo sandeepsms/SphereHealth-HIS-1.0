@@ -151,6 +151,34 @@ const fmtTemp = (v) => {
   if (!Number.isFinite(n)) return v == null ? "" : String(v);
   return `${v}°${n >= 45 ? "F" : "C"}`;
 };
+// ── MAR (medication administration) timing helpers ──────────────────────────
+// Scheduled slot "HH:MM" → minutes-of-day, for ordering a drug's doses. Non-
+// clock slots ("Continuous"/"Immediate"/"") sort ahead of timed ones.
+const _schedMin = (a) => {
+  const m = /^(\d{1,2}):(\d{2})/.exec(a?.schedTime || "");
+  if (m) return Number(m[1]) * 60 + Number(m[2]);
+  const g = a?.givenAt ? new Date(a.givenAt) : null;
+  return g && !isNaN(g.getTime()) ? g.getHours() * 60 + g.getMinutes() : -1;
+};
+const _fmtDelay = (min) => {
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
+};
+// Was a dose given on time? Compare givenAt to its HH:MM scheduled slot on the
+// same day: within 30 min → on time; later → late; earlier → early. Returns
+// null when the slot isn't a clock time (Continuous/Immediate) or givenAt is
+// absent, so "timely diya ya nahi" only shows where it's meaningful.
+const _doseTiming = (a) => {
+  if (!a?.givenAt || !/^\d{1,2}:\d{2}/.test(a.schedTime || "")) return null;
+  const g = new Date(a.givenAt);
+  if (isNaN(g.getTime())) return null;
+  const [h, m] = a.schedTime.split(":").map(Number);
+  const sched = new Date(g); sched.setHours(h, m, 0, 0);
+  const diff = Math.round((g - sched) / 60000);
+  if (Math.abs(diff) <= 30) return { label: "on time", color: "#15803d" };
+  return diff > 0 ? { label: `late ${_fmtDelay(diff)}`, color: "#b45309" }
+                  : { label: `early ${_fmtDelay(-diff)}`, color: "#b45309" };
+};
 const vitalsSentence = (v) => {
   if (!v || typeof v !== "object") return "";
   const bits = [];
@@ -867,6 +895,31 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   const nurNotesByDay = groupByDay(f.nursingNotes,   (n) => n.noteDate || n.createdAt);
   const ordersByDay   = groupByDay(f.doctorOrders,   (o) => o.orderedAt || o.createdAt);
   const handoverByDay = groupByDay(f.shiftHandovers, (h) => h.at);
+  // R7hu — per-day MAR: explode every order's administrationRecord and bucket
+  // each dose by its scheduled (or given) DAY, then by drug — so the day-wise
+  // chart shows one row per medicine with THAT day's doses (scheduled → given
+  // · by whom · on-time), instead of repeating the whole order under the day
+  // it was written. A drug running TDS is a single row with three dose lines.
+  const medsByDay = (() => {
+    const map = new Map(); // dayKey -> Map<drugKey, { o, doses[] }>
+    (f.doctorOrders || []).forEach((o) => {
+      (Array.isArray(o.admin) ? o.admin : []).forEach((a) => {
+        // Bucket by the day the dose was actually GIVEN (the truthful clinical
+        // day); fall back to the scheduled day for a dose that was never given
+        // (missed / pending), so those still surface on their chart day.
+        const when = a.givenAt || a.schedDate;
+        const dk = when ? dayKey(when) : null;
+        if (!dk) return;
+        if (!map.has(dk)) map.set(dk, new Map());
+        const day = map.get(dk);
+        const key = `${o.displayName}|${o.dose}|${o.route}|${o.frequency}|${o.orderType}`;
+        if (!day.has(key)) day.set(key, { o, doses: [] });
+        day.get(key).doses.push(a);
+      });
+    });
+    map.forEach((day) => day.forEach((e) => e.doses.sort((x, y) => _schedMin(x) - _schedMin(y))));
+    return map;
+  })();
   /* R7gt — Extend the day-wise journey to absorb the remaining time-
      stamped streams the user expects to read day-by-day: vital signs,
      intake/output, investigations, blood transfusion, nursing care
@@ -1690,7 +1743,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
         // still surfaces as its own block.
         [docNotesByDay, nurNotesByDay, ordersByDay, marByDay, handoverByDay,
          vitalsByDay, ioByDay, invsByDay, bloodByDay, carePlanByDay,
-         nurAssByDay, consentByDay, icuByDay, xferByDay, mlcByDay].forEach((m) => {
+         nurAssByDay, consentByDay, icuByDay, xferByDay, mlcByDay, medsByDay].forEach((m) => {
           for (const k of m.keys()) allKeys.add(k);
         });
         if (allKeys.size === 0) return null;
@@ -1719,7 +1772,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               const marRows  = marByDay.get(k)       || [];
               const handovrs = (handoverByDay.get(k) || []).slice().sort((a,b) =>
                 new Date(a.at || 0) - new Date(b.at || 0));
-              if (!notes.length && !orders.length && !marRows.length && !handovrs.length) return null;
+              if (!notes.length && !orders.length && !marRows.length && !handovrs.length && !(medsByDay.get(k)?.size)) return null;
 
               const dayMatch = dayIndex.find((d) => d.key === k);
               // R7gf — Always derive the heading from the day-key itself
@@ -1775,45 +1828,73 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               // held, dose given, route, by-whom, five-rights) — so an order
               // and the nursing response to it read together, not as two
               // disconnected lists. (order.admin ← DoctorOrder.administrationRecord)
-              const ordersBlock = orders.length > 0 ? (
+              // ── Treatment Chart sub-section ──
+              // A real drug-chart / MAR for the day: any orders WRITTEN that
+              // day as a compact list, then one row per medicine with THAT
+              // day's doses inline — scheduled slot → given time · by whom ·
+              // on-time/late. A TDS drug is a single row with three dose lines
+              // (the row grows with the number of doses). "medsByDay" buckets
+              // every order's administrationRecord by scheduled day + drug.
+              const dayMeds = medsByDay.get(k);
+              const _thin = { fontWeight: 700, fontSize: 9, color: COL.muted, textTransform: "uppercase", letterSpacing: 0.3, margin: "5px 0 2px" };
+              const ordersBlock = (orders.length > 0 || (dayMeds && dayMeds.size > 0)) ? (
                 <div key={`day-orders-${k}`} style={{ marginBottom: 6 }}>
                   <Para style={{ fontWeight: 700, fontSize: 9.5, color: COL.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 0 2px" }}>
-                    Treatment Chart — Orders &amp; Nursing Administration
+                    Treatment Chart
                   </Para>
-                  {orders.map((o, oi) => {
-                    const admin = (Array.isArray(o.admin) ? o.admin : []).slice()
-                      .sort((a, b) => new Date(a.schedDate || a.givenAt || 0) - new Date(b.schedDate || b.givenAt || 0));
-                    return (
-                      <div key={`day-${k}-o-${oi}`} style={{ marginBottom: 5, paddingLeft: 6, borderLeft: "2px solid #e5e7eb" }}>
-                        <Para style={{ margin: "2px 0", fontSize: 9.5 }}>
-                          <strong>{o.orderType || "Order"}</strong>{" · "}{orderDetailLine(o)}
-                          {o.priority && !/^(routine|normal)$/i.test(o.priority)
-                            ? <span style={{ color: "#b91c1c", fontWeight: 700 }}>{"  [" + o.priority + "]"}</span> : null}
-                          {"  — "}<em>{o.status || "—"}</em>
-                          {"  · ordered "}{fmtTimeOnly(o.orderedAt || o.createdAt)}{" · "}{displayActor(o.orderedBy)}
-                        </Para>
-                        {admin.length > 0 ? (
-                          <MiniTable
-                            headers={["Scheduled", "Status", "Given at", "Dose given", "Route", "By", "5R"]}
-                            rows={admin.map((a) => [
-                              a.schedTime || "—",
-                              adminStatusCell(a.status),
-                              a.givenAt ? fmtDateTime(a.givenAt) : "—",
-                              a.doseGiven || "—",
-                              a.routeUsed || "—",
-                              a.givenBy ? displayActor(a.givenBy, "—") : "—",
-                              a.fiveRights ? "✓" : "—",
-                            ])}
-                            widths={["13%", "12%", "22%", "15%", "12%", "16%", "10%"]}
-                          />
-                        ) : (
-                          <Para style={{ margin: "0 0 3px", fontSize: 9, color: COL.muted, fontStyle: "italic" }}>
-                            No nursing administration recorded against this order.
-                          </Para>
-                        )}
-                      </div>
-                    );
-                  })}
+
+                  {/* Orders written this day (compact — one line each) */}
+                  {orders.length > 0 ? (
+                    <>
+                      <Para style={_thin}>Orders raised</Para>
+                      <MiniTable
+                        headers={["Time", "Type", "Order detail", "Priority", "Status", "Ordered by"]}
+                        rows={orders.map((o) => [
+                          fmtTimeOnly(o.orderedAt || o.createdAt),
+                          o.orderType || "—",
+                          orderDetailLine(o),
+                          (o.priority && !/^(routine|normal)$/i.test(o.priority))
+                            ? <span style={{ color: "#b91c1c", fontWeight: 700 }}>{o.priority}</span> : "—",
+                          o.status || "—",
+                          displayActor(o.orderedBy),
+                        ])}
+                        widths={["9%", "13%", "42%", "11%", "11%", "14%"]}
+                      />
+                    </>
+                  ) : null}
+
+                  {/* Medication administration — one row per drug, this day's doses */}
+                  {dayMeds && dayMeds.size > 0 ? (
+                    <>
+                      <Para style={_thin}>Medication administration — who · when · on-time</Para>
+                      <MiniTable
+                        headers={["Medication", "Route · Freq", "Doses this day — scheduled → given · by · timing"]}
+                        rows={[...dayMeds.values()].map(({ o, doses }) => [
+                          <span><strong>{o.displayName || o.orderType || "—"}</strong>{o.dose ? ` ${o.dose}` : ""}</span>,
+                          [o.route, o.frequency].filter(Boolean).join(" · ") || "—",
+                          <div>
+                            {doses.map((a, ai) => {
+                              const t = _doseTiming(a);
+                              const given = /given/i.test(a.status || "");
+                              return (
+                                <div key={ai} style={{ marginBottom: ai < doses.length - 1 ? 3 : 0, lineHeight: 1.35 }}>
+                                  <strong>{a.schedTime || "—"}</strong>{" → "}
+                                  {given ? (
+                                    <>given{a.givenAt ? ` ${fmtTimeOnly(a.givenAt)}` : ""}{a.doseGiven ? ` (${a.doseGiven})` : ""} by {displayActor(a.givenBy, "—")}
+                                      {t ? <span style={{ color: t.color, fontWeight: 700 }}>{` · ${t.label}`}</span> : null}
+                                      {a.fiveRights ? <span style={{ color: "#15803d" }}> · ✓5R</span> : null}</>
+                                  ) : (
+                                    <span style={{ color: "#b91c1c", fontWeight: 700 }}>{a.status || "not given"}</span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>,
+                        ])}
+                        widths={["26%", "16%", "58%"]}
+                      />
+                    </>
+                  ) : null}
                 </div>
               ) : null;
 
