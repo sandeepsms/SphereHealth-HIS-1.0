@@ -1116,30 +1116,32 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
     anticipatedDischargeNeeds: "Anticipated needs", educationNeeded: "Education needed",
     socialWorkReferral: "Social-work referral", dischargePlanNotes: "Notes",
   };
+  // R7hu — render nursing-IA sub-blocks as bold-label PROSE lines, identical
+  // in style to the Doctor IA (e.g. "Review of systems: CVS: X; RS: Y."), not
+  // as tables — so both Initial Assessments read in the same format.
   const IAGrid = (title, obj, labelMap) => {
     if (!obj || typeof obj !== "object") return null;
-    const rows = Object.entries(labelMap)
+    const parts = Object.entries(labelMap)
       .filter(([k]) => obj[k] != null && obj[k] !== "" && obj[k] !== false && typeof obj[k] !== "object")
-      .map(([k, label]) => [label, String(obj[k])]);
-    if (!rows.length) return null;
-    return (<><SubHeader>{title}</SubHeader>
-      <MiniTable headers={["Parameter", "Finding"]} rows={rows} widths={["38%", "62%"]} /></>);
+      .map(([k, label]) => `${label}: ${obj[k]}`);
+    if (!parts.length) return null;
+    return <Para><strong>{title}:</strong> {parts.join("; ").replace(/\.+$/, "")}.</Para>;
   };
-  // Admission vitals & baseline — compose BP from bpSys/bpDia, list the rest.
+  // Admission vitals — one prose line, mirroring the doctor's "Admission
+  // vitals: BP …, pulse …, temperature …" sentence.
   const niaVitalsBlock = (() => {
     const v = f.ia?.nursing?.vitals;
     if (!v || typeof v !== "object") return null;
-    const rows = [];
+    const parts = [];
     const bp = (v.bpSys || v.bpDia) ? `${v.bpSys || "?"}/${v.bpDia || "?"} mmHg` : (typeof v.bp === "string" ? v.bp : "");
-    if (bp) rows.push(["Blood pressure", bp]);
-    const add = (label, val, unit = "") => { if (val != null && val !== "") rows.push([label, `${val}${unit}`]); };
-    add("Pulse", v.pulse, " /min"); if (v.temp != null && v.temp !== "") rows.push(["Temperature", fmtTemp(v.temp)]); add("SpO₂", v.spo2, " %");
-    add("Respiratory rate", v.rr, " /min"); add("Pain score", v.painScore, "/10");
-    add("Consciousness", v.consciousnessLevel); add("GCS", v.gcs); add("Pupils", v.pupils);
-    add("Capillary glucose", v.glucometer, " mg/dL"); add("Weight", v.weight, " kg"); add("Height", v.height, " cm"); add("BMI", v.bmi);
-    if (!rows.length) return null;
-    return (<><SubHeader>Admission Vitals &amp; Baseline</SubHeader>
-      <MiniTable headers={["Parameter", "Finding"]} rows={rows} widths={["38%", "62%"]} /></>);
+    if (bp) parts.push(`BP ${bp}`);
+    const add = (label, val, unit = "") => { if (val != null && val !== "") parts.push(`${label} ${val}${unit}`); };
+    add("pulse", v.pulse, "/min"); if (v.temp != null && v.temp !== "") parts.push(`temperature ${fmtTemp(v.temp)}`); add("SpO₂", v.spo2, "%");
+    add("respiratory rate", v.rr, "/min"); add("pain", v.painScore, "/10");
+    add("consciousness", v.consciousnessLevel); add("GCS", v.gcs); add("pupils", v.pupils);
+    add("capillary glucose", v.glucometer, " mg/dL"); add("weight", v.weight, " kg"); add("height", v.height, " cm"); add("BMI", v.bmi);
+    if (!parts.length) return null;
+    return <Para><strong>Admission vitals:</strong> {parts.join(", ")}.</Para>;
   })();
 
   /* ── Bills fallback (canonical doesn't normalise yet) ───────── */
@@ -1466,9 +1468,9 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                 ].filter(Boolean).join(" · ")}.</Para>
               ) : null}
               {niaVitalsBlock}
-              {IAGrid("Head-to-toe System Assessment", n.systemAssessment, NIA_SYSTEM_LABELS)}
-              {IAGrid("Psychosocial Assessment", n.psychosocial, NIA_PSYCHO_LABELS)}
-              {IAGrid("Nutrition & Hydration", n.nutritionHydration, NIA_NUTRI_LABELS)}
+              {IAGrid("Head-to-toe examination", n.systemAssessment, NIA_SYSTEM_LABELS)}
+              {IAGrid("Psychosocial assessment", n.psychosocial, NIA_PSYCHO_LABELS)}
+              {IAGrid("Nutrition & hydration", n.nutritionHydration, NIA_NUTRI_LABELS)}
               {n.identification ? proseLine("Identification", n.identification) : null}
               {n.anthropometry ? proseLine("Anthropometry", n.anthropometry) : null}
               {(f.alerts?.allergies || []).length > 0 ? (
@@ -1578,7 +1580,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               {n.sleep ? proseLine("Sleep pattern", n.sleep) : null}
               {n.caregiver ? proseLine("Family caregiver", n.caregiver) : null}
               {n.dischargePlanning && typeof n.dischargePlanning === "object"
-                ? IAGrid("Nursing Discharge Planning", n.dischargePlanning, NIA_DISCHARGE_LABELS)
+                ? IAGrid("Discharge planning", n.dischargePlanning, NIA_DISCHARGE_LABELS)
                 : n.dischargePlanning ? proseLine("Discharge planning", n.dischargePlanning) : null}
 
               {carePlan ? (
