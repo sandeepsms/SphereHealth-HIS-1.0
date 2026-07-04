@@ -360,7 +360,26 @@ export function normalizeFileData(receipt = {}) {
       route:        toStr(o.orderDetails?.route || o.route),
       frequency:    toStr(o.orderDetails?.frequency || o.frequency),
       status:       toStr(o.status),
+      priority:     toStr(o.priority),
       orderedBy:    toStr(o.orderedByName || o.doctorName || o.orderedBy),
+      // Nursing administration actions are embedded on the order itself
+      // (DoctorOrder.administrationRecord) — the MAR for THIS order. Carry
+      // them through so the print can pair each order with the nursing
+      // actions taken against it. `f.mar` (a separate collection) stays a
+      // fallback for deployments that record MAR out-of-band.
+      admin: toArr(o.administrationRecord).map(a => ({
+        schedDate:  toDate(a.scheduledDate),
+        schedTime:  toStr(a.scheduledTime),
+        status:     toStr(a.status),                       // given / missed / held / pending
+        givenAt:    toDate(a.givenAt),
+        givenBy:    toStr(a.givenBy || a.givenByName || a.nurseName),
+        givenByRole:toStr(a.givenByRole),
+        doseGiven:  toStr(a.doseGiven),
+        routeUsed:  toStr(a.routeUsed),
+        fiveRights: a.fiveRightsChecked === true,
+        adverse:    a.adverseEvent === true,
+        notes:      toStr(a.notes),
+      })),
     })),
 
     mar: toArr(r.mar).map(m => ({
@@ -441,11 +460,13 @@ export function normalizeFileData(receipt = {}) {
     })),
 
     bedTransfers: toArr(r.bedTransfers).map(t => ({
-      at:       toDate(t.createdAt || t.transferDate),
-      fromBed:  toStr(t.fromBed || t.previousBed),
-      toBed:    toStr(t.toBed || t.newBed),
+      at:       toDate(t.transferredAt || t.handoverAt || t.requestedAt || t.createdAt || t.transferDate),
+      // Compose "Ward · Bed" from the real stored fields; fall back to the
+      // older flat fromBed/toBed shape if a deployment uses that instead.
+      fromBed:  toStr([t.fromWardName, t.fromRoomNumber, t.fromBedNumber].filter(Boolean).join(" · ") || t.fromBed || t.previousBed),
+      toBed:    toStr([t.toWardName, t.toRoomNumber, t.toBedNumber].filter(Boolean).join(" · ") || t.toBed || t.newBed),
       reason:   toStr(t.reason),
-      by:       toStr(t.transferredByName || t.by || t.requestedBy),
+      by:       toStr(t.handoverBy || t.transferredByName || t.by || t.requestedBy),
       status:   toStr(t.status),
     })),
 

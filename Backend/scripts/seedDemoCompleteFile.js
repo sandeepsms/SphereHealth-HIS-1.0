@@ -112,6 +112,44 @@ async function main() {
     createdAt: day(n, 6), recordedAt: day(n, 6), updatedAt: now, _demoSeed: true,
   });
 
+  // ── Nursing workflow builders ────────────────────────────────────────
+  // These collections were empty, so their Complete-File sections printed
+  // blank. Each seeded doc carries BOTH the model's own fields AND the flat
+  // fields the print's normaliser reads (shift/handingByName/summary,
+  // nursingDiagnosis/goals/interventions, assessmentType/summary) so it
+  // renders without touching the normaliser.
+  const oid   = () => new mongoose.Types.ObjectId();
+  const NURSE = "Sunita Patil (Nurse)";
+  const NURSE2 = "Meena Kumari (Nurse)";
+  const SHIFT_HR = { morning: 7, evening: 15, night: 22 };
+  const SH = (n, fromShift, toShift, handing, receiving, cond, summary) => {
+    const t = day(n, SHIFT_HR[fromShift]);
+    return Object.assign({}, base, {
+      uhid: UHID, admissionId, date: t, fromShift, toShift,
+      shift: `${fromShift} → ${toShift}`,                       // print reads h.shift
+      handingByName: handing, receivingByName: receiving, summary,
+      outgoingNurse: oid(), incomingNurse: oid(),
+      patientStatus: { overallCondition: cond, consciousness: n <= 1 ? "drowsy" : "conscious" },
+      vitalsSnapshot: { pulse: 118 - n * 4, bp: `${96 + n * 3}/${60 + n}`, spo2: 94 + Math.min(n, 5), temp: Number((39.4 - n * 0.2).toFixed(1)) },
+      specialInstructions: summary,
+      createdAt: t, updatedAt: now, _demoSeed: true,
+    });
+  };
+  const NCP = (n, diagnosis, goals, interventions, evaluation, dischargeGoals) => Object.assign({}, base, {
+    patient: patient._id, patientName: patient.fullName || patient.firstName, ipdNo,
+    nursingDiagnosis: diagnosis, goals, interventions, evaluation, nurseName: NURSE,   // print fields
+    assessmentDate: day(n, 9),
+    nursingProblems: [{ problemStatement: diagnosis, shortTermGoal: goals, interventions: [{ intervention: interventions, frequency: "Per shift", responsible: "Nurse" }], evaluation, priority: "HIGH", status: "ACTIVE" }],
+    dischargeGoals, status: "ACTIVE",
+    createdAt: day(n, 9), updatedAt: now, _demoSeed: true,
+  });
+  const NA = (n, type, label, summary) => Object.assign({}, base, {
+    patientName: patient.fullName || patient.firstName,
+    type, assessmentType: label, summary, nurseName: NURSE,     // print reads assessmentType||type, summary
+    data: { note: summary }, assessmentDate: day(n, 11),
+    createdAt: day(n, 11), updatedAt: now, _demoSeed: true,
+  });
+
   const SETS = {
     // Doctor notes — an Initial Assessment (the day-1 note that powers the
     // "Initial Assessment → Doctor" section) + daily progress notes so the
@@ -161,6 +199,29 @@ async function main() {
       VS(5,  [{ time: "06:00", sys: 112, dia: 72, pr: 88,  temp: 37.2, spo2: 97, rr: 18, gcs: 15 }]),
       VS(8,  [{ time: "06:00", sys: 118, dia: 76, pr: 82,  temp: 36.9, spo2: 98, rr: 16, gcs: 15 }]),
       VS(11, [{ time: "06:00", sys: 122, dia: 78, pr: 78,  temp: 36.8, spo2: 99, rr: 16, gcs: 15 }]),
+    ],
+    "../models/Nurse/shiftHandoverModel": [
+      SH(0, "morning", "evening", NURSE,  NURSE2, "critical",          "Septic, GCS 12, on noradrenaline infusion + insulin sliding scale. Right IJV CVC, Foley in situ, 2-hrly turning. Wrist restraint for line safety."),
+      SH(1, "evening", "night",   NURSE2, NURSE,  "needs_observation", "Fever settling, noradrenaline weaning. Restraint reviewed 2-hrly, skin intact. Strict I/O maintained."),
+      SH(3, "night",   "morning", NURSE,  NURSE2, "needs_observation", "Post-debridement dressing dry & intact. Pain 4/10 controlled. Physiotherapy referral raised."),
+      SH(7, "morning", "evening", NURSE2, NURSE,  "stable",            "Afebrile, wound granulating, ambulating with walker. Stepped down to oral antibiotics. Discharge teaching started."),
+    ],
+    "../models/Nurse/NursingCarePlanModel": [
+      NCP(0, "Risk of sepsis-related deterioration related to diabetic foot infection",
+          "Maintain MAP > 65 mmHg, temperature < 38°C and adequate perfusion within 48 hours",
+          "Hourly vitals, IV antibiotics as charted, insulin-infusion titration, strict intake/output, sepsis-bundle compliance",
+          "Sepsis resolving by day 5 — vitals normalised, lactate trending down",
+          "Wound healed, ambulant, glycaemia controlled, foot-care educated before discharge"),
+      NCP(2, "Impaired skin integrity related to diabetic foot ulcer and reduced mobility",
+          "Wound bed granulating and no new pressure injury throughout the stay",
+          "Daily aseptic dressing, 2-hrly turning, air mattress, heel offloading, Braden reassessment each shift",
+          "Sacral skin intact; foot wound granulating well by day 8",
+          "Home wound-care and diabetic-footwear advice delivered to patient and son"),
+    ],
+    "../models/Nurse/NursingAssessmentModel": [
+      NA(1, "daily",     "Daily nursing assessment", "Drowsy to alert, fever settling, wound post-debridement clean, tolerating oral diet."),
+      NA(4, "pain",      "Pain reassessment",        "NRS 4/10 at foot wound, relieved to 2/10 after analgesia and repositioning."),
+      NA(8, "nutrition", "Nutrition reassessment",   "MUST 2 — diabetic high-protein diet; egg removed after urticaria; oral intake adequate."),
     ],
     "../models/Patient/emergencyModel": [B({
       createdAt: admit, arrivalTime: admit, triageLevel: "Red (Emergent)", erType: "Medical Emergency",

@@ -118,6 +118,8 @@ const CONTENT = {
   initial: (i) => ({ noteData: {
     nursing: { admitDate: admit.toLocaleDateString("en-IN"), admitTime: "14:30", ward: "ICU", bedNo: "ICU-3",
       modeOfAdmit: "Ambulance (via ER)", consciousnessLevel: "Drowsy (GCS 12)", mobility: "Bed-bound",
+      carePlan: "Sepsis management with source control, glycaemic control and diabetic-foot wound care — hourly monitoring, IV antibiotics as charted, insulin sliding scale, strict intake/output, 2-hrly turning and pressure-area care.",
+      dischargePlanning: "Anticipated 12-14 day stay. Discharge goals: infection cleared, wound granulating, independent ambulation with footwear, glycaemia controlled. Patient and son to be educated on foot care, insulin technique, dressing and follow-up before discharge.",
       vitals: { bp: "96/60", pulse: 118, temp: "39.4", spo2: 94, rr: 24 } },
     nursingNabh: {
       allergies: { noKnown: false, list: [{ type: "Drug", agent: "Sulfa", severity: "Moderate", reaction: "Rash" }] },

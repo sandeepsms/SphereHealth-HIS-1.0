@@ -1063,6 +1063,16 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
     const det = [o.displayName, o.dose, o.route, o.frequency].filter(Boolean).join(" · ");
     return det || "—";
   };
+  // Colour-coded administration status (given / missed / held / pending) for
+  // the per-order nursing-action table in the treatment chart.
+  const adminStatusCell = (s) => {
+    const v = String(s || "").toLowerCase();
+    const color = v === "given" ? "#15803d"
+                : v === "missed" ? "#b91c1c"
+                : v === "held"   ? "#b45309"
+                : "#6b7280";
+    return <span style={{ color, fontWeight: 600, textTransform: "capitalize" }}>{s || "—"}</span>;
+  };
 
   /* ── Bills fallback (canonical doesn't normalise yet) ───────── */
   const bills = Array.isArray(f.bills) ? f.bills
@@ -1654,23 +1664,51 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                 </div>
               ) : null;
 
-              // ── Orders sub-section ──
+              // ── Treatment Chart sub-section ──
+              // Each doctor order raised that day is printed WITH the nursing
+              // administration actions recorded against it (given / missed /
+              // held, dose given, route, by-whom, five-rights) — so an order
+              // and the nursing response to it read together, not as two
+              // disconnected lists. (order.admin ← DoctorOrder.administrationRecord)
               const ordersBlock = orders.length > 0 ? (
                 <div key={`day-orders-${k}`} style={{ marginBottom: 6 }}>
                   <Para style={{ fontWeight: 700, fontSize: 9.5, color: COL.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 0 2px" }}>
-                    Orders Raised
+                    Treatment Chart — Orders &amp; Nursing Administration
                   </Para>
-                  <MiniTable
-                    headers={["Time", "Type", "Order detail", "Status", "Ordered by"]}
-                    rows={orders.map((o) => [
-                      fmtTimeOnly(o.orderedAt || o.createdAt),
-                      o.orderType || "—",
-                      orderDetailLine(o),
-                      o.status || "—",
-                      displayActor(o.orderedBy),
-                    ])}
-                    widths={["10%", "14%", "48%", "12%", "16%"]}
-                  />
+                  {orders.map((o, oi) => {
+                    const admin = (Array.isArray(o.admin) ? o.admin : []).slice()
+                      .sort((a, b) => new Date(a.schedDate || a.givenAt || 0) - new Date(b.schedDate || b.givenAt || 0));
+                    return (
+                      <div key={`day-${k}-o-${oi}`} style={{ marginBottom: 5, paddingLeft: 6, borderLeft: "2px solid #e5e7eb" }}>
+                        <Para style={{ margin: "2px 0", fontSize: 9.5 }}>
+                          <strong>{o.orderType || "Order"}</strong>{" · "}{orderDetailLine(o)}
+                          {o.priority && !/^(routine|normal)$/i.test(o.priority)
+                            ? <span style={{ color: "#b91c1c", fontWeight: 700 }}>{"  [" + o.priority + "]"}</span> : null}
+                          {"  — "}<em>{o.status || "—"}</em>
+                          {"  · ordered "}{fmtTimeOnly(o.orderedAt || o.createdAt)}{" · "}{displayActor(o.orderedBy)}
+                        </Para>
+                        {admin.length > 0 ? (
+                          <MiniTable
+                            headers={["Scheduled", "Status", "Given at", "Dose given", "Route", "By", "5R"]}
+                            rows={admin.map((a) => [
+                              a.schedTime || "—",
+                              adminStatusCell(a.status),
+                              a.givenAt ? fmtDateTime(a.givenAt) : "—",
+                              a.doseGiven || "—",
+                              a.routeUsed || "—",
+                              a.givenBy ? displayActor(a.givenBy, "—") : "—",
+                              a.fiveRights ? "✓" : "—",
+                            ])}
+                            widths={["13%", "12%", "22%", "15%", "12%", "16%", "10%"]}
+                          />
+                        ) : (
+                          <Para style={{ margin: "0 0 3px", fontSize: 9, color: COL.muted, fontStyle: "italic" }}>
+                            No nursing administration recorded against this order.
+                          </Para>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : null;
 
@@ -2287,20 +2325,25 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
           (the per-day Handovers sub-block). Bed Transfers kept here
           as they're usually 1-2 events, not shift-paced.
           ════════════════════════════════════════════════════════════ */}
-      {/* R7gt — Suppressed; bed transfers render per-day inline. */}
-      {false && (f.bedTransfers || []).length > 0 ? (
+      {/* R7hs — Bed Transfers print as their own complete log: every transfer
+          (including any pre-admission / ER move that the day-wise journey drops
+          because it predates the admission anchor), with from → to, reason,
+          status and who handed over. A same-day transfer also surfaces briefly
+          inline in the day-wise journey for context. */}
+      {(f.bedTransfers || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH COP.6">Bed Transfers</SectionHeader>
           <MiniTable
-            headers={["Date / Time", "From", "To", "Reason", "By"]}
+            headers={["Date / Time", "From", "To", "Reason", "Status", "By"]}
             rows={f.bedTransfers.map((t) => [
               fmtDateTime(t.at),
               t.fromBed || "—",
               t.toBed || "—",
               t.reason || "—",
+              t.status || "—",
               displayActor(t.by),
             ])}
-            widths={["16%", "16%", "16%", "32%", "20%"]}
+            widths={["15%", "17%", "17%", "26%", "12%", "12%"]}
           />
         </>
       ) : null}
