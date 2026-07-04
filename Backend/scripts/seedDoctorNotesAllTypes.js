@@ -25,7 +25,7 @@ const UHID  = (process.argv[2] || "UH01").toUpperCase();
 const COUNT = Math.max(1, Math.min(parseInt(process.argv[3], 10) || 5, 20));
 
 const now = new Date();
-const admit = new Date(now.getTime() - 14 * 86400000);
+let admit = new Date(now.getTime() - 14 * 86400000);   // fallback; re-anchored to the real admission date in main()
 const at = (dayOffset, h = 10, min = 0) => {
   const d = new Date(admit.getTime() + dayOffset * 86400000);
   d.setHours(h, min, 0, 0); return d;
@@ -155,6 +155,7 @@ async function main() {
   const adm = await Admission.findOne({ UHID }).sort({ admissionDate: -1 }).lean();
   const ipdNo = adm?.admissionNumber || "";
   const admissionId = adm?._id || null;
+  if (adm?.admissionDate) admit = new Date(adm.admissionDate);   // anchor note dates to the admission banner (date coherence)
   console.log(`✅ ${UHID} (${patient.fullName || patient.firstName}) · admission ${ipdNo} · ${COUNT} of each type\n`);
 
   // "initial" is unique-per-admission (uniq_initial_per_admission_section) —

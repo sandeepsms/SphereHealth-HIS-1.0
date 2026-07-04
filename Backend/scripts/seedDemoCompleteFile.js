@@ -38,12 +38,15 @@ function resolveModel(p) {
 }
 
 const now = new Date();
-const admit = new Date(now.getTime() - 14 * 86400000);        // admitted 14d ago
+let admit = new Date(now.getTime() - 14 * 86400000);          // fallback; re-anchored to the real admission date in main()
 const day = (n, h = 10, min = 0) => {                          // day n of stay
   const d = new Date(admit.getTime() + n * 86400000);
   d.setHours(h, min, 0, 0); return d;
 };
 const future = (n) => new Date(now.getTime() + n * 86400000);
+// "YYYY-MM-DD" for day n of the stay (VitalSheet keys on a date string, and
+// {uhid,date} is unique — so each sheet needs its own local-time date).
+const dstr = (n) => { const d = new Date(admit.getTime() + n * 86400000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 async function main() {
   await mongoose.connect(process.env.MONGO_URI);
@@ -55,6 +58,10 @@ async function main() {
   if (!patient) { console.error(`No patient ${UHID}`); process.exit(1); }
   const adm = await Admission.findOne({ UHID }).sort({ admissionDate: -1 }).lean();
   const admissionId = adm?._id || null;
+  // Anchor the whole seeded journey to the REAL admission date so the printed
+  // Complete File's day-wise timeline lines up with the admission banner (no
+  // 40-day void). Falls back to the now-14d default if the admission has none.
+  if (adm?.admissionDate) admit = new Date(adm.admissionDate);
   console.log(`   patient: ${patient.fullName || patient.firstName} · admission: ${adm?.admissionNumber || "—"}\n`);
 
   // ── 1. Enrich demographics (previously-dropped registration fields) ──
@@ -85,6 +92,25 @@ async function main() {
     patientUHID: UHID, ipdNo, admissionId,
     createdAt: extra.createdAt || now, updatedAt: now, status: "signed", _demoSeed: true,
   }, extra);
+
+  // Vital Signs sheets (hourly grid) across the stay — a septic-ICU picture on
+  // admission (tachycardia, hypotension, fever, low GCS) normalising by
+  // discharge. Keyed on lowercase `uhid` + a unique date string per sheet.
+  // Column names are chosen so the print's _expandVitalSheets matcher
+  // (systol / diastol / pulse / temp / spo / rr / gcs) picks every one up.
+  const VITAL_COLS = ["BP Systolic", "BP Diastolic", "Pulse", "Temperature", "SpO2", "Respiratory Rate", "GCS"];
+  const VS = (n, slots) => Object.assign({}, base, {
+    uhid: UHID, patient: patient._id, patientName: patient.fullName || patient.firstName,
+    date: dstr(n), admission: admissionId, ipdNo,
+    activeVitals: VITAL_COLS.map((name) => ({ name })),
+    tableData: slots.map((s) => ({ time: s.time, nurseName: "Sunita Patil (Nurse)", values: {
+      "BP Systolic": { value: s.sys, unit: "mmHg" }, "BP Diastolic": { value: s.dia, unit: "mmHg" },
+      "Pulse": { value: s.pr, unit: "bpm" }, "Temperature": { value: s.temp, unit: "°C" },
+      "SpO2": { value: s.spo2, unit: "%" }, "Respiratory Rate": { value: s.rr, unit: "breaths/min" },
+      "GCS": { value: s.gcs, unit: "/15" },
+    } })),
+    createdAt: day(n, 6), recordedAt: day(n, 6), updatedAt: now, _demoSeed: true,
+  });
 
   const SETS = {
     // Doctor notes — an Initial Assessment (the day-1 note that powers the
@@ -126,6 +152,15 @@ async function main() {
           assessment: "Recovering; sepsis resolved.", plan: "Step down to oral antibiotics, continue physio, plan discharge in 3-4 days.",
         },
       }),
+    ],
+    "../models/Vitals/vitalSheetModel": [
+      VS(0,  [{ time: "06:00", sys: 96,  dia: 60, pr: 118, temp: 39.4, spo2: 94, rr: 24, gcs: 12 },
+              { time: "14:00", sys: 100, dia: 62, pr: 110, temp: 38.6, spo2: 95, rr: 22, gcs: 13 }]),
+      VS(2,  [{ time: "06:00", sys: 106, dia: 68, pr: 98,  temp: 37.8, spo2: 96, rr: 20, gcs: 14 },
+              { time: "18:00", sys: 108, dia: 70, pr: 94,  temp: 37.5, spo2: 97, rr: 19, gcs: 14 }]),
+      VS(5,  [{ time: "06:00", sys: 112, dia: 72, pr: 88,  temp: 37.2, spo2: 97, rr: 18, gcs: 15 }]),
+      VS(8,  [{ time: "06:00", sys: 118, dia: 76, pr: 82,  temp: 36.9, spo2: 98, rr: 16, gcs: 15 }]),
+      VS(11, [{ time: "06:00", sys: 122, dia: 78, pr: 78,  temp: 36.8, spo2: 99, rr: 16, gcs: 15 }]),
     ],
     "../models/Patient/emergencyModel": [B({
       createdAt: admit, arrivalTime: admit, triageLevel: "Red (Emergent)", erType: "Medical Emergency",
