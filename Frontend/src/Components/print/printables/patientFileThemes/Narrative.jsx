@@ -1092,16 +1092,19 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
      The comprehensive head-to-toe assessment the NurseInitialAssessmentPage
      captures. Each sub-block prints as a 2-column table of every populated
      field, so the Complete File shows the ENTIRE nursing IA. */
-  const NIA_SYSTEM_LABELS = {
-    neuroStatus: "Neurological", neuroNotes: "Neuro notes",
-    respiratoryPattern: "Respiratory pattern", breathSounds: "Breath sounds", oxygenSupport: "Oxygen support", oxygenLPM: "O₂ flow (LPM)", respiratoryNotes: "Respiratory notes",
-    heartSounds: "Heart sounds", capRefill: "Capillary refill", peripheralPulse: "Peripheral pulses", cvNotes: "CVS notes",
-    abdomen: "Abdomen", bowelSounds: "Bowel sounds", lastBowelMovement: "Last bowel movement", nausea: "Nausea", vomiting: "Vomiting", giNotes: "GI notes",
-    urinaryPattern: "Urinary pattern", catheter: "Urinary catheter", catheterSite: "Catheter detail", guNotes: "GU notes",
-    mobility: "Mobility", assistiveDevice: "Assistive device", musculoNotes: "Musculoskeletal notes",
-    skinColor: "Skin colour", skinTurgor: "Skin turgor", skinIntact: "Skin intact", woundPresent: "Wound present", woundLocation: "Wound location", woundDescription: "Wound description", edema: "Edema", edemaLocation: "Edema site",
-    ivAccess: "IV access", ivSite: "IV site", ivSize: "IV size", ivInsertedDate: "IV inserted",
-  };
+  // Head-to-toe examination grouped by body system — one short prose line per
+  // system (like the doctor IA's per-category lines), instead of one 25-field
+  // run-on line that reads poorly and risks running off the page.
+  const NIA_SYS_GROUPS = [
+    ["Neurological",    { neuroStatus: "status", neuroNotes: "notes" }],
+    ["Respiratory",     { respiratoryPattern: "pattern", breathSounds: "breath sounds", oxygenSupport: "O₂ support", oxygenLPM: "O₂ flow (LPM)", respiratoryNotes: "notes" }],
+    ["Cardiovascular",  { heartSounds: "heart sounds", capRefill: "cap refill", peripheralPulse: "peripheral pulses", cvNotes: "notes" }],
+    ["Abdomen / GI",    { abdomen: "abdomen", bowelSounds: "bowel sounds", lastBowelMovement: "last bowel movement", nausea: "nausea", vomiting: "vomiting", giNotes: "notes" }],
+    ["Genitourinary",   { urinaryPattern: "pattern", catheter: "catheter", catheterSite: "detail", guNotes: "notes" }],
+    ["Musculoskeletal", { mobility: "mobility", assistiveDevice: "assistive device", musculoNotes: "notes" }],
+    ["Skin & wound",    { skinColor: "colour", skinTurgor: "turgor", skinIntact: "intact", woundPresent: "wound", woundLocation: "location", woundDescription: "description", edema: "edema", edemaLocation: "edema site" }],
+    ["IV access",       { ivAccess: "access", ivSite: "site", ivSize: "size", ivInsertedDate: "inserted" }],
+  ];
   const NIA_PSYCHO_LABELS = {
     anxietyLevel: "Anxiety", emotionalStatus: "Emotional status", cooperationLevel: "Cooperation",
     cognitiveStatus: "Cognition", languageBarrier: "Language barrier", language: "Preferred language",
@@ -1125,7 +1128,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       .filter(([k]) => obj[k] != null && obj[k] !== "" && obj[k] !== false && typeof obj[k] !== "object")
       .map(([k, label]) => `${label}: ${obj[k]}`);
     if (!parts.length) return null;
-    return <Para><strong>{title}:</strong> {parts.join("; ").replace(/\.+$/, "")}.</Para>;
+    return <Para key={title}><strong>{title}:</strong> {parts.join("; ").replace(/\.+$/, "")}.</Para>;
   };
   // Admission vitals — one prose line, mirroring the doctor's "Admission
   // vitals: BP …, pulse …, temperature …" sentence.
@@ -1468,7 +1471,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                 ].filter(Boolean).join(" · ")}.</Para>
               ) : null}
               {niaVitalsBlock}
-              {IAGrid("Head-to-toe examination", n.systemAssessment, NIA_SYSTEM_LABELS)}
+              {NIA_SYS_GROUPS.map(([title, lm]) => IAGrid(title, n.systemAssessment, lm))}
               {IAGrid("Psychosocial assessment", n.psychosocial, NIA_PSYCHO_LABELS)}
               {IAGrid("Nutrition & hydration", n.nutritionHydration, NIA_NUTRI_LABELS)}
               {n.identification ? proseLine("Identification", n.identification) : null}
