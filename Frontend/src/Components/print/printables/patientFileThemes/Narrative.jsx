@@ -1950,11 +1950,15 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
           as dead JSX in case a future change reinstates a longitudinal
           trend view (e.g. for graphical export).
           ════════════════════════════════════════════════════════════ */}
-      {false && (f.vitalsTrend || []).length > 0 ? (
+      {/* R7hr — Vital Signs Trend re-enabled. The section was gated behind
+          `{false && …}` because the VitalSheet GRID shape never mapped to flat
+          trend rows; normalizeData now expands the grid (per time-slot points)
+          so this renders the full observation chart. */}
+      {(f.vitalsTrend || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH COP.3">Vital Signs Trend</SectionHeader>
           <MiniTable
-            headers={["Time", "BP", "Pulse", "Temp", "SpO₂", "RR", "Recorded by"]}
+            headers={["Date / Time", "BP", "Pulse", "Temp", "SpO₂", "RR", "GCS", "Recorded by"]}
             // R7gc — user requirement: NO vitals truncation. Print every reading.
             rows={(f.vitalsTrend || []).map((v) => [
               fmtDateTime(v.at),
@@ -1963,11 +1967,11 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               v.temp || "—",
               v.spo2 || "—",
               v.rr || "—",
+              v.gcs || "—",
               displayActor(v.recordedBy),
             ])}
-            widths={["18%", "12%", "10%", "10%", "10%", "10%", "30%"]}
+            widths={["18%", "12%", "9%", "10%", "9%", "9%", "8%", "25%"]}
           />
-          {/* R7gc — no truncation hint needed; we print every reading. */}
         </>
       ) : null}
 
@@ -2573,6 +2577,40 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
         Thank you for entrusting {obj || "the patient"} to our care. We
         remain available for any clarification regarding this admission.
       </p>
+
+      {/* ════════════════════════════════════════════════════════════
+          R7hr — RECORD AUTHENTICATION / ATTESTATION (medico-legal).
+          Closes the file with the treating consultant + Medical Records
+          sign-off and a computer-generated-record disclaimer.
+          ════════════════════════════════════════════════════════════ */}
+      <div style={{ marginTop: 14, borderTop: `2px solid ${COL.head}`, paddingTop: 10, pageBreakInside: "avoid" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 28, flexWrap: "wrap" }}>
+          {[
+            { name: f.admission?.consultant || f.signatures?.consultant || "Treating Consultant", role: "Treating Consultant — Signature & Date" },
+            { name: "Medical Records Officer", role: "Certified true copy — Signature & Date" },
+          ].map((s, i) => (
+            <div key={i} style={{ flex: 1, minWidth: 210 }}>
+              <div style={{ height: 30 }} />
+              <div style={{ borderTop: "1px solid #64748b", paddingTop: 3 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: COL.body }}>{s.name}</div>
+                <div style={{ fontSize: 9, color: COL.muted }}>{s.role}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p style={{ fontSize: 8.5, color: COL.muted, margin: "12px 0 0", lineHeight: 1.5 }}>
+          Computer-generated Complete Patient File for <strong>{fullName}</strong> (UHID {f.meta?.uhid || f.patient?.uhid || "—"}{f.meta?.ipdNo ? ` · ${f.meta.ipdNo}` : ""}),
+          compiled from the hospital medical record on {fmtDateTime(f.meta?.printedAt) || fmtDateTime(new Date())}. This document reproduces the patient's
+          clinical record for the admission and is valid without a physical signature when digitally issued. Each page bears the patient identifier;
+          report any discrepancy to the Medical Records Department. — NABH IMS.1 / MCI 1.4.
+        </p>
+      </div>
+
+      {/* R7hr — per-page running footer: patient identity repeats on every
+          printed page (medico-legal). Hidden on screen; fixed in print. */}
+      <div className="pf-running-footer" aria-hidden="true">
+        {fullName} · UHID {f.meta?.uhid || f.patient?.uhid || "—"}{f.meta?.ipdNo ? ` · ${f.meta.ipdNo}` : ""} · Complete Patient File · Confidential
+      </div>
     </PrintShell>
   );
 };

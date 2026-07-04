@@ -53,6 +53,62 @@ const toDate = (v) => {
 };
 const joinNonEmpty = (...parts) => parts.filter(p => p != null && p !== "").join(" ");
 
+/* R7hr — Vital Signs Trend fix. VitalSheet docs are a GRID: each doc holds
+   tableData[] of { time, values:{ "<vital name>": {value,unit} } } keyed by
+   the admin-configured vital names (Pulse / BP Systolic / Temperature / …).
+   The trend section expects one FLAT point per reading, so expand each grid
+   into per-time-slot points here; already-flat rows (legacy shape) pass
+   through untouched. Vital-name matching is fuzzy so custom column names
+   still map. */
+function _expandVitalSheets(arr) {
+  const out = [];
+  (Array.isArray(arr) ? arr : []).forEach((v) => {
+    if (v && Array.isArray(v.tableData) && v.tableData.length) {
+      const base = v.date || v.createdAt;
+      v.tableData.forEach((row) => {
+        const vals = row.values || {};
+        const cell = (...needles) => {
+          for (const key of Object.keys(vals)) {
+            const kl = key.toLowerCase();
+            if (needles.some((n) => kl.includes(n))) {
+              const c = vals[key];
+              const val = c && typeof c === "object" ? c.value : c;
+              if (val != null && val !== "") return val;
+            }
+          }
+          return "";
+        };
+        // Combine the sheet date with the row's "HH:MM" slot.
+        let at = base;
+        if (base && typeof row.time === "string" && /^\d{1,2}:\d{2}/.test(row.time)) {
+          const d = new Date(base);
+          if (!isNaN(d.getTime())) {
+            const [h, m] = row.time.split(":");
+            d.setHours(Number(h), Number(m), 0, 0);
+            at = d;
+          }
+        }
+        const sys = cell("systol"), dia = cell("diastol");
+        const bp = (sys || dia) ? `${sys || "?"}/${dia || "?"}` : cell("bp", "blood pressure");
+        out.push({
+          at,
+          bp,
+          pulse: cell("pulse", "heart rate", "hr"),
+          temp:  cell("temp"),
+          spo2:  cell("spo", "o2 sat", "saturation"),
+          rr:    cell("rr", "resp"),
+          gcs:   cell("gcs"),
+          painScore: cell("pain"),
+          recordedBy: row.recordedBy || row.nurseName || "",
+        });
+      });
+    } else if (v) {
+      out.push(v);   // already-flat trend row
+    }
+  });
+  return out;
+}
+
 /* ── public: normalize the raw receipt payload ──────────────── */
 export function normalizeFileData(receipt = {}) {
   const r = receipt || {};
@@ -319,17 +375,18 @@ export function normalizeFileData(receipt = {}) {
       administrations: toArr(m.administrations || m.givenDoses),
     })),
 
-    vitalsTrend: toArr(r.vitalsTrend || r.vitals).map(v => {
+    vitalsTrend: _expandVitalSheets(r.vitalsTrend || r.vitals).map(v => {
       const bp = typeof v.bp === "object" && v.bp
         ? `${v.bp.systolic ?? "?"}/${v.bp.diastolic ?? "?"}`
         : toStr(v.bp);
       return {
-        at:     toDate(v.recordedAt || v.createdAt || v.at),
+        at:     toDate(v.at || v.recordedAt || v.createdAt),
         bp:     bp || toStr(v.bloodPressure),
         pulse:  toStr(v.pulse || v.hr),
         temp:   toStr(v.temp || v.temperature),
         spo2:   toStr(v.spo2 || v.SpO2),
         rr:     toStr(v.rr || v.respiratoryRate),
+        gcs:    toStr(v.gcs),
         painScore:  toNum(v.painScore || v.pain || v.vasPain),
         recordedBy: toStr(v.recordedBy || v.recordedByName || v.nurseName),
       };

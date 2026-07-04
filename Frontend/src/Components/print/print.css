@@ -24,6 +24,8 @@ html[data-paper="a4"][data-orient="landscape"]      { --pr-page-width: 297mm; }
 html[data-paper="a5"][data-orient="landscape"]      { --pr-page-width: 210mm; }
 
 @page                       { margin: 12mm; }
+/* Running footer is print-only — hidden in the on-screen preview. */
+.pf-running-footer          { display: none; }
 @media print {
   /* Portrait — default */
   html[data-paper="a4"] @page                                  { size: A4 portrait;     margin: 12mm; }
@@ -112,6 +114,27 @@ html[data-paper="a5"] .pr-page {
   }
   .pr-no-print { display: none !important; }
   .pr-page-break { page-break-after: always; }
+
+  /* R7hr — per-page running footer (patient identity on every printed page,
+     medico-legal). Fixed to the bottom margin so the browser repeats it on
+     each sheet; reserve room so body text never runs under it. */
+  .pf-running-footer {
+    display: block !important;
+    position: fixed;
+    bottom: 2mm; left: 0; right: 0;
+    font-size: 7.5px;
+    letter-spacing: .2px;
+    text-align: center;
+    color: #64748b;
+    border-top: 0.5px solid #cbd5e1;
+    padding-top: 1.5mm;
+    background: #fff;
+  }
+  .pr-page { padding-bottom: 8mm !important; }
+  /* Best-effort page numbers via paged-media margin boxes (honoured by
+     Firefox + most print-to-PDF engines; Chrome falls back to its own
+     print-dialog "Headers and footers" page numbering). */
+  @page { @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 8px; color: #64748b; } }
   /* Same defensive rules for the paper-variant overrides above */
   html[data-paper="half-a4"] .pr-page,
   html[data-paper="a5"]      .pr-page,

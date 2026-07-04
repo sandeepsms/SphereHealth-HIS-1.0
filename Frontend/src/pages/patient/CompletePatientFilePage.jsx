@@ -4372,7 +4372,9 @@ export default function CompletePatientFilePage() {
       allergies: data.allergies || iaDoc.allergies?.list || iaNurse.allergies?.list || patient?.allergyList || patient?.allergies || [],
       isolationFlags: adm.isolationFlags || iaDoc.isolationFlags || [],
       crossCheckAlerts: iaNurse.crossCheckAlerts || iaDoc.crossCheckAlerts || [],
-      vitalsOnAdmission: flatVitals, vitalsTrend: data.vitalSheet || data.vitalsTrend || [],
+      // R7hr — aggregator returns VitalSheet docs under `vitals` (not
+      // `vitalSheet`); read that so the Vital Signs Trend actually populates.
+      vitalsOnAdmission: flatVitals, vitalsTrend: data.vitalSheet || data.vitals || data.vitalsTrend || [],
       chiefComplaints: iaDoc.chiefComplaints || iaDoc.cc || iaDoc.complaints
                        || iaNurse.chiefComplaint || iaNurse.cc || adm.chiefComplaints || adm.reasonForAdmission || "",
       history: iaDoc.hopi || iaDoc.historyOfPresentingIllness || iaDoc.history || iaDoc.presentingIllness
@@ -4721,7 +4723,7 @@ export default function CompletePatientFilePage() {
                 /* vitals on admission — flattened above; bp is now a
                    "120/80" string, not a {systolic,diastolic} object. */
                 vitalsOnAdmission: flatVitals,
-                vitalsTrend:       data.vitalSheet || data.vitalsTrend || [],
+                vitalsTrend:       data.vitalSheet || data.vitals || data.vitalsTrend || [],
 
                 /* history & exam — every alias path the R7fa/R7fb/R7fc
                    IA forms can land in. The doctor IA's hopi field is
