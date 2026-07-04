@@ -4308,8 +4308,16 @@ export default function CompletePatientFilePage() {
     const iaNurseNote = allNursingNotes.find(n => n.noteType === "initial") ||
                         allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.nursing);
     const iaDocRaw   = iaDocNote?.noteDetails?.doctor || adm.initialAssessment || data.initialAssessment || {};
-    const iaNurseRaw = iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing
-                       || adm.nurseInitialAssessment || data.nurseInitialAssessment || {};
+    // Prefer the dedicated, comprehensive Nursing Initial Assessment the
+    // NurseInitialAssessmentPage form saves (admission.nurseInitialAssessment —
+    // full head-to-toe: vitals / systemAssessment / psychosocial / nutrition /
+    // riskAssessments / dischargePlanning) over the thin nurse-note payload, so
+    // the Complete File prints the ENTIRE assessment. Fall back to the note.
+    const richNurseIA = adm.nurseInitialAssessment || data.nurseInitialAssessment;
+    const iaNurseRaw = (richNurseIA && (richNurseIA.systemAssessment || richNurseIA.vitals || richNurseIA.riskAssessments))
+                       ? richNurseIA
+                       : (iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing
+                          || richNurseIA || {});
     /* R7gu-FIX — lift signer fields from the parent IA note onto the
        nested noteDetails payload so the IA signature pill in Narrative
        can show name + Emp ID + Reg + sign image instead of falling back

@@ -79,6 +79,59 @@ async function main() {
     await Admission.collection.updateOne({ _id: admissionId }, { $set: {
       triageLevel: "Red (Emergent)", erType: "Medical Emergency",
       broughtBy: "Suresh Kumar (son)", modeOfArrival: adm.modeOfArrival || "Ambulance",
+      // Full structured Nursing Initial Assessment — the exact shape the
+      // NurseInitialAssessmentPage form saves (POST /admissions/:id/nurse-
+      // assessment). Populating it here lets the Complete File print the
+      // COMPLETE head-to-toe nursing IA, not just a couple of lines.
+      nurseInitialAssessment: {
+        assessedAt: admit, nurseName: "Sunita Patil", assessedBy: "Sunita Patil",
+        signedAt: admit, nurseId: "N-1042", designation: "Staff Nurse",
+        ward: "ICU", bedNo: "ICU-3", modeOfAdmit: "Ambulance (via ER)",
+        vitals: {
+          bpSys: "96", bpDia: "60", pulse: "118", temp: "39.4", spo2: "94", rr: "24",
+          weight: "72", height: "168", bmi: "25.5", painScore: "6",
+          consciousnessLevel: "Drowsy (GCS 12)", pupils: "Equal & Reacting", gcs: "12", glucometer: "342",
+        },
+        systemAssessment: {
+          neuroStatus: "Drowsy, GCS 12", neuroNotes: "Rousable to voice, no focal deficit",
+          respiratoryPattern: "Tachypnoeic", breathSounds: "Bibasal crepts", oxygenSupport: "Yes", oxygenLPM: "4",
+          heartSounds: "S1S2 normal, tachycardia", capRefill: "3 sec", peripheralPulse: "Weak",
+          abdomen: "Soft", bowelSounds: "Present", nausea: "No", vomiting: "No",
+          urinaryPattern: "Catheterised", catheter: "Yes", catheterSite: "Foley 16Fr",
+          mobility: "Bed-bound", assistiveDevice: "None",
+          skinColor: "Pale", skinTurgor: "Reduced", skinIntact: "No",
+          woundPresent: "Yes", woundLocation: "Right plantar foot",
+          woundDescription: "4×3 cm ulcer, purulent discharge, surrounding cellulitis", edema: "No",
+          ivAccess: "Yes", ivSite: "Right forearm cannula + Right IJV CVC", ivSize: "18G / 7Fr",
+        },
+        psychosocial: {
+          anxietyLevel: "Moderate", emotionalStatus: "Distressed", cooperationLevel: "Cooperative",
+          cognitiveStatus: "Drowsy", languageBarrier: "No", language: "Hindi",
+          spiritualNeeds: "No", physicalAbuseRisk: "No", socialSupport: "Family present (son)",
+        },
+        nutritionHydration: {
+          dietaryRestrictions: "Diabetic diet", allergies: "Sulfa (rash)", nutritionRisk: "Moderate (MUST 2)",
+          hydrationStatus: "Dehydrated", lastMealTime: "Morning", swallowingDifficulty: "No", feedingMethod: "Oral",
+        },
+        riskAssessments: {
+          bradenScale: { totalScore: 14, riskLevel: "Moderate Risk" },
+          morseFallScale: { totalScore: 55, riskLevel: "High Fall Risk" },
+        },
+        dischargePlanning: {
+          livesAlone: "No", caregiver: "Son (Suresh Kumar)", homeSupportAvailable: "Yes",
+          anticipatedDischargeNeeds: "Wound care, diabetic footwear, insulin teaching",
+          educationNeeded: "Foot care, glycaemic control, dressing technique",
+          socialWorkReferral: "No",
+          dischargePlanNotes: "Anticipated 12-14 day stay; discharge when infection cleared, wound granulating and ambulant with footwear.",
+        },
+        carePlan: "Sepsis management with source control, glycaemic control and diabetic-foot wound care — hourly monitoring, IV antibiotics as charted, insulin sliding scale, strict intake/output, 2-hrly turning and pressure-area care.",
+        homeMedications: [
+          { drug: "Metformin 500mg", dose: "1 tab", frequency: "BD" },
+          { drug: "Glimepiride 1mg", dose: "1 tab", frequency: "OD" },
+          { drug: "Amlodipine 5mg", dose: "1 tab", frequency: "OD" },
+        ],
+        notes: "Baseline admission assessment — septic diabetic foot, ICU-level care initiated.",
+      },
     } });
   }
   console.log("   ✅ demographics + ER context enriched");

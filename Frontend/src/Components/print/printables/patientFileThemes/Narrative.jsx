@@ -145,7 +145,7 @@ const vitalsSentence = (v) => {
   const bits = [];
   if (v.bp)    bits.push(`BP ${v.bp}`);
   if (v.pulse) bits.push(`pulse ${v.pulse}/min`);
-  if (v.temp)  bits.push(`temperature ${v.temp}°F`);
+  if (v.temp)  bits.push(`temperature ${v.temp}°C`);
   if (v.spo2)  bits.push(`SpO₂ ${v.spo2}%`);
   if (v.rr)    bits.push(`respiratory rate ${v.rr}/min`);
   if (!bits.length) return "";
@@ -888,9 +888,9 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   };
 
   /* ── Diagnosis triplet ──────────────────────────────────────── */
-  const dxProv  = f.admission?.provisionalDiagnosis || f.ia?.doctor?.provisionalDiagnosis || "";
-  const dxWork  = f.admission?.workingDiagnosis || f.ia?.doctor?.workingDiagnosis || "";
-  const dxFinal = f.admission?.finalDiagnosis || f.ia?.doctor?.finalDiagnosis || "";
+  const dxProv  = stripDot(f.admission?.provisionalDiagnosis || f.ia?.doctor?.provisionalDiagnosis || "");
+  const dxWork  = stripDot(f.admission?.workingDiagnosis || f.ia?.doctor?.workingDiagnosis || "");
+  const dxFinal = stripDot(f.admission?.finalDiagnosis || f.ia?.doctor?.finalDiagnosis || "");
 
   /* ── Investigations split ───────────────────────────────────── */
   const invs = (f.investigations || []).filter((i) => i.name);
@@ -984,7 +984,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               || null;
 
   /* ── Home meds ─────────────────────────────────────────────── */
-  const homeMeds = Array.isArray(f.history?.homeMeds) ? f.history.homeMeds : [];
+  const homeMeds = Array.isArray(f.history?.homeMeds) ? f.history.homeMeds
+                 : Array.isArray(f.ia?.nursing?.homeMedications) ? f.ia.nursing.homeMedications : [];
 
   /* ── Care plan (text or list) ───────────────────────────────── */
   const carePlan = f.ia?.nursing?.carePlan
@@ -997,15 +998,17 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   const n = f.ia?.nursing || {};
   const d = f.ia?.doctor || {};
 
-  const morseVal   = pick(n, "fallRisk", "morseTotal", "morseScore") ?? scalarOrNum(n.morse?.total);
-  const bradenVal  = pick(n, "pressureUlcer", "bradenTotal", "bradenScore") ?? scalarOrNum(n.braden?.total);
-  const painVal    = pick(n, "painScore", "vasPain") ?? scalarOrNum(n.pain?.score) ?? scalarOrNum(n.pain?.total);
+  const morseVal   = pick(n, "fallRisk", "morseTotal", "morseScore") ?? scalarOrNum(n.morse?.total) ?? scalarOrNum(n.riskAssessments?.morseFallScale?.totalScore);
+  const bradenVal  = pick(n, "pressureUlcer", "bradenTotal", "bradenScore") ?? scalarOrNum(n.braden?.total) ?? scalarOrNum(n.riskAssessments?.bradenScale?.totalScore);
+  const painVal    = pick(n, "painScore", "vasPain") ?? scalarOrNum(n.pain?.score) ?? scalarOrNum(n.pain?.total) ?? scalarOrNum(n.vitals?.painScore);
   const nutriVal   = pick(n, "nutritionScore", "must", "nutriRisk", "mna") ?? scalarOrNum(n.nutrition?.score) ?? scalarOrNum(n.nutri?.total);
   const vteVal     = pick(n, "vteRisk", "padua") ?? scalarOrNum(n.vte?.total) ?? scalarOrNum(d.vte?.total) ?? pick(d, "vteRisk", "padua");
   const dvtVal     = pick(n, "dvtRisk") ?? scalarOrNum(n.dvt?.total) ?? pick(d, "dvtRisk");
-  const gcsVal     = pick(d, "gcs", "GCS") ?? scalarOrNum(d.gcs?.total) ?? pick(n, "gcs", "GCS");
-  const morseRisk  = (typeof n.morse?.risk === "string") ? n.morse.risk : null;
-  const bradenRisk = (typeof n.braden?.risk === "string") ? n.braden.risk : null;
+  const gcsVal     = pick(d, "gcs", "GCS") ?? scalarOrNum(d.gcs?.total) ?? pick(n, "gcs", "GCS") ?? scalarOrNum(n.vitals?.gcs);
+  const morseRisk  = (typeof n.morse?.risk === "string") ? n.morse.risk
+                   : (typeof n.riskAssessments?.morseFallScale?.riskLevel === "string" ? n.riskAssessments.morseFallScale.riskLevel : null);
+  const bradenRisk = (typeof n.braden?.risk === "string") ? n.braden.risk
+                   : (typeof n.riskAssessments?.bradenScale?.riskLevel === "string" ? n.riskAssessments.bradenScale.riskLevel : null);
   const nutriRisk  = (typeof n.nutri?.risk === "string") ? n.nutri.risk : (typeof n.nutrition?.risk === "string" ? n.nutrition.risk : null);
   const vteRisk    = (typeof n.vte?.risk === "string") ? n.vte.risk : null;
 
@@ -1073,6 +1076,60 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                 : "#6b7280";
     return <span style={{ color, fontWeight: 600, textTransform: "capitalize" }}>{s || "—"}</span>;
   };
+
+  /* ── Rich Nursing IA renderers (admission.nurseInitialAssessment) ────────
+     The comprehensive head-to-toe assessment the NurseInitialAssessmentPage
+     captures. Each sub-block prints as a 2-column table of every populated
+     field, so the Complete File shows the ENTIRE nursing IA. */
+  const NIA_SYSTEM_LABELS = {
+    neuroStatus: "Neurological", neuroNotes: "Neuro notes",
+    respiratoryPattern: "Respiratory pattern", breathSounds: "Breath sounds", oxygenSupport: "Oxygen support", oxygenLPM: "O₂ flow (LPM)", respiratoryNotes: "Respiratory notes",
+    heartSounds: "Heart sounds", capRefill: "Capillary refill", peripheralPulse: "Peripheral pulses", cvNotes: "CVS notes",
+    abdomen: "Abdomen", bowelSounds: "Bowel sounds", lastBowelMovement: "Last bowel movement", nausea: "Nausea", vomiting: "Vomiting", giNotes: "GI notes",
+    urinaryPattern: "Urinary pattern", catheter: "Urinary catheter", catheterSite: "Catheter detail", guNotes: "GU notes",
+    mobility: "Mobility", assistiveDevice: "Assistive device", musculoNotes: "Musculoskeletal notes",
+    skinColor: "Skin colour", skinTurgor: "Skin turgor", skinIntact: "Skin intact", woundPresent: "Wound present", woundLocation: "Wound location", woundDescription: "Wound description", edema: "Edema", edemaLocation: "Edema site",
+    ivAccess: "IV access", ivSite: "IV site", ivSize: "IV size", ivInsertedDate: "IV inserted",
+  };
+  const NIA_PSYCHO_LABELS = {
+    anxietyLevel: "Anxiety", emotionalStatus: "Emotional status", cooperationLevel: "Cooperation",
+    cognitiveStatus: "Cognition", languageBarrier: "Language barrier", language: "Preferred language",
+    spiritualNeeds: "Spiritual needs", spiritualNotes: "Spiritual notes", physicalAbuseRisk: "Abuse risk", socialSupport: "Social support",
+  };
+  const NIA_NUTRI_LABELS = {
+    dietaryRestrictions: "Diet", allergies: "Food / other allergies", nutritionRisk: "Nutrition risk",
+    hydrationStatus: "Hydration", lastMealTime: "Last meal", swallowingDifficulty: "Swallowing difficulty", feedingMethod: "Feeding method", nutritionNotes: "Nutrition notes",
+  };
+  const NIA_DISCHARGE_LABELS = {
+    livesAlone: "Lives alone", caregiver: "Primary caregiver", homeSupportAvailable: "Home support",
+    anticipatedDischargeNeeds: "Anticipated needs", educationNeeded: "Education needed",
+    socialWorkReferral: "Social-work referral", dischargePlanNotes: "Notes",
+  };
+  const IAGrid = (title, obj, labelMap) => {
+    if (!obj || typeof obj !== "object") return null;
+    const rows = Object.entries(labelMap)
+      .filter(([k]) => obj[k] != null && obj[k] !== "" && obj[k] !== false && typeof obj[k] !== "object")
+      .map(([k, label]) => [label, String(obj[k])]);
+    if (!rows.length) return null;
+    return (<><SubHeader>{title}</SubHeader>
+      <MiniTable headers={["Parameter", "Finding"]} rows={rows} widths={["38%", "62%"]} /></>);
+  };
+  // Admission vitals & baseline — compose BP from bpSys/bpDia, list the rest.
+  const niaVitalsBlock = (() => {
+    const v = f.ia?.nursing?.vitals;
+    if (!v || typeof v !== "object") return null;
+    const rows = [];
+    const bp = (v.bpSys || v.bpDia) ? `${v.bpSys || "?"}/${v.bpDia || "?"} mmHg` : (typeof v.bp === "string" ? v.bp : "");
+    if (bp) rows.push(["Blood pressure", bp]);
+    const add = (label, val, unit = "") => { if (val != null && val !== "") rows.push([label, `${val}${unit}`]); };
+    add("Pulse", v.pulse, " /min"); add("Temperature", v.temp, " °C"); add("SpO₂", v.spo2, " %");
+    add("Respiratory rate", v.rr, " /min"); add("Pain score", v.painScore, "/10");
+    add("Consciousness", v.consciousnessLevel); add("GCS", v.gcs); add("Pupils", v.pupils);
+    add("Capillary glucose", v.glucometer, " mg/dL"); add("Weight", v.weight, " kg"); add("Height", v.height, " cm"); add("BMI", v.bmi);
+    if (!rows.length) return null;
+    return (<><SubHeader>Admission Vitals &amp; Baseline</SubHeader>
+      <MiniTable headers={["Parameter", "Finding"]} rows={rows} widths={["38%", "62%"]} /></>);
+  })();
 
   /* ── Bills fallback (canonical doesn't normalise yet) ───────── */
   const bills = Array.isArray(f.bills) ? f.bills
@@ -1368,16 +1425,24 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
           {Object.keys(n).length > 0 ? (
             <>
               <SubHeader>Nursing Initial Assessment</SubHeader>
-              {n.modeOfAdmission ? (
-                <Para><strong>Mode of admission:</strong> {n.modeOfAdmission}.</Para>
+              {(n.modeOfAdmit || n.modeOfAdmission || n.ward || n.bedNo) ? (
+                <Para><strong>Admission:</strong> {[
+                  (n.modeOfAdmit || n.modeOfAdmission) && `via ${n.modeOfAdmit || n.modeOfAdmission}`,
+                  n.ward && `ward ${n.ward}`,
+                  n.bedNo && `bed ${n.bedNo}`,
+                ].filter(Boolean).join(" · ")}.</Para>
               ) : null}
+              {niaVitalsBlock}
+              {IAGrid("Head-to-toe System Assessment", n.systemAssessment, NIA_SYSTEM_LABELS)}
+              {IAGrid("Psychosocial Assessment", n.psychosocial, NIA_PSYCHO_LABELS)}
+              {IAGrid("Nutrition & Hydration", n.nutritionHydration, NIA_NUTRI_LABELS)}
               {n.identification ? proseLine("Identification", n.identification) : null}
               {n.anthropometry ? proseLine("Anthropometry", n.anthropometry) : null}
               {(f.alerts?.allergies || []).length > 0 ? (
                 <Para><strong>Allergies:</strong> {oxford(allergies)}.</Para>
               ) : null}
               {n.language ? <Para><strong>Preferred language:</strong> {n.language}.</Para> : null}
-              {n.psychosocial ? proseLine("Psycho-social", n.psychosocial) : null}
+              {typeof n.psychosocial === "string" ? proseLine("Psycho-social", n.psychosocial) : null}
               {n.familySupport ? proseLine("Family support", n.familySupport) : null}
 
               {/* Risk scores — compact one-liners */}
@@ -1479,7 +1544,9 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               {n.bowelBladder ? proseLine("Bowel / bladder", n.bowelBladder) : null}
               {n.sleep ? proseLine("Sleep pattern", n.sleep) : null}
               {n.caregiver ? proseLine("Family caregiver", n.caregiver) : null}
-              {n.dischargePlanning ? proseLine("Discharge planning", n.dischargePlanning) : null}
+              {n.dischargePlanning && typeof n.dischargePlanning === "object"
+                ? IAGrid("Nursing Discharge Planning", n.dischargePlanning, NIA_DISCHARGE_LABELS)
+                : n.dischargePlanning ? proseLine("Discharge planning", n.dischargePlanning) : null}
 
               {carePlan ? (
                 <Para><strong>Initial care plan:</strong> <em>{cleanSentence(carePlan)}</em></Para>
